@@ -129,6 +129,34 @@ fn request_body(tool_call: &Value, options: &Value) -> Value {
     })
 }
 
+/// Build the ACP-shaped values the shared state builder reads for an ad-hoc
+/// permission test. The first option is allowing so a test request has the
+/// same option shape as a live ACP request.
+pub(crate) fn test_call(
+    tool: String,
+    kind: Option<String>,
+    input: Value,
+    names: &[String],
+) -> (Value, Value) {
+    let mut tool_call = Map::new();
+    tool_call.insert("title".into(), Value::String(tool));
+    tool_call.insert("rawInput".into(), input);
+    if let Some(kind) = kind {
+        tool_call.insert("kind".into(), Value::String(kind));
+    }
+    let options = names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            json!({
+                "name": name,
+                "kind": if index == 0 { "allow_once" } else { "reject_once" },
+            })
+        })
+        .collect();
+    (Value::Object(tool_call), Value::Array(options))
+}
+
 /// The winner's danger formula: the expected three-level score divided by
 /// the highest level. Kev includes probabilities with each score, and both
 /// the score and every probability must be valid before a decision can use it.

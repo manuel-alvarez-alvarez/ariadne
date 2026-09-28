@@ -134,6 +134,20 @@ ariadne permissions ai refresh
 ariadne permissions ai disable
 ```
 
+Test one request before an agent makes it with the same model and thresholds:
+
+```sh
+ariadne permissions ai test --tool Bash --kind execute \
+  --input '{"command":"git status"}' --option Allow --option Reject
+```
+
+The command prints the label, danger and thresholds, such as `ask (danger
+0.41; allow 0.13, deny 0.53)`. Use `--format json` for the response fields.
+It does not select an option, save an approval, or add an event. The model
+must be enabled; `ai_disabled` means turn it on first. Invalid `--input` JSON
+is refused locally. If the enabled model cannot answer, the command prints
+`no answer: unavailable`, `failed`, `timed out`, or `malformed`.
+
 In the desktop app, the same settings are on the **Permissions** screen.
 
 Enabling installs three things, under `~/.ariadne/ai-permissions`:

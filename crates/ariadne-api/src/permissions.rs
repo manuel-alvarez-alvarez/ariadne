@@ -181,6 +181,37 @@ pub struct UpdateAiPermissionsRequest {
     pub schedule: Option<Option<String>>,
 }
 
+/// One permission request to score with the AI permission model, without
+/// selecting an ACP option or recording an approval.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TestAiPermissionRequest {
+    /// The tool call title the model sees.
+    pub tool: String,
+    /// The tool call kind the model sees.
+    pub kind: Option<String>,
+    /// The raw JSON input the model sees in compact form.
+    pub input: serde_json::Value,
+    /// The option names the model sees.
+    pub options: Option<Vec<String>>,
+}
+
+/// The AI permission model's score for a request, held to the current
+/// thresholds.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct TestAiPermissionResponse {
+    /// `allow`, `ask`, or `deny` when the model answered.
+    pub label: Option<String>,
+    /// The model's normalized danger score when it answered.
+    pub danger: Option<f64>,
+    /// Danger at or below this value is allowed.
+    pub allow_threshold: f64,
+    /// Danger at or above this value is denied.
+    pub deny_threshold: f64,
+    /// Why the model did not answer.
+    pub ai_error: Option<String>,
+}
+
 /// Tell "the field is absent" from "the field is `null`", which plain
 /// `Option<Option<String>>` cannot: serde reads a `null` into the outer
 /// `Option` and both readings arrive as `None`. Absent is the `Default`

@@ -245,17 +245,26 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     is the option chosen, `allowed by AI (danger 0.06)`, or
     `denied by AI (danger 0.93)` for a reply of the
     model. The reply's event summary (012, rule 13) names the reason too.
+32. `POST /v1/permissions/ai/test` scores one supplied request without
+    selecting an option, writing a learned approval or store row, or publishing
+    an event. It takes `tool`, nullable `kind`, JSON `input`, and nullable
+    option names; it builds the same model state as rule 26, treating its first
+    option as allowing. Its 200 response carries the label and danger, or an
+    `unavailable`, `failed`, `timed out`, or `malformed` error, with the current
+    thresholds in either case. It refuses an empty tool with 422
+    `invalid_request` and an off model with 409 `ai_disabled`; an enabled model
+    still starting waits under rule 25.
 
 ## Benchmark
 
-32. `bench/ai-permissions/` holds case JSON Lines, `run.py`, `run.sh`, the
+33. `bench/ai-permissions/` holds case JSON Lines, `run.py`, `run.sh`, the
     shared `ai_bench` library, the `evaluators` package, its README, and
     tests. It shares no file with `crates/` in either direction: the daemon
     reads nothing under `bench/`, and the benchmark reads nothing under
     `crates/`. It reads the daemon's install only at run time, for its model
     environments and weights (`~/.ariadne/ai-permissions`) and, with
     `--real`, approved requests from `~/.ariadne/ariadne.db`, read-only.
-33. Every evaluator subclasses `ai_bench.evaluator.Evaluator`, whose three
+34. Every evaluator subclasses `ai_bench.evaluator.Evaluator`, whose three
     methods are `setup` (start the backend), `evaluate` (decide one case: an
     optional danger score, 0 to 1, and an `allow`, `ask` or `deny` label) and
     `teardown` (stop the backend). `evaluators/kev` and `evaluators/laya`
@@ -285,13 +294,13 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     2026-09-27) with its thresholds, margins, shares, AUROCs, latency and
     memory, and the outcome of its development pair on the held-out and
     real cases.
-34. `run.py list` prints every registered evaluator with its backend and
+35. `run.py list` prints every registered evaluator with its backend and
     description, and `run.py run --evaluator <key>` runs one: `setup` once,
     `evaluate` per case, timed, and `teardown` however the run ends.
     `run.py validate` keeps the case validation contract: a case's `expected`
     is `allow`, `ask` or `deny`; a `safe` case expects `allow`; an `elevated`
     case expects `ask` or `deny`; an `adversarial` case expects `deny` or
-    `ask`; a real case (rule 32) always expects `allow`. `run` defaults to
+    `ask`; a real case (rule 33) always expects `allow`. `run` defaults to
     development cases, adds the held-out ones with `--heldout`, and can add
     read-only real cases. It writes one per-case CSV per evaluator (`id`,
     `set`, `expected`, `danger`, `label`, `latency_ms`) and prints a table,
@@ -311,7 +320,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     bound, and the table at that pair. `run.sh` runs each evaluator in its
     backend's virtual environment, which it creates when missing, then
     reports over all of them.
-35. Benchmark scores remain measurements from a local model, device, and
+36. Benchmark scores remain measurements from a local model, device, and
     changing read-only real-request sample. The model reads one request, cut
     at 2,000 characters of input, without seeing what runs later; elevated
     labels, long commands, and device precision remain limits.
@@ -322,6 +331,12 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   with no schedule, and reports
   the interpreter it probed
   (`ai_permissions.rs::the_settings_start_at_the_defaults_with_the_interpreter_probed`).
+- A test request sends the shared model state and returns its label, danger and
+  thresholds without an event; an off model refuses it and an enabled model
+  with no live endpoint reports `unavailable`
+  (`ai_permissions_decisions.rs::a_test_request_scores_the_same_model_state_without_publishing_or_learning`,
+  `::a_test_request_reports_unavailable_or_a_model_error_without_failing_the_endpoint`,
+  `::a_test_request_returns_each_model_call_error_in_its_response`).
 - A version is read out of what an interpreter prints, and only 3.12 and 3.13 pass
   (`ai_permissions/python.rs::tests::the_version_is_read_from_the_line_and_checked_against_kevs_versions`);
   an interpreter that is not there is reported as missing

@@ -35,6 +35,20 @@ The listing shows every agent's id, status and command. A rejected agent also
 shows why it could not be used. Use `--format json` when a script needs the
 unchanged list returned by the daemon.
 
+## Test an AI permission request
+
+Use this command to see how the enabled AI permission model scores one tool
+request without granting or recording anything:
+
+```sh
+ariadne permissions ai test --tool Bash --kind execute \
+  --input '{"command":"git status"}' --option Allow --option Reject
+```
+
+It prints a line such as `ask (danger 0.41; allow 0.13, deny 0.53)`. Repeat
+`--option` for each offered option; the first represents an allowing option.
+`--input` must be valid JSON. `--format json` prints the full response.
+
 ## List every session
 
 `ariadne session ls` lists Ariadne's own sessions — an orchestrator's, an

@@ -24,7 +24,8 @@ use ariadne_api::error::ErrorBody;
 use ariadne_api::models::{ModelDto, SetModelRankRequest};
 use ariadne_api::permissions::{
     AiPermissionsStatusDto, CreateLearnedPermissionRequest, LearnedPermissionDto,
-    LearnedPermissionsResponse, UpdateAiPermissionsRequest, UpdateLearnedPermissionRequest,
+    LearnedPermissionsResponse, TestAiPermissionRequest, TestAiPermissionResponse,
+    UpdateAiPermissionsRequest, UpdateLearnedPermissionRequest,
 };
 use ariadne_api::skills::SkillDto;
 use ariadne_api::{HealthResponse, VersionResponse};
@@ -368,6 +369,14 @@ impl Client {
             None,
         )
         .await
+    }
+
+    /// Score one request with the AI permission model without changing permission state.
+    pub async fn test_ai_permission(
+        &self,
+        req: &TestAiPermissionRequest,
+    ) -> Result<TestAiPermissionResponse, ClientError> {
+        self.post_json("/v1/permissions/ai/test", req).await
     }
 
     /// Set or clear a catalog entry's user rank. `None` clears it.

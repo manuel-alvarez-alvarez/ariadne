@@ -1,8 +1,8 @@
 //! The AI permission settings behind the `ai` permission mode (022).
 //!
-//! Three endpoints over one settings row: read it, write it, and run the
-//! install again. Turning the model on starts an install, so the write answers
-//! with `installing` rather than waiting for two gigabytes; the
+//! Four endpoints over one settings row: read it, write it, run the install,
+//! or test a request. Turning the model on starts an install, so the write
+//! answers with `installing` rather than waiting for two gigabytes; the
 //! `ai_permissions_updated` event says how it ended.
 
 use axum::extract::{Path, Query, State};
@@ -10,8 +10,8 @@ use axum::http::StatusCode;
 
 use ariadne_api::permissions::{
     AiPermissionsStatusDto, CreateLearnedPermissionRequest, LearnedPermissionDto,
-    LearnedPermissionQuery, LearnedPermissionsResponse, UpdateAiPermissionsRequest,
-    UpdateLearnedPermissionRequest,
+    LearnedPermissionQuery, LearnedPermissionsResponse, TestAiPermissionRequest,
+    TestAiPermissionResponse, UpdateAiPermissionsRequest, UpdateLearnedPermissionRequest,
 };
 use ariadne_store::{
     AiPermissionSettingsUpdate, LearnedPermissionUpdate, NewLearnedPermission, StoreError,
@@ -261,6 +261,101 @@ pub(super) async fn refresh(
         )
     })?;
     Ok((StatusCode::ACCEPTED, Json(started)))
+}
+
+/// Score one request with the AI permission model without selecting an option
+/// or changing any permission state.
+#[utoipa::path(post, path = "/v1/permissions/ai/test", tag = "permissions",
+    request_body = TestAiPermissionRequest,
+    responses(
+        (status = 200, body = TestAiPermissionResponse),
+        (status = 409, description = "the AI permission model is off"),
+        (status = 422, description = "the tool is empty")
+    ))]
+pub(super) async fn test(
+    State(state): State<AppState>,
+    Json(req): Json<TestAiPermissionRequest>,
+) -> ApiResult<Json<TestAiPermissionResponse>> {
+    if req.tool.is_empty() {
+        return Err(invalid("tool must not be empty".to_string()));
+    }
+    let status = state.ai_permissions.status().await;
+    if !status.enabled {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "ai_disabled",
+            "the AI permission model is off; turn it on before testing a request",
+        ));
+    }
+    let tool = req.tool.clone();
+    let (tool_call, options) = crate::ai_permissions::decide::test_call(
+        req.tool,
+        req.kind,
+        req.input,
+        req.options.as_deref().unwrap_or_default(),
+    );
+    let response = match state.ai_permissions.live_once_started().await {
+        Some(live) => match crate::ai_permissions::decide::decide(
+            &live,
+            &tool_call,
+            &options,
+            state.ai_permissions.decision_timeout(),
+        )
+        .await
+        {
+            crate::ai_permissions::decide::Decision::Allow {
+                danger,
+                allow_threshold,
+                deny_threshold,
+            } => TestAiPermissionResponse {
+                label: Some("allow".into()),
+                danger: Some(danger),
+                allow_threshold,
+                deny_threshold,
+                ai_error: None,
+            },
+            crate::ai_permissions::decide::Decision::Ask {
+                danger,
+                allow_threshold,
+                deny_threshold,
+            } => TestAiPermissionResponse {
+                label: Some("ask".into()),
+                danger: Some(danger),
+                allow_threshold,
+                deny_threshold,
+                ai_error: None,
+            },
+            crate::ai_permissions::decide::Decision::Deny {
+                danger,
+                allow_threshold,
+                deny_threshold,
+            } => TestAiPermissionResponse {
+                label: Some("deny".into()),
+                danger: Some(danger),
+                allow_threshold,
+                deny_threshold,
+                ai_error: None,
+            },
+            crate::ai_permissions::decide::Decision::Unanswered { reason } => {
+                TestAiPermissionResponse {
+                    label: None,
+                    danger: None,
+                    allow_threshold: status.allow_threshold,
+                    deny_threshold: status.deny_threshold,
+                    ai_error: Some(reason.into()),
+                }
+            }
+        },
+        None => TestAiPermissionResponse {
+            label: None,
+            danger: None,
+            allow_threshold: status.allow_threshold,
+            deny_threshold: status.deny_threshold,
+            ai_error: Some("unavailable".into()),
+        },
+    };
+    tracing::info!(tool, label = ?response.label, danger = ?response.danger, ai_error = ?response.ai_error, "AI permission test");
+    Ok(Json(response))
 }
 
 /// Refuse a repository set to `ai` while the AI permission model is off.

@@ -128,6 +128,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("permissions learned list", true),
     ("permissions learned rm", true),
     ("permissions learned show", true),
+    ("permissions ai test", true),
     ("repo add", true),
     ("repo inspect", true),
     ("repo ls", true),
@@ -1480,6 +1481,39 @@ fn every_permissions_verb_parses() {
         panic!("permissions ai set --no-schedule");
     };
     assert!(no_schedule);
+
+    let Command::Permissions {
+        command:
+            PermissionsCommand::Ai(AiPermissionsCommand::Test {
+                tool,
+                kind,
+                input,
+                options,
+            }),
+    } = parse(&[
+        "ariadne",
+        "permissions",
+        "ai",
+        "test",
+        "--tool",
+        "Bash",
+        "--kind",
+        "execute",
+        "--input",
+        "{\"command\":\"git status\"}",
+        "--option",
+        "Allow",
+        "--option",
+        "Reject",
+    ])
+    .command
+    else {
+        panic!("permissions ai test");
+    };
+    assert_eq!(tool, "Bash");
+    assert_eq!(kind.as_deref(), Some("execute"));
+    assert_eq!(input, serde_json::json!({"command":"git status"}));
+    assert_eq!(options, ["Allow", "Reject"]);
 }
 
 /// `set` with nothing to change is refused: there is nothing to send.
@@ -1599,6 +1633,23 @@ fn permissions_set_refuses_a_bad_threshold_or_schedule_locally() {
         panic!("25:00 is not a clock time");
     };
     assert!(err.to_string().contains("HH:MM"), "{err}");
+}
+
+#[test]
+fn permissions_test_refuses_bad_json_locally() {
+    let Err(err) = try_parse(&[
+        "ariadne",
+        "permissions",
+        "ai",
+        "test",
+        "--tool",
+        "Bash",
+        "--input",
+        "not json",
+    ]) else {
+        panic!("invalid JSON parsed");
+    };
+    assert!(err.to_string().contains("valid JSON"), "{err}");
 }
 
 /// `ai` is a real value of the same enum `learn` and `ask` are, so it parses

@@ -1046,6 +1046,43 @@
         }
       }
     },
+    "/v1/permissions/ai/test": {
+      "post": {
+        "tags": [
+          "permissions"
+        ],
+        "summary": "Score one request with the AI permission model without selecting an option\nor changing any permission state.",
+        "operationId": "test",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestAiPermissionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestAiPermissionResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the AI permission model is off"
+          },
+          "422": {
+            "description": "the tool is empty"
+          }
+        }
+      }
+    },
     "/v1/permissions/learned": {
       "get": {
         "tags": [
@@ -5258,6 +5295,83 @@
           "total": {
             "$ref": "#/components/schemas/TokenUsageDto",
             "description": "Every session on the task summed, whatever its seat."
+          }
+        }
+      },
+      "TestAiPermissionRequest": {
+        "type": "object",
+        "description": "One permission request to score with the AI permission model, without\nselecting an ACP option or recording an approval.",
+        "required": [
+          "tool",
+          "input"
+        ],
+        "properties": {
+          "input": {
+            "description": "The raw JSON input the model sees in compact form."
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The tool call kind the model sees."
+          },
+          "options": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The option names the model sees."
+          },
+          "tool": {
+            "type": "string",
+            "description": "The tool call title the model sees."
+          }
+        },
+        "additionalProperties": false
+      },
+      "TestAiPermissionResponse": {
+        "type": "object",
+        "description": "The AI permission model's score for a request, held to the current\nthresholds.",
+        "required": [
+          "allow_threshold",
+          "deny_threshold"
+        ],
+        "properties": {
+          "ai_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the model did not answer."
+          },
+          "allow_threshold": {
+            "type": "number",
+            "format": "double",
+            "description": "Danger at or below this value is allowed."
+          },
+          "danger": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The model's normalized danger score when it answered."
+          },
+          "deny_threshold": {
+            "type": "number",
+            "format": "double",
+            "description": "Danger at or above this value is denied."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`allow`, `ask`, or `deny` when the model answered."
           }
         }
       },

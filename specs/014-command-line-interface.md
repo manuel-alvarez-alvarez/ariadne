@@ -195,7 +195,12 @@ same binary also serves (013).
     --permission-mode ai` alike — carries the hint `run ariadne permissions ai
     enable`; a `python_unavailable` one carries `install Python 3.12 or 3.13,
     or set python_bin in config.toml`.
-33. `ariadne doctor` reports the Python interpreter the AI permission model's install would run
+33. `ariadne permissions ai test --tool <T> [--kind <K>] --input <json>
+    [--option <name>]...` sends one request to the AI permission model without
+    selecting or recording an approval. It refuses invalid input JSON locally,
+    prints one score line for people and the response unchanged with
+    `--format json`.
+34. `ariadne doctor` reports the Python interpreter the AI permission model's install would run
     on, next to the daemon's own environment (rule 19), and where the install
     itself stands. Neither ever fails the report, since `ai` is one
     permission mode among four: `python` is `ok` with the version found, or a
@@ -313,6 +318,11 @@ same binary also serves (013).
   `::permissions_set_with_no_flag_is_a_usage_error`,
   `::permissions_set_schedule_and_no_schedule_are_a_usage_error`,
   `::permissions_set_refuses_a_bad_threshold_or_schedule_locally`).
+- `permissions ai test` parses its request, rejects invalid JSON locally, and
+  prints its score line and JSON response
+  (`cli/tests.rs::every_permissions_verb_parses`,
+  `::permissions_test_refuses_bad_json_locally`,
+  `commands/permissions.rs::tests::test_prints_the_score_line_and_names_no_answer`).
 - `show` renders every status field except built-in configuration; `enable`
   sends only `{"enabled": true}`, `set --no-schedule` only a `null` schedule,
   and `set --threshold` only the threshold.

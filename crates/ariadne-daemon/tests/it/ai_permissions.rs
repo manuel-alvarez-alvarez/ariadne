@@ -723,7 +723,7 @@ async fn the_endpoint_is_the_configured_one_and_live_needs_the_model_on() {
     );
 }
 
-/// The wire contract four other tasks build on: the three paths, the request
+/// The wire contract four other tasks build on: the four paths, the request
 /// and reply schemas, the nullable schedule and the event kind.
 #[tokio::test]
 async fn the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document() {
@@ -733,6 +733,7 @@ async fn the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document() {
     assert!(doc["paths"]["/v1/permissions/ai"]["get"].is_object());
     assert!(doc["paths"]["/v1/permissions/ai"]["put"].is_object());
     assert!(doc["paths"]["/v1/permissions/ai/refresh"]["post"].is_object());
+    assert!(doc["paths"]["/v1/permissions/ai/test"]["post"].is_object());
 
     let schemas = &doc["components"]["schemas"];
     for name in [
@@ -740,6 +741,8 @@ async fn the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document() {
         "UpdateAiPermissionsRequest",
         "AiPermissionsState",
         "PythonDto",
+        "TestAiPermissionRequest",
+        "TestAiPermissionResponse",
     ] {
         assert!(schemas[name].is_object(), "{name} is not in the document");
     }

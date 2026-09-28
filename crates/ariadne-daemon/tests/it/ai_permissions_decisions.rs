@@ -10,14 +10,15 @@ use serde_json::{Value, json};
 use tracing_subscriber::layer::SubscriberExt;
 
 use ariadne_api::logs::LogSnapshotResponse;
+use ariadne_api::permissions::TestAiPermissionResponse;
 use ariadne_core::{Actor, AttentionReason, PermissionMode, SessionStatus, TaskStatus};
 use ariadne_daemon::timeouts::Timeouts;
-use ariadne_store::{AgentPin, EventFilter};
+use ariadne_store::{AgentPin, AiPermissionSettingsUpdate, EventFilter};
 
 use crate::common::acp::{registry_home, script, stub_acp_agent};
 use crate::common::{
-    Cast, Harness, HarnessBuilder, RUNS_OUT, TIMEOUT, eventually, harness, post_json, put_json,
-    shared_script,
+    Cast, Harness, HarnessBuilder, QUIET, RUNS_OUT, TIMEOUT, eventually, harness, post_json,
+    put_json, shared_script,
 };
 
 #[derive(Clone)]
@@ -57,6 +58,10 @@ impl ModelServer {
 
     async fn hanging() -> Self {
         Self::start(Answer::Hang).await
+    }
+
+    async fn malformed() -> Self {
+        Self::start(Answer::Value(json!({}))).await
     }
 
     async fn start(answer: Answer) -> Self {
@@ -141,6 +146,156 @@ fn python() -> String {
     shared_script("#!/bin/sh\necho 'Python 3.12.1'\n")
         .display()
         .to_string()
+}
+
+async fn enabled_test_harness(server: &ModelServer, timeouts: Timeouts) -> Harness {
+    let h = harness()
+        .ai_permissions_endpoint(server.endpoint.clone())
+        .python_bin(python())
+        .ai_permissions_installer(vec!["/usr/bin/true".into()])
+        .timeouts(timeouts)
+        .await;
+    let _: Value = h
+        .json(
+            put_json("/v1/permissions/ai", json!({"enabled": true})),
+            StatusCode::OK,
+        )
+        .await;
+    h
+}
+
+async fn test_error(h: &Harness) -> String {
+    h.json::<TestAiPermissionResponse>(
+        post_json(
+            "/v1/permissions/ai/test",
+            json!({"tool":"Bash", "input":{}}),
+        ),
+        StatusCode::OK,
+    )
+    .await
+    .ai_error
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_test_request_scores_the_same_model_state_without_publishing_or_learning() {
+    let server = ModelServer::answer(0.41).await;
+    let h = harness()
+        .ai_permissions_endpoint(server.endpoint.clone())
+        .python_bin(python())
+        .await;
+    h.store
+        .update_ai_permission_settings(AiPermissionSettingsUpdate {
+            enabled: Some(true),
+            allow_threshold: Some(0.13),
+            deny_threshold: Some(0.53),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let mut events = h.bus.subscribe();
+
+    let response: TestAiPermissionResponse = h
+        .json(
+            post_json(
+                "/v1/permissions/ai/test",
+                json!({"tool":"Bash", "kind":"execute", "input":{"command":"git status"}, "options":["Allow", "Reject"]}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+
+    assert_eq!(response.label.as_deref(), Some("ask"));
+    assert_eq!(response.danger, Some(0.41));
+    assert_eq!(response.allow_threshold, 0.13);
+    assert_eq!(response.deny_threshold, 0.53);
+    assert_eq!(response.ai_error, None);
+    assert!(
+        h.store
+            .list_learned_permissions(None)
+            .await
+            .unwrap()
+            .is_empty(),
+        "the test wrote a learned approval"
+    );
+    assert_eq!(
+        server.requests.lock().unwrap()[0]["state"],
+        json!({
+            "tool":"Bash", "kind":"execute", "input":"{\"command\":\"git status\"}", "options":"Allow, Reject"
+        })
+    );
+    assert!(
+        tokio::time::timeout(QUIET, events.recv()).await.is_err(),
+        "the test published an event"
+    );
+}
+
+#[tokio::test]
+async fn a_test_request_reports_unavailable_or_a_model_error_without_failing_the_endpoint() {
+    let h = harness().await;
+    let empty: ariadne_api::error::ErrorBody = h
+        .json(
+            post_json("/v1/permissions/ai/test", json!({"tool":"", "input":{}})),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    assert_eq!(empty.error.code, "invalid_request");
+    let disabled: ariadne_api::error::ErrorBody = h
+        .json(
+            post_json(
+                "/v1/permissions/ai/test",
+                json!({"tool":"Bash", "input":{}}),
+            ),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    assert_eq!(disabled.error.code, "ai_disabled");
+
+    let unavailable = harness()
+        .python_bin(python())
+        .ai_permissions_installer(vec!["/usr/bin/true".into()])
+        .await;
+    let _: Value = unavailable
+        .json(
+            put_json("/v1/permissions/ai", json!({"enabled": true})),
+            StatusCode::OK,
+        )
+        .await;
+    let response: TestAiPermissionResponse = unavailable
+        .json(
+            post_json(
+                "/v1/permissions/ai/test",
+                json!({"tool":"Bash", "input":{}}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(response.label, None);
+    assert_eq!(response.danger, None);
+    assert_eq!(response.ai_error.as_deref(), Some("unavailable"));
+}
+
+#[tokio::test]
+async fn a_test_request_returns_each_model_call_error_in_its_response() {
+    let failed_server = ModelServer::answer(0.41).await;
+    let failed = enabled_test_harness(&failed_server, Timeouts::default()).await;
+    failed_server.stop();
+    assert_eq!(test_error(&failed).await, "failed");
+
+    let timeout_server = ModelServer::hanging().await;
+    let timed_out = enabled_test_harness(
+        &timeout_server,
+        Timeouts {
+            ai_permissions_decision: RUNS_OUT,
+            ..Timeouts::default()
+        },
+    )
+    .await;
+    assert_eq!(test_error(&timed_out).await, "timed out");
+
+    let malformed_server = ModelServer::malformed().await;
+    let malformed = enabled_test_harness(&malformed_server, Timeouts::default()).await;
+    assert_eq!(test_error(&malformed).await, "malformed");
 }
 
 async fn ai_permissions_harness(

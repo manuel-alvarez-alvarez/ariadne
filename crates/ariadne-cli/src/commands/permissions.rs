@@ -5,7 +5,8 @@ use clap::Subcommand;
 
 use ariadne_api::permissions::{
     AiPermissionsState, AiPermissionsStatusDto, CreateLearnedPermissionRequest,
-    LearnedPermissionDto, PythonDto, UpdateAiPermissionsRequest, UpdateLearnedPermissionRequest,
+    LearnedPermissionDto, PythonDto, TestAiPermissionRequest, TestAiPermissionResponse,
+    UpdateAiPermissionsRequest, UpdateLearnedPermissionRequest,
 };
 use ariadne_client::Client;
 
@@ -92,6 +93,21 @@ pub(crate) enum AiPermissionsCommand {
         /// Turn the daily refresh off
         #[arg(long, conflicts_with = "schedule")]
         no_schedule: bool,
+    },
+    /// Score one request with the AI permission model
+    Test {
+        /// The tool call title
+        #[arg(long)]
+        tool: String,
+        /// The tool call kind
+        #[arg(long)]
+        kind: Option<String>,
+        /// The tool call input as JSON
+        #[arg(long, value_parser = parse_json)]
+        input: serde_json::Value,
+        /// An option name, repeated for each option
+        #[arg(long = "option")]
+        options: Vec<String>,
     },
 }
 
@@ -286,6 +302,39 @@ async fn run_ai(client: &Client, cmd: AiPermissionsCommand, format: Format) -> R
                 .await?;
             print_result(format, &status)
         }
+        AiPermissionsCommand::Test {
+            tool,
+            kind,
+            input,
+            options,
+        } => {
+            let response = client
+                .test_ai_permission(&TestAiPermissionRequest {
+                    tool,
+                    kind,
+                    input,
+                    options: (!options.is_empty()).then_some(options),
+                })
+                .await?;
+            print(format, &response, || {
+                println!("{}", test_one_line(&response))
+            })
+        }
+    }
+}
+
+fn parse_json(text: &str) -> Result<serde_json::Value, String> {
+    serde_json::from_str(text).map_err(|error| format!("`--input` must be valid JSON: {error}"))
+}
+
+fn test_one_line(response: &TestAiPermissionResponse) -> String {
+    match (&response.label, response.danger, &response.ai_error) {
+        (Some(label), Some(danger), None) => format!(
+            "{label} (danger {danger:.2}; allow {:.2}, deny {:.2})",
+            response.allow_threshold, response.deny_threshold
+        ),
+        (_, _, Some(error)) => format!("no answer: {error}"),
+        _ => "no answer".to_string(),
     }
 }
 
@@ -586,6 +635,31 @@ mod tests {
                 .contains("between 0 and 1")
         );
         assert!(parse_threshold("abc").unwrap_err().contains("not a number"));
+    }
+
+    #[test]
+    fn test_prints_the_score_line_and_names_no_answer() {
+        let answered = TestAiPermissionResponse {
+            label: Some("ask".into()),
+            danger: Some(0.4129),
+            allow_threshold: 0.2,
+            deny_threshold: 0.8,
+            ai_error: None,
+        };
+        assert_eq!(
+            test_one_line(&answered),
+            "ask (danger 0.41; allow 0.20, deny 0.80)"
+        );
+        assert_eq!(
+            test_one_line(&TestAiPermissionResponse {
+                label: None,
+                danger: None,
+                allow_threshold: 0.2,
+                deny_threshold: 0.8,
+                ai_error: Some("timed out".into()),
+            }),
+            "no answer: timed out"
+        );
     }
 
     #[test]

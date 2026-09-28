@@ -501,6 +501,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/permissions/ai/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Score one request with the AI permission model without selecting an option
+         *     or changing any permission state.
+         */
+        post: operations["permissions_test"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/permissions/learned": {
         parameters: {
             query?: never;
@@ -2252,6 +2272,45 @@ export interface components {
             total: components["schemas"]["TokenUsageDto"];
         };
         /**
+         * @description One permission request to score with the AI permission model, without
+         *     selecting an ACP option or recording an approval.
+         */
+        TestAiPermissionRequest: {
+            /** @description The raw JSON input the model sees in compact form. */
+            input: unknown;
+            /** @description The tool call kind the model sees. */
+            kind?: string | null;
+            /** @description The option names the model sees. */
+            options?: string[] | null;
+            /** @description The tool call title the model sees. */
+            tool: string;
+        };
+        /**
+         * @description The AI permission model's score for a request, held to the current
+         *     thresholds.
+         */
+        TestAiPermissionResponse: {
+            /** @description Why the model did not answer. */
+            ai_error?: string | null;
+            /**
+             * Format: double
+             * @description Danger at or below this value is allowed.
+             */
+            allow_threshold: number;
+            /**
+             * Format: double
+             * @description The model's normalized danger score when it answered.
+             */
+            danger?: number | null;
+            /**
+             * Format: double
+             * @description Danger at or above this value is denied.
+             */
+            deny_threshold: number;
+            /** @description `allow`, `ask`, or `deny` when the model answered. */
+            label?: string | null;
+        };
+        /**
          * @description Tokens spent, as the agents' own transcripts report them.
          *
          *     Always present and always a number: nothing reported is zero, not null.
@@ -3173,6 +3232,43 @@ export interface operations {
             };
             /** @description the AI permission model is off, or an install is already running */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    permissions_test: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TestAiPermissionRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestAiPermissionResponse"];
+                };
+            };
+            /** @description the AI permission model is off */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the tool is empty */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

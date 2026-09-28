@@ -211,6 +211,11 @@ impl AiPermissions {
         }
     }
 
+    /// The maximum time one model scoring request may take.
+    pub(crate) fn decision_timeout(&self) -> std::time::Duration {
+        self.timeouts.ai_permissions_decision
+    }
+
     /// Publish the status as it now stands, whatever moved it.
     pub(crate) async fn announce(&self) -> AiPermissionsStatusDto {
         let status = self.status().await;
