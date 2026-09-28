@@ -1053,6 +1053,23 @@ async fn learn_remembers_an_approval_per_repository_across_a_daemon_restart() {
             .unwrap(),
         "a daemon restart reads the learned approval from its store"
     );
+    let learned = restarted
+        .list_learned_permissions(Some(&cast.repo.id))
+        .await
+        .unwrap();
+    assert_eq!(learned.len(), 1);
+    let learned = &learned[0];
+    assert_eq!(learned.source, "console");
+    assert_eq!(learned.selected_option.as_deref(), Some("yes"));
+    assert_eq!(learned.session_id.as_deref(), Some(approved.id.as_str()));
+    assert_eq!(learned.task_id.as_deref(), Some(asked_again.id.as_str()));
+    assert_eq!(learned.label, None);
+    let tool_call: serde_json::Value =
+        serde_json::from_str(learned.tool_call.as_deref().unwrap()).unwrap();
+    assert_eq!(tool_call["rawInput"]["path"], "src/main.rs");
+    let options: serde_json::Value =
+        serde_json::from_str(learned.options.as_deref().unwrap()).unwrap();
+    assert_eq!(options.as_array().unwrap().len(), 2);
 
     let remembered = h
         .task_on(

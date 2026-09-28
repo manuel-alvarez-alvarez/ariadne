@@ -206,6 +206,26 @@ pub struct AiPermissionSettings {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
+pub struct LearnedPermission {
+    pub id: String,
+    pub repository_id: String,
+    pub tool_name: String,
+    pub kind: String,
+    pub source: String,
+    pub tool_call: Option<String>,
+    pub options: Option<String>,
+    pub selected_option: Option<String>,
+    pub session_id: Option<String>,
+    pub task_id: Option<String>,
+    pub label: Option<String>,
+    pub danger: Option<f64>,
+    pub allow_threshold: Option<f64>,
+    pub deny_threshold: Option<f64>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 /// A git repository registered once, globally, and named by id from there on.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Repository {

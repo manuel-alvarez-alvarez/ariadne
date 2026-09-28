@@ -384,6 +384,19 @@ for the related session workflows.
 
 ## AI permissions
 
+Use `ariadne permissions learned` to inspect and manage remembered approvals:
+
+```sh
+ariadne permissions learned list --repo ~/projects/api
+ariadne permissions learned show <id>
+ariadne permissions learned add --repo ~/projects/api --tool Bash --kind execute
+ariadne permissions learned edit <id> --tool Shell
+ariadne permissions learned rm <id>
+```
+
+`list` accepts a repository id or path. `show` prints every field and the
+complete tool call. Add `--format json` to any verb for JSON output.
+
 `ariadne permissions ai` manages the AI permission model behind the `ai` permission
 mode: see [Permission modes](permissions.md#the-ai-permission-model) for what it installs and
 what each setting does.

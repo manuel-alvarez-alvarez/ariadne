@@ -5,14 +5,150 @@
 //! with `installing` rather than waiting for two gigabytes; the
 //! `ai_permissions_updated` event says how it ended.
 
-use axum::extract::State;
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 
-use ariadne_api::permissions::{AiPermissionsStatusDto, UpdateAiPermissionsRequest};
-use ariadne_store::AiPermissionSettingsUpdate;
+use ariadne_api::permissions::{
+    AiPermissionsStatusDto, CreateLearnedPermissionRequest, LearnedPermissionDto,
+    LearnedPermissionQuery, LearnedPermissionsResponse, UpdateAiPermissionsRequest,
+    UpdateLearnedPermissionRequest,
+};
+use ariadne_store::{
+    AiPermissionSettingsUpdate, LearnedPermissionUpdate, NewLearnedPermission, StoreError,
+};
 
 use super::AppState;
+use super::convert::learned_permission_dto;
 use super::error::{ApiError, ApiResult, Json};
+
+#[utoipa::path(get, path = "/v1/permissions/learned", tag = "permissions", params(LearnedPermissionQuery), responses((status = 200, body = LearnedPermissionsResponse)))]
+pub(super) async fn list_learned(
+    State(state): State<AppState>,
+    Query(query): Query<LearnedPermissionQuery>,
+) -> ApiResult<Json<LearnedPermissionsResponse>> {
+    let items = state
+        .store
+        .list_learned_permissions(query.repository.as_deref())
+        .await?
+        .into_iter()
+        .map(learned_permission_dto)
+        .collect();
+    Ok(Json(LearnedPermissionsResponse { items }))
+}
+
+#[utoipa::path(get, path = "/v1/permissions/learned/{id}", tag = "permissions", params(("id" = String, Path)), responses((status = 200, body = LearnedPermissionDto), (status = 404)))]
+pub(super) async fn get_learned(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<LearnedPermissionDto>> {
+    state
+        .store
+        .get_learned_permission(&id)
+        .await
+        .map(learned_permission_dto)
+        .map(Json)
+        .map_err(learned_error)
+}
+
+#[utoipa::path(post, path = "/v1/permissions/learned", tag = "permissions", request_body = CreateLearnedPermissionRequest, responses((status = 201, body = LearnedPermissionDto), (status = 404), (status = 409), (status = 422)))]
+pub(super) async fn create_learned(
+    State(state): State<AppState>,
+    Json(req): Json<CreateLearnedPermissionRequest>,
+) -> ApiResult<(StatusCode, Json<LearnedPermissionDto>)> {
+    validate_fields(&[&req.repository_id, &req.tool_name, &req.kind])?;
+    state
+        .store
+        .get_repository(&req.repository_id)
+        .await
+        .map_err(|e| match e {
+            StoreError::NotFound { .. } => ApiError::new(
+                StatusCode::NOT_FOUND,
+                "repository_not_found",
+                format!("repository not found: {}", req.repository_id),
+            ),
+            other => other.into(),
+        })?;
+    let row = state
+        .store
+        .create_learned_permission(NewLearnedPermission {
+            repository_id: req.repository_id,
+            tool_name: req.tool_name,
+            kind: req.kind,
+            source: "manual".into(),
+            tool_call: None,
+            options: None,
+            selected_option: None,
+            session_id: None,
+            task_id: None,
+            label: None,
+            danger: None,
+            allow_threshold: None,
+            deny_threshold: None,
+        })
+        .await
+        .map_err(learned_error)?;
+    Ok((StatusCode::CREATED, Json(learned_permission_dto(row))))
+}
+
+#[utoipa::path(put, path = "/v1/permissions/learned/{id}", tag = "permissions", params(("id" = String, Path)), request_body = UpdateLearnedPermissionRequest, responses((status = 200, body = LearnedPermissionDto), (status = 404), (status = 409), (status = 422)))]
+pub(super) async fn update_learned(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateLearnedPermissionRequest>,
+) -> ApiResult<Json<LearnedPermissionDto>> {
+    if req.tool_name.as_deref().is_some_and(str::is_empty)
+        || req.kind.as_deref().is_some_and(str::is_empty)
+    {
+        return Err(invalid("fields must not be empty".into()));
+    }
+    state
+        .store
+        .update_learned_permission(
+            &id,
+            LearnedPermissionUpdate {
+                tool_name: req.tool_name,
+                kind: req.kind,
+            },
+        )
+        .await
+        .map(learned_permission_dto)
+        .map(Json)
+        .map_err(learned_error)
+}
+
+#[utoipa::path(delete, path = "/v1/permissions/learned/{id}", tag = "permissions", params(("id" = String, Path)), responses((status = 204), (status = 404)))]
+pub(super) async fn delete_learned(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<StatusCode> {
+    state
+        .store
+        .delete_learned_permission(&id)
+        .await
+        .map_err(learned_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn validate_fields(fields: &[&str]) -> ApiResult<()> {
+    if fields.iter().any(|field| field.is_empty()) {
+        return Err(invalid("fields must not be empty".into()));
+    }
+    Ok(())
+}
+
+fn learned_error(error: StoreError) -> ApiError {
+    match error {
+        StoreError::NotFound { .. } => ApiError::new(
+            StatusCode::NOT_FOUND,
+            "learned_permission_not_found",
+            error.to_string(),
+        ),
+        StoreError::Conflict(message) => {
+            ApiError::new(StatusCode::CONFLICT, "learned_permission_exists", message)
+        }
+        other => other.into(),
+    }
+}
 
 /// The AI permission settings, the interpreter probed afresh, and where the install
 /// has got to.

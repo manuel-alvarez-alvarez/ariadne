@@ -202,8 +202,14 @@ same binary also serves (013).
     warning naming the version that is too old or that none was found;
     `ai permissions` is `ok` for `disabled`, `installing` and `ready <release>`, and a
     warning for `failed: <last_error>`.
+34. `ariadne permissions learned` lists, shows, adds, edits, and removes
+    approvals. A repository can be an id or path, and every verb supports JSON.
 
 ## Acceptance criteria
+
+- `permissions learned` provides list, show, add, edit, and remove commands.
+  Every verb parses, and an empty edit fails
+  (`cli/tests.rs::every_learned_permissions_verb_parses_and_edit_requires_a_change`).
 
 - The command tree is well formed and every command is classified
   (`cli/tests.rs::the_command_tree_is_well_formed`,

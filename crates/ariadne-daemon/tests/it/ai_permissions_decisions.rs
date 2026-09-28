@@ -563,6 +563,16 @@ async fn a_deny_without_a_rejecting_option_waits_for_the_console() {
         answered(&h, &session.id, "yes").await["decided_by"],
         "console"
     );
+    let learned = h
+        .store
+        .list_learned_permissions(Some(&cast.repo.id))
+        .await
+        .unwrap();
+    assert_eq!(learned.len(), 1);
+    assert_eq!(learned[0].label.as_deref(), Some("deny"));
+    assert_eq!(learned[0].danger, Some(0.99));
+    assert_eq!(learned[0].allow_threshold, Some(0.2));
+    assert_eq!(learned[0].deny_threshold, Some(0.8));
 }
 
 #[tokio::test]

@@ -137,6 +137,17 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       queryClient.setQueryData(qk.permissions.ai(), event.data)
       break
     }
+    case "learned_permission_created":
+    case "learned_permission_updated": {
+      queryClient.setQueryData(qk.learnedPermissions.detail(event.data.id), event.data)
+      void queryClient.invalidateQueries({ queryKey: qk.learnedPermissions.lists() })
+      break
+    }
+    case "learned_permission_deleted": {
+      queryClient.removeQueries({ queryKey: qk.learnedPermissions.detail(event.data.id) })
+      void queryClient.invalidateQueries({ queryKey: qk.learnedPermissions.lists() })
+      break
+    }
     default: {
       // A kind the generated types do not know about: the daemon is newer than
       // these types. Regenerate with `npm run gen:api`.

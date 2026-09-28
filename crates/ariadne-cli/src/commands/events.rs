@@ -401,6 +401,16 @@ fn domain_line(event: &DomainEvent) -> Line {
             session: None,
             status: Some(l.state.as_str().to_string()),
         },
+        DomainEvent::LearnedPermissionCreated(p)
+        | DomainEvent::LearnedPermissionUpdated(p)
+        | DomainEvent::LearnedPermissionDeleted(p) => Line {
+            at: p.updated_at.clone(),
+            kind,
+            subject: p.id.clone(),
+            detail: format!("{} {}", p.tool_name, p.kind),
+            session: p.session_id.clone(),
+            status: None,
+        },
         DomainEvent::GoalDeleted(DeletedDto { id })
         | DomainEvent::SkillDeleted(DeletedDto { id })
         | DomainEvent::RepositoryDeleted(DeletedDto { id }) => Line {

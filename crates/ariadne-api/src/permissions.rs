@@ -8,7 +8,86 @@
 //! says how it ended.
 
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LearnedPermissionSource {
+    Console,
+    Manual,
+}
+
+impl LearnedPermissionSource {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Console => "console",
+            Self::Manual => "manual",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LearnedPermissionLabel {
+    Allow,
+    Ask,
+    Deny,
+}
+
+impl LearnedPermissionLabel {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Ask => "ask",
+            Self::Deny => "deny",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct LearnedPermissionDto {
+    pub id: String,
+    pub repository_id: String,
+    pub tool_name: String,
+    pub kind: String,
+    pub source: LearnedPermissionSource,
+    pub tool_call: Option<serde_json::Value>,
+    pub options: Option<serde_json::Value>,
+    pub selected_option: Option<String>,
+    pub session_id: Option<String>,
+    pub task_id: Option<String>,
+    pub label: Option<LearnedPermissionLabel>,
+    pub danger: Option<f64>,
+    pub allow_threshold: Option<f64>,
+    pub deny_threshold: Option<f64>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct LearnedPermissionsResponse {
+    pub items: Vec<LearnedPermissionDto>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]
+pub struct LearnedPermissionQuery {
+    pub repository: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateLearnedPermissionRequest {
+    pub repository_id: String,
+    pub tool_name: String,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateLearnedPermissionRequest {
+    pub tool_name: Option<String>,
+    pub kind: Option<String>,
+}
 
 /// Where the install has got to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

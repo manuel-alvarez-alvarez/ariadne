@@ -1446,7 +1446,21 @@ impl RuntimeIncoming {
                 .runtime
                 .inner
                 .store
-                .learn_permission(&self.repository_id, &signature.tool_name, &signature.kind)
+                .learn_permission(ariadne_store::NewLearnedPermission {
+                    repository_id: self.repository_id.clone(),
+                    tool_name: signature.tool_name.clone(),
+                    kind: signature.kind.clone(),
+                    source: "console".into(),
+                    tool_call: Some(params["toolCall"].clone()),
+                    options: Some(params.get("options").cloned().unwrap_or_default()),
+                    selected_option: selected.clone(),
+                    session_id: Some(self.sink.session_id.clone()),
+                    task_id: self.sink.task_id.clone(),
+                    label: label.map(str::to_string),
+                    danger,
+                    allow_threshold,
+                    deny_threshold,
+                })
                 .await
                 .map_err(|error| anyhow!("remembering ACP permission approval: {error}"))?;
         }

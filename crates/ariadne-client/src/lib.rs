@@ -22,7 +22,10 @@ use ariadne_api::agents::{AcpAgentDto, AgentConfigDto, UpdateAgentConfigRequest}
 use ariadne_api::doctor::DaemonReportDto;
 use ariadne_api::error::ErrorBody;
 use ariadne_api::models::{ModelDto, SetModelRankRequest};
-use ariadne_api::permissions::{AiPermissionsStatusDto, UpdateAiPermissionsRequest};
+use ariadne_api::permissions::{
+    AiPermissionsStatusDto, CreateLearnedPermissionRequest, LearnedPermissionDto,
+    LearnedPermissionsResponse, UpdateAiPermissionsRequest, UpdateLearnedPermissionRequest,
+};
 use ariadne_api::skills::SkillDto;
 use ariadne_api::{HealthResponse, VersionResponse};
 
@@ -321,6 +324,50 @@ impl Client {
     /// Run the model install again, on the settings as they stand.
     pub async fn refresh_ai_permissions(&self) -> Result<AiPermissionsStatusDto, ClientError> {
         self.post_empty("/v1/permissions/ai/refresh").await
+    }
+
+    pub async fn list_learned_permissions(
+        &self,
+        repository: Option<&str>,
+    ) -> Result<LearnedPermissionsResponse, ClientError> {
+        let path = repository.map_or_else(
+            || "/v1/permissions/learned".to_string(),
+            |id| format!("/v1/permissions/learned?repository={id}"),
+        );
+        self.get_json(&path).await
+    }
+
+    pub async fn get_learned_permission(
+        &self,
+        id: &str,
+    ) -> Result<LearnedPermissionDto, ClientError> {
+        self.get_json(&format!("/v1/permissions/learned/{id}"))
+            .await
+    }
+
+    pub async fn create_learned_permission(
+        &self,
+        req: &CreateLearnedPermissionRequest,
+    ) -> Result<LearnedPermissionDto, ClientError> {
+        self.post_json("/v1/permissions/learned", req).await
+    }
+
+    pub async fn update_learned_permission(
+        &self,
+        id: &str,
+        req: &UpdateLearnedPermissionRequest,
+    ) -> Result<LearnedPermissionDto, ClientError> {
+        self.put_json(&format!("/v1/permissions/learned/{id}"), req)
+            .await
+    }
+
+    pub async fn delete_learned_permission(&self, id: &str) -> Result<(), ClientError> {
+        self.send_no_content::<()>(
+            Method::DELETE,
+            &format!("/v1/permissions/learned/{id}"),
+            None,
+        )
+        .await
     }
 
     /// Set or clear a catalog entry's user rank. `None` clears it.

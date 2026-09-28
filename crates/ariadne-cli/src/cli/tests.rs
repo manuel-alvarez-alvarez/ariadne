@@ -8,7 +8,9 @@ use clap::FromArgMatches;
 use ariadne_core::{GoalStatus, Landing, PermissionMode, Seat, SessionStatus, TaskStatus};
 
 use crate::commands::models::ModelsCommand;
-use crate::commands::permissions::{AiPermissionsCommand, PermissionsCommand};
+use crate::commands::permissions::{
+    AiPermissionsCommand, LearnedPermissionsCommand, PermissionsCommand,
+};
 use crate::commands::skill::SkillCommand;
 use crate::output::ColorChoice;
 
@@ -121,6 +123,11 @@ const LEAVES: &[(&str, bool)] = &[
     ("permissions ai refresh", true),
     ("permissions ai set", true),
     ("permissions ai show", true),
+    ("permissions learned add", true),
+    ("permissions learned edit", true),
+    ("permissions learned list", true),
+    ("permissions learned rm", true),
+    ("permissions learned show", true),
     ("repo add", true),
     ("repo inspect", true),
     ("repo ls", true),
@@ -1479,6 +1486,70 @@ fn every_permissions_verb_parses() {
 #[test]
 fn permissions_set_with_no_flag_is_a_usage_error() {
     assert!(try_parse(&["ariadne", "permissions", "ai", "set"]).is_err());
+}
+
+#[test]
+fn every_learned_permissions_verb_parses_and_edit_requires_a_change() {
+    assert!(matches!(
+        parse(&[
+            "ariadne",
+            "permissions",
+            "learned",
+            "list",
+            "--repo",
+            "/tmp/repo"
+        ])
+        .command,
+        Command::Permissions {
+            command: PermissionsCommand::Learned(LearnedPermissionsCommand::List { repo: Some(_) })
+        }
+    ));
+    assert!(matches!(
+        parse(&["ariadne", "permissions", "learned", "show", "row"]).command,
+        Command::Permissions {
+            command: PermissionsCommand::Learned(LearnedPermissionsCommand::Show { .. })
+        }
+    ));
+    assert!(matches!(
+        parse(&[
+            "ariadne",
+            "permissions",
+            "learned",
+            "add",
+            "--repo",
+            "repo",
+            "--tool",
+            "Bash",
+            "--kind",
+            "execute"
+        ])
+        .command,
+        Command::Permissions {
+            command: PermissionsCommand::Learned(LearnedPermissionsCommand::Add { .. })
+        }
+    ));
+    assert!(matches!(
+        parse(&[
+            "ariadne",
+            "permissions",
+            "learned",
+            "edit",
+            "row",
+            "--tool",
+            "Shell"
+        ])
+        .command,
+        Command::Permissions {
+            command: PermissionsCommand::Learned(LearnedPermissionsCommand::Edit { .. })
+        }
+    ));
+    assert!(matches!(
+        parse(&["ariadne", "permissions", "learned", "rm", "row"]).command,
+        Command::Permissions {
+            command: PermissionsCommand::Learned(LearnedPermissionsCommand::Rm { .. })
+        }
+    ));
+    assert!(try_parse(&["ariadne", "permissions", "learned", "edit", "row"]).is_err());
 }
 
 #[test]

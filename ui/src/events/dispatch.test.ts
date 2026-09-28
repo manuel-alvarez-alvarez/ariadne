@@ -277,6 +277,50 @@ describe("ai permissions events", () => {
   })
 })
 
+describe("learned permission events", () => {
+  const learned = {
+    id: "01JLEARNED000000000000001",
+    repository_id: REPOSITORY.id,
+    tool_name: "Bash",
+    kind: "execute",
+    source: "manual",
+    tool_call: null,
+    options: null,
+    selected_option: null,
+    session_id: null,
+    task_id: null,
+    label: null,
+    danger: null,
+    allow_threshold: null,
+    deny_threshold: null,
+    created_at: "2026-09-28T10:00:00.000Z",
+    updated_at: "2026-09-28T10:00:00.000Z",
+  } as const
+
+  it("patches created and updated details and refetches lists", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const list = qk.learnedPermissions.list({ repository: REPOSITORY.id })
+    queryClient.setQueryData(list, { items: [] })
+    dispatch(queryClient, { event: "learned_permission_created", data: learned })
+    expect(queryClient.getQueryData(qk.learnedPermissions.detail(learned.id))).toEqual(learned)
+    expect(stale(queryClient, list)).toBe(true)
+
+    const updated = { ...learned, tool_name: "Shell" }
+    dispatch(queryClient, { event: "learned_permission_updated", data: updated })
+    expect(queryClient.getQueryData(qk.learnedPermissions.detail(learned.id))).toEqual(updated)
+  })
+
+  it("removes a deleted detail and refetches lists", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const list = qk.learnedPermissions.list({})
+    queryClient.setQueryData(list, { items: [learned] })
+    queryClient.setQueryData(qk.learnedPermissions.detail(learned.id), learned)
+    dispatch(queryClient, { event: "learned_permission_deleted", data: learned })
+    expect(queryClient.getQueryData(qk.learnedPermissions.detail(learned.id))).toBeUndefined()
+    expect(stale(queryClient, list)).toBe(true)
+  })
+})
+
 describe("agent events", () => {
   it("refetches the session activity lists, since the frame carries no payload to apply", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })

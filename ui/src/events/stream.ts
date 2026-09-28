@@ -43,6 +43,9 @@ const DOMAIN_EVENT_KINDS_PRESENT: Record<DomainEventKind, true> = {
   repository_updated: true,
   repository_deleted: true,
   ai_permissions_updated: true,
+  learned_permission_created: true,
+  learned_permission_updated: true,
+  learned_permission_deleted: true,
 }
 
 const DOMAIN_EVENT_KINDS = Object.keys(DOMAIN_EVENT_KINDS_PRESENT) as DomainEventKind[]

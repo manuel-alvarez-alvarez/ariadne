@@ -8,6 +8,9 @@
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::goals::{GoalDto, GoalUsageDto};
 use ariadne_api::messages::MessageDto;
+use ariadne_api::permissions::{
+    LearnedPermissionDto, LearnedPermissionLabel, LearnedPermissionSource,
+};
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::sessions::{OutsideSessionDto, SessionDto, SessionEntryDto, SessionKind};
 use ariadne_api::skills::{SkillDto, SkillSeat};
@@ -56,7 +59,7 @@ dto! {
         .. name, created_at, updated_at
     }
 
-    pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
+pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
         permission_mode: r.permission_mode(),
         .. id, path, base_branch, description, created_at, updated_at
     }
@@ -149,6 +152,34 @@ dto! {
         .. id, goal_id, task_id, task_agent_id, model, effort, internal_session_id,
            worktree_path, attention_since,
            last_activity_at, created_at, ended_at, title
+    }
+}
+
+pub(crate) fn learned_permission_dto(row: store::LearnedPermission) -> LearnedPermissionDto {
+    LearnedPermissionDto {
+        id: row.id,
+        repository_id: row.repository_id,
+        tool_name: row.tool_name,
+        kind: row.kind,
+        source: match row.source.as_str() {
+            "manual" => LearnedPermissionSource::Manual,
+            _ => LearnedPermissionSource::Console,
+        },
+        tool_call: row.tool_call.and_then(|v| serde_json::from_str(&v).ok()),
+        options: row.options.and_then(|v| serde_json::from_str(&v).ok()),
+        selected_option: row.selected_option,
+        session_id: row.session_id,
+        task_id: row.task_id,
+        label: row.label.map(|label| match label.as_str() {
+            "allow" => LearnedPermissionLabel::Allow,
+            "deny" => LearnedPermissionLabel::Deny,
+            _ => LearnedPermissionLabel::Ask,
+        }),
+        danger: row.danger,
+        allow_threshold: row.allow_threshold,
+        deny_threshold: row.deny_threshold,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
     }
 }
 

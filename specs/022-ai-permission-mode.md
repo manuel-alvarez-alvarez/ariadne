@@ -226,7 +226,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     unavailable, and a warning is logged, when `live()` is absent, its call
     fails or times out, or its answer is malformed.
 30. An allow or deny of the model is never learned. Only an allowing console
-    answer writes the learned table.
+    answer writes the learned table, with the model label, danger, and thresholds.
 31. `permission.replied` carries `decided_by`: `ai`, `learned`, `console`,
     or `auto`, and always the keys `label`, `danger`, `allow_threshold`,
     `deny_threshold` and `ai_error`. Whenever the model answered, whoever

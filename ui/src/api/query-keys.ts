@@ -42,6 +42,10 @@ interface AgentEventFilters extends PageFilters {
   task?: string
 }
 
+interface LearnedPermissionFilters {
+  repository?: string
+}
+
 /** What `GET /v1/outside-sessions` narrows its snapshot by, page aside. */
 interface OutsideSessionFilters {
   agent?: string
@@ -141,5 +145,13 @@ export const qk = {
    */
   permissions: {
     ai: () => ["permissions", "detail", "ai"] as const,
+  },
+  learnedPermissions: {
+    all: () => ["learned-permissions"] as const,
+    lists: () => ["learned-permissions", "list"] as const,
+    list: (filters?: LearnedPermissionFilters) =>
+      ["learned-permissions", "list", filters ?? {}] as const,
+    details: () => ["learned-permissions", "detail"] as const,
+    detail: (id: string) => ["learned-permissions", "detail", id] as const,
   },
 } as const

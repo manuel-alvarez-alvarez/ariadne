@@ -99,6 +99,7 @@ write a key literal. Every key is `[entity, "list" | "detail", ...]`:
 ["agents",       "list", {}]        ["models",   "list", {}]
 ["agent-events", "list", filters]
 ["permissions",  "detail", "ai"]
+["learned-permissions", "list", filters] ["learned-permissions", "detail", id]
 ```
 
 `permissions.ai()` is the one key with no list beside it: there is one AI
@@ -149,6 +150,8 @@ the query cache and it stays live.
 | `repository_updated` | the same, plus every goal key — goals carry their repositories inline |
 | `repository_deleted` | remove `repositories.detail`, invalidate `repositories.lists` |
 | `ai_permissions_updated` | patch `permissions.ai()` whole — the one settings row, no list beside it |
+| `learned_permission_created`, `learned_permission_updated` | patch `learnedPermissions.detail`, invalidate `learnedPermissions.lists` |
+| `learned_permission_deleted` | remove `learnedPermissions.detail`, invalidate `learnedPermissions.lists` |
 
 The daemon has **no replay**: anything that happened while the stream was down
 is simply gone. So both a reconnect and the daemon's `resync` control event

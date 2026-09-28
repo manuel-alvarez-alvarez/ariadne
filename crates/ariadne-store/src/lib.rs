@@ -32,6 +32,7 @@ pub use entities::*;
 pub use events::{EventFilter, EventOrder, NewAgentEvent};
 pub use goals::NewGoal;
 pub use messages::{MessageFilter, NewMessage};
+pub use permissions::{LearnedPermissionUpdate, NewLearnedPermission};
 pub use picks::picked_winner;
 pub use repositories::{NewRepository, RepositoryUpdate};
 pub use sessions::{NewSession, SessionFilter};
@@ -51,10 +52,7 @@ use tokio::sync::mpsc;
 
 use ariadne_core::TransitionError;
 
-/// The migrations this release ships: one, the squashed schema
-/// (`migrations/0001_init.sql`). Pre-1.0 a schema change is folded back into
-/// it rather than added beside it — a database written by an earlier build is
-/// recreated, not migrated — so the chain stays a single file.
+/// The migrations this release ships.
 static MIGRATIONS: Migrator = sqlx::migrate!("./migrations");
 
 #[derive(Debug, thiserror::Error)]

@@ -345,6 +345,15 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
         Change::RepositoryDeleted(id) => {
             unscoped(DomainEvent::RepositoryDeleted(DeletedDto { id }))
         }
+        Change::LearnedPermissionCreated(row) => unscoped(DomainEvent::LearnedPermissionCreated(
+            crate::http::convert::learned_permission_dto(row),
+        )),
+        Change::LearnedPermissionUpdated(row) => unscoped(DomainEvent::LearnedPermissionUpdated(
+            crate::http::convert::learned_permission_dto(row),
+        )),
+        Change::LearnedPermissionDeleted(row) => unscoped(DomainEvent::LearnedPermissionDeleted(
+            crate::http::convert::learned_permission_dto(row),
+        )),
     };
     Ok(event)
 }

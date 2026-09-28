@@ -1046,6 +1046,180 @@
         }
       }
     },
+    "/v1/permissions/learned": {
+      "get": {
+        "tags": [
+          "permissions"
+        ],
+        "operationId": "list_learned",
+        "parameters": [
+          {
+            "name": "repository",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearnedPermissionsResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "permissions"
+        ],
+        "operationId": "create_learned",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLearnedPermissionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearnedPermissionDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          },
+          "422": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/permissions/learned/{id}": {
+      "get": {
+        "tags": [
+          "permissions"
+        ],
+        "operationId": "get_learned",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearnedPermissionDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "permissions"
+        ],
+        "operationId": "update_learned",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLearnedPermissionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearnedPermissionDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          },
+          "422": {
+            "description": ""
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "permissions"
+        ],
+        "operationId": "delete_learned",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/repositories": {
       "get": {
         "tags": [
@@ -2870,13 +3044,13 @@
             "type": "number",
             "format": "double",
             "description": "Danger at or below this value is allowed, 0 to 1.",
-            "example": 0.2
+            "example": 0.1338
           },
           "deny_threshold": {
             "type": "number",
             "format": "double",
             "description": "Danger at or above this value is denied, 0 to 1.",
-            "example": 0.8
+            "example": 0.5345
           },
           "enabled": {
             "type": "boolean",
@@ -3035,6 +3209,26 @@
             "description": "Ids of registered repositories (`POST /v1/repositories`); at least one."
           },
           "title": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateLearnedPermissionRequest": {
+        "type": "object",
+        "required": [
+          "repository_id",
+          "tool_name",
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "repository_id": {
+            "type": "string"
+          },
+          "tool_name": {
             "type": "string"
           }
         },
@@ -3537,6 +3731,60 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/LearnedPermissionDto"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "learned_permission_created"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/LearnedPermissionDto"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "learned_permission_updated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/LearnedPermissionDto"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "learned_permission_deleted"
+                ]
+              }
+            }
           }
         ],
         "description": "One domain event. Serialized as `{\"event\": \"<kind>\", \"data\": <payload>}`;\non the SSE wire the kind becomes the `event:` field and the payload alone\nthe `data:` field."
@@ -3727,6 +3975,121 @@
           "pull_request",
           "none"
         ]
+      },
+      "LearnedPermissionDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "repository_id",
+          "tool_name",
+          "kind",
+          "source",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "allow_threshold": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "danger": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "deny_threshold": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "label": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LearnedPermissionLabel"
+              }
+            ]
+          },
+          "options": {},
+          "repository_id": {
+            "type": "string"
+          },
+          "selected_option": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/LearnedPermissionSource"
+          },
+          "task_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tool_call": {},
+          "tool_name": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "LearnedPermissionLabel": {
+        "type": "string",
+        "enum": [
+          "allow",
+          "ask",
+          "deny"
+        ]
+      },
+      "LearnedPermissionSource": {
+        "type": "string",
+        "enum": [
+          "console",
+          "manual"
+        ]
+      },
+      "LearnedPermissionsResponse": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LearnedPermissionDto"
+            }
+          }
+        }
       },
       "LogLineDto": {
         "type": "object",
@@ -5002,6 +5365,24 @@
             ],
             "description": "`HH:MM` in 24-hour local time. Absent keeps the schedule; `null`\nturns it off.",
             "example": "03:30"
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateLearnedPermissionRequest": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tool_name": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "additionalProperties": false

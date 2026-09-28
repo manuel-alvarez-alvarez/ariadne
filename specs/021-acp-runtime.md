@@ -152,7 +152,8 @@ gone (009).
    and blocks until console input selects an option. `learn` does the same on
    the first request for one repository, tool name and tool kind; an allowing
    answer is stored and later matching requests are selected automatically.
-   A denial is not stored. In `ai`, the AI permission model decides first (022), then `learn`
+   A denial is not stored. An approval keeps the complete request, selection,
+   session, task, and model verdict. A repeat keeps the first row. In `ai`, the AI permission model decides first (022), then `learn`
    handles every answer that is not a confident allow.
 10. After a turn ends the agent stays up and the runtime keeps serving it.
    Everything the daemon says to the agent after the launch — a scheduler
@@ -222,6 +223,8 @@ gone (009).
 - A repository set to `learn` remembers an approval across a daemon restart,
   and does not remember a denial
   (`acp_console.rs::learn_remembers_an_approval_per_repository_across_a_daemon_restart`).
+- A learned approval keeps its complete request, while a repeat keeps the first
+  row (`store.rs::learned_permissions_keep_the_first_full_request_and_support_crud`).
 - A repository set to `ai` asks the AI permission model first. A confident
   allow proceeds; every other outcome uses a learned approval or asks the
   console

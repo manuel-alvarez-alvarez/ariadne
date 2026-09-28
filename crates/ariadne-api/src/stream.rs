@@ -14,7 +14,7 @@ use utoipa::{IntoParams, ToSchema};
 use crate::events::AgentEventSummaryDto;
 use crate::goals::GoalDto;
 use crate::messages::MessageDto;
-use crate::permissions::AiPermissionsStatusDto;
+use crate::permissions::{AiPermissionsStatusDto, LearnedPermissionDto};
 use crate::repositories::RepositoryDto;
 use crate::sessions::SessionDto;
 use crate::skills::SkillDto;
@@ -109,6 +109,9 @@ pub enum DomainEvent {
     RepositoryDeleted(DeletedDto),
     /// The AI permission settings or the state of its install moved (022).
     AiPermissionsUpdated(AiPermissionsStatusDto),
+    LearnedPermissionCreated(LearnedPermissionDto),
+    LearnedPermissionUpdated(LearnedPermissionDto),
+    LearnedPermissionDeleted(LearnedPermissionDto),
 }
 
 impl DomainEvent {
@@ -132,6 +135,9 @@ impl DomainEvent {
             Self::RepositoryUpdated(_) => "repository_updated",
             Self::RepositoryDeleted(_) => "repository_deleted",
             Self::AiPermissionsUpdated(_) => "ai_permissions_updated",
+            Self::LearnedPermissionCreated(_) => "learned_permission_created",
+            Self::LearnedPermissionUpdated(_) => "learned_permission_updated",
+            Self::LearnedPermissionDeleted(_) => "learned_permission_deleted",
         }
     }
 
@@ -155,6 +161,9 @@ impl DomainEvent {
             Self::RepositoryCreated(r) | Self::RepositoryUpdated(r) => json(r),
             Self::RepositoryDeleted(d) => json(d),
             Self::AiPermissionsUpdated(l) => json(l),
+            Self::LearnedPermissionCreated(l)
+            | Self::LearnedPermissionUpdated(l)
+            | Self::LearnedPermissionDeleted(l) => json(l),
         }
     }
 }

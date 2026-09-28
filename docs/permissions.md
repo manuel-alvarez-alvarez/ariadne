@@ -66,6 +66,15 @@ for one repository does not grant it in another. The memory survives a daemon
 restart and is used only for later requests with the same three values. Change
 the repository to `ask` when you want to review a matching request again.
 
+The learned row also keeps the complete ACP tool call, including `rawInput`,
+the offered options, the selected option, and the session and task. When the AI
+permission model considered the request, the row keeps its label, danger, and
+thresholds. Repeating the same approval keeps the first request unchanged.
+
+Manage these rows with `ariadne permissions learned list`, `show`, `add`,
+`edit`, and `rm`. Rows added from the CLI contain the signature only and have
+the source `manual`.
+
 ## The AI permission model
 
 The AI permission model is the model behind the `ai` mode. It runs on your own machine: nothing

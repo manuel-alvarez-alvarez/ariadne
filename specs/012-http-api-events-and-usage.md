@@ -235,8 +235,14 @@ and the ACP runtime that reports the agent events (021).
     daemon has just probed and where its server answers, so only the daemon
     can build it, and an install publishes one as readily as a write does.
     The event belongs to no goal or task, so a filtered stream carries none.
+26. Learned approvals are exposed under `/v1/permissions/learned` for list,
+    get, create, update, and delete. Lists can filter by repository and return
+    newest first. Each write publishes its complete learned-permission DTO.
 
 ## Acceptance criteria
+
+- Learned permission routes validate, round-trip, conflict, delete, and publish
+  complete events (`learned_permissions.rs::learned_permission_routes_validate_crud_and_publish_fat_events`).
 
 - An HTTP mutation emits a fat event
   (`events.rs::http_mutation_emits_a_fat_event`), a transition carries its

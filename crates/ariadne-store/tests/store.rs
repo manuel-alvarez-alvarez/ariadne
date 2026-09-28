@@ -14,6 +14,97 @@ async fn test_store() -> (Store, tempfile::TempDir) {
 }
 
 #[tokio::test]
+async fn learned_permissions_keep_the_first_full_request_and_support_crud() {
+    let (store, _dir) = test_store().await;
+    let repo = store
+        .create_repository(NewRepository {
+            path: "/tmp/learned-repo".into(),
+            base_branch: "main".into(),
+            description: None,
+            permission_mode: Some(PermissionMode::Learn),
+        })
+        .await
+        .unwrap();
+    let record = NewLearnedPermission {
+        repository_id: repo.id.clone(),
+        tool_name: "Bash".into(),
+        kind: "execute".into(),
+        source: "console".into(),
+        tool_call: Some(
+            serde_json::json!({"title":"Bash","kind":"execute","rawInput":{"command":"echo first"}}),
+        ),
+        options: Some(serde_json::json!([{"optionId":"yes","kind":"allow_once"}])),
+        selected_option: Some("yes".into()),
+        session_id: Some("session-1".into()),
+        task_id: Some("task-1".into()),
+        label: Some("ask".into()),
+        danger: Some(0.4),
+        allow_threshold: Some(0.2),
+        deny_threshold: Some(0.8),
+    };
+    let first = store.learn_permission(record.clone()).await.unwrap();
+    let mut repeated = record;
+    repeated.tool_call = Some(serde_json::json!({"rawInput":{"command":"echo second"}}));
+    let same = store.learn_permission(repeated).await.unwrap();
+    assert_eq!(same.id, first.id);
+    assert_eq!(same.tool_call, first.tool_call);
+    assert_eq!(
+        store
+            .list_learned_permissions(Some(&repo.id))
+            .await
+            .unwrap(),
+        vec![first.clone()]
+    );
+    let edited = store
+        .update_learned_permission(
+            &first.id,
+            LearnedPermissionUpdate {
+                tool_name: Some("Shell".into()),
+                kind: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(edited.tool_name, "Shell");
+    assert_eq!(edited.tool_call, first.tool_call);
+    assert_ne!(edited.updated_at, "");
+    let deleted = store.delete_learned_permission(&first.id).await.unwrap();
+    assert_eq!(deleted.id, first.id);
+    assert!(
+        store
+            .list_learned_permissions(None)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn learned_permission_migration_keeps_old_rows_and_assigns_ids() {
+    use sqlx::Connection;
+    let mut connection = sqlx::SqliteConnection::connect(":memory:").await.unwrap();
+    sqlx::raw_sql(include_str!("../migrations/0001_init.sql"))
+        .execute(&mut connection)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO repositories (id, path, base_branch, permission_mode, created_at, updated_at) VALUES ('repo', '/tmp/repo', 'main', 'learn', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')").execute(&mut connection).await.unwrap();
+    sqlx::query("INSERT INTO learned_permissions (repository_id, tool_name, kind, created_at) VALUES ('repo', 'Bash', 'execute', '2026-01-01T00:00:00.000Z')").execute(&mut connection).await.unwrap();
+    sqlx::raw_sql(include_str!("../migrations/0002_learned_permissions.sql"))
+        .execute(&mut connection)
+        .await
+        .unwrap();
+    let row: (String, String, Option<String>) =
+        sqlx::query_as("SELECT id, source, tool_call FROM learned_permissions")
+            .fetch_one(&mut connection)
+            .await
+            .unwrap();
+    assert!(!row.0.is_empty());
+    assert_eq!(row.0.len(), 26);
+    assert_eq!(row.1, "console");
+    assert_eq!(row.2, None);
+}
+
+#[tokio::test]
 async fn a_loose_session_round_trips_without_a_goal_task_or_seat() {
     let (store, dir) = test_store().await;
     let session = store
