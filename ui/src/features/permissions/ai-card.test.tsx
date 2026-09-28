@@ -10,7 +10,7 @@
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it } from "vitest"
 
@@ -49,8 +49,6 @@ function renderCard(status: AiPermissionsStatusDto) {
           <AiCard status={next} />
         </QueryClientProvider>,
       ),
-    /** The result badge's own text — distinct from the track's plain "Ask" label. */
-    badgeText: () => view.container.querySelector('[data-slot="badge"]')?.textContent,
   }
 }
 
@@ -68,21 +66,29 @@ beforeEach(() => {
 it("draws the marker and the label from a test result", async () => {
   const status = anAiPermissionsStatus({ enabled: true, allow_threshold: 0.2, deny_threshold: 0.8 })
   const user = userEvent.setup()
-  const { badgeText } = renderCard(status)
+  renderCard(status)
 
+  expect(screen.queryByLabelText("Tool")).toBeNull()
+  await user.click(screen.getByRole("button", { name: "Test a request" }))
+  expect(await screen.findByRole("dialog")).toBeDefined()
   await user.click(screen.getByRole("button", { name: "Test" }))
 
   expect(await screen.findByLabelText("Danger 0.5000")).toBeDefined()
-  await waitFor(() => expect(badgeText()).toBe("Ask"))
+  expect(await screen.findByText("Ask", { selector: '[data-slot="badge"]' })).toBeDefined()
+
+  await user.click(screen.getByRole("button", { name: "Close" }))
+  expect(screen.queryByRole("dialog")).toBeNull()
+  expect(screen.getByLabelText("Danger 0.5000")).toBeDefined()
 })
 
 it("relabels the same danger once a threshold moves, with no second call", async () => {
   const status = anAiPermissionsStatus({ enabled: true, allow_threshold: 0.2, deny_threshold: 0.8 })
   const user = userEvent.setup()
-  const { rerender, badgeText } = renderCard(status)
+  const { rerender } = renderCard(status)
 
-  await user.click(screen.getByRole("button", { name: "Test" }))
-  await waitFor(() => expect(badgeText()).toBe("Ask"))
+  await user.click(screen.getByRole("button", { name: "Test a request" }))
+  await user.click(await screen.findByRole("button", { name: "Test" }))
+  expect(await screen.findByText("Ask", { selector: '[data-slot="badge"]' })).toBeDefined()
   const callsAfterTest = requests.filter((one) => one.path === "/v1/permissions/ai/test").length
 
   // The same move `ThresholdRange`'s own commit would make, applied the way
@@ -90,7 +96,7 @@ it("relabels the same danger once a threshold moves, with no second call", async
   // `status` prop, once the write it sent has settled.
   rerender(anAiPermissionsStatus({ enabled: true, allow_threshold: 0.6, deny_threshold: 0.8 }))
 
-  await waitFor(() => expect(badgeText()).toBe("Allow"))
+  expect(await screen.findByText("Allow", { selector: '[data-slot="badge"]' })).toBeDefined()
   expect(requests.filter((one) => one.path === "/v1/permissions/ai/test").length).toBe(
     callsAfterTest,
   )
@@ -108,7 +114,8 @@ it("draws no marker for an ai_error answer", async () => {
   const user = userEvent.setup()
   renderCard(status)
 
-  await user.click(screen.getByRole("button", { name: "Test" }))
+  await user.click(screen.getByRole("button", { name: "Test a request" }))
+  await user.click(await screen.findByRole("button", { name: "Test" }))
 
   expect(await screen.findByText("No answer: unavailable")).toBeDefined()
   expect(screen.queryByLabelText(/^Danger/)).toBeNull()

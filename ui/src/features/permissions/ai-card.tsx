@@ -25,6 +25,7 @@ import type {
   UpdateAiPermissionsRequest,
 } from "@/api"
 import { Fact, FactList } from "@/components/fact-list"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
@@ -63,6 +64,7 @@ export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
   // danger too: this is what draws its marker, so a dragged or typed
   // threshold recolours the same score rather than losing it.
   const [testResult, setTestResult] = useState<TestAiPermissionResponse | null>(null)
+  const [testOpen, setTestOpen] = useState(false)
 
   function send(body: UpdateAiPermissionsRequest, failureTitle: string) {
     update.mutate(body, {
@@ -72,10 +74,16 @@ export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
 
   return (
     <div className="flex flex-col gap-4 rounded-xl border bg-card p-4">
+      {status.last_error ? (
+        <Alert variant="destructive">
+          <AlertTitle>Last error</AlertTitle>
+          <AlertDescription>{status.last_error}</AlertDescription>
+        </Alert>
+      ) : null}
       <div>
         <h2 className="font-heading text-base font-semibold">AI</h2>
         <p className="text-sm text-muted-foreground">
-          A model that runs on this machine and answers the `ai` permission mode's requests.
+          A model that runs on this machine and answers the ai permission mode's requests.
         </p>
       </div>
 
@@ -104,7 +112,18 @@ export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
         mutate={update.mutate}
       />
 
-      <AiTestPanel status={status} result={testResult} onResult={setTestResult} />
+      <div>
+        <Button variant="outline" onClick={() => setTestOpen(true)}>
+          Test a request
+        </Button>
+        <AiTestPanel
+          open={testOpen}
+          onOpenChange={setTestOpen}
+          status={status}
+          result={testResult}
+          onResult={setTestResult}
+        />
+      </div>
 
       <Field>
         <FieldLabel htmlFor="ai-schedule">Daily refresh</FieldLabel>
@@ -113,10 +132,16 @@ export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
           type="time"
           value={schedule}
           aria-label="Daily refresh"
-          onChange={(event) => {
-            const value = event.target.value
-            setSchedule(value)
-            send({ schedule: value === "" ? null : value }, "Could not change the daily refresh")
+          onChange={(event) => setSchedule(event.target.value)}
+          onBlur={() => {
+            if (schedule === (status.schedule ?? "")) return
+            send(
+              { schedule: schedule === "" ? null : schedule },
+              "Could not change the daily refresh",
+            )
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur()
           }}
         />
         <FieldDescription>
@@ -151,11 +176,6 @@ export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
         <Fact label="Last refresh">
           <When at={status.last_refresh_at} format="age" />
         </Fact>
-        {status.last_error ? (
-          <Fact label="Last error" className="sm:col-span-2 lg:col-span-3">
-            <span className="text-destructive">{status.last_error}</span>
-          </Fact>
-        ) : null}
       </FactList>
     </div>
   )

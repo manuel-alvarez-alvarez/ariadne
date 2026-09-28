@@ -126,15 +126,15 @@ it("shows every fact the daemon answered with", async () => {
   expect(screen.getByText("http://127.0.0.1:8901")).toBeDefined()
 })
 
-it("shows the last error in the error style, once there is one", async () => {
+it("shows the last error as an alert at the top of the card", async () => {
   current = anAiPermissionsStatus({
     state: "failed",
     last_error: "the package could not be installed",
   })
   renderScreen(<PermissionsPage />)
 
-  const message = await screen.findByText("the package could not be installed")
-  expect(message.className).toContain("text-destructive")
+  const alert = await screen.findByRole("alert")
+  expect(alert.textContent).toContain("the package could not be installed")
 })
 
 describe("the enabled switch", () => {
@@ -219,14 +219,26 @@ it("toasts the daemon's own message on a refused threshold, and puts the value b
 })
 
 describe("the daily refresh", () => {
-  it("sends the time picked", async () => {
+  it("does not send when the field is left without an edit", async () => {
     renderScreen(<PermissionsPage />)
 
-    fireEvent.change(await screen.findByLabelText("Daily refresh"), {
+    fireEvent.blur(await screen.findByLabelText("Daily refresh"))
+
+    expect(requests.filter((request) => request.method !== "GET")).toHaveLength(0)
+  })
+
+  it("sends the typed time once when the field is left", async () => {
+    renderScreen(<PermissionsPage />)
+
+    const schedule = await screen.findByLabelText("Daily refresh")
+    fireEvent.change(schedule, {
       target: { value: "03:30" },
     })
+    expect(requests.filter((request) => request.method !== "GET")).toHaveLength(0)
+    fireEvent.blur(schedule)
 
     await waitFor(() => expect(lastWrite()?.body).toEqual({ schedule: "03:30" }))
+    expect(requests.filter((request) => request.method !== "GET")).toHaveLength(1)
   })
 
   it("sends null once it is cleared back to off", async () => {
@@ -234,6 +246,7 @@ describe("the daily refresh", () => {
     renderScreen(<PermissionsPage />)
 
     fireEvent.change(await screen.findByLabelText("Daily refresh"), { target: { value: "" } })
+    fireEvent.blur(screen.getByLabelText("Daily refresh"))
 
     await waitFor(() => expect(lastWrite()?.body).toEqual({ schedule: null }))
   })

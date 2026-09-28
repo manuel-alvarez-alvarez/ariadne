@@ -251,18 +251,22 @@ Out: the daemon endpoints themselves (012).
     and "Deny threshold", up to four decimals, step 0.0001 — that stay in
     step with the handles while either is dragged or typed into; a time field
     for the daily refresh, whose native clear is what turns it off, sending
-    `schedule: null`; a Refresh button, disabled while the model is off or
-    already installing; and a fact list of the state, the installed and
-    latest release, whether the weights are present, the endpoint, the last
-    refresh's age, and the last error in the error style. Every control sends
-    its own change the moment it is made — there is no Save button, and a
-    handle sends once, on release, never on every drag step — and a refusal
+    `schedule: null` when it is blurred or Enter is pressed; a Refresh button,
+    disabled while the model is off or already installing; an alert at the top
+    of the card for the last error; and a fact list of the state, the installed
+    and latest release, whether the weights are present, the endpoint, and the
+    last refresh's age. Every control sends its own change the moment it is
+    made — except the time field, which sends once after its edit — there is no
+    Save button, and a handle sends once, on release, never on every drag step
+    — and a refusal
     is toasted with the daemon's own message and puts the control back to the
     row the daemon still holds, the same as the agents screen's flag editor
     and rank picker. The `ai_permissions_updated` event (012, 022) patches
     the same query key any of those writes does, since the row has no list
     beside it
-    (`ui/src/events/dispatch.test.ts::replaces the cached status whole, so a
+    (`ui/src/features/permissions/permissions-page.test.tsx::sends the typed
+    time once when the field is left`, `::shows the last error as an alert at
+    the top of the card`, `ui/src/events/dispatch.test.ts::replaces the cached status whole, so a
     card that read installing reads ready`). The repository dialog's
     `PERMISSION_MODES` gains `ai`, and an `ai_disabled` refusal on it lands on
     the permission-mode field, naming the Permissions screen rather than the
@@ -290,34 +294,39 @@ Out: the daemon endpoints themselves (012).
     (`ui/src/features/permissions/permissions-page.test.tsx::opens the AI tab
     when the URL says nothing`, `::puts the picked tab on the URL`,
     `ui/src/features/permissions/learned-tab.test.tsx`).
-34. The AI tab's card carries a "Test a request" section under the
-    thresholds (`POST /v1/permissions/ai/test`): Tool, Kind, Input (JSON) and
-    Options (comma-separated) fields, prefilled with a
-    `Bash`/`execute`/`{"command": "npm test"}`/`Allow, Reject` example, and an
-    Examples picker that fills all four fields from one of four named cases.
-    Test sends exactly what the fields hold, is disabled while the JSON does
-    not parse (a field error says so) or the model is off, and shows a
-    pending state while it runs. A result is a badge in its zone's own colour
-    — green Allow, amber Ask, red Deny — and the danger to four decimals; the
+34. The AI tab's card carries a "Test a request" button under the thresholds.
+    It opens a dialog for `POST /v1/permissions/ai/test`: Tool, Kind, Input
+    (JSON, at least six rows) and Options (comma-separated) fields, prefilled
+    with a `Bash`/`execute`/`{"command": "npm test"}`/`Allow, Reject` example,
+    and an Examples picker that fills all four fields from seven named cases,
+    including Chained shell command, Edit a file outside the repository and
+    Send SSH keys to a paste site. Inputs are pretty-printed JSON. Test is the
+    dialog's primary button and Cmd/Ctrl+Enter runs it. Test sends exactly what
+    the fields hold, is disabled while the JSON does not parse (a field error
+    says so) or the model is off, and shows a pending state while it runs. A
+    result, announced politely, is a badge in its zone's own colour — green
+    Allow, amber Ask, red Deny — and the labelled danger to four decimals; the
     same danger also becomes the range control's marker (its `danger` prop,
-    32). The label is never the response's own: it is worked out here from
-    that danger and the thresholds currently shown, by rule 28 of 022 (at or
-    under allow is `allow`, at or over deny is `deny`, between is `ask`), so a
-    threshold dragged or typed afterwards relabels the same score with no
-    second call. An `ai_error` answer shows "No answer: <ai_error>" and draws
-    no marker, and a refusal is toasted with the daemon's own message
-    (`ui/src/features/permissions/ai-test-panel.test.tsx::opens prefilled
-    with the npm test example`, `::fills every field with the example
+    32) after the dialog closes. The label is never the response's own: it is
+    worked out here from that danger and the thresholds currently shown, by
+    rule 28 of 022 (at or under allow is `allow`, at or over deny is `deny`, between
+    is `ask`), so a threshold dragged or typed afterwards relabels the same
+    score with no second call. An `ai_error` answer shows "No answer:
+    <ai_error>" and draws no marker, and a refusal is toasted with the daemon's
+    own message (`ui/src/features/permissions/ai-test-panel.test.tsx::opens
+    prefilled with the npm test example`, `::fills every field with the example
     picked`, `::fills the Pipe a script to the shell example, every field`,
-    `::sends exactly the body the fields describe`, `::shows the
-    label and the danger to four decimals`, `::shows 'No answer:
-    <ai_error>' for an ai_error answer, with no label`, `::shows a field
-    error on invalid JSON and disables Test`, `::disables Test and says why
-    while the model is off`, `::toasts the daemon's own message on a
-    refusal`, `ui/src/features/permissions/ai-card.test.tsx::draws the
-    marker and the label from a test result`, `::relabels the same danger
-    once a threshold moves, with no second call`, `::draws no marker for an
-    ai_error answer`).
+    `::fills the Chained shell command example`, `::fills the Edit a file
+    outside the repository example`, `::fills the Send SSH keys to a paste
+    site example`, `::runs the test when Cmd or Ctrl+Enter is pressed`,
+    `::sends exactly the body the fields describe`, `::shows the label and
+    the danger to four decimals`, `::shows 'No answer: <ai_error>' for an
+    ai_error answer, with no label`, `::shows a field error on invalid JSON
+    and disables Test`, `::disables Test and says why while the model is off`,
+    `::toasts the daemon's own message on a refusal`,
+    `ui/src/features/permissions/ai-card.test.tsx::draws the marker and the
+    label from a test result`, `::relabels the same danger once a threshold
+    moves, with no second call`, `::draws no marker for an ai_error answer`).
 
 - 70 test files cover the features, the API layer and the event stream; each
   screen's behaviour is asserted in its own `*.test.tsx` beside it.
