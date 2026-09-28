@@ -84,7 +84,7 @@ beforeEach(() => {
 })
 
 it("renders the switch, the two thresholds, the schedule, Refresh and the facts, and nothing about checkpoints or prompts", async () => {
-  renderScreen(<PermissionsPage />)
+  renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
 
   expect(
     await screen.findByRole("switch", { name: "Enable the AI permission model" }),
@@ -116,7 +116,7 @@ it("shows every fact the daemon answered with", async () => {
     last_refresh_at: "2026-01-01T00:00:00Z",
     last_error: null,
   })
-  renderScreen(<PermissionsPage />)
+  renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
 
   expect(await screen.findByText("Ready")).toBeDefined()
   expect(
@@ -131,7 +131,7 @@ it("shows the last error as an alert at the top of the card", async () => {
     state: "failed",
     last_error: "the package could not be installed",
   })
-  renderScreen(<PermissionsPage />)
+  renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
 
   const alert = await screen.findByRole("alert")
   expect(alert.textContent).toContain("the package could not be installed")
@@ -140,7 +140,7 @@ it("shows the last error as an alert at the top of the card", async () => {
 describe("the enabled switch", () => {
   it("sends enabled: true the moment it is turned on", async () => {
     const user = userEvent.setup()
-    renderScreen(<PermissionsPage />)
+    renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
 
     await user.click(await screen.findByRole("switch", { name: "Enable the AI permission model" }))
 
@@ -151,7 +151,7 @@ describe("the enabled switch", () => {
     current = anAiPermissionsStatus({
       python: { path: "/usr/bin/python3", version: "3.9.1", ok: false },
     })
-    renderScreen(<PermissionsPage />)
+    renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
 
     const switchEl = await screen.findByRole("switch", { name: "Enable the AI permission model" })
     expect(switchEl.getAttribute("data-disabled")).not.toBeNull()
@@ -161,7 +161,7 @@ describe("the enabled switch", () => {
 
   it("is disabled and says not found, where no interpreter was found at all", async () => {
     current = anAiPermissionsStatus({ python: { path: null, version: null, ok: false } })
-    renderScreen(<PermissionsPage />)
+    renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
 
     expect(await screen.findByText(/not found/)).toBeDefined()
   })
@@ -169,7 +169,7 @@ describe("the enabled switch", () => {
 
 it("sends the allow threshold typed, once the field is left", async () => {
   const user = userEvent.setup()
-  renderScreen(<PermissionsPage />)
+  renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
 
   const allowThreshold = await screen.findByRole("spinbutton", { name: "Allow threshold" })
   await user.clear(allowThreshold)
@@ -181,7 +181,7 @@ it("sends the allow threshold typed, once the field is left", async () => {
 
 it("sends the deny threshold typed, once the field is left", async () => {
   const user = userEvent.setup()
-  renderScreen(<PermissionsPage />)
+  renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
 
   const denyThreshold = await screen.findByRole("spinbutton", { name: "Deny threshold" })
   await user.clear(denyThreshold)
@@ -203,6 +203,7 @@ it("toasts the daemon's own message on a refused threshold, and puts the value b
       <Toaster />
       <PermissionsPage />
     </>,
+    { route: "/permissions?tab=ai" },
   )
 
   const allowThreshold = (await screen.findByRole("spinbutton", {
@@ -220,7 +221,7 @@ it("toasts the daemon's own message on a refused threshold, and puts the value b
 
 describe("the daily refresh", () => {
   it("does not send when the field is left without an edit", async () => {
-    renderScreen(<PermissionsPage />)
+    renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
 
     fireEvent.blur(await screen.findByLabelText("Daily refresh"))
 
@@ -228,7 +229,7 @@ describe("the daily refresh", () => {
   })
 
   it("sends the typed time once when the field is left", async () => {
-    renderScreen(<PermissionsPage />)
+    renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
 
     const schedule = await screen.findByLabelText("Daily refresh")
     fireEvent.change(schedule, {
@@ -243,7 +244,7 @@ describe("the daily refresh", () => {
 
   it("sends null once it is cleared back to off", async () => {
     current = anAiPermissionsStatus({ schedule: "03:30" })
-    renderScreen(<PermissionsPage />)
+    renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
 
     fireEvent.change(await screen.findByLabelText("Daily refresh"), { target: { value: "" } })
     fireEvent.blur(screen.getByLabelText("Daily refresh"))
@@ -256,7 +257,7 @@ describe("Refresh", () => {
   it("posts to the refresh endpoint", async () => {
     current = anAiPermissionsStatus({ enabled: true, state: "ready" })
     const user = userEvent.setup()
-    renderScreen(<PermissionsPage />)
+    renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
 
     await user.click(await screen.findByRole("button", { name: "Refresh" }))
 
@@ -266,7 +267,7 @@ describe("Refresh", () => {
   })
 
   it("is disabled while the model is off", async () => {
-    renderScreen(<PermissionsPage />)
+    renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
 
     const button = (await screen.findByRole("button", { name: "Refresh" })) as HTMLButtonElement
     expect(button.disabled).toBe(true)
@@ -274,7 +275,7 @@ describe("Refresh", () => {
 
   it("is disabled while an install is already running", async () => {
     current = anAiPermissionsStatus({ enabled: true, state: "installing" })
-    renderScreen(<PermissionsPage />)
+    renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
 
     const button = (await screen.findByRole("button", { name: "Refresh" })) as HTMLButtonElement
     expect(button.disabled).toBe(true)
@@ -290,6 +291,7 @@ it("toasts the daemon's own message on a refusal", async () => {
       <Toaster />
       <PermissionsPage />
     </>,
+    { route: "/permissions?tab=ai" },
   )
 
   await user.click(await screen.findByRole("button", { name: "Refresh" }))
@@ -298,10 +300,10 @@ it("toasts the daemon's own message on a refusal", async () => {
 })
 
 describe("tabs", () => {
-  it("opens the AI tab when the URL says nothing", async () => {
+  it("opens the Learned tab when the URL says nothing", async () => {
     renderScreen(<PermissionsPage />, { route: "/permissions" })
 
-    expect(await screen.findByRole("tab", { name: "AI", selected: true })).toBeDefined()
+    expect(await screen.findByRole("tab", { name: "Learned", selected: true })).toBeDefined()
   })
 
   it("opens the Learned tab the URL asks for", async () => {
@@ -314,8 +316,8 @@ describe("tabs", () => {
     const user = userEvent.setup()
     const { location } = renderScreen(<PermissionsPage />, { route: "/permissions" })
 
-    await user.click(await screen.findByRole("tab", { name: "Learned" }))
+    await user.click(await screen.findByRole("tab", { name: "AI" }))
 
-    expect(location.url).toBe("/permissions?tab=learned")
+    expect(location.url).toBe("/permissions?tab=ai")
   })
 })

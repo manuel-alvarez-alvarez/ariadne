@@ -82,7 +82,9 @@ function LearnedPermissionDetailView({ learned }: { learned: LearnedPermissionDt
           <CopyableId value={learned.id} label="approval id" />
         </Fact>
         <Fact label="Repository">
-          <span className="truncate font-mono text-xs">{repositoryPath}</span>
+          <span className="truncate font-mono text-xs" title={repositoryPath}>
+            {repositoryPath}
+          </span>
         </Fact>
         <Fact label="Repository ID">
           <CopyableId value={learned.repository_id} label="repository id" />

@@ -25,6 +25,7 @@ import { ScrollableTable } from "@/components/scroll-edge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { cn } from "@/lib/format"
 
 /** Rows drawn while the list loads. Enough to read as a table, not as a page. */
 const PLACEHOLDER_ROWS = [0, 1, 2]
@@ -52,6 +53,7 @@ export function DataTable<T>({
   empty,
   rowKey,
   renderRow,
+  pinnedEnd = false,
 }: {
   query: ListQuery<T>
   /** "Could not load profiles" — the alert's heading when the read fails. */
@@ -61,6 +63,15 @@ export function DataTable<T>({
   empty: ReactNode
   rowKey: (row: T) => string
   renderRow: (row: T) => ReactNode
+  /**
+   * The last column is a row's own controls rather than more of its data, so it
+   * is pinned to the trailing edge instead of scrolling with the rest — see
+   * {@link ScrollableTable}. A row's own cell still has to carry the sticky
+   * classes itself; this only says the table's fade must not cross it, and
+   * gives the header and the loading rows the opaque background a sticky cell
+   * needs to inherit.
+   */
+  pinnedEnd?: boolean
 }) {
   if (query.isError) {
     return (
@@ -82,9 +93,9 @@ export function DataTable<T>({
     // A screen this narrow for its columns scrolls sideways, and says so:
     // macOS draws no scrollbar until something moves, so the fade at the edge
     // is the only sign that a column is cut short.
-    <ScrollableTable className="rounded-xl border">
+    <ScrollableTable className="rounded-xl border" pinnedEnd={pinnedEnd}>
       <TableHeader>
-        <TableRow className="hover:bg-transparent">
+        <TableRow className={cn("hover:bg-transparent", pinnedEnd && "bg-background")}>
           {columns.map((column, index) => (
             <TableHead
               // Columns are a fixed list per screen; a heading may repeat.
@@ -100,7 +111,10 @@ export function DataTable<T>({
       <TableBody>
         {query.isPending ? (
           PLACEHOLDER_ROWS.map((row) => (
-            <TableRow key={row} className="hover:bg-transparent">
+            <TableRow
+              key={row}
+              className={cn("hover:bg-transparent", pinnedEnd && "bg-background")}
+            >
               {columns.map((_column, index) => (
                 // biome-ignore lint/suspicious/noArrayIndexKey: placeholder cells have no identity
                 <TableCell key={index}>

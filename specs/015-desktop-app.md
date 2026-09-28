@@ -276,23 +276,42 @@ Out: the daemon endpoints themselves (012).
     Permissions screen`).
 33. The Permissions screen's Learned tab lists every learned approval
     (`GET /v1/permissions/learned`, filtered by `?repository=` when the URL
-    carries one): the repository by its path, the tool name, the kind, the
-    source (`console` or `manual`), the AI label and danger where the model
-    scored the row, and how long ago it was learned. Add approval opens a
-    form for the repository, the tool name and the kind
-    (`POST /v1/permissions/learned`); each row's Edit changes the tool name
-    and the kind (`PUT .../{id}`) and Delete removes it
-    (`DELETE .../{id}`) after a confirm, and a refusal from any of the three
-    is toasted with the daemon's own message rather than held on the dialog.
-    A row opens a detail panel with every field, the stored `tool_call` and
+    carries one), its actions column pinned to the trailing edge the way
+    `models/model-table.tsx`'s Available column is: the repository by its
+    folder name — the last path segment, a `title` of the full path on the
+    cell — the tool name and the kind each cut with an ellipsis and a `title`
+    of the full value, a Request column after Kind reading the `command` of a
+    shell call or the `file_path` or `path` of a file call from the row's own
+    `tool_call.rawInput` — where the daemon keeps the agent's own arguments
+    (`crates/ariadne-daemon/src/acp.rs`), never on the call itself — else the
+    call compacted to one line, cut with an ellipsis and a `title` of the full
+    text, the source (`console` or `manual`), the AI
+    label and danger where the model scored the row, and how long ago it was
+    learned. A row is a Tab stop that opens its detail on Enter or Space as
+    well as a click, under an accessible name of its tool and its repository's
+    folder. The repository filter's trigger and its options show the same
+    folder name, each option's full path underneath it in muted text and on
+    the trigger as a `title`; the popup is wide enough for a full path rather
+    than the trigger's own width, and a `?repository=` id the registry does
+    not carry still shows a readable label instead of an empty trigger. A
+    filtered empty state offers Clear filter, which drops `?repository=`. Add
+    approval opens a form for the repository, the tool name and the kind
+    (`POST /v1/permissions/learned`), whose own repository picker follows the
+    same folder-name-with-path convention; each row's Edit changes the tool
+    name and the kind (`PUT .../{id}`) and Delete removes it
+    (`DELETE .../{id}`) after a confirm naming the repository's folder and the
+    row's own request rather than only the tool name, and a refusal from any
+    of the three is toasted with the daemon's own message rather than held on
+    the dialog. A row opens a detail panel with every field, the repository's
+    full path as a `title` on its cut fact, the stored `tool_call` and
     `options` pretty-printed for a console row (a manual row says none was
     recorded), the selected option, links to the session and the task where
     the row carries one, and the AI label with both thresholds. Which tab is
-    open lives in the URL the way every other panel's does — `?tab=learned`
-    or `?tab=ai`, AI by default — and the repository filter lives beside it as
-    `?repository=`
-    (`ui/src/features/permissions/permissions-page.test.tsx::opens the AI tab
-    when the URL says nothing`, `::puts the picked tab on the URL`,
+    open lives in the URL the way every other panel's does — `?tab=learned` or
+    `?tab=ai`, Learned by default, since it is where every mode leaves what it
+    decided — and the repository filter lives beside it as `?repository=`
+    (`ui/src/features/permissions/permissions-page.test.tsx::opens the Learned
+    tab when the URL says nothing`, `::puts the picked tab on the URL`,
     `ui/src/features/permissions/learned-tab.test.tsx`).
 34. The AI tab's card carries a "Test a request" button under the thresholds.
     It opens a dialog for `POST /v1/permissions/ai/test`: Tool, Kind, Input

@@ -31,8 +31,8 @@ import { aiPermissionsStatusQueryOptions } from "./queries"
 const TABS = ["learned", "ai"] as const
 type Tab = (typeof TABS)[number]
 
-/** Where the screen opens when the URL does not say: the AI model's settings, as before. */
-const DEFAULT_TAB: Tab = "ai"
+/** Where the screen opens when the URL does not say: Learned, where every mode leaves what it decided. */
+const DEFAULT_TAB: Tab = "learned"
 
 export function PermissionsPage() {
   const [search, setSearch] = useSearchParams()

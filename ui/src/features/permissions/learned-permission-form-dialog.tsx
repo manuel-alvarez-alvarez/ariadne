@@ -28,7 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { describeError } from "@/lib/format"
+import { describeError, folderName } from "@/lib/format"
 
 import { useCreateLearnedPermission, useUpdateLearnedPermission } from "./queries"
 
@@ -146,33 +146,50 @@ export function LearnedPermissionFormDialog({
               <Controller
                 control={control}
                 name="repository_id"
-                render={({ field }) => (
-                  <Select
-                    value={field.value}
-                    onValueChange={field.onChange}
-                    items={repositories.map((repository) => ({
-                      value: repository.id,
-                      label: repository.path,
-                    }))}
-                  >
-                    <SelectTrigger
-                      id="learned-repository"
-                      aria-label="Repository"
-                      className="w-full"
-                      aria-invalid={formState.errors.repository_id ? true : undefined}
-                      onBlur={field.onBlur}
+                render={({ field }) => {
+                  const selected = repositories.find((repository) => repository.id === field.value)
+                  return (
+                    <Select
+                      value={field.value}
+                      onValueChange={field.onChange}
+                      items={repositories.map((repository) => ({
+                        value: repository.id,
+                        label: folderName(repository.path),
+                      }))}
                     >
-                      <SelectValue placeholder="Pick a repository…" />
-                    </SelectTrigger>
-                    <SelectContent alignItemWithTrigger={false}>
-                      {repositories.map((repository) => (
-                        <SelectItem key={repository.id} value={repository.id}>
-                          {repository.path}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
+                      <SelectTrigger
+                        id="learned-repository"
+                        aria-label="Repository"
+                        className="w-full"
+                        aria-invalid={formState.errors.repository_id ? true : undefined}
+                        onBlur={field.onBlur}
+                        title={selected?.path}
+                      >
+                        <SelectValue placeholder="Pick a repository…">
+                          {selected ? folderName(selected.path) : undefined}
+                        </SelectValue>
+                      </SelectTrigger>
+                      {/* Wide enough for a full path, decoupled from the
+                          trigger's own width — see `learned-tab.tsx`. */}
+                      <SelectContent alignItemWithTrigger={false} className="w-96">
+                        {repositories.map((repository) => (
+                          <SelectItem
+                            key={repository.id}
+                            value={repository.id}
+                            aria-label={repository.path}
+                          >
+                            <span className="flex min-w-0 flex-col overflow-hidden py-0.5">
+                              <span className="truncate">{folderName(repository.path)}</span>
+                              <span className="truncate text-xs text-muted-foreground">
+                                {repository.path}
+                              </span>
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )
+                }}
               />
               {formState.errors.repository_id ? (
                 <FieldError errors={[formState.errors.repository_id]} />

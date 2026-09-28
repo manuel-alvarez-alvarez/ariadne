@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, it } from "vitest"
 
 import type { LearnedPermissionDto, RepositoryDto } from "@/api"
 import { Toaster } from "@/components/ui/sonner"
+import { shortId } from "@/lib/format"
 import { aLearnedPermission, aRepository } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { LearnedPermissionsTab } from "./learned-tab"
@@ -36,7 +37,7 @@ const CONSOLE_ROW: LearnedPermissionDto = aLearnedPermission({
   tool_name: "Bash",
   kind: "execute",
   source: "console",
-  tool_call: { command: "ls" },
+  tool_call: { title: "Bash", kind: "execute", rawInput: { command: "ls" } },
   options: { choices: ["allow", "deny"] },
   selected_option: "allow",
   session_id: "01JSESS0000000000000000001",
@@ -53,6 +54,19 @@ const MANUAL_ROW: LearnedPermissionDto = aLearnedPermission({
   tool_name: "Write",
   kind: "edit",
   source: "manual",
+})
+
+const FILE_ROW: LearnedPermissionDto = aLearnedPermission({
+  id: "01JLEARN0000000000000FIL",
+  repository_id: REPO_A.id,
+  tool_name: "Read",
+  kind: "read",
+  source: "console",
+  tool_call: {
+    title: "Read",
+    kind: "read",
+    rawInput: { file_path: "/home/me/dev/ariadne/src/main.rs" },
+  },
 })
 
 interface Recorded {
@@ -137,12 +151,14 @@ beforeEach(() => {
 })
 
 describe("the table", () => {
-  it("lists the fixture's rows, each repository shown by its path", async () => {
+  it("shows each row's repository by its folder name, with the full path as a title", async () => {
     renderScreen(<LearnedPermissionsTab />)
 
     expect(await screen.findByText("Bash")).toBeDefined()
+    expect(screen.getByText("ariadne")).toBeDefined()
     expect(screen.getByTitle(REPO_A.path)).toBeDefined()
     expect(screen.getByText("Write")).toBeDefined()
+    expect(screen.getByText("sandbox")).toBeDefined()
     expect(screen.getByTitle(REPO_B.path)).toBeDefined()
     expect(screen.getByText("Console")).toBeDefined()
     expect(screen.getByText("Manual")).toBeDefined()
@@ -169,7 +185,7 @@ describe("the table", () => {
     expect(screen.getByText("Bash")).toBeDefined()
   })
 
-  it("shows an empty state once the filter matches nothing", async () => {
+  it("shows an empty state once the filter matches nothing, with a way to clear it", async () => {
     rows = [MANUAL_ROW]
     const user = userEvent.setup()
     renderScreen(<LearnedPermissionsTab />)
@@ -179,6 +195,80 @@ describe("the table", () => {
     await user.click(await screen.findByRole("option", { name: REPO_A.path }))
 
     expect(await screen.findByText("No approvals for this repository")).toBeDefined()
+
+    await user.click(screen.getByRole("button", { name: "Clear filter" }))
+
+    expect(await screen.findByText("Write")).toBeDefined()
+  })
+
+  it("shows the tool name and the kind cut with an ellipsis, each with a title of the full value", async () => {
+    renderScreen(<LearnedPermissionsTab />)
+    await screen.findByText("Bash")
+
+    const tool = screen.getByTitle("Bash")
+    expect(tool.className).toContain("truncate")
+    const kind = screen.getByTitle("execute")
+    expect(kind.className).toContain("truncate")
+  })
+
+  it("shows the Request column text: the command of a shell call, the path of a file call", async () => {
+    rows = [CONSOLE_ROW, FILE_ROW]
+    renderScreen(<LearnedPermissionsTab />)
+    await screen.findByText("Bash")
+
+    expect(screen.getByTitle("ls")).toBeDefined()
+    expect(screen.getByTitle("/home/me/dev/ariadne/src/main.rs")).toBeDefined()
+  })
+
+  it("pins the actions cell to the trailing edge", async () => {
+    renderScreen(<LearnedPermissionsTab />)
+    await screen.findByText("Bash")
+
+    const actionsCell = screen.getByRole("button", { name: "Edit Bash" }).closest("td")
+    expect(actionsCell).not.toBeNull()
+    expect(actionsCell?.className).toContain("sticky")
+    expect(actionsCell?.className).toContain("right-0")
+  })
+
+  it("opens a row's detail with the keyboard", async () => {
+    const user = userEvent.setup()
+    renderScreen(<LearnedPermissionsTab />)
+    await screen.findByText("Bash")
+
+    const row = screen.getByRole("row", { name: "Bash in ariadne" })
+    row.focus()
+    await user.keyboard("{Enter}")
+
+    expect(await screen.findByText(/"command": "ls"/)).toBeDefined()
+  })
+})
+
+describe("the repository filter", () => {
+  it("shows the folder name on the trigger and each option, with the full path underneath and on the trigger", async () => {
+    const user = userEvent.setup()
+    renderScreen(<LearnedPermissionsTab />)
+    await screen.findByText("Bash")
+
+    const trigger = screen.getByRole("combobox", { name: "Filter by repository" })
+    await user.click(trigger)
+    const option = await screen.findByRole("option", { name: REPO_A.path })
+    expect(within(option).getByText("ariadne")).toBeDefined()
+    expect(within(option).getByText(REPO_A.path)).toBeDefined()
+
+    await user.click(option)
+
+    expect(trigger.title).toBe(REPO_A.path)
+    expect(within(trigger).getByText("ariadne")).toBeDefined()
+  })
+
+  it("shows a readable label where the URL's repository id is not in the list", async () => {
+    const missingId = "01JMISSING000000000000000"
+    renderScreen(<LearnedPermissionsTab />, { route: `/permissions?repository=${missingId}` })
+    await screen.findByText("No approvals for this repository")
+
+    const trigger = screen.getByRole("combobox", { name: "Filter by repository" })
+    expect(within(trigger).getByText(shortId(missingId))).toBeDefined()
+    expect(trigger.title).toBe(missingId)
   })
 })
 
@@ -191,7 +281,11 @@ describe("adding an approval", () => {
     await user.click(screen.getByRole("button", { name: "Add approval" }))
     const dialog = await screen.findByRole("dialog")
     await user.click(within(dialog).getByRole("combobox", { name: "Repository" }))
-    await user.click(await screen.findByRole("option", { name: REPO_B.path }))
+    const option = await screen.findByRole("option", { name: REPO_B.path })
+    expect(within(option).getByText("sandbox")).toBeDefined()
+    expect(within(option).getByText(REPO_B.path)).toBeDefined()
+    await user.click(option)
+    expect(within(dialog).getByRole("combobox", { name: "Repository" }).title).toBe(REPO_B.path)
     await user.type(within(dialog).getByLabelText("Tool name"), "Read")
     await user.type(within(dialog).getByLabelText("Kind"), "read")
     await user.click(within(dialog).getByRole("button", { name: "Add approval" }))
@@ -284,6 +378,17 @@ describe("removing an approval", () => {
 
     await waitFor(() => expect(screen.queryByText("Bash")).toBeNull())
     expect(requests.some((request) => request.method === "DELETE")).toBe(true)
+  })
+
+  it("names the repository folder and the request, not only the tool name", async () => {
+    const user = userEvent.setup()
+    renderScreen(<LearnedPermissionsTab />)
+    await screen.findByText("Bash")
+
+    await user.click(screen.getByRole("button", { name: "Remove Bash" }))
+
+    expect(await screen.findByText(/in ariadne\?/)).toBeDefined()
+    expect(screen.getByText(/“ls”/)).toBeDefined()
   })
 
   it("toasts the daemon's own message on a refusal", async () => {
