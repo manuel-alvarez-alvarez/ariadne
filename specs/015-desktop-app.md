@@ -571,14 +571,20 @@ Out: the daemon endpoints themselves (012).
   `::the enabled switch > is disabled and says not found, where no
   interpreter was found at all`).
 - The allow and deny thresholds render as one range control: a two-handle
-  slider over the three coloured zones labelled Allow, Ask and Deny, and the
-  two named number inputs beneath it, holding the row's own values
+  slider over the three coloured zones with labels Allow, Ask and Deny
+  positioned at each zone's center and numbered ticks at 0, 0.5 and 1 beneath
+  the track; the two named number inputs below, holding the row's own values
   (`ui/src/features/permissions/threshold-range.test.tsx::shows the track's
   three zones and the handles named for what they hold`,
-  `::shows the two number inputs, named and valued for the row they hold`).
+  `::shows the two number inputs, named and valued for the row they hold`,
+  `::positions zone labels at the center of each zone and updates them when
+  thresholds move`,
+  `::hides zone labels when the ask zone is too narrow`,
+  `::shows ticks and numbers at 0, 0.5 and 1 under the track`).
 - A handle released at a new value, or a number field left or Entered, sends
-  only the field that changed, up to four decimals, and neither handle can
-  reach or pass the other
+  only the field that changed, clamped to 0–1, up to four decimals; neither
+  handle can reach or pass the other; each thumb has `aria-valuetext` with the
+  value to four decimals (for example "Allow threshold 0.3000")
   (`ui/src/features/permissions/threshold-range.test.tsx::a handle released
   at a new value > sends one PUT with only the allow field`,
   `::a handle released at a new value > sends one PUT with only the deny
@@ -591,13 +597,17 @@ Out: the daemon endpoints themselves (012).
   decimals kept`,
   `::an input left or Entered > sends one PUT with only the deny field, on
   Enter`,
+  `::clamps a typed allow value of 5 to 1 before sending`,
+  `::clamps a typed deny value of -1 to 0 before sending`,
+  `::gives each thumb an aria-valuetext with the value to four decimals`,
   `ui/src/features/permissions/permissions-page.test.tsx::sends the allow
   threshold typed, once the field is left`,
   `::sends the deny threshold typed, once the field is left`).
 - The range control takes an optional danger marker on its track, drawn with
-  its own accessible label, for a later task to set
+  its own accessible label formatted to four decimals
   (`ui/src/features/permissions/threshold-range.test.tsx::draws no danger
-  marker where none is set, and one labelled with its value where it is`).
+  marker where none is set, and one labelled with its value to four decimals
+  where it is`).
 - The daily refresh field's native clear is what turns the schedule off
   (`ui/src/features/permissions/permissions-page.test.tsx::the daily refresh
   > sends the time picked`,

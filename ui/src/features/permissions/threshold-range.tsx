@@ -6,9 +6,10 @@
  * other.
  *
  * A commit — a handle released, or a number field left or Entered — sends
- * only the one field that changed. A refusal is toasted with the daemon's
- * own message, and the row snaps back to the value it still holds: the
- * buffer here is never the truth, `allowThreshold`/`denyThreshold` are.
+ * only the one field that changed, clamped to 0–1. A refusal is toasted with
+ * the daemon's own message, and the row snaps back to the value it still
+ * holds: the buffer here is never the truth, `allowThreshold`/`denyThreshold`
+ * are.
  */
 
 import { Slider as SliderPrimitive } from "@base-ui/react/slider"
@@ -56,7 +57,6 @@ export function ThresholdRange({
 }: {
   allowThreshold: number
   denyThreshold: number
-  /** Where a marker is drawn on the track. Nothing sets it in this task. */
   danger?: number
   mutate: ReturnType<typeof useUpdateAiPermissions>["mutate"]
 }) {
@@ -133,14 +133,14 @@ export function ThresholdRange({
   function commitAllowText() {
     const parsed = readTyped(allowText)
     if (parsed !== null) {
-      commitAllow(roundToInputDecimals(parsed))
+      commitAllow(roundToInputDecimals(clamp01(parsed)))
     }
   }
 
   function commitDenyText() {
     const parsed = readTyped(denyText)
     if (parsed !== null) {
-      commitDeny(roundToInputDecimals(parsed))
+      commitDeny(roundToInputDecimals(clamp01(parsed)))
     }
   }
 
@@ -154,6 +154,18 @@ export function ThresholdRange({
   const denyPercent = clamp01(denyValue) * 100
   const zoneStart = Math.min(allowPercent, denyPercent)
   const zoneEnd = Math.max(allowPercent, denyPercent)
+
+  function formatDecimals(value: number): string {
+    return value.toFixed(4)
+  }
+
+  const allowZoneCenter = zoneStart / 2
+  const askZoneCenter = (zoneStart + zoneEnd) / 2
+  const denyZoneCenter = (zoneEnd + 100) / 2
+  const allowZoneWidth = zoneStart
+  const askZoneWidth = zoneEnd - zoneStart
+  const denyZoneWidth = 100 - zoneEnd
+  const minZoneWidthForLabel = 15
 
   return (
     <div className="flex flex-col gap-3">
@@ -187,7 +199,7 @@ export function ThresholdRange({
             {danger !== undefined ? (
               <div
                 role="img"
-                aria-label={`Danger ${danger}`}
+                aria-label={`Danger ${formatDecimals(clamp01(danger))}`}
                 className="pointer-events-none absolute inset-y-0 w-0.5 -translate-x-1/2 bg-foreground"
                 style={{ left: `${clamp01(danger) * 100}%` }}
               />
@@ -195,24 +207,52 @@ export function ThresholdRange({
             <SliderPrimitive.Thumb
               index={0}
               aria-label="Allow threshold"
+              aria-valuetext={`Allow threshold ${formatDecimals(allowValue)}`}
               className={thumbClassName}
             />
             <SliderPrimitive.Thumb
               index={1}
               aria-label="Deny threshold"
+              aria-valuetext={`Deny threshold ${formatDecimals(denyValue)}`}
               className={thumbClassName}
             />
           </SliderPrimitive.Track>
         </SliderPrimitive.Control>
       </SliderPrimitive.Root>
 
-      <div className="flex justify-between text-xs text-muted-foreground">
-        <span>Allow</span>
-        <span>Ask</span>
-        <span>Deny</span>
+      <div className="relative h-6">
+        <span
+          className={`pointer-events-none absolute top-0 left-0 text-xs text-muted-foreground transition-opacity ${allowZoneWidth < minZoneWidthForLabel ? "opacity-0" : "opacity-100"}`}
+          style={{ left: `${allowZoneCenter}%`, transform: "translateX(-50%)" }}
+        >
+          Allow
+        </span>
+        <span
+          className={`pointer-events-none absolute top-0 left-0 text-xs text-muted-foreground transition-opacity ${askZoneWidth < minZoneWidthForLabel ? "opacity-0" : "opacity-100"}`}
+          style={{ left: `${askZoneCenter}%`, transform: "translateX(-50%)" }}
+        >
+          Ask
+        </span>
+        <span
+          className={`pointer-events-none absolute top-0 left-0 text-xs text-muted-foreground transition-opacity ${denyZoneWidth < minZoneWidthForLabel ? "opacity-0" : "opacity-100"}`}
+          style={{ left: `${denyZoneCenter}%`, transform: "translateX(-50%)" }}
+        >
+          Deny
+        </span>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="relative flex justify-between text-xs text-muted-foreground -mt-1 px-0">
+        <div className="pointer-events-none absolute bottom-0 w-full flex justify-between">
+          <span className="h-1 w-0.5 bg-muted-foreground" />
+          <span className="h-1 w-0.5 bg-muted-foreground" />
+          <span className="h-1 w-0.5 bg-muted-foreground" />
+        </div>
+        <span>0</span>
+        <span>0.5</span>
+        <span>1</span>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Field>
           <FieldLabel htmlFor="ai-allow-threshold">Allow threshold</FieldLabel>
           <Input
@@ -222,7 +262,6 @@ export function ThresholdRange({
             max={1}
             step={INPUT_STEP}
             value={allowText}
-            aria-label="Allow threshold"
             onChange={(event) => handleAllowTextChange(event.target.value)}
             onBlur={commitAllowText}
             onKeyDown={blurOnEnter}
@@ -237,7 +276,6 @@ export function ThresholdRange({
             max={1}
             step={INPUT_STEP}
             value={denyText}
-            aria-label="Deny threshold"
             onChange={(event) => handleDenyTextChange(event.target.value)}
             onBlur={commitDenyText}
             onKeyDown={blurOnEnter}

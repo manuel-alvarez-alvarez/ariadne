@@ -57,7 +57,7 @@ it("shows the two number inputs, named and valued for the row they hold", () => 
   expect(deny.value).toBe("0.8")
 })
 
-it("draws no danger marker where none is set, and one labelled with its value where it is", () => {
+it("draws no danger marker where none is set, and one labelled with its value to four decimals where it is", () => {
   const { rerender } = render(
     <ThresholdRange allowThreshold={0.2} denyThreshold={0.8} mutate={mutate} />,
   )
@@ -66,7 +66,90 @@ it("draws no danger marker where none is set, and one labelled with its value wh
   rerender(
     <ThresholdRange allowThreshold={0.2} denyThreshold={0.8} danger={0.42} mutate={mutate} />,
   )
-  expect(screen.getByLabelText("Danger 0.42")).toBeDefined()
+  expect(screen.getByLabelText("Danger 0.4200")).toBeDefined()
+})
+
+it("positions zone labels at the center of each zone and updates them when thresholds move", () => {
+  const { container, rerender } = render(
+    <ThresholdRange allowThreshold={0.2} denyThreshold={0.8} mutate={mutate} />,
+  )
+
+  let labels = Array.from(
+    container.querySelectorAll("span.pointer-events-none.absolute.top-0"),
+  ) as HTMLElement[]
+  expect(labels.length).toBe(3)
+  expect(labels[0]?.textContent).toBe("Allow")
+  expect(labels[1]?.textContent).toBe("Ask")
+  expect(labels[2]?.textContent).toBe("Deny")
+
+  // Labels positioned absolutely with left: Allow at 10%, Ask at 50%, Deny at 90%
+  expect(labels[0]?.className).toContain("absolute")
+  expect(labels[0]?.style.left).toBe("10%")
+  expect(labels[1]?.className).toContain("absolute")
+  expect(labels[1]?.style.left).toBe("50%")
+  expect(labels[2]?.className).toContain("absolute")
+  expect(labels[2]?.style.left).toBe("90%")
+
+  rerender(<ThresholdRange allowThreshold={0.3} denyThreshold={0.7} mutate={mutate} />)
+
+  labels = Array.from(
+    container.querySelectorAll("span.pointer-events-none.absolute.top-0"),
+  ) as HTMLElement[]
+  expect(labels[0]?.style.left).toBe("15%")
+  expect(labels[1]?.style.left).toBe("50%")
+  expect(labels[2]?.style.left).toBe("85%")
+})
+
+it("hides only the narrow zone label", () => {
+  const { container } = render(
+    <ThresholdRange allowThreshold={0.45} denyThreshold={0.55} mutate={mutate} />,
+  )
+
+  const labels = Array.from(
+    container.querySelectorAll("span.pointer-events-none.absolute.top-0"),
+  ) as HTMLElement[]
+  expect(labels.length).toBe(3)
+  // Ask zone is 10% wide (< 15%), so only Ask is hidden
+  expect(labels[0]?.className).toContain("opacity-100")
+  expect(labels[1]?.className).toContain("opacity-0")
+  expect(labels[2]?.className).toContain("opacity-100")
+})
+
+it("shows ticks and numbers at 0, 0.5 and 1 under the track", () => {
+  const { container } = render(
+    <ThresholdRange allowThreshold={0.2} denyThreshold={0.8} mutate={mutate} />,
+  )
+
+  // Check numbers are present
+  expect(screen.getByText("0")).toBeDefined()
+  expect(screen.getByText("0.5")).toBeDefined()
+  expect(screen.getByText("1")).toBeDefined()
+
+  // Check tick marks are present (visual lines with bg-muted-foreground)
+  const tickContainer = container.querySelector("div.pointer-events-none.absolute.bottom-0")
+  expect(tickContainer).toBeDefined()
+  const ticks = Array.from(
+    tickContainer?.querySelectorAll("span.bg-muted-foreground") || [],
+  ) as HTMLElement[]
+  expect(ticks.length).toBe(3)
+})
+
+it("gives each thumb an aria-valuetext with the value to four decimals", () => {
+  const { rerender } = render(
+    <ThresholdRange allowThreshold={0.2456} denyThreshold={0.7654} mutate={mutate} />,
+  )
+
+  const allow = screen.getByRole("slider", { name: "Allow threshold" }) as HTMLElement
+  const deny = screen.getByRole("slider", { name: "Deny threshold" }) as HTMLElement
+  expect(allow.getAttribute("aria-valuetext")).toBe("Allow threshold 0.2456")
+  expect(deny.getAttribute("aria-valuetext")).toBe("Deny threshold 0.7654")
+
+  rerender(<ThresholdRange allowThreshold={0.1} denyThreshold={0.9} mutate={mutate} />)
+
+  const allowUpdated = screen.getByRole("slider", { name: "Allow threshold" }) as HTMLElement
+  const denyUpdated = screen.getByRole("slider", { name: "Deny threshold" }) as HTMLElement
+  expect(allowUpdated.getAttribute("aria-valuetext")).toBe("Allow threshold 0.1000")
+  expect(denyUpdated.getAttribute("aria-valuetext")).toBe("Deny threshold 0.9000")
 })
 
 describe("a handle released at a new value", () => {
@@ -166,6 +249,31 @@ describe("an input left or Entered", () => {
 
     expect(mutateMock).toHaveBeenCalledTimes(1)
     expect(mutateMock).toHaveBeenCalledWith({ deny_threshold: 0.9877 }, expect.anything())
+  })
+
+  it("clamps a typed allow value of 5 to 1 before sending", async () => {
+    const user = userEvent.setup()
+    render(<ThresholdRange allowThreshold={0.2} denyThreshold={0.8} mutate={mutate} />)
+
+    const allow = screen.getByRole("spinbutton", { name: "Allow threshold" })
+    await user.clear(allow)
+    await user.type(allow, "5")
+    await user.tab()
+
+    expect(mutateMock).toHaveBeenCalledTimes(1)
+    expect(mutateMock).toHaveBeenCalledWith({ allow_threshold: 1 }, expect.anything())
+  })
+
+  it("clamps a typed deny value of -1 to 0 before sending", async () => {
+    const user = userEvent.setup()
+    render(<ThresholdRange allowThreshold={0.2} denyThreshold={0.8} mutate={mutate} />)
+
+    const deny = screen.getByRole("spinbutton", { name: "Deny threshold" })
+    await user.clear(deny)
+    await user.type(deny, "-1{Enter}")
+
+    expect(mutateMock).toHaveBeenCalledTimes(1)
+    expect(mutateMock).toHaveBeenCalledWith({ deny_threshold: 0 }, expect.anything())
   })
 })
 

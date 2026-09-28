@@ -72,7 +72,7 @@ it("draws the marker and the label from a test result", async () => {
 
   await user.click(screen.getByRole("button", { name: "Test" }))
 
-  expect(await screen.findByLabelText("Danger 0.5")).toBeDefined()
+  expect(await screen.findByLabelText("Danger 0.5000")).toBeDefined()
   await waitFor(() => expect(badgeText()).toBe("Ask"))
 })
 
