@@ -203,6 +203,26 @@ An empty box says `Tell the agent what to do` in dim text. The hint is not
 part of the prompt. The box grows to four text rows, then scrolls with the
 cursor.
 
+### Agent slash commands
+
+When an agent supplies slash commands, type `/` at the start of the input box
+to open its command list. Typing after the `/` filters the names without
+regard to case. The list comes from the agent, so it can differ between
+agents and sessions. Claude ACP, Codex ACP, and OpenCode supplied a list in
+the terminal console check.
+
+| Key | What it does while the list is open |
+| --- | --- |
+| Up, Down | Move the selected command without moving through prompt history |
+| Tab | Put the selected command and a trailing space in the input box |
+| Enter | Run a selected command without input; for a command with input, put its name and a trailing space in the box |
+| Escape | Close the list and keep the text in the input box |
+
+The hint after a command with input describes its argument and is not sent.
+Other editing keys work as they do in the input box. Press Enter after a
+command with its input to run it. If the text does not name a listed command,
+including a path such as `/tmp/x`, Enter sends it as an ordinary prompt.
+
 The transcript starts with a short welcome banner naming the seat, task (or
 orchestrator goal), model and effort, repository, and session, and one blank
 line under it. It scrolls into the scrollback like any other line.
