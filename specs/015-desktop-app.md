@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-09-26
+updated: 2026-09-28
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, ced9f4f8, c11241f3]
 tests:
@@ -240,17 +240,17 @@ Out: the daemon endpoints themselves (012).
     row from the daemon's answer through the same `models` query key a switch
     write uses, and a refusal is toasted rather than swallowed, springing the
     picker back to what the daemon still says.
-32. The Permissions screen holds one card, "AI", over the one settings row
-    `GET /v1/permissions/ai` answers with (022): a switch for `enabled`,
-    labelled "Enable the AI permission model", disabled with the Python
-    version found (or that none was) where the daemon has none new enough to
-    install into; the allow and deny thresholds as one range control, a
-    two-handle slider from 0 to 1 in steps of 0.01 whose track is cut into a
-    green Allow zone, an amber Ask zone and a red Deny zone the handles
-    cannot cross, with two number inputs below it — "Allow threshold" and
-    "Deny threshold", up to four decimals, step 0.0001 — that stay in step
-    with the handles while either is dragged or typed into; a time field for
-    the daily refresh, whose native clear is what turns it off, sending
+32. The Permissions screen's AI tab holds one card, "AI", over the one
+    settings row `GET /v1/permissions/ai` answers with (022): a switch for
+    `enabled`, labelled "Enable the AI permission model", disabled with the
+    Python version found (or that none was) where the daemon has none new
+    enough to install into; the allow and deny thresholds as one range
+    control, a two-handle slider from 0 to 1 in steps of 0.01 whose track is
+    cut into a green Allow zone, an amber Ask zone and a red Deny zone the
+    handles cannot cross, with two number inputs below it — "Allow threshold"
+    and "Deny threshold", up to four decimals, step 0.0001 — that stay in
+    step with the handles while either is dragged or typed into; a time field
+    for the daily refresh, whose native clear is what turns it off, sending
     `schedule: null`; a Refresh button, disabled while the model is off or
     already installing; and a fact list of the state, the installed and
     latest release, whether the weights are present, the endpoint, the last
@@ -270,6 +270,26 @@ Out: the daemon endpoints themselves (012).
     (`ui/src/features/repositories/repository-form-dialog.test.tsx::puts an
     ai_disabled refusal on the permission mode field, pointing at the
     Permissions screen`).
+33. The Permissions screen's Learned tab lists every learned approval
+    (`GET /v1/permissions/learned`, filtered by `?repository=` when the URL
+    carries one): the repository by its path, the tool name, the kind, the
+    source (`console` or `manual`), the AI label and danger where the model
+    scored the row, and how long ago it was learned. Add approval opens a
+    form for the repository, the tool name and the kind
+    (`POST /v1/permissions/learned`); each row's Edit changes the tool name
+    and the kind (`PUT .../{id}`) and Delete removes it
+    (`DELETE .../{id}`) after a confirm, and a refusal from any of the three
+    is toasted with the daemon's own message rather than held on the dialog.
+    A row opens a detail panel with every field, the stored `tool_call` and
+    `options` pretty-printed for a console row (a manual row says none was
+    recorded), the selected option, links to the session and the task where
+    the row carries one, and the AI label with both thresholds. Which tab is
+    open lives in the URL the way every other panel's does — `?tab=learned`
+    or `?tab=ai`, AI by default — and the repository filter lives beside it as
+    `?repository=`
+    (`ui/src/features/permissions/permissions-page.test.tsx::opens the AI tab
+    when the URL says nothing`, `::puts the picked tab on the URL`,
+    `ui/src/features/permissions/learned-tab.test.tsx`).
 
 - 70 test files cover the features, the API layer and the event stream; each
   screen's behaviour is asserted in its own `*.test.tsx` beside it.

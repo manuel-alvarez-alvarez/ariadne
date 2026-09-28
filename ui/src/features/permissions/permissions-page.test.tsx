@@ -3,11 +3,15 @@
 /**
  * The Permissions screen against a stubbed daemon.
  *
- * One card, one settings row: what is worth pinning is that every fact of
- * `GET /v1/permissions/ai` reaches the screen, that each control sends only
- * the field it changed the moment it changed, that the switch is what the
+ * The AI tab: one card, one settings row. What is worth pinning is that every
+ * fact of `GET /v1/permissions/ai` reaches the screen, that each control sends
+ * only the field it changed the moment it changed, that the switch is what the
  * Python check gates, and that a refusal is toasted with the daemon's own
  * words rather than swallowed.
+ *
+ * The Learned tab has its own test file (`learned-tab.test.tsx`); what belongs
+ * here is only which tab the screen opens on and how the URL follows a switch
+ * between them.
  */
 
 import { fireEvent, screen, waitFor } from "@testing-library/react"
@@ -41,6 +45,10 @@ function lastWrite(): Recorded | undefined {
  * result — or is refused, as `failure` says, which only ever applies to a
  * write: the screen has to be on the card before a write can be tried against
  * it.
+ *
+ * The Learned tab has its own test file and its own stub; this one only has to
+ * answer its two reads with nothing, so switching onto that tab from here does
+ * not throw.
  */
 function stubDaemon(failure?: { status: number; code: string; message: string }) {
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
@@ -49,6 +57,11 @@ function stubDaemon(failure?: { status: number; code: string; message: string })
     const raw = await request.text()
     const body = raw.length > 0 ? (JSON.parse(raw) as Record<string, unknown>) : null
     requests.push({ method: request.method, path: pathname, body })
+
+    if (pathname === "/v1/repositories") return new Response(JSON.stringify([]), { status: 200 })
+    if (pathname === "/v1/permissions/learned") {
+      return new Response(JSON.stringify({ items: [] }), { status: 200 })
+    }
 
     if (failure && request.method !== "GET") {
       const { status, code, message } = failure
@@ -269,4 +282,27 @@ it("toasts the daemon's own message on a refusal", async () => {
   await user.click(await screen.findByRole("button", { name: "Refresh" }))
 
   expect(await screen.findByText(/an install is already running/)).toBeDefined()
+})
+
+describe("tabs", () => {
+  it("opens the AI tab when the URL says nothing", async () => {
+    renderScreen(<PermissionsPage />, { route: "/permissions" })
+
+    expect(await screen.findByRole("tab", { name: "AI", selected: true })).toBeDefined()
+  })
+
+  it("opens the Learned tab the URL asks for", async () => {
+    renderScreen(<PermissionsPage />, { route: "/permissions?tab=learned" })
+
+    expect(await screen.findByRole("tab", { name: "Learned", selected: true })).toBeDefined()
+  })
+
+  it("puts the picked tab on the URL", async () => {
+    const user = userEvent.setup()
+    const { location } = renderScreen(<PermissionsPage />, { route: "/permissions" })
+
+    await user.click(await screen.findByRole("tab", { name: "Learned" }))
+
+    expect(location.url).toBe("/permissions?tab=learned")
+  })
 })

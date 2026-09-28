@@ -19,6 +19,7 @@ import type {
   components,
   EffortDto,
   GoalDto,
+  LearnedPermissionDto,
   ModelDto,
   RepositoryDto,
   SessionDto,
@@ -39,6 +40,7 @@ const SESSION_ID = "01JSESS0000000000000000001"
 const AUTHOR_ID = "01JAGENT0000000000000AUTH"
 const REVIEWER_ID = "01JAGENT0000000000000REVW"
 const REPO_ID = "01JREPO0000000000000000001"
+const LEARNED_ID = "01JLEARNED000000000000001"
 
 /** A row nobody has reported tokens for, which is how every fixture starts. */
 const NO_TOKENS = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 }
@@ -289,6 +291,31 @@ export function anAiPermissionsStatus(
     endpoint: null,
     last_refresh_at: null,
     last_error: null,
+    ...overrides,
+  }
+}
+
+/** A manual row `GET /v1/permissions/learned` answers with, unscored by the AI model. */
+export function aLearnedPermission(
+  overrides: Partial<LearnedPermissionDto> = {},
+): LearnedPermissionDto {
+  return {
+    id: LEARNED_ID,
+    repository_id: REPO_ID,
+    tool_name: "Bash",
+    kind: "execute",
+    source: "manual",
+    tool_call: null,
+    options: null,
+    selected_option: null,
+    session_id: null,
+    task_id: null,
+    label: null,
+    danger: null,
+    allow_threshold: null,
+    deny_threshold: null,
+    created_at: STAMP,
+    updated_at: STAMP,
     ...overrides,
   }
 }

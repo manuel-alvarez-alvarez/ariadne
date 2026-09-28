@@ -49,8 +49,9 @@ src/
     skills/        skills screen: the catalog, and the document each one is
     repositories/  the registered checkouts goals are created against
     agents/        agents screen: the flags each registry agent is launched with
-    permissions/   the Permissions screen: the AI permission model's settings
-                   behind the `ai` permission mode
+    permissions/   the Permissions screen: Learned (every approval a `learn`
+                   or `ai` repository has kept, and one added by hand) and AI
+                   (the model's settings behind the `ai` permission mode)
     system/        the daemon-logs drawer and the log stream behind it
   test/            setup, render harness, DTO fixtures and the browser stand-ins
                    the suite shares
