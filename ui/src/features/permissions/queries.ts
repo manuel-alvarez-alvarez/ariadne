@@ -23,6 +23,7 @@ import {
   cacheRow,
   dropRow,
   qk,
+  type TestAiPermissionRequest,
   type UpdateAiPermissionsRequest,
   type UpdateLearnedPermissionRequest,
   unwrap,
@@ -52,6 +53,14 @@ export function useRefreshAiPermissions() {
   return useMutation({
     mutationFn: () => unwrap(api().POST("/v1/permissions/ai/refresh")),
     onSuccess: (status) => queryClient.setQueryData(qk.permissions.ai(), status),
+  })
+}
+
+/** `POST /v1/permissions/ai/test` — score one request, without recording anything. */
+export function useTestAiPermission() {
+  return useMutation({
+    mutationFn: (body: TestAiPermissionRequest) =>
+      unwrap(api().POST("/v1/permissions/ai/test", { body })),
   })
 }
 

@@ -290,6 +290,34 @@ Out: the daemon endpoints themselves (012).
     (`ui/src/features/permissions/permissions-page.test.tsx::opens the AI tab
     when the URL says nothing`, `::puts the picked tab on the URL`,
     `ui/src/features/permissions/learned-tab.test.tsx`).
+34. The AI tab's card carries a "Test a request" section under the
+    thresholds (`POST /v1/permissions/ai/test`): Tool, Kind, Input (JSON) and
+    Options (comma-separated) fields, prefilled with a
+    `Bash`/`execute`/`{"command": "npm test"}`/`Allow, Reject` example, and an
+    Examples picker that fills all four fields from one of four named cases.
+    Test sends exactly what the fields hold, is disabled while the JSON does
+    not parse (a field error says so) or the model is off, and shows a
+    pending state while it runs. A result is a badge in its zone's own colour
+    — green Allow, amber Ask, red Deny — and the danger to four decimals; the
+    same danger also becomes the range control's marker (its `danger` prop,
+    32). The label is never the response's own: it is worked out here from
+    that danger and the thresholds currently shown, by rule 28 of 022 (at or
+    under allow is `allow`, at or over deny is `deny`, between is `ask`), so a
+    threshold dragged or typed afterwards relabels the same score with no
+    second call. An `ai_error` answer shows "No answer: <ai_error>" and draws
+    no marker, and a refusal is toasted with the daemon's own message
+    (`ui/src/features/permissions/ai-test-panel.test.tsx::opens prefilled
+    with the npm test example`, `::fills every field with the example
+    picked`, `::fills the Pipe a script to the shell example, every field`,
+    `::sends exactly the body the fields describe`, `::shows the
+    label and the danger to four decimals`, `::shows 'No answer:
+    <ai_error>' for an ai_error answer, with no label`, `::shows a field
+    error on invalid JSON and disables Test`, `::disables Test and says why
+    while the model is off`, `::toasts the daemon's own message on a
+    refusal`, `ui/src/features/permissions/ai-card.test.tsx::draws the
+    marker and the label from a test result`, `::relabels the same danger
+    once a threshold moves, with no second call`, `::draws no marker for an
+    ai_error answer`).
 
 - 70 test files cover the features, the API layer and the event stream; each
   screen's behaviour is asserted in its own `*.test.tsx` beside it.

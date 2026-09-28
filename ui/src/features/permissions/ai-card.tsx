@@ -18,7 +18,12 @@
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
 
-import type { AiPermissionsStatusDto, PythonDto, UpdateAiPermissionsRequest } from "@/api"
+import type {
+  AiPermissionsStatusDto,
+  PythonDto,
+  TestAiPermissionResponse,
+  UpdateAiPermissionsRequest,
+} from "@/api"
 import { Fact, FactList } from "@/components/fact-list"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
@@ -27,6 +32,7 @@ import { Switch } from "@/components/ui/switch"
 import { When } from "@/components/when"
 import { describeError } from "@/lib/format"
 
+import { AiTestPanel } from "./ai-test-panel"
 import { useRefreshAiPermissions, useUpdateAiPermissions } from "./queries"
 import { ThresholdRange } from "./threshold-range"
 
@@ -52,6 +58,11 @@ export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
   // value actually moves (a write's own answer, another window, the stream).
   const [schedule, setSchedule] = useState(status.schedule ?? "")
   useEffect(() => setSchedule(status.schedule ?? ""), [status.schedule])
+
+  // Held here, not in the test panel, because the range control needs the
+  // danger too: this is what draws its marker, so a dragged or typed
+  // threshold recolours the same score rather than losing it.
+  const [testResult, setTestResult] = useState<TestAiPermissionResponse | null>(null)
 
   function send(body: UpdateAiPermissionsRequest, failureTitle: string) {
     update.mutate(body, {
@@ -89,8 +100,11 @@ export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
       <ThresholdRange
         allowThreshold={status.allow_threshold}
         denyThreshold={status.deny_threshold}
+        danger={testResult && !testResult.ai_error ? (testResult.danger ?? undefined) : undefined}
         mutate={update.mutate}
       />
+
+      <AiTestPanel status={status} result={testResult} onResult={setTestResult} />
 
       <Field>
         <FieldLabel htmlFor="ai-schedule">Daily refresh</FieldLabel>

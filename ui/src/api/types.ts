@@ -69,6 +69,8 @@ export type HeartbeatDto = Schemas["HeartbeatDto"]
 export type AiPermissionsStatusDto = Schemas["AiPermissionsStatusDto"]
 export type PythonDto = Schemas["PythonDto"]
 export type UpdateAiPermissionsRequest = Schemas["UpdateAiPermissionsRequest"]
+export type TestAiPermissionRequest = Schemas["TestAiPermissionRequest"]
+export type TestAiPermissionResponse = Schemas["TestAiPermissionResponse"]
 
 export type LearnedPermissionDto = Schemas["LearnedPermissionDto"]
 export type LearnedPermissionLabel = Schemas["LearnedPermissionLabel"]
