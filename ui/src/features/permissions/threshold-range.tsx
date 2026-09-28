@@ -33,6 +33,10 @@ function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value))
 }
 
+function formatDecimals(value: number): string {
+  return value.toFixed(INPUT_DECIMALS)
+}
+
 /** A typed field's raw text, read as a number the way the one below reads it. */
 function readTyped(text: string): number | null {
   if (text.trim() === "") {
@@ -65,10 +69,10 @@ export function ThresholdRange({
   const [denyValue, setDenyValue] = useState(denyThreshold)
   useEffect(() => setDenyValue(denyThreshold), [denyThreshold])
 
-  const [allowText, setAllowText] = useState(String(allowThreshold))
-  useEffect(() => setAllowText(String(allowThreshold)), [allowThreshold])
-  const [denyText, setDenyText] = useState(String(denyThreshold))
-  useEffect(() => setDenyText(String(denyThreshold)), [denyThreshold])
+  const [allowText, setAllowText] = useState(formatDecimals(allowThreshold))
+  useEffect(() => setAllowText(formatDecimals(allowThreshold)), [allowThreshold])
+  const [denyText, setDenyText] = useState(formatDecimals(denyThreshold))
+  useEffect(() => setDenyText(formatDecimals(denyThreshold)), [denyThreshold])
 
   function commitAllow(value: number) {
     mutate(
@@ -77,7 +81,7 @@ export function ThresholdRange({
         onError: (error) => {
           toast.error("Could not change the allow threshold", { description: describeError(error) })
           setAllowValue(allowThreshold)
-          setAllowText(String(allowThreshold))
+          setAllowText(formatDecimals(allowThreshold))
         },
       },
     )
@@ -90,7 +94,7 @@ export function ThresholdRange({
         onError: (error) => {
           toast.error("Could not change the deny threshold", { description: describeError(error) })
           setDenyValue(denyThreshold)
-          setDenyText(String(denyThreshold))
+          setDenyText(formatDecimals(denyThreshold))
         },
       },
     )
@@ -99,13 +103,15 @@ export function ThresholdRange({
   function handleSliderChange(value: readonly [number, number]) {
     const [allow, deny] = value
     setAllowValue(allow)
-    setAllowText(String(allow))
+    setAllowText(formatDecimals(allow))
     setDenyValue(deny)
-    setDenyText(String(deny))
+    setDenyText(formatDecimals(deny))
   }
 
   function handleSliderCommit(value: readonly [number, number]) {
     const [allow, deny] = value
+    setAllowText(formatDecimals(allow))
+    setDenyText(formatDecimals(deny))
     if (allow !== allowThreshold) {
       commitAllow(allow)
     }
@@ -133,14 +139,18 @@ export function ThresholdRange({
   function commitAllowText() {
     const parsed = readTyped(allowText)
     if (parsed !== null) {
-      commitAllow(roundToInputDecimals(clamp01(parsed)))
+      const rounded = roundToInputDecimals(clamp01(parsed))
+      setAllowText(formatDecimals(rounded))
+      commitAllow(rounded)
     }
   }
 
   function commitDenyText() {
     const parsed = readTyped(denyText)
     if (parsed !== null) {
-      commitDeny(roundToInputDecimals(clamp01(parsed)))
+      const rounded = roundToInputDecimals(clamp01(parsed))
+      setDenyText(formatDecimals(rounded))
+      commitDeny(rounded)
     }
   }
 
@@ -154,10 +164,6 @@ export function ThresholdRange({
   const denyPercent = clamp01(denyValue) * 100
   const zoneStart = Math.min(allowPercent, denyPercent)
   const zoneEnd = Math.max(allowPercent, denyPercent)
-
-  function formatDecimals(value: number): string {
-    return value.toFixed(4)
-  }
 
   const allowZoneCenter = zoneStart / 2
   const askZoneCenter = (zoneStart + zoneEnd) / 2
@@ -182,27 +188,38 @@ export function ThresholdRange({
         <SliderPrimitive.Control className="relative flex w-full touch-none items-center select-none">
           <SliderPrimitive.Track
             data-slot="slider-track"
-            className="relative h-1.5 w-full grow overflow-hidden rounded-full select-none"
+            className="relative h-1.5 w-full grow rounded-full select-none"
           >
-            <div
-              className="pointer-events-none absolute inset-y-0 left-0 bg-status-done"
-              style={{ width: `${zoneStart}%` }}
-            />
-            <div
-              className="pointer-events-none absolute inset-y-0 bg-status-warn"
-              style={{ left: `${zoneStart}%`, width: `${zoneEnd - zoneStart}%` }}
-            />
-            <div
-              className="pointer-events-none absolute inset-y-0 right-0 bg-status-danger"
-              style={{ left: `${zoneEnd}%` }}
-            />
-            {danger !== undefined ? (
+            <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-full">
               <div
-                role="img"
-                aria-label={`Danger ${formatDecimals(clamp01(danger))}`}
-                className="pointer-events-none absolute inset-y-0 w-0.5 -translate-x-1/2 bg-foreground"
-                style={{ left: `${clamp01(danger) * 100}%` }}
+                className="absolute inset-y-0 left-0 bg-status-done"
+                style={{ width: `${zoneStart}%` }}
               />
+              <div
+                className="absolute inset-y-0 bg-status-warn"
+                style={{ left: `${zoneStart}%`, width: `${zoneEnd - zoneStart}%` }}
+              />
+              <div
+                className="absolute inset-y-0 right-0 bg-status-danger"
+                style={{ left: `${zoneEnd}%` }}
+              />
+            </div>
+            {danger !== undefined ? (
+              <>
+                <div
+                  role="img"
+                  aria-label={`Danger ${formatDecimals(clamp01(danger))}`}
+                  className="pointer-events-none absolute top-1/2 h-3 w-0.5 -translate-x-1/2 -translate-y-1/2 bg-foreground"
+                  style={{ left: `${clamp01(danger) * 100}%` }}
+                />
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute -top-4 -translate-x-1/2 text-[10px] text-muted-foreground"
+                  style={{ left: `${clamp01(danger) * 100}%` }}
+                >
+                  {formatDecimals(clamp01(danger))}
+                </span>
+              </>
             ) : null}
             <SliderPrimitive.Thumb
               index={0}
@@ -241,20 +258,33 @@ export function ThresholdRange({
         </span>
       </div>
 
-      <div className="relative flex justify-between text-xs text-muted-foreground -mt-1 px-0">
-        <div className="pointer-events-none absolute bottom-0 w-full flex justify-between">
+      <div className="relative mt-1 h-8 text-xs text-muted-foreground">
+        <div className="absolute top-0 flex flex-col items-center gap-1" style={{ left: "0%" }}>
           <span className="h-1 w-0.5 bg-muted-foreground" />
-          <span className="h-1 w-0.5 bg-muted-foreground" />
-          <span className="h-1 w-0.5 bg-muted-foreground" />
+          <span>0</span>
         </div>
-        <span>0</span>
-        <span>0.5</span>
-        <span>1</span>
+        <div
+          className="absolute top-0 flex -translate-x-1/2 flex-col items-center gap-1"
+          style={{ left: "50%" }}
+        >
+          <span className="h-1 w-0.5 bg-muted-foreground" />
+          <span>0.5</span>
+        </div>
+        <div
+          className="absolute top-0 flex -translate-x-full flex-col items-center gap-1"
+          style={{ left: "100%" }}
+        >
+          <span className="h-1 w-0.5 bg-muted-foreground" />
+          <span>1</span>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Field>
-          <FieldLabel htmlFor="ai-allow-threshold">Allow threshold</FieldLabel>
+      <div className="flex items-end justify-between gap-4">
+        <Field className="w-28 shrink-0">
+          <FieldLabel htmlFor="ai-allow-threshold" className="items-center">
+            <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-status-done" />
+            Allow threshold
+          </FieldLabel>
           <Input
             id="ai-allow-threshold"
             type="number"
@@ -262,13 +292,17 @@ export function ThresholdRange({
             max={1}
             step={INPUT_STEP}
             value={allowText}
+            className="tabular-nums"
             onChange={(event) => handleAllowTextChange(event.target.value)}
             onBlur={commitAllowText}
             onKeyDown={blurOnEnter}
           />
         </Field>
-        <Field>
-          <FieldLabel htmlFor="ai-deny-threshold">Deny threshold</FieldLabel>
+        <Field className="w-28 shrink-0 items-end">
+          <FieldLabel htmlFor="ai-deny-threshold" className="items-center">
+            <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-status-danger" />
+            Deny threshold
+          </FieldLabel>
           <Input
             id="ai-deny-threshold"
             type="number"
@@ -276,6 +310,7 @@ export function ThresholdRange({
             max={1}
             step={INPUT_STEP}
             value={denyText}
+            className="tabular-nums"
             onChange={(event) => handleDenyTextChange(event.target.value)}
             onBlur={commitDenyText}
             onKeyDown={blurOnEnter}

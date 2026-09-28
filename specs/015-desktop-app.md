@@ -252,9 +252,13 @@ Out: the daemon endpoints themselves (012).
     Thresholds section holding the allow and deny thresholds as one range
     control, a two-handle slider from 0 to 1 in steps of 0.01 whose track is
     cut into a green Allow zone, an amber Ask zone and a red Deny zone the
-    handles cannot cross, with two number inputs below it — "Allow threshold"
-    and "Deny threshold", up to four decimals, step 0.0001 — that stay in
-    step with the handles while either is dragged or typed into; a Daily
+    handles cannot cross, with a 0, 0.5, 1 scale of ticks and numbers under
+    the track, and two narrow number inputs in one row below that — "Allow
+    threshold" at the left end with a green dot and "Deny threshold" at the
+    right end with a red dot, each shown to four fixed decimals, step
+    0.0001 — that stay in step with the handles while either is dragged or
+    typed into, the digits settling to four decimals on mount, after a drag
+    and after a commit, and left alone while typed into; a Daily
     refresh section holding a time field about 8rem wide, whose native clear
     is what turns it off, sending `schedule: null` when it is blurred or
     Enter is pressed; the Refresh button, disabled while the model is off or
@@ -623,15 +627,23 @@ Out: the daemon endpoints themselves (012).
   interpreter was found at all`).
 - The allow and deny thresholds render as one range control: a two-handle
   slider over the three coloured zones with labels Allow, Ask and Deny
-  positioned at each zone's center and numbered ticks at 0, 0.5 and 1 beneath
-  the track; the two named number inputs below, holding the row's own values
+  positioned at each zone's center, and a tick and its digit for 0, 0.5 and 1
+  beneath the track, each tick a sibling sitting above its own digit at the
+  track's 0%, 50% and 100%; the two named, zone-dotted number inputs below,
+  holding the row's own values to four fixed decimals, settled on mount,
+  after a drag and after a commit, and left alone while typed into
   (`ui/src/features/permissions/threshold-range.test.tsx::shows the track's
   three zones and the handles named for what they hold`,
-  `::shows the two number inputs, named and valued for the row they hold`,
+  `::shows the two number inputs, named and valued to four decimals for the
+  row they hold`,
+  `::shows a zone-coloured dot beside each input's label`,
+  `::formats an input to four decimals on first render, after a drag, and
+  after a commit, but not while typing`,
   `::positions zone labels at the center of each zone and updates them when
   thresholds move`,
   `::hides zone labels when the ask zone is too narrow`,
-  `::shows ticks and numbers at 0, 0.5 and 1 under the track`).
+  `::puts a tick and its digit at 0%, 50% and 100% of the track, the tick a
+  sibling above its digit`).
 - A handle released at a new value, or a number field left or Entered, sends
   only the field that changed, clamped to 0–1, up to four decimals; neither
   handle can reach or pass the other; each thumb has `aria-valuetext` with the
@@ -654,8 +666,9 @@ Out: the daemon endpoints themselves (012).
   `ui/src/features/permissions/permissions-page.test.tsx::sends the allow
   threshold typed, once the field is left`,
   `::sends the deny threshold typed, once the field is left`).
-- The range control takes an optional danger marker on its track, drawn with
-  its own accessible label formatted to four decimals
+- The range control takes an optional danger marker on its track, taller than
+  the track so it reads over the zone colours, drawn with its own accessible
+  label formatted to four decimals and that same value written beside it
   (`ui/src/features/permissions/threshold-range.test.tsx::draws no danger
   marker where none is set, and one labelled with its value to four decimals
   where it is`).

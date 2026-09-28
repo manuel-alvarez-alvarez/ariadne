@@ -7,7 +7,7 @@
  * changed, and a refusal snaps the row back to what it was.
  */
 
-import { render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -48,13 +48,83 @@ it("shows the track's three zones and the handles named for what they hold", () 
   expect(screen.getByText("Deny")).toBeDefined()
 })
 
-it("shows the two number inputs, named and valued for the row they hold", () => {
+it("shows the two number inputs, named and valued to four decimals for the row they hold", () => {
   render(<ThresholdRange allowThreshold={0.2} denyThreshold={0.8} mutate={mutate} />)
 
   const allow = screen.getByRole("spinbutton", { name: "Allow threshold" }) as HTMLInputElement
   const deny = screen.getByRole("spinbutton", { name: "Deny threshold" }) as HTMLInputElement
-  expect(allow.value).toBe("0.2")
-  expect(deny.value).toBe("0.8")
+  expect(allow.value).toBe("0.2000")
+  expect(deny.value).toBe("0.8000")
+})
+
+it("shows a zone-coloured dot beside each input's label", () => {
+  render(<ThresholdRange allowThreshold={0.2} denyThreshold={0.8} mutate={mutate} />)
+
+  const allowLabel = screen.getByText("Allow threshold").closest("label") as HTMLElement
+  const denyLabel = screen.getByText("Deny threshold").closest("label") as HTMLElement
+
+  const allowDot = allowLabel.querySelector(".bg-status-done") as HTMLElement
+  const denyDot = denyLabel.querySelector(".bg-status-danger") as HTMLElement
+  expect(allowDot).not.toBeNull()
+  expect(allowDot.getAttribute("aria-hidden")).toBe("true")
+  expect(denyDot).not.toBeNull()
+  expect(denyDot.getAttribute("aria-hidden")).toBe("true")
+})
+
+it("formats an input to four decimals on first render, after a drag, and after a commit, but not while typing", () => {
+  render(<ThresholdRange allowThreshold={0.3} denyThreshold={0.8} mutate={mutate} />)
+
+  const allow = screen.getByRole("spinbutton", { name: "Allow threshold" }) as HTMLInputElement
+  expect(allow.value).toBe("0.3000")
+
+  const allowInput = screen.getByRole("slider", { name: "Allow threshold" }) as HTMLElement
+  // The accessible role sits on a visually hidden input; the draggable thumb
+  // — the element `onPointerDown` is bound to — is its own parent div.
+  const allowThumb = allowInput.parentElement as HTMLElement
+  const track = allowThumb.closest('[data-slot="slider-track"]') as HTMLElement
+  const control = track.parentElement as HTMLElement
+
+  // jsdom lays nothing out: fake a 200px-wide track and a 10px-wide thumb,
+  // so a pointer press and move against those fixed rects reads as a move
+  // from the value 0.3 to 0.31.
+  vi.spyOn(control, "getBoundingClientRect").mockReturnValue({
+    left: 0,
+    right: 200,
+    top: 0,
+    bottom: 20,
+    width: 200,
+    height: 20,
+    x: 0,
+    y: 0,
+    toJSON: () => {},
+  } as DOMRect)
+  vi.spyOn(allowThumb, "getBoundingClientRect").mockReturnValue({
+    left: 55,
+    right: 65,
+    top: 0,
+    bottom: 20,
+    width: 10,
+    height: 10,
+    x: 55,
+    y: 0,
+    toJSON: () => {},
+  } as DOMRect)
+  control.setPointerCapture = vi.fn()
+  control.hasPointerCapture = vi.fn(() => false)
+  control.releasePointerCapture = vi.fn()
+
+  fireEvent.pointerDown(allowThumb, { clientX: 60, clientY: 10, button: 0, pointerId: 1 })
+  // buttons: 1 tells the library the primary button is still down during the
+  // move; without it the move reads like the button was released elsewhere.
+  fireEvent.pointerMove(document, { clientX: 68, clientY: 10, pointerId: 1, buttons: 1 })
+  fireEvent.pointerUp(document, { clientX: 68, clientY: 10, pointerId: 1 })
+  expect(allow.value).toBe("0.3100")
+
+  fireEvent.change(allow, { target: { value: "0.5" } })
+  expect(allow.value).toBe("0.5")
+
+  fireEvent.blur(allow)
+  expect(allow.value).toBe("0.5000")
 })
 
 it("draws no danger marker where none is set, and one labelled with its value to four decimals where it is", () => {
@@ -67,6 +137,7 @@ it("draws no danger marker where none is set, and one labelled with its value to
     <ThresholdRange allowThreshold={0.2} denyThreshold={0.8} danger={0.42} mutate={mutate} />,
   )
   expect(screen.getByLabelText("Danger 0.4200")).toBeDefined()
+  expect(screen.getByText("0.4200")).toBeDefined()
 })
 
 it("positions zone labels at the center of each zone and updates them when thresholds move", () => {
@@ -115,23 +186,24 @@ it("hides only the narrow zone label", () => {
   expect(labels[2]?.className).toContain("opacity-100")
 })
 
-it("shows ticks and numbers at 0, 0.5 and 1 under the track", () => {
-  const { container } = render(
-    <ThresholdRange allowThreshold={0.2} denyThreshold={0.8} mutate={mutate} />,
-  )
+it("puts a tick and its digit at 0%, 50% and 100% of the track, the tick a sibling above its digit", () => {
+  render(<ThresholdRange allowThreshold={0.2} denyThreshold={0.8} mutate={mutate} />)
 
-  // Check numbers are present
-  expect(screen.getByText("0")).toBeDefined()
-  expect(screen.getByText("0.5")).toBeDefined()
-  expect(screen.getByText("1")).toBeDefined()
+  const zeroDigit = screen.getByText("0")
+  const halfDigit = screen.getByText("0.5")
+  const oneDigit = screen.getByText("1")
 
-  // Check tick marks are present (visual lines with bg-muted-foreground)
-  const tickContainer = container.querySelector("div.pointer-events-none.absolute.bottom-0")
-  expect(tickContainer).toBeDefined()
-  const ticks = Array.from(
-    tickContainer?.querySelectorAll("span.bg-muted-foreground") || [],
-  ) as HTMLElement[]
-  expect(ticks.length).toBe(3)
+  const groups = [zeroDigit, halfDigit, oneDigit].map((digit) => digit.parentElement as HTMLElement)
+  const expectedLeft = ["0%", "50%", "100%"]
+
+  const digits = [zeroDigit, halfDigit, oneDigit]
+  groups.forEach((group, index) => {
+    expect(group.style.left).toBe(expectedLeft[index])
+    const tick = group.querySelector("span.bg-muted-foreground") as HTMLElement
+    expect(tick).not.toBeNull()
+    // the tick is the digit's immediately preceding sibling, so it sits above it in the column
+    expect(tick.nextElementSibling).toBe(digits[index])
+  })
 })
 
 it("gives each thumb an aria-valuetext with the value to four decimals", () => {
@@ -281,7 +353,6 @@ it("toasts the daemon's own message on a refusal, and puts the value back", asyn
   mutateMock.mockImplementation((_body, options) => {
     options.onError(new Error("the allow threshold must stay under the deny threshold"))
   })
-  const user = userEvent.setup()
   render(
     <>
       <Toaster />
@@ -290,12 +361,11 @@ it("toasts the daemon's own message on a refusal, and puts the value back", asyn
   )
 
   const allow = screen.getByRole("spinbutton", { name: "Allow threshold" }) as HTMLInputElement
-  await user.clear(allow)
-  await user.type(allow, "0.95")
-  await user.tab()
+  fireEvent.change(allow, { target: { value: "0.95" } })
+  fireEvent.blur(allow)
 
   expect(
     await screen.findByText(/the allow threshold must stay under the deny threshold/),
   ).toBeDefined()
-  await waitFor(() => expect(allow.value).toBe("0.2"))
+  await waitFor(() => expect(allow.value).toBe("0.2000"))
 })

@@ -95,8 +95,8 @@ it("renders the switch, the two thresholds, the schedule, Refresh and the facts,
   const denyThreshold = screen.getByRole("spinbutton", {
     name: "Deny threshold",
   }) as HTMLInputElement
-  expect(allowThreshold.value).toBe("0.2")
-  expect(denyThreshold.value).toBe("0.8")
+  expect(allowThreshold.value).toBe("0.2000")
+  expect(denyThreshold.value).toBe("0.8000")
   expect(screen.getByLabelText("Daily refresh")).toBeDefined()
   expect(screen.getByRole("button", { name: "Refresh" })).toBeDefined()
   expect(screen.queryByText("State")).toBeNull()
@@ -256,7 +256,6 @@ it("toasts the daemon's own message on a refused threshold, and puts the value b
     code: "invalid_request",
     message: "the allow threshold must stay under the deny threshold",
   })
-  const user = userEvent.setup()
   renderScreen(
     <>
       <Toaster />
@@ -268,14 +267,14 @@ it("toasts the daemon's own message on a refused threshold, and puts the value b
   const allowThreshold = (await screen.findByRole("spinbutton", {
     name: "Allow threshold",
   })) as HTMLInputElement
-  await user.clear(allowThreshold)
-  await user.type(allowThreshold, "0.95")
-  await user.tab()
+  // user-event rewrites the value of a number input to String(Number(v)) after its first focus.
+  fireEvent.change(allowThreshold, { target: { value: "0.95" } })
+  fireEvent.blur(allowThreshold)
 
   expect(
     await screen.findByText(/the allow threshold must stay under the deny threshold/),
   ).toBeDefined()
-  await waitFor(() => expect(allowThreshold.value).toBe("0.2"))
+  await waitFor(() => expect(allowThreshold.value).toBe("0.2000"))
 })
 
 describe("the daily refresh", () => {
