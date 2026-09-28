@@ -1,7 +1,7 @@
 ---
 id: sessions-terminals-and-logs
 status: current
-updated: 2026-09-26
+updated: 2026-09-28
 areas: [daemon, store, cli]
 commits: [e4816cf6, 39937143, a69b953f]
 tests:
@@ -22,6 +22,7 @@ tests:
   - crates/ariadne-console/src/tui/mod.rs
   - crates/ariadne-console/src/tui/blocks.rs
   - crates/ariadne-console/src/tui/chrome.rs
+  - crates/ariadne-console/src/tui/commands.rs
   - crates/ariadne-console/src/tui/input.rs
   - crates/ariadne-console/src/tui/picker.rs
   - crates/ariadne-console/src/tui/viewport.rs
@@ -213,7 +214,9 @@ goal id to a seat (014).
 23. `ariadne attach` on a terminal is an inline pane, never the alternate
     screen. The pane is as tall as the terminal, always, and starts on its
     top row. Its last rows are the pinned ones, in this order: the status
-    row, the input box between its two rules, and the footer. So the input
+    row, the input box between its two rules, and the footer; while the
+    suggestion list of rule 31 is open, it is between the status row and
+    the box. So the input
     box is on the bottom rows of the screen whatever the transcript holds: a
     transcript of two lines and a screen full of it alike, between turns and
     during one. Every row over the pinned ones is the live area, and the
@@ -547,6 +550,41 @@ goal id to a seat (014).
 30. With stdin or stdout redirected there is no pane. `ariadne attach` is then
     the plain line protocol: one `kind · summary` per event, numbered options
     for a permission question, and one prompt per line read (014).
+31. The console suggests the agent's slash commands. The agent's list comes
+    as the console event `available_commands_update`, with the payload
+    `{"session_id", "available_commands"}`: each entry is the ACP
+    `AvailableCommand` as the agent sent it, a `name` without its `/`, a
+    `description` and, where it takes an argument, an `input` with a
+    `hint`. The console keeps the latest list, from the stream and from a
+    snapshot: each list replaces the one before it whole, an empty list
+    means that no command is available, and an entry without a `name` is
+    ignored. A snapshot replaces the list with the one it carries, at any
+    position in it, or with none. The event draws no block and moves
+    neither the status row nor the turn. The list opens while the agent
+    lists a command, the box starts with `/`, no white space is before the
+    cursor and no permission question waits. It shows the commands whose
+    name holds the text after the `/`, without regard to case: first the
+    names that start with it, then the names that hold it elsewhere, each
+    group in the agent's order. It is drawn directly above the top rule of
+    the box, under the status row: one row per command, `/name` and then
+    its description dim, the pick marked as the picker of a permission
+    question marks its own. A row too wide for the pane is cut, never
+    wrapped. The list shows eight rows at most and scrolls to keep the
+    pick on the screen; a short terminal shows fewer, so the status row,
+    the box and the footer stay whole. Where no command matches, one dim
+    row says `no matching command`, and Enter sends the text as typed.
+    While the list is open, Up and Down move the pick and not through the
+    history; Tab writes `/name ` over the first word, and the space closes
+    the list; Enter on a command without `input` sends `/name` at once,
+    and on a command with `input` writes `/name ` and sends nothing, so the
+    next Enter sends the box; Escape closes the list, keeps the text and
+    cancels no turn, and the list stays closed until the box is empty
+    again. Every other key edits the box as it does without the list. While
+    the box is `/name ` and the argument is empty, the command's
+    `input.hint` is drawn dim after it, and is not input. A command is sent
+    as every prompt is, the text of the box to console input (rule 27): the
+    daemon sends it to the agent as a command where its first word names a
+    listed command.
 
 ## Acceptance criteria
 
@@ -951,6 +989,53 @@ goal id to a seat (014).
   (`::a_chunk_that_arrives_after_the_whole_of_its_turn_is_not_drawn_again`),
   and text after a tool call is a block of its own that the stored whole does
   not repeat (`::agent_text_after_a_tool_call_is_a_block_of_its_own`).
+- With the agent's list, `/` in an empty box opens the suggestion list with
+  each command and its description, under the status row and over the box
+  (`ariadne-console/tui/commands.rs::a_slash_in_an_empty_box_opens_the_list_with_each_command_and_its_description`),
+  its description dim and its pick marked as the picker marks its own
+  (`::the_description_is_dim_and_the_pick_is_marked_as_the_picker_marks_its_own`);
+  with no list, or an empty one, `/` opens nothing
+  (`::with_no_list_or_an_empty_list_a_slash_opens_nothing`). `/CO` shows
+  `compact` before `mcp:code` and hides a name without `co`
+  (`::the_names_that_start_with_the_text_come_before_the_names_that_contain_it`).
+  Up and Down move the pick and not through the history
+  (`::up_and_down_move_the_pick_and_not_through_the_history`), and Down then
+  Tab writes the second name and a space and sends nothing
+  (`::down_then_tab_writes_the_second_name_and_a_space_and_sends_nothing`).
+  Enter on a command without `input` sends `/name` and empties the box
+  (`::enter_on_a_command_without_input_sends_it_and_empties_the_box`); on a
+  command with `input` it writes `/name `, shows the hint dim and sends
+  nothing
+  (`::enter_on_a_command_with_input_writes_it_shows_the_hint_and_sends_nothing`),
+  and the next Enter sends `/name x`
+  (`::the_next_enter_sends_the_command_with_its_argument`). A text no
+  command matches shows `no matching command`, and Enter sends it as typed
+  (`::a_text_no_command_matches_shows_no_matching_command_and_enter_sends_it_as_typed`).
+  Escape closes the list, keeps the text and cancels no running turn
+  (`::escape_closes_the_list_keeps_the_text_and_cancels_no_running_turn`),
+  a second Escape cancels it
+  (`::a_second_escape_while_a_turn_runs_cancels_it`), and the list stays
+  closed until the box is empty again
+  (`::after_escape_the_list_stays_closed_until_the_box_is_empty_again`).
+  While a permission question waits, `/` opens no list and the picker's
+  keys work
+  (`::while_a_permission_question_waits_a_slash_opens_no_list_and_the_picker_keys_work`).
+  Twenty commands draw eight rows, and Down past the last drawn row
+  scrolls the list
+  (`::a_list_of_twenty_commands_draws_eight_rows_and_down_past_the_last_scrolls_it`);
+  at 60×20, and on a shorter terminal with fewer rows, the status row, the
+  box and the footer are whole
+  (`::at_60_by_20_with_the_list_open_the_status_row_the_box_and_the_footer_are_whole`),
+  and a row too wide is cut and not wrapped
+  (`::a_row_wider_than_the_pane_is_cut_and_not_wrapped`). A snapshot without
+  the list, after one with it, leaves no list
+  (`::a_snapshot_without_the_list_after_one_with_it_leaves_no_list`), and the
+  event adds no block and leaves the status row
+  (`::the_list_adds_no_block_to_the_transcript_and_leaves_the_status_row`).
+  The open list, the no-match row and the hint draw in the whole scenario at
+  60×20, 80×24 and 120×40, and leave no cell behind
+  (`ariadne-console/tui/scenario.rs::the_whole_pane_draws_at_60_by_20`,
+  `::the_whole_pane_draws_at_80_by_24`, `::the_whole_pane_draws_at_120_by_40`).
 - A pending permission question draws a rule labelled `permission` above it
   and a rule below its options
   (`ariadne-console/tui/picker.rs::a_pending_question_draws_a_labelled_rule_above_and_a_rule_below`).
@@ -1165,6 +1250,7 @@ goal id to a seat (014).
 `crates/ariadne-console/src/tui/banner.rs`,
 `crates/ariadne-console/src/tui/blocks.rs`,
 `crates/ariadne-console/src/tui/chrome.rs`,
+`crates/ariadne-console/src/tui/commands.rs`,
 `crates/ariadne-console/src/tui/input.rs`,
 `crates/ariadne-console/src/tui/picker.rs`,
 `crates/ariadne-console/src/tui/viewport.rs`.

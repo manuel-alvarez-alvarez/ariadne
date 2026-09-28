@@ -1,5 +1,6 @@
 //! The whole pane at once: every kind of block, the picker, a queued prompt,
-//! a refused post, a dropped stream, a cancelled turn and the session's end,
+//! the suggestion list of the agent's slash commands, a refused post, a
+//! dropped stream, a cancelled turn and the session's end,
 //! drawn at three sizes on ratatui's test backend and, byte for byte, on the
 //! ANSI backend read back by a terminal emulator.
 
@@ -93,16 +94,17 @@ impl Pair {
         assert_eq!(emulated, expected, "the emulator shows the pane");
         let size = self.test.size().unwrap();
         assert_eq!(pane, Rect::from(size), "the pane is the whole screen");
-        let status = usize::from(size.height - self.on_test.pinned_rows(self.width));
+        let suggested = self.on_test.suggestion_rows(size.width, size.height);
+        let status = usize::from(size.height - self.on_test.pinned_rows(self.width) - suggested);
         let last = expected.len() - 1;
         assert!(
             expected[status].starts_with(" author · ")
-                && expected[status + 1].starts_with('─')
+                && expected[status + 1 + usize::from(suggested)].starts_with('─')
                 && expected[last - 1].starts_with('─')
                 && expected[last].starts_with(' ')
                 && !expected[last].trim().is_empty(),
-            "the status row, the box between its rules and the footer are the last rows: \
-             {expected:#?}"
+            "the status row, the suggestion list, the box between its rules and the \
+             footer are the last rows: {expected:#?}"
         );
         let cursor = self
             .test
@@ -417,6 +419,42 @@ fn scenario(width: u16, height: u16) -> String {
     pair.event("agent_message", "done", json!({"text": "Done."}));
     pair.event("stop", "stop", json!({"stop_reason": "end_turn"}));
 
+    // The agent's slash commands: the open list, the row that says no
+    // command matches, and the hint of the one picked. None is a block.
+    pair.event(
+        "available_commands_update",
+        "commands",
+        json!({"session_id": "agent", "available_commands": [
+            {"name": "review", "description": "Review the branch against its base",
+             "input": {"hint": "what to review"}},
+            {"name": "compact", "description": "Compact the conversation"},
+            {"name": "init", "description": "Write an AGENTS.md for the repository"}
+        ]}),
+    );
+    pair.typed("/");
+    let open = pair.pane_text();
+    for shown in [
+        "❯ /review   Review the branch",
+        "  /compact  Compact the conversation",
+        "  /init     Write an AGENTS.md",
+    ] {
+        assert!(open.contains(shown), "{shown} is on the screen: {open}");
+    }
+    pair.typed("zz");
+    let none = pair.pane_text();
+    assert!(none.contains("  no matching command"), "{none}");
+    for _ in 0..2 {
+        pair.key(with(KeyCode::Backspace, KeyModifiers::NONE));
+    }
+    pair.typed("rev");
+    assert_eq!(
+        pair.key(with(KeyCode::Enter, KeyModifiers::NONE)),
+        Action::None
+    );
+    let hinted = pair.pane_text();
+    assert!(hinted.contains("❯ /review what to review"), "{hinted}");
+    pair.key(ctrl('u'));
+
     // The newline keys add a line each and post nothing, and the cursor
     // is after the last character typed.
     pair.typed("a");
@@ -564,7 +602,16 @@ fn check(width: u16, height: u16) {
         );
         assert!(row.width() <= usize::from(width), "{row:?} fits {width}");
     }
-    for gone in ["queued", "permission ─", "reconnecting", "enter send"] {
+    for gone in [
+        "queued",
+        "permission ─",
+        "reconnecting",
+        "enter send",
+        "/compact",
+        "no matching command",
+        "what to review",
+        "available_commands_update",
+    ] {
         assert!(
             !shown.contains(gone),
             "{gone:?} left no cell behind at {width}x{height}:\n{shown}"

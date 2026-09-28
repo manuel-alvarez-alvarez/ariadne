@@ -24,6 +24,7 @@
 //! takes the backend as an argument, so one that answers no cursor query
 //! proves the viewport still opens, and still grows and shrinks.
 
+use std::cell::Cell;
 use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
 use std::time::Duration;
@@ -47,6 +48,7 @@ use crate::transcript::{self, PermissionOption, TranscriptItem};
 mod banner;
 mod blocks;
 mod chrome;
+mod commands;
 mod input;
 mod picker;
 mod viewport;
@@ -59,6 +61,7 @@ mod testing;
 pub use viewport::{Anchored, Screen, open};
 
 use blocks::block;
+use commands::Command;
 use input::Input;
 
 /// How often the spinner turns while a turn runs.
@@ -208,6 +211,17 @@ pub struct Console {
     /// block already there cannot be drawn again; a block part-way there
     /// keeps the fold its first lines had.
     whole: bool,
+    /// The slash commands the agent lists, in its order: the latest list,
+    /// which replaces the one before it whole.
+    commands: Vec<Command>,
+    /// The pick of the suggestion list, among the commands that match.
+    suggested: usize,
+    /// The first match the suggestion list draws: it scrolls to keep the
+    /// pick on the screen.
+    scrolled: Cell<usize>,
+    /// Escape closed the suggestion list: it stays closed until the box is
+    /// empty again.
+    dismissed: bool,
 }
 
 /// Where the attach banner is.
@@ -243,6 +257,10 @@ impl Console {
             launches: BTreeMap::new(),
             whole_on_resize: false,
             whole: false,
+            commands: Vec::new(),
+            suggested: 0,
+            scrolled: Cell::new(0),
+            dismissed: false,
         }
     }
 
@@ -340,7 +358,11 @@ impl Console {
         // while the stream was down counts from its prompt, not the old one.
         let finished = self.settled();
         let mut items = Vec::new();
+        self.commands = Vec::new();
         for event in events {
+            if self.follow_commands(event) {
+                continue;
+            }
             absorb(&mut items, event);
             self.follow_turn(event, now);
             self.follow_usage(event);
@@ -359,6 +381,9 @@ impl Console {
     /// as `now` rather than at the moment the event is folded in. See
     /// [`Console::snapshot_at`].
     pub(crate) fn apply_at(&mut self, event: &AgentEventDto, now: chrono::DateTime<chrono::Utc>) {
+        if self.follow_commands(event) {
+            return;
+        }
         self.follow_turn(event, now);
         self.follow_usage(event);
         // A daemon that predates `source` and `text` (021) names neither.
@@ -621,7 +646,10 @@ impl Console {
             }
         }
 
-        match key.code {
+        if let Some(action) = self.suggest_key(key) {
+            return action;
+        }
+        let action = match key.code {
             KeyCode::Esc if self.turn.running() => Action::Cancel,
             KeyCode::Enter if modified_enter => {
                 self.input.newline();
@@ -646,7 +674,9 @@ impl Console {
                 self.input.key(key);
                 Action::None
             }
-        }
+        };
+        self.edited();
+        action
     }
 
     /// Put a just-typed prompt on the transcript straight away, rather than
@@ -674,6 +704,7 @@ impl Console {
     pub fn paste(&mut self, text: &str) {
         self.armed = false;
         self.input.paste(text);
+        self.edited();
     }
 
     /// How many leading items are finished with: their lines are stable,
@@ -787,7 +818,9 @@ impl Console {
         }
         viewport::fit(terminal, self.rows(terminal.size()?))?;
         let size = terminal.size()?;
-        let room = size.height.saturating_sub(self.pinned_rows(size.width));
+        let room = size.height.saturating_sub(
+            self.pinned_rows(size.width) + self.suggestion_rows(size.width, size.height),
+        );
         let (pieces, from) = self.finished(size.width);
         let finished: usize = pieces.iter().map(Vec::len).sum();
         let written = self.unfinished(from, size.width, room).len();

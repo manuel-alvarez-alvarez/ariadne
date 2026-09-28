@@ -95,17 +95,19 @@ impl Console {
         STATUS_ROWS + self.input.height(width) + FOOTER_ROWS
     }
 
-    /// Draw the viewport: what is being written, the status row, the box and
-    /// the footer.
+    /// Draw the viewport: what is being written, the status row, the
+    /// suggestion list while it is open, the box and the footer.
     pub fn render(&self, frame: &mut Draw) {
         let area = frame.area();
+        let suggested = self.suggestion_rows(area.width, area.height);
         let [live, pinned] = Layout::vertical([
             Constraint::Min(0),
-            Constraint::Length(self.pinned_rows(area.width)),
+            Constraint::Length(self.pinned_rows(area.width) + suggested),
         ])
         .areas(area);
-        let [status, input, footer] = Layout::vertical([
+        let [status, suggestions, input, footer] = Layout::vertical([
             Constraint::Length(STATUS_ROWS),
+            Constraint::Length(suggested),
             Constraint::Min(0),
             Constraint::Length(FOOTER_ROWS),
         ])
@@ -113,7 +115,8 @@ impl Console {
 
         self.draw_live(frame, live);
         self.draw_status(frame, status);
-        self.input.draw(frame, input);
+        self.draw_suggestions(frame, suggestions);
+        self.input.draw(frame, input, self.hint());
         self.draw_footer(frame, footer);
     }
 
