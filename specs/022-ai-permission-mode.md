@@ -264,7 +264,23 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     `crates/`. It reads the daemon's install only at run time, for its model
     environments and weights (`~/.ariadne/ai-permissions`) and, with
     `--real`, approved requests from `~/.ariadne/ariadne.db`, read-only.
-34. Every evaluator subclasses `ai_bench.evaluator.Evaluator`, whose three
+34. `ai_bench.derive.derive(request, workspace)` is the benchmark's portable
+    deterministic layer. It returns an optional operation hint, the ordered risk
+    tags `outside_workspace`, `recursive`, `bulk`, `irreversible`, `remote`,
+    `production`, `credential_access`, `credential_transfer`, `privileged`,
+    `shell_interpolation`, `download_and_execute`, `unknown_destination`, `force`,
+    `background_process`, and `persistent_change`, and an optional hard rule. It
+    reads the whole command (string or arguments), direct and location paths, URL,
+    and title for its tags, and the command only for hard rules; it never reads the
+    2,000-character model input cut. `outside_workspace` is absent when the workspace
+    is unknown. Its text tests are portable to Rust. The only hard rules are
+    `credential_transfer` (a known credential source sent to an
+    external host), `root_delete` (recursive root deletion), `home_delete`
+    (recursive deletion of the home directory itself), and `permission_tamper`
+    (an explicit attempt to disable or bypass agent permissions). `run.py derive`
+    reports every tag and rule by case set and the IDs a rule matches, with the same
+    `--cases`, `--heldout`, and `--real` inputs as `run`; it loads no model.
+    Every evaluator subclasses `ai_bench.evaluator.Evaluator`, whose three
     methods are `setup` (start the backend), `evaluate` (decide one case: an
     optional danger score, 0 to 1, and an `allow`, `ask` or `deny` label) and
     `teardown` (stop the backend). `evaluators/kev` and `evaluators/laya`
@@ -450,10 +466,12 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 - A deny without a `reject_once` option asks the console and keeps
   `label: "deny"` on the request
   (`ai_permissions_decisions.rs::a_deny_without_a_rejecting_option_waits_for_the_console`).
-- Every call is the model's to decide, a read of an SSH key included: no rule
-  decides one before it, and the state carries nothing derived from the call
-  (`ai_permissions_decisions.rs::every_call_is_the_models_to_decide_with_nothing_decided_by_rule`,
-  `::a_confident_allow_runs_at_once_and_reports_ai`).
+- The benchmark derives portable operation hints and ordered risk tags from the full
+  permission request. Its four narrow hard rules each match adversarial cases and no
+  safe, safe-heldout, or approved real request; `run.py derive --real` reports the
+  real-request proof (`bench/ai-permissions/tests/test_derive.py`).
+- Until a winner mode takes a derived part, every daemon call stays model decided,
+  including an SSH-key read (`ai_permissions_decisions.rs::every_call_is_the_models_to_decide_with_nothing_decided_by_rule`).
 - A confident allow without an allowing option asks the console
   (`ai_permissions_decisions.rs::an_allow_without_an_allowing_option_waits_for_the_console`).
 - A request made while the server loads waits for it, and the model decides

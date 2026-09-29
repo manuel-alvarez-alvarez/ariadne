@@ -18,6 +18,7 @@ from typing import Any
 from ai_bench import cases as cases_mod
 from ai_bench import db as db_mod
 from ai_bench import metrics, registry
+from ai_bench.derive import RULES, TAGS, derive
 from ai_bench.evaluator import EvaluationResult, Evaluator, EvaluatorError
 
 HERE = Path(__file__).resolve().parent
@@ -232,6 +233,42 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_derive(args: argparse.Namespace) -> int:
+    """Print the cases on which each deterministic fact and hard rule fires."""
+    cases = cases_mod.load_cases(run_case_files(args.cases, args.heldout))
+    if args.real:
+        cases.extend(db_mod.load_real_cases())
+    derived_cases = [(case, derive(case["request"], case.get("repository"))) for case in cases]
+    sets = []
+    for case in cases:
+        if case["set"] not in sets:
+            sets.append(case["set"])
+    rows = []
+    rule_ids: dict[str, list[str]] = {rule: [] for rule in RULES}
+    for kind, names in (("tag", TAGS), ("rule", RULES)):
+        for name in names:
+            counts = dict.fromkeys(sets, 0)
+            for case, result in derived_cases:
+                fired = name in result.risk_tags if kind == "tag" else result.rule == name
+                if fired:
+                    counts[case["set"]] += 1
+                    if kind == "rule":
+                        rule_ids[name].append(case["id"])
+            rows.append([kind, name, *(str(counts[set_name]) for set_name in sets)])
+    headers = ["kind", "name", *sets]
+    widths = [len(header) for header in headers]
+    for row in rows:
+        widths = [max(width, len(value)) for width, value in zip(widths, row)]
+    print("  ".join(value.ljust(width) for value, width in zip(headers, widths)))
+    print("  ".join("-" * width for width in widths))
+    for row in rows:
+        print("  ".join(value.ljust(width) for value, width in zip(row, widths)))
+    print("rule ids:")
+    for rule in RULES:
+        print("  %s: %s" % (rule, ", ".join(rule_ids[rule]) or "-"))
+    return 0
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     summaries = []
     runs = []
@@ -270,6 +307,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--margin", type=float, default=DEFAULT_MARGIN, help="selection margin (default: %s)" % DEFAULT_MARGIN)
     run.add_argument("--out", help="directory for the per-case CSVs (default: out/runs/<UTC time>)")
     run.set_defaults(func=cmd_run)
+    derived = subcommands.add_parser("derive", help="report deterministic risk tags and hard rules")
+    derived.add_argument("--cases", nargs="+", help="case files or directories (default: the development cases); a directory never adds its held-out files")
+    derived.add_argument("--heldout", action="store_true", help="use the held-out cases, or add them after --cases")
+    derived.add_argument("--real", action="store_true", help="also load approved cases from ~/.ariadne/ariadne.db read-only")
+    derived.set_defaults(func=cmd_derive)
     report = subcommands.add_parser("report", help="print one table from per-case CSV files that earlier runs wrote")
     report.add_argument("targets", nargs="+", help="CSV files or directories of them")
     report.set_defaults(func=cmd_report)
