@@ -10,7 +10,9 @@ from __future__ import annotations
 import gc
 from typing import Any, ClassVar
 
-from ai_bench.evaluator import Evaluator, EvaluatorError
+from ai_bench import decision
+from ai_bench.derive import derive
+from ai_bench.evaluator import Evaluation, Evaluator, EvaluatorError
 
 
 class KevEvaluator(Evaluator):
@@ -52,18 +54,28 @@ class KevEvaluator(Evaluator):
             options = replace(options, temperature=self.temperature)
         self._tokenizer, self._model = Checkpoint(self.run).load(device, options)
 
-    def answer(self, state: Any, questions: dict[str, Any]) -> dict[str, Any]:
-        """Kev's answer to one request, in the `{"answers": {...}}` shape."""
+    def _probabilities(self, state: Any, questions: dict[str, Any]) -> tuple[list[list[float]], list[dict[str, Any]]]:
         if self._model is None:
             raise EvaluatorError("%s: evaluate before setup" % self.key)
-        from kev.api import SystemOneRequest, to_answers, to_record
+        from kev.api import SystemOneRequest, to_record
         from kev.model import SERVE_MAX_BRANCH, SERVE_MAX_STATE
 
         request = SystemOneRequest(state=state, model=self.model, questions=questions)
         record, meta = to_record(request)
         encoded = self._model.encode(self._tokenizer, record, max_state=SERVE_MAX_STATE, max_branch=SERVE_MAX_BRANCH)
-        probabilities = self._model.probs(encoded)
-        return {"model": self.model, "answers": to_answers([p.tolist() for p in probabilities], meta)}
+        return [p.tolist() for p in self._model.probs(encoded)], meta
+
+    def answer(self, state: Any, questions: dict[str, Any]) -> dict[str, Any]:
+        """Kev's answer to one request, in the `{"answers": {...}}` shape."""
+        from kev.api import to_answers
+
+        probabilities, meta = self._probabilities(state, questions)
+        return {"model": self.model, "answers": to_answers(probabilities, meta)}
+
+    def probabilities(self, state: Any, questions: dict[str, Any]) -> dict[str, list[float]]:
+        """The probabilities of each question of one request, in option order, not rounded."""
+        probabilities, meta = self._probabilities(state, questions)
+        return {one["id"]: [float(p) for p in found] for one, found in zip(meta, probabilities)}
 
     def teardown(self) -> None:
         self._tokenizer = None
@@ -76,3 +88,16 @@ class KevEvaluator(Evaluator):
                 torch.mps.empty_cache()
         except ImportError:
             pass
+
+
+def evaluate_contract(evaluator: KevEvaluator, contract: Any, case: dict[str, Any]) -> Evaluation:
+    """One case under the contract module `contract`: a hard rule of its `RULES` denies with no
+    call to the model; else the model answers its `QUESTIONS` over its `state`, and a tag of
+    its `CAPS` keeps the call from `allow`."""
+    request, workspace = case["request"], case.get("repository")
+    derived = derive(request, workspace)
+    if derived.rule in contract.RULES:
+        return decision.ruled(derived.rule)
+    answer = evaluator.answer(contract.state(request, workspace), contract.QUESTIONS)
+    evaluation = decision.three_way(contract.danger(answer), contract.ALLOW_THRESHOLD, contract.DENY_THRESHOLD)
+    return decision.capped(evaluation, derived.risk_tags, contract.CAPS)

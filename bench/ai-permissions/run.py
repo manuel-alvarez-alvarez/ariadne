@@ -3,12 +3,15 @@
 
 Evaluators live under `evaluators/`, one package per backend, and register under a unique
 key; `list` prints them and `run --evaluator <key>` runs one: `setup`, `evaluate` per case,
-then `teardown`.
+then `teardown`. `fixture --evaluator <key>` prints what a mode sends for each case, and what
+its rules and caps decide, with no model.
 """
 from __future__ import annotations
 
 import argparse
 import csv
+import importlib
+import json
 import sys
 import time
 from datetime import datetime, timezone
@@ -17,7 +20,7 @@ from typing import Any
 
 from ai_bench import cases as cases_mod
 from ai_bench import db as db_mod
-from ai_bench import metrics, registry
+from ai_bench import metrics, probe, registry, representations
 from ai_bench.derive import RULES, TAGS, derive
 from ai_bench.evaluator import EvaluationResult, Evaluator, EvaluatorError
 
@@ -39,7 +42,11 @@ def evaluate_all(evaluator: Evaluator, cases: list[dict[str, Any]]) -> list[Eval
             latency_ms = (time.perf_counter() - started) * 1000.0
             if evaluation.label not in ("allow", "ask", "deny"):
                 raise EvaluatorError("%s: invalid label %r for %s" % (evaluator.key, evaluation.label, case["id"]))
-            results.append(EvaluationResult(case["id"], evaluation.danger, evaluation.label, latency_ms))
+            results.append(
+                EvaluationResult(
+                    case["id"], evaluation.danger, evaluation.label, latency_ms, evaluation.rule, evaluation.cap
+                )
+            )
         return results
     finally:
         evaluator.teardown()
@@ -127,6 +134,12 @@ def print_selection(name: str, cases: list[dict[str, Any]], results: list[Evalua
             "  no pair: allow_threshold %.4f is not under deny_threshold %.4f"
             % (selection["allow_threshold"], selection["deny_threshold"])
         )
+    if selection["decided"]:
+        print("  risky cases that a rule or a cap decides, off the allow bound: %d" % len(selection["decided"]))
+    if selection["rule_denied"]:
+        print("  broken hard rule, a rule denies %d safe or real case(s):" % len(selection["rule_denied"]))
+        for case_id in selection["rule_denied"]:
+            print("    %s" % case_id)
     print("  nearest the allow bound:")
     for case_id, danger in selection["nearest_allow"]:
         print("    %-40s %.4f" % (case_id, danger))
@@ -188,7 +201,9 @@ def write_scores(directory: Path, name: str, cases: list[dict[str, Any]], result
     safe_name = "".join(character if character.isalnum() or character in "._-" else "_" for character in name)
     with (directory / (safe_name + ".csv")).open("w", newline="", encoding="utf-8") as output:
         writer = csv.writer(output, lineterminator="\n")
-        writer.writerow(["id", "set", "expected", "danger", "label", "latency_ms", "operation", "risk_tags", "pair"])
+        writer.writerow(
+            ["id", "set", "expected", "danger", "label", "latency_ms", "operation", "risk_tags", "pair", "rule", "cap"]
+        )
         writer.writerows(
             [
                 case["id"],
@@ -200,6 +215,8 @@ def write_scores(directory: Path, name: str, cases: list[dict[str, Any]], result
                 case.get("operation") or "",
                 "|".join(case.get("risk_tags") or []),
                 case.get("pair") or "",
+                result.rule or "",
+                result.cap or "",
             ]
             for case, result in zip(cases, results)
         )
@@ -230,6 +247,8 @@ def read_scores(path: Path) -> tuple[list[dict[str, Any]], list[EvaluationResult
                         float(row["danger"]) if row["danger"] else None,
                         row["label"],
                         float(row["latency_ms"]),
+                        row.get("rule") or None,
+                        row.get("cap") or None,
                     )
                 )
     except OSError as exc:
@@ -330,6 +349,274 @@ def cmd_derive(args: argparse.Namespace) -> int:
     return 0
 
 
+def fixture_line(cls: type[Evaluator], case: dict[str, Any]) -> dict[str, Any]:
+    """What the mode `cls` sends for `case`, and what its rules and caps decide before the
+    model answers. `derived.rule` is the rule of the mode that denies the call, and
+    `derived.cap` the first tag of its caps that the call has; each is `None` where none does."""
+    _, module = contract_of(cls.key)
+    request = case["request"]
+    workspace = case.get("repository")
+    state = state_of(module, request, workspace)
+    derived = derive(request, workspace)
+    rules = getattr(module, "RULES", [])
+    caps = getattr(module, "CAPS", [])
+    return {
+        "id": case["id"],
+        "request": request,
+        "workspace": workspace,
+        "model": getattr(cls, "model", None),
+        "state": state,
+        "questions": module.QUESTIONS,
+        "derived": {
+            "operation": derived.operation_hint,
+            "risk_tags": derived.risk_tags,
+            "rule": derived.rule if derived.rule in rules else None,
+            "cap": next((tag for tag in caps if tag in derived.risk_tags), None),
+        },
+    }
+
+
+def cmd_fixture(args: argparse.Namespace) -> int:
+    """Print one JSON line per case: the request of a mode and its derived facts. No model."""
+    cls = registry.get(args.evaluator)
+    cases = cases_mod.load_cases(run_case_files(args.cases, args.heldout))
+    if args.real:
+        cases.extend(db_mod.load_real_cases())
+    for case in cases:
+        print(json.dumps(fixture_line(cls, case), ensure_ascii=False, separators=(",", ":")))
+    return 0
+
+
+def contract_of(key: str) -> tuple[type[Evaluator], Any]:
+    """The evaluator `key` and its module, which must carry the contract of a mode."""
+    cls = registry.get(key)
+    module = importlib.import_module(cls.__module__)
+    if not hasattr(module, "QUESTIONS") or not (hasattr(module, "state") or hasattr(module, "FIELDS")):
+        raise EvaluatorError("%s is not a contract: it has no QUESTIONS, or no state and no FIELDS" % key)
+    return cls, module
+
+
+def state_of(module: Any, request: dict[str, Any], workspace: str | None) -> Any:
+    if hasattr(module, "state"):
+        return module.state(request, workspace)
+    return representations.build_json(request, workspace, module.FIELDS)
+
+
+def probe_cases(prober: Any, contracts: list[tuple[str, Any]], cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One record per case: the probabilities of each question of each mode at the temperature
+    of `prober`, and the derived facts. The modes that build one state go in one request, each
+    question under the name `<key>.<question>` of the first mode that asks it: a question that
+    two modes ask over one state is asked one time. `prober` gives
+    `probabilities(state, questions)`."""
+    records = []
+    for case in cases:
+        request, workspace = case["request"], case.get("repository")
+        groups: dict[str, tuple[Any, dict[str, Any], dict[str, list[tuple[str, str]]]]] = {}
+        for key, module in contracts:
+            state = state_of(module, request, workspace)
+            _, questions, askers = groups.setdefault(json.dumps(state, sort_keys=True), (state, {}, {}))
+            for name, question in module.QUESTIONS.items():
+                text = json.dumps(question, sort_keys=True)
+                if text not in askers:
+                    questions["%s.%s" % (key, name)] = question
+                askers.setdefault(text, []).append((key, name))
+        found: dict[str, dict[str, list[float]]] = {key: {} for key, _ in contracts}
+        started = time.perf_counter()
+        for state, questions, askers in groups.values():
+            answered = prober.probabilities(state, questions)
+            for asked in askers.values():
+                first = "%s.%s" % asked[0]
+                for key, name in asked:
+                    found[key][name] = answered[first]
+        derived = derive(request, workspace)
+        records.append(
+            {
+                "id": case["id"],
+                "set": case["set"],
+                "expected": case["expected"],
+                "operation": case.get("operation"),
+                "risk_tags": case.get("risk_tags") or [],
+                "pair": case.get("pair"),
+                "derived": {
+                    "operation_hint": derived.operation_hint,
+                    "risk_tags": derived.risk_tags,
+                    "rule": derived.rule,
+                },
+                "latency_ms": (time.perf_counter() - started) * 1000.0,
+                "probabilities": found,
+            }
+        )
+    return records
+
+
+def cmd_probe(args: argparse.Namespace) -> int:
+    """Ask the questions of several modes in one model load, at temperature 1.0."""
+    from evaluators.kev import KevEvaluator
+
+    contracts = []
+    for key in args.evaluator:
+        cls, module = contract_of(key)
+        if cls.backend != "kev":
+            raise EvaluatorError("%s is not a Kev mode" % key)
+        if contracts and module.RUN != contracts[0][1].RUN:
+            raise EvaluatorError("%s has another run than %s: probe each run alone" % (key, contracts[0][0]))
+        contracts.append((key, module))
+
+    class Prober(KevEvaluator):
+        key = "probe"
+        run = contracts[0][1].RUN
+        temperature = 1.0
+
+        def evaluate(self, case: dict[str, Any]) -> Any:
+            raise EvaluatorError("a probe evaluates no case")
+
+    cases = cases_mod.load_cases(run_case_files(args.cases, args.heldout))
+    if args.real:
+        cases.extend(db_mod.load_real_cases())
+    prober = Prober()
+    prober.setup()
+    try:
+        records = probe_cases(prober, contracts, cases)
+    finally:
+        prober.teardown()
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w", encoding="utf-8") as output:
+        for record in records:
+            output.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+    print("%d records of %s: %s" % (len(records), ", ".join(args.evaluator), out))
+    return 0
+
+
+def read_probe(targets: list[str]) -> list[dict[str, Any]]:
+    records = []
+    for target in targets:
+        try:
+            with Path(target).open(encoding="utf-8") as lines:
+                records.extend(json.loads(line) for line in lines if line.strip())
+        except (OSError, json.JSONDecodeError) as exc:
+            raise EvaluatorError("could not read the probe records %s: %s" % (target, exc)) from exc
+    if not records:
+        raise EvaluatorError("no probe records in %s" % ", ".join(targets))
+    return records
+
+
+def print_rows(headers: list[str], rows: list[list[str]]) -> None:
+    widths = [len(header) for header in headers]
+    for row in rows:
+        widths = [max(width, len(value)) for width, value in zip(widths, row)]
+    print("  ".join(header.ljust(width) for header, width in zip(headers, widths)))
+    print("  ".join("-" * width for width in widths))
+    for row in rows:
+        print("  ".join(value.ljust(width) for value, width in zip(row, widths)))
+
+
+def share(count: int, total: int) -> str:
+    return "%d of %d (%s)" % (count, total, "%.3f" % (count / total) if total else "-")
+
+
+OUTCOME_HEADERS = [
+    "allow threshold",
+    "deny threshold",
+    "pair",
+    "allow margin",
+    "deny margin",
+    "benign allowed",
+    "adversarial denied",
+    "risky allowed",
+    "benign denied",
+    "AUROC risky",
+    "AUROC deny",
+]
+
+
+def outcome_row(found: dict[str, Any]) -> list[str]:
+    return [
+        "%.4f" % found["allow_threshold"],
+        "%.4f" % found["deny_threshold"],
+        "yes" if found["has_pair"] else "no",
+        format_value(found["allow_margin"]),
+        format_value(found["deny_margin"]),
+        share(found["benign_allowed"], found["benign"]),
+        share(found["adversarial_denied"], found["adversarial"]),
+        str(found["risky_allowed"]),
+        str(found["safe_denied"]),
+        format_value(found["auroc_risky"]),
+        format_value(found["auroc_deny"]),
+    ]
+
+
+def cmd_measure(args: argparse.Namespace) -> int:
+    """Print one variable of a mode from probe records, with no model."""
+    records = read_probe(args.targets)
+    _, module = contract_of(args.evaluator)
+    if any(args.evaluator not in record["probabilities"] for record in records):
+        raise EvaluatorError("the probe records do not carry %s" % args.evaluator)
+    caps = list(getattr(module, "CAPS", [])) if args.caps is None else [tag for tag in args.caps.split(",") if tag]
+    rules = list(getattr(module, "RULES", [])) if args.rules is None else [rule for rule in args.rules.split(",") if rule]
+    for name, known in (("cap", TAGS), ("rule", RULES)):
+        for value in caps if name == "cap" else rules:
+            if value not in known:
+                raise EvaluatorError("unknown %s %r" % (name, value))
+    temperatures = args.temperature or [module.TEMPERATURE]
+    if any(temperature is None for temperature in temperatures):
+        raise EvaluatorError("%s keeps the temperature of its checkpoint: give --temperature" % args.evaluator)
+    print("%s, caps: %s, rules: %s, margin %.2f" % (args.evaluator, ", ".join(caps) or "-", ", ".join(rules) or "-", args.margin))
+    if args.variable == "temperature":
+        rows = []
+        for temperature in temperatures:
+            found = probe.results(records, args.evaluator, module.QUESTIONS, module.danger, temperature, caps, rules)
+            if args.pair:
+                outcome = probe.at_pair(records, found, args.pair[0], args.pair[1])
+            else:
+                outcome = probe.outcome(records, found, args.margin)
+            rows.append(["%.2f" % temperature, *outcome_row(outcome)])
+        print_rows(["temperature", *OUTCOME_HEADERS], rows)
+    elif args.variable == "caps":
+        rows = probe.cap_costs(records, args.evaluator, module.QUESTIONS, module.danger, temperatures[0], caps, rules, args.margin)
+        print_rows(
+            ["tag", "benign", "risky", "cost", "allow threshold", "benign allowed", "gain"],
+            [
+                [
+                    row["tag"],
+                    str(row["benign"]),
+                    str(row["risky"]),
+                    str(row["cost"]),
+                    "%.4f" % row["allow_threshold"],
+                    str(row["benign_allowed"]),
+                    "%+d" % row["gain"],
+                ]
+                for row in rows
+            ],
+        )
+    elif args.variable == "policy":
+        found = probe.probability_policy(records, args.evaluator, args.question, temperatures[0], caps, rules, args.margin)
+        print_rows(
+            ["allow probability", "deny probability", "benign allowed", "adversarial denied", "risky allowed", "benign denied"],
+            [
+                [
+                    "%.4f" % found["allow_probability"],
+                    "%.4f" % found["deny_probability"],
+                    share(found["benign_allowed"], found["benign"]),
+                    share(found["adversarial_denied"], found["adversarial"]),
+                    str(found["risky_allowed"]),
+                    str(found["safe_denied"]),
+                ]
+            ],
+        )
+    else:
+        options = list(module.QUESTIONS[args.question]["criteria"])
+        found = probe.choice_accuracy(records, args.evaluator, args.question, options)
+        print_rows(
+            ["operation", "correct"],
+            [
+                *([operation, share(hits, total)] for operation, (hits, total) in found["by_operation"].items()),
+                ["every operation", share(round((found["accuracy"] or 0) * found["count"]), found["count"])],
+            ],
+        )
+    return 0
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     summaries = []
     runs = []
@@ -377,6 +664,30 @@ def build_parser() -> argparse.ArgumentParser:
     derived.add_argument("--heldout", action="store_true", help="use the held-out cases, or add them after --cases")
     derived.add_argument("--real", action="store_true", help="also load approved cases from ~/.ariadne/ariadne.db read-only")
     derived.set_defaults(func=cmd_derive)
+    fixture = subcommands.add_parser("fixture", help="print what a mode sends and derives for each case, with no model")
+    fixture.add_argument("--evaluator", required=True, help="an evaluator key from `list`")
+    fixture.add_argument("--cases", nargs="+", help="case files or directories (default: the development cases); a directory never adds its held-out files")
+    fixture.add_argument("--heldout", action="store_true", help="use the held-out cases, or add them after --cases")
+    fixture.add_argument("--real", action="store_true", help="also load approved cases from ~/.ariadne/ariadne.db read-only")
+    fixture.set_defaults(func=cmd_fixture)
+    probing = subcommands.add_parser("probe", help="record the probabilities of several Kev modes in one model load, at temperature 1.0")
+    probing.add_argument("--evaluator", action="append", required=True, help="a Kev evaluator key from `list`; repeat for each mode")
+    probing.add_argument("--cases", nargs="+", help="case files or directories (default: the development cases); a directory never adds its held-out files")
+    probing.add_argument("--heldout", action="store_true", help="use the held-out cases, or add them after --cases")
+    probing.add_argument("--real", action="store_true", help="also load approved cases from ~/.ariadne/ariadne.db read-only")
+    probing.add_argument("--out", required=True, help="the JSON Lines file for the records")
+    probing.set_defaults(func=cmd_probe)
+    measure = subcommands.add_parser("measure", help="print one variable of a mode from probe records, with no model")
+    measure.add_argument("variable", choices=("temperature", "caps", "policy", "operation"))
+    measure.add_argument("targets", nargs="+", help="files of probe records; their records go together")
+    measure.add_argument("--evaluator", required=True, help="the mode to measure, by key")
+    measure.add_argument("--temperature", type=float, action="append", help="a temperature; repeat for each one (default: the one of the mode)")
+    measure.add_argument("--caps", help="tags that cap, with commas (default: the CAPS of the mode; '' for none)")
+    measure.add_argument("--rules", help="hard rules in use, with commas (default: the RULES of the mode; '' for none)")
+    measure.add_argument("--margin", type=float, default=DEFAULT_MARGIN, help="selection margin (default: %s)" % DEFAULT_MARGIN)
+    measure.add_argument("--pair", type=float, nargs=2, metavar=("ALLOW", "DENY"), help="temperature only: judge at this pair, not at the pair of the records")
+    measure.add_argument("--question", default="decision", help="policy and operation: the name of the choice question (default: decision)")
+    measure.set_defaults(func=cmd_measure)
     report = subcommands.add_parser("report", help="print one table from per-case CSV files that earlier runs wrote")
     report.add_argument("targets", nargs="+", help="CSV files or directories of them")
     report.add_argument("--by", choices=("operation", "tag", "pair"), help="print a breakdown table per operation, risk tag or adversarial pair")

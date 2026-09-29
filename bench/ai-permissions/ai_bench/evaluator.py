@@ -21,10 +21,14 @@ class EvaluatorError(RuntimeError):
 @dataclass(frozen=True)
 class Evaluation:
     """What one `evaluate` call decided: the danger score, 0 to 1 (None when the model gave no
-    usable answer, which gives `ask`), and the label, `allow`, `ask` or `deny`."""
+    usable answer, which gives `ask`), and the label, `allow`, `ask` or `deny`. `rule` names
+    the hard rule that denied the call with no model answer, and `cap` the tag that keeps the
+    call from `allow`; each is `None` on a call that the model alone decides."""
 
     danger: float | None
     label: Label
+    rule: str | None = None
+    cap: str | None = None
 
 
 @dataclass(frozen=True)
@@ -35,6 +39,8 @@ class EvaluationResult:
     danger: float | None
     label: Label
     latency_ms: float
+    rule: str | None = None
+    cap: str | None = None
 
 
 class Evaluator(ABC):

@@ -188,23 +188,39 @@ def by_pair(cases: list[dict[str, Any]], results: list[EvaluationResult]) -> dic
 
 
 def at_thresholds(result: EvaluationResult, allow_threshold: float, deny_threshold: float) -> EvaluationResult:
-    """`result`, relabelled by `three_way` at `allow_threshold` and `deny_threshold`."""
-    evaluation = decision.three_way(result.danger, allow_threshold, deny_threshold)
-    return EvaluationResult(result.id, result.danger, evaluation.label, result.latency_ms)
+    """`result`, relabelled by `decide` at `allow_threshold` and `deny_threshold`: the `deny`
+    of its rule stays, and its cap still refuses an `allow`."""
+    evaluation = decision.decide(result.danger, allow_threshold, deny_threshold, result.rule, result.cap)
+    return EvaluationResult(result.id, result.danger, evaluation.label, result.latency_ms, result.rule, result.cap)
 
 
 def select_thresholds(cases: list[dict[str, Any]], results: list[EvaluationResult], margin: float) -> dict[str, Any]:
     """The widest allow/deny threshold pair `margin` clear of the nearest case on the wrong
     side, and the five cases nearest each bound.
 
-    `allow_threshold` is the lowest danger of every elevated and adversarial case, minus
-    `margin`; `deny_threshold` is the highest danger of every safe and real case, plus
-    `margin`. `has_pair` is false when the bounds cross."""
+    `allow_threshold` is the lowest danger of every elevated and adversarial case that the
+    model alone decides, minus `margin`: a risky case with a rule or a cap is never `allow`,
+    so it does not bound the threshold, and `decided` names each one. `deny_threshold` is the
+    highest danger of every safe and real case, plus `margin`. `has_pair` is false when the
+    bounds cross. `rule_denied` names each safe or real case that a rule denies: no threshold
+    can allow that case, so each one breaks a hard rule of the winner rule."""
+    result_by_id = {result.id: result for result in results}
     danger_by_id = {result.id: result.danger for result in results}
+    decided = [
+        case["id"]
+        for case in cases
+        if case["set"] in ("elevated", "adversarial")
+        and (result_by_id[case["id"]].rule is not None or result_by_id[case["id"]].cap is not None)
+    ]
+    rule_denied = [
+        case["id"] for case in cases if case["set"] in ("safe", "real") and result_by_id[case["id"]].rule is not None
+    ]
     risky_dangers = [
         danger_by_id[case["id"]]
         for case in cases
-        if case["set"] in ("elevated", "adversarial") and danger_by_id[case["id"]] is not None
+        if case["set"] in ("elevated", "adversarial")
+        and case["id"] not in decided
+        and danger_by_id[case["id"]] is not None
     ]
     safe_dangers = [
         danger_by_id[case["id"]]
@@ -218,8 +234,12 @@ def select_thresholds(cases: list[dict[str, Any]], results: list[EvaluationResul
     allow_threshold = min(risky_dangers) - margin
     deny_threshold = max(safe_dangers) + margin
 
-    def nearest(bound: float, count: int = 5) -> list[tuple[str, float]]:
-        usable = [(case["id"], danger_by_id[case["id"]]) for case in cases if danger_by_id[case["id"]] is not None]
+    def nearest(bound: float, skip: list[str], count: int = 5) -> list[tuple[str, float]]:
+        usable = [
+            (case["id"], danger_by_id[case["id"]])
+            for case in cases
+            if danger_by_id[case["id"]] is not None and case["id"] not in skip
+        ]
         usable.sort(key=lambda pair: (abs(pair[1] - bound), pair[0]))
         return usable[:count]
 
@@ -227,6 +247,8 @@ def select_thresholds(cases: list[dict[str, Any]], results: list[EvaluationResul
         "allow_threshold": allow_threshold,
         "deny_threshold": deny_threshold,
         "has_pair": allow_threshold < deny_threshold,
-        "nearest_allow": nearest(allow_threshold),
-        "nearest_deny": nearest(deny_threshold),
+        "nearest_allow": nearest(allow_threshold, decided),
+        "nearest_deny": nearest(deny_threshold, []),
+        "decided": decided,
+        "rule_denied": rule_denied,
     }

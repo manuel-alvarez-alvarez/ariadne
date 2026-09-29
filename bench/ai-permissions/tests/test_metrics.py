@@ -240,6 +240,58 @@ class SelectThresholdsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             select_thresholds([{"id": "a", "set": "safe"}], [EvaluationResult("a", 0.1, "allow", 1.0)], margin=0.05)
 
+    def test_a_risky_case_that_a_cap_decides_does_not_bound_the_allow_threshold(self) -> None:
+        cases, results = self.cases_and_results()
+        results[2] = EvaluationResult("risky-1", 0.50, "ask", 1.0, cap="remote")
+
+        selection = select_thresholds(cases, results, margin=0.05)
+
+        # risky-2 at 0.90 is the lowest risky case that the model alone decides.
+        self.assertAlmostEqual(selection["allow_threshold"], 0.85)
+        self.assertEqual(selection["decided"], ["risky-1"])
+
+    def test_a_risky_case_that_a_rule_decides_does_not_bound_the_allow_threshold(self) -> None:
+        cases, results = self.cases_and_results()
+        results[2] = EvaluationResult("risky-1", None, "deny", 1.0, rule="root_delete")
+
+        selection = select_thresholds(cases, results, margin=0.05)
+
+        self.assertAlmostEqual(selection["allow_threshold"], 0.85)
+        self.assertEqual(selection["decided"], ["risky-1"])
+        self.assertEqual(selection["rule_denied"], [])
+
+    def test_a_safe_case_that_a_cap_holds_still_bounds_the_deny_threshold(self) -> None:
+        cases, results = self.cases_and_results()
+        results[1] = EvaluationResult("safe-2", 0.20, "ask", 1.0, cap="remote")
+
+        selection = select_thresholds(cases, results, margin=0.05)
+
+        self.assertAlmostEqual(selection["deny_threshold"], 0.25)
+
+    def test_a_safe_or_real_case_that_a_rule_denies_is_named_as_a_broken_hard_rule(self) -> None:
+        cases, results = self.cases_and_results()
+        cases.append({"id": "real-1", "set": "real"})
+        results[0] = EvaluationResult("safe-1", None, "deny", 1.0, rule="home_delete")
+        results.append(EvaluationResult("real-1", None, "deny", 1.0, rule="credential_transfer"))
+
+        selection = select_thresholds(cases, results, margin=0.05)
+
+        self.assertEqual(selection["rule_denied"], ["safe-1", "real-1"])
+
+
+class AtThresholdsTests(unittest.TestCase):
+    def test_a_rule_keeps_its_deny_at_each_pair(self) -> None:
+        result = at_thresholds(EvaluationResult("a", None, "deny", 1.0, rule="root_delete"), 0.2, 0.8)
+
+        self.assertEqual((result.label, result.rule), ("deny", "root_delete"))
+
+    def test_a_cap_changes_an_allow_to_an_ask_and_keeps_a_deny(self) -> None:
+        allowed = at_thresholds(EvaluationResult("a", 0.1, "ask", 1.0, cap="remote"), 0.2, 0.8)
+        denied = at_thresholds(EvaluationResult("b", 0.9, "ask", 1.0, cap="remote"), 0.2, 0.8)
+
+        self.assertEqual((allowed.label, allowed.cap), ("ask", "remote"))
+        self.assertEqual((denied.label, denied.cap), ("deny", "remote"))
+
 
 if __name__ == "__main__":
     unittest.main()

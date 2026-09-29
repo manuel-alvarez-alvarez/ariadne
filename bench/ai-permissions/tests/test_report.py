@@ -68,6 +68,70 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("kev_v1", output.getvalue())
 
+    def test_a_score_file_keeps_the_rule_and_the_cap_of_each_case(self) -> None:
+        cases = [
+            {"id": "a", "set": "adversarial", "expected": "deny"},
+            {"id": "b", "set": "elevated", "expected": "ask"},
+            {"id": "c", "set": "safe", "expected": "allow"},
+        ]
+        results = [
+            EvaluationResult("a", None, "deny", 0.0, rule="root_delete"),
+            EvaluationResult("b", 0.1, "ask", 4.0, cap="force"),
+            EvaluationResult("c", 0.1, "allow", 4.0),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            run.write_scores(Path(directory), "kev_v1", cases, results)
+            [path] = run.score_files([directory])
+            _, read_results = run.read_scores(path)
+
+        self.assertEqual(read_results, results)
+
+    def test_select_leaves_a_capped_risky_case_off_the_allow_bound(self) -> None:
+        cases = [
+            {"id": "safe-1", "set": "safe", "expected": "allow"},
+            {"id": "risky-1", "set": "elevated", "expected": "ask"},
+            {"id": "risky-2", "set": "adversarial", "expected": "deny"},
+        ]
+        results = [
+            EvaluationResult("safe-1", 0.30, "ask", 1.0),
+            EvaluationResult("risky-1", 0.10, "ask", 1.0, cap="force"),
+            EvaluationResult("risky-2", 0.38, "ask", 1.0),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            run.write_scores(Path(directory), "kev_v1", cases, results)
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                code = run.main(["select", directory, "--margin", "0.05"])
+
+        self.assertEqual(code, 0)
+        text = output.getvalue()
+        self.assertIn("  pair: allow_threshold 0.3300 / deny_threshold 0.3500", text)
+        self.assertIn("risky cases that a rule or a cap decides, off the allow bound: 1", text)
+
+    def test_select_names_a_safe_case_that_a_rule_denies(self) -> None:
+        cases = [
+            {"id": "safe-1", "set": "safe", "expected": "allow"},
+            {"id": "safe-2", "set": "safe", "expected": "allow"},
+            {"id": "risky-1", "set": "adversarial", "expected": "deny"},
+        ]
+        results = [
+            EvaluationResult("safe-1", 0.05, "allow", 1.0),
+            EvaluationResult("safe-2", None, "deny", 0.0, rule="home_delete"),
+            EvaluationResult("risky-1", 0.50, "ask", 1.0),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            run.write_scores(Path(directory), "kev_v1", cases, results)
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                code = run.main(["select", directory, "--margin", "0.05"])
+
+        self.assertEqual(code, 0)
+        text = output.getvalue()
+        self.assertIn("broken hard rule, a rule denies 1 safe or real case(s):", text)
+        self.assertIn("    safe-2", text)
+        # The table at the pair keeps the deny of the rule.
+        self.assertEqual(text.splitlines()[-1].split()[4:6], ["0", "1"])
+
     def test_report_by_operation_prints_one_row_per_operation(self) -> None:
         cases = [
             {"id": "a", "set": "safe", "expected": "allow", "operation": "read_workspace"},

@@ -2,7 +2,7 @@
 
 Each builder is a pure function of a case's request and repository. `fields` picks which
 parts of the call the state carries (`JSON_KEYS` / `STRUCTURED_KEYS` name them), in order;
-an empty value is left out.
+an empty value is left out. `build_normalized` has one fixed shape and no `fields`.
 """
 from __future__ import annotations
 
@@ -109,6 +109,53 @@ def build_json(request: dict[str, Any], repository: str, fields: list[str], inpu
             continue
         obj[JSON_KEYS[field]] = value
     return obj
+
+
+def _without_empty(value: Any) -> Any:
+    """`value` with no empty member at any depth: no `None`, `False`, `""`, `[]` or `{}`."""
+    if isinstance(value, dict):
+        members = {key: _without_empty(member) for key, member in value.items()}
+        return {key: member for key, member in members.items() if member not in (None, False, "", [], {})}
+    return value
+
+
+DERIVED_FACTS = ("operation_hint", "risk_tags", "outside_workspace")
+
+
+def build_normalized(
+    request: dict[str, Any],
+    workspace: str | None,
+    derived: Any = None,
+    input_cut: int = INPUT_CUT,
+    facts: tuple[str, ...] = DERIVED_FACTS,
+) -> dict[str, Any]:
+    """The normalized state: the task, the request, the derived facts and the option names,
+    each in an object of its own, with each empty value left out.
+
+    `derived` is the result of `ai_bench.derive.derive`, or `None` for a state with no derived
+    fact. `facts` names the derived facts that the state carries, from `DERIVED_FACTS`.
+    `outside_workspace` repeats the tag of that name as a fact of its own."""
+    unknown = [fact for fact in facts if fact not in DERIVED_FACTS]
+    if unknown:
+        raise ValueError("unknown derived fact: %s" % ", ".join(unknown))
+    tool_call = request.get("toolCall", {})
+    state: dict[str, Any] = {
+        "task": {"workspace": workspace},
+        "request": {
+            "tool": tool_call.get("title"),
+            "kind": tool_call.get("kind"),
+            "input": _field_value("input", request, workspace or "", input_cut),
+        },
+    }
+    if derived is not None:
+        found = {
+            "operation_hint": derived.operation_hint,
+            "risk_tags": list(derived.risk_tags),
+            "outside_workspace": "outside_workspace" in derived.risk_tags,
+        }
+        state["derived"] = {fact: found[fact] for fact in DERIVED_FACTS if fact in facts}
+    state["permission_options"] = [option.get("name", "") for option in request.get("options", []) or []]
+    return _without_empty(state)
 
 
 def noul_question(instructions: str, criteria: dict[str, str] | None = None) -> dict[str, Any]:
