@@ -339,7 +339,9 @@ Out: the daemon endpoints themselves (012).
 34. The AI tab's card carries a "Test a request" button in its header button
     group, beside Refresh.
     It opens a wide dialog for `POST /v1/permissions/ai/test`: Tool, Kind,
-    Input (JSON, at least six rows) and Options (comma-separated) fields,
+    Input (JSON, at least six rows), Options (comma-separated), and optional
+    Workspace fields. An empty Workspace sends `null`; otherwise it gives the
+    daemon the workspace for deriving whether a path is outside it. The dialog is
     prefilled with a `Bash`/`execute`/`{"command": "npm test"}`/`Allow, Reject`
     example. Only the fields scroll on a short window, with focus-ring padding;
     the header and footer stay in view and no width shows a horizontal scrollbar.
@@ -352,7 +354,10 @@ Out: the daemon endpoints themselves (012).
     parse (a field error says so) or the model is off, and shows a pending state
     while it runs. The footer holds the polite result at the left of Test: a
     badge in its zone's own colour — green Allow, amber Ask, red Deny — and the
-    labelled danger to four decimals with tabular digits. The same danger also
+    labelled danger to four decimals with tabular digits. Where the daemon derives
+    them, the result also shows the operation and one badge for each risk tag. A
+    hard-rule result shows Deny and `denied by rule <rule>` with no danger. A capped
+    result shows `capped by <tag>` beside its Ask badge and danger. The same danger also
     becomes the range control's marker (its `danger` prop, 32) after the dialog
     closes. The label is never the response's own: it is worked out here from
     that danger and the thresholds currently shown, by rule 28 of 022 (at or
@@ -368,9 +373,12 @@ Out: the daemon endpoints themselves (012).
     `::fills the Pipe a script to the shell example, every field`, `::fills the
     Chained shell command example`, `::fills the Edit a file outside the
     repository example`, `::fills the Send SSH keys to a paste site example`,
-    `::runs the test when Cmd or Ctrl+Enter is pressed`, `::sends exactly the
-    body the fields describe`, `::shows the label and danger in the polite
-    footer result`, `::shows 'No answer: <ai_error>' in the footer, with no
+    `::runs the test when Cmd or Ctrl+Enter is pressed`, `::sends a workspace
+    when one is provided`, `::shows the label and danger in the polite footer
+    result`, `::shows the operation and each risk tag in the footer result`,
+    `::shows a rule denial without danger`, `::shows the cap beside an ask
+    result`, `::keeps the existing result when no derived facts are present`,
+    `::shows 'No answer: <ai_error>' in the footer, with no
     label`, `::shows a field error on invalid JSON and disables Test`,
     `::shows the model-off hint in the footer and disables Test`, `::toasts the
     daemon's own message on a refusal`,

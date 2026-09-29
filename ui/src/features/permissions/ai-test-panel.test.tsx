@@ -212,10 +212,11 @@ describe("the example picker", () => {
   })
 })
 
-it("sends exactly the body the fields describe", async () => {
+it("sends a workspace when one is provided", async () => {
   const user = userEvent.setup()
   renderPanel(ENABLED)
 
+  await user.type(screen.getByLabelText("Workspace"), "/work/ariadne")
   await user.click(screen.getByRole("button", { name: "Test" }))
 
   await waitFor(() => {
@@ -225,6 +226,7 @@ it("sends exactly the body the fields describe", async () => {
       kind: "execute",
       input: { command: "npm test" },
       options: ["Allow", "Reject"],
+      workspace: "/work/ariadne",
     })
   })
 })
@@ -274,6 +276,7 @@ it("sends a typed tool, kind and comma-separated options, edited by hand", async
       kind: null,
       input: { command: "npm test" },
       options: ["Allow", "Deny", "Ask"],
+      workspace: null,
     })
   })
 })
@@ -299,6 +302,77 @@ it("shows the label and danger in the polite footer result", async () => {
   expect(footer?.contains(danger)).toBe(true)
   expect(danger.closest("[aria-live]")?.getAttribute("aria-live")).toBe("polite")
   expect(danger.className).toContain("tabular-nums")
+})
+
+it("shows the operation and each risk tag in the footer result", async () => {
+  testResponse = {
+    label: "allow",
+    danger: 0.1,
+    allow_threshold: 0.2,
+    deny_threshold: 0.8,
+    ai_error: null,
+    operation: "read_workspace",
+    risk_tags: ["remote", "force"],
+  }
+  const user = userEvent.setup()
+  renderPanel(ENABLED)
+
+  await user.click(screen.getByRole("button", { name: "Test" }))
+
+  expect(await screen.findByText("operation read_workspace")).toBeDefined()
+  expect(screen.getByText("remote")).toBeDefined()
+  expect(screen.getByText("force")).toBeDefined()
+})
+
+it("shows a rule denial without danger", async () => {
+  testResponse = {
+    label: "deny",
+    danger: null,
+    allow_threshold: 0.2,
+    deny_threshold: 0.8,
+    ai_error: null,
+    rule: "home_delete",
+  }
+  const user = userEvent.setup()
+  renderPanel(ENABLED)
+
+  await user.click(screen.getByRole("button", { name: "Test" }))
+
+  expect(await screen.findByText("Deny")).toBeDefined()
+  expect(screen.getByText("denied by rule home_delete")).toBeDefined()
+  expect(screen.queryByText(/^danger /)).toBeNull()
+})
+
+it("shows the cap beside an ask result", async () => {
+  testResponse = {
+    label: "ask",
+    danger: 0.1,
+    allow_threshold: 0.2,
+    deny_threshold: 0.8,
+    ai_error: null,
+    cap: "credential_access",
+  }
+  const user = userEvent.setup()
+  renderPanel(ENABLED)
+
+  await user.click(screen.getByRole("button", { name: "Test" }))
+
+  expect(await screen.findByText("Ask")).toBeDefined()
+  expect(screen.getByText("danger 0.1000")).toBeDefined()
+  expect(screen.getByText("capped by credential_access")).toBeDefined()
+})
+
+it("keeps the existing result when no derived facts are present", async () => {
+  const user = userEvent.setup()
+  renderPanel(ENABLED)
+
+  await user.click(screen.getByRole("button", { name: "Test" }))
+
+  expect(await screen.findByText("Ask")).toBeDefined()
+  expect(screen.getByText("danger 0.5000")).toBeDefined()
+  expect(screen.queryByText(/^operation /)).toBeNull()
+  expect(screen.queryByText(/^denied by rule /)).toBeNull()
+  expect(screen.queryByText(/^capped by /)).toBeNull()
 })
 
 it("shows 'No answer: <ai_error>' in the footer, with no label", async () => {

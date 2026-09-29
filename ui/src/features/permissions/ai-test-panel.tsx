@@ -164,6 +164,7 @@ export function AiTestPanel({
   const [kind, setKind] = useState(DEFAULT_EXAMPLE.kind)
   const [inputText, setInputText] = useState(DEFAULT_EXAMPLE.input)
   const [optionsText, setOptionsText] = useState(DEFAULT_EXAMPLE.options)
+  const [workspace, setWorkspace] = useState("")
 
   const parsedInput = useMemo(() => {
     try {
@@ -189,6 +190,7 @@ export function AiTestPanel({
         kind: kind.trim() === "" ? null : kind.trim(),
         input: parsedInput.value,
         options: parseOptions(optionsText),
+        workspace: workspace.trim() === "" ? null : workspace.trim(),
       },
       {
         onSuccess: (response) => onResult(response),
@@ -199,8 +201,14 @@ export function AiTestPanel({
   }
 
   const label =
-    result && !result.ai_error && result.danger !== null && result.danger !== undefined
-      ? classify(result.danger, status.allow_threshold, status.deny_threshold)
+    result && !result.ai_error
+      ? result.rule
+        ? "deny"
+        : result.cap
+          ? "ask"
+          : result.danger !== null && result.danger !== undefined
+            ? classify(result.danger, status.allow_threshold, status.deny_threshold)
+            : null
       : null
 
   return (
@@ -288,6 +296,19 @@ export function AiTestPanel({
                 The option names the model sees, separated by commas.
               </FieldDescription>
             </Field>
+
+            <Field>
+              <FieldLabel htmlFor="ai-test-workspace">Workspace</FieldLabel>
+              <Input
+                id="ai-test-workspace"
+                className="font-mono"
+                value={workspace}
+                onChange={(event) => setWorkspace(event.target.value)}
+              />
+              <FieldDescription>
+                The workspace used to derive whether a path is outside it.
+              </FieldDescription>
+            </Field>
           </FieldGroup>
 
           <DialogFooter className="flex-row items-center justify-between">
@@ -307,11 +328,27 @@ export function AiTestPanel({
                     {label ? (
                       <Badge className={LABEL_TONE[label]}>{LABEL_TEXT[label]}</Badge>
                     ) : null}
-                    {result.danger !== null && result.danger !== undefined ? (
+                    {result.danger !== null && result.danger !== undefined && !result.rule ? (
                       <span className="tabular-nums text-muted-foreground">
                         danger {result.danger.toFixed(4)}
                       </span>
                     ) : null}
+                    {result.cap ? (
+                      <span className="text-muted-foreground">capped by {result.cap}</span>
+                    ) : null}
+                    {result.rule ? (
+                      <span className="text-muted-foreground">denied by rule {result.rule}</span>
+                    ) : null}
+                    {result.operation ? (
+                      <span className="font-mono text-muted-foreground">
+                        operation {result.operation}
+                      </span>
+                    ) : null}
+                    {result.risk_tags?.map((tag) => (
+                      <Badge key={tag} variant="outline">
+                        {tag}
+                      </Badge>
+                    ))}
                   </span>
                 )
               ) : null}
