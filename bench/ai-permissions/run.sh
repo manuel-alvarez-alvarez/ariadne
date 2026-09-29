@@ -39,6 +39,7 @@ Options:
       --real                     also score approved requests from ariadne.db
       --select                   print each evaluator's threshold selection
       --margin MARGIN            selection margin (default: 0.05)
+      --by KEY                   print a breakdown table: operation, tag or pair
   -o, --out DIR                  where the CSVs, logs and report go.
                                  Default: out/runs/<UTC time>, linked as out/latest
       --setup                    only create the virtual environments
@@ -64,6 +65,7 @@ heldout=0
 real=0
 select=0
 margin=""
+by=""
 out=""
 setup_only=0
 rebuild=0
@@ -75,6 +77,7 @@ while [ $# -gt 0 ]; do
         --real) real=1; shift ;;
         --select) select=1; shift ;;
         --margin) [ $# -ge 2 ] || die "$1 needs a value"; margin="$2"; shift 2 ;;
+        --by) [ $# -ge 2 ] || die "$1 needs a value"; by="$2"; shift 2 ;;
         -o|--out) [ $# -ge 2 ] || die "$1 needs a value"; out="$2"; shift 2 ;;
         --setup) setup_only=1; shift ;;
         --rebuild) rebuild=1; shift ;;
@@ -194,6 +197,7 @@ run_args=(run --out "$out")
 [ "$real" -eq 0 ] || run_args+=(--real)
 [ "$select" -eq 0 ] || run_args+=(--select)
 [ -z "$margin" ] || run_args+=(--margin "$margin")
+[ -z "$by" ] || run_args+=(--by "$by")
 
 failed=()
 for i in "${!evaluators[@]}"; do

@@ -57,6 +57,55 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(files[-2:], run.HELDOUT_CASES)
         self.assertFalse(any(f.name.endswith("-heldout.jsonl") for f in files[:-2]), files)
 
+    def test_a_csv_without_the_new_columns_still_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "kev_v1.csv"
+            path.write_text("id,set,expected,danger,label,latency_ms\na,safe,allow,0.1,allow,1.0\n", encoding="utf-8")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                code = run.main(["report", str(path)])
+
+        self.assertEqual(code, 0)
+        self.assertIn("kev_v1", output.getvalue())
+
+    def test_report_by_operation_prints_one_row_per_operation(self) -> None:
+        cases = [
+            {"id": "a", "set": "safe", "expected": "allow", "operation": "read_workspace"},
+            {"id": "b", "set": "adversarial", "expected": "deny", "operation": "network_read"},
+        ]
+        results = [EvaluationResult("a", 0.1, "allow", 1.0), EvaluationResult("b", 0.9, "deny", 1.0)]
+        with tempfile.TemporaryDirectory() as directory:
+            run.write_scores(Path(directory), "kev_v1", cases, results)
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                code = run.main(["report", directory, "--by", "operation"])
+
+        self.assertEqual(code, 0)
+        text = output.getvalue()
+        self.assertIn("read_workspace", text)
+        self.assertIn("network_read", text)
+
+    def test_report_by_pair_names_the_incorrect_pair(self) -> None:
+        cases = [
+            {"id": "safe-1", "set": "safe", "expected": "allow", "pair": "adversarial-1"},
+            {"id": "adversarial-1", "set": "adversarial", "expected": "deny", "pair": "safe-1"},
+        ]
+        results = [
+            EvaluationResult("safe-1", 0.1, "allow", 1.0),
+            EvaluationResult("adversarial-1", 0.1, "allow", 1.0),  # wrong: expected deny
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            run.write_scores(Path(directory), "kev_v1", cases, results)
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                code = run.main(["report", directory, "--by", "pair"])
+
+        self.assertEqual(code, 0)
+        text = output.getvalue()
+        self.assertIn("pairs: 1", text)
+        self.assertIn("correct: 0", text)
+        self.assertIn("adversarial-1 / safe-1", text)
+
     def test_report_fails_on_an_empty_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stderr(io.StringIO()) as error:
             code = run.main(["report", directory])

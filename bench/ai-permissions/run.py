@@ -88,6 +88,10 @@ def print_table(rows: list[tuple[str, dict[str, Any]]], include_real: bool) -> N
         ("AUROC deny", "auroc_deny"),
         ("accuracy", "accuracy"),
         ("median latency ms", "median_latency_ms"),
+        ("dangerous auto-allow", "dangerous_auto_allow_rate"),
+        ("benign auto-allow", "benign_auto_allow_rate"),
+        ("ask rate", "ask_rate"),
+        ("false deny", "false_deny_rate"),
     ]
     rendered = []
     for name, summary in rows:
@@ -137,12 +141,54 @@ def print_selection(name: str, cases: list[dict[str, Any]], results: list[Evalua
     print_table([(name, metrics.summary(cases, relabelled))], include_real)
 
 
+def print_by_table(by: str, rows: dict[str, dict[str, Any]]) -> None:
+    columns = [(by, "key"), ("count", "count"), ("a/k/d", "shares"), ("risky allowed", "risky_allowed"), ("safe denied", "safe_denied")]
+    rendered = []
+    for key in sorted(rows):
+        row = rows[key]
+        rendered.append(
+            [
+                key,
+                str(row["count"]),
+                format_shares(row["shares"]),
+                format_value(row["risky_allowed"]),
+                format_value(row["safe_denied"]),
+            ]
+        )
+    widths = [len(title) for title, _ in columns]
+    for row in rendered:
+        widths = [max(width, len(value)) for width, value in zip(widths, row)]
+    print("  ".join(title.ljust(width) for (title, _), width in zip(columns, widths)))
+    print("  ".join("-" * width for width in widths))
+    for row in rendered:
+        print("  ".join(value.ljust(width) for value, width in zip(row, widths)))
+
+
+def print_pair_table(pairs: dict[str, Any]) -> None:
+    print("  pairs: %d" % pairs["pairs"])
+    print("  correct: %d" % pairs["correct"])
+    if pairs["incorrect"]:
+        print("  incorrect:")
+        for one, other in pairs["incorrect"]:
+            print("    %s / %s" % (one, other))
+
+
+def print_grouping(by: str, name: str, cases: list[dict[str, Any]], results: list[EvaluationResult]) -> None:
+    print()
+    print(name)
+    if by == "pair":
+        print_pair_table(metrics.by_pair(cases, results))
+    else:
+        grouping = metrics.by_operation if by == "operation" else metrics.by_tag
+        print_by_table(by, grouping(cases, results))
+
+
 def write_scores(directory: Path, name: str, cases: list[dict[str, Any]], results: list[EvaluationResult]) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     safe_name = "".join(character if character.isalnum() or character in "._-" else "_" for character in name)
     with (directory / (safe_name + ".csv")).open("w", newline="", encoding="utf-8") as output:
         writer = csv.writer(output, lineterminator="\n")
-        writer.writerow(["id", "set", "expected", "danger", "label", "latency_ms"])
+        writer.writerow(["id", "set", "expected", "danger", "label", "latency_ms", "operation", "risk_tags", "pair"])
         writer.writerows(
             [
                 case["id"],
@@ -151,6 +197,9 @@ def write_scores(directory: Path, name: str, cases: list[dict[str, Any]], result
                 result.danger,
                 result.label,
                 result.latency_ms,
+                case.get("operation") or "",
+                "|".join(case.get("risk_tags") or []),
+                case.get("pair") or "",
             ]
             for case, result in zip(cases, results)
         )
@@ -165,7 +214,16 @@ def read_scores(path: Path) -> tuple[list[dict[str, Any]], list[EvaluationResult
             for row in csv.DictReader(scores):
                 if row["label"] not in ("allow", "ask", "deny"):
                     raise EvaluatorError("%s: invalid label %r for %s" % (path, row["label"], row["id"]))
-                cases.append({"id": row["id"], "set": row["set"], "expected": row["expected"]})
+                cases.append(
+                    {
+                        "id": row["id"],
+                        "set": row["set"],
+                        "expected": row["expected"],
+                        "operation": row.get("operation") or None,
+                        "risk_tags": [tag for tag in (row.get("risk_tags") or "").split("|") if tag],
+                        "pair": row.get("pair") or None,
+                    }
+                )
                 results.append(
                     EvaluationResult(
                         row["id"],
@@ -229,6 +287,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.select:
         for name, run_cases, results in runs:
             print_selection(name, run_cases, results, args.margin)
+    if args.by:
+        for name, run_cases, results in runs:
+            print_grouping(args.by, name, run_cases, results)
     print("\nper-case scores: %s" % out)
     return 0
 
@@ -279,6 +340,9 @@ def cmd_report(args: argparse.Namespace) -> int:
         summaries.append((path.stem, metrics.summary(cases, results)))
         runs.append((path.stem, cases, results))
     print_table(summaries, include_real)
+    if args.by:
+        for name, run_cases, results in runs:
+            print_grouping(args.by, name, run_cases, results)
     return 0
 
 
@@ -306,6 +370,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--select", action="store_true", help="print each evaluator's threshold selection after the table")
     run.add_argument("--margin", type=float, default=DEFAULT_MARGIN, help="selection margin (default: %s)" % DEFAULT_MARGIN)
     run.add_argument("--out", help="directory for the per-case CSVs (default: out/runs/<UTC time>)")
+    run.add_argument("--by", choices=("operation", "tag", "pair"), help="print a breakdown table per operation, risk tag or adversarial pair")
     run.set_defaults(func=cmd_run)
     derived = subcommands.add_parser("derive", help="report deterministic risk tags and hard rules")
     derived.add_argument("--cases", nargs="+", help="case files or directories (default: the development cases); a directory never adds its held-out files")
@@ -314,6 +379,7 @@ def build_parser() -> argparse.ArgumentParser:
     derived.set_defaults(func=cmd_derive)
     report = subcommands.add_parser("report", help="print one table from per-case CSV files that earlier runs wrote")
     report.add_argument("targets", nargs="+", help="CSV files or directories of them")
+    report.add_argument("--by", choices=("operation", "tag", "pair"), help="print a breakdown table per operation, risk tag or adversarial pair")
     report.set_defaults(func=cmd_report)
     select = subcommands.add_parser("select", help="print each evaluator's threshold selection from per-case CSV files")
     select.add_argument("targets", nargs="+", help="CSV files or directories of them")

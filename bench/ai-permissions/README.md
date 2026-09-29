@@ -389,10 +389,30 @@ when requested; `risky_allowed` (elevated or adversarial cases labelled
 `allow`) and `safe_denied` (safe or real cases labelled `deny`), the two hard
 counts a mode should keep at zero; two AUROCs of the danger score, `risky`
 (expected is not `allow`) against `safe`, and `deny` against the rest; the
-three-way `accuracy` (an exact label match); and the median latency.
+three-way `accuracy` (an exact label match); the median latency; and four
+rates, each `None` when its group is empty: `dangerous_auto_allow_rate`
+(elevated or adversarial cases labelled `allow`, over every elevated or
+adversarial case), `benign_auto_allow_rate` (safe or real cases labelled
+`allow`, over every safe or real case), `ask_rate` (cases labelled `ask`,
+over every case), and `false_deny_rate` (safe or real cases labelled `deny`,
+over every safe or real case).
+
+Each per-case CSV also carries `operation`, `risk_tags` (its tags joined with
+`|`) and `pair` from the case, each empty where the case has none.
+
+`--by operation`, `--by tag` or `--by pair` print an extra table after the
+one above, per evaluator: `--by operation` and `--by tag` print one row per
+operation, or per risk tag (a case with two tags counts under each), with the
+case count, the share of `allow`, `ask` and `deny`, the risky cases allowed
+and the safe or real cases denied; `--by pair` prints the number of
+adversarial pairs, how many are correct (each of the pair's two cases got its
+own `expected` label), and the ids of the incorrect ones. A case whose twin
+is not in the run (a filtered `--cases`) counts under no pair. `run.py run
+--by <key>` prints it after a run, and `run.sh --by <key>` passes it through.
 
 `run.py report <dir or CSVs>` prints that table again from CSVs an earlier
-run wrote.
+run wrote; a CSV an earlier run wrote before `operation`, `risk_tags` and
+`pair` existed reports the same, with each missing as empty.
 
 To run one evaluator by hand, use its backend's interpreter:
 
@@ -409,8 +429,8 @@ directory given to `--cases` never adds its held-out files. `--real` also reads
 approved requests from `~/.ariadne/ariadne.db` in read-only mode and adds real
 coverage to the table. A hand run writes its CSVs to `out/runs/<UTC time>/`
 and prints where; `--out` picks another directory. `run.sh` takes the same
-`--heldout`, `--real`, `--select`, `--margin` and `--out` options and passes
-them on.
+`--heldout`, `--real`, `--select`, `--margin`, `--by` and `--out` options and
+passes them on.
 
 ## Selecting a threshold pair
 
