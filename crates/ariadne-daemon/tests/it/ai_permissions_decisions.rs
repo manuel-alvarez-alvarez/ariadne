@@ -142,6 +142,12 @@ fn ssh_key_script() -> Value {
     scripted
 }
 
+fn home_delete_script() -> Value {
+    let mut scripted = permission_script();
+    scripted["prompts"][0]["permission"]["toolCall"]["rawInput"] = json!({"command": "rm -rf ~"});
+    scripted
+}
+
 fn python() -> String {
     shared_script("#!/bin/sh\necho 'Python 3.12.1'\n")
         .display()
@@ -199,7 +205,8 @@ async fn a_test_request_scores_the_same_model_state_without_publishing_or_learni
         .json(
             post_json(
                 "/v1/permissions/ai/test",
-                json!({"tool":"Bash", "kind":"execute", "input":{"command":"git status"}, "options":["Allow", "Reject"]}),
+                json!({"tool":"Bash", "kind":"execute", "input":{"command":"git status"},
+                       "options":["Allow", "Reject"], "workspace":"/repo/ariadne"}),
             ),
             StatusCode::OK,
         )
@@ -210,6 +217,11 @@ async fn a_test_request_scores_the_same_model_state_without_publishing_or_learni
     assert_eq!(response.allow_threshold, 0.13);
     assert_eq!(response.deny_threshold, 0.53);
     assert_eq!(response.ai_error, None);
+    assert_eq!(response.operation.as_deref(), Some("read_workspace"));
+    assert_eq!(response.risk_tags, Some(vec![]));
+    assert_eq!(response.rule, None);
+    assert_eq!(response.cap, None);
+    assert!(response.probabilities.is_some());
     assert!(
         h.store
             .list_learned_permissions(None)
@@ -221,9 +233,25 @@ async fn a_test_request_scores_the_same_model_state_without_publishing_or_learni
     assert_eq!(
         server.requests.lock().unwrap()[0]["state"],
         json!({
-            "tool":"Bash", "kind":"execute", "input":"{\"command\":\"git status\"}", "options":"Allow, Reject"
+            "task":{"workspace":"/repo/ariadne"},
+            "request":{"tool":"Bash", "kind":"execute", "input":"{\"command\":\"git status\"}"},
+            "permission_options":["Allow", "Reject"]
         })
     );
+    let ruled: TestAiPermissionResponse = h
+        .json(
+            post_json(
+                "/v1/permissions/ai/test",
+                json!({"tool":"Bash", "kind":"execute", "input":{"command":"rm -rf ~"},
+                       "workspace":"/repo/ariadne"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(ruled.label.as_deref(), Some("deny"));
+    assert_eq!(ruled.danger, None);
+    assert_eq!(ruled.rule.as_deref(), Some("home_delete"));
+    assert_eq!(server.requests.lock().unwrap().len(), 1);
     assert!(
         tokio::time::timeout(QUIET, events.recv()).await.is_err(),
         "the test published an event"
@@ -296,6 +324,14 @@ async fn a_test_request_returns_each_model_call_error_in_its_response() {
     let malformed_server = ModelServer::malformed().await;
     let malformed = enabled_test_harness(&malformed_server, Timeouts::default()).await;
     assert_eq!(test_error(&malformed).await, "malformed");
+
+    let probability_server = ModelServer::start(Answer::Value(response(json!({
+        "type": "score", "score": 0.5,
+        "probabilities": {"0": 1.2, "1": -0.2, "2": 0.0}
+    }))))
+    .await;
+    let probability = enabled_test_harness(&probability_server, Timeouts::default()).await;
+    assert_eq!(test_error(&probability).await, "malformed");
 }
 
 async fn ai_permissions_harness(
@@ -461,22 +497,28 @@ async fn a_confident_allow_runs_at_once_and_reports_ai() {
         json!({"session_id": "stub-session", "option_id": "yes", "decided_by": "ai",
                "label": "allow", "danger": 0.05, "allow_threshold": 0.05,
                "deny_threshold": 0.8,
-               "ai_error": null})
+               "ai_error": null, "operation": "build_test", "risk_tags": [],
+               "rule": null, "cap": null,
+               "probabilities": {"0": 0.9, "1": 0.1, "2": 0.0}})
     );
     let requests = server.requests.lock().unwrap();
     assert_eq!(
-        requests[0]["state"],
+        requests[0]["state"]["request"],
         json!({
-            "tool": "Bash", "kind": "execute", "input": "{\"command\":\"cargo test -p app\"}",
-            "options": "Reject, Allow"
+            "tool": "Bash", "kind": "execute", "input": "{\"command\":\"cargo test -p app\"}"
         }),
-        "the call and its options, and nothing derived from them"
+        "the normalized call"
     );
+    assert_eq!(
+        requests[0]["state"]["permission_options"],
+        json!(["Reject", "Allow"])
+    );
+    assert!(requests[0]["state"]["task"]["workspace"].is_string());
     assert_eq!(requests[0]["model"], "kev-latest");
     assert_eq!(requests[0]["questions"]["decision"]["type"], "score");
     assert_eq!(
         requests[0]["questions"]["decision"]["instructions"],
-        "How much does this coding-agent tool call put the system or the project at risk?"
+        "How much does this coding-agent tool call put the system or the project at risk? Do not ask only because a command runs, a file changes, a project file is deleted, or git is used. Do not deny only because an operation is powerful."
     );
     assert_eq!(
         requests[0]["questions"]["decision"]["criteria"]
@@ -574,6 +616,23 @@ async fn a_score_answer_is_used_as_the_danger() {
 }
 
 #[tokio::test]
+async fn a_score_equal_to_the_deny_threshold_is_denied() {
+    let server = ModelServer::answer(0.8).await;
+    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.2, Timeouts::default()).await;
+
+    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    eventually(TIMEOUT, "the boundary denial to finish", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+
+    let reply = reply(&h, &session.id).await;
+    assert_eq!(reply["decided_by"], "ai");
+    assert_eq!(reply["label"], "deny");
+    assert_eq!(reply["danger"], 0.8);
+}
+
+#[tokio::test]
 async fn an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval() {
     let server = ModelServer::answer(0.4).await;
     let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.2, Timeouts::default()).await;
@@ -626,32 +685,93 @@ async fn an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval() 
 }
 
 #[tokio::test]
-async fn every_call_is_the_models_to_decide_with_nothing_decided_by_rule() {
+async fn a_cap_changes_a_model_allow_to_a_console_question() {
     let server = ModelServer::answer(0.05).await;
     let (h, cast, _agent_dir) =
         ai_permissions_harness_with(&server, 0.2, Timeouts::default(), ssh_key_script()).await;
 
     let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
-    eventually(TIMEOUT, "the AI-approved turn to finish", || async {
-        h.session_status(&session).await == SessionStatus::Idle
-    })
-    .await;
-
-    assert_eq!(h.attention(&session).await, None);
-    assert_eq!(reply(&h, &session.id).await["decided_by"], "ai");
+    wait_for_question(&h, &session).await;
+    let request = permission_request(&h, &session.id).await;
+    assert_eq!(request["label"], "ask");
+    assert_eq!(request["danger"], 0.05);
+    assert_eq!(request["operation"], "secrets_credentials");
+    assert_eq!(request["cap"], "credential_access");
+    assert_eq!(
+        request["risk_tags"],
+        json!(["outside_workspace", "remote", "credential_access"])
+    );
     let requests = server.requests.lock().unwrap().clone();
     assert_eq!(requests.len(), 1, "the model was asked");
     assert!(
-        requests[0]["state"]["input"]
+        requests[0]["state"]["request"]["input"]
             .as_str()
             .unwrap()
             .contains("cat ~/.ssh/id_rsa")
     );
+    drop(requests);
+    let reply = answered(&h, &session.id, "no").await;
+    assert_eq!(reply["decided_by"], "console");
+    assert_eq!(reply["cap"], "credential_access");
+}
+
+#[tokio::test]
+async fn a_hard_rule_denies_without_the_model_attention_or_learning() {
+    let server = ModelServer::answer(0.05).await;
+    let (h, cast, _agent_dir) =
+        ai_permissions_harness_with(&server, 0.2, Timeouts::default(), home_delete_script()).await;
+
+    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    eventually(TIMEOUT, "the rule-denied turn to finish", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+
+    assert!(server.requests.lock().unwrap().is_empty());
+    assert_eq!(h.attention(&session).await, None);
+    let reply = reply(&h, &session.id).await;
+    assert_eq!(reply["decided_by"], "rule");
+    assert_eq!(reply["option_id"], "no");
+    assert_eq!(reply["label"], "deny");
+    assert_eq!(reply["danger"], Value::Null);
+    assert_eq!(reply["rule"], "home_delete");
+    assert_eq!(reply["probabilities"], Value::Null);
     assert!(
-        permission_request(&h, &session.id)
+        h.store
+            .list_learned_permissions(Some(&cast.repo.id))
             .await
-            .get("guardrail")
-            .is_none()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn a_hard_rule_without_a_one_time_reject_asks_without_learning() {
+    let server = ModelServer::answer(0.05).await;
+    let mut scripted = home_delete_script();
+    scripted["prompts"][0]["permission"]["options"] = json!([
+        {"optionId": "never", "name": "Reject always", "kind": "reject_always"},
+        {"optionId": "yes", "name": "Allow", "kind": "allow_once"}
+    ]);
+    let (h, cast, _agent_dir) =
+        ai_permissions_harness_with(&server, 0.2, Timeouts::default(), scripted).await;
+
+    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    wait_for_question(&h, &session).await;
+    let request = permission_request(&h, &session.id).await;
+    assert_eq!(request["rule"], "home_delete");
+    assert_eq!(request["label"], "deny");
+    let reply = answered(&h, &session.id, "yes").await;
+    assert_eq!(reply["decided_by"], "console");
+    assert_eq!(reply["rule"], "home_delete");
+    assert!(server.requests.lock().unwrap().is_empty());
+    assert!(
+        h.store
+            .list_learned_permissions(Some(&cast.repo.id))
+            .await
+            .unwrap()
+            .is_empty(),
+        "a rule decision was learned"
     );
 }
 

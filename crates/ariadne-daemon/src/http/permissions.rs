@@ -288,71 +288,55 @@ pub(super) async fn test(
         ));
     }
     let tool = req.tool.clone();
+    let workspace = req.workspace.clone();
     let (tool_call, options) = crate::ai_permissions::decide::test_call(
         req.tool,
         req.kind,
         req.input,
         req.options.as_deref().unwrap_or_default(),
     );
-    let response = match state.ai_permissions.live_once_started().await {
-        Some(live) => match crate::ai_permissions::decide::decide(
-            &live,
-            &tool_call,
-            &options,
-            state.ai_permissions.decision_timeout(),
-        )
-        .await
-        {
-            crate::ai_permissions::decide::Decision::Allow {
-                danger,
-                allow_threshold,
-                deny_threshold,
-            } => TestAiPermissionResponse {
-                label: Some("allow".into()),
-                danger: Some(danger),
-                allow_threshold,
-                deny_threshold,
-                ai_error: None,
-            },
-            crate::ai_permissions::decide::Decision::Ask {
-                danger,
-                allow_threshold,
-                deny_threshold,
-            } => TestAiPermissionResponse {
-                label: Some("ask".into()),
-                danger: Some(danger),
-                allow_threshold,
-                deny_threshold,
-                ai_error: None,
-            },
-            crate::ai_permissions::decide::Decision::Deny {
-                danger,
-                allow_threshold,
-                deny_threshold,
-            } => TestAiPermissionResponse {
-                label: Some("deny".into()),
-                danger: Some(danger),
-                allow_threshold,
-                deny_threshold,
-                ai_error: None,
-            },
-            crate::ai_permissions::decide::Decision::Unanswered { reason } => {
-                TestAiPermissionResponse {
-                    label: None,
-                    danger: None,
-                    allow_threshold: status.allow_threshold,
-                    deny_threshold: status.deny_threshold,
-                    ai_error: Some(reason.into()),
-                }
+    let prepared =
+        crate::ai_permissions::decide::prepare(&tool_call, &options, workspace.as_deref());
+    let decision = if let Some(decision) = prepared.hard_rule() {
+        decision
+    } else {
+        match state.ai_permissions.live_once_started().await {
+            Some(live) => {
+                crate::ai_permissions::decide::decide(
+                    &live,
+                    &prepared,
+                    state.ai_permissions.decision_timeout(),
+                )
+                .await
             }
+            None => prepared.unanswered("unavailable"),
+        }
+    };
+    let label = match &decision {
+        crate::ai_permissions::decide::Decision::Allow { .. } => Some("allow".into()),
+        crate::ai_permissions::decide::Decision::Ask { .. } => Some("ask".into()),
+        crate::ai_permissions::decide::Decision::Deny { .. }
+        | crate::ai_permissions::decide::Decision::Rule { .. } => Some("deny".into()),
+        crate::ai_permissions::decide::Decision::Unanswered { .. } => None,
+    };
+    let score = decision.score();
+    let derived = decision.derived();
+    let response = TestAiPermissionResponse {
+        label,
+        danger: score.map(|score| score.danger),
+        allow_threshold: score.map_or(status.allow_threshold, |score| score.allow_threshold),
+        deny_threshold: score.map_or(status.deny_threshold, |score| score.deny_threshold),
+        ai_error: match &decision {
+            crate::ai_permissions::decide::Decision::Unanswered { reason, .. } => {
+                Some((*reason).into())
+            }
+            _ => None,
         },
-        None => TestAiPermissionResponse {
-            label: None,
-            danger: None,
-            allow_threshold: status.allow_threshold,
-            deny_threshold: status.deny_threshold,
-            ai_error: Some("unavailable".into()),
-        },
+        operation: derived.operation.map(str::to_string),
+        risk_tags: Some(derived.risk_tags.iter().map(ToString::to_string).collect()),
+        rule: decision.rule().map(str::to_string),
+        cap: decision.cap().map(str::to_string),
+        probabilities: score.map(|score| score.probabilities.clone()),
     };
     tracing::info!(tool, label = ?response.label, danger = ?response.danger, ai_error = ?response.ai_error, "AI permission test");
     Ok(Json(response))

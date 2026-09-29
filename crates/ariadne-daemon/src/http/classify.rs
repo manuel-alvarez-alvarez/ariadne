@@ -139,6 +139,10 @@ pub(crate) fn summarize(kind: &str, payload: &serde_json::Value) -> String {
 /// `allowed by AI (danger 0.06)`.
 fn permission_reply_summary(payload: &serde_json::Value) -> String {
     let decided_by = non_empty_str(payload.get("decided_by"));
+    if decided_by == Some("rule") {
+        let rule = non_empty_str(payload.get("rule")).unwrap_or("unknown");
+        return format!("denied by rule {rule}");
+    }
     if decided_by == Some("ai")
         && let Some(danger) = payload.get("danger").and_then(serde_json::Value::as_f64)
     {
@@ -537,6 +541,20 @@ mod tests {
                           "deny_threshold": 0.8})
             ),
             "allow-once in the console — AI said ask (danger 0.41, allow 0.20, deny 0.80)"
+        );
+        assert_eq!(
+            reply(json!({"label": "ask", "danger": 0.081,
+                         "cap": "credential_access"})),
+            "allow-once in the console — AI said ask (danger 0.08, capped by credential_access)"
+        );
+        assert_eq!(
+            reply(json!({"label": "deny", "rule": "home_delete"})),
+            "allow-once in the console — rule home_delete said deny"
+        );
+        assert_eq!(
+            reply(json!({"decided_by": "rule", "label": "deny",
+                         "rule": "home_delete", "option_id": "reject"})),
+            "denied by rule home_delete"
         );
         assert_eq!(
             reply(

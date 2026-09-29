@@ -536,6 +536,25 @@ mod tests {
         let shown = screen(&terminal);
 
         assert!(shown.contains("↳ denied by AI (danger 0.93)"), "{shown}");
+
+        let mut console = Console::new(header());
+        let mut rule_terminal = crate::tui::testing::terminal();
+        console.apply(&asked_with(
+            "Allow this edit?",
+            &["Reject"],
+            json!({"toolCallId": "edit", "kind": "edit",
+                   "rawInput": {"file_path": "src/main.rs"}}),
+        ));
+        console.apply(&event(
+            "permission.replied",
+            "answered",
+            json!({"option_id": "option-0", "decided_by": "rule",
+                   "label": "deny", "rule": "home_delete"}),
+        ));
+        console.apply(&event("agent_message", "done", json!({"text": "done"})));
+        console.commit(&mut rule_terminal).unwrap();
+        let shown = screen(&rule_terminal);
+        assert!(shown.contains("↳ denied by rule home_delete"), "{shown}");
     }
 
     #[test]
@@ -579,6 +598,33 @@ mod tests {
             !shown.contains("AI said"),
             "the answer does not repeat it: {shown}"
         );
+
+        for (fields, expected) in [
+            (
+                json!({"label": "ask", "danger": 0.081, "cap": "credential_access"}),
+                "AI said ask (danger 0.08, capped by credential_access)",
+            ),
+            (
+                json!({"label": "deny", "rule": "home_delete"}),
+                "rule home_delete said deny",
+            ),
+        ] {
+            let mut console = Console::new(header());
+            let mut asked = asked_with(
+                "Allow this edit?",
+                &["Always Allow", "Reject"],
+                json!({"toolCallId": "edit", "kind": "edit",
+                       "rawInput": {"file_path": "src/main.rs"}}),
+            );
+            asked
+                .payload
+                .as_object_mut()
+                .unwrap()
+                .extend(fields.as_object().unwrap().clone());
+            console.apply(&asked);
+            let waiting = pane(&console, 80, 12);
+            assert!(waiting.contains(expected), "{waiting}");
+        }
     }
 
     #[test]

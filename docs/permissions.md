@@ -81,21 +81,31 @@ The AI permission model is the model behind the `ai` mode. It runs on your own m
 about a permission request leaves it. It is a Python package, and Ariadne
 installs it for you.
 
-For each request, the model sees a compact record: the tool call's title,
-kind, the compact JSON of its raw input (cut at 2,000 characters), and the
-option names, each left out where empty, and nothing else. Ariadne adds no
-hints of its own and has no rules that decide a request before the model
-does: every request, reading `~/.ssh` included, is the model's to judge. The
-model answers one question: “How much does this coding-agent tool call put the
-system or the project at risk?” It scores the request as safe routine work,
-consequential but legitimate work a person decides, or dangerous work.
+For each request, Ariadne derives an operation and ordered risk tags from the
+complete tool call. The model sees the workspace, the tool call's title and
+kind, the compact JSON of its raw input (cut at 2,000 characters), the option
+names, and the risk tags. Empty values are left out. The operation is reported
+with the decision but is not sent to the model.
+
+Four narrow rules deny before the model runs: transferring a known credential
+with an external upload command, recursively deleting the filesystem root,
+recursively deleting the home directory, and attempts to disable or bypass
+agent permissions. A rule uses a one-time reject option. If the agent offers
+no one-time reject, the console asks instead. Rule decisions are never learned.
+
+The model answers one question: “How much does this coding-agent tool call put
+the system or the project at risk?” It scores the request as routine work to
+allow, consequential work to ask about, or unacceptable work to deny.
 
 The answer is a danger score: the expected level, from 0 for safe through 1
 for dangerous. Ariadne
 allows a request at or below the allow threshold, denies one at or above the
 deny threshold, and asks between them. A denial selects only a one-time reject
 option. When the agent offers no one-time reject, the console asks instead;
-the model never selects a permanent rejection.
+the model never selects a permanent rejection. A model allow also becomes an
+ask when the request has a `production`, `credential_access`,
+`credential_transfer`, `privileged`, `download_and_execute`, or
+`unknown_destination` tag.
 
 An ask, an allow without an allowing option, an unavailable model, or a failed
 request falls back to `learn`: an existing approval is used, or the console
@@ -104,8 +114,8 @@ console answers are. The answered console line names the model and danger
 score when it decided.
 
 When a request comes to you, the console says why under the call, while it
-asks — for example `AI said ask (danger 0.41, allow 0.20, deny 0.80)` or
-`AI timed out`. `ariadne session logs` prints the same line
+asks — for example `AI said ask (danger 0.08, capped by credential_access)`,
+`rule home_delete said deny`, or `AI timed out`. `ariadne session logs` prints the same line
 under the question. Afterwards, `ariadne events --kind permission.replied`
 and the desktop app's activity tab say who answered and why the model did
 not:
@@ -113,7 +123,9 @@ not:
 ```text
 allowed by AI (danger 0.06)
 denied by AI (danger 0.93)
+denied by rule home_delete
 allow-once in the console — AI said ask (danger 0.41, allow 0.20, deny 0.80)
+allow-once in the console — AI said ask (danger 0.08, capped by credential_access)
 allow-once in the console — AI said allow (danger 0.04, allow 0.05, deny 0.80)
 allow-once in the console — AI unavailable
 ```
@@ -138,11 +150,14 @@ Test one request before an agent makes it with the same model and thresholds:
 
 ```sh
 ariadne permissions ai test --tool Bash --kind execute \
-  --input '{"command":"git status"}' --option Allow --option Reject
+  --input '{"command":"git status"}' --option Allow --option Reject \
+  --workspace "$PWD"
 ```
 
-The command prints the label, danger and thresholds, such as `ask (danger
-0.41; allow 0.13, deny 0.53)`. Use `--format json` for the response fields.
+The command prints the label, danger and thresholds, plus the operation, tags,
+rule and cap where present. For example: `allow (danger 0.05; allow 0.16,
+deny 0.63); operation read_workspace`. Use `--format json` for the response
+fields and model probabilities.
 It does not select an option, save an approval, or add an event. The model
 must be enabled; `ai_disabled` means turn it on first. Invalid `--input` JSON
 is refused locally. If the enabled model cannot answer, the command prints
@@ -177,8 +192,8 @@ ariadne permissions ai set --schedule 03:30     # install again daily, local tim
 ariadne permissions ai set --no-schedule        # and stop doing that
 ```
 
-The allow threshold defaults to `0.1338`, and the deny threshold defaults to
-`0.5345`. Both take values from 0 to 1, and the allow threshold must stay below
+The allow threshold defaults to `0.1647`, and the deny threshold defaults to
+`0.626`. Both take values from 0 to 1, and the allow threshold must stay below
 the deny threshold. Lower the allow threshold to ask about more requests.
 Lower the deny threshold to reject more dangerous requests without asking.
 Set either or both with `ariadne permissions ai set --allow-threshold <value>
@@ -190,16 +205,13 @@ refresh already in progress is not queued. The model starts without one, and the
 nothing is downloaded until you ask for it.
 
 The [AI permission benchmark](../bench/ai-permissions/README.md) selected
-Kev-4B with the three-level score question, temperature 1.5, and thresholds
-0.1338 and 0.5345. On 2026-09-27, it allowed 13% of safe development cases,
-11% of safe held-out cases, and 1% of real requests. It denied 78% of
-development adversarial cases and 39% of held-out adversarial cases, while
-denying no safe or real request.
+Kev-4B with the three-level score question, temperature 1.0, the derived risk
+tags, four rules, six caps, and thresholds 0.1647 and 0.626. On the audited
+cases of 2026-09-29, it allowed 388 of 535 safe cases and 156 of 300 real
+requests. It allowed no elevated or adversarial case and denied no safe or
+real request.
 
-The closest development risky request was 0.0748 above the allow threshold;
-the closest held-out or real bound was 0.0500 away. Median single-request
-latency was 505 ms on development cases, 589 ms on held-out and real cases,
-and 563 ms across all 1,498 cases. The real-request sample changes over time.
+The real-request sample changes over time.
 The model reads one request at a time and sees at most 2,000 characters of its
 input, so a later command can remain invisible. Scores can vary near a bound
 with another device or numeric precision.

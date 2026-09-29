@@ -105,6 +105,37 @@ async fn learned_permission_migration_keeps_old_rows_and_assigns_ids() {
 }
 
 #[tokio::test]
+async fn ai_permission_threshold_migration_replaces_the_old_defaults() {
+    use sqlx::Connection;
+    let mut connection = sqlx::SqliteConnection::connect(":memory:").await.unwrap();
+    sqlx::raw_sql(include_str!("../migrations/0001_init.sql"))
+        .execute(&mut connection)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE ai_permission_settings SET allow_threshold = 0.1338, deny_threshold = 0.5345",
+    )
+    .execute(&mut connection)
+    .await
+    .unwrap();
+
+    sqlx::raw_sql(include_str!(
+        "../migrations/0003_ai_permission_thresholds.sql"
+    ))
+    .execute(&mut connection)
+    .await
+    .unwrap();
+
+    let thresholds: (f64, f64) = sqlx::query_as(
+        "SELECT allow_threshold, deny_threshold FROM ai_permission_settings WHERE id = 1",
+    )
+    .fetch_one(&mut connection)
+    .await
+    .unwrap();
+    assert_eq!(thresholds, (0.1647, 0.626));
+}
+
+#[tokio::test]
 async fn a_loose_session_round_trips_without_a_goal_task_or_seat() {
     let (store, dir) = test_store().await;
     let session = store
@@ -3712,8 +3743,8 @@ async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
 
     let defaults = store.ai_permission_settings().await.unwrap();
     assert!(!defaults.enabled);
-    assert_eq!(defaults.allow_threshold, 0.1338);
-    assert_eq!(defaults.deny_threshold, 0.5345);
+    assert_eq!(defaults.allow_threshold, 0.1647);
+    assert_eq!(defaults.deny_threshold, 0.626);
     assert_eq!(defaults.schedule, None);
     assert_eq!(defaults.state, "disabled");
     assert_eq!(defaults.installed_release, None);
@@ -3733,7 +3764,7 @@ async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
         .await
         .unwrap();
     assert_eq!(partly_chosen.allow_threshold, 0.2);
-    assert_eq!(partly_chosen.deny_threshold, 0.5345);
+    assert_eq!(partly_chosen.deny_threshold, 0.626);
     let chosen = store
         .update_ai_permission_settings(AiPermissionSettingsUpdate {
             deny_threshold: Some(0.8),

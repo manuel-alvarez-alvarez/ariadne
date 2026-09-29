@@ -590,6 +590,11 @@ pub fn permission_answer(payload: &Value, options: &[PermissionOption]) -> Strin
     let Some(id) = string_at(payload, "/option_id") else {
         return "cancelled".into();
     };
+    if payload.get("decided_by").and_then(Value::as_str) == Some("rule")
+        && let Some(rule) = payload.get("rule").and_then(Value::as_str)
+    {
+        return format!("denied by rule {rule}");
+    }
     if payload.get("decided_by").and_then(Value::as_str) == Some("ai")
         && let Some(danger) = payload.get("danger").and_then(Value::as_f64)
     {

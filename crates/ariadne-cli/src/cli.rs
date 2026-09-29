@@ -77,7 +77,7 @@ Examples:
   ariadne permissions ai show                  # settings, install state, python
   ariadne permissions ai set --allow-threshold 0.2 --deny-threshold 0.8
   ariadne permissions ai set --schedule 03:30  # or: --no-schedule
-  ariadne permissions ai test --tool Bash --input '{\"command\":\"git status\"}'
+  ariadne permissions ai test --tool Bash --input '{\"command\":\"git status\"}' --workspace .
   ariadne permissions ai refresh
   ariadne permissions ai disable
 ";

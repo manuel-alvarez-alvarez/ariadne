@@ -42,7 +42,7 @@ use ariadne_store::Store;
 use crate::acp_calls::PromptTurn;
 use crate::acp_transport::pipes;
 use crate::ai_permissions::AiPermissions;
-use crate::ai_permissions::decide::{Decision, decide};
+use crate::ai_permissions::decide::{Decision, decide, prepare};
 use crate::http::classify::summarize;
 use crate::http::events::ingest_event;
 use crate::scheduler::SchedEvent;
@@ -841,6 +841,7 @@ impl AcpRuntime {
             turn: turn.clone(),
             repository_id: launch.repository_id.clone(),
             permission_mode: launch.permission_mode,
+            workspace: launch.cwd.display().to_string(),
             pending_permission: permission.clone(),
             reports: io.reports.clone(),
         };
@@ -1191,6 +1192,7 @@ struct RuntimeIncoming {
     turn: Arc<tokio::sync::Mutex<Turn>>,
     repository_id: String,
     permission_mode: PermissionMode,
+    workspace: String,
     pending_permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
     reports: Followers,
 }
@@ -1354,31 +1356,37 @@ impl RuntimeIncoming {
             PermissionMode::Learn | PermissionMode::Ai
         );
         let ai_permissions_decision = if self.permission_mode == PermissionMode::Ai {
-            match self.sink.runtime.inner.ai_permissions.as_ref() {
-                Some(ai_permissions) => match ai_permissions.live_once_started().await {
-                    Some(live) => Some(
-                        decide(
-                            &live,
-                            &params["toolCall"],
-                            &params["options"],
-                            self.sink.runtime.inner.timeouts.ai_permissions_decision,
-                        )
-                        .await,
-                    ),
+            let prepared = prepare(
+                &params["toolCall"],
+                &params["options"],
+                Some(&self.workspace),
+            );
+            if let Some(decision) = prepared.hard_rule() {
+                Some(decision)
+            } else {
+                match self.sink.runtime.inner.ai_permissions.as_ref() {
+                    Some(ai_permissions) => match ai_permissions.live_once_started().await {
+                        Some(live) => Some(
+                            decide(
+                                &live,
+                                &prepared,
+                                self.sink.runtime.inner.timeouts.ai_permissions_decision,
+                            )
+                            .await,
+                        ),
+                        None => {
+                            tracing::warn!(
+                                "AI permission model is unavailable for a permission decision"
+                            );
+                            Some(prepared.unanswered("unavailable"))
+                        }
+                    },
                     None => {
                         tracing::warn!(
                             "AI permission model is unavailable for a permission decision"
                         );
-                        Some(Decision::Unanswered {
-                            reason: "unavailable",
-                        })
+                        Some(prepared.unanswered("unavailable"))
                     }
-                },
-                None => {
-                    tracing::warn!("AI permission model is unavailable for a permission decision");
-                    Some(Decision::Unanswered {
-                        reason: "unavailable",
-                    })
                 }
             }
         } else {
@@ -1397,11 +1405,13 @@ impl RuntimeIncoming {
             Some(Decision::Allow { .. }) => {
                 approved_option(params).filter(|option| allowing_option(params, option))
             }
-            Some(Decision::Deny { .. }) => rejecting_option(params),
+            Some(Decision::Deny { .. } | Decision::Rule { .. }) => rejecting_option(params),
             _ => None,
         };
-        let deny_without_option = matches!(&ai_permissions_decision, Some(Decision::Deny { .. }))
-            && ai_permissions_selection.is_none();
+        let deny_without_option = matches!(
+            &ai_permissions_decision,
+            Some(Decision::Deny { .. } | Decision::Rule { .. })
+        ) && ai_permissions_selection.is_none();
         let waiting = matches!(self.permission_mode, PermissionMode::Ask)
             || deny_without_option
             || (remembers && !learned && ai_permissions_selection.is_none());
@@ -1409,46 +1419,30 @@ impl RuntimeIncoming {
         // question shows it while it waits, and the reply keeps it, so a
         // reader asking why the console was asked finds the score it fell
         // short with.
-        let (label, danger, allow_threshold, deny_threshold, ai_error) =
-            match &ai_permissions_decision {
-                Some(Decision::Allow {
-                    danger,
-                    allow_threshold,
-                    deny_threshold,
-                }) => (
-                    Some("allow"),
-                    Some(*danger),
-                    Some(*allow_threshold),
-                    Some(*deny_threshold),
-                    None,
-                ),
-                Some(Decision::Ask {
-                    danger,
-                    allow_threshold,
-                    deny_threshold,
-                }) => (
-                    Some("ask"),
-                    Some(*danger),
-                    Some(*allow_threshold),
-                    Some(*deny_threshold),
-                    None,
-                ),
-                Some(Decision::Deny {
-                    danger,
-                    allow_threshold,
-                    deny_threshold,
-                }) => (
-                    Some("deny"),
-                    Some(*danger),
-                    Some(*allow_threshold),
-                    Some(*deny_threshold),
-                    None,
-                ),
-                Some(Decision::Unanswered { reason }) => (None, None, None, None, Some(*reason)),
-                None => (None, None, None, None, None),
-            };
+        let label = match &ai_permissions_decision {
+            Some(Decision::Allow { .. }) => Some("allow"),
+            Some(Decision::Ask { .. }) => Some("ask"),
+            Some(Decision::Deny { .. } | Decision::Rule { .. }) => Some("deny"),
+            Some(Decision::Unanswered { .. }) | None => None,
+        };
+        let score = ai_permissions_decision.as_ref().and_then(Decision::score);
+        let danger = score.map(|score| score.danger);
+        let allow_threshold = score.map(|score| score.allow_threshold);
+        let deny_threshold = score.map(|score| score.deny_threshold);
+        let probabilities = score.map(|score| score.probabilities.clone());
+        let ai_error = match &ai_permissions_decision {
+            Some(Decision::Unanswered { reason, .. }) => Some(*reason),
+            _ => None,
+        };
+        let derived = ai_permissions_decision.as_ref().map(Decision::derived);
+        let operation = derived.and_then(|derived| derived.operation);
+        let risk_tags = derived.map(|derived| derived.risk_tags.clone());
+        let rule = ai_permissions_decision.as_ref().and_then(Decision::rule);
+        let cap = ai_permissions_decision.as_ref().and_then(Decision::cap);
         let request_decided_by = if waiting {
             None
+        } else if matches!(&ai_permissions_decision, Some(Decision::Rule { .. })) {
+            Some("rule")
         } else if ai_permissions_selection.is_some() {
             Some("ai")
         } else if learned {
@@ -1463,6 +1457,11 @@ impl RuntimeIncoming {
             ("allow_threshold", json!(allow_threshold)),
             ("deny_threshold", json!(deny_threshold)),
             ("ai_error", json!(ai_error)),
+            ("operation", json!(operation)),
+            ("risk_tags", json!(risk_tags)),
+            ("rule", json!(rule)),
+            ("cap", json!(cap)),
+            ("probabilities", json!(probabilities)),
         ] {
             payload[key] = value;
         }
@@ -1471,6 +1470,9 @@ impl RuntimeIncoming {
         self.sink.emit("permission_request", payload).await;
         let (selected, decided_by) = match receiver {
             Some(receiver) => (self.wait_for_permission(params, receiver).await?, "console"),
+            None if matches!(&ai_permissions_decision, Some(Decision::Rule { .. })) => {
+                (ai_permissions_selection, "rule")
+            }
             None if ai_permissions_selection.is_some() => (ai_permissions_selection, "ai"),
             None if learned => (approved_option(params), "learned"),
             None => (approved_option(params), "auto"),
@@ -1484,11 +1486,17 @@ impl RuntimeIncoming {
                 allow_threshold,
                 deny_threshold,
                 ai_error,
+                operation,
+                risk_tags = ?risk_tags,
+                rule,
+                cap,
+                probabilities = ?probabilities,
                 "AI permission decision"
             );
         }
         if remembers
             && decided_by == "console"
+            && !matches!(&ai_permissions_decision, Some(Decision::Rule { .. }))
             && !self.repository_id.is_empty()
             && selected
                 .as_deref()
@@ -1526,7 +1534,9 @@ impl RuntimeIncoming {
                 json!({"session_id": session_id, "option_id": selected,
                        "decided_by": decided_by, "label": label, "danger": danger,
                        "allow_threshold": allow_threshold, "deny_threshold": deny_threshold,
-                       "ai_error": ai_error}),
+                       "ai_error": ai_error, "operation": operation,
+                       "risk_tags": risk_tags, "rule": rule, "cap": cap,
+                       "probabilities": probabilities}),
             )
             .await;
         Ok(json!({"outcome": outcome}))

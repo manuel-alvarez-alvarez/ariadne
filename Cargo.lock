@@ -273,6 +273,7 @@ dependencies = [
  "http-body-util",
  "keepawake",
  "notify",
+ "regex",
  "reqwest",
  "rustix",
  "serde",

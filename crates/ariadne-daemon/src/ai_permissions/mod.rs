@@ -10,7 +10,9 @@
 //! [`AiPermissionsStatusDto`], and every change to it is published as `ai_permissions_updated`.
 
 pub(crate) mod decide;
+mod derive;
 pub mod install;
+mod operations;
 pub mod python;
 pub mod schedule;
 mod server;
@@ -225,8 +227,8 @@ impl AiPermissions {
 }
 
 /// The thresholds a daemon that cannot read its settings reports.
-pub(crate) const DEFAULT_ALLOW_THRESHOLD: f64 = 0.1338;
-pub(crate) const DEFAULT_DENY_THRESHOLD: f64 = 0.5345;
+pub(crate) const DEFAULT_ALLOW_THRESHOLD: f64 = 0.1647;
+pub(crate) const DEFAULT_DENY_THRESHOLD: f64 = 0.626;
 
 /// The state a stored spelling names. One nothing here knows reads as
 /// `failed`: a state that cannot be read is not one to answer requests on.

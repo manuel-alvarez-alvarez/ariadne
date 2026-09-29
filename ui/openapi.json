@@ -3081,13 +3081,13 @@
             "type": "number",
             "format": "double",
             "description": "Danger at or below this value is allowed, 0 to 1.",
-            "example": 0.1338
+            "example": 0.1647
           },
           "deny_threshold": {
             "type": "number",
             "format": "double",
             "description": "Danger at or above this value is denied, 0 to 1.",
-            "example": 0.5345
+            "example": 0.626
           },
           "enabled": {
             "type": "boolean",
@@ -5329,6 +5329,13 @@
           "tool": {
             "type": "string",
             "description": "The tool call title the model sees."
+          },
+          "workspace": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The workspace used to derive whether a path is outside it."
           }
         },
         "additionalProperties": false
@@ -5353,6 +5360,13 @@
             "format": "double",
             "description": "Danger at or below this value is allowed."
           },
+          "cap": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The first cap that changed an allow into an ask."
+          },
           "danger": {
             "type": [
               "number",
@@ -5372,6 +5386,33 @@
               "null"
             ],
             "description": "`allow`, `ask`, or `deny` when the model answered."
+          },
+          "operation": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The derived operation hint, when one is known."
+          },
+          "probabilities": {
+            "description": "Kev's probabilities for the decision question."
+          },
+          "risk_tags": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The ordered risk tags derived from the complete request."
+          },
+          "rule": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The hard rule that denied the request."
           }
         }
       },

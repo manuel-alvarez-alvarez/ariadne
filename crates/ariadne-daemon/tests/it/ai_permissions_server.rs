@@ -80,7 +80,7 @@ async fn a_ready_model_starts_the_server_with_its_built_in_weights() {
     assert!(saw.contains(RUN));
     assert!(saw.contains("/ai-permissions/hf"));
     assert!(saw.contains("\n1\n"), "HF_HUB_OFFLINE=1: {saw}");
-    assert!(saw.ends_with("1.5"), "KEV_TEMPERATURE=1.5: {saw}");
+    assert!(saw.ends_with("1.0"), "KEV_TEMPERATURE=1.0: {saw}");
     let _: AiPermissionsStatusDto = h
         .json(
             put_json("/v1/permissions/ai", json!({"enabled":false})),

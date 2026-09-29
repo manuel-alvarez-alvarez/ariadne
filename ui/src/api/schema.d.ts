@@ -1252,13 +1252,13 @@ export interface components {
             /**
              * Format: double
              * @description Danger at or below this value is allowed, 0 to 1.
-             * @example 0.1338
+             * @example 0.1647
              */
             allow_threshold: number;
             /**
              * Format: double
              * @description Danger at or above this value is denied, 0 to 1.
-             * @example 0.5345
+             * @example 0.626
              */
             deny_threshold: number;
             /** @description Whether the model answers permission requests at all. */
@@ -2284,6 +2284,8 @@ export interface components {
             options?: string[] | null;
             /** @description The tool call title the model sees. */
             tool: string;
+            /** @description The workspace used to derive whether a path is outside it. */
+            workspace?: string | null;
         };
         /**
          * @description The AI permission model's score for a request, held to the current
@@ -2297,6 +2299,8 @@ export interface components {
              * @description Danger at or below this value is allowed.
              */
             allow_threshold: number;
+            /** @description The first cap that changed an allow into an ask. */
+            cap?: string | null;
             /**
              * Format: double
              * @description The model's normalized danger score when it answered.
@@ -2309,6 +2313,14 @@ export interface components {
             deny_threshold: number;
             /** @description `allow`, `ask`, or `deny` when the model answered. */
             label?: string | null;
+            /** @description The derived operation hint, when one is known. */
+            operation?: string | null;
+            /** @description Kev's probabilities for the decision question. */
+            probabilities?: unknown;
+            /** @description The ordered risk tags derived from the complete request. */
+            risk_tags?: string[] | null;
+            /** @description The hard rule that denied the request. */
+            rule?: string | null;
         };
         /**
          * @description Tokens spent, as the agents' own transcripts report them.

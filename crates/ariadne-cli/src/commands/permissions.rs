@@ -108,6 +108,9 @@ pub(crate) enum AiPermissionsCommand {
         /// An option name, repeated for each option
         #[arg(long = "option")]
         options: Vec<String>,
+        /// The workspace used to derive whether a path is outside it
+        #[arg(long)]
+        workspace: Option<String>,
     },
 }
 
@@ -307,6 +310,7 @@ async fn run_ai(client: &Client, cmd: AiPermissionsCommand, format: Format) -> R
             kind,
             input,
             options,
+            workspace,
         } => {
             let response = client
                 .test_ai_permission(&TestAiPermissionRequest {
@@ -314,6 +318,7 @@ async fn run_ai(client: &Client, cmd: AiPermissionsCommand, format: Format) -> R
                     kind,
                     input,
                     options: (!options.is_empty()).then_some(options),
+                    workspace,
                 })
                 .await?;
             print(format, &response, || {
@@ -328,13 +333,34 @@ fn parse_json(text: &str) -> Result<serde_json::Value, String> {
 }
 
 fn test_one_line(response: &TestAiPermissionResponse) -> String {
-    match (&response.label, response.danger, &response.ai_error) {
+    let answer = match (&response.label, response.danger, &response.ai_error) {
         (Some(label), Some(danger), None) => format!(
             "{label} (danger {danger:.2}; allow {:.2}, deny {:.2})",
             response.allow_threshold, response.deny_threshold
         ),
+        (Some(label), None, None) => label.clone(),
         (_, _, Some(error)) => format!("no answer: {error}"),
         _ => "no answer".to_string(),
+    };
+    let mut facts = Vec::new();
+    if let Some(operation) = &response.operation {
+        facts.push(format!("operation {operation}"));
+    }
+    if let Some(tags) = &response.risk_tags
+        && !tags.is_empty()
+    {
+        facts.push(format!("tags {}", tags.join(", ")));
+    }
+    if let Some(rule) = &response.rule {
+        facts.push(format!("rule {rule}"));
+    }
+    if let Some(cap) = &response.cap {
+        facts.push(format!("cap {cap}"));
+    }
+    if facts.is_empty() {
+        answer
+    } else {
+        format!("{answer}; {}", facts.join("; "))
     }
 }
 
@@ -645,10 +671,15 @@ mod tests {
             allow_threshold: 0.2,
             deny_threshold: 0.8,
             ai_error: None,
+            operation: Some("external_mutation".into()),
+            risk_tags: Some(vec!["remote".into()]),
+            rule: None,
+            cap: None,
+            probabilities: Some(serde_json::json!({"0": 0.2, "1": 0.8, "2": 0.0})),
         };
         assert_eq!(
             test_one_line(&answered),
-            "ask (danger 0.41; allow 0.20, deny 0.80)"
+            "ask (danger 0.41; allow 0.20, deny 0.80); operation external_mutation; tags remote"
         );
         assert_eq!(
             test_one_line(&TestAiPermissionResponse {
@@ -657,6 +688,11 @@ mod tests {
                 allow_threshold: 0.2,
                 deny_threshold: 0.8,
                 ai_error: Some("timed out".into()),
+                operation: None,
+                risk_tags: Some(vec![]),
+                rule: None,
+                cap: None,
+                probabilities: None,
             }),
             "no answer: timed out"
         );
@@ -749,6 +785,53 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         (Client::tcp(format!("http://{address}")), server)
+    }
+
+    #[tokio::test]
+    async fn test_sends_the_workspace_with_the_request() {
+        let seen = Arc::new(Mutex::new(None));
+        async fn handler(
+            State(seen): State<Arc<Mutex<Option<serde_json::Value>>>>,
+            Json(req): Json<serde_json::Value>,
+        ) -> Json<TestAiPermissionResponse> {
+            *seen.lock().unwrap() = Some(req);
+            Json(TestAiPermissionResponse {
+                label: Some("allow".into()),
+                danger: Some(0.05),
+                allow_threshold: 0.1647,
+                deny_threshold: 0.626,
+                ai_error: None,
+                operation: Some("read_workspace".into()),
+                risk_tags: Some(vec![]),
+                rule: None,
+                cap: None,
+                probabilities: Some(json!({"0": 0.9, "1": 0.1, "2": 0.0})),
+            })
+        }
+        let app = Router::new()
+            .route("/v1/permissions/ai/test", post(handler))
+            .with_state(seen.clone());
+        let (client, server) = serve(app).await;
+
+        run(
+            &client,
+            PermissionsCommand::Ai(AiPermissionsCommand::Test {
+                tool: "Bash".into(),
+                kind: Some("execute".into()),
+                input: json!({"command": "git status"}),
+                options: vec!["Allow".into()],
+                workspace: Some("/repo/ariadne".into()),
+            }),
+            Format::Json,
+        )
+        .await
+        .unwrap();
+        server.abort();
+
+        assert_eq!(
+            seen.lock().unwrap().as_ref().unwrap()["workspace"],
+            "/repo/ariadne"
+        );
     }
 
     /// `enable` sends `{"enabled": true}` and nothing else.

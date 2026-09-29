@@ -115,8 +115,8 @@ async fn the_settings_start_at_the_defaults_with_the_interpreter_probed() {
 
     let status = status(&h).await;
     assert!(!status.enabled);
-    assert_eq!(status.allow_threshold, 0.1338);
-    assert_eq!(status.deny_threshold, 0.5345);
+    assert_eq!(status.allow_threshold, 0.1647);
+    assert_eq!(status.deny_threshold, 0.626);
     assert_eq!(status.schedule, None);
     assert_eq!(status.state, AiPermissionsState::Disabled);
     assert_eq!(status.installed_release, None);
@@ -760,6 +760,16 @@ async fn the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document() {
         assert!(
             schemas["UpdateAiPermissionsRequest"]["properties"][field].is_object(),
             "{field} is absent from the update schema"
+        );
+    }
+    assert!(
+        schemas["TestAiPermissionRequest"]["properties"]["workspace"].is_object(),
+        "workspace is absent from the test request"
+    );
+    for field in ["operation", "risk_tags", "rule", "cap", "probabilities"] {
+        assert!(
+            schemas["TestAiPermissionResponse"]["properties"][field].is_object(),
+            "{field} is absent from the test response"
         );
     }
 

@@ -657,6 +657,33 @@ mod tests {
             "{output}"
         );
         assert!(output.contains("answer: Allow\n"), "{output}");
+
+        let capped = [event(
+            "ask",
+            "permission_request",
+            json!({
+                "tool_name": "Bash", "tool_input": {"command": "cat ~/.aws/credentials"},
+                "options": [{"optionId": "yes", "name": "Allow"}],
+                "label": "ask", "danger": 0.081, "cap": "credential_access"
+            }),
+        )];
+        let output = render::transcript(&fold(&capped), Some(80), false);
+        assert!(
+            output.contains("AI said ask (danger 0.08, capped by credential_access)"),
+            "{output}"
+        );
+
+        let ruled = [event(
+            "ask",
+            "permission_request",
+            json!({
+                "tool_name": "Bash", "tool_input": {"command": "rm -rf ~"},
+                "options": [{"optionId": "yes", "name": "Allow"}],
+                "label": "deny", "rule": "home_delete"
+            }),
+        )];
+        let output = render::transcript(&fold(&ruled), Some(80), false);
+        assert!(output.contains("rule home_delete said deny"), "{output}");
     }
 
     #[test]

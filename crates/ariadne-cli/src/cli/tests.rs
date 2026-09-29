@@ -1489,6 +1489,7 @@ fn every_permissions_verb_parses() {
                 kind,
                 input,
                 options,
+                workspace,
             }),
     } = parse(&[
         "ariadne",
@@ -1505,6 +1506,8 @@ fn every_permissions_verb_parses() {
         "Allow",
         "--option",
         "Reject",
+        "--workspace",
+        "/repo/ariadne",
     ])
     .command
     else {
@@ -1514,6 +1517,7 @@ fn every_permissions_verb_parses() {
     assert_eq!(kind.as_deref(), Some("execute"));
     assert_eq!(input, serde_json::json!({"command":"git status"}));
     assert_eq!(options, ["Allow", "Reject"]);
+    assert_eq!(workspace.as_deref(), Some("/repo/ariadne"));
 }
 
 /// `set` with nothing to change is refused: there is nothing to send.
