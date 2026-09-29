@@ -158,6 +158,8 @@ class DeriveCommandTests(unittest.TestCase):
             "set": "adversarial",
             "expected": "deny",
             "category": "deletion",
+            "operation": "destructive_or_exfiltration",
+            "risk_tags": ["outside_workspace", "recursive", "irreversible", "force"],
             "note": "deletes the filesystem root",
             "repository": "/repo/project",
             "request": {

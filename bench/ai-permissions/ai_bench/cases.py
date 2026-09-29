@@ -5,11 +5,45 @@ import json
 from pathlib import Path
 from typing import Any, Iterable
 
-REQUIRED_TOP = ("id", "set", "expected", "category", "note", "repository", "request")
+REQUIRED_TOP = ("id", "set", "expected", "category", "operation", "risk_tags", "note", "repository", "request")
 VALID_SETS = ("safe", "elevated", "adversarial", "real")
 VALID_EXPECTED = ("allow", "ask", "deny")
 VALID_KINDS = ("execute", "edit", "read", "fetch", "search", "other")
 REQUIRED_TOOL_CALL = ("toolCallId", "name", "title", "kind", "rawInput", "locations")
+# The main effect of a request. It is not a decision: a case of each operation can expect any label.
+OPERATIONS = (
+    "read_workspace",
+    "write_workspace",
+    "delete_workspace",
+    "build_test",
+    "dependency_change",
+    "local_execution",
+    "network_read",
+    "external_mutation",
+    "version_control_mutation",
+    "secrets_credentials",
+    "system_privileged",
+    "destructive_or_exfiltration",
+)
+# The properties of a request that change its risk. A tag is not a decision.
+RISK_TAGS = (
+    "outside_workspace",
+    "recursive",
+    "bulk",
+    "irreversible",
+    "remote",
+    "production",
+    "credential_access",
+    "credential_transfer",
+    "privileged",
+    "shell_interpolation",
+    "download_and_execute",
+    "unknown_destination",
+    "force",
+    "background_process",
+    "persistent_change",
+)
+HELDOUT_SUFFIX = "-heldout.jsonl"
 
 
 class CaseError(ValueError):
@@ -36,6 +70,20 @@ def _check(case: dict[str, Any], source: str, line_no: int | None) -> None:
         raise CaseError(source, line_no, "every elevated case must expect ask or deny")
     if case["set"] == "adversarial" and case["expected"] not in ("deny", "ask"):
         raise CaseError(source, line_no, "every adversarial case must expect deny or ask")
+    if not isinstance(case["operation"], str) or case["operation"] not in OPERATIONS:
+        raise CaseError(source, line_no, "operation must be one of %s, got %r" % (OPERATIONS, case["operation"]))
+    tags = case["risk_tags"]
+    if not isinstance(tags, list):
+        raise CaseError(source, line_no, "risk_tags must be a list, got %r" % (tags,))
+    for tag in tags:
+        if not isinstance(tag, str) or tag not in RISK_TAGS:
+            raise CaseError(source, line_no, "risk_tags must hold only %s, got %r" % (RISK_TAGS, tag))
+    if len(set(tags)) != len(tags):
+        raise CaseError(source, line_no, "risk_tags holds one tag twice: %r" % (tags,))
+    if "pair" in case:
+        pair = case["pair"]
+        if not isinstance(pair, str) or not pair or pair == case["id"]:
+            raise CaseError(source, line_no, "pair must be the id of another case, got %r" % (pair,))
     request = case["request"]
     if not isinstance(request, dict) or "toolCall" not in request or "options" not in request:
         raise CaseError(source, line_no, "request must hold toolCall and options")
@@ -89,19 +137,50 @@ def load_cases(targets: Iterable[str]) -> list[dict[str, Any]]:
     return cases
 
 
+def pair_problems(cases: dict[str, tuple[str, dict[str, Any]]]) -> list[str]:
+    """The faults of the adversarial pairs in `cases`, a map of id to (file, case).
+
+    A `pair` names the twin of a case. The twin names the case back, expects another label, and
+    is in the same group: two development cases or two held-out cases, because a run loads one
+    group without the other."""
+    problems = []
+    for case_id, (source, case) in cases.items():
+        if "pair" not in case:
+            continue
+        if case["pair"] not in cases:
+            problems.append("%s: pair %r of %r names no case" % (source, case["pair"], case_id))
+            continue
+        twin_source, twin = cases[case["pair"]]
+        if twin.get("pair") != case_id:
+            problems.append("%s: the twin %r of %r does not name it back" % (source, case["pair"], case_id))
+            continue
+        if case_id > case["pair"]:
+            continue  # one report per pair, from its first id
+        if twin["expected"] == case["expected"]:
+            problems.append("%s: the twins %r and %r both expect %r" % (source, case_id, case["pair"], case["expected"]))
+        if source.endswith(HELDOUT_SUFFIX) != twin_source.endswith(HELDOUT_SUFFIX):
+            problems.append(
+                "%s: the twins %r and %r are not both development or both held-out cases" % (source, case_id, case["pair"])
+            )
+    return problems
+
+
 def validate(targets: Iterable[str]) -> list[str]:
-    """Validate every case in `targets`. Returns the list of problems found (empty = clean)."""
+    """Validate every case in `targets`. Returns the list of problems found (empty = clean).
+
+    Only `validate` checks the pairs, and it needs the file of each twin in `targets`.
+    `load_cases` does not, so that a run on one file loads a case whose twin is in another."""
     problems: list[str] = []
-    seen_ids: dict[str, str] = {}
+    seen: dict[str, tuple[str, dict[str, Any]]] = {}
     for path in iter_case_files(targets):
         try:
             for case in load_file(path):
-                if case["id"] in seen_ids:
+                if case["id"] in seen:
                     problems.append(
-                        "%s: duplicate id %r (first seen in %s)" % (path, case["id"], seen_ids[case["id"]])
+                        "%s: duplicate id %r (first seen in %s)" % (path, case["id"], seen[case["id"]][0])
                     )
                     continue
-                seen_ids[case["id"]] = str(path)
+                seen[case["id"]] = (str(path), case)
         except CaseError as exc:
             problems.append(str(exc))
-    return problems
+    return problems + pair_problems(seen)
