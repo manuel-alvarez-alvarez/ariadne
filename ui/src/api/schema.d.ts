@@ -1252,13 +1252,13 @@ export interface components {
             /**
              * Format: double
              * @description Danger at or below this value is allowed, 0 to 1.
-             * @example 0.1647
+             * @example 0.0886
              */
             allow_threshold: number;
             /**
              * Format: double
              * @description Danger at or above this value is denied, 0 to 1.
-             * @example 0.626
+             * @example 0.6256
              */
             deny_threshold: number;
             /**

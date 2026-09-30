@@ -245,10 +245,10 @@ pub struct AiPermissionsStatusDto {
     /// Whether the model answers permission requests at all.
     pub enabled: bool,
     /// Danger at or below this value is allowed, 0 to 1.
-    #[schema(example = 0.1647)]
+    #[schema(example = 0.0886)]
     pub allow_threshold: f64,
     /// Danger at or above this value is denied, 0 to 1.
-    #[schema(example = 0.626)]
+    #[schema(example = 0.6256)]
     pub deny_threshold: f64,
     /// The Kev flavour chosen, `4b` by default where the machine can run it.
     pub flavour: Flavour,

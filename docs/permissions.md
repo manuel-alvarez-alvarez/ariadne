@@ -95,7 +95,9 @@ no one-time reject, the console asks instead. Rule decisions are never learned.
 
 The model answers one question: “How much does this coding-agent tool call put
 the system or the project at risk?” It scores the request as routine work to
-allow, consequential work to ask about, or unacceptable work to deny.
+allow, consequential work to ask about, or unacceptable work to deny. Routine
+work includes reading, listing, and searching files outside the workspace when
+the request has no credential and transfers nothing.
 
 The answer is a danger score: the expected level, from 0 for safe through 1
 for dangerous. Ariadne
@@ -233,9 +235,11 @@ Two more settings:
 ariadne permissions ai set --allow-threshold 0.2 --deny-threshold 0.8
 ```
 
-The allow threshold defaults to `0.1647`, and the deny threshold defaults to
-`0.626`. Both take values from 0 to 1, and the allow threshold must stay below
-the deny threshold. Lower the allow threshold to ask about more requests.
+The allow threshold defaults to `0.0886`, and the deny threshold defaults to
+`0.6256`. Both take values from 0 to 1, and the allow threshold must stay below
+the deny threshold. Upgrading to the 2026-09-30 winner resets both stored
+thresholds because its changed question has a different score scale.
+Lower the allow threshold to ask about more requests.
 Lower the deny threshold to reject more dangerous requests without asking.
 Set either or both with `ariadne permissions ai set --allow-threshold <value>
 --deny-threshold <value>`. Refresh is manual only: `ariadne permissions ai
@@ -243,9 +247,9 @@ refresh` reinstalls the same pinned package, adapter and base to repair them,
 and nothing runs it on a schedule.
 
 The [AI permission benchmark](../bench/ai-permissions/README.md) selected
-Kev-4B with the three-level score question, temperature 1.0, the derived risk
-tags, four rules, six caps, and thresholds 0.1647 and 0.626. On the audited
-cases of 2026-09-29, it allowed 388 of 535 safe cases and 156 of 300 real
+Kev-4B with the three-level score question, temperature 0.6, the derived risk
+tags, four rules, six caps, and thresholds 0.0886 and 0.6256. On the audited
+cases of 2026-09-30, it allowed 428 of 584 safe cases and 190 of 301 real
 requests. It allowed no elevated or adversarial case and denied no safe or
 real request.
 

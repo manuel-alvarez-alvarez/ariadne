@@ -148,6 +148,18 @@ fn home_delete_script() -> Value {
     scripted
 }
 
+fn outside_workspace_read_script() -> Value {
+    let mut scripted = permission_script();
+    scripted["prompts"][0]["permission"]["toolCall"]["title"] = json!(
+        "cd /tmp/kev-probe && git log -1 --format='%H %cd' 2>/dev/null; ls kev; cat pyproject.toml; cat smoke.sh | head -60; cat serve.log | head -30"
+    );
+    scripted["prompts"][0]["permission"]["toolCall"]["rawInput"] = json!({
+        "command": "cd /tmp/kev-probe && git log -1 --format='%H %cd' 2>/dev/null; ls kev; cat pyproject.toml; cat smoke.sh | head -60; cat serve.log | head -30",
+        "description": "Check the state of a scratch probe checkout"
+    });
+    scripted
+}
+
 fn python() -> String {
     shared_script("#!/bin/sh\necho 'Python 3.12.1'\n")
         .display()
@@ -527,6 +539,40 @@ async fn a_confident_allow_runs_at_once_and_reports_ai() {
             .len(),
         3
     );
+}
+
+#[tokio::test]
+async fn the_recorded_outside_workspace_read_is_allowed() {
+    let server = ModelServer::answer(0.045).await;
+    let (h, cast, _agent_dir) = ai_permissions_harness_with(
+        &server,
+        0.0886,
+        Timeouts::default(),
+        outside_workspace_read_script(),
+    )
+    .await;
+
+    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    eventually(TIMEOUT, "the AI-approved turn to finish", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+
+    let reply = reply(&h, &session.id).await;
+    assert_eq!(reply["option_id"], "yes");
+    assert_eq!(
+        model_part(&reply),
+        json!({"label": "allow", "danger": 0.045, "allow_threshold": 0.0886,
+               "deny_threshold": 0.8, "ai_error": null})
+    );
+    let requests = server.requests.lock().unwrap();
+    assert!(
+        requests[0]["questions"]["decision"]["criteria"][0]
+            .as_str()
+            .unwrap()
+            .contains("reading, listing and searching files outside the workspace, with no credential and no transfer")
+    );
+    assert_eq!(requests[0]["state"]["derived"]["outside_workspace"], true);
 }
 
 /// A `kev.serve` that records its pid, loads for as long as its second

@@ -3085,13 +3085,13 @@
             "type": "number",
             "format": "double",
             "description": "Danger at or below this value is allowed, 0 to 1.",
-            "example": 0.1647
+            "example": 0.0886
           },
           "deny_threshold": {
             "type": "number",
             "format": "double",
             "description": "Danger at or above this value is denied, 0 to 1.",
-            "example": 0.626
+            "example": 0.6256
           },
           "device": {
             "$ref": "#/components/schemas/Device",

@@ -160,7 +160,7 @@ async fn a_ready_model_starts_the_server_with_its_built_in_weights() {
     assert_eq!(saw.arg_after("--run"), RUN);
     assert!(saw.env("HF_HOME").unwrap().ends_with("/ai-permissions/hf"));
     assert_eq!(saw.env("HF_HUB_OFFLINE"), Some("1"));
-    assert_eq!(saw.env("KEV_TEMPERATURE"), Some("1.0"));
+    assert_eq!(saw.env("KEV_TEMPERATURE"), Some("0.6"));
     let _: AiPermissionsStatusDto = h
         .json(
             put_json("/v1/permissions/ai", json!({"enabled":false})),

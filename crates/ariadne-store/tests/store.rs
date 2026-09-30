@@ -135,6 +135,35 @@ async fn ai_permission_threshold_migration_replaces_the_old_defaults() {
     assert_eq!(thresholds, (0.1647, 0.626));
 }
 
+#[tokio::test]
+async fn winner_threshold_migration_resets_the_stored_pair() {
+    use sqlx::Connection;
+    let mut connection = sqlx::SqliteConnection::connect(":memory:").await.unwrap();
+    sqlx::raw_sql(include_str!("../migrations/0001_init.sql"))
+        .execute(&mut connection)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE ai_permission_settings SET allow_threshold = 0.12, deny_threshold = 0.54")
+        .execute(&mut connection)
+        .await
+        .unwrap();
+
+    sqlx::raw_sql(include_str!(
+        "../migrations/0005_ai_permission_winner_thresholds.sql"
+    ))
+    .execute(&mut connection)
+    .await
+    .unwrap();
+
+    let thresholds: (f64, f64) = sqlx::query_as(
+        "SELECT allow_threshold, deny_threshold FROM ai_permission_settings WHERE id = 1",
+    )
+    .fetch_one(&mut connection)
+    .await
+    .unwrap();
+    assert_eq!(thresholds, (0.0886, 0.6256));
+}
+
 /// An install from before flavours existed keeps `4b`, its device starts
 /// `NULL` for the daemon to fill at startup, and the schedule columns are gone.
 #[tokio::test]
@@ -3780,8 +3809,8 @@ async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
 
     let defaults = store.ai_permission_settings().await.unwrap();
     assert!(!defaults.enabled);
-    assert_eq!(defaults.allow_threshold, 0.1647);
-    assert_eq!(defaults.deny_threshold, 0.626);
+    assert_eq!(defaults.allow_threshold, 0.0886);
+    assert_eq!(defaults.deny_threshold, 0.6256);
     assert_eq!(defaults.flavour, "4b");
     assert_eq!(defaults.device, None);
     assert_eq!(defaults.state, "disabled");
@@ -3802,7 +3831,7 @@ async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
         .await
         .unwrap();
     assert_eq!(partly_chosen.allow_threshold, 0.2);
-    assert_eq!(partly_chosen.deny_threshold, 0.626);
+    assert_eq!(partly_chosen.deny_threshold, 0.6256);
     let chosen = store
         .update_ai_permission_settings(AiPermissionSettingsUpdate {
             deny_threshold: Some(0.8),

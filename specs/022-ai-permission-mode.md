@@ -188,18 +188,20 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     say not to ask only because a command runs, a project file changes or is
     deleted, or git is used, and not to deny only because an operation is
     powerful. Its three levels begin `allow`, `ask` and `deny` and carry the
-    exact winner criteria. `answers.decision.score`, divided by the highest
+    exact winner criteria. Its `allow` level names reading, listing and searching
+    files outside the workspace with no credential and no transfer.
+    `answers.decision.score`, divided by the highest
     level index, is the danger.
 22. The status and update request do not carry the checkpoint or prompt texts.
 23. The server passes `--run`, the run of the chosen flavour, and
-    `KEV_TEMPERATURE=1.0` to `kev.serve`; the installer downloads what that run
+    `KEV_TEMPERATURE=0.6` to `kev.serve`; the installer downloads what that run
     needs onto disk before the model is ready. The installer seam receives
     `AI_PERMISSIONS_HOME`, `AI_PERMISSIONS_RUN` (the run of the chosen
     flavour), `AI_PERMISSIONS_KEV_COMMIT`, `AI_PERMISSIONS_FLAVOUR` and
     `AI_PERMISSIONS_DEVICE`.
-24. The default allow threshold is 0.1647 and the default deny threshold is
-    0.626. The store migration replaces the former default pair, 0.1338 and
-    0.5345, on an existing settings row and preserves another chosen pair.
+24. The default allow threshold is 0.0886 and the default deny threshold is
+    0.6256. The store migration resets the stored pair because the winner changes
+    the question and its score scale.
 
 ## Decisions
 
@@ -369,8 +371,8 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     grid of each mode, and its latency and memory. The section "Winner
     (2026-09-29)" keeps, for `kev_v25`, the baseline `kev_v10` against it
     per set, its tables per operation, per tag and per pair, and the cases
-    that it does not decide. The daemon keeps the `kev_v25` contract in
-    rules 21 to 32 until the port of the 2026-09-30 winner.
+    that it does not decide. The daemon keeps the `kev_v28` contract in
+    rules 21 to 32.
 35. `run.py list` prints every registered evaluator with its backend and
     description, and `run.py run --evaluator <key>` runs one: `setup` once,
     `evaluate` per case, timed, and `teardown` however the run ends.
@@ -600,7 +602,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 
 ## Acceptance criteria
 
-- A fresh daemon is off, at allow threshold 0.1647 and deny threshold 0.626,
+- A fresh daemon is off, at allow threshold 0.0886 and deny threshold 0.6256,
   and reports
   the interpreter it probed
   (`ai_permissions.rs::the_settings_start_at_the_defaults_with_the_interpreter_probed`).
@@ -655,7 +657,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   live while the model is off
   (`ai_permissions.rs::the_endpoint_is_the_configured_one_and_live_needs_the_model_on`).
 - A ready enabled model starts its local server with its built-in run,
-  offline cache and temperature 1.0, and reports the endpoint
+  offline cache and temperature 0.6, and reports the endpoint
   (`ai_permissions_server.rs::a_ready_model_starts_the_server_with_its_built_in_weights`),
   restarts it after a refresh and an unexpected exit
   (`::a_refresh_and_an_unexpected_exit_restart_the_server`), starts it again
@@ -679,6 +681,8 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   (`store.rs::the_ai_permission_settings_are_one_row_that_takes_partial_writes`).
 - A stored row with the former default pair opens with the new pair
   (`store.rs::ai_permission_threshold_migration_replaces_the_old_defaults`).
+- The winner migration resets the stored threshold pair for the new score scale
+  (`store.rs::winner_threshold_migration_resets_the_stored_pair`).
 - `python_bin` and `nvidia_smi_bin` are read from `config.toml`, and
   `ai_permissions_release_url` and `ai_permissions_hardware` are refused,
   and the test seams are not keys of it
@@ -691,6 +695,8 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   `decided_by: "ai"` and `label: "allow"`, raises no attention, and sends the benchmarked state and
   three-level `score` question with `model = "kev-latest"` to the model
   (`ai_permissions_decisions.rs::a_confident_allow_runs_at_once_and_reports_ai`).
+- The recorded outside-workspace read is allowed and sends the winner's added
+  criterion (`ai_permissions_decisions.rs::the_recorded_outside_workspace_read_is_allowed`).
 - Every reply keeps the model's side: the label, danger and both thresholds that
   fell short, or why the model gave no answer
   (`ai_permissions_decisions.rs::an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval`,
@@ -709,7 +715,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   `ariadne_api::permissions::tests::a_reply_names_why_the_model_did_not_decide_it`).
 - A `score` answer is divided by its highest level index for the danger score
   (`ai_permissions_decisions.rs::a_score_answer_is_used_as_the_danger`), and
-  three recorded winner answers map to their recorded danger values
+  four recorded benchmark answers map to their recorded danger values
   (`ai_permissions::decide::tests::recorded_answers_map_to_the_winner_danger_values`).
 - An uncertain allow asks the console, remembers its approval, and still asks
   the model before selecting that learned approval next time
@@ -916,7 +922,7 @@ The AI permission model is the upstream package
 from its `serve` extra (not the unrelated PyPI package of the same name). The
 daemon keeps to its interface: `<venv>/bin/python -m kev.serve --run <run>
 --host <host> --port <port>`, `HF_HOME`, `HF_HUB_OFFLINE=1` and
-`KEV_TEMPERATURE=1.0` so nothing
+`KEV_TEMPERATURE=0.6` so nothing
 downloads once the model is serving, `KEV_BACKEND` and `KEV_DTYPE` for the
 device (`kev/checkpoint.py`, `kev/serve.py`), and `GET /v1/models` for health
 and for the device, backend and precision it serves on. `<run>` is the
