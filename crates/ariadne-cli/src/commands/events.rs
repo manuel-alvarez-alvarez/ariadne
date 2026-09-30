@@ -407,8 +407,8 @@ fn domain_line(event: &DomainEvent) -> Line {
             at: p.updated_at.clone(),
             kind,
             subject: p.id.clone(),
-            detail: format!("{} {}", p.tool_name, p.kind),
-            session: p.session_id.clone(),
+            detail: format!("{} {}", p.tool_name, p.selected_option),
+            session: None,
             status: None,
         },
         DomainEvent::GoalDeleted(DeletedDto { id })

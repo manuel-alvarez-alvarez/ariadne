@@ -123,8 +123,7 @@ impl AppState {
         repositories::create, repositories::list, repositories::get,
         repositories::update, repositories::delete,
         permissions::get, permissions::update, permissions::refresh,
-        permissions::list_learned, permissions::get_learned, permissions::create_learned,
-        permissions::update_learned, permissions::delete_learned,
+        permissions::list_learned, permissions::get_learned, permissions::delete_learned,
         permissions::test,
         goals::create, goals::list, goals::get, goals::delete,
         goals::cancel, goals::complete, goals::finalize,
@@ -205,15 +204,10 @@ pub fn router(state: AppState) -> Router {
             get(permissions::get).put(permissions::update),
         )
         .route("/v1/permissions/ai/refresh", post(permissions::refresh))
-        .route(
-            "/v1/permissions/learned",
-            get(permissions::list_learned).post(permissions::create_learned),
-        )
+        .route("/v1/permissions/learned", get(permissions::list_learned))
         .route(
             "/v1/permissions/learned/{id}",
-            get(permissions::get_learned)
-                .put(permissions::update_learned)
-                .delete(permissions::delete_learned),
+            get(permissions::get_learned).delete(permissions::delete_learned),
         )
         .route("/v1/permissions/ai/test", post(permissions::test))
         // goals

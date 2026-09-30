@@ -227,7 +227,7 @@ popover with the full seven facts`).
 
 ## Decisions
 
-25. In `ai`, the model decides before a learned approval is read. A request
+25. In `ai`, the model decides before a learned row is read (021, rule 9). A request
     made while a launched server is still loading its weights waits until
     that server is healthy or given up on (at most
     `Timeouts::ai_permissions_serve_start`), so the requests of a freshly
@@ -261,16 +261,22 @@ popover with the full seven facts`).
     `unknown_destination`. The first cap on a call changes a model `allow`
     to `ask`; an `ask` and a `deny` keep their label.
 29. An ask, a capped allow, an allow without an allowing option, and an unanswered decision
-    follow `learn` (021, rule 9): a matching learned approval is selected,
-    otherwise the console is asked, and its allowing answer is remembered.
+    follow `learn` (021, rule 9): a matching allowed row is selected,
+    otherwise the console is asked, and its answer is recorded.
     A model or rule deny without a `reject_once` option asks the console. The model is
     unavailable, and a warning is logged, when `live()` is absent, its call
     fails or times out, or its answer is malformed.
-30. An allow or deny of the model is never learned. A rule denial is never
-    learned, including when its missing reject option sends it to the
-    console. Only another allowing console answer writes the learned table,
-    with the model label, danger, and thresholds.
-31. `permission.replied` carries `decided_by`: `ai`, `rule`, `learned`,
+30. A model allow is never recorded. A model deny, a rule deny and every
+    console answer, allow or deny, write the row of their key with
+    `target = ai` (021, rule 9). Where the model was called, its `output` is
+    the model decision: `label`, `danger`, `allow_threshold`,
+    `deny_threshold`, `probabilities`, `operation`, `risk_tags`, `rule`,
+    `cap`, and `error` where the model gave no answer. A hard rule denies
+    before the model is called, and an unavailable model is never called, so
+    their rows have a null `output`. A row with a
+    denying option never answers a request.
+31. `permission.replied` carries `decided_by`: `ai`, `rule`, `learned` (an
+    allowed row),
     `console`, or `auto`, and always the keys `label`, `danger`, `allow_threshold`,
     `deny_threshold`, `ai_error`, `operation`, `risk_tags`, `rule`, `cap` and
     `probabilities`. Whenever the model answered, whoever
@@ -789,12 +795,14 @@ popover with the full seven facts`).
   (`ai_permissions_decisions.rs::a_score_answer_is_used_as_the_danger`), and
   four recorded benchmark answers map to their recorded danger values
   (`ai_permissions::decide::tests::recorded_answers_map_to_the_winner_danger_values`).
-- An uncertain allow asks the console, remembers its approval, and still asks
-  the model before selecting that learned approval next time
+- An uncertain allow asks the console, records its answer with
+  `target = ai`, and still asks the model before selecting that allowed row
+  next time
   (`ai_permissions_decisions.rs::an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval`).
 - Danger at or above the deny threshold selects `reject_once`, answers the
   agent, records `decided_by: "ai"` and `label: "deny"`, raises no attention,
-  and learns nothing
+  and writes a row with `target = ai` and an `output` that holds the label
+  and the danger
   (`ai_permissions_decisions.rs::a_confident_deny_selects_the_rejecting_option_and_reports_ai`).
 - Equality at the allow threshold allows, and equality at the deny threshold
   denies (`ai_permissions_decisions.rs::a_confident_allow_runs_at_once_and_reports_ai`,
@@ -809,11 +817,21 @@ popover with the full seven facts`).
 - A winner cap changes a model allow to a console question and keeps the cap,
   danger and derived facts on both events
   (`ai_permissions_decisions.rs::a_cap_changes_a_model_allow_to_a_console_question`).
-- A winner rule selects `reject_once` without a model request, attention or
-  learned row, and reports `decided_by = rule`, `label = deny`, its rule and
-  no danger (`ai_permissions_decisions.rs::a_hard_rule_denies_without_the_model_attention_or_learning`).
-- A winner rule without `reject_once` asks the console and never learns its
-  answer (`ai_permissions_decisions.rs::a_hard_rule_without_a_one_time_reject_asks_without_learning`).
+- A winner rule selects `reject_once` without a model request or attention,
+  writes a row with a null `output`, and reports `decided_by = rule`,
+  `label = deny`, its rule and no danger
+  (`ai_permissions_decisions.rs::a_hard_rule_denies_without_the_model_or_attention_and_is_recorded`).
+- A winner rule without `reject_once` asks the console and records its answer
+  with a null `output`
+  (`ai_permissions_decisions.rs::a_hard_rule_without_a_one_time_reject_asks_and_records_the_choice`).
+- A model allow writes no row
+  (`ai_permissions_decisions.rs::a_confident_allow_runs_at_once_and_reports_ai`).
+- A console answer after a model deny keeps every `output` key, and a
+  malformed answer records its `error`
+  (`ai_permissions_decisions.rs::a_deny_without_a_rejecting_option_waits_for_the_console`,
+  `::a_malformed_answer_warns_and_waits_for_the_console`), and an unavailable
+  model leaves a null `output`
+  (`::a_disabled_model_waits_for_the_console`).
 - A confident allow without an allowing option asks the console
   (`ai_permissions_decisions.rs::an_allow_without_an_allowing_option_waits_for_the_console`).
 - A request made while the server loads waits for it, and the model decides

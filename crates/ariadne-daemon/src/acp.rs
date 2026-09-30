@@ -1392,15 +1392,7 @@ impl RuntimeIncoming {
         } else {
             None
         };
-        let learned = remembers
-            && self
-                .sink
-                .runtime
-                .inner
-                .store
-                .has_learned_permission(&self.repository_id, &signature.tool_name, &signature.kind)
-                .await
-                .unwrap_or(false);
+        let learned = remembers && self.learned_allow(&signature).await;
         let ai_permissions_selection = match &ai_permissions_decision {
             Some(Decision::Allow { .. }) => {
                 approved_option(params).filter(|option| allowing_option(params, option))
@@ -1494,35 +1486,51 @@ impl RuntimeIncoming {
                 "AI permission decision"
             );
         }
-        if remembers
-            && decided_by == "console"
-            && !matches!(&ai_permissions_decision, Some(Decision::Rule { .. }))
+        // Every choice a person makes, and every denial, is training data
+        // for the model: allows the daemon made itself are not.
+        let recorded = match decided_by {
+            "console" | "rule" => true,
+            "ai" => matches!(&ai_permissions_decision, Some(Decision::Deny { .. })),
+            _ => false,
+        };
+        if let Some(selected_option) = selected.clone().filter(|_| recorded)
             && !self.repository_id.is_empty()
-            && selected
-                .as_deref()
-                .is_some_and(|option| allowing_option(params, option))
         {
+            // A hard rule and an unavailable model decide without a model
+            // call, so they have no output.
+            let output = ai_permissions_decision
+                .as_ref()
+                .filter(|decision| {
+                    !matches!(
+                        decision,
+                        Decision::Rule { .. }
+                            | Decision::Unanswered {
+                                reason: "unavailable",
+                                ..
+                            }
+                    )
+                })
+                .map(|_| {
+                    json!({"label": label, "danger": danger,
+                       "allow_threshold": allow_threshold, "deny_threshold": deny_threshold,
+                       "probabilities": probabilities, "operation": operation,
+                       "risk_tags": risk_tags, "rule": rule, "cap": cap, "error": ai_error})
+                });
             self.sink
                 .runtime
                 .inner
                 .store
-                .learn_permission(ariadne_store::NewLearnedPermission {
+                .record_learned_permission(ariadne_store::NewLearnedPermission {
                     repository_id: self.repository_id.clone(),
                     tool_name: signature.tool_name.clone(),
-                    kind: signature.kind.clone(),
-                    source: "console".into(),
-                    tool_call: Some(params["toolCall"].clone()),
-                    options: Some(params.get("options").cloned().unwrap_or_default()),
-                    selected_option: selected.clone(),
-                    session_id: Some(self.sink.session_id.clone()),
-                    task_id: self.sink.task_id.clone(),
-                    label: label.map(str::to_string),
-                    danger,
-                    allow_threshold,
-                    deny_threshold,
+                    tool_call: params["toolCall"].clone(),
+                    options: params.get("options").cloned().unwrap_or_default(),
+                    selected_option,
+                    target: self.permission_mode.as_str().to_string(),
+                    output,
                 })
                 .await
-                .map_err(|error| anyhow!("remembering ACP permission approval: {error}"))?;
+                .map_err(|error| anyhow!("recording ACP permission choice: {error}"))?;
         }
         let outcome = selected.as_ref().map_or_else(
             || json!({"outcome": "cancelled"}),
@@ -1540,6 +1548,28 @@ impl RuntimeIncoming {
             )
             .await;
         Ok(json!({"outcome": outcome}))
+    }
+
+    /// Whether this repository holds an allowing choice for the request's
+    /// key. A request with no `rawInput` never matches one.
+    async fn learned_allow(&self, signature: &PermissionSignature) -> bool {
+        let Some(raw_input) = &signature.raw_input else {
+            return false;
+        };
+        if self.repository_id.is_empty() {
+            return false;
+        }
+        let row = self
+            .sink
+            .runtime
+            .inner
+            .store
+            .find_learned_permission(&self.repository_id, &signature.tool_name, raw_input)
+            .await;
+        row.ok().flatten().is_some_and(|row| {
+            let options = serde_json::from_str::<Value>(&row.options).unwrap_or_default();
+            allowing_option(&json!({ "options": options }), &row.selected_option)
+        })
     }
 
     /// Make the input path answer the permission request now visible to the
@@ -2143,26 +2173,34 @@ fn rejecting_option(params: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
-/// A remembered permission is deliberately narrow: the ACP tool's human
-/// name and kind, and the repository the request came from.
+/// The key of a learned permission, with the repository the request came
+/// from: the tool name and the tool's input.
 struct PermissionSignature {
     tool_name: String,
-    kind: String,
+    raw_input: Option<Value>,
 }
 
+/// The tool name is the agent's own name for the tool where it sends one
+/// (`Bash`, `Read`, `mcp__ariadne__create_task`), else the title.
 fn permission_signature(tool_call: &Value) -> PermissionSignature {
-    let tool_name = tool_call
-        .get("title")
-        .or_else(|| tool_call.get("toolCallId"))
-        .and_then(Value::as_str)
-        .unwrap_or("ACP tool")
-        .to_string();
-    let kind = tool_call
-        .get("kind")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown")
-        .to_string();
-    PermissionSignature { tool_name, kind }
+    let tool_name = [
+        "/name",
+        "/_meta/claudeCode/toolName",
+        "/title",
+        "/toolCallId",
+    ]
+    .into_iter()
+    .find_map(|pointer| tool_call.pointer(pointer).and_then(Value::as_str))
+    .unwrap_or("ACP tool")
+    .to_string();
+    let raw_input = tool_call
+        .get("rawInput")
+        .filter(|raw_input| !raw_input.is_null())
+        .cloned();
+    PermissionSignature {
+        tool_name,
+        raw_input,
+    }
 }
 
 /// Resolve a console answer to an option. Option ids are the stable answer
@@ -2186,7 +2224,8 @@ fn permission_option(params: &Value, answer: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Whether the selected option is an approval, rather than a denial.
+/// Whether the selected option is an approval, rather than a denial: its
+/// kind is `allow_once` or `allow_always`.
 fn allowing_option(params: &Value, option_id: &str) -> bool {
     params
         .get("options")
@@ -2195,15 +2234,35 @@ fn allowing_option(params: &Value, option_id: &str) -> bool {
         .flatten()
         .find(|option| option.get("optionId").and_then(Value::as_str) == Some(option_id))
         .and_then(|option| option.get("kind").and_then(Value::as_str))
-        .is_some_and(|kind| kind.starts_with("allow"))
+        .is_some_and(|kind| matches!(kind, "allow_once" | "allow_always"))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{approved_option, completed_tool_payload, usage_for_prompt_response};
+    use super::{
+        approved_option, completed_tool_payload, permission_signature, usage_for_prompt_response,
+    };
 
     use ariadne_core::TokenUsage;
     use serde_json::json;
+
+    /// The tool name is the first string among `name`, the Claude tool name
+    /// and the title: a null candidate does not hide the next one.
+    #[test]
+    fn the_tool_name_is_the_first_string_candidate() {
+        let name = |tool_call| permission_signature(&tool_call).tool_name;
+        assert_eq!(name(json!({"name": "Bash", "title": "ls"})), "Bash");
+        assert_eq!(
+            name(
+                json!({"name": null, "_meta": {"claudeCode": {"toolName": "Read"}},
+                        "title": "Read /a"})
+            ),
+            "Read"
+        );
+        assert_eq!(name(json!({"name": null, "title": "ls"})), "ls");
+        assert_eq!(name(json!({"toolCallId": "call-1"})), "call-1");
+        assert_eq!(name(json!({})), "ACP tool");
+    }
 
     /// Empty content does not replace the raw output a finished call needs.
     #[test]

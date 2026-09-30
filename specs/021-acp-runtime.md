@@ -159,12 +159,23 @@ gone (009).
    directory lies deepest in — `auto` when it lies in none. `auto` selects the
    first allowing option, then the first option, and cancels only an empty
    list. `ask` records the request in the console, raises session attention
-   and blocks until console input selects an option. `learn` does the same on
-   the first request for one repository, tool name and tool kind; an allowing
-   answer is stored and later matching requests are selected automatically.
-   A denial is not stored. An approval keeps the complete request, selection,
-   session, task, and model verdict. A repeat keeps the first row. In `ai`, the AI permission model decides first (022), then `learn`
-   handles every answer that is not a confident allow.
+   and blocks until console input selects an option. `learn` does the same
+   for a request whose key has no allowing row. The key is the repository,
+   the tool name and the canonical `rawInput` (JSON with sorted keys). The
+   tool name is `toolCall.name`, else `toolCall._meta.claudeCode.toolName`,
+   else `toolCall.title`, else `toolCall.toolCallId`. The table
+   `learned_permissions` keeps one row per key, with the `toolCall`, the
+   `options`, the selected option, the `target` and the model `output`.
+   `target` is the permission mode at the time of the decision. Every console
+   choice writes the row of its key, in every mode, allow or deny. A model
+   deny, a rule deny and a cap deny write it too. A model allow, a learned
+   allow and an `auto` allow write nothing. A write on an existing key keeps
+   its id and `created_at` and replaces the rest. In `learn` and `ai` only, a
+   row whose selected option has kind `allow_once` or `allow_always` selects
+   the allowing option without the console. A denied row never auto-allows
+   and never auto-denies. A request with no `rawInput` never auto-allows. In
+   `ai`, the AI permission model decides first (022), then `learn` handles
+   every answer that is not a confident allow or deny.
 10. After a turn ends the agent stays up and the runtime keeps serving it.
    Everything the daemon says to the agent after the launch — a scheduler
    nudge, a review briefing, an agent message — is a `session/prompt`, sent
@@ -230,11 +241,24 @@ gone (009).
 - A repository set to `ask` raises session attention and console input
   unblocks the turn
   (`acp_console.rs::ask_raises_attention_and_a_console_answer_unblocks_the_turn`).
-- A repository set to `learn` remembers an approval across a daemon restart,
-  and does not remember a denial
+- A repository set to `learn` records a console denial, asks again after it,
+  replaces the row with the approval that follows, and auto-allows from that
+  row across a daemon restart
   (`acp_console.rs::learn_remembers_an_approval_per_repository_across_a_daemon_restart`).
-- A learned approval keeps its complete request, while a repeat keeps the first
-  row (`store.rs::learned_permissions_keep_the_first_full_request_and_support_crud`).
+- A console choice in `ask` writes a row with `target = ask` and the tool name
+  from `toolCall.name`, and `ask` never auto-allows from a row
+  (`acp_console.rs::ask_records_the_console_choice_and_never_auto_allows`).
+- An allowed `Bash` row does not auto-allow another command
+  (`acp_console.rs::an_allowed_row_does_not_allow_another_command_of_the_same_tool`).
+- A request with no `rawInput` gets a row but never auto-allows
+  (`acp_console.rs::a_request_without_raw_input_never_auto_allows`,
+  `store.rs::learned_permissions_without_raw_input_keep_one_row`).
+- The same request under another `toolCallId` keeps one row: it updates the
+  selected option and `updated_at`, and keeps the id and `created_at`
+  (`store.rs::learned_permissions_keep_one_row_per_repository_tool_and_raw_input`).
+- A fresh and an existing database both migrate to the ten columns, with no
+  row carried over
+  (`store.rs::learned_permission_choice_migration_drops_every_old_row`).
 - A repository set to `ai` asks the AI permission model first. A confident
   allow proceeds; every other outcome uses a learned approval or asks the
   console

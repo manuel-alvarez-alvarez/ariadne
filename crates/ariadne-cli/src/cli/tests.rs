@@ -123,8 +123,6 @@ const LEAVES: &[(&str, bool)] = &[
     ("permissions ai refresh", true),
     ("permissions ai set", true),
     ("permissions ai show", true),
-    ("permissions learned add", true),
-    ("permissions learned edit", true),
     ("permissions learned list", true),
     ("permissions learned rm", true),
     ("permissions learned show", true),
@@ -1529,7 +1527,7 @@ fn permissions_set_with_no_flag_is_a_usage_error() {
 }
 
 #[test]
-fn every_learned_permissions_verb_parses_and_edit_requires_a_change() {
+fn every_learned_permissions_verb_parses_and_add_and_edit_are_gone() {
     assert!(matches!(
         parse(&[
             "ariadne",
@@ -1551,7 +1549,13 @@ fn every_learned_permissions_verb_parses_and_edit_requires_a_change() {
         }
     ));
     assert!(matches!(
-        parse(&[
+        parse(&["ariadne", "permissions", "learned", "rm", "row"]).command,
+        Command::Permissions {
+            command: PermissionsCommand::Learned(LearnedPermissionsCommand::Rm { .. })
+        }
+    ));
+    for gone in [
+        &[
             "ariadne",
             "permissions",
             "learned",
@@ -1560,36 +1564,19 @@ fn every_learned_permissions_verb_parses_and_edit_requires_a_change() {
             "repo",
             "--tool",
             "Bash",
-            "--kind",
-            "execute"
-        ])
-        .command,
-        Command::Permissions {
-            command: PermissionsCommand::Learned(LearnedPermissionsCommand::Add { .. })
-        }
-    ));
-    assert!(matches!(
-        parse(&[
+        ][..],
+        &[
             "ariadne",
             "permissions",
             "learned",
             "edit",
             "row",
             "--tool",
-            "Shell"
-        ])
-        .command,
-        Command::Permissions {
-            command: PermissionsCommand::Learned(LearnedPermissionsCommand::Edit { .. })
-        }
-    ));
-    assert!(matches!(
-        parse(&["ariadne", "permissions", "learned", "rm", "row"]).command,
-        Command::Permissions {
-            command: PermissionsCommand::Learned(LearnedPermissionsCommand::Rm { .. })
-        }
-    ));
-    assert!(try_parse(&["ariadne", "permissions", "learned", "edit", "row"]).is_err());
+            "Shell",
+        ][..],
+    ] {
+        assert!(try_parse(gone).is_err(), "{gone:?}");
+    }
 }
 
 #[test]

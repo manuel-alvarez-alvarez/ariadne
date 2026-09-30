@@ -4,9 +4,8 @@ use anyhow::Result;
 use clap::Subcommand;
 
 use ariadne_api::permissions::{
-    AiPermissionsState, AiPermissionsStatusDto, CreateLearnedPermissionRequest, Device, Flavour,
-    LearnedPermissionDto, PythonDto, TestAiPermissionRequest, TestAiPermissionResponse,
-    UpdateAiPermissionsRequest, UpdateLearnedPermissionRequest,
+    AiPermissionsState, AiPermissionsStatusDto, Device, Flavour, LearnedPermissionDto, PythonDto,
+    TestAiPermissionRequest, TestAiPermissionResponse, UpdateAiPermissionsRequest,
 };
 use ariadne_client::Client;
 
@@ -21,39 +20,21 @@ pub(crate) enum PermissionsCommand {
     /// Manage the AI permission model
     #[command(subcommand)]
     Ai(#[command(subcommand)] AiPermissionsCommand),
-    /// Manage learned approvals
+    /// Manage learned choices
     #[command(subcommand)]
     Learned(#[command(subcommand)] LearnedPermissionsCommand),
 }
 
 #[derive(Subcommand)]
 pub(crate) enum LearnedPermissionsCommand {
-    /// List learned approvals
+    /// List learned choices
     List {
         #[arg(long)]
         repo: Option<String>,
     },
-    /// Show one learned approval
+    /// Show one learned choice
     Show { id: String },
-    /// Add a manual approval
-    Add {
-        #[arg(long)]
-        repo: String,
-        #[arg(long)]
-        tool: String,
-        #[arg(long)]
-        kind: String,
-    },
-    /// Edit a learned approval
-    #[command(group = clap::ArgGroup::new("learned-edit").args(["tool", "kind"]).required(true))]
-    Edit {
-        id: String,
-        #[arg(long)]
-        tool: Option<String>,
-        #[arg(long)]
-        kind: Option<String>,
-    },
-    /// Remove a learned approval
+    /// Remove a learned choice
     Rm { id: String },
 }
 
@@ -121,13 +102,26 @@ pub(crate) async fn run(client: &Client, cmd: PermissionsCommand, format: Format
     }
 }
 
+fn learned_row(row: &LearnedPermissionDto, now: chrono::DateTime<chrono::Utc>) -> Vec<String> {
+    vec![
+        row.id.clone(),
+        row.repository_id.clone(),
+        row.tool_name.clone(),
+        row.target.as_str().into(),
+        row.selected_option.clone(),
+        age(&row.created_at, now),
+        age(&row.updated_at, now),
+    ]
+}
+
 const LEARNED_LIST: &[Column] = &[
     col("id", UNCAPPED).id(),
     col("repository", UNCAPPED),
     col("tool", 28),
-    col("kind", 20),
-    col("source", 10),
+    col("target", 6),
+    col("selected", 20),
     col("created", UNCAPPED),
+    col("updated", UNCAPPED),
 ];
 
 async fn run_learned(
@@ -147,55 +141,13 @@ async fn run_learned(
                 format,
                 &response.items,
                 LEARNED_LIST,
-                |row| {
-                    vec![
-                        row.id.clone(),
-                        row.repository_id.clone(),
-                        row.tool_name.clone(),
-                        row.kind.clone(),
-                        row.source.as_str().into(),
-                        age(&row.created_at, now),
-                    ]
-                },
-                "No learned approvals yet.",
+                |row| learned_row(row, now),
+                "No learned choices yet.",
             )
         }
         LearnedPermissionsCommand::Show { id } => {
             let row = client.get_learned_permission(&id).await?;
             print(format, &row, || print_learned(&row))
-        }
-        LearnedPermissionsCommand::Add { repo, tool, kind } => {
-            let repository_id = resolve::id(client, Kind::Repo, &repo).await?;
-            let row = client
-                .create_learned_permission(&CreateLearnedPermissionRequest {
-                    repository_id,
-                    tool_name: tool,
-                    kind,
-                })
-                .await?;
-            print(format, &row, || {
-                println!(
-                    "{}",
-                    ok_id_line(view().color, view().quiet, "created", &row.id)
-                )
-            })
-        }
-        LearnedPermissionsCommand::Edit { id, tool, kind } => {
-            let row = client
-                .update_learned_permission(
-                    &id,
-                    &UpdateLearnedPermissionRequest {
-                        tool_name: tool,
-                        kind,
-                    },
-                )
-                .await?;
-            print(format, &row, || {
-                println!(
-                    "{}",
-                    ok_id_line(view().color, view().quiet, "updated", &row.id)
-                )
-            })
         }
         LearnedPermissionsCommand::Rm { id } => {
             client.delete_learned_permission(&id).await?;
@@ -210,54 +162,27 @@ async fn run_learned(
 }
 
 fn print_learned(row: &LearnedPermissionDto) {
-    let json = |value: &Option<serde_json::Value>| {
-        value
-            .as_ref()
-            .map(|v| serde_json::to_string_pretty(v).unwrap_or_default())
-            .unwrap_or_else(|| "-".into())
-    };
-    print_kv(&[
+    print_kv(&learned_fields(row));
+}
+
+/// Every field of a learned choice, its JSON fields pretty-printed.
+fn learned_fields(row: &LearnedPermissionDto) -> Vec<(&'static str, Kv)> {
+    let json = |value: &serde_json::Value| serde_json::to_string_pretty(value).unwrap_or_default();
+    vec![
         ("id", Kv::id(row.id.clone())),
         ("repository", row.repository_id.clone().into()),
         ("tool", row.tool_name.clone().into()),
-        ("kind", row.kind.clone().into()),
-        ("source", row.source.as_str().into()),
+        ("target", row.target.as_str().into()),
+        ("selected option", row.selected_option.clone().into()),
         ("tool call", json(&row.tool_call).into()),
         ("options", json(&row.options).into()),
         (
-            "selected option",
-            dash(row.selected_option.as_deref()).into(),
-        ),
-        ("session", dash(row.session_id.as_deref()).into()),
-        ("task", dash(row.task_id.as_deref()).into()),
-        (
-            "label",
-            row.label.as_ref().map(|v| v.as_str()).unwrap_or("-").into(),
-        ),
-        (
-            "danger",
-            row.danger
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "-".into())
-                .into(),
-        ),
-        (
-            "allow threshold",
-            row.allow_threshold
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "-".into())
-                .into(),
-        ),
-        (
-            "deny threshold",
-            row.deny_threshold
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "-".into())
-                .into(),
+            "output",
+            row.output.as_ref().map_or_else(|| "-".into(), json).into(),
         ),
         ("created", Kv::meta(moment(&row.created_at))),
         ("updated", Kv::meta(moment(&row.updated_at))),
-    ]);
+    ]
 }
 
 async fn run_ai(client: &Client, cmd: AiPermissionsCommand, format: Format) -> Result<()> {
@@ -643,19 +568,13 @@ mod tests {
             id: "01J00000000000000000000001".into(),
             repository_id: "01J00000000000000000000002".into(),
             tool_name: "Bash".into(),
-            kind: "execute".into(),
-            source: ariadne_api::permissions::LearnedPermissionSource::Manual,
-            tool_call: None,
-            options: None,
-            selected_option: None,
-            session_id: None,
-            task_id: None,
-            label: None,
-            danger: None,
-            allow_threshold: None,
-            deny_threshold: None,
+            tool_call: json!({"toolCallId": "call-1", "rawInput": {"command": "cargo test"}}),
+            options: json!([{"optionId": "yes", "kind": "allow_once"}]),
+            selected_option: "yes".into(),
+            target: ariadne_api::permissions::LearnedPermissionTarget::Ai,
+            output: Some(json!({"label": "ask", "danger": 0.41})),
             created_at: "2026-09-28T00:00:00Z".into(),
-            updated_at: "2026-09-28T00:00:00Z".into(),
+            updated_at: "2026-09-29T00:00:00Z".into(),
         }
     }
 
@@ -673,28 +592,14 @@ mod tests {
             StatusCode::NO_CONTENT
         }
         let app = Router::new()
-            .route("/v1/permissions/learned", get(list).post(one))
-            .route(
-                "/v1/permissions/learned/{id}",
-                get(one).put(one).delete(gone),
-            );
+            .route("/v1/permissions/learned", get(list))
+            .route("/v1/permissions/learned/{id}", get(one).delete(gone));
         let (client, server) = serve(app).await;
-        let repo = "01J00000000000000000000002".to_string();
         let id = "01J00000000000000000000001".to_string();
         for format in [Format::Table, Format::Json] {
             for command in [
                 LearnedPermissionsCommand::List { repo: None },
                 LearnedPermissionsCommand::Show { id: id.clone() },
-                LearnedPermissionsCommand::Add {
-                    repo: repo.clone(),
-                    tool: "Bash".into(),
-                    kind: "execute".into(),
-                },
-                LearnedPermissionsCommand::Edit {
-                    id: id.clone(),
-                    tool: Some("Shell".into()),
-                    kind: None,
-                },
                 LearnedPermissionsCommand::Rm { id: id.clone() },
             ] {
                 run(&client, PermissionsCommand::Learned(command), format)
@@ -703,6 +608,52 @@ mod tests {
             }
         }
         server.abort();
+    }
+
+    /// `list` shows the target and the selected option beside the tool,
+    /// and `show` prints every field with the JSON fields pretty-printed.
+    #[test]
+    fn learned_list_and_show_print_the_new_fields() {
+        let row = learned();
+        let now = chrono::DateTime::parse_from_rfc3339("2026-09-30T00:00:00Z")
+            .unwrap()
+            .to_utc();
+        let listed = learned_row(&row, now);
+        assert_eq!(
+            LEARNED_LIST
+                .iter()
+                .map(|column| column.header)
+                .collect::<Vec<_>>(),
+            [
+                "id",
+                "repository",
+                "tool",
+                "target",
+                "selected",
+                "created",
+                "updated"
+            ]
+        );
+        assert_eq!(listed[2..5], ["Bash", "ai", "yes"]);
+
+        let text = crate::output::kv_block(&learned_fields(&row), &crate::output::View::plain());
+        for expected in [
+            "01J00000000000000000000001",
+            "01J00000000000000000000002",
+            "target",
+            "selected option",
+            "\"toolCallId\": \"call-1\"",
+            "\"command\": \"cargo test\"",
+            "\"kind\": \"allow_once\"",
+            "\"danger\": 0.41",
+            "created",
+            "updated",
+        ] {
+            assert!(
+                text.contains(expected),
+                "{expected:?} missing from:\n{text}"
+            );
+        }
     }
 
     #[test]

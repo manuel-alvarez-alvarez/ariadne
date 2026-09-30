@@ -32,7 +32,7 @@ pub use entities::*;
 pub use events::{EventFilter, EventOrder, NewAgentEvent};
 pub use goals::NewGoal;
 pub use messages::{MessageFilter, NewMessage};
-pub use permissions::{LearnedPermissionUpdate, NewLearnedPermission};
+pub use permissions::NewLearnedPermission;
 pub use picks::picked_winner;
 pub use repositories::{NewRepository, RepositoryUpdate};
 pub use sessions::{NewSession, SessionFilter};

@@ -1,14 +1,33 @@
 use ariadne_api::permissions::{
-    LearnedPermissionDto, LearnedPermissionSource, LearnedPermissionsResponse,
+    LearnedPermissionDto, LearnedPermissionTarget, LearnedPermissionsResponse,
 };
 use ariadne_api::stream::DomainEvent;
-use ariadne_store::NewRepository;
+use ariadne_store::{NewLearnedPermission, NewRepository};
 use axum::http::StatusCode;
+use serde_json::json;
 
 use crate::common::{delete, get, harness, next_event, post_json, put_json};
 
+fn choice(repository_id: &str, selected: &str) -> NewLearnedPermission {
+    NewLearnedPermission {
+        repository_id: repository_id.into(),
+        tool_name: "Bash".into(),
+        tool_call: json!({"toolCallId": "call-1", "name": "Bash", "title": "cargo test",
+                          "rawInput": {"command": "cargo test"}}),
+        options: json!([
+            {"optionId": "yes", "name": "Allow", "kind": "allow_once"},
+            {"optionId": "no", "name": "Reject", "kind": "reject_once"},
+        ]),
+        selected_option: selected.into(),
+        target: "ai".into(),
+        output: Some(json!({"label": "ask", "danger": 0.4})),
+    }
+}
+
+/// The routes read and delete recorded choices; nothing writes one but a
+/// decision, so `POST` and `PUT` are gone. Each change publishes its event.
 #[tokio::test]
-async fn learned_permission_routes_validate_crud_and_publish_fat_events() {
+async fn learned_permission_routes_read_and_delete_and_publish_fat_events() {
     let h = harness().await;
     let repo = h
         .store
@@ -23,115 +42,91 @@ async fn learned_permission_routes_validate_crud_and_publish_fat_events() {
     let mut rx = h.bus.subscribe();
     let openapi: serde_json::Value = h.get("/api-docs/openapi.json").await;
     assert!(openapi["paths"]["/v1/permissions/learned"]["get"].is_object());
-    assert!(openapi["paths"]["/v1/permissions/learned"]["post"].is_object());
-    assert!(openapi["paths"]["/v1/permissions/learned/{id}"]["put"].is_object());
+    assert!(openapi["paths"]["/v1/permissions/learned"]["post"].is_null());
+    assert!(openapi["paths"]["/v1/permissions/learned/{id}"]["put"].is_null());
     assert!(openapi["paths"]["/v1/permissions/learned/{id}"]["delete"].is_object());
-    let event = openapi["components"]["schemas"]["DomainEvent"]["oneOf"]
-        .as_array()
-        .unwrap();
+    assert!(openapi["components"]["schemas"]["CreateLearnedPermissionRequest"].is_null());
+    assert!(openapi["components"]["schemas"]["UpdateLearnedPermissionRequest"].is_null());
     assert!(
-        event
-            .iter()
-            .any(|schema| schema.to_string().contains("learned_permission_created"))
+        openapi["components"]["schemas"]["LearnedPermissionDto"]["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("output")),
+        "output is a required nullable field"
     );
-    let created: LearnedPermissionDto = h
-        .json(
-            post_json(
-                "/v1/permissions/learned",
-                serde_json::json!({
-                    "repository_id": repo.id, "tool_name": "Bash", "kind": "execute"
-                }),
-            ),
-            StatusCode::CREATED,
-        )
-        .await;
-    assert_eq!(created.source, LearnedPermissionSource::Manual);
-    assert!(created.tool_call.is_none());
+
+    h.store
+        .record_learned_permission(choice(&repo.id, "no"))
+        .await
+        .unwrap();
     let event = next_event(&mut rx, |event| {
         event.event.kind() == "learned_permission_created"
     })
     .await;
-    let DomainEvent::LearnedPermissionCreated(dto) = event.event else {
+    let DomainEvent::LearnedPermissionCreated(created) = event.event else {
         unreachable!()
     };
-    assert_eq!(dto, created);
-
-    let listed: LearnedPermissionsResponse = h
-        .json(
-            get(&format!(
-                "/v1/permissions/learned?repository={}",
-                created.repository_id
-            )),
-            StatusCode::OK,
-        )
-        .await;
-    assert_eq!(listed.items, vec![created.clone()]);
-    let shown: LearnedPermissionDto = h
-        .json(
-            get(&format!("/v1/permissions/learned/{}", created.id)),
-            StatusCode::OK,
-        )
-        .await;
-    assert_eq!(shown, created);
-
-    let edited: LearnedPermissionDto = h
-        .json(
-            put_json(
-                &format!("/v1/permissions/learned/{}", created.id),
-                serde_json::json!({"tool_name":"Shell"}),
-            ),
-            StatusCode::OK,
-        )
-        .await;
-    assert_eq!(edited.tool_name, "Shell");
+    h.store
+        .record_learned_permission(choice(&repo.id, "yes"))
+        .await
+        .unwrap();
     let event = next_event(&mut rx, |event| {
         event.event.kind() == "learned_permission_updated"
     })
     .await;
-    assert!(matches!(
-        event.event,
-        DomainEvent::LearnedPermissionUpdated(_)
-    ));
+    let DomainEvent::LearnedPermissionUpdated(updated) = event.event else {
+        unreachable!()
+    };
+    assert_eq!(updated.id, created.id);
+    assert_eq!(updated.selected_option, "yes");
+    assert_eq!(updated.target, LearnedPermissionTarget::Ai);
+    assert_eq!(updated.tool_name, "Bash");
+    assert_eq!(
+        updated.tool_call["rawInput"],
+        json!({"command": "cargo test"})
+    );
+    assert_eq!(updated.options.as_array().unwrap().len(), 2);
+    assert_eq!(updated.output, Some(json!({"label": "ask", "danger": 0.4})));
 
-    let duplicate = h
-        .error(
-            post_json(
-                "/v1/permissions/learned",
-                serde_json::json!({
-                    "repository_id": edited.repository_id, "tool_name": "Shell", "kind": "execute"
-                }),
-            ),
-            StatusCode::CONFLICT,
+    let listed: LearnedPermissionsResponse = h
+        .json(
+            get(&format!("/v1/permissions/learned?repository={}", repo.id)),
+            StatusCode::OK,
         )
         .await;
-    assert_eq!(duplicate.error.code, "learned_permission_exists");
-    let invalid = h
-        .error(
-            post_json(
-                "/v1/permissions/learned",
-                serde_json::json!({
-                    "repository_id": edited.repository_id, "tool_name": "", "kind": "execute"
-                }),
-            ),
-            StatusCode::UNPROCESSABLE_ENTITY,
+    assert_eq!(listed.items, vec![updated.clone()]);
+    let other: LearnedPermissionsResponse = h
+        .json(
+            get("/v1/permissions/learned?repository=other"),
+            StatusCode::OK,
         )
         .await;
-    assert_eq!(invalid.error.code, "invalid_request");
-    let missing_repo = h
-        .error(
-            post_json(
-                "/v1/permissions/learned",
-                serde_json::json!({
-                    "repository_id": "missing", "tool_name": "Bash", "kind": "execute"
-                }),
-            ),
-            StatusCode::NOT_FOUND,
+    assert!(other.items.is_empty());
+    let shown: LearnedPermissionDto = h
+        .json(
+            get(&format!("/v1/permissions/learned/{}", updated.id)),
+            StatusCode::OK,
         )
         .await;
-    assert_eq!(missing_repo.error.code, "repository_not_found");
+    assert_eq!(shown, updated);
 
     let (status, _) = h
-        .send(delete(&format!("/v1/permissions/learned/{}", created.id)))
+        .send(post_json(
+            "/v1/permissions/learned",
+            json!({"repository_id": repo.id, "tool_name": "Bash", "kind": "execute"}),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    let (status, _) = h
+        .send(put_json(
+            &format!("/v1/permissions/learned/{}", updated.id),
+            json!({"tool_name": "Shell"}),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+
+    let (status, _) = h
+        .send(delete(&format!("/v1/permissions/learned/{}", updated.id)))
         .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     let event = next_event(&mut rx, |event| {
@@ -141,10 +136,10 @@ async fn learned_permission_routes_validate_crud_and_publish_fat_events() {
     let DomainEvent::LearnedPermissionDeleted(dto) = event.event else {
         unreachable!()
     };
-    assert_eq!(dto.id, created.id);
+    assert_eq!(dto.id, updated.id);
     let missing = h
         .error(
-            get(&format!("/v1/permissions/learned/{}", created.id)),
+            get(&format!("/v1/permissions/learned/{}", updated.id)),
             StatusCode::NOT_FOUND,
         )
         .await;

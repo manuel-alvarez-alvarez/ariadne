@@ -13,8 +13,29 @@ async fn test_store() -> (Store, tempfile::TempDir) {
     (store, dir)
 }
 
+fn bash_choice(repository_id: &str, call_id: &str, selected: &str) -> NewLearnedPermission {
+    NewLearnedPermission {
+        repository_id: repository_id.into(),
+        tool_name: "Bash".into(),
+        tool_call: serde_json::json!({
+            "toolCallId": call_id, "title": "echo first", "kind": "execute",
+            "rawInput": {"description": "Print", "command": "echo first"},
+        }),
+        options: serde_json::json!([
+            {"optionId": "yes", "kind": "allow_once"},
+            {"optionId": "no", "kind": "reject_once"},
+        ]),
+        selected_option: selected.into(),
+        target: "learn".into(),
+        output: None,
+    }
+}
+
+/// The same request twice, under another `toolCallId` and with its
+/// `rawInput` keys in another order, keeps one row: the second choice
+/// replaces the first, and the row keeps its id and `created_at`.
 #[tokio::test]
-async fn learned_permissions_keep_the_first_full_request_and_support_crud() {
+async fn learned_permissions_keep_one_row_per_repository_tool_and_raw_input() {
     let (store, _dir) = test_store().await;
     let repo = store
         .create_repository(NewRepository {
@@ -25,49 +46,71 @@ async fn learned_permissions_keep_the_first_full_request_and_support_crud() {
         })
         .await
         .unwrap();
-    let record = NewLearnedPermission {
-        repository_id: repo.id.clone(),
-        tool_name: "Bash".into(),
-        kind: "execute".into(),
-        source: "console".into(),
-        tool_call: Some(
-            serde_json::json!({"title":"Bash","kind":"execute","rawInput":{"command":"echo first"}}),
-        ),
-        options: Some(serde_json::json!([{"optionId":"yes","kind":"allow_once"}])),
-        selected_option: Some("yes".into()),
-        session_id: Some("session-1".into()),
-        task_id: Some("task-1".into()),
-        label: Some("ask".into()),
-        danger: Some(0.4),
-        allow_threshold: Some(0.2),
-        deny_threshold: Some(0.8),
-    };
-    let first = store.learn_permission(record.clone()).await.unwrap();
-    let mut repeated = record;
-    repeated.tool_call = Some(serde_json::json!({"rawInput":{"command":"echo second"}}));
-    let same = store.learn_permission(repeated).await.unwrap();
-    assert_eq!(same.id, first.id);
-    assert_eq!(same.tool_call, first.tool_call);
+    let mut changes = store.watch_changes().expect("the only watcher");
+    let first = store
+        .record_learned_permission(bash_choice(&repo.id, "call-1", "yes"))
+        .await
+        .unwrap();
+    assert!(matches!(
+        changes.recv().await.unwrap(),
+        Change::LearnedPermissionCreated(_)
+    ));
+    let mut again = bash_choice(&repo.id, "call-2", "no");
+    again.tool_call["rawInput"] =
+        serde_json::json!({"command": "echo first", "description": "Print"});
+    again.target = "ai".into();
+    again.output = Some(serde_json::json!({"label": "deny", "danger": 0.9}));
+    let second = store.record_learned_permission(again).await.unwrap();
+    assert!(matches!(
+        changes.recv().await.unwrap(),
+        Change::LearnedPermissionUpdated(_)
+    ));
+
+    assert_eq!(second.id, first.id);
+    assert_eq!(second.created_at, first.created_at);
+    assert!(second.updated_at > first.updated_at);
+    assert_eq!(second.selected_option, "no");
+    assert_eq!(second.target, "ai");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(second.output.as_deref().unwrap()).unwrap(),
+        serde_json::json!({"label": "deny", "danger": 0.9})
+    );
+    let tool_call: serde_json::Value = serde_json::from_str(&second.tool_call).unwrap();
+    assert_eq!(tool_call["toolCallId"], "call-2");
+    assert!(
+        second
+            .tool_call
+            .contains(r#""rawInput":{"command":"echo first","description":"Print"}"#),
+        "rawInput is stored with sorted keys: {}",
+        second.tool_call
+    );
     assert_eq!(
         store
             .list_learned_permissions(Some(&repo.id))
             .await
             .unwrap(),
-        vec![first.clone()]
+        vec![second.clone()]
     );
-    let edited = store
-        .update_learned_permission(
-            &first.id,
-            LearnedPermissionUpdate {
-                tool_name: Some("Shell".into()),
-                kind: None,
-            },
+
+    let other = store
+        .find_learned_permission(
+            &repo.id,
+            "Bash",
+            &serde_json::json!({"command": "echo other"}),
         )
         .await
         .unwrap();
-    assert_eq!(edited.tool_name, "Shell");
-    assert_eq!(edited.tool_call, first.tool_call);
-    assert_ne!(edited.updated_at, "");
+    assert_eq!(other, None, "another command is another key");
+    let found = store
+        .find_learned_permission(
+            &repo.id,
+            "Bash",
+            &serde_json::json!({"description": "Print", "command": "echo first"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(found, Some(second.clone()));
+
     let deleted = store.delete_learned_permission(&first.id).await.unwrap();
     assert_eq!(deleted.id, first.id);
     assert!(
@@ -77,6 +120,95 @@ async fn learned_permissions_keep_the_first_full_request_and_support_crud() {
             .unwrap()
             .is_empty()
     );
+}
+
+/// Requests without a `rawInput` share one key per tool.
+#[tokio::test]
+async fn learned_permissions_without_raw_input_keep_one_row() {
+    let (store, _dir) = test_store().await;
+    let repo = store
+        .create_repository(NewRepository {
+            path: "/tmp/learned-repo".into(),
+            base_branch: "main".into(),
+            description: None,
+            permission_mode: None,
+        })
+        .await
+        .unwrap();
+    for call_id in ["call-1", "call-2"] {
+        let mut choice = bash_choice(&repo.id, call_id, "yes");
+        choice.tool_call.as_object_mut().unwrap().remove("rawInput");
+        store.record_learned_permission(choice).await.unwrap();
+    }
+    assert_eq!(store.list_learned_permissions(None).await.unwrap().len(), 1);
+}
+
+/// A fresh database and one that already holds learned approvals both end
+/// with the new table: exactly its ten columns, and no row.
+#[tokio::test]
+async fn learned_permission_choice_migration_drops_every_old_row() {
+    use sqlx::Connection;
+    let expected = [
+        "id",
+        "repository_id",
+        "tool_name",
+        "tool_call",
+        "options",
+        "selected_option",
+        "target",
+        "output",
+        "created_at",
+        "updated_at",
+    ];
+    let (store, dir) = test_store().await;
+    drop(store);
+    let mut fresh = sqlx::SqliteConnection::connect(&format!(
+        "sqlite://{}",
+        dir.path().join("test.db").display()
+    ))
+    .await
+    .unwrap();
+    let columns: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM pragma_table_info('learned_permissions')")
+            .fetch_all(&mut fresh)
+            .await
+            .unwrap();
+    assert_eq!(columns, expected);
+
+    let mut connection = sqlx::SqliteConnection::connect(":memory:").await.unwrap();
+    for migration in [
+        include_str!("../migrations/0001_init.sql"),
+        include_str!("../migrations/0002_learned_permissions.sql"),
+        include_str!("../migrations/0003_ai_permission_thresholds.sql"),
+        include_str!("../migrations/0004_ai_permission_flavour.sql"),
+        include_str!("../migrations/0005_ai_permission_winner_thresholds.sql"),
+    ] {
+        sqlx::raw_sql(migration)
+            .execute(&mut connection)
+            .await
+            .unwrap();
+    }
+    sqlx::query("INSERT INTO repositories (id, path, base_branch, permission_mode, created_at, updated_at) VALUES ('repo', '/tmp/repo', 'main', 'learn', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')").execute(&mut connection).await.unwrap();
+    sqlx::query("INSERT INTO learned_permissions (id, repository_id, tool_name, kind, source, created_at, updated_at) VALUES ('row', 'repo', 'Bash', 'execute', 'console', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')").execute(&mut connection).await.unwrap();
+
+    sqlx::raw_sql(include_str!(
+        "../migrations/0006_learned_permission_choices.sql"
+    ))
+    .execute(&mut connection)
+    .await
+    .unwrap();
+
+    let columns: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM pragma_table_info('learned_permissions')")
+            .fetch_all(&mut connection)
+            .await
+            .unwrap();
+    assert_eq!(columns, expected);
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM learned_permissions")
+        .fetch_one(&mut connection)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
 }
 
 #[tokio::test]

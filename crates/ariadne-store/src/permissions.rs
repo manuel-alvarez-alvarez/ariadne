@@ -1,50 +1,42 @@
-//! Learned ACP permission approvals, scoped to one repository.
+//! Learned ACP permission choices, scoped to one repository: every user
+//! choice and every denial, one row per repository, tool name and canonical
+//! `rawInput`.
 
 use ariadne_core::id::new_id;
+use serde_json::Value;
 
-use crate::{Change, LearnedPermission, Result, Store, StoreError, not_found, now};
+use crate::{Change, LearnedPermission, Result, Store, not_found, now};
 
 #[derive(Debug, Clone)]
 pub struct NewLearnedPermission {
     pub repository_id: String,
     pub tool_name: String,
-    pub kind: String,
-    pub source: String,
-    pub tool_call: Option<serde_json::Value>,
-    pub options: Option<serde_json::Value>,
-    pub selected_option: Option<String>,
-    pub session_id: Option<String>,
-    pub task_id: Option<String>,
-    pub label: Option<String>,
-    pub danger: Option<f64>,
-    pub allow_threshold: Option<f64>,
-    pub deny_threshold: Option<f64>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct LearnedPermissionUpdate {
-    pub tool_name: Option<String>,
-    pub kind: Option<String>,
+    /// The ACP `toolCall`. Its `rawInput` is stored with sorted keys.
+    pub tool_call: Value,
+    pub options: Value,
+    pub selected_option: String,
+    pub target: String,
+    pub output: Option<Value>,
 }
 
 impl Store {
-    /// Whether this repository has an approval for this ACP tool signature.
-    pub async fn has_learned_permission(
+    /// The row for this request's key, when one exists.
+    pub async fn find_learned_permission(
         &self,
         repository_id: &str,
         tool_name: &str,
-        kind: &str,
-    ) -> Result<bool> {
-        let found: Option<i64> = sqlx::query_scalar(
-            "SELECT 1 FROM learned_permissions
-              WHERE repository_id = ? AND tool_name = ? AND kind = ?",
+        raw_input: &Value,
+    ) -> Result<Option<LearnedPermission>> {
+        Ok(sqlx::query_as(
+            "SELECT * FROM learned_permissions
+              WHERE repository_id = ? AND tool_name = ?
+                AND ifnull(tool_call -> '$.rawInput', 'null') = json(?)",
         )
         .bind(repository_id)
         .bind(tool_name)
-        .bind(kind)
+        .bind(canonical(raw_input).to_string())
         .fetch_optional(self.r())
-        .await?;
-        Ok(found.is_some())
+        .await?)
     }
 
     pub async fn list_learned_permissions(
@@ -67,95 +59,48 @@ impl Store {
             .ok_or_else(|| not_found("learned permission", id))
     }
 
-    /// Remember an approval. Repeating the same approval keeps the first row.
-    pub async fn learn_permission(&self, new: NewLearnedPermission) -> Result<LearnedPermission> {
-        self.insert_learned_permission(new, true).await
-    }
-
-    async fn insert_learned_permission(
+    /// Record one choice. A row with the same key keeps its id and
+    /// `created_at`, and takes everything else from this choice.
+    pub async fn record_learned_permission(
         &self,
         new: NewLearnedPermission,
-        ignore_duplicate: bool,
     ) -> Result<LearnedPermission> {
+        let mut tool_call = new.tool_call;
+        if let Some(raw_input) = tool_call.get_mut("rawInput") {
+            *raw_input = canonical(raw_input);
+        }
         let id = new_id();
         let ts = now();
-        let statement = if ignore_duplicate {
-            "INSERT OR IGNORE INTO learned_permissions
-                (id, repository_id, tool_name, kind, source, tool_call, options, selected_option,
-                 session_id, task_id, label, danger, allow_threshold, deny_threshold, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-        } else {
+        let stored: String = sqlx::query_scalar(
             "INSERT INTO learned_permissions
-                (id, repository_id, tool_name, kind, source, tool_call, options, selected_option,
-                 session_id, task_id, label, danger, allow_threshold, deny_threshold, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-        };
-        let result = sqlx::query(statement)
-            .bind(&id)
-            .bind(&new.repository_id)
-            .bind(&new.tool_name)
-            .bind(&new.kind)
-            .bind(&new.source)
-            .bind(new.tool_call.as_ref().map(serde_json::Value::to_string))
-            .bind(new.options.as_ref().map(serde_json::Value::to_string))
-            .bind(&new.selected_option)
-            .bind(&new.session_id)
-            .bind(&new.task_id)
-            .bind(&new.label)
-            .bind(new.danger)
-            .bind(new.allow_threshold)
-            .bind(new.deny_threshold)
-            .bind(&ts)
-            .bind(&ts)
-            .execute(self.w())
-            .await
-            .map_err(|error| match error {
-                sqlx::Error::Database(ref db) if db.is_unique_violation() => {
-                    StoreError::Conflict("learned permission already exists".into())
-                }
-                other => StoreError::Db(other),
-            })?;
-        if result.rows_affected() == 1 {
-            let row = self.get_learned_permission(&id).await?;
-            self.publish(Change::LearnedPermissionCreated(row.clone()));
-            return Ok(row);
-        }
-        Ok(sqlx::query_as("SELECT * FROM learned_permissions WHERE repository_id = ? AND tool_name = ? AND kind = ?")
-            .bind(&new.repository_id).bind(&new.tool_name).bind(&new.kind).fetch_one(self.r()).await?)
-    }
-
-    pub async fn create_learned_permission(
-        &self,
-        new: NewLearnedPermission,
-    ) -> Result<LearnedPermission> {
-        self.insert_learned_permission(new, false).await
-    }
-
-    pub async fn update_learned_permission(
-        &self,
-        id: &str,
-        update: LearnedPermissionUpdate,
-    ) -> Result<LearnedPermission> {
-        let current = self.get_learned_permission(id).await?;
-        let tool_name = update.tool_name.unwrap_or(current.tool_name);
-        let kind = update.kind.unwrap_or(current.kind);
-        sqlx::query(
-            "UPDATE learned_permissions SET tool_name = ?, kind = ?, updated_at = ? WHERE id = ?",
+                (id, repository_id, tool_name, tool_call, options, selected_option, target,
+                 output, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT (repository_id, tool_name, ifnull(tool_call -> '$.rawInput', 'null'))
+             DO UPDATE SET
+                tool_call = excluded.tool_call, options = excluded.options,
+                selected_option = excluded.selected_option, target = excluded.target,
+                output = excluded.output, updated_at = excluded.updated_at
+             RETURNING id",
         )
-        .bind(tool_name)
-        .bind(kind)
-        .bind(now())
-        .bind(id)
-        .execute(self.w())
-        .await
-        .map_err(|e| match e {
-            sqlx::Error::Database(ref db) if db.is_unique_violation() => {
-                StoreError::Conflict("learned permission already exists".into())
-            }
-            other => StoreError::Db(other),
-        })?;
-        let row = self.get_learned_permission(id).await?;
-        self.publish(Change::LearnedPermissionUpdated(row.clone()));
+        .bind(&id)
+        .bind(&new.repository_id)
+        .bind(&new.tool_name)
+        .bind(tool_call.to_string())
+        .bind(new.options.to_string())
+        .bind(&new.selected_option)
+        .bind(&new.target)
+        .bind(new.output.as_ref().map(Value::to_string))
+        .bind(&ts)
+        .bind(&ts)
+        .fetch_one(self.w())
+        .await?;
+        let row = self.get_learned_permission(&stored).await?;
+        self.publish(if stored == id {
+            Change::LearnedPermissionCreated(row.clone())
+        } else {
+            Change::LearnedPermissionUpdated(row.clone())
+        });
         Ok(row)
     }
 
@@ -167,5 +112,24 @@ impl Store {
             .await?;
         self.publish(Change::LearnedPermissionDeleted(row.clone()));
         Ok(row)
+    }
+}
+
+/// The value with the keys of every object sorted, whatever order the
+/// agent sent them in.
+fn canonical(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut entries: Vec<_> = map.iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(b.0));
+            Value::Object(
+                entries
+                    .into_iter()
+                    .map(|(key, value)| (key.clone(), canonical(value)))
+                    .collect(),
+            )
+        }
+        Value::Array(items) => Value::Array(items.iter().map(canonical).collect()),
+        other => other.clone(),
     }
 }

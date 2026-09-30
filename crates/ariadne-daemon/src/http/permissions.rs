@@ -9,13 +9,11 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 
 use ariadne_api::permissions::{
-    AiPermissionsStatusDto, CreateLearnedPermissionRequest, Device, LearnedPermissionDto,
-    LearnedPermissionQuery, LearnedPermissionsResponse, TestAiPermissionRequest,
-    TestAiPermissionResponse, UpdateAiPermissionsRequest, UpdateLearnedPermissionRequest,
+    AiPermissionsStatusDto, Device, LearnedPermissionDto, LearnedPermissionQuery,
+    LearnedPermissionsResponse, TestAiPermissionRequest, TestAiPermissionResponse,
+    UpdateAiPermissionsRequest,
 };
-use ariadne_store::{
-    AiPermissionSettingsUpdate, LearnedPermissionUpdate, NewLearnedPermission, StoreError,
-};
+use ariadne_store::{AiPermissionSettingsUpdate, StoreError};
 
 use crate::ai_permissions::flavours;
 
@@ -52,72 +50,6 @@ pub(super) async fn get_learned(
         .map_err(learned_error)
 }
 
-#[utoipa::path(post, path = "/v1/permissions/learned", tag = "permissions", request_body = CreateLearnedPermissionRequest, responses((status = 201, body = LearnedPermissionDto), (status = 404), (status = 409), (status = 422)))]
-pub(super) async fn create_learned(
-    State(state): State<AppState>,
-    Json(req): Json<CreateLearnedPermissionRequest>,
-) -> ApiResult<(StatusCode, Json<LearnedPermissionDto>)> {
-    validate_fields(&[&req.repository_id, &req.tool_name, &req.kind])?;
-    state
-        .store
-        .get_repository(&req.repository_id)
-        .await
-        .map_err(|e| match e {
-            StoreError::NotFound { .. } => ApiError::new(
-                StatusCode::NOT_FOUND,
-                "repository_not_found",
-                format!("repository not found: {}", req.repository_id),
-            ),
-            other => other.into(),
-        })?;
-    let row = state
-        .store
-        .create_learned_permission(NewLearnedPermission {
-            repository_id: req.repository_id,
-            tool_name: req.tool_name,
-            kind: req.kind,
-            source: "manual".into(),
-            tool_call: None,
-            options: None,
-            selected_option: None,
-            session_id: None,
-            task_id: None,
-            label: None,
-            danger: None,
-            allow_threshold: None,
-            deny_threshold: None,
-        })
-        .await
-        .map_err(learned_error)?;
-    Ok((StatusCode::CREATED, Json(learned_permission_dto(row))))
-}
-
-#[utoipa::path(put, path = "/v1/permissions/learned/{id}", tag = "permissions", params(("id" = String, Path)), request_body = UpdateLearnedPermissionRequest, responses((status = 200, body = LearnedPermissionDto), (status = 404), (status = 409), (status = 422)))]
-pub(super) async fn update_learned(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(req): Json<UpdateLearnedPermissionRequest>,
-) -> ApiResult<Json<LearnedPermissionDto>> {
-    if req.tool_name.as_deref().is_some_and(str::is_empty)
-        || req.kind.as_deref().is_some_and(str::is_empty)
-    {
-        return Err(invalid("fields must not be empty".into()));
-    }
-    state
-        .store
-        .update_learned_permission(
-            &id,
-            LearnedPermissionUpdate {
-                tool_name: req.tool_name,
-                kind: req.kind,
-            },
-        )
-        .await
-        .map(learned_permission_dto)
-        .map(Json)
-        .map_err(learned_error)
-}
-
 #[utoipa::path(delete, path = "/v1/permissions/learned/{id}", tag = "permissions", params(("id" = String, Path)), responses((status = 204), (status = 404)))]
 pub(super) async fn delete_learned(
     State(state): State<AppState>,
@@ -131,13 +63,6 @@ pub(super) async fn delete_learned(
     Ok(StatusCode::NO_CONTENT)
 }
 
-fn validate_fields(fields: &[&str]) -> ApiResult<()> {
-    if fields.iter().any(|field| field.is_empty()) {
-        return Err(invalid("fields must not be empty".into()));
-    }
-    Ok(())
-}
-
 fn learned_error(error: StoreError) -> ApiError {
     match error {
         StoreError::NotFound { .. } => ApiError::new(
@@ -145,9 +70,6 @@ fn learned_error(error: StoreError) -> ApiError {
             "learned_permission_not_found",
             error.to_string(),
         ),
-        StoreError::Conflict(message) => {
-            ApiError::new(StatusCode::CONFLICT, "learned_permission_exists", message)
-        }
         other => other.into(),
     }
 }

@@ -89,7 +89,7 @@ pub enum PermissionMode {
     Auto,
     /// Send every request to the session console and wait for an answer.
     Ask,
-    /// Ask once for each repository, tool name and kind; remember approvals.
+    /// Ask once for each repository, tool name and input; remember approvals.
     Learn,
     /// Let the AI permission model answer each request (022).
     Ai,

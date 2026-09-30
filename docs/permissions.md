@@ -44,7 +44,7 @@ remove it.
 | --- | --- | --- |
 | `auto` | Ariadne selects an allowing option automatically. | You accept the agent's requested tool access by default. |
 | `ask` | Ariadne shows every permission request in the console and waits for your answer. | You want to approve or deny each request yourself. |
-| `learn` | Ariadne asks the first time, then remembers an allowing answer for a matching request. | You want review at first use without repeating the same approval. |
+| `learn` | Ariadne asks the first time, then allows a matching request that you allowed before. | You want review at first use without repeating the same approval. |
 | `ai` | The AI permission model decides first; an uncertain answer falls back to `learn`. | You want local model review with remembered console approvals as a fallback. |
 
 For `ask` and a new `learn` request, `ariadne attention` marks the session as
@@ -56,24 +56,38 @@ same console in a terminal pane, so the same picker and the same keys answer
 it there. All of them send the selected answer to the same session.
 
 `auto` chooses an allowing option when one exists. If the request offers no
-options, it is cancelled. In `learn`, Ariadne remembers only an allowing
-answer. A denial is never saved.
+options, it is cancelled. In `learn`, only an allowing answer allows a later
+request. A denied request is asked again.
 
 ## What `learn` remembers
 
-`learn` keeps an approval per repository, tool name, and tool kind. An approval
-for one repository does not grant it in another. The memory survives a daemon
-restart and is used only for later requests with the same three values. Change
-the repository to `ask` when you want to review a matching request again.
+Ariadne records every answer you give in the console, in every mode, allow or
+deny. It also records every denial of the AI permission model and of its
+rules. These rows are training data for the permission model. An allow that
+Ariadne made without you (by the model, by a learned row, or in `auto`) is not
+recorded.
 
-The learned row also keeps the complete ACP tool call, including `rawInput`,
-the offered options, the selected option, and the session and task. When the AI
-permission model considered the request, the row keeps its label, danger, and
-thresholds. Repeating the same approval keeps the first request unchanged.
+A row is kept per repository, tool name, and tool input. The tool name is the
+agent's own name for the tool, such as `Bash`, `Read` or
+`mcp__ariadne__create_task`, or else the title of the call. The tool input is
+the `rawInput` of the call. So an allowed `Bash` command allows only that same
+command, not another one. A later answer for the same request replaces the
+answer in its row.
 
-Manage these rows with `ariadne permissions learned list`, `show`, `add`,
-`edit`, and `rm`. Rows added from the CLI contain the signature only and have
-the source `manual`.
+In `learn` and `ai` only, a row whose answer allowed the request allows a later
+request with the same repository, tool name, and input, without asking you. A
+row whose answer denied the request never answers it: the request is asked
+again. A request without `rawInput` is recorded but never allowed from a row.
+An approval for one repository does not grant it in another. The rows survive
+a daemon restart. Change the repository to `ask` when you want to review a
+matching request again.
+
+Each row keeps the complete ACP tool call, the offered options, the selected
+option, the permission mode at the time (`target`), and the model decision
+(`output`) when the AI permission model was called.
+
+Manage these rows with `ariadne permissions learned list`, `show`, and `rm`.
+You cannot add or edit a row by hand.
 
 ## The AI permission model
 
@@ -91,7 +105,8 @@ Four narrow rules deny before the model runs: transferring a known credential
 with an external upload command, recursively deleting the filesystem root,
 recursively deleting the home directory, and attempts to disable or bypass
 agent permissions. A rule uses a one-time reject option. If the agent offers
-no one-time reject, the console asks instead. Rule decisions are never learned.
+no one-time reject, the console asks instead. A rule denial is recorded, but a
+denied row never answers a later request.
 
 The model answers one question: “How much does this coding-agent tool call put
 the system or the project at risk?” It scores the request as routine work to
@@ -110,9 +125,9 @@ ask when the request has a `production`, `credential_access`,
 `unknown_destination` tag.
 
 An ask, an allow without an allowing option, an unavailable model, or a failed
-request falls back to `learn`: an existing approval is used, or the console
-asks you. The model's own decisions are never remembered; only allowing
-console answers are. The answered console line names the model and danger
+request falls back to `learn`: an allowed row is used, or the console
+asks you. Every console answer and every model denial is recorded; a model
+allow is not. The answered console line names the model and danger
 score when it decided.
 
 When a request comes to you, the console says why under the call, while it

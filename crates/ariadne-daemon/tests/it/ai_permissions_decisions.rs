@@ -513,6 +513,14 @@ async fn a_confident_allow_runs_at_once_and_reports_ai() {
                "rule": null, "cap": null,
                "probabilities": {"0": 0.9, "1": 0.1, "2": 0.0}})
     );
+    assert!(
+        h.store
+            .list_learned_permissions(Some(&cast.repo.id))
+            .await
+            .unwrap()
+            .is_empty(),
+        "a model allow is not recorded"
+    );
     let requests = server.requests.lock().unwrap();
     assert_eq!(
         requests[0]["state"]["request"],
@@ -711,6 +719,14 @@ async fn an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval() 
                "ai_error": null}),
         "the reply keeps the score that fell short"
     );
+    let learned = h
+        .store
+        .list_learned_permissions(Some(&cast.repo.id))
+        .await
+        .unwrap();
+    assert_eq!(learned.len(), 1);
+    assert_eq!(learned[0].target, "ai");
+    assert_eq!(learned[0].selected_option, "yes");
 
     let again = h
         .task_on(
@@ -771,7 +787,7 @@ async fn a_cap_changes_a_model_allow_to_a_console_question() {
 }
 
 #[tokio::test]
-async fn a_hard_rule_denies_without_the_model_attention_or_learning() {
+async fn a_hard_rule_denies_without_the_model_or_attention_and_is_recorded() {
     let server = ModelServer::answer(0.05).await;
     let (h, cast, _agent_dir) =
         ai_permissions_harness_with(&server, 0.2, Timeouts::default(), home_delete_script()).await;
@@ -791,17 +807,19 @@ async fn a_hard_rule_denies_without_the_model_attention_or_learning() {
     assert_eq!(reply["danger"], Value::Null);
     assert_eq!(reply["rule"], "home_delete");
     assert_eq!(reply["probabilities"], Value::Null);
-    assert!(
-        h.store
-            .list_learned_permissions(Some(&cast.repo.id))
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    let learned = h
+        .store
+        .list_learned_permissions(Some(&cast.repo.id))
+        .await
+        .unwrap();
+    assert_eq!(learned.len(), 1, "a rule denial is recorded");
+    assert_eq!(learned[0].selected_option, "no");
+    assert_eq!(learned[0].target, "ai");
+    assert_eq!(learned[0].output, None, "no model was called");
 }
 
 #[tokio::test]
-async fn a_hard_rule_without_a_one_time_reject_asks_without_learning() {
+async fn a_hard_rule_without_a_one_time_reject_asks_and_records_the_choice() {
     let server = ModelServer::answer(0.05).await;
     let mut scripted = home_delete_script();
     scripted["prompts"][0]["permission"]["options"] = json!([
@@ -820,14 +838,14 @@ async fn a_hard_rule_without_a_one_time_reject_asks_without_learning() {
     assert_eq!(reply["decided_by"], "console");
     assert_eq!(reply["rule"], "home_delete");
     assert!(server.requests.lock().unwrap().is_empty());
-    assert!(
-        h.store
-            .list_learned_permissions(Some(&cast.repo.id))
-            .await
-            .unwrap()
-            .is_empty(),
-        "a rule decision was learned"
-    );
+    let learned = h
+        .store
+        .list_learned_permissions(Some(&cast.repo.id))
+        .await
+        .unwrap();
+    assert_eq!(learned.len(), 1, "the console choice is recorded");
+    assert_eq!(learned[0].selected_option, "yes");
+    assert_eq!(learned[0].output, None, "no model was called");
 }
 
 #[tokio::test]
@@ -852,13 +870,20 @@ async fn a_confident_deny_selects_the_rejecting_option_and_reports_ai() {
                "deny_threshold": 0.8,
                "ai_error": null})
     );
-    assert!(
-        !h.store
-            .has_learned_permission(&cast.repo.id, "Bash", "execute")
-            .await
-            .unwrap(),
-        "the denial was not learned"
-    );
+    let learned = h
+        .store
+        .list_learned_permissions(Some(&cast.repo.id))
+        .await
+        .unwrap();
+    assert_eq!(learned.len(), 1, "the model denial is recorded");
+    assert_eq!(learned[0].tool_name, "Bash");
+    assert_eq!(learned[0].selected_option, "no");
+    assert_eq!(learned[0].target, "ai");
+    let output: Value = serde_json::from_str(learned[0].output.as_deref().unwrap()).unwrap();
+    assert_eq!(output["label"], "deny");
+    assert_eq!(output["danger"], 0.99);
+    assert_eq!(output["allow_threshold"], 0.2);
+    assert_eq!(output["deny_threshold"], 0.8);
     let snapshot: LogSnapshotResponse = h.get("/v1/logs").await;
     assert!(
         snapshot.lines.iter().any(|line| line.level == "INFO"
@@ -899,10 +924,30 @@ async fn a_deny_without_a_rejecting_option_waits_for_the_console() {
         .await
         .unwrap();
     assert_eq!(learned.len(), 1);
-    assert_eq!(learned[0].label.as_deref(), Some("deny"));
-    assert_eq!(learned[0].danger, Some(0.99));
-    assert_eq!(learned[0].allow_threshold, Some(0.2));
-    assert_eq!(learned[0].deny_threshold, Some(0.8));
+    assert_eq!(learned[0].selected_option, "yes");
+    let output: Value = serde_json::from_str(learned[0].output.as_deref().unwrap()).unwrap();
+    let mut keys: Vec<_> = output.as_object().unwrap().keys().cloned().collect();
+    keys.sort();
+    assert_eq!(
+        keys,
+        [
+            "allow_threshold",
+            "cap",
+            "danger",
+            "deny_threshold",
+            "error",
+            "label",
+            "operation",
+            "probabilities",
+            "risk_tags",
+            "rule"
+        ]
+    );
+    assert_eq!(output["label"], "deny");
+    assert_eq!(output["danger"], 0.99);
+    assert_eq!(output["operation"], "build_test");
+    assert!(output["probabilities"].is_object());
+    assert_eq!(output["error"], Value::Null);
 }
 
 #[tokio::test]
@@ -947,6 +992,14 @@ async fn a_malformed_answer_warns_and_waits_for_the_console() {
                "deny_threshold": null,
                "ai_error": "malformed"})
     );
+    let learned = h
+        .store
+        .list_learned_permissions(Some(&cast.repo.id))
+        .await
+        .unwrap();
+    let output: Value = serde_json::from_str(learned[0].output.as_deref().unwrap()).unwrap();
+    assert_eq!(output["error"], "malformed");
+    assert_eq!(output["label"], Value::Null);
 }
 
 #[tokio::test]
@@ -1016,4 +1069,11 @@ async fn a_disabled_model_waits_for_the_console() {
                "deny_threshold": null,
                "ai_error": "unavailable"})
     );
+    let learned = h
+        .store
+        .list_learned_permissions(Some(&cast.repo.id))
+        .await
+        .unwrap();
+    assert_eq!(learned.len(), 1, "the console answer is recorded");
+    assert_eq!(learned[0].output, None, "no model was called");
 }

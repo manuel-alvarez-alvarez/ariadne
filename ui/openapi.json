@@ -1114,43 +1114,6 @@
             }
           }
         }
-      },
-      "post": {
-        "tags": [
-          "permissions"
-        ],
-        "operationId": "create_learned",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateLearnedPermissionRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LearnedPermissionDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          },
-          "422": {
-            "description": ""
-          }
-        }
       }
     },
     "/v1/permissions/learned/{id}": {
@@ -1181,53 +1144,6 @@
             }
           },
           "404": {
-            "description": ""
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "permissions"
-        ],
-        "operationId": "update_learned",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateLearnedPermissionRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LearnedPermissionDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          },
-          "422": {
             "description": ""
           }
         }
@@ -3266,26 +3182,6 @@
         },
         "additionalProperties": false
       },
-      "CreateLearnedPermissionRequest": {
-        "type": "object",
-        "required": [
-          "repository_id",
-          "tool_name",
-          "kind"
-        ],
-        "properties": {
-          "kind": {
-            "type": "string"
-          },
-          "repository_id": {
-            "type": "string"
-          },
-          "tool_name": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": false
-      },
       "CreateRepositoryRequest": {
         "type": "object",
         "required": [
@@ -4148,103 +4044,64 @@
       },
       "LearnedPermissionDto": {
         "type": "object",
+        "description": "One user choice or denial of an ACP permission request, keyed by the\nrepository, the tool name and the canonical `rawInput`.",
         "required": [
           "id",
           "repository_id",
           "tool_name",
-          "kind",
-          "source",
+          "tool_call",
+          "options",
+          "selected_option",
+          "target",
+          "output",
           "created_at",
           "updated_at"
         ],
         "properties": {
-          "allow_threshold": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double"
-          },
           "created_at": {
             "type": "string"
-          },
-          "danger": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double"
-          },
-          "deny_threshold": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double"
           },
           "id": {
             "type": "string"
           },
-          "kind": {
-            "type": "string"
+          "options": {
+            "description": "The ACP `options`."
           },
-          "label": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/LearnedPermissionLabel"
-              }
-            ]
+          "output": {
+            "description": "The model decision, when the model was called; null otherwise."
           },
-          "options": {},
           "repository_id": {
             "type": "string"
           },
           "selected_option": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string",
+            "description": "The option id of the final choice."
           },
-          "session_id": {
-            "type": [
-              "string",
-              "null"
-            ]
+          "target": {
+            "$ref": "#/components/schemas/LearnedPermissionTarget",
+            "description": "The repository permission mode at the time of the decision."
           },
-          "source": {
-            "$ref": "#/components/schemas/LearnedPermissionSource"
+          "tool_call": {
+            "description": "The ACP `toolCall`, its `rawInput` with sorted keys."
           },
-          "task_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "tool_call": {},
           "tool_name": {
-            "type": "string"
+            "type": "string",
+            "description": "`toolCall.name`, else `toolCall._meta.claudeCode.toolName`, else `toolCall.title`.",
+            "example": "Bash"
           },
           "updated_at": {
             "type": "string"
           }
         }
       },
-      "LearnedPermissionLabel": {
+      "LearnedPermissionTarget": {
         "type": "string",
+        "description": "The repository permission mode a learned permission was decided under.",
         "enum": [
-          "allow",
+          "auto",
           "ask",
-          "deny"
-        ]
-      },
-      "LearnedPermissionSource": {
-        "type": "string",
-        "enum": [
-          "console",
-          "manual"
+          "learn",
+          "ai"
         ]
       },
       "LearnedPermissionsResponse": {
@@ -5666,24 +5523,6 @@
                 "$ref": "#/components/schemas/Flavour",
                 "description": "A flavour with no device picks the best device that runs it."
               }
-            ]
-          }
-        },
-        "additionalProperties": false
-      },
-      "UpdateLearnedPermissionRequest": {
-        "type": "object",
-        "properties": {
-          "kind": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "tool_name": {
-            "type": [
-              "string",
-              "null"
             ]
           }
         },

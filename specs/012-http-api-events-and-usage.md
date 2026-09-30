@@ -235,14 +235,23 @@ and the ACP runtime that reports the agent events (021).
     daemon has just probed and where its server answers, so only the daemon
     can build it, and an install publishes one as readily as a write does.
     The event belongs to no goal or task, so a filtered stream carries none.
-26. Learned approvals are exposed under `/v1/permissions/learned` for list,
-    get, create, update, and delete. Lists can filter by repository and return
-    newest first. Each write publishes its complete learned-permission DTO.
+26. Learned permissions (021, rule 9) are exposed under
+    `/v1/permissions/learned` for list, get and delete. There is no create or
+    update route: only a permission decision writes a row. Lists can filter
+    by repository and return newest first. `LearnedPermissionDto` is `id`,
+    `repository_id`, `tool_name`, `tool_call` (JSON), `options` (JSON),
+    `selected_option`, `target` (`auto`, `ask`, `learn` or `ai`), `output`
+    (JSON or null), `created_at` and `updated_at`. A new row publishes
+    `learned_permission_created`, a write on an existing key
+    `learned_permission_updated`, and a delete `learned_permission_deleted`,
+    each with the complete DTO.
 
 ## Acceptance criteria
 
-- Learned permission routes validate, round-trip, conflict, delete, and publish
-  complete events (`learned_permissions.rs::learned_permission_routes_validate_crud_and_publish_fat_events`).
+- Learned permission routes list, get and delete, refuse `POST` and `PUT`
+  with 405, and publish complete events for a create, an update by key and a
+  delete
+  (`learned_permissions.rs::learned_permission_routes_read_and_delete_and_publish_fat_events`).
 
 - An HTTP mutation emits a fat event
   (`events.rs::http_mutation_emits_a_fat_event`), a transition carries its

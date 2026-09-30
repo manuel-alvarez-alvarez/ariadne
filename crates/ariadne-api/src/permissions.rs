@@ -10,56 +10,47 @@
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+/// The repository permission mode a learned permission was decided under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum LearnedPermissionSource {
-    Console,
-    Manual,
-}
-
-impl LearnedPermissionSource {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Console => "console",
-            Self::Manual => "manual",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum LearnedPermissionLabel {
-    Allow,
+pub enum LearnedPermissionTarget {
+    Auto,
     Ask,
-    Deny,
+    Learn,
+    Ai,
 }
 
-impl LearnedPermissionLabel {
+impl LearnedPermissionTarget {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::Allow => "allow",
+            Self::Auto => "auto",
             Self::Ask => "ask",
-            Self::Deny => "deny",
+            Self::Learn => "learn",
+            Self::Ai => "ai",
         }
     }
 }
 
+/// One user choice or denial of an ACP permission request, keyed by the
+/// repository, the tool name and the canonical `rawInput`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct LearnedPermissionDto {
     pub id: String,
     pub repository_id: String,
+    /// `toolCall.name`, else `toolCall._meta.claudeCode.toolName`, else `toolCall.title`.
+    #[schema(example = "Bash")]
     pub tool_name: String,
-    pub kind: String,
-    pub source: LearnedPermissionSource,
-    pub tool_call: Option<serde_json::Value>,
-    pub options: Option<serde_json::Value>,
-    pub selected_option: Option<String>,
-    pub session_id: Option<String>,
-    pub task_id: Option<String>,
-    pub label: Option<LearnedPermissionLabel>,
-    pub danger: Option<f64>,
-    pub allow_threshold: Option<f64>,
-    pub deny_threshold: Option<f64>,
+    /// The ACP `toolCall`, its `rawInput` with sorted keys.
+    pub tool_call: serde_json::Value,
+    /// The ACP `options`.
+    pub options: serde_json::Value,
+    /// The option id of the final choice.
+    pub selected_option: String,
+    /// The repository permission mode at the time of the decision.
+    pub target: LearnedPermissionTarget,
+    /// The model decision, when the model was called; null otherwise.
+    #[schema(required = true)]
+    pub output: Option<serde_json::Value>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -72,21 +63,6 @@ pub struct LearnedPermissionsResponse {
 #[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]
 pub struct LearnedPermissionQuery {
     pub repository: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CreateLearnedPermissionRequest {
-    pub repository_id: String,
-    pub tool_name: String,
-    pub kind: String,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct UpdateLearnedPermissionRequest {
-    pub tool_name: Option<String>,
-    pub kind: Option<String>,
 }
 
 /// Where the install has got to.

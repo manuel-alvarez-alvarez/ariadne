@@ -87,13 +87,20 @@ async fn permission_decider(h: &Harness, session_id: &str) -> String {
 }
 
 /// A request whose allowing and denying answers are distinct, so a test can
-/// prove that only the former becomes a learned approval.
+/// prove that only the former auto-allows the request later.
 fn permission_script() -> serde_json::Value {
+    permission_script_for(
+        json!({"toolCallId": "call-1", "title": "Write", "kind": "write",
+                                 "rawInput": {"path": "src/main.rs"}}),
+    )
+}
+
+/// [`permission_script`] with another `toolCall`.
+fn permission_script_for(tool_call: serde_json::Value) -> serde_json::Value {
     let mut scripted = script();
     scripted["prompts"] = json!([{
         "permission": {
-            "toolCall": {"toolCallId": "call-1", "title": "Write", "kind": "write",
-                         "rawInput": {"path": "src/main.rs"}},
+            "toolCall": tool_call,
             "options": [
                 {"optionId": "no", "name": "Reject", "kind": "reject_once"},
                 {"optionId": "yes", "name": "Allow", "kind": "allow_once"},
@@ -1177,8 +1184,9 @@ async fn ask_raises_attention_and_a_console_answer_unblocks_the_turn() {
     assert_eq!(permission_decider(&h, &session.id).await, "console");
 }
 
-/// Learn mode asks again after a denial, records an approval under the
-/// repository, and a fresh store opened over the database finds that row.
+/// Learn mode records a denial and asks again after it, replaces the row with
+/// the approval that follows, and a fresh store opened over the database
+/// finds that row.
 #[tokio::test]
 async fn learn_remembers_an_approval_per_repository_across_a_daemon_restart() {
     let root = tempfile::tempdir().unwrap();
@@ -1201,22 +1209,27 @@ async fn learn_remembers_an_approval_per_repository_across_a_daemon_restart() {
         h.session_status(&denied).await == SessionStatus::Idle
     })
     .await;
-    assert!(
-        !h.store
-            .has_learned_permission(&cast.repo.id, "Write", "write")
-            .await
-            .unwrap(),
-        "a denial is not a learned approval"
-    );
+    let denial = h
+        .store
+        .list_learned_permissions(Some(&cast.repo.id))
+        .await
+        .unwrap();
+    assert_eq!(denial.len(), 1, "a console denial is recorded");
+    let denial = denial[0].clone();
+    assert_eq!(denial.selected_option, "no");
+    assert_eq!(denial.target, "learn");
+    assert_eq!(denial.output, None, "no model was called");
 
     let asked_again = h
         .task_on(&cast.goal, &cast.repo, "Ask again", 1, common::test_pin())
         .await;
     ready(&h, &asked_again.id).await;
     let approved = h.launcher.spawn_author(&asked_again.id).await.unwrap();
-    eventually(TIMEOUT, "the second permission attention", || async {
-        h.attention(&approved).await == Some(AttentionReason::WaitingPermission)
-    })
+    eventually(
+        TIMEOUT,
+        "the second permission attention: a denial never auto-allows",
+        || async { h.attention(&approved).await == Some(AttentionReason::WaitingPermission) },
+    )
     .await;
     let (status, _) = h.send(post_console_input(&approved.id, "yes")).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
@@ -1226,29 +1239,20 @@ async fn learn_remembers_an_approval_per_repository_across_a_daemon_restart() {
     .await;
 
     let restarted = Store::open(h.dir.path().join("test.db")).await.unwrap();
-    assert!(
-        restarted
-            .has_learned_permission(&cast.repo.id, "Write", "write")
-            .await
-            .unwrap(),
-        "a daemon restart reads the learned approval from its store"
-    );
     let learned = restarted
         .list_learned_permissions(Some(&cast.repo.id))
         .await
         .unwrap();
-    assert_eq!(learned.len(), 1);
+    assert_eq!(learned.len(), 1, "the approval replaced the denial");
     let learned = &learned[0];
-    assert_eq!(learned.source, "console");
-    assert_eq!(learned.selected_option.as_deref(), Some("yes"));
-    assert_eq!(learned.session_id.as_deref(), Some(approved.id.as_str()));
-    assert_eq!(learned.task_id.as_deref(), Some(asked_again.id.as_str()));
-    assert_eq!(learned.label, None);
-    let tool_call: serde_json::Value =
-        serde_json::from_str(learned.tool_call.as_deref().unwrap()).unwrap();
+    assert_eq!(learned.id, denial.id);
+    assert_eq!(learned.created_at, denial.created_at);
+    assert!(learned.updated_at > denial.updated_at);
+    assert_eq!(learned.tool_name, "Write");
+    assert_eq!(learned.selected_option, "yes");
+    let tool_call: serde_json::Value = serde_json::from_str(&learned.tool_call).unwrap();
     assert_eq!(tool_call["rawInput"]["path"], "src/main.rs");
-    let options: serde_json::Value =
-        serde_json::from_str(learned.options.as_deref().unwrap()).unwrap();
+    let options: serde_json::Value = serde_json::from_str(&learned.options).unwrap();
     assert_eq!(options.as_array().unwrap().len(), 2);
 
     let remembered = h
@@ -1305,13 +1309,14 @@ async fn ai_asks_once_and_remembers_the_approval_as_learn_does() {
         h.session_status(&asked).await == SessionStatus::Idle
     })
     .await;
-    assert!(
-        h.store
-            .has_learned_permission(&cast.repo.id, "Write", "write")
-            .await
-            .unwrap(),
-        "an allowing answer in `ai` is remembered under the repository"
-    );
+    let learned = h
+        .store
+        .list_learned_permissions(Some(&cast.repo.id))
+        .await
+        .unwrap();
+    assert_eq!(learned.len(), 1);
+    assert_eq!(learned[0].selected_option, "yes");
+    assert_eq!(learned[0].target, "ai");
 
     let again = h
         .task_on(&cast.goal, &cast.repo, "Ask again", 1, common::test_pin())
@@ -1336,6 +1341,167 @@ async fn ai_asks_once_and_remembers_the_approval_as_learn_does() {
         .collect();
     assert_eq!(replies.len(), 2, "each stub process got one reply");
     assert_eq!(replies[1]["result"]["outcome"]["optionId"], "yes");
+}
+
+/// A `Bash` request as Claude sends it: the tool name in `name`, the
+/// command in the title and in `rawInput`.
+fn bash_call(command: &str) -> serde_json::Value {
+    json!({"toolCallId": "call-1", "name": "Bash", "title": command, "kind": "execute",
+           "rawInput": {"command": command}})
+}
+
+/// Record an allowing console choice for `tool_call` under the repository.
+async fn allowed_row(h: &Harness, cast: &Cast, tool_call: serde_json::Value) {
+    h.store
+        .record_learned_permission(ariadne_store::NewLearnedPermission {
+            repository_id: cast.repo.id.clone(),
+            tool_name: "Bash".into(),
+            tool_call,
+            options: json!([
+                {"optionId": "no", "name": "Reject", "kind": "reject_once"},
+                {"optionId": "yes", "name": "Allow", "kind": "allow_once"},
+            ]),
+            selected_option: "yes".into(),
+            target: "learn".into(),
+            output: None,
+        })
+        .await
+        .unwrap();
+}
+
+/// Spawn the task's author and wait until it asks the console.
+async fn asked(h: &Harness, task_id: &str) -> ariadne_store::AgentSession {
+    ready(h, task_id).await;
+    let session = h.launcher.spawn_author(task_id).await.unwrap();
+    eventually(TIMEOUT, "the permission attention", || async {
+        h.attention(&session).await == Some(AttentionReason::WaitingPermission)
+    })
+    .await;
+    session
+}
+
+/// `ask` records the console choice under the tool's own name, and never
+/// auto-allows from a row: the same request asks again.
+#[tokio::test]
+async fn ask_records_the_console_choice_and_never_auto_allows() {
+    let root = tempfile::tempdir().unwrap();
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(
+        agent_dir.path(),
+        permission_script_for(bash_call("cargo test")),
+    );
+    let h = harness().home(home_with_stub(&root, &stub)).await;
+    let cast = acp_cast(&h).await;
+    h.set_permission_mode(&cast.repo, PermissionMode::Ask).await;
+
+    let session = asked(&h, &cast.task.id).await;
+    let (status, _) = h.send(post_console_input(&session.id, "yes")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "the answered turn to finish", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    let learned = h
+        .store
+        .list_learned_permissions(Some(&cast.repo.id))
+        .await
+        .unwrap();
+    assert_eq!(learned.len(), 1);
+    assert_eq!(learned[0].tool_name, "Bash");
+    assert_eq!(learned[0].target, "ask");
+    assert_eq!(learned[0].selected_option, "yes");
+    assert_eq!(learned[0].output, None);
+
+    let again = h
+        .task_on(&cast.goal, &cast.repo, "Ask again", 1, common::test_pin())
+        .await;
+    asked(&h, &again.id).await;
+}
+
+/// A `Bash` row keys on its command: an allowed `cargo build` does not
+/// auto-allow `cargo test`.
+#[tokio::test]
+async fn an_allowed_row_does_not_allow_another_command_of_the_same_tool() {
+    let root = tempfile::tempdir().unwrap();
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(
+        agent_dir.path(),
+        permission_script_for(bash_call("cargo test")),
+    );
+    let h = harness().home(home_with_stub(&root, &stub)).await;
+    let cast = acp_cast(&h).await;
+    h.set_permission_mode(&cast.repo, PermissionMode::Learn)
+        .await;
+    allowed_row(&h, &cast, bash_call("cargo build")).await;
+
+    asked(&h, &cast.task.id).await;
+}
+
+/// Only `allow_once` and `allow_always` are allowing kinds: a stored option
+/// whose kind merely starts with `allow` never auto-allows.
+#[tokio::test]
+async fn a_row_with_an_unknown_allow_kind_never_auto_allows() {
+    let root = tempfile::tempdir().unwrap();
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(
+        agent_dir.path(),
+        permission_script_for(bash_call("cargo test")),
+    );
+    let h = harness().home(home_with_stub(&root, &stub)).await;
+    let cast = acp_cast(&h).await;
+    h.set_permission_mode(&cast.repo, PermissionMode::Learn)
+        .await;
+    h.store
+        .record_learned_permission(ariadne_store::NewLearnedPermission {
+            repository_id: cast.repo.id.clone(),
+            tool_name: "Bash".into(),
+            tool_call: bash_call("cargo test"),
+            options: json!([{"optionId": "yes", "name": "Allow", "kind": "allow_invalid"}]),
+            selected_option: "yes".into(),
+            target: "learn".into(),
+            output: None,
+        })
+        .await
+        .unwrap();
+
+    asked(&h, &cast.task.id).await;
+}
+
+/// A request with no `rawInput` gets a row, but even an allowing row never
+/// auto-allows it.
+#[tokio::test]
+async fn a_request_without_raw_input_never_auto_allows() {
+    let root = tempfile::tempdir().unwrap();
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(
+        agent_dir.path(),
+        permission_script_for(json!({"toolCallId": "call-1", "name": "Bash",
+                                     "title": "Bash", "kind": "execute"})),
+    );
+    let h = harness().home(home_with_stub(&root, &stub)).await;
+    let cast = acp_cast(&h).await;
+    h.set_permission_mode(&cast.repo, PermissionMode::Learn)
+        .await;
+
+    let session = asked(&h, &cast.task.id).await;
+    let (status, _) = h.send(post_console_input(&session.id, "yes")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "the approved turn to finish", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    let learned = h
+        .store
+        .list_learned_permissions(Some(&cast.repo.id))
+        .await
+        .unwrap();
+    assert_eq!(learned.len(), 1);
+    assert_eq!(learned[0].selected_option, "yes");
+
+    let again = h
+        .task_on(&cast.goal, &cast.repo, "Ask again", 1, common::test_pin())
+        .await;
+    asked(&h, &again.id).await;
 }
 
 /// A permission request, and the daemon's reply to it, appear in the console
