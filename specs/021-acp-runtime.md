@@ -256,9 +256,8 @@ gone (009).
 - The same request under another `toolCallId` keeps one row: it updates the
   selected option and `updated_at`, and keeps the id and `created_at`
   (`store.rs::learned_permissions_keep_one_row_per_repository_tool_and_raw_input`).
-- A fresh and an existing database both migrate to the ten columns, with no
-  row carried over
-  (`store.rs::learned_permission_choice_migration_drops_every_old_row`).
+- A fresh database holds the table with its ten columns
+  (`store.rs::a_fresh_database_holds_the_ten_learned_permission_columns`).
 - A repository set to `ai` asks the AI permission model first. A confident
   allow proceeds; every other outcome uses a learned approval or asks the
   console

@@ -84,8 +84,8 @@ pub(crate) fn not_found(entity: &'static str, id: &str) -> StoreError {
     }
 }
 
-/// Whether the database at `path` predates the squash of the 29 migrations
-/// into one, which is the only thing that stops this release opening a
+/// Whether the database at `path` predates the squash of the migrations into
+/// one, which is the only thing that stops this release opening a
 /// database it otherwise understands. `Some` is the sentence to show; a file
 /// that is not one of ours and a path with nothing on it are both `None` — a
 /// report never calls anything old on a guess.

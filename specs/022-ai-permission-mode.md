@@ -222,8 +222,7 @@ popover with the full seven facts`).
     flavour), `AI_PERMISSIONS_KEV_COMMIT`, `AI_PERMISSIONS_FLAVOUR` and
     `AI_PERMISSIONS_DEVICE`.
 24. The default allow threshold is 0.0886 and the default deny threshold is
-    0.6256. The store migration resets the stored pair because the winner changes
-    the question and its score scale.
+    0.6256.
 
 ## Decisions
 
@@ -556,11 +555,10 @@ popover with the full seven facts`).
     the first of `cuda`, then `mlx`, then `cpu` that can run it, or nothing.
     `default_flavour(hardware)` is `4b` where some device runs it, else
     `0.8b`.
-43. Migration `0004_ai_permission_flavour.sql` adds `flavour TEXT NOT NULL
-    DEFAULT '4b'` and a nullable `device`, and drops `schedule` and
-    `last_scheduled_refresh`. At every start, `AiPermissions::ensure_device`
-    fills a `NULL` stored `device` with `best_device` of the stored `flavour`,
-    silently: it is a backfill, not a choice somebody made. Where no device
+43. The settings row holds `flavour TEXT NOT NULL DEFAULT '4b'` and a
+    nullable `device`, and has no schedule columns. At every start,
+    `AiPermissions::ensure_device` fills a `NULL` stored `device` with
+    `best_device` of the stored `flavour`, silently: it is a backfill, not a choice somebody made. Where no device
     runs the stored flavour, it writes nothing and the device stays `NULL`:
     the fill never stores a device its own `options` table marks unable to
     run that flavour. An install from before flavours existed thus keeps `4b`
@@ -757,10 +755,8 @@ popover with the full seven facts`).
 - The settings are one row taking partial writes of both thresholds and
   they survive a store reopen
   (`store.rs::the_ai_permission_settings_are_one_row_that_takes_partial_writes`).
-- A stored row with the former default pair opens with the new pair
-  (`store.rs::ai_permission_threshold_migration_replaces_the_old_defaults`).
-- The winner migration resets the stored threshold pair for the new score scale
-  (`store.rs::winner_threshold_migration_resets_the_stored_pair`).
+- A fresh database seeds the default threshold pair
+  (`store.rs::a_fresh_database_seeds_the_ai_permission_defaults`).
 - `python_bin` and `nvidia_smi_bin` are read from `config.toml`, and
   `ai_permissions_release_url` and `ai_permissions_hardware` are refused,
   and the test seams are not keys of it
@@ -889,9 +885,9 @@ popover with the full seven facts`).
   (`ai_permissions_flavours.rs::put_refuses_an_unsupported_combination_and_leaves_the_row_unchanged`,
   `::put_with_only_a_flavour_picks_the_best_device`,
   `::put_with_only_a_device_keeps_the_stored_flavour`).
-- The migration keeps an existing row's flavour at `4b`, drops the schedule
-  columns, and the daemon fills the device at its next start
-  (`store.rs::ai_permission_flavour_migration_keeps_4b_and_drops_the_schedule`,
+- A fresh row starts at `4b` with no schedule columns, and the daemon fills
+  the device at its next start
+  (`store.rs::a_fresh_database_seeds_the_ai_permission_defaults`,
   `ai_permissions_flavours.rs::a_fresh_row_keeps_4b_and_gets_a_device_at_startup`).
   A host where no device runs the stored flavour keeps its device `NULL`
   rather than getting one its own table marks unable to run it, and `status`
@@ -1045,8 +1041,6 @@ the others.
 `crates/ariadne-client/src/lib.rs`,
 `crates/ariadne-client/src/endpoint.rs`,
 `crates/ariadne-store/migrations/0001_init.sql`,
-`crates/ariadne-store/migrations/0003_ai_permission_thresholds.sql`,
-`crates/ariadne-store/migrations/0004_ai_permission_flavour.sql`,
 `crates/ariadne-store/src/ai_permissions.rs`,
 `crates/ariadne-daemon/src/ai_permissions/`,
 `crates/ariadne-daemon/src/main.rs`,

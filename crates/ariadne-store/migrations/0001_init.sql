@@ -182,14 +182,9 @@ CREATE TABLE ai_permission_settings (
     id                INTEGER PRIMARY KEY CHECK (id = 1),
     enabled           INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
     -- Danger at or below this value is allowed, 0 to 1.
-    allow_threshold   REAL NOT NULL DEFAULT 0.1338,
+    allow_threshold   REAL NOT NULL DEFAULT 0.0886,
     -- Danger at or above this value is denied, 0 to 1.
-    deny_threshold    REAL NOT NULL DEFAULT 0.5345,
-    -- When the daily refresh runs, `HH:MM` in 24-hour local time.
-    -- NULL = no refresh.
-    schedule          TEXT,
-    -- Local date (`YYYY-MM-DD`) of the last scheduled refresh.
-    last_scheduled_refresh TEXT,
+    deny_threshold    REAL NOT NULL DEFAULT 0.6256,
     state             TEXT NOT NULL DEFAULT 'disabled'
                       CHECK (state IN ('disabled', 'installing', 'ready', 'failed')),
     installed_release TEXT,                     -- the release tag on disk
@@ -197,20 +192,35 @@ CREATE TABLE ai_permission_settings (
     weights_present   INTEGER NOT NULL DEFAULT 0 CHECK (weights_present IN (0, 1)),
     last_refresh_at   TEXT,                     -- when an install last ended well
     last_error        TEXT,                     -- why the last install failed
-    updated_at        TEXT NOT NULL
+    updated_at        TEXT NOT NULL,
+    -- The flavour and device the user chose (022, flavours and devices). A
+    -- NULL device is filled by the daemon at startup with the best device
+    -- that runs the stored flavour.
+    flavour           TEXT NOT NULL DEFAULT '4b' CHECK (flavour IN ('0.8b', '4b', '9b', '27b')),
+    device            TEXT CHECK (device IN ('mlx', 'cuda', 'cpu'))
 );
 INSERT INTO ai_permission_settings (id, updated_at)
 VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 
--- An ACP permission approval learned from one repository. A denial has no
--- row, so it is always asked again.
+-- Training data for the permission model: one row per user choice and per
+-- denial, allow or deny, keyed by the repository, the tool name and the
+-- canonical `rawInput` of the ACP `toolCall`.
 CREATE TABLE learned_permissions (
-    repository_id TEXT NOT NULL REFERENCES repositories (id) ON DELETE CASCADE,
-    tool_name     TEXT NOT NULL,
-    kind          TEXT NOT NULL,
-    created_at    TEXT NOT NULL,
-    PRIMARY KEY (repository_id, tool_name, kind)
+    id              TEXT PRIMARY KEY,
+    repository_id   TEXT NOT NULL REFERENCES repositories (id) ON DELETE CASCADE,
+    tool_name       TEXT NOT NULL,
+    tool_call       TEXT NOT NULL,              -- the ACP `toolCall`, `rawInput` with sorted keys
+    options         TEXT NOT NULL,              -- the ACP `options`
+    selected_option TEXT NOT NULL,              -- the option id of the final choice
+    target          TEXT NOT NULL CHECK (target IN ('auto', 'ask', 'learn', 'ai')),
+    output          TEXT,                       -- the model decision, when the model was called
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
 );
+CREATE INDEX idx_learned_permissions_repository
+ON learned_permissions (repository_id, created_at DESC);
+CREATE UNIQUE INDEX idx_learned_permissions_key
+ON learned_permissions (repository_id, tool_name, ifnull(tool_call -> '$.rawInput', 'null'));
 
 -- The agents staffed on a task. An agent has no identity of its own: it is a
 -- model of a registry agent, an effort, a brief and a set of skills, and its seat

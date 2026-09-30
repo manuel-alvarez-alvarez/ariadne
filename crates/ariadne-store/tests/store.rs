@@ -143,10 +143,10 @@ async fn learned_permissions_without_raw_input_keep_one_row() {
     assert_eq!(store.list_learned_permissions(None).await.unwrap().len(), 1);
 }
 
-/// A fresh database and one that already holds learned approvals both end
-/// with the new table: exactly its ten columns, and no row.
+/// A fresh database holds the learned permissions table with exactly its ten
+/// columns.
 #[tokio::test]
-async fn learned_permission_choice_migration_drops_every_old_row() {
+async fn a_fresh_database_holds_the_ten_learned_permission_columns() {
     use sqlx::Connection;
     let expected = [
         "id",
@@ -174,153 +174,31 @@ async fn learned_permission_choice_migration_drops_every_old_row() {
             .await
             .unwrap();
     assert_eq!(columns, expected);
-
-    let mut connection = sqlx::SqliteConnection::connect(":memory:").await.unwrap();
-    for migration in [
-        include_str!("../migrations/0001_init.sql"),
-        include_str!("../migrations/0002_learned_permissions.sql"),
-        include_str!("../migrations/0003_ai_permission_thresholds.sql"),
-        include_str!("../migrations/0004_ai_permission_flavour.sql"),
-        include_str!("../migrations/0005_ai_permission_winner_thresholds.sql"),
-    ] {
-        sqlx::raw_sql(migration)
-            .execute(&mut connection)
-            .await
-            .unwrap();
-    }
-    sqlx::query("INSERT INTO repositories (id, path, base_branch, permission_mode, created_at, updated_at) VALUES ('repo', '/tmp/repo', 'main', 'learn', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')").execute(&mut connection).await.unwrap();
-    sqlx::query("INSERT INTO learned_permissions (id, repository_id, tool_name, kind, source, created_at, updated_at) VALUES ('row', 'repo', 'Bash', 'execute', 'console', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')").execute(&mut connection).await.unwrap();
-
-    sqlx::raw_sql(include_str!(
-        "../migrations/0006_learned_permission_choices.sql"
-    ))
-    .execute(&mut connection)
-    .await
-    .unwrap();
-
-    let columns: Vec<String> =
-        sqlx::query_scalar("SELECT name FROM pragma_table_info('learned_permissions')")
-            .fetch_all(&mut connection)
-            .await
-            .unwrap();
-    assert_eq!(columns, expected);
-    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM learned_permissions")
-        .fetch_one(&mut connection)
-        .await
-        .unwrap();
-    assert_eq!(rows, 0);
 }
 
+/// A fresh database seeds the AI permission settings with the winner's
+/// threshold pair, the `4b` flavour and a `NULL` device for the daemon to fill
+/// at startup, and has no schedule columns.
 #[tokio::test]
-async fn learned_permission_migration_keeps_old_rows_and_assigns_ids() {
+async fn a_fresh_database_seeds_the_ai_permission_defaults() {
     use sqlx::Connection;
-    let mut connection = sqlx::SqliteConnection::connect(":memory:").await.unwrap();
-    sqlx::raw_sql(include_str!("../migrations/0001_init.sql"))
-        .execute(&mut connection)
-        .await
-        .unwrap();
-    sqlx::query("INSERT INTO repositories (id, path, base_branch, permission_mode, created_at, updated_at) VALUES ('repo', '/tmp/repo', 'main', 'learn', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')").execute(&mut connection).await.unwrap();
-    sqlx::query("INSERT INTO learned_permissions (repository_id, tool_name, kind, created_at) VALUES ('repo', 'Bash', 'execute', '2026-01-01T00:00:00.000Z')").execute(&mut connection).await.unwrap();
-    sqlx::raw_sql(include_str!("../migrations/0002_learned_permissions.sql"))
-        .execute(&mut connection)
-        .await
-        .unwrap();
-    let row: (String, String, Option<String>) =
-        sqlx::query_as("SELECT id, source, tool_call FROM learned_permissions")
-            .fetch_one(&mut connection)
-            .await
-            .unwrap();
-    assert!(!row.0.is_empty());
-    assert_eq!(row.0.len(), 26);
-    assert_eq!(row.1, "console");
-    assert_eq!(row.2, None);
-}
-
-#[tokio::test]
-async fn ai_permission_threshold_migration_replaces_the_old_defaults() {
-    use sqlx::Connection;
-    let mut connection = sqlx::SqliteConnection::connect(":memory:").await.unwrap();
-    sqlx::raw_sql(include_str!("../migrations/0001_init.sql"))
-        .execute(&mut connection)
-        .await
-        .unwrap();
-    sqlx::query(
-        "UPDATE ai_permission_settings SET allow_threshold = 0.1338, deny_threshold = 0.5345",
-    )
-    .execute(&mut connection)
-    .await
-    .unwrap();
-
-    sqlx::raw_sql(include_str!(
-        "../migrations/0003_ai_permission_thresholds.sql"
+    let (store, dir) = test_store().await;
+    drop(store);
+    let mut connection = sqlx::SqliteConnection::connect(&format!(
+        "sqlite://{}",
+        dir.path().join("test.db").display()
     ))
-    .execute(&mut connection)
     .await
     .unwrap();
 
-    let thresholds: (f64, f64) = sqlx::query_as(
-        "SELECT allow_threshold, deny_threshold FROM ai_permission_settings WHERE id = 1",
+    let (allow, deny, flavour, device): (f64, f64, String, Option<String>) = sqlx::query_as(
+        "SELECT allow_threshold, deny_threshold, flavour, device
+         FROM ai_permission_settings WHERE id = 1",
     )
     .fetch_one(&mut connection)
     .await
     .unwrap();
-    assert_eq!(thresholds, (0.1647, 0.626));
-}
-
-#[tokio::test]
-async fn winner_threshold_migration_resets_the_stored_pair() {
-    use sqlx::Connection;
-    let mut connection = sqlx::SqliteConnection::connect(":memory:").await.unwrap();
-    sqlx::raw_sql(include_str!("../migrations/0001_init.sql"))
-        .execute(&mut connection)
-        .await
-        .unwrap();
-    sqlx::query("UPDATE ai_permission_settings SET allow_threshold = 0.12, deny_threshold = 0.54")
-        .execute(&mut connection)
-        .await
-        .unwrap();
-
-    sqlx::raw_sql(include_str!(
-        "../migrations/0005_ai_permission_winner_thresholds.sql"
-    ))
-    .execute(&mut connection)
-    .await
-    .unwrap();
-
-    let thresholds: (f64, f64) = sqlx::query_as(
-        "SELECT allow_threshold, deny_threshold FROM ai_permission_settings WHERE id = 1",
-    )
-    .fetch_one(&mut connection)
-    .await
-    .unwrap();
-    assert_eq!(thresholds, (0.0886, 0.6256));
-}
-
-/// An install from before flavours existed keeps `4b`, its device starts
-/// `NULL` for the daemon to fill at startup, and the schedule columns are gone.
-#[tokio::test]
-async fn ai_permission_flavour_migration_keeps_4b_and_drops_the_schedule() {
-    use sqlx::Connection;
-    let mut connection = sqlx::SqliteConnection::connect(":memory:").await.unwrap();
-    sqlx::raw_sql(include_str!("../migrations/0001_init.sql"))
-        .execute(&mut connection)
-        .await
-        .unwrap();
-    sqlx::query("UPDATE ai_permission_settings SET schedule = '03:30'")
-        .execute(&mut connection)
-        .await
-        .unwrap();
-
-    sqlx::raw_sql(include_str!("../migrations/0004_ai_permission_flavour.sql"))
-        .execute(&mut connection)
-        .await
-        .unwrap();
-
-    let (flavour, device): (String, Option<String>) =
-        sqlx::query_as("SELECT flavour, device FROM ai_permission_settings WHERE id = 1")
-            .fetch_one(&mut connection)
-            .await
-            .unwrap();
+    assert_eq!((allow, deny), (0.0886, 0.6256));
     assert_eq!(flavour, "4b");
     assert_eq!(device, None, "the daemon fills it at startup");
 
