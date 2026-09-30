@@ -39,6 +39,7 @@ use ariadne_core::{
     TaskStatus,
 };
 use ariadne_daemon::acp::AcpLaunch;
+use ariadne_daemon::ai_permissions::hardware::HardwareOverride;
 use ariadne_daemon::branch::BranchWatchers;
 use ariadne_daemon::bus::{BusEvent, EventBus};
 use ariadne_daemon::config::Config;
@@ -115,7 +116,9 @@ pub(crate) struct HarnessBuilder {
     ai_permissions_installer: Option<Vec<String>>,
     ai_permissions_serve_command: Option<Vec<String>>,
     ai_permissions_endpoint: Option<String>,
+    ai_permissions_hardware: Option<HardwareOverride>,
     python_bin: Option<String>,
+    nvidia_smi_bin: Option<String>,
 }
 
 /// The pin the fixtures staff an agent on: a model of the registry agent the
@@ -149,7 +152,9 @@ pub(crate) fn harness() -> HarnessBuilder {
         ai_permissions_installer: None,
         ai_permissions_serve_command: None,
         ai_permissions_endpoint: None,
+        ai_permissions_hardware: None,
         python_bin: None,
+        nvidia_smi_bin: None,
     }
 }
 
@@ -243,11 +248,26 @@ impl HarnessBuilder {
         self
     }
 
+    /// Answer the hardware probe with `hardware` instead of reading the real
+    /// machine running the tests: the whole memory rule (022, flavours and
+    /// devices) reads GB, not bytes.
+    pub(crate) fn ai_permissions_hardware(mut self, hardware: HardwareOverride) -> Self {
+        self.ai_permissions_hardware = Some(hardware);
+        self
+    }
+
     /// Install into `path` rather than whatever `python3` the machine
     /// running the tests has: a script that prints a version is a Python as
     /// far as the check is concerned.
     pub(crate) fn python_bin(mut self, path: impl Into<String>) -> Self {
         self.python_bin = Some(path.into());
+        self
+    }
+
+    /// Probe the GPU with `path` rather than whatever `nvidia-smi` the
+    /// machine running the tests has.
+    pub(crate) fn nvidia_smi_bin(mut self, path: impl Into<String>) -> Self {
+        self.nvidia_smi_bin = Some(path.into());
         self
     }
 
@@ -285,8 +305,12 @@ impl HarnessBuilder {
         config.ai_permissions_installer = self.ai_permissions_installer;
         config.ai_permissions_serve_command = self.ai_permissions_serve_command;
         config.ai_permissions_endpoint = self.ai_permissions_endpoint;
+        config.ai_permissions_hardware = self.ai_permissions_hardware;
         if let Some(python_bin) = self.python_bin {
             config.python_bin = Some(python_bin);
+        }
+        if let Some(nvidia_smi_bin) = self.nvidia_smi_bin {
+            config.nvidia_smi_bin = Some(nvidia_smi_bin);
         }
         let agent_registry = ariadne_daemon::acp_discovery::AgentRegistry::test_registry(
             &config.acp_agents,
@@ -310,10 +334,7 @@ impl HarnessBuilder {
             &config,
             self.timeouts,
         );
-        ariadne_daemon::ai_permissions::schedule::start(
-            ai_permissions.clone(),
-            self.timeouts.ai_permissions_schedule_poll,
-        );
+        ai_permissions.ensure_device().await;
         let launcher = Arc::new(Launcher {
             cfg: Arc::new(config),
             store: store.clone(),

@@ -9,13 +9,15 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 
 use ariadne_api::permissions::{
-    AiPermissionsStatusDto, CreateLearnedPermissionRequest, LearnedPermissionDto,
+    AiPermissionsStatusDto, CreateLearnedPermissionRequest, Device, LearnedPermissionDto,
     LearnedPermissionQuery, LearnedPermissionsResponse, TestAiPermissionRequest,
     TestAiPermissionResponse, UpdateAiPermissionsRequest, UpdateLearnedPermissionRequest,
 };
 use ariadne_store::{
     AiPermissionSettingsUpdate, LearnedPermissionUpdate, NewLearnedPermission, StoreError,
 };
+
+use crate::ai_permissions::flavours;
 
 use super::AppState;
 use super::convert::learned_permission_dto;
@@ -169,7 +171,7 @@ pub(super) async fn get(State(state): State<AppState>) -> ApiResult<Json<AiPermi
     responses(
         (status = 200, body = AiPermissionsStatusDto),
         (status = 409, description = "no Python 3.12 or 3.13 to install into"),
-        (status = 422, description = "invalid thresholds or a schedule that is not HH:MM")
+        (status = 422, description = "invalid thresholds, or a flavour and device combination that cannot run")
     ))]
 pub(super) async fn update(
     State(state): State<AppState>,
@@ -186,13 +188,6 @@ pub(super) async fn update(
                 "{name} must be between 0 and 1, not {threshold}"
             )));
         }
-    }
-    if let Some(Some(schedule)) = &req.schedule
-        && !is_clock_time(schedule)
-    {
-        return Err(invalid(format!(
-            "schedule must be HH:MM in 24-hour time, not `{schedule}`"
-        )));
     }
 
     let before = state.ai_permissions.status().await;
@@ -212,11 +207,48 @@ pub(super) async fn update(
         ));
     }
 
+    let chosen = match (req.flavour, req.device) {
+        (None, None) => None,
+        (flavour, device) => {
+            let hardware = state.ai_permissions.hardware().await;
+            let flavour = match flavour {
+                Some(flavour) => flavour,
+                None => state.ai_permissions.stored_flavour().await,
+            };
+            let device = match device {
+                Some(device) => device,
+                None => flavours::best_device(&hardware, flavour).unwrap_or(Device::Cpu),
+            };
+            let options = flavours::options(&hardware);
+            let entry = options
+                .iter()
+                .find(|option| option.flavour == flavour)
+                .expect("every flavour is listed");
+            let option = entry
+                .devices
+                .iter()
+                .find(|option| option.device == device)
+                .expect("every device is listed");
+            if !option.can_run {
+                return Err(ApiError::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "flavour_unsupported",
+                    option
+                        .reason
+                        .clone()
+                        .unwrap_or_else(|| "that combination cannot run here".to_string()),
+                ));
+            }
+            Some((flavour, device))
+        }
+    };
+
     let update = AiPermissionSettingsUpdate {
         enabled: req.enabled,
         allow_threshold: req.allow_threshold,
         deny_threshold: req.deny_threshold,
-        schedule: req.schedule,
+        flavour: chosen.map(|(flavour, _)| flavour.as_str().to_string()),
+        device: chosen.map(|(_, device)| device.as_str().to_string()),
         // Turning the model off leaves the files where they are and says so;
         // turning it on is the install's own state to write.
         state: (req.enabled == Some(false) && before.enabled).then(|| "disabled".to_string()),
@@ -375,38 +407,5 @@ fn python_unavailable(status: &AiPermissionsStatusDto) -> String {
         _ => "the AI permission model needs Python 3.12 or 3.13, and this daemon found no Python \
               on its PATH. Set `python_bin` in config.toml"
             .to_string(),
-    }
-}
-
-/// Whether a schedule is `HH:MM` in 24-hour time. Exactly two digits, a
-/// colon, and two more: `3:30` and `03:30:00` are refused, so every stored
-/// schedule sorts and compares as text.
-fn is_clock_time(schedule: &str) -> bool {
-    let Some((hours, minutes)) = schedule.split_once(':') else {
-        return false;
-    };
-    let two_digits = |part: &str| part.len() == 2 && part.bytes().all(|b| b.is_ascii_digit());
-    two_digits(hours)
-        && two_digits(minutes)
-        && hours.parse::<u32>().is_ok_and(|h| h < 24)
-        && minutes.parse::<u32>().is_ok_and(|m| m < 60)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Midnight and the last minute of the day are times; a missing zero, a
-    /// seconds field, an hour that does not exist and empty text are not.
-    #[test]
-    fn a_schedule_is_two_digits_a_colon_and_two_digits() {
-        for good in ["00:00", "03:30", "23:59", "09:05"] {
-            assert!(is_clock_time(good), "{good}");
-        }
-        for bad in [
-            "25:00", "03:60", "3:30", "03:30:00", "0330", "", ":", "ab:cd",
-        ] {
-            assert!(!is_clock_time(bad), "{bad}");
-        }
     }
 }

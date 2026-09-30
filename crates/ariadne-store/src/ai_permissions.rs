@@ -13,9 +13,10 @@ pub struct AiPermissionSettingsUpdate {
     pub enabled: Option<bool>,
     pub allow_threshold: Option<f64>,
     pub deny_threshold: Option<f64>,
-    /// `Some(None)` clears the daily refresh; `None` keeps it.
-    pub schedule: Option<Option<String>>,
-    pub last_scheduled_refresh: Option<Option<String>>,
+    /// `0.8b`, `4b`, `9b` or `27b`.
+    pub flavour: Option<String>,
+    /// `mlx`, `cuda` or `cpu`.
+    pub device: Option<String>,
     /// `disabled`, `installing`, `ready` or `failed`.
     pub state: Option<String>,
     /// Move `state` only where the row is still enabled; a row turned off
@@ -30,7 +31,7 @@ pub struct AiPermissionSettingsUpdate {
     pub last_error: Option<Option<String>>,
 }
 
-const COLUMNS: &str = "enabled, allow_threshold, deny_threshold, schedule, last_scheduled_refresh, state, \
+const COLUMNS: &str = "enabled, allow_threshold, deny_threshold, flavour, device, state, \
                        installed_release, latest_release, weights_present, \
                        last_refresh_at, last_error, updated_at";
 
@@ -61,11 +62,11 @@ impl Store {
         if update.deny_threshold.is_some() {
             sets.push("deny_threshold = ?");
         }
-        if update.schedule.is_some() {
-            sets.push("schedule = ?");
+        if update.flavour.is_some() {
+            sets.push("flavour = ?");
         }
-        if update.last_scheduled_refresh.is_some() {
-            sets.push("last_scheduled_refresh = ?");
+        if update.device.is_some() {
+            sets.push("device = ?");
         }
         if update.state.is_some() {
             sets.push(match update.state_while_enabled {
@@ -103,11 +104,11 @@ impl Store {
         if let Some(threshold) = update.deny_threshold {
             query = query.bind(threshold);
         }
-        if let Some(schedule) = update.schedule {
-            query = query.bind(schedule);
+        if let Some(flavour) = update.flavour {
+            query = query.bind(flavour);
         }
-        if let Some(date) = update.last_scheduled_refresh {
-            query = query.bind(date);
+        if let Some(device) = update.device {
+            query = query.bind(device);
         }
         if let Some(state) = update.state {
             query = query.bind(state);

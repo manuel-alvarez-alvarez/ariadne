@@ -1,4 +1,4 @@
-//! The local model server and its daily refresh clock.
+//! The local model server.
 
 use axum::body::Body;
 use axum::http::StatusCode;
@@ -94,51 +94,6 @@ async fn a_ready_model_starts_the_server_with_its_built_in_weights() {
             .is_none()
     })
     .await;
-    h.state.ai_permissions.shutdown().await;
-}
-
-#[tokio::test]
-async fn the_schedule_refreshes_once_per_local_day() {
-    let h = harness()
-        .python_bin(python())
-        .ai_permissions_installer(installer())
-        .timeouts(Timeouts {
-            ai_permissions_schedule_poll: std::time::Duration::from_millis(50),
-            ..Timeouts::default()
-        })
-        .await;
-    let now = chrono::Local::now().format("%H:%M").to_string();
-    let _: AiPermissionsStatusDto = h
-        .json(
-            put_json("/v1/permissions/ai", json!({"enabled":true,"schedule":now})),
-            StatusCode::OK,
-        )
-        .await;
-    ready(&h).await;
-    eventually(TIMEOUT, "a scheduled refresh marker", || async {
-        h.store
-            .ai_permission_settings()
-            .await
-            .unwrap()
-            .last_scheduled_refresh
-            .is_some()
-    })
-    .await;
-    let marker = h
-        .store
-        .ai_permission_settings()
-        .await
-        .unwrap()
-        .last_scheduled_refresh;
-    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-    assert_eq!(
-        h.store
-            .ai_permission_settings()
-            .await
-            .unwrap()
-            .last_scheduled_refresh,
-        marker
-    );
     h.state.ai_permissions.shutdown().await;
 }
 

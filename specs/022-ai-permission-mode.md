@@ -1,21 +1,27 @@
 ---
 id: ai-permission-mode
 status: current
-updated: 2026-09-29
+updated: 2026-09-30
 areas: [core, api, store, daemon]
 commits: []
 tests:
   - crates/ariadne-daemon/tests/it/ai_permissions.rs
   - crates/ariadne-daemon/tests/it/ai_permissions_decisions.rs
   - crates/ariadne-daemon/tests/it/ai_permissions_server.rs
+  - crates/ariadne-daemon/tests/it/ai_permissions_flavours.rs
   - crates/ariadne-daemon/tests/it/acp_console.rs
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
   - crates/ariadne-console/src/tui/picker.rs
   - crates/ariadne-client/src/lib.rs
+  - crates/ariadne-cli/src/commands/permissions.rs
+  - crates/ariadne-cli/src/cli/tests.rs
+  - crates/ariadne-cli/src/commands/doctor/agents.rs
   - crates/ariadne-daemon/src/ai_permissions/python.rs
   - crates/ariadne-daemon/src/ai_permissions/install.rs
   - crates/ariadne-daemon/src/ai_permissions/server.rs
   - crates/ariadne-daemon/src/ai_permissions/decide.rs
+  - crates/ariadne-daemon/src/ai_permissions/hardware.rs
+  - crates/ariadne-daemon/src/ai_permissions/flavours.rs
   - crates/ariadne-daemon/src/ai_permissions/fixtures/requests.jsonl
   - crates/ariadne-daemon/src/http/permissions.rs
   - crates/ariadne-daemon/src/config.rs
@@ -51,11 +57,12 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 2. The model is the daemon's, not a repository's: one settings row
    (`ai_permission_settings`), one install, one server. A repository chooses
    `ai`; this says whether there is a model to answer with.
-3. The settings are `enabled`, `allow_threshold`, `deny_threshold`, and `schedule`. The
-   Kev run and the decision prompts are built in.
+3. The settings are `enabled`, `allow_threshold`, `deny_threshold`, `flavour`
+   and `device`. The decision prompts are built in.
    `allow_threshold` is the highest danger that is allowed, 0 to 1.
-   `deny_threshold` is the lowest danger that is denied, 0 to 1. `schedule` is
-   `HH:MM` in 24-hour local time, or nothing.
+   `deny_threshold` is the lowest danger that is denied, 0 to 1. `flavour` and
+   `device` choose which Kev runs and where (Flavours and devices, below).
+   There is no scheduled refresh; refresh is manual only (rule 12).
 4. The state of the install is `disabled`, `installing`, `ready` or `failed`,
    and beside it are the pin on disk, the pin the last install used,
    whether the checkpoints are there, when the last install ended well, and
@@ -93,11 +100,12 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     interpreter probed afresh, as an
     `AiPermissionsStatusDto`.
 11. `PUT /v1/permissions/ai` takes an `UpdateAiPermissionsRequest`; an absent
-    field stays as it is. A `schedule` of `null` turns the daily refresh off,
-    and an absent one keeps it. Either threshold outside 0..=1, an allow
-    threshold that is not below the deny threshold after the update, or a
-    `schedule` that is not `HH:MM` is refused with 422 and the code
-    `invalid_request`, and writes nothing. Turning the model
+    field stays as it is. Either threshold outside 0..=1, or an allow
+    threshold that is not below the deny threshold after the update, is
+    refused with 422 and the code `invalid_request`, and writes nothing. A
+    `flavour` and a `device` that together cannot run on this machine are
+    refused with 422 `flavour_unsupported` and write nothing (Flavours and
+    devices, below). Turning the model
     on starts an install and answers at once with `state = installing`.
     Turning it off writes `state = disabled` and keeps every file, so turning
     it back on repairs the pinned package and weights.
@@ -113,15 +121,9 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 12. `POST /v1/permissions/ai/refresh` runs the install again on the settings
     as they stand, and answers 202 with `state = installing`. It is refused
     with 409 `ai_disabled` while the model is off, and 409 `ai_busy` while an
-    install is running. A manual or scheduled refresh reinstalls the same pins to repair
-    the installation; it never upgrades them.
-    The daily refresh is the same install, run by the daemon itself. It reads
-    the local clock every `Timeouts::ai_permissions_schedule_poll`, 30 s, and
-    starts an install once each local date when the `schedule` minute has
-    passed. It runs nothing while the model is off, without a schedule, or
-    while an install runs. A daemon that starts after the minute catches up
-    once that day. A minute a daylight-saving change skips is no time on that
-    day.
+    install is running. A refresh reinstalls the same pins to repair
+    the installation; it never upgrades them. Refresh is manual only: nothing
+    runs it on a clock or a schedule.
 13. `POST /v1/repositories` and `PUT /v1/repositories/{id}` refuse
     `permission_mode = ai` while the model is off, with 409 `ai_disabled`.
     The refusal is where the mode is set, rather than at the first permission
@@ -130,14 +132,15 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     interpreter is reported apart from the tools (012, rule 19) because the
     question it answers is not whether it is there but whether it is new
     enough.
-15. `python_bin` is a key of
+15. `python_bin` and `nvidia_smi_bin` are keys of
    `<home>/config.toml`, listed by `ariadned --help` and read by
     `--check-config`. The test seam `ai_permissions_installer` — a command
     the daemon runs in place of the venv, package and weights, with the
     model home, run and Kev commit in its
    environment, its exit status deciding the install and its stderr becoming
-    `last_error` — `ai_permissions_serve_command` and
-    `ai_permissions_endpoint` are settings of the daemon alone. None is a key
+    `last_error` — `ai_permissions_serve_command`,
+    `ai_permissions_endpoint` and `ai_permissions_hardware` are settings of
+    the daemon alone. None is a key
     of the user's config, and a file naming one is refused like any other
     unknown key.
 16. Where the model's server answers is `ai_permissions_endpoint` where it is
@@ -454,10 +457,95 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     differ from the ones of the question alone, by 0.001 of danger at the
     median.
 
+## Flavours and devices
+
+37. Kev publishes four flavours, `0.8b`, `4b`, `9b` and `27b`, each of which
+    can run on Apple Silicon (`mlx`), an NVIDIA GPU (`cuda`), or the CPU
+    (`cpu`). The user chooses a flavour and a device, but only a combination
+    this machine can run. `crates/ariadne-daemon/src/ai_permissions/hardware.rs`
+    probes the machine; `flavours.rs` holds the pins and the memory rule that
+    decide what runs. Installing and serving the chosen pair on a change is a
+    later task's; here a choice only is stored.
+38. The probe reports `Hardware { os, arch, memory_bytes, gpu }`, `gpu` an
+    optional `Gpu { name, vram_bytes }`. `os` and `arch` are the daemon's own
+    `std::env::consts`. Total RAM is read from `sysctl hw.memsize` on macOS and
+    `/proc/meminfo` on Linux. The GPU is the one of the largest `memory.total`
+    that `nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits`
+    reports; a missing or failed `nvidia-smi` is no GPU. `nvidia_smi_bin` is a
+    key of `<home>/config.toml`, a path taken as it stands or a bare name
+    looked up on the daemon's own `PATH`, else `nvidia-smi` on that `PATH`.
+    `ai_permissions_hardware` — `os`, `arch`, `memory_gb`, `gpu_name`,
+    `vram_gb` — replaces the whole probe in tests, the way
+    `ai_permissions_installer` replaces the install; it is not a key of the
+    user's config.
+39. `pins(flavour)` gives the adapter and base a flavour installs, every one
+    at the shared Kev commit `f1535963cea021439370c23127bc970b6788e730`:
+    `0.8b` is `jaredpalmer/kev-0.8b@9a45d25eb2ab761841196625383fa1dff0e56c1e`
+    on `Qwen/Qwen3.5-0.8B-Base@dc7cdfe2ee4154fa7e30f5b51ca41bfa40174e68`;
+    `4b` is the pin rule 7 already names; `9b` is
+    `jaredpalmer/kev-9b@2629c06a5aeb0feb3b9783bafed17ed8f39ecf5c` on
+    `Qwen/Qwen3.5-9B-Base@68c46c4b3498877f3ef123c856ecfde50c39f404`; `27b` is
+    `jaredpalmer/kev-27b@01b81998019be550f0ae858727df49bac9511195` on
+    `Qwen/Qwen3.8-27B@1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0`.
+40. A device is available at all before its memory is even asked about: `mlx`
+    only where `os` is `macos` and `arch` is `aarch64`; `cuda` only where the
+    probe found a GPU; `cpu` always. Where a device is not available the
+    reason is `MLX needs macOS on Apple Silicon` or `CUDA needs a GPU`.
+41. The memory rule, in GiB (`1024³` bytes) against total RAM for `mlx` and
+    `cpu` and against the largest GPU's VRAM for `cuda`:
+
+    | Flavour | mlx | cuda | cpu |
+    |---|---|---|---|
+    | 0.8b | ≥ 8 GB | ≥ 4 GB | ≥ 8 GB |
+    | 4b | ≥ 24 GB | ≥ 12 GB | ≥ 32 GB |
+    | 9b | ≥ 32 GB | ≥ 24 GB | ≥ 64 GB |
+    | 27b | never | ≥ 80 GB | ≥ 128 GB |
+
+    Short of the bound, the reason is `needs <bound> GB <VRAM|RAM>, found
+    <found> GB`. `27b` on `mlx` is never available, whatever the RAM, with
+    the reason `27b does not run on mlx`. `slow` is `true` for `4b`, `9b` and
+    `27b` on `cpu`; it is a note only and blocks nothing.
+42. `options(hardware)` gives every flavour with every device, `can_run` and
+    the reason where it cannot, in the order `0.8b`, `4b`, `9b`, `27b` and,
+    within each, `mlx`, `cuda`, `cpu` — the order the wire always lists them,
+    unavailable combinations included. `best_device(hardware, flavour)` gives
+    the first of `cuda`, then `mlx`, then `cpu` that can run it, or nothing.
+    `default_flavour(hardware)` is `4b` where some device runs it, else
+    `0.8b`.
+43. Migration `0004_ai_permission_flavour.sql` adds `flavour TEXT NOT NULL
+    DEFAULT '4b'` and a nullable `device`, and drops `schedule` and
+    `last_scheduled_refresh`. At every start, `AiPermissions::ensure_device`
+    fills a `NULL` stored `device` with `best_device` of the stored `flavour`,
+    silently: it is a backfill, not a choice somebody made. Where no device
+    runs the stored flavour, it writes nothing and the device stays `NULL`:
+    the fill never stores a device its own `options` table marks unable to
+    run that flavour. An install from before flavours existed thus keeps `4b`
+    and gets a device without a fresh choice, and so does a fresh row, whose
+    device is `NULL` until this same fill runs once.
+44. `AiPermissionsStatusDto` carries `flavour`, `device`, `hardware` — the
+    probed `Hardware`, as `HardwareDto` — and `flavours`, the `options` of
+    that hardware as `FlavourOptionsDto`. `UpdateAiPermissionsRequest` carries
+    optional `flavour` and `device`. A request with a flavour and no device
+    takes `best_device` of that flavour (`cpu` where nothing runs it); one
+    with a device and no flavour keeps the stored flavour. A chosen
+    combination that `can_run` is false for is refused with 422
+    `flavour_unsupported`, its message the combination's own reason, and
+    writes nothing. `status`'s `flavour` and `device` are never a pair its
+    own `flavours` marks unable to run: the stored device where there is one,
+    paired with the stored flavour; a `NULL` stored device takes
+    `best_device` of the stored flavour where one runs it, else the flavour
+    and device a fresh row would settle on (rule 42).
+45. `ariadne permissions ai set --flavour <0.8b|4b|9b|27b> --device
+    <mlx|cuda|cpu>` sends what it is given; the daemon refuses a bad value
+    locally, in the same words. `ariadne permissions ai show` prints the
+    flavour, the device, the hardware, and a table of every flavour and
+    device with `can run`, the reason and the slow note. `ariadne doctor`'s
+    `ready` line names the flavour and device, e.g. `ready kev-4b on mlx`.
+
 ## Acceptance criteria
 
 - A fresh daemon is off, at allow threshold 0.1647 and deny threshold 0.626,
-  with no schedule, and reports
+  and reports
   the interpreter it probed
   (`ai_permissions.rs::the_settings_start_at_the_defaults_with_the_interpreter_probed`).
 - A test request sends the shared normalized state for its workspace and returns
@@ -482,13 +570,10 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 - An install that fails leaves the model on and carries the installer's own
   words
   (`ai_permissions.rs::an_install_that_fails_keeps_the_model_on_and_says_why`).
-- Both thresholds and `schedule` are kept and read back by the next daemon;
-  1.5, an allow threshold at or above the deny threshold, and `25:00` are
-  refused with 422 and write nothing; `null` turns the schedule off and an
-  absent one keeps it
-  (`ai_permissions.rs::the_settings_are_validated_and_survive_a_daemon_restart`),
-  and a schedule is two digits, a colon and two digits
-  (`http/permissions.rs::tests::a_schedule_is_two_digits_a_colon_and_two_digits`).
+- Both thresholds are kept and read back by the next daemon;
+  1.5 and an allow threshold at or above the deny threshold are
+  refused with 422 and write nothing
+  (`ai_permissions.rs::the_settings_are_validated_and_survive_a_daemon_restart`).
 - Refresh is refused with `ai_disabled` while off and `ai_busy` while
   installing, and runs the installer again on the fixed Kev pins
   (`ai_permissions.rs::refresh_is_refused_while_the_model_is_off_or_busy_and_reruns_the_install`).
@@ -505,10 +590,6 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   (`::a_turn_off_that_lands_before_the_rejoin_keeps_the_model_off`); and a
   state written only while enabled leaves a row turned off at `disabled`
   (`store.rs::the_ai_permission_settings_are_one_row_that_takes_partial_writes`).
-- The daily refresh starts once per local date, catches up after daemon
-  startup, and skips a disabled or busy model
-  (`ai_permissions.rs::the_daily_refresh_runs_the_install_once_at_its_minute`,
-  `ai_permissions_server.rs::the_schedule_refreshes_once_per_local_day`).
 - A repository is refused `ai` while the model is off, on registration and on
   an edit, and takes it once the model is on
   (`ai_permissions.rs::a_repository_takes_the_ai_mode_only_once_the_model_is_on`),
@@ -530,8 +611,9 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   exits with the server's status when the server exits on its own
   (`ai_permissions/server.rs::tests::the_server_dies_when_the_daemon_end_of_its_pipe_closes`,
   `::the_guard_exits_with_the_server_status`).
-- The four paths, both threshold fields in both schemas, the nullable schedule,
-  test workspace, five test response fields, the doctor's `python` and the event kind are in the OpenAPI document
+- The four paths, both threshold fields in both schemas, the flavour and
+  device shapes, test workspace, five test response fields, the doctor's
+  `python` and the event kind are in the OpenAPI document
   (`ai_permissions.rs::the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document`),
   and the doctor reports the interpreter apart from the tools
   (`::the_doctor_reports_the_interpreter_the_model_needs`).
@@ -541,7 +623,8 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   (`store.rs::the_ai_permission_settings_are_one_row_that_takes_partial_writes`).
 - A stored row with the former default pair opens with the new pair
   (`store.rs::ai_permission_threshold_migration_replaces_the_old_defaults`).
-- `python_bin` is read from `config.toml`, and `ai_permissions_release_url` is refused,
+- `python_bin` and `nvidia_smi_bin` are read from `config.toml`, and
+  `ai_permissions_release_url` and `ai_permissions_hardware` are refused,
   and the test seams are not keys of it
   (`config.rs::tests::the_ai_permissions_keys_a_user_may_set_are_read_and_the_test_seams_are_not`).
 - Every fixture request builds its recorded model, questions, normalized state
@@ -622,12 +705,47 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   The event summary renders `denied by AI` and `denied by rule home_delete`
   (`ariadne_api::permissions::tests::a_reply_names_why_the_model_did_not_decide_it`,
   `http/classify.rs::tests::an_answered_permission_says_who_answered_and_why_the_model_did_not`).
-- The CLI sends both threshold fields and nothing else, and `show` prints both
-  rows (`commands/permissions.rs::tests::set_thresholds_sends_both_fields_and_nothing_else`,
-  `::show_omits_the_built_in_configuration`).
+- The CLI sends both threshold fields and nothing else, and `show` prints
+  every field, the hardware and the flavour and device table
+  (`commands/permissions.rs::tests::set_thresholds_sends_both_fields_and_nothing_else`,
+  `::show_omits_the_built_in_configuration`, `::flavour_rows_lists_every_flavour_and_device`).
+- `set --flavour` alone, and `--flavour` with `--device`, send only the
+  fields given, and the daemon's `flavour_unsupported` message survives whole
+  (`commands/permissions.rs::tests::set_flavour_sends_the_flavour_alone`,
+  `::set_flavour_and_device_sends_both_fields`,
+  `::set_prints_the_daemons_flavour_unsupported_refusal`); `--schedule` and
+  `--no-schedule` are gone (`rg -i schedule crates specs docs` outside `ui/`
+  finds no AI-permission hit).
 - The CLI test command sends `--workspace` and prints the operation, tags,
   rule and cap when present (`cli/tests.rs::every_permissions_verb_parses`,
   `commands/permissions.rs::tests::test_prints_the_score_line_and_names_no_answer`).
+- A 64 GB Mac offers 0.8b, 4b and 9b on `mlx` and `cpu`, never `cuda` or 27b
+  on `mlx`; a Linux box with no GPU offers `cpu` only; a Linux box with a
+  24 GB GPU offers `cuda` up to 9b
+  (`ai_permissions_flavours.rs::a_64gb_mac_offers_08b_4b_9b_on_mlx_and_cpu_never_cuda_or_27b_on_mlx`,
+  `::a_linux_box_with_no_gpu_offers_cpu_only`,
+  `::a_linux_box_with_a_24gb_gpu_offers_cuda_up_to_9b`;
+  `ai_permissions/flavours.rs::tests::every_cell_of_the_memory_rule_holds_at_its_boundary`).
+- A probe with a stub `nvidia_smi_bin` parses two GPUs and takes the larger
+  one; a failing stub gives no GPU
+  (`ai_permissions/hardware.rs::tests::a_stub_probe_is_parsed_and_a_failing_one_reports_no_gpu`,
+  `ai_permissions_flavours.rs::a_configured_nvidia_smi_bin_reaches_the_hardware_probe`).
+- A `PUT` with a combination that cannot run is refused with 422
+  `flavour_unsupported` and leaves the row unchanged; a `PUT` with only a
+  flavour picks the best device, and one with only a device keeps the stored
+  flavour
+  (`ai_permissions_flavours.rs::put_refuses_an_unsupported_combination_and_leaves_the_row_unchanged`,
+  `::put_with_only_a_flavour_picks_the_best_device`,
+  `::put_with_only_a_device_keeps_the_stored_flavour`).
+- The migration keeps an existing row's flavour at `4b`, drops the schedule
+  columns, and the daemon fills the device at its next start
+  (`store.rs::ai_permission_flavour_migration_keeps_4b_and_drops_the_schedule`,
+  `ai_permissions_flavours.rs::a_fresh_row_keeps_4b_and_gets_a_device_at_startup`).
+  A host where no device runs the stored flavour keeps its device `NULL`
+  rather than getting one its own table marks unable to run it, and `status`
+  falls back to the flavour and device a fresh row would settle on rather
+  than reporting that unsupported pair
+  (`ai_permissions_flavours.rs::a_16gb_linux_box_that_cannot_run_4b_keeps_its_device_unset`).
 - The benchmark validates every committed case file and uses development files
   by default (`bench/ai-permissions/run.py validate bench/ai-permissions/cases/`);
   a safe case labelled anything but `allow`, or an elevated or adversarial
@@ -727,6 +845,7 @@ the installer downloads onto disk before the server is ready.
 `crates/ariadne-client/src/endpoint.rs`,
 `crates/ariadne-store/migrations/0001_init.sql`,
 `crates/ariadne-store/migrations/0003_ai_permission_thresholds.sql`,
+`crates/ariadne-store/migrations/0004_ai_permission_flavour.sql`,
 `crates/ariadne-store/src/ai_permissions.rs`,
 `crates/ariadne-daemon/src/ai_permissions/`,
 `crates/ariadne-daemon/src/main.rs`,
@@ -734,4 +853,6 @@ the installer downloads onto disk before the server is ready.
 `crates/ariadne-daemon/src/http/repositories.rs`,
 `crates/ariadne-daemon/src/http/doctor.rs`,
 `crates/ariadne-daemon/src/config.rs`,
-`crates/ariadne-daemon/src/acp.rs`.
+`crates/ariadne-daemon/src/acp.rs`,
+`crates/ariadne-cli/src/commands/permissions.rs`,
+`crates/ariadne-cli/src/commands/doctor/agents.rs`.

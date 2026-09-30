@@ -11,6 +11,8 @@ use anyhow::{Context, Result};
 
 use ariadne_client::endpoint::{self, AcpAgentConfig};
 
+use crate::ai_permissions::hardware::HardwareOverride;
+
 /// Fully resolved daemon configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -34,6 +36,9 @@ pub struct Config {
     /// The Python interpreter the model's install runs on (022). `None` finds
     /// Python 3.13, Python 3.12, then `python3` on the daemon's PATH.
     pub python_bin: Option<String>,
+    /// The `nvidia-smi` the hardware probe runs (022, flavours and devices).
+    /// `None` looks up `nvidia-smi` on the daemon's PATH.
+    pub nvidia_smi_bin: Option<String>,
     /// A command that stands in for the whole model install — the venv, pip
     /// and the weights — so the suite proves the install's states without
     /// downloading two gigabytes. Set by the test harness alone: it is not a
@@ -45,6 +50,9 @@ pub struct Config {
     /// Where the model server answers, in place of one the daemon started.
     /// Set by the test harness alone, for the same reason.
     pub ai_permissions_endpoint: Option<String>,
+    /// The whole hardware probe, in place of the real machine. Set by the
+    /// test harness alone, for the same reason.
+    pub ai_permissions_hardware: Option<HardwareOverride>,
 }
 
 /// Default `ariadne` CLI: sibling of the running ariadned, else PATH lookup.
@@ -94,9 +102,11 @@ impl Config {
                 "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json".into()
             }),
             python_bin: file.python_bin,
+            nvidia_smi_bin: file.nvidia_smi_bin,
             ai_permissions_installer: None,
             ai_permissions_serve_command: None,
             ai_permissions_endpoint: None,
+            ai_permissions_hardware: None,
             root,
         };
 
@@ -155,26 +165,36 @@ mod tests {
             "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json"
         );
         assert_eq!(config.python_bin, None);
+        assert_eq!(config.nvidia_smi_bin, None);
     }
 
-    /// The AI permission model Python key is read; the test seams beside
-    /// them are not keys at all, and a file naming one is refused like any
-    /// other unknown key.
+    /// The AI permission model's Python and `nvidia-smi` keys are read; the
+    /// test seams beside them are not keys at all, and a file naming one is
+    /// refused like any other unknown key.
     #[test]
     fn the_ai_permissions_keys_a_user_may_set_are_read_and_the_test_seams_are_not() {
-        let dir = home_with("python_bin = \"/opt/python3.12/bin/python3\"\n");
+        let dir = home_with(
+            "python_bin = \"/opt/python3.12/bin/python3\"\n\
+             nvidia_smi_bin = \"/opt/bin/nvidia-smi\"\n",
+        );
         let config = Config::load(Some(dir.path().join("home"))).unwrap();
         assert_eq!(
             config.python_bin.as_deref(),
             Some("/opt/python3.12/bin/python3")
         );
+        assert_eq!(
+            config.nvidia_smi_bin.as_deref(),
+            Some("/opt/bin/nvidia-smi")
+        );
         assert_eq!(config.ai_permissions_installer, None);
         assert_eq!(config.ai_permissions_endpoint, None);
+        assert_eq!(config.ai_permissions_hardware, None);
 
         for seam in [
             "ai_permissions_installer = [\"/bin/true\"]\n",
             "ai_permissions_endpoint = \"http://x\"\n",
             "ai_permissions_release_url = \"http://x\"\n",
+            "ai_permissions_hardware = { os = \"linux\", arch = \"x86_64\", memory_gb = 16 }\n",
         ] {
             let dir = home_with(seam);
             assert!(

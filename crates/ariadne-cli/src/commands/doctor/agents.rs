@@ -182,8 +182,9 @@ fn ai_permissions_check(status: &AiPermissionsStatusDto) -> Check {
         AiPermissionsState::Ready => Check::ok(
             "ai permissions",
             format!(
-                "ready {}",
-                status.installed_release.as_deref().unwrap_or("-")
+                "ready kev-{} on {}",
+                status.flavour.as_str(),
+                status.device.as_str()
             ),
         ),
         AiPermissionsState::Failed => Check::warn(
@@ -333,7 +334,15 @@ mod tests {
             enabled: true,
             allow_threshold: 0.2,
             deny_threshold: 0.8,
-            schedule: None,
+            flavour: ariadne_api::permissions::Flavour::Kev4B,
+            device: ariadne_api::permissions::Device::Mlx,
+            hardware: ariadne_api::permissions::HardwareDto {
+                os: "macos".into(),
+                arch: "aarch64".into(),
+                memory_bytes: 64 * 1024 * 1024 * 1024,
+                gpu: None,
+            },
+            flavours: Vec::new(),
             python: PythonDto {
                 path: Some("/usr/bin/python3".into()),
                 version: Some("3.12.1".into()),
@@ -414,7 +423,7 @@ mod tests {
         );
         let ready = ai_permissions_check(&ai_permissions_status(AiPermissionsState::Ready));
         assert_eq!(ready.status, Status::Ok);
-        assert!(ready.detail.contains("v0.1.4"), "{}", ready.detail);
+        assert_eq!(ready.detail, "ready kev-4b on mlx");
 
         let failed = AiPermissionsStatusDto {
             last_error: Some("pip install failed".into()),

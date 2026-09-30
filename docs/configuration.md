@@ -25,6 +25,9 @@ python_bin = "/opt/python3.12/bin/python3"
                                    # installs into; it has to be Python 3.12 or 3.13
                                    # (default: python3.13, python3.12, then python3 on PATH).
                                    # See Permission modes.
+nvidia_smi_bin = "/opt/bin/nvidia-smi"
+                                   # the nvidia-smi the AI permission model's hardware
+                                   # probe runs to find a GPU (default: nvidia-smi on PATH).
 
 [[acp_agents]]                     # an agent of your own, or one the registry
 id = "my-agent"                    # names under another command
@@ -61,8 +64,10 @@ built from — set it where the
 first supported Python on the daemon's own `PATH` is not 3.12 or 3.13, or where
 you want the model on a different interpreter. Nothing is installed into that interpreter: the
 package and PyTorch go into `~/.ariadne/ai-permissions/venv`.
-The daemon installs fixed model pins. `python_bin` does not turn the model on —
-[Permission modes](permissions.md) does that.
+`nvidia_smi_bin` is the `nvidia-smi` its hardware probe runs to find a GPU and
+its VRAM, when one is not on the daemon's own `PATH` under that name. Neither
+key turns the model on — [Permission modes](permissions.md) does that, and
+chooses its flavour and device.
 
 `ariadned --check-config` reads that file and exits: a key the daemon would
 refuse is named where it stands, without starting anything or touching the

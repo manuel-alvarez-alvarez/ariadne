@@ -47,6 +47,8 @@ unknown key stops the daemon rather than being ignored):
                            https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json)
   python_bin               the Python 3.12 or 3.13 the AI permission model
                            installs into (default: python3.13, python3.12, then python3 on this daemon's PATH)
+  nvidia_smi_bin           the `nvidia-smi` the AI permission model's hardware
+                           probe runs to find a GPU (default: nvidia-smi on this daemon's PATH)
   [[acp_agents]]           add an ACP command with a stable `id` and `command` array
 
   ariadned --check-config reads that file and exits.\
@@ -124,6 +126,7 @@ async fn main() -> Result<()> {
         &config,
         ariadne_daemon::timeouts::Timeouts::default(),
     );
+    ai_permissions.ensure_device().await;
     let launcher = std::sync::Arc::new(ariadne_daemon::launcher::Launcher {
         cfg: config.clone(),
         store: store.clone(),
@@ -148,10 +151,6 @@ async fn main() -> Result<()> {
         launcher.clone(),
         config.prevent_sleep,
         ariadne_daemon::timeouts::Timeouts::default(),
-    );
-    ariadne_daemon::ai_permissions::schedule::start(
-        ai_permissions.clone(),
-        ariadne_daemon::timeouts::Timeouts::default().ai_permissions_schedule_poll,
     );
     let state = AppState {
         store,

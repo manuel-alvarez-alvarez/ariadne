@@ -11,10 +11,11 @@
 
 pub(crate) mod decide;
 mod derive;
+pub mod flavours;
+pub mod hardware;
 pub mod install;
 mod operations;
 pub mod python;
-pub mod schedule;
 mod server;
 
 use std::path::PathBuf;
@@ -23,8 +24,13 @@ use std::sync::{Arc, RwLock};
 
 use tokio::sync::{mpsc, watch};
 
-use ariadne_api::permissions::{AiPermissionsState, AiPermissionsStatusDto};
-use ariadne_store::Store;
+use ariadne_api::permissions::{
+    AiPermissionsState, AiPermissionsStatusDto, Device, DeviceOptionDto, Flavour,
+    FlavourOptionsDto, GpuDto, HardwareDto,
+};
+use ariadne_store::{AiPermissionSettingsUpdate, Store};
+
+use hardware::HardwareOverride;
 
 use crate::bus::EventBus;
 use crate::config::Config;
@@ -52,6 +58,10 @@ pub struct AiPermissions {
     home: PathBuf,
     /// The `python_bin` config key, or `None` for supported Python on PATH.
     python_bin: Option<String>,
+    /// The `nvidia_smi_bin` config key, or `None` for `nvidia-smi` on PATH.
+    nvidia_smi_bin: Option<String>,
+    /// `ai_permissions_hardware`: replaces the whole hardware probe in tests.
+    hardware_override: Option<HardwareOverride>,
     /// The command that stands in for the whole install, in the suite.
     installer: Option<Vec<String>>,
     /// The command that stands in for `kev.serve` in integration tests.
@@ -80,6 +90,8 @@ impl AiPermissions {
             events,
             home: cfg.root.join("ai-permissions"),
             python_bin: cfg.python_bin.clone(),
+            nvidia_smi_bin: cfg.nvidia_smi_bin.clone(),
+            hardware_override: cfg.ai_permissions_hardware.clone(),
             installer: cfg.ai_permissions_installer.clone(),
             serve_command: cfg.ai_permissions_serve_command.clone(),
             configured_endpoint: cfg.ai_permissions_endpoint.clone(),
@@ -94,20 +106,25 @@ impl AiPermissions {
     }
 
     /// The settings and the state of the install behind them, with the
-    /// interpreter probed afresh: what a client reads is what a start would
-    /// find now, not what it found when the daemon came up.
+    /// interpreter and the hardware probed afresh: what a client reads is
+    /// what a start would find now, not what it found when the daemon came up.
     pub async fn status(&self) -> AiPermissionsStatusDto {
         let path = std::env::var_os("PATH");
         let python = python::probe_python(self.python_bin.as_deref(), path.as_deref()).await;
+        let hardware = self.hardware().await;
         let row = match self.store.ai_permission_settings().await {
             Ok(row) => row,
             Err(error) => {
                 tracing::warn!(error = %error, "reading the AI permission settings failed");
+                let (flavour, device) = effective_pair(&hardware, Flavour::Kev4B, None);
                 return AiPermissionsStatusDto {
                     enabled: false,
                     allow_threshold: DEFAULT_ALLOW_THRESHOLD,
                     deny_threshold: DEFAULT_DENY_THRESHOLD,
-                    schedule: None,
+                    flavour,
+                    device,
+                    hardware: hardware_dto(&hardware),
+                    flavours: flavours_dto(&hardware),
                     python,
                     state: AiPermissionsState::Failed,
                     installed_release: None,
@@ -119,11 +136,17 @@ impl AiPermissions {
                 };
             }
         };
+        let stored_flavour = Flavour::parse(&row.flavour).unwrap_or(Flavour::Kev4B);
+        let stored_device = row.device.as_deref().and_then(Device::parse);
+        let (flavour, device) = effective_pair(&hardware, stored_flavour, stored_device);
         AiPermissionsStatusDto {
             enabled: row.enabled,
             allow_threshold: row.allow_threshold,
             deny_threshold: row.deny_threshold,
-            schedule: row.schedule,
+            flavour,
+            device,
+            hardware: hardware_dto(&hardware),
+            flavours: flavours_dto(&hardware),
             python,
             state: state_of(&row.state),
             installed_release: row.installed_release,
@@ -132,6 +155,61 @@ impl AiPermissions {
             endpoint: self.endpoint(),
             last_refresh_at: row.last_refresh_at,
             last_error: row.last_error,
+        }
+    }
+
+    /// The machine this daemon runs on: `ai_permissions_hardware` where the
+    /// suite set it, else the real probe.
+    pub(crate) async fn hardware(&self) -> hardware::Hardware {
+        hardware::hardware(
+            self.hardware_override.as_ref(),
+            self.nvidia_smi_bin.as_deref(),
+            std::env::var_os("PATH").as_deref(),
+        )
+        .await
+    }
+
+    /// The flavour as stored, ignoring the display fallback `status` can
+    /// substitute for it when no device runs that flavour here. What a
+    /// device-only `PUT` keeps: `status`'s own `flavour` is not it, since a
+    /// fallback there is not a change anybody asked for.
+    pub(crate) async fn stored_flavour(&self) -> Flavour {
+        self.store
+            .ai_permission_settings()
+            .await
+            .ok()
+            .and_then(|row| Flavour::parse(&row.flavour))
+            .unwrap_or(Flavour::Kev4B)
+    }
+
+    /// Fill a `NULL` stored device with the best device that runs the stored
+    /// flavour. An install from before flavours existed keeps `4b` and gets a
+    /// device without a fresh choice; a fresh row does the same at its first
+    /// start. Where no device runs the stored flavour on this machine, the
+    /// device stays `NULL`: nothing here writes a device its own table marks
+    /// unable to run it. Silent: it is a backfill, not a setting somebody
+    /// chose.
+    pub async fn ensure_device(&self) {
+        let Ok(row) = self.store.ai_permission_settings().await else {
+            return;
+        };
+        if row.device.is_some() {
+            return;
+        }
+        let hardware = self.hardware().await;
+        let flavour = Flavour::parse(&row.flavour).unwrap_or(Flavour::Kev4B);
+        let Some(device) = flavours::best_device(&hardware, flavour) else {
+            return;
+        };
+        if let Err(error) = self
+            .store
+            .update_ai_permission_settings(AiPermissionSettingsUpdate {
+                device: Some(device.as_str().to_string()),
+                ..Default::default()
+            })
+            .await
+        {
+            tracing::warn!(error = %error, "filling the AI permission device failed");
         }
     }
 
@@ -224,6 +302,59 @@ impl AiPermissions {
         self.events.ai_permissions_updated(status.clone());
         status
     }
+}
+
+/// The flavour and device `status` reports: the stored device where there is
+/// one, alongside the stored flavour. Where there is none — a row `ensure_device`
+/// left `NULL` because nothing runs the stored flavour, or no row could be
+/// read at all — the best device of the stored flavour where one runs it,
+/// else the flavour and device a fresh row would settle on. Never the stored
+/// flavour paired with a device its own `options` mark unable to run it.
+fn effective_pair(
+    hardware: &hardware::Hardware,
+    stored_flavour: Flavour,
+    stored_device: Option<Device>,
+) -> (Flavour, Device) {
+    if let Some(device) = stored_device {
+        return (stored_flavour, device);
+    }
+    if let Some(device) = flavours::best_device(hardware, stored_flavour) {
+        return (stored_flavour, device);
+    }
+    let flavour = flavours::default_flavour(hardware);
+    let device = flavours::best_device(hardware, flavour).unwrap_or(Device::Cpu);
+    (flavour, device)
+}
+
+fn hardware_dto(hardware: &hardware::Hardware) -> HardwareDto {
+    HardwareDto {
+        os: hardware.os.clone(),
+        arch: hardware.arch.clone(),
+        memory_bytes: hardware.memory_bytes,
+        gpu: hardware.gpu.as_ref().map(|gpu| GpuDto {
+            name: gpu.name.clone(),
+            vram_bytes: gpu.vram_bytes,
+        }),
+    }
+}
+
+fn flavours_dto(hardware: &hardware::Hardware) -> Vec<FlavourOptionsDto> {
+    flavours::options(hardware)
+        .into_iter()
+        .map(|flavour_options| FlavourOptionsDto {
+            flavour: flavour_options.flavour,
+            devices: flavour_options
+                .devices
+                .into_iter()
+                .map(|device| DeviceOptionDto {
+                    device: device.device,
+                    can_run: device.can_run,
+                    reason: device.reason,
+                    slow: device.slow,
+                })
+                .collect(),
+        })
+        .collect()
 }
 
 /// The thresholds a daemon that cannot read its settings reports.

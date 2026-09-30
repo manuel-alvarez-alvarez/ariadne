@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-09-26
+updated: 2026-09-30
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 7fe184e9]
 tests:
@@ -186,12 +186,12 @@ same binary also serves (013).
     it, and each of the two that starts an install takes `--wait`: it blocks
     until `state` leaves `installing` by following `ai_permissions_updated` on
     `/v1/events/stream`, and exits 1 with `last_error` where it settles on
-    `failed`. `set` changes `--threshold` or `--schedule`; `--no-schedule`
-    turns the daily refresh off. At least one setting is required, `--schedule`
-    and `--no-schedule` refuse each other, and only the flags actually given
-    reach the daemon. A bad `--threshold` or `--schedule` is
+    `failed`. `set` changes `--threshold`, `--flavour` or `--device` (022,
+    flavours and devices); at least one setting is required, and only the
+    flags actually given reach the daemon. A bad `--threshold`, `--flavour`
+    or `--device` is
     refused locally, in the same words the daemon would use, before anything
-    is sent. An `ai_disabled` refusal — here and on `repo add|update
+    is sent; the daemon's own `flavour_unsupported` refusal survives whole. An `ai_disabled` refusal — here and on `repo add|update
     --permission-mode ai` alike — carries the hint `run ariadne permissions ai
     enable`; a `python_unavailable` one carries `install Python 3.12 or 3.13,
     or set python_bin in config.toml`.
@@ -310,27 +310,26 @@ same binary also serves (013).
   (`commands/doctor/agents.rs::python_never_fails_and_names_what_it_found`,
   `::ai_permissions_reports_its_four_states_and_never_fails`).
 - Every `permissions ai` verb parses, the group prints help, the former flat
-  commands are refused, `set` with no flag and `--schedule` with
-  `--no-schedule` are usage errors, and a bad threshold or schedule is
+  commands are refused, `set` with no flag is a usage error, and a bad
+  threshold, flavour or device is
   refused locally in the daemon's own words
   (`cli/tests.rs::every_permissions_verb_parses`,
   `::permissions_group_prints_help_and_refuses_the_old_flat_commands`,
   `::permissions_set_with_no_flag_is_a_usage_error`,
-  `::permissions_set_schedule_and_no_schedule_are_a_usage_error`,
-  `::permissions_set_refuses_a_bad_threshold_or_schedule_locally`).
+  `::permissions_set_refuses_a_bad_threshold_flavour_or_device_locally`).
 - `permissions ai test` parses its request, rejects invalid JSON locally, and
   prints its score line and JSON response
   (`cli/tests.rs::every_permissions_verb_parses`,
   `::permissions_test_refuses_bad_json_locally`,
   `commands/permissions.rs::tests::test_prints_the_score_line_and_names_no_answer`).
-- `show` renders every status field except built-in configuration; `enable`
-  sends only `{"enabled": true}`, `set --no-schedule` only a `null` schedule,
-  and `set --threshold` only the threshold.
+- `show` renders every status field except built-in configuration, and the
+  flavour and device table; `enable` sends only `{"enabled": true}`, and
+  `set --flavour` sends only the flavour
   (`commands/permissions.rs::show_renders_every_field`,
   `::show_omits_the_built_in_configuration`,
+  `::flavour_rows_lists_every_flavour_and_device`,
   `::enable_sends_enabled_true_and_nothing_else`,
-  `::set_no_schedule_sends_a_null_schedule`,
-  `::set_threshold_sends_only_threshold`).
+  `::set_flavour_sends_the_flavour_alone`).
 - `enable --wait` and `refresh --wait` block on the event stream until the
   install leaves `installing`, and a failed install exits with its
   `last_error`

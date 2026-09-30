@@ -192,10 +192,10 @@ pub struct AiPermissionSettings {
     pub allow_threshold: f64,
     /// Danger at or above this value is denied, 0 to 1.
     pub deny_threshold: f64,
-    /// `HH:MM` in 24-hour local time, or `None` for no daily refresh.
-    pub schedule: Option<String>,
-    /// Local date of the last refresh the daily schedule started.
-    pub last_scheduled_refresh: Option<String>,
+    /// `0.8b`, `4b`, `9b` or `27b`.
+    pub flavour: String,
+    /// `mlx`, `cuda` or `cpu`. `None` until the daemon fills it at startup.
+    pub device: Option<String>,
     /// `disabled`, `installing`, `ready` or `failed`.
     pub state: String,
     pub installed_release: Option<String>,

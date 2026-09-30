@@ -106,8 +106,8 @@ async fn settles_on(h: &Harness, state: AiPermissionsState) -> AiPermissionsStat
 // -- the tests ---------------------------------------------------------------
 
 /// A daemon nobody has configured answers with the defaults, and with the
-/// interpreter it probed: off, the thresholds the schema
-/// carries, and no daily refresh.
+/// interpreter it probed: off, the thresholds the schema carries, and the
+/// default flavour.
 #[tokio::test]
 async fn the_settings_start_at_the_defaults_with_the_interpreter_probed() {
     let python = python_printing("3.13.1");
@@ -117,7 +117,6 @@ async fn the_settings_start_at_the_defaults_with_the_interpreter_probed() {
     assert!(!status.enabled);
     assert_eq!(status.allow_threshold, 0.1647);
     assert_eq!(status.deny_threshold, 0.626);
-    assert_eq!(status.schedule, None);
     assert_eq!(status.state, AiPermissionsState::Disabled);
     assert_eq!(status.installed_release, None);
     assert_eq!(status.latest_release, None);
@@ -248,7 +247,7 @@ async fn an_install_that_fails_keeps_the_model_on_and_says_why() {
 }
 
 /// The settings a user chooses are kept, refused where they are not a
-/// threshold pair or a time, and read back by the daemon that comes up next: an
+/// threshold pair, and read back by the daemon that comes up next: an
 /// install that ran for minutes must not be forgotten by a restart.
 #[tokio::test]
 async fn the_settings_are_validated_and_survive_a_daemon_restart() {
@@ -259,20 +258,17 @@ async fn the_settings_are_validated_and_survive_a_daemon_restart() {
 
     let chosen: AiPermissionsStatusDto = h
         .json(
-            update(json!({"allow_threshold": 0.2, "deny_threshold": 0.8,
-                          "schedule": "03:30"})),
+            update(json!({"allow_threshold": 0.2, "deny_threshold": 0.8})),
             StatusCode::OK,
         )
         .await;
     assert_eq!(chosen.allow_threshold, 0.2);
     assert_eq!(chosen.deny_threshold, 0.8);
-    assert_eq!(chosen.schedule.as_deref(), Some("03:30"));
 
     for bad in [
         json!({"allow_threshold": 1.5}),
         json!({"deny_threshold": 1.5}),
         json!({"allow_threshold": 0.8}),
-        json!({"schedule": "25:00"}),
     ] {
         let refused: ErrorBody = h
             .json(update(bad.clone()), StatusCode::UNPROCESSABLE_ENTITY)
@@ -282,7 +278,6 @@ async fn the_settings_are_validated_and_survive_a_daemon_restart() {
     let unchanged = status(&h).await;
     assert_eq!(unchanged.allow_threshold, 0.2, "a refusal wrote nothing");
     assert_eq!(unchanged.deny_threshold, 0.8, "a refusal wrote nothing");
-    assert_eq!(unchanged.schedule.as_deref(), Some("03:30"));
 
     // The daemon that comes up next reads the same settings.
     let restarted = Store::open(h.dir.path().join("test.db")).await.unwrap();
@@ -295,17 +290,6 @@ async fn the_settings_are_validated_and_survive_a_daemon_restart() {
     let kept = ai_permissions.status().await;
     assert_eq!(kept.allow_threshold, 0.2);
     assert_eq!(kept.deny_threshold, 0.8);
-    assert_eq!(kept.schedule.as_deref(), Some("03:30"));
-
-    // An absent schedule keeps it; a null turns it off.
-    let untouched: AiPermissionsStatusDto = h
-        .json(update(json!({"allow_threshold": 0.3})), StatusCode::OK)
-        .await;
-    assert_eq!(untouched.schedule.as_deref(), Some("03:30"));
-    let off: AiPermissionsStatusDto = h
-        .json(update(json!({"schedule": null})), StatusCode::OK)
-        .await;
-    assert_eq!(off.schedule, None);
 }
 
 /// The old name of the settings is gone from the wire: nothing answers at the
@@ -512,83 +496,6 @@ async fn a_turn_off_that_lands_before_the_rejoin_keeps_the_model_off() {
     assert_eq!(status(&h).await.state, AiPermissionsState::Disabled);
 }
 
-/// A local time on a January day, when no daylight-saving change is near.
-fn local(time: &str) -> chrono::DateTime<chrono::Local> {
-    use chrono::TimeZone;
-    let naive = chrono::NaiveDate::from_ymd_opt(2026, 1, 10)
-        .unwrap()
-        .and_time(chrono::NaiveTime::parse_from_str(time, "%H:%M:%S").unwrap());
-    chrono::Local
-        .from_local_datetime(&naive)
-        .earliest()
-        .unwrap()
-}
-
-/// The daily refresh runs the install once, on the tick that passes its
-/// minute, on the settings as they stand. It runs nothing on the next tick,
-/// nothing while the AI permission model is off, and nothing without a schedule. The test says
-/// what time it is, so nothing here waits on a clock.
-#[tokio::test]
-async fn the_daily_refresh_runs_the_install_once_at_its_minute() {
-    let record = tempfile::NamedTempFile::new().unwrap();
-    // The installer waits while this file is missing: it is there, so the
-    // first install ends at once, and the refresh removes it to hold its own
-    // install open while the test reads `installing`.
-    let hold = tempfile::tempdir().unwrap();
-    let hold = hold.path().join("hold");
-    std::fs::write(&hold, "").unwrap();
-    let h = with_ai_permissions("3.13.1")
-        .ai_permissions_installer(installer(record.path(), &hold.display().to_string(), "0"))
-        .await;
-    let ai_permissions = &h.state.ai_permissions;
-    let (before, over, after) = (local("03:29:40"), local("03:30:10"), local("03:30:40"));
-
-    let _: AiPermissionsStatusDto = h
-        .json(update(json!({"enabled": true})), StatusCode::OK)
-        .await;
-    settles_on(&h, AiPermissionsState::Ready).await;
-    assert!(
-        !ai_permissions.run_schedule(before, over).await,
-        "no schedule, no refresh"
-    );
-
-    let _: AiPermissionsStatusDto = h
-        .json(update(json!({"schedule": "03:30"})), StatusCode::OK)
-        .await;
-    std::fs::write(record.path(), "").unwrap();
-    assert!(!ai_permissions.run_schedule(local("03:29:00"), before).await);
-    assert!(
-        recorded(record.path()).is_empty(),
-        "a tick before the minute runs nothing"
-    );
-
-    std::fs::remove_file(&hold).unwrap();
-    assert!(ai_permissions.run_schedule(before, over).await);
-    assert_eq!(status(&h).await.state, AiPermissionsState::Installing);
-    std::fs::write(&hold, "").unwrap();
-    settles_on(&h, AiPermissionsState::Ready).await;
-    assert_eq!(
-        recorded(record.path()).get(1).map(String::as_str),
-        Some(RUN),
-        "the refresh installs the built-in run"
-    );
-
-    std::fs::write(record.path(), "").unwrap();
-    assert!(
-        !ai_permissions.run_schedule(over, after).await,
-        "the tick after the minute runs nothing"
-    );
-
-    let _: AiPermissionsStatusDto = h
-        .json(update(json!({"enabled": false})), StatusCode::OK)
-        .await;
-    assert!(
-        !ai_permissions.run_schedule(before, over).await,
-        "a model that is off is not refreshed"
-    );
-    assert!(recorded(record.path()).is_empty());
-}
-
 /// The `ai` mode asks the model, so a repository cannot be put into it while
 /// there is no model to ask. It is refused where it is set rather than an
 /// hour into an agent's work, and allowed once the model is on.
@@ -724,7 +631,7 @@ async fn the_endpoint_is_the_configured_one_and_live_needs_the_model_on() {
 }
 
 /// The wire contract four other tasks build on: the four paths, the request
-/// and reply schemas, the nullable schedule and the event kind.
+/// and reply schemas, the flavour and device shapes and the event kind.
 #[tokio::test]
 async fn the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document() {
     let h = harness().await;
@@ -743,15 +650,26 @@ async fn the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document() {
         "PythonDto",
         "TestAiPermissionRequest",
         "TestAiPermissionResponse",
+        "Flavour",
+        "Device",
+        "HardwareDto",
+        "FlavourOptionsDto",
+        "DeviceOptionDto",
     ] {
         assert!(schemas[name].is_object(), "{name} is not in the document");
     }
-    // A schedule that can be turned off has to say so on the wire.
-    let schedule = &schemas["UpdateAiPermissionsRequest"]["properties"]["schedule"];
-    assert!(
-        schedule.to_string().contains("null"),
-        "the schedule is not nullable: {schedule}"
-    );
+    for field in ["flavour", "device", "hardware", "flavours"] {
+        assert!(
+            schemas["AiPermissionsStatusDto"]["properties"][field].is_object(),
+            "{field} is absent from the status schema"
+        );
+    }
+    for field in ["flavour", "device"] {
+        assert!(
+            schemas["UpdateAiPermissionsRequest"]["properties"][field].is_object(),
+            "{field} is absent from the update schema"
+        );
+    }
     for field in ["allow_threshold", "deny_threshold"] {
         assert!(
             schemas["AiPermissionsStatusDto"]["properties"][field].is_object(),

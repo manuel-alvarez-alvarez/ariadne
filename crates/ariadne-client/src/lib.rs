@@ -312,8 +312,8 @@ impl Client {
     /// Change the AI permission settings. Only the fields `req` names are sent — an
     /// absent field leaves the daemon's own value alone, which is the whole
     /// point of a partial update: `UpdateAiPermissionsRequest`'s own `Serialize`
-    /// writes every field, `schedule` excepted, so it is built by hand here
-    /// rather than serialized whole.
+    /// writes every field as `null` where it is absent, so it is built by
+    /// hand here rather than serialized whole.
     pub async fn update_ai_permissions(
         &self,
         req: &UpdateAiPermissionsRequest,
@@ -656,8 +656,7 @@ impl SseStream {
 
 /// [`Client::update_ai_permissions`]'s body: only the fields `req` names, so an absent
 /// one reaches the daemon absent rather than as an explicit `null` — which
-/// `UpdateAiPermissionsRequest`'s own `Serialize` cannot do for `enabled`,
-/// either threshold, only for `schedule`.
+/// `UpdateAiPermissionsRequest`'s own `Serialize` cannot do for any of them.
 fn ai_permissions_update_body(req: &UpdateAiPermissionsRequest) -> serde_json::Value {
     let mut body = serde_json::Map::new();
     if let Some(enabled) = req.enabled {
@@ -669,8 +668,17 @@ fn ai_permissions_update_body(req: &UpdateAiPermissionsRequest) -> serde_json::V
     if let Some(threshold) = req.deny_threshold {
         body.insert("deny_threshold".into(), threshold.into());
     }
-    if let Some(schedule) = &req.schedule {
-        body.insert("schedule".into(), schedule.clone().into());
+    if let Some(flavour) = req.flavour {
+        body.insert(
+            "flavour".into(),
+            serde_json::to_value(flavour).expect("Flavour serializes"),
+        );
+    }
+    if let Some(device) = req.device {
+        body.insert(
+            "device".into(),
+            serde_json::to_value(device).expect("Device serializes"),
+        );
     }
     serde_json::Value::Object(body)
 }
@@ -880,10 +888,17 @@ mod tests {
         );
         assert_eq!(
             ai_permissions_update_body(&UpdateAiPermissionsRequest {
-                schedule: Some(None),
+                flavour: Some(ariadne_api::permissions::Flavour::Kev9B),
                 ..Default::default()
             }),
-            serde_json::json!({"schedule": null})
+            serde_json::json!({"flavour": "9b"})
+        );
+        assert_eq!(
+            ai_permissions_update_body(&UpdateAiPermissionsRequest {
+                device: Some(ariadne_api::permissions::Device::Cuda),
+                ..Default::default()
+            }),
+            serde_json::json!({"device": "cuda"})
         );
         assert_eq!(
             ai_permissions_update_body(&UpdateAiPermissionsRequest::default()),

@@ -1450,8 +1450,8 @@ fn every_permissions_verb_parses() {
             PermissionsCommand::Ai(AiPermissionsCommand::Set {
                 allow_threshold,
                 deny_threshold,
-                schedule,
-                no_schedule,
+                flavour,
+                device,
             }),
     } = parse(&[
         "ariadne",
@@ -1462,8 +1462,10 @@ fn every_permissions_verb_parses() {
         "0.2",
         "--deny-threshold",
         "0.8",
-        "--schedule",
-        "03:30",
+        "--flavour",
+        "9b",
+        "--device",
+        "cuda",
     ])
     .command
     else {
@@ -1471,16 +1473,16 @@ fn every_permissions_verb_parses() {
     };
     assert_eq!(allow_threshold, Some(0.2));
     assert_eq!(deny_threshold, Some(0.8));
-    assert_eq!(schedule.as_deref(), Some("03:30"));
-    assert!(!no_schedule);
+    assert_eq!(flavour, Some(ariadne_api::permissions::Flavour::Kev9B));
+    assert_eq!(device, Some(ariadne_api::permissions::Device::Cuda));
 
     let Command::Permissions {
-        command: PermissionsCommand::Ai(AiPermissionsCommand::Set { no_schedule, .. }),
-    } = parse(&["ariadne", "permissions", "ai", "set", "--no-schedule"]).command
+        command: PermissionsCommand::Ai(AiPermissionsCommand::Set { flavour, .. }),
+    } = parse(&["ariadne", "permissions", "ai", "set", "--flavour", "0.8b"]).command
     else {
-        panic!("permissions ai set --no-schedule");
+        panic!("permissions ai set --flavour");
     };
-    assert!(no_schedule);
+    assert_eq!(flavour, Some(ariadne_api::permissions::Flavour::Kev08B));
 
     let Command::Permissions {
         command:
@@ -1602,29 +1604,12 @@ fn permissions_group_prints_help_and_refuses_the_old_flat_commands() {
     assert!(try_parse(&["ariadne", "permissions", "show"]).is_err());
 }
 
-/// `--schedule` and `--no-schedule` say opposite things about the same
-/// setting, so both together is refused rather than one silently winning.
+/// Thresholds outside 0 to 1 and a flavour or device that is not one of the
+/// four or three are refused before anything is sent, in the same words the
+/// daemon would refuse them in — a round trip is not needed to know 0 to 1
+/// from a typo.
 #[test]
-fn permissions_set_schedule_and_no_schedule_are_a_usage_error() {
-    assert!(
-        try_parse(&[
-            "ariadne",
-            "permissions",
-            "ai",
-            "set",
-            "--schedule",
-            "03:30",
-            "--no-schedule",
-        ])
-        .is_err()
-    );
-}
-
-/// Thresholds outside 0 to 1 and a schedule that is not `HH:MM` are refused
-/// before anything is sent, in the same words the daemon would refuse them
-/// in — a round trip is not needed to know 0 to 1 from a typo.
-#[test]
-fn permissions_set_refuses_a_bad_threshold_or_schedule_locally() {
+fn permissions_set_refuses_a_bad_threshold_flavour_or_device_locally() {
     for flag in ["--allow-threshold", "--deny-threshold"] {
         let Err(err) = try_parse(&["ariadne", "permissions", "ai", "set", flag, "1.5"]) else {
             panic!("1.5 is out of range");
@@ -1632,11 +1617,15 @@ fn permissions_set_refuses_a_bad_threshold_or_schedule_locally() {
         assert!(err.to_string().contains("between 0 and 1"), "{err}");
     }
 
-    let Err(err) = try_parse(&["ariadne", "permissions", "ai", "set", "--schedule", "25:00"])
-    else {
-        panic!("25:00 is not a clock time");
+    let Err(err) = try_parse(&["ariadne", "permissions", "ai", "set", "--flavour", "40b"]) else {
+        panic!("40b is not a flavour");
     };
-    assert!(err.to_string().contains("HH:MM"), "{err}");
+    assert!(err.to_string().contains("0.8b, 4b, 9b or 27b"), "{err}");
+
+    let Err(err) = try_parse(&["ariadne", "permissions", "ai", "set", "--device", "tpu"]) else {
+        panic!("tpu is not a device");
+    };
+    assert!(err.to_string().contains("mlx, cuda or cpu"), "{err}");
 }
 
 #[test]

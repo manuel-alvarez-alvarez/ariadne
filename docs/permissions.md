@@ -169,7 +169,7 @@ Enabling installs three things, under `~/.ariadne/ai-permissions`:
 
 - a Python virtual environment, in `~/.ariadne/ai-permissions/venv`;
 - the pinned model package and its dependencies;
-- the 152 MB adapter and 8.7 GB base model, in `~/.ariadne/ai-permissions/hf`.
+- the pinned Kev-4B adapter and base model, in `~/.ariadne/ai-permissions/hf`.
 
 It needs **Python 3.12 or 3.13**. Ariadne tries `python3.13`, then `python3.12`,
 then `python3` from the daemon's own `PATH`, or whatever `python_bin` in
@@ -184,12 +184,33 @@ enable` answers at once, and `ariadne permissions ai show` says where it has got
 to: `installing`, `ready`, or `failed` with the reason. An install that fails
 leaves the one before it on disk, so a working model stays working.
 
+### Choosing a flavour and device
+
+Kev publishes four flavours, 0.8B, 4B, 9B and 27B, each of which can run on
+Apple Silicon (`mlx`), an NVIDIA GPU (`cuda`), or the CPU. `ariadne permissions
+ai show` reports the hardware Ariadne found — the OS, the architecture, the
+RAM, and the largest GPU's name and VRAM where there is one — and a table of
+every flavour and device with whether it can run there and, when it cannot,
+why: `needs 24 GB VRAM, found 8 GB`. A combination the table marks slow still
+runs; it is only slower than the same flavour on a faster device.
+
+```sh
+ariadne permissions ai set --flavour 9b --device cuda
+ariadne permissions ai set --flavour 9b     # keeps mlx, cuda or cpu — the best device that runs it
+ariadne permissions ai set --device cpu     # keeps the flavour already chosen
+```
+
+A combination this machine cannot run is refused with the same reason the
+table shows, and nothing is stored. The default is `4b` on the best available
+device, or `0.8b` where nothing on the machine can run `4b`. A choice here is
+stored only: the install and the local server still run the pinned Kev-4B
+above, whatever flavour and device are chosen. Installing and serving the
+chosen pair is a later change.
+
 Two more settings:
 
 ```sh
 ariadne permissions ai set --allow-threshold 0.2 --deny-threshold 0.8
-ariadne permissions ai set --schedule 03:30     # install again daily, local time
-ariadne permissions ai set --no-schedule        # and stop doing that
 ```
 
 The allow threshold defaults to `0.1647`, and the deny threshold defaults to
@@ -197,12 +218,9 @@ The allow threshold defaults to `0.1647`, and the deny threshold defaults to
 the deny threshold. Lower the allow threshold to ask about more requests.
 Lower the deny threshold to reject more dangerous requests without asking.
 Set either or both with `ariadne permissions ai set --allow-threshold <value>
---deny-threshold <value>`. The schedule is
-`HH:MM` in 24-hour local time, and the daily refresh reinstalls the same pinned
-package, adapter and base to repair them. It runs once per local date: if the daemon
-was down at the scheduled time, it catches up on its next start that day. A
-refresh already in progress is not queued. The model starts without one, and then
-nothing is downloaded until you ask for it.
+--deny-threshold <value>`. Refresh is manual only: `ariadne permissions ai
+refresh` reinstalls the same pinned package, adapter and base to repair them,
+and nothing runs it on a schedule.
 
 The [AI permission benchmark](../bench/ai-permissions/README.md) selected
 Kev-4B with the three-level score question, temperature 1.0, the derived risk
@@ -217,7 +235,7 @@ input, so a later command can remain invisible. Scores can vary near a bound
 with another device or numeric precision.
 
 Once the install is ready, the daemon runs the model's local server on a loopback
-port and keeps its selected weights in memory for permission decisions. It
+port and keeps its weights in memory for permission decisions. It
 stops that child when you disable the model or the daemon exits, and starts it
 again after a refresh. Turning the model off keeps every file. Turning it back on
 reinstalls the same pins and repairs the model.
@@ -248,8 +266,7 @@ permission mode among four.
 In the desktop app, the **Permissions** screen holds the same settings, in one
 card: a switch for `enabled` — disabled, with the Python version it found (or
 that it found none), while there is no Python 3.12 or 3.13 to install into —
-number fields for the allow and deny thresholds, and a time field for the daily refresh
-whose clear button is what turns it off. A Refresh button reruns the install,
+and number fields for the allow and deny thresholds. A Refresh button reruns the install,
 disabled while the model is off or already installing. Below them, a fact
 list shows the state, the installed and latest release, whether the
 checkpoints are on disk, the endpoint, and when the install last ended well;

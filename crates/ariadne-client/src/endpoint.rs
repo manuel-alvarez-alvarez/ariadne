@@ -68,6 +68,9 @@ pub struct FileConfig {
     /// The Python 3.12 or 3.13 interpreter the model's install runs on
     /// (default: `python3.13`, `python3.12`, then `python3` on the daemon's PATH).
     pub python_bin: Option<String>,
+    /// The `nvidia-smi` the hardware probe runs to find a GPU (022, flavours
+    /// and devices; default: `nvidia-smi` on the daemon's PATH).
+    pub nvidia_smi_bin: Option<String>,
     /// Additional ACP agents appended to the built-in registry.
     #[serde(default)]
     pub acp_agents: Vec<AcpAgentConfig>,

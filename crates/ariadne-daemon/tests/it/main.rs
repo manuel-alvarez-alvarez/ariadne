@@ -20,6 +20,7 @@ mod agent_messages;
 mod agents;
 mod ai_permissions;
 mod ai_permissions_decisions;
+mod ai_permissions_flavours;
 mod ai_permissions_server;
 mod doctor;
 mod events;

@@ -115,6 +115,117 @@ impl AiPermissionsState {
     }
 }
 
+/// A Kev flavour: how large a model to run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub enum Flavour {
+    #[serde(rename = "0.8b")]
+    Kev08B,
+    #[serde(rename = "4b")]
+    Kev4B,
+    #[serde(rename = "9b")]
+    Kev9B,
+    #[serde(rename = "27b")]
+    Kev27B,
+}
+
+impl Flavour {
+    /// Every flavour, in the order the wire always lists them.
+    pub const ALL: [Flavour; 4] = [
+        Flavour::Kev08B,
+        Flavour::Kev4B,
+        Flavour::Kev9B,
+        Flavour::Kev27B,
+    ];
+
+    /// The spelling the store and the wire carry.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Flavour::Kev08B => "0.8b",
+            Flavour::Kev4B => "4b",
+            Flavour::Kev9B => "9b",
+            Flavour::Kev27B => "27b",
+        }
+    }
+
+    pub fn parse(wire: &str) -> Option<Self> {
+        Some(match wire {
+            "0.8b" => Flavour::Kev08B,
+            "4b" => Flavour::Kev4B,
+            "9b" => Flavour::Kev9B,
+            "27b" => Flavour::Kev27B,
+            _ => return None,
+        })
+    }
+}
+
+/// Where a Kev flavour runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Device {
+    Mlx,
+    Cuda,
+    Cpu,
+}
+
+impl Device {
+    /// Every device, in the order the wire always lists them.
+    pub const ALL: [Device; 3] = [Device::Mlx, Device::Cuda, Device::Cpu];
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Device::Mlx => "mlx",
+            Device::Cuda => "cuda",
+            Device::Cpu => "cpu",
+        }
+    }
+
+    pub fn parse(wire: &str) -> Option<Self> {
+        Some(match wire {
+            "mlx" => Device::Mlx,
+            "cuda" => Device::Cuda,
+            "cpu" => Device::Cpu,
+            _ => return None,
+        })
+    }
+}
+
+/// The GPU with the largest VRAM the daemon's probe found.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct GpuDto {
+    pub name: String,
+    pub vram_bytes: u64,
+}
+
+/// The machine the daemon runs on, as far as choosing a Kev flavour and
+/// device cares.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct HardwareDto {
+    #[schema(example = "macos")]
+    pub os: String,
+    #[schema(example = "aarch64")]
+    pub arch: String,
+    pub memory_bytes: u64,
+    pub gpu: Option<GpuDto>,
+}
+
+/// Whether one device can run one flavour, and why not.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct DeviceOptionDto {
+    pub device: Device,
+    pub can_run: bool,
+    /// Why it cannot, e.g. `needs 24 GB VRAM, found 8 GB`.
+    pub reason: Option<String>,
+    /// A note only: the flavour can still be chosen on this device.
+    pub slow: bool,
+}
+
+/// One flavour with every device it might run on.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct FlavourOptionsDto {
+    pub flavour: Flavour,
+    pub devices: Vec<DeviceOptionDto>,
+}
+
 /// The Python interpreter the daemon found, as it answered `--version`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct PythonDto {
@@ -139,10 +250,15 @@ pub struct AiPermissionsStatusDto {
     /// Danger at or above this value is denied, 0 to 1.
     #[schema(example = 0.626)]
     pub deny_threshold: f64,
-    /// When the daily refresh runs, `HH:MM` in 24-hour local time. `null`
-    /// turns the refresh off.
-    #[schema(example = "03:30")]
-    pub schedule: Option<String>,
+    /// The Kev flavour chosen, `4b` by default where the machine can run it.
+    pub flavour: Flavour,
+    /// The device the flavour runs on: the best one the machine could run it
+    /// on, unless another was chosen.
+    pub device: Device,
+    /// The machine the daemon runs on, probed afresh.
+    pub hardware: HardwareDto,
+    /// Every flavour with every device it might run on, in wire order.
+    pub flavours: Vec<FlavourOptionsDto>,
     pub python: PythonDto,
     pub state: AiPermissionsState,
     /// The pinned model package and run on disk.
@@ -170,15 +286,10 @@ pub struct UpdateAiPermissionsRequest {
     pub allow_threshold: Option<f64>,
     /// Danger at or above this value is denied. Values outside 0 to 1 are refused.
     pub deny_threshold: Option<f64>,
-    /// `HH:MM` in 24-hour local time. Absent keeps the schedule; `null`
-    /// turns it off.
-    #[serde(
-        default,
-        deserialize_with = "nullable",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[schema(value_type = Option<String>, nullable = true, example = "03:30")]
-    pub schedule: Option<Option<String>>,
+    /// A flavour with no device picks the best device that runs it.
+    pub flavour: Option<Flavour>,
+    /// A device with no flavour keeps the stored flavour.
+    pub device: Option<Device>,
 }
 
 /// One permission request to score with the AI permission model, without
@@ -222,18 +333,6 @@ pub struct TestAiPermissionResponse {
     pub cap: Option<String>,
     /// Kev's probabilities for the decision question.
     pub probabilities: Option<serde_json::Value>,
-}
-
-/// Tell "the field is absent" from "the field is `null`", which plain
-/// `Option<Option<String>>` cannot: serde reads a `null` into the outer
-/// `Option` and both readings arrive as `None`. Absent is the `Default`
-/// `None`; anything this sees is a `Some`, holding the `null` as an inner
-/// `None`.
-fn nullable<'de, D>(de: D) -> Result<Option<Option<String>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Option::<String>::deserialize(de).map(Some)
 }
 
 /// Why the AI permission model did not decide a `permission.replied`, in the

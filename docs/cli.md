@@ -436,10 +436,10 @@ mode: see [Permission modes](permissions.md#the-ai-permission-model) for what it
 what each setting does.
 
 ```sh
-ariadne permissions ai show                    # settings, install state, and python
+ariadne permissions ai show                    # settings, hardware, flavours and devices
 ariadne permissions ai enable --wait            # turn it on and wait for the install
 ariadne permissions ai set --allow-threshold 0.2 --deny-threshold 0.8
-ariadne permissions ai set --schedule 03:30     # daily reinstall, or --no-schedule
+ariadne permissions ai set --flavour 9b --device cuda  # only a combination the machine can run
 ariadne permissions ai refresh --wait           # install again, on the settings as they stand
 ariadne permissions ai disable                  # keeps the files
 ```

@@ -553,7 +553,15 @@ mod tests {
             enabled: true,
             allow_threshold: 0.2,
             deny_threshold: 0.8,
-            schedule: None,
+            flavour: ariadne_api::permissions::Flavour::Kev4B,
+            device: ariadne_api::permissions::Device::Mlx,
+            hardware: ariadne_api::permissions::HardwareDto {
+                os: "macos".into(),
+                arch: "aarch64".into(),
+                memory_bytes: 64 * 1024 * 1024 * 1024,
+                gpu: None,
+            },
+            flavours: Vec::new(),
             python: PythonDto {
                 path: None,
                 version: None,

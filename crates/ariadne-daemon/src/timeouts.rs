@@ -30,8 +30,6 @@ pub struct Timeouts {
     pub ai_permissions_serve_start: Duration,
     /// How long the server supervisor waits before its first restart.
     pub ai_permissions_serve_restart: Duration,
-    /// How often the daily model refresh clock checks local time.
-    pub ai_permissions_schedule_poll: Duration,
     /// How long one permission decision may take at the model's local HTTP seam.
     pub ai_permissions_decision: Duration,
     /// How often a running turn's transcript is read again for what the
@@ -77,7 +75,6 @@ impl Default for Timeouts {
             registry_download: Duration::from_secs(30),
             ai_permissions_serve_start: Duration::from_secs(120),
             ai_permissions_serve_restart: Duration::from_secs(1),
-            ai_permissions_schedule_poll: Duration::from_secs(30),
             ai_permissions_decision: Duration::from_secs(5),
             transcript_poll: Duration::from_secs(15),
             session_wake: Duration::from_millis(250),

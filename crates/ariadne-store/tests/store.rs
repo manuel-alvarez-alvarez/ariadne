@@ -135,6 +135,43 @@ async fn ai_permission_threshold_migration_replaces_the_old_defaults() {
     assert_eq!(thresholds, (0.1647, 0.626));
 }
 
+/// An install from before flavours existed keeps `4b`, its device starts
+/// `NULL` for the daemon to fill at startup, and the schedule columns are gone.
+#[tokio::test]
+async fn ai_permission_flavour_migration_keeps_4b_and_drops_the_schedule() {
+    use sqlx::Connection;
+    let mut connection = sqlx::SqliteConnection::connect(":memory:").await.unwrap();
+    sqlx::raw_sql(include_str!("../migrations/0001_init.sql"))
+        .execute(&mut connection)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE ai_permission_settings SET schedule = '03:30'")
+        .execute(&mut connection)
+        .await
+        .unwrap();
+
+    sqlx::raw_sql(include_str!("../migrations/0004_ai_permission_flavour.sql"))
+        .execute(&mut connection)
+        .await
+        .unwrap();
+
+    let (flavour, device): (String, Option<String>) =
+        sqlx::query_as("SELECT flavour, device FROM ai_permission_settings WHERE id = 1")
+            .fetch_one(&mut connection)
+            .await
+            .unwrap();
+    assert_eq!(flavour, "4b");
+    assert_eq!(device, None, "the daemon fills it at startup");
+
+    let columns: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM pragma_table_info('ai_permission_settings')")
+            .fetch_all(&mut connection)
+            .await
+            .unwrap();
+    assert!(!columns.contains(&"schedule".to_string()));
+    assert!(!columns.contains(&"last_scheduled_refresh".to_string()));
+}
+
 #[tokio::test]
 async fn a_loose_session_round_trips_without_a_goal_task_or_seat() {
     let (store, dir) = test_store().await;
@@ -3745,7 +3782,8 @@ async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
     assert!(!defaults.enabled);
     assert_eq!(defaults.allow_threshold, 0.1647);
     assert_eq!(defaults.deny_threshold, 0.626);
-    assert_eq!(defaults.schedule, None);
+    assert_eq!(defaults.flavour, "4b");
+    assert_eq!(defaults.device, None);
     assert_eq!(defaults.state, "disabled");
     assert_eq!(defaults.installed_release, None);
     assert_eq!(defaults.latest_release, None);
@@ -3758,7 +3796,7 @@ async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
         .update_ai_permission_settings(AiPermissionSettingsUpdate {
             enabled: Some(true),
             allow_threshold: Some(0.2),
-            schedule: Some(Some("03:30".into())),
+            flavour: Some("9b".into()),
             ..Default::default()
         })
         .await
@@ -3775,7 +3813,7 @@ async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
     assert!(chosen.enabled);
     assert_eq!(chosen.allow_threshold, 0.2);
     assert_eq!(chosen.deny_threshold, 0.8);
-    assert_eq!(chosen.schedule.as_deref(), Some("03:30"));
+    assert_eq!(chosen.flavour, "9b");
     assert_eq!(chosen.state, "disabled", "a choice is not an install");
 
     // What the installer found, written without touching what the user chose.
@@ -3797,16 +3835,18 @@ async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
     assert_eq!(installed.allow_threshold, 0.2, "the user's choice stayed");
     assert_eq!(installed.deny_threshold, 0.8, "the user's choice stayed");
 
-    // A `Some(None)` clears a column; an absent field keeps it.
-    let cleared = store
+    // The device the daemon fills in at startup, written without touching
+    // the flavour the user chose.
+    let with_device = store
         .update_ai_permission_settings(AiPermissionSettingsUpdate {
-            schedule: Some(None),
+            device: Some("mlx".into()),
             ..Default::default()
         })
         .await
         .unwrap();
-    assert_eq!(cleared.schedule, None);
-    assert_eq!(cleared.installed_release.as_deref(), Some("v0.1.4"));
+    assert_eq!(with_device.device.as_deref(), Some("mlx"));
+    assert_eq!(with_device.flavour, "9b");
+    assert_eq!(with_device.installed_release.as_deref(), Some("v0.1.4"));
 
     // A state written only while enabled lands on an enabled row, and leaves
     // a row turned off at `disabled`: what an install that ends after the model

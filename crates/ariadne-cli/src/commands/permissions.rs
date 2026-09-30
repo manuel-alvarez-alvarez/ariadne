@@ -4,7 +4,7 @@ use anyhow::Result;
 use clap::Subcommand;
 
 use ariadne_api::permissions::{
-    AiPermissionsState, AiPermissionsStatusDto, CreateLearnedPermissionRequest,
+    AiPermissionsState, AiPermissionsStatusDto, CreateLearnedPermissionRequest, Device, Flavour,
     LearnedPermissionDto, PythonDto, TestAiPermissionRequest, TestAiPermissionResponse,
     UpdateAiPermissionsRequest, UpdateLearnedPermissionRequest,
 };
@@ -13,7 +13,7 @@ use ariadne_client::Client;
 use super::resolve::{self, Kind};
 use crate::output::{
     Column, Format, Kv, UNCAPPED, age, col, dash, moment, ok_id_line, print, print_kv, print_list,
-    style, view, yes_no,
+    print_table, style, view, yes_no,
 };
 
 #[derive(Subcommand)]
@@ -75,9 +75,9 @@ pub(crate) enum AiPermissionsCommand {
         #[arg(long)]
         wait: bool,
     },
-    /// Change the decision thresholds or daily refresh
+    /// Change the decision thresholds, or the flavour and device
     #[command(group = clap::ArgGroup::new("ai-set")
-        .args(["allow_threshold", "deny_threshold", "schedule", "no_schedule"])
+        .args(["allow_threshold", "deny_threshold", "flavour", "device"])
         .required(true)
         .multiple(true))]
     Set {
@@ -87,12 +87,12 @@ pub(crate) enum AiPermissionsCommand {
         /// Deny danger at or above this value, 0 to 1
         #[arg(long, value_parser = parse_threshold)]
         deny_threshold: Option<f64>,
-        /// When the daily refresh runs, HH:MM in 24-hour local time
-        #[arg(long, value_parser = parse_schedule, conflicts_with = "no_schedule")]
-        schedule: Option<String>,
-        /// Turn the daily refresh off
-        #[arg(long, conflicts_with = "schedule")]
-        no_schedule: bool,
+        /// The Kev flavour to run: 0.8b, 4b, 9b or 27b
+        #[arg(long, value_parser = parse_flavour)]
+        flavour: Option<Flavour>,
+        /// The device to run it on: mlx, cuda or cpu
+        #[arg(long, value_parser = parse_device)]
+        device: Option<Device>,
     },
     /// Score one request with the AI permission model
     Test {
@@ -292,15 +292,16 @@ async fn run_ai(client: &Client, cmd: AiPermissionsCommand, format: Format) -> R
         AiPermissionsCommand::Set {
             allow_threshold,
             deny_threshold,
-            schedule,
-            no_schedule,
+            flavour,
+            device,
         } => {
             let status = client
                 .update_ai_permissions(&UpdateAiPermissionsRequest {
                     enabled: None,
                     allow_threshold,
                     deny_threshold,
-                    schedule: schedule_field(schedule, no_schedule),
+                    flavour,
+                    device,
                 })
                 .await?;
             print_result(format, &status)
@@ -364,20 +365,55 @@ fn test_one_line(response: &TestAiPermissionResponse) -> String {
     }
 }
 
-/// The wire shape of a partial `schedule`: absent when neither flag was
-/// given, `Some(Some(_))` for `--schedule`, `Some(None)` for `--no-schedule`
-/// — clap's own `ArgGroup` has already refused both together.
-fn schedule_field(schedule: Option<String>, no_schedule: bool) -> Option<Option<String>> {
-    match (schedule, no_schedule) {
-        (Some(hhmm), _) => Some(Some(hhmm)),
-        (None, true) => Some(None),
-        (None, false) => None,
-    }
+/// `--flavour`, refused locally before anything is sent: the daemon would
+/// refuse the same value with a 422, but a round trip is not needed to know
+/// the four flavours from a typo.
+fn parse_flavour(s: &str) -> Result<Flavour, String> {
+    Flavour::parse(s).ok_or_else(|| format!("flavour must be 0.8b, 4b, 9b or 27b, not `{s}`"))
+}
+
+/// `--device`, refused locally the same way.
+fn parse_device(s: &str) -> Result<Device, String> {
+    Device::parse(s).ok_or_else(|| format!("device must be mlx, cuda or cpu, not `{s}`"))
 }
 
 async fn show(client: &Client, format: Format) -> Result<()> {
     let status = client.ai_permissions_status().await?;
-    print(format, &status, || print_kv(&fields(&status)))
+    match format {
+        Format::Json => crate::output::print_json(&status),
+        Format::Table => {
+            print_kv(&fields(&status));
+            println!();
+            print_table(FLAVOURS_TABLE, &flavour_rows(&status))
+        }
+    }
+}
+
+const FLAVOURS_TABLE: &[Column] = &[
+    col("flavour", UNCAPPED),
+    col("device", UNCAPPED),
+    col("can run", UNCAPPED),
+    col("reason", 40),
+    col("slow", UNCAPPED),
+];
+
+/// One row per flavour and device combination, unavailable ones included.
+fn flavour_rows(status: &AiPermissionsStatusDto) -> Vec<Vec<String>> {
+    status
+        .flavours
+        .iter()
+        .flat_map(|flavour_options| {
+            flavour_options.devices.iter().map(move |device| {
+                vec![
+                    flavour_options.flavour.as_str().to_string(),
+                    device.device.as_str().to_string(),
+                    yes_no(device.can_run, "no"),
+                    dash(device.reason.as_deref()),
+                    yes_no(device.slow, "no"),
+                ]
+            })
+        })
+        .collect()
 }
 
 /// `--wait` on `enable` and `refresh`: neither answers with anything but
@@ -473,14 +509,9 @@ fn fields(status: &AiPermissionsStatusDto) -> Vec<(&'static str, Kv)> {
         ("python", python_field(&status.python).into()),
         ("allow threshold", status.allow_threshold.to_string().into()),
         ("deny threshold", status.deny_threshold.to_string().into()),
-        (
-            "schedule",
-            status
-                .schedule
-                .clone()
-                .unwrap_or_else(|| "off".into())
-                .into(),
-        ),
+        ("flavour", status.flavour.as_str().into()),
+        ("device", status.device.as_str().into()),
+        ("hardware", hardware_field(&status.hardware).into()),
         (
             "installed release",
             dash(status.installed_release.as_deref()).into(),
@@ -506,6 +537,23 @@ fn python_field(python: &PythonDto) -> String {
     }
 }
 
+fn hardware_field(hardware: &ariadne_api::permissions::HardwareDto) -> String {
+    let memory_gb = hardware.memory_bytes / (1024 * 1024 * 1024);
+    match &hardware.gpu {
+        Some(gpu) => format!(
+            "{} {}, {memory_gb} GB RAM, {} ({} GB VRAM)",
+            hardware.os,
+            hardware.arch,
+            gpu.name,
+            gpu.vram_bytes / (1024 * 1024 * 1024)
+        ),
+        None => format!(
+            "{} {}, {memory_gb} GB RAM, no GPU",
+            hardware.os, hardware.arch
+        ),
+    }
+}
+
 fn last_refresh(at: Option<&str>) -> Kv {
     match at {
         Some(rfc3339) => age(rfc3339, chrono::Utc::now()).into(),
@@ -522,28 +570,6 @@ fn parse_threshold(s: &str) -> Result<f64, String> {
         return Err(format!("threshold must be between 0 and 1, not {value}"));
     }
     Ok(value)
-}
-
-/// `--schedule`, refused locally before anything is sent: two digits, a
-/// colon, two digits — the same shape the daemon checks, kept in step with
-/// `http/permissions.rs::is_clock_time` by hand since the two sides of the
-/// wire do not share code.
-fn parse_schedule(s: &str) -> Result<String, String> {
-    match is_clock_time(s) {
-        true => Ok(s.to_string()),
-        false => Err(format!("schedule must be HH:MM in 24-hour time, not `{s}`")),
-    }
-}
-
-fn is_clock_time(schedule: &str) -> bool {
-    let Some((hours, minutes)) = schedule.split_once(':') else {
-        return false;
-    };
-    let two_digits = |part: &str| part.len() == 2 && part.bytes().all(|b| b.is_ascii_digit());
-    two_digits(hours)
-        && two_digits(minutes)
-        && hours.parse::<u32>().is_ok_and(|h| h < 24)
-        && minutes.parse::<u32>().is_ok_and(|m| m < 60)
 }
 
 #[cfg(test)]
@@ -569,7 +595,15 @@ mod tests {
             enabled: true,
             allow_threshold: 0.2,
             deny_threshold: 0.8,
-            schedule: None,
+            flavour: Flavour::Kev4B,
+            device: Device::Mlx,
+            hardware: ariadne_api::permissions::HardwareDto {
+                os: "macos".into(),
+                arch: "aarch64".into(),
+                memory_bytes: 64 * 1024 * 1024 * 1024,
+                gpu: None,
+            },
+            flavours: flavour_options(),
             python: PythonDto {
                 path: Some("/usr/bin/python3".into()),
                 version: Some("3.12.1".into()),
@@ -583,6 +617,25 @@ mod tests {
             last_refresh_at: Some("2026-09-20T10:00:00Z".into()),
             last_error: None,
         }
+    }
+
+    fn flavour_options() -> Vec<ariadne_api::permissions::FlavourOptionsDto> {
+        Flavour::ALL
+            .into_iter()
+            .map(|flavour| ariadne_api::permissions::FlavourOptionsDto {
+                flavour,
+                devices: Device::ALL
+                    .into_iter()
+                    .map(|device| ariadne_api::permissions::DeviceOptionDto {
+                        device,
+                        can_run: flavour == Flavour::Kev4B && device == Device::Mlx,
+                        reason: (flavour != Flavour::Kev4B || device != Device::Mlx)
+                            .then(|| "needs 24 GB RAM, found 8 GB".to_string()),
+                        slow: device == Device::Cpu && flavour != Flavour::Kev08B,
+                    })
+                    .collect(),
+            })
+            .collect()
     }
 
     fn learned() -> LearnedPermissionDto {
@@ -698,15 +751,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_schedule_is_two_digits_a_colon_and_two_digits() {
-        assert_eq!(parse_schedule("03:30"), Ok("03:30".to_string()));
-        assert!(parse_schedule("25:00").unwrap_err().contains("HH:MM"));
-    }
-
     /// Every field of the status shows up in the block, in words a person
     /// reads rather than the wire's own spelling: python names its path and
-    /// version together, an unset schedule reads "off".
+    /// version together, and the hardware names the OS, the RAM and the GPU.
     #[test]
     fn show_renders_every_field() {
         let text = crate::output::kv_block(
@@ -718,7 +765,10 @@ mod tests {
             "ready",
             "3.12.1 at /usr/bin/python3",
             "0.8",
-            "off",
+            "4b",
+            "mlx",
+            "macos aarch64",
+            "64 GB RAM",
             "v0.1.4",
             "http://127.0.0.1:8900",
             "last refresh",
@@ -751,8 +801,27 @@ mod tests {
         };
         assert_eq!(
             crate::output::kv_block(&fields(&status), &crate::output::View::plain()),
-            "enabled            yes\nstate              ● ready\npython             3.12.1 at /usr/bin/python3\nallow threshold    0.2\ndeny threshold     0.8\nschedule           off\ninstalled release  v0.1.4\nlatest release     v0.1.4\nweights            yes\nendpoint           http://127.0.0.1:8900\nlast refresh       never\nlast error         -"
+            "enabled            yes\nstate              ● ready\npython             3.12.1 at /usr/bin/python3\nallow threshold    0.2\ndeny threshold     0.8\nflavour            4b\ndevice             mlx\nhardware           macos aarch64, 64 GB RAM, no GPU\ninstalled release  v0.1.4\nlatest release     v0.1.4\nweights            yes\nendpoint           http://127.0.0.1:8900\nlast refresh       never\nlast error         -"
         );
+    }
+
+    /// The flavour and device table lists every combination, unavailable
+    /// ones included, with the reason and the slow note.
+    #[test]
+    fn flavour_rows_lists_every_flavour_and_device() {
+        let rows = flavour_rows(&status(AiPermissionsState::Ready));
+        assert_eq!(rows.len(), 4 * 3);
+        let mlx_4b = rows
+            .iter()
+            .find(|row| row[0] == "4b" && row[1] == "mlx")
+            .unwrap();
+        assert_eq!(mlx_4b[2], "yes", "{mlx_4b:?}");
+        let cuda_4b = rows
+            .iter()
+            .find(|row| row[0] == "4b" && row[1] == "cuda")
+            .unwrap();
+        assert_eq!(cuda_4b[2], "no", "{cuda_4b:?}");
+        assert_eq!(cuda_4b[3], "needs 24 GB RAM, found 8 GB");
     }
 
     /// One route, capturing every body it is sent — what every body-shape
@@ -852,9 +921,9 @@ mod tests {
         assert_eq!(seen.lock().unwrap()[0], json!({"enabled": true}));
     }
 
-    /// `set --no-schedule` sends `{"schedule": null}` alone.
+    /// `set --flavour` alone sends `{"flavour": "9b"}` and nothing else.
     #[tokio::test]
-    async fn set_no_schedule_sends_a_null_schedule() {
+    async fn set_flavour_sends_the_flavour_alone() {
         let (client, server, seen) = capturing_put().await;
 
         run(
@@ -862,8 +931,8 @@ mod tests {
             PermissionsCommand::Ai(AiPermissionsCommand::Set {
                 allow_threshold: None,
                 deny_threshold: None,
-                schedule: None,
-                no_schedule: true,
+                flavour: Some(Flavour::Kev9B),
+                device: None,
             }),
             Format::Json,
         )
@@ -871,7 +940,67 @@ mod tests {
         .unwrap();
         server.abort();
 
-        assert_eq!(seen.lock().unwrap()[0], json!({"schedule": null}));
+        assert_eq!(seen.lock().unwrap()[0], json!({"flavour": "9b"}));
+    }
+
+    /// `set --flavour --device` sends both fields and nothing else.
+    #[tokio::test]
+    async fn set_flavour_and_device_sends_both_fields() {
+        let (client, server, seen) = capturing_put().await;
+
+        run(
+            &client,
+            PermissionsCommand::Ai(AiPermissionsCommand::Set {
+                allow_threshold: None,
+                deny_threshold: None,
+                flavour: Some(Flavour::Kev08B),
+                device: Some(Device::Cpu),
+            }),
+            Format::Json,
+        )
+        .await
+        .unwrap();
+        server.abort();
+
+        assert_eq!(
+            seen.lock().unwrap()[0],
+            json!({"flavour": "0.8b", "device": "cpu"})
+        );
+    }
+
+    /// The daemon's refusal of an unsupported combination survives whole.
+    #[tokio::test]
+    async fn set_prints_the_daemons_flavour_unsupported_refusal() {
+        async fn refused() -> (StatusCode, Json<ErrorBody>) {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(ErrorBody::new(
+                    "flavour_unsupported",
+                    "needs 24 GB VRAM, found 8 GB",
+                )),
+            )
+        }
+        let app = Router::new().route("/v1/permissions/ai", put(refused));
+        let (client, server) = serve(app).await;
+
+        let err = run(
+            &client,
+            PermissionsCommand::Ai(AiPermissionsCommand::Set {
+                allow_threshold: None,
+                deny_threshold: None,
+                flavour: Some(Flavour::Kev9B),
+                device: Some(Device::Cuda),
+            }),
+            Format::Table,
+        )
+        .await
+        .unwrap_err();
+        server.abort();
+
+        assert_eq!(
+            err.downcast_ref::<ClientError>().unwrap().human(),
+            "needs 24 GB VRAM, found 8 GB"
+        );
     }
 
     /// Both threshold flags send both fields and nothing else.
@@ -884,8 +1013,8 @@ mod tests {
             PermissionsCommand::Ai(AiPermissionsCommand::Set {
                 allow_threshold: Some(0.2),
                 deny_threshold: Some(0.8),
-                schedule: None,
-                no_schedule: false,
+                flavour: None,
+                device: None,
             }),
             Format::Json,
         )
@@ -920,8 +1049,8 @@ mod tests {
             PermissionsCommand::Ai(AiPermissionsCommand::Set {
                 allow_threshold: Some(0.8),
                 deny_threshold: Some(0.8),
-                schedule: None,
-                no_schedule: false,
+                flavour: None,
+                device: None,
             }),
             Format::Table,
         )

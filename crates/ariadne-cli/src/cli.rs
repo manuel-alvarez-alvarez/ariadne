@@ -76,7 +76,7 @@ Examples:
   ariadne permissions ai enable --wait         # turn the AI permission model on and wait for the install
   ariadne permissions ai show                  # settings, install state, python
   ariadne permissions ai set --allow-threshold 0.2 --deny-threshold 0.8
-  ariadne permissions ai set --schedule 03:30  # or: --no-schedule
+  ariadne permissions ai set --flavour 9b --device cuda
   ariadne permissions ai test --tool Bash --input '{\"command\":\"git status\"}' --workspace .
   ariadne permissions ai refresh
   ariadne permissions ai disable
