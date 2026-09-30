@@ -260,24 +260,24 @@ Out: the daemon endpoints themselves (012).
     holds the allow and deny thresholds as one range control, a two-handle
     slider from 0 to 1 in steps of 0.01 whose track is cut into a green Allow
     zone, an amber Ask zone and a red Deny zone the handles cannot cross,
-    with a 0, 0.5, 1 scale of ticks and numbers under the track, and two
-    narrow number inputs in one row below that — "Allow threshold" at the
-    left end with a green dot and "Deny threshold" at the right end with a
-    red dot, each shown to four fixed decimals, step 0.0001 — that stay in
-    step with the handles while either is dragged or typed into, the digits
-    settling to four decimals on mount, after a drag and after a commit, and
-    left alone while typed into. A Model section holds the Flavour and
-    Device selects in one inline row. A Status and hardware section shows
-    one muted line — the flavour, the device, the state, the memory and the
-    GPU — with the installed and latest release, whether the weights are
-    present, the endpoint, and the last refresh's age behind a "Details"
-    popover. Every control sends its own change the moment it is made, there
-    is no Save button, and a handle sends once, on release, never on every
-    drag step — and a refusal is toasted with the daemon's own message and
-    puts the control back to the row the daemon still holds, the same as the
-    agents screen's flag editor and rank picker. The `ai_permissions_updated`
-    event (012, 022) patches the same query key any of those writes does,
-    since the row has no list beside it
+    with the zone names Allow, Ask and Deny on the track, centered on each
+    zone and hidden where its own zone is too narrow, and a small number
+    input directly under each handle — "Allow threshold" with a green dot
+    and "Deny threshold" with a red dot, each shown to four fixed decimals,
+    step 0.0001 — that stay in step with the handles while either is dragged
+    or typed into, the digits settling to four decimals on mount, after a
+    drag and after a commit, and left alone while typed into. A Model
+    section holds the Flavour and Device selects in one inline row. A Status
+    and hardware section shows one muted line — the flavour, the device, the
+    state, the memory and the GPU — with the installed and latest release,
+    whether the weights are present, the endpoint, and the last refresh's
+    age behind a "Details" popover. Every control sends its own change the
+    moment it is made, there is no Save button, and a handle sends once, on
+    release, never on every drag step — and a refusal is toasted with the
+    daemon's own message and puts the control back to the row the daemon
+    still holds, the same as the agents screen's flag editor and rank
+    picker. The `ai_permissions_updated` event (012, 022) patches the same
+    query key any of those writes does, since the row has no list beside it
     (`ui/src/features/permissions/permissions-page.test.tsx::puts the title,
     the badge, the switch and both icon buttons in one header row`, `::drops
     the old description line under the title`, `::shows the last error as an
@@ -663,24 +663,25 @@ Out: the daemon endpoints themselves (012).
   `::the enabled switch > is disabled and says not found, where no
   interpreter was found at all`).
 - The allow and deny thresholds render as one range control: a two-handle
-  slider over the three coloured zones with labels Allow, Ask and Deny
-  positioned at each zone's center, and a tick and its digit for 0, 0.5 and 1
-  beneath the track, each tick a sibling sitting above its own digit at the
-  track's 0%, 50% and 100%; the two named, zone-dotted number inputs below,
-  holding the row's own values to four fixed decimals, settled on mount,
-  after a drag and after a commit, and left alone while typed into
+  slider over the three coloured zones with labels Allow, Ask and Deny on the
+  track, positioned at each zone's center and hidden where its own zone is
+  too narrow, and a small number input directly under each handle — a green
+  dot for the allow input, a red dot for the deny input — each named for the
+  threshold it holds and showing the row's own value to four fixed decimals,
+  settled on mount, after a drag and after a commit, and left alone while
+  typed into. The control has no tick row and no description, so it is
+  visibly shorter than before
   (`ui/src/features/permissions/threshold-range.test.tsx::shows the track's
   three zones and the handles named for what they hold`,
   `::shows the two number inputs, named and valued to four decimals for the
   row they hold`,
   `::shows a zone-coloured dot beside each input's label`,
+  `::puts each input directly under its own handle`,
   `::formats an input to four decimals on first render, after a drag, and
   after a commit, but not while typing`,
   `::positions zone labels at the center of each zone and updates them when
   thresholds move`,
-  `::hides zone labels when the ask zone is too narrow`,
-  `::puts a tick and its digit at 0%, 50% and 100% of the track, the tick a
-  sibling above its digit`).
+  `::hides only the narrow zone label`).
 - A handle released at a new value, or a number field left or Entered, sends
   only the field that changed, clamped to 0–1, up to four decimals; neither
   handle can reach or pass the other; each thumb has `aria-valuetext` with the

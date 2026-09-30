@@ -5,6 +5,7 @@ updated: 2026-09-30
 areas: [core, api, store, daemon, ui]
 commits: []
 tests:
+  - ui/src/features/permissions/threshold-range.test.tsx
   - crates/ariadne-daemon/tests/it/ai_permissions.rs
   - crates/ariadne-daemon/tests/it/ai_permissions_decisions.rs
   - crates/ariadne-daemon/tests/it/ai_permissions_server.rs
@@ -621,6 +622,56 @@ popover with the full seven facts`).
     between them can lose the cache of its pair. The reinstall of rule 47
     then downloads that cache again.
 
+## Desktop rendering
+
+50. The desktop app renders `allow_threshold` and `deny_threshold` as one
+    range control: a two-handle slider from 0 to 1 in steps of 0.01, its
+    track cut into a green Allow zone, an amber Ask zone and a red Deny zone
+    the handles cannot cross, with the zone names Allow, Ask and Deny on the
+    track, centered on each zone and hidden where its own zone is too
+    narrow, and a small number input directly under each handle — a green
+    dot for the allow input, a red dot for the deny input — each held to
+    four fixed decimals, step 0.0001, settled on mount, after a drag and
+    after a commit, and left alone while typed into. A handle released at a
+    new value, or a number field left or Entered, sends only the field that
+    changed, clamped to 0–1; neither handle can reach or pass the other;
+    each thumb carries `aria-valuetext` to four decimals. The control also
+    takes an optional danger marker on the track, taller than the track,
+    with an accessible label to four decimals and that value written beside
+    it. A refusal is toasted with the daemon's own message and the row snaps
+    back to the value it still holds. The control has no tick row and no
+    description of the three labels' meaning
+    (`ui/src/features/permissions/threshold-range.test.tsx::shows the
+    track's three zones and the handles named for what they hold`,
+    `::puts the zone labels on the track itself, centered on its own vertical middle`,
+    `::shows no tick row and no threshold description`,
+    `::shows the two number inputs, named and valued to four decimals for
+    the row they hold`,
+    `::shows a zone-coloured dot beside each input's label`,
+    `::puts each input directly under its own handle`,
+    `::formats an input to four decimals on first render, after a drag, and
+    after a commit, but not while typing`,
+    `::draws no danger marker where none is set, and one labelled with its
+    value to four decimals where it is`,
+    `::positions zone labels at the center of each zone and updates them
+    when thresholds move`,
+    `::hides only the narrow zone label`,
+    `::gives each thumb an aria-valuetext with the value to four decimals`,
+    `::a handle released at a new value > sends one PUT with only the allow
+    field`,
+    `::a handle released at a new value > sends one PUT with only the deny
+    field`,
+    `::a handle released at a new value > does not let the allow handle
+    reach or pass the deny handle`,
+    `::a handle released at a new value > does not let the deny handle
+    reach or pass the allow handle`,
+    `::an input left or Entered > sends one PUT with only the allow field,
+    four decimals kept`,
+    `::an input left or Entered > sends one PUT with only the deny field, on
+    Enter`,
+    `::toasts the daemon's own message on a refusal, and puts the value
+    back`).
+
 ## Acceptance criteria
 
 - A fresh daemon is off, at allow threshold 0.0886 and deny threshold 0.6256,
@@ -935,6 +986,22 @@ popover with the full seven facts`).
 - The normalized state carries only the derived facts that the mode names,
   and an unknown fact is refused
   (`bench/ai-permissions/tests/test_evaluators.py::NormalizedStateTests`).
+- The range control of rule 50 shows the zone labels on the track, hidden
+  where a zone is too narrow, a small number input under each handle, and no
+  tick row or description; a release or a left/Entered field sends the one
+  field that changed and a refusal snaps the row back
+  (`ui/src/features/permissions/threshold-range.test.tsx::shows the track's
+  three zones and the handles named for what they hold`,
+  `::puts the zone labels on the track itself, centered on its own vertical middle`,
+  `::shows no tick row and no threshold description`,
+  `::shows the two number inputs, named and valued to four decimals for the
+  row they hold`,
+  `::puts each input directly under its own handle`,
+  `::positions zone labels at the center of each zone and updates them when
+  thresholds move`,
+  `::hides only the narrow zone label`,
+  `::toasts the daemon's own message on a refusal, and puts the value
+  back`).
 
 ## Sources
 

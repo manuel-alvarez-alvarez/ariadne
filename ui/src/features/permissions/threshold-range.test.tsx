@@ -48,6 +48,29 @@ it("shows the track's three zones and the handles named for what they hold", () 
   expect(screen.getByText("Deny")).toBeDefined()
 })
 
+it("puts the zone labels on the track itself, centered on its own vertical middle", () => {
+  const { container } = render(
+    <ThresholdRange allowThreshold={0.2} denyThreshold={0.8} mutate={mutate} />,
+  )
+
+  const track = container.querySelector('[data-slot="slider-track"]') as HTMLElement
+  for (const text of ["Allow", "Ask", "Deny"]) {
+    const label = screen.getByText(text)
+    expect(track.contains(label)).toBe(true)
+    // "top-1/2 -translate-y-1/2" centers the label on the track's own
+    // height, so it sits on the coloured bar rather than above or below it.
+    expect(label.className).toContain("top-1/2")
+    expect(label.className).toContain("-translate-y-1/2")
+  }
+})
+
+it("shows no tick row and no threshold description", () => {
+  render(<ThresholdRange allowThreshold={0.2} denyThreshold={0.8} mutate={mutate} />)
+
+  expect(screen.queryByText("0.5")).toBeNull()
+  expect(screen.queryByText(/at or under the allow threshold/i)).toBeNull()
+})
+
 it("shows the two number inputs, named and valued to four decimals for the row they hold", () => {
   render(<ThresholdRange allowThreshold={0.2} denyThreshold={0.8} mutate={mutate} />)
 
@@ -69,6 +92,18 @@ it("shows a zone-coloured dot beside each input's label", () => {
   expect(allowDot.getAttribute("aria-hidden")).toBe("true")
   expect(denyDot).not.toBeNull()
   expect(denyDot.getAttribute("aria-hidden")).toBe("true")
+})
+
+it("puts each input directly under its own handle", () => {
+  render(<ThresholdRange allowThreshold={0.2} denyThreshold={0.8} mutate={mutate} />)
+
+  const allow = screen.getByRole("spinbutton", { name: "Allow threshold" }) as HTMLInputElement
+  const deny = screen.getByRole("spinbutton", { name: "Deny threshold" }) as HTMLInputElement
+
+  const allowColumn = allow.closest("div.absolute") as HTMLElement
+  const denyColumn = deny.closest("div.absolute") as HTMLElement
+  expect(allowColumn.style.left).toBe("20%")
+  expect(denyColumn.style.left).toBe("80%")
 })
 
 it("formats an input to four decimals on first render, after a drag, and after a commit, but not while typing", () => {
@@ -140,14 +175,18 @@ it("draws no danger marker where none is set, and one labelled with its value to
   expect(screen.getByText("0.4200")).toBeDefined()
 })
 
+function zoneLabels(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll("span.pointer-events-none.absolute")).filter(
+    (element) => element.className.includes("top-1/2"),
+  ) as HTMLElement[]
+}
+
 it("positions zone labels at the center of each zone and updates them when thresholds move", () => {
   const { container, rerender } = render(
     <ThresholdRange allowThreshold={0.2} denyThreshold={0.8} mutate={mutate} />,
   )
 
-  let labels = Array.from(
-    container.querySelectorAll("span.pointer-events-none.absolute.top-0"),
-  ) as HTMLElement[]
+  let labels = zoneLabels(container)
   expect(labels.length).toBe(3)
   expect(labels[0]?.textContent).toBe("Allow")
   expect(labels[1]?.textContent).toBe("Ask")
@@ -163,9 +202,7 @@ it("positions zone labels at the center of each zone and updates them when thres
 
   rerender(<ThresholdRange allowThreshold={0.3} denyThreshold={0.7} mutate={mutate} />)
 
-  labels = Array.from(
-    container.querySelectorAll("span.pointer-events-none.absolute.top-0"),
-  ) as HTMLElement[]
+  labels = zoneLabels(container)
   expect(labels[0]?.style.left).toBe("15%")
   expect(labels[1]?.style.left).toBe("50%")
   expect(labels[2]?.style.left).toBe("85%")
@@ -176,34 +213,12 @@ it("hides only the narrow zone label", () => {
     <ThresholdRange allowThreshold={0.45} denyThreshold={0.55} mutate={mutate} />,
   )
 
-  const labels = Array.from(
-    container.querySelectorAll("span.pointer-events-none.absolute.top-0"),
-  ) as HTMLElement[]
+  const labels = zoneLabels(container)
   expect(labels.length).toBe(3)
   // Ask zone is 10% wide (< 15%), so only Ask is hidden
   expect(labels[0]?.className).toContain("opacity-100")
   expect(labels[1]?.className).toContain("opacity-0")
   expect(labels[2]?.className).toContain("opacity-100")
-})
-
-it("puts a tick and its digit at 0%, 50% and 100% of the track, the tick a sibling above its digit", () => {
-  render(<ThresholdRange allowThreshold={0.2} denyThreshold={0.8} mutate={mutate} />)
-
-  const zeroDigit = screen.getByText("0")
-  const halfDigit = screen.getByText("0.5")
-  const oneDigit = screen.getByText("1")
-
-  const groups = [zeroDigit, halfDigit, oneDigit].map((digit) => digit.parentElement as HTMLElement)
-  const expectedLeft = ["0%", "50%", "100%"]
-
-  const digits = [zeroDigit, halfDigit, oneDigit]
-  groups.forEach((group, index) => {
-    expect(group.style.left).toBe(expectedLeft[index])
-    const tick = group.querySelector("span.bg-muted-foreground") as HTMLElement
-    expect(tick).not.toBeNull()
-    // the tick is the digit's immediately preceding sibling, so it sits above it in the column
-    expect(tick.nextElementSibling).toBe(digits[index])
-  })
 })
 
 it("gives each thumb an aria-valuetext with the value to four decimals", () => {

@@ -1,9 +1,9 @@
 /**
  * The allow/deny threshold pair as one range control: a two-handle slider
- * over three coloured zones, and the two number inputs the handles' values
- * are typed into. Both surfaces read and write the same pair, so a drag and
- * a keystroke move each other in step, and neither handle can pass the
- * other.
+ * over three coloured zones, with the zone labels on the track and a small
+ * editable number under each handle. Both surfaces read and write the same
+ * pair, so a drag and a keystroke move each other in step, and neither
+ * handle can pass the other.
  *
  * A commit — a handle released, or a number field left or Entered — sends
  * only the one field that changed, clamped to 0–1. A refusal is toasted with
@@ -16,8 +16,8 @@ import { Slider as SliderPrimitive } from "@base-ui/react/slider"
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
 
-import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { describeError } from "@/lib/format"
 
 import type { useUpdateAiPermissions } from "./queries"
@@ -174,7 +174,7 @@ export function ThresholdRange({
   const minZoneWidthForLabel = 15
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-1">
       <SliderPrimitive.Root
         value={[allowValue, denyValue]}
         min={0}
@@ -204,6 +204,24 @@ export function ThresholdRange({
                 style={{ left: `${zoneEnd}%` }}
               />
             </div>
+            <span
+              className={`pointer-events-none absolute top-1/2 left-0 -translate-x-1/2 -translate-y-1/2 text-xs text-muted-foreground transition-opacity ${allowZoneWidth < minZoneWidthForLabel ? "opacity-0" : "opacity-100"}`}
+              style={{ left: `${allowZoneCenter}%` }}
+            >
+              Allow
+            </span>
+            <span
+              className={`pointer-events-none absolute top-1/2 left-0 -translate-x-1/2 -translate-y-1/2 text-xs text-muted-foreground transition-opacity ${askZoneWidth < minZoneWidthForLabel ? "opacity-0" : "opacity-100"}`}
+              style={{ left: `${askZoneCenter}%` }}
+            >
+              Ask
+            </span>
+            <span
+              className={`pointer-events-none absolute top-1/2 left-0 -translate-x-1/2 -translate-y-1/2 text-xs text-muted-foreground transition-opacity ${denyZoneWidth < minZoneWidthForLabel ? "opacity-0" : "opacity-100"}`}
+              style={{ left: `${denyZoneCenter}%` }}
+            >
+              Deny
+            </span>
             {danger !== undefined ? (
               <>
                 <div
@@ -237,54 +255,15 @@ export function ThresholdRange({
         </SliderPrimitive.Control>
       </SliderPrimitive.Root>
 
-      <div className="relative h-6">
-        <span
-          className={`pointer-events-none absolute top-0 left-0 text-xs text-muted-foreground transition-opacity ${allowZoneWidth < minZoneWidthForLabel ? "opacity-0" : "opacity-100"}`}
-          style={{ left: `${allowZoneCenter}%`, transform: "translateX(-50%)" }}
-        >
-          Allow
-        </span>
-        <span
-          className={`pointer-events-none absolute top-0 left-0 text-xs text-muted-foreground transition-opacity ${askZoneWidth < minZoneWidthForLabel ? "opacity-0" : "opacity-100"}`}
-          style={{ left: `${askZoneCenter}%`, transform: "translateX(-50%)" }}
-        >
-          Ask
-        </span>
-        <span
-          className={`pointer-events-none absolute top-0 left-0 text-xs text-muted-foreground transition-opacity ${denyZoneWidth < minZoneWidthForLabel ? "opacity-0" : "opacity-100"}`}
-          style={{ left: `${denyZoneCenter}%`, transform: "translateX(-50%)" }}
-        >
-          Deny
-        </span>
-      </div>
-
-      <div className="relative mt-1 h-8 text-xs text-muted-foreground">
-        <div className="absolute top-0 flex flex-col items-center gap-1" style={{ left: "0%" }}>
-          <span className="h-1 w-0.5 bg-muted-foreground" />
-          <span>0</span>
-        </div>
+      <div className="relative h-9">
         <div
           className="absolute top-0 flex -translate-x-1/2 flex-col items-center gap-1"
-          style={{ left: "50%" }}
+          style={{ left: `${allowPercent}%` }}
         >
-          <span className="h-1 w-0.5 bg-muted-foreground" />
-          <span>0.5</span>
-        </div>
-        <div
-          className="absolute top-0 flex -translate-x-full flex-col items-center gap-1"
-          style={{ left: "100%" }}
-        >
-          <span className="h-1 w-0.5 bg-muted-foreground" />
-          <span>1</span>
-        </div>
-      </div>
-
-      <div className="flex items-end justify-between gap-4">
-        <Field className="w-28 shrink-0">
-          <FieldLabel htmlFor="ai-allow-threshold" className="items-center">
+          <Label htmlFor="ai-allow-threshold" className="gap-1">
             <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-status-done" />
-            Allow threshold
-          </FieldLabel>
+            <span className="sr-only">Allow threshold</span>
+          </Label>
           <Input
             id="ai-allow-threshold"
             type="number"
@@ -292,17 +271,20 @@ export function ThresholdRange({
             max={1}
             step={INPUT_STEP}
             value={allowText}
-            className="tabular-nums"
+            className="h-6 w-16 px-1 text-center text-xs tabular-nums"
             onChange={(event) => handleAllowTextChange(event.target.value)}
             onBlur={commitAllowText}
             onKeyDown={blurOnEnter}
           />
-        </Field>
-        <Field className="w-28 shrink-0 items-end">
-          <FieldLabel htmlFor="ai-deny-threshold" className="items-center">
+        </div>
+        <div
+          className="absolute top-0 flex -translate-x-1/2 flex-col items-center gap-1"
+          style={{ left: `${denyPercent}%` }}
+        >
+          <Label htmlFor="ai-deny-threshold" className="gap-1">
             <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-status-danger" />
-            Deny threshold
-          </FieldLabel>
+            <span className="sr-only">Deny threshold</span>
+          </Label>
           <Input
             id="ai-deny-threshold"
             type="number"
@@ -310,18 +292,13 @@ export function ThresholdRange({
             max={1}
             step={INPUT_STEP}
             value={denyText}
-            className="tabular-nums"
+            className="h-6 w-16 px-1 text-center text-xs tabular-nums"
             onChange={(event) => handleDenyTextChange(event.target.value)}
             onBlur={commitDenyText}
             onKeyDown={blurOnEnter}
           />
-        </Field>
+        </div>
       </div>
-
-      <FieldDescription>
-        At or under the allow threshold the model allows. At or over the deny threshold it denies.
-        Between them, it asks you.
-      </FieldDescription>
     </div>
   )
 }
