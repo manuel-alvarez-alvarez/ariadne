@@ -139,7 +139,7 @@ class OperationTests(unittest.TestCase):
 
 
 class RiskTagTests(unittest.TestCase):
-    def test_the_risk_tags_are_the_fifteen_of_the_contract(self) -> None:
+    def test_the_risk_tags_are_the_eighteen_of_the_contract(self) -> None:
         self.assertEqual(
             RISK_TAGS,
             (
@@ -158,6 +158,9 @@ class RiskTagTests(unittest.TestCase):
                 "force",
                 "background_process",
                 "persistent_change",
+                "reviewer_directive",
+                "permission_bypass",
+                "root_or_home_delete",
             ),
         )
 

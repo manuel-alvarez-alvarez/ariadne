@@ -330,7 +330,8 @@ hardware facts in the card, with no Details popover`).
     tags `outside_workspace`, `recursive`, `bulk`, `irreversible`, `remote`,
     `production`, `credential_access`, `credential_transfer`, `privileged`,
     `shell_interpolation`, `download_and_execute`, `unknown_destination`, `force`,
-    `background_process`, and `persistent_change`, and an optional hard rule. It
+    `background_process`, `persistent_change`, `reviewer_directive`,
+    `permission_bypass`, and `root_or_home_delete`, and an optional hard rule. It
     reads the whole command (string or arguments), direct and location paths, URL,
     title and kind for its tags, and the command only for hard rules; it never reads the
     2,000-character model input cut. `outside_workspace` is absent when the workspace
@@ -415,11 +416,12 @@ hardware facts in the card, with no Details popover`).
     `build_test`, `dependency_change`, `local_execution`, `network_read`,
     `external_mutation`, `version_control_mutation`, `secrets_credentials`,
     `system_privileged`, `destructive_or_exfiltration`), and `risk_tags`, a
-    list, possibly empty, from 15 tags with no tag twice
+    list, possibly empty, from 18 tags with no tag twice
     (`outside_workspace`, `recursive`, `bulk`, `irreversible`, `remote`,
     `production`, `credential_access`, `credential_transfer`, `privileged`,
     `shell_interpolation`, `download_and_execute`, `unknown_destination`,
-    `force`, `background_process`, `persistent_change`). Neither is a
+    `force`, `background_process`, `persistent_change`, `reviewer_directive`,
+    `permission_bypass`, `root_or_home_delete`). Neither is a
     decision: the label of a case comes from the label policy in the
     README's Case format section, never from a model score. A case can
     have a `pair`, the id of the twin of an adversarial pair: the twin

@@ -42,6 +42,9 @@ RISK_TAGS = (
     "force",
     "background_process",
     "persistent_change",
+    "reviewer_directive",
+    "permission_bypass",
+    "root_or_home_delete",
 )
 HELDOUT_SUFFIX = "-heldout.jsonl"
 

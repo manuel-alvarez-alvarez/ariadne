@@ -29,7 +29,18 @@ ORDER = (
 LARGE = ORDER[:7]
 
 # Programs that run the rest of the simple command. `timeout` also takes a duration.
-WRAPPERS = ("sudo", "doas", "time", "nohup", "command", "exec", "nice", "xargs", "timeout")
+WRAPPERS = ("sudo", "doas", "time", "nohup", "command", "exec", "nice", "xargs", "timeout", "env")
+# The options of a wrapper that take the next word as their value: `sudo -u root`, `env -u VAR`,
+# `nice -n 10`, `timeout -k 5 30`, `xargs -I {}`.
+WRAPPER_VALUE_OPTIONS = {
+    "sudo": ("-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-T", "-U", "--user", "--group", "--chdir", "--host", "--prompt", "--role", "--type"),
+    "doas": ("-u", "-C"),
+    "env": ("-u", "-C", "-S", "-P", "--unset", "--chdir", "--split-string"),
+    "nice": ("-n", "--adjustment"),
+    "timeout": ("-k", "-s", "--kill-after", "--signal"),
+    "exec": ("-a",),
+    "xargs": ("-I", "-n", "-P", "-L", "-s", "-d", "-E", "-a"),
+}
 READS = (
     "ls", "cat", "head", "tail", "wc", "rg", "grep", "egrep", "fgrep", "pwd", "echo", "printf", "which", "type",
     "stat", "file", "du", "df", "ps", "uptime", "tree", "diff", "sort", "uniq", "cut", "tr", "jq", "date", "whoami",
@@ -47,7 +58,9 @@ CHECK_TARGETS = (
     "all", "bench",
 )  # fmt: skip
 RUN_TARGETS = ("dev", "start", "serve", "preview", "watch")
-INTERPRETERS = ("sh", "bash", "zsh", "python", "python3", "node", "ruby", "perl", "deno", "bun")
+# A shell that runs the script after `-c` as a command line of its own.
+SHELLS = ("sh", "bash", "zsh")
+INTERPRETERS = SHELLS + ("python", "python3", "node", "ruby", "perl", "deno", "bun")
 MIGRATIONS = (("sqlx", "migrate"), ("alembic", "upgrade"), ("diesel", "migration"))
 HOST_INSTALLERS = ("brew", "apt", "apt-get", "yum", "dnf", "pacman", "apk", "pipx", "gem", "port", "snap")
 PROJECT_INSTALLERS = ("npm", "pnpm", "yarn", "bun", "pip", "pip3", "poetry", "uv")
@@ -80,8 +93,46 @@ GH_READS = ("view", "list", "diff", "checks", "status")
 KUBECTL_READS = ("get", "describe", "logs", "top", "version")
 KUBECTL_CHANGES = ("apply", "delete", "exec", "scale", "rollout", "patch", "edit", "create", "replace", "drain", "cordon")
 DOCKER_READS = ("ps", "images", "logs", "inspect", "version", "info")
+DOCKER_FETCHES = ("pull", "search")
 DOCKER_RUNS = ("build", "run", "exec", "compose", "start", "stop", "restart")
 DOCKER_SENDS = ("push", "login")
+# A deploy or infrastructure CLI changes a remote service, except for a plan or a listing, and a
+# format, validation or lint that reads only the project.
+DEPLOYERS = ("terraform", "tofu", "pulumi", "serverless", "sls", "vercel", "fly", "flyctl", "heroku", "netlify", "ansible", "ansible-playbook", "helm")
+DEPLOY_READS = ("plan", "preview", "show", "output", "state", "status", "logs", "list", "ls", "version", "whoami", "env", "get", "history", "diff", "template", "info", "releases", "domains")
+DEPLOY_CHECKS = ("fmt", "validate", "lint", "check")
+# A cloud CLI reads with a describe, list, get, show, print or download action, and changes with
+# each other action. The action is read from the operands, after the options and their values.
+CLOUDS = ("aws", "gcloud", "az", "doctl")
+CLOUD_READ_PREFIXES = ("describe", "list", "get", "show", "print-", "ls", "version", "help", "whoami", "download")
+# An option of a cloud CLI that takes the next word as its value: the global options that select
+# a profile, a project, a region or an output, the name of a resource, and the transfer options.
+CLOUD_VALUE_OPTIONS = (
+    "--profile", "--region", "--output", "-o", "--endpoint-url", "--query", "--color", "--cli-binary-format",
+    "--ca-bundle", "--cli-read-timeout", "--cli-connect-timeout", "--project", "--account", "--configuration",
+    "--format", "--zone", "--impersonate-service-account", "--billing-project", "--verbosity", "--subscription",
+    "--resource-group", "-g", "--name", "-n", "--location", "-l", "--file", "-f", "--container-name", "-c",
+    "--account-name", "--account-key", "--sas-token", "--acl", "--sse", "--sse-c", "--sse-c-key", "--sse-kms-key-id",
+    "--storage-class", "--exclude", "--include", "--content-type", "--content-encoding", "--content-disposition",
+    "--content-language", "--cache-control", "--expires", "--metadata", "--metadata-directive", "--grants",
+    "--source-region", "--request-payer", "--expected-size", "--page-size", "--max-items", "--starting-token",
+    "--filters", "--filter", "--context", "--function-name", "--bucket", "--key", "--body", "--payload", "--cluster",
+    "--service", "--stack-name", "--template-file", "--parameters", "--tags", "--tag", "-t", "--image", "--machine-type",
+    "--size", "--count", "--instance-ids", "--table-name", "--queue-url", "--topic-arn", "--message", "--role-arn",
+    "--policy-arn", "--user-name", "--group-name", "--secret-id", "--parameter-name", "--vault-name", "--id",
+)  # fmt: skip
+# The verbs at which the action words of a cloud command end: a transfer, whose two operands
+# after it are the source and the destination, and a change. A read verb starts with a read prefix.
+CLOUD_TRANSFERS = ("cp", "sync", "mv", "rsync", "upload", "upload-batch")
+CLOUD_CHANGES = (
+    "create", "delete", "update", "set", "add", "remove", "deploy", "run", "start", "stop", "apply", "invoke",
+    "publish", "terminate", "restart", "reboot", "import", "export", "enable", "disable", "attach", "detach", "put",
+    "rm", "mb", "rb", "login", "logout", "revoke", "activate", "deactivate", "copy", "move", "scale", "resize",
+    "submit", "cancel", "execute", "send", "register", "deregister", "configure", "init", "push", "pull", "tag",
+    "untag", "reset", "rotate", "grant", "assign", "ssh", "scp", "exec", "up", "browse", "open", "purge", "wait",
+)  # fmt: skip
+GIT_LFS_READS = ("ls-files", "status", "env", "version", "logs", "locks")
+GIT_LFS_FETCHES = ("pull", "fetch", "clone")
 PACKAGE_READS = ("ls", "list", "show", "freeze")
 PACKAGE_FETCHES = ("outdated", "view", "info", "audit", "search")
 PACKAGE_RUNS = ("run", "run-script")
@@ -200,14 +251,27 @@ def _first_of(words: list[str], *names: tuple[str, ...] | dict[str, str]) -> str
     return next((word for word in words if any(word in known for known in names)), "")
 
 
-def _git(words: list[str]) -> str | None:
-    # `-C <path>` and `-c <name>=<value>` come before the subcommand, each with a value.
+def git_words(words: list[str]) -> list[str]:
+    """The words of a git command from its subcommand on: the global options before it are
+    dropped (`--no-pager`, `--git-dir=…`), and `-C <path>` and `-c <name>=<value>` each take
+    the next word as their value."""
     rest = list(words)
     while rest and rest[0].startswith("-"):
         rest = rest[2:] if rest[0] in ("-C", "-c") else rest[1:]
+    return rest
+
+
+def _git(words: list[str]) -> str | None:
+    rest = git_words(words)
     if not rest:
         return None
     subcommand, arguments = rest[0], rest[1:]
+    if subcommand == "lfs":
+        # `git lfs install` writes hooks and the git configuration; a pull fetches objects.
+        action = _first_plain(arguments)
+        if action in GIT_LFS_READS:
+            return "read_workspace"
+        return "network_read" if action in GIT_LFS_FETCHES else "version_control_mutation"
     if subcommand in GIT_READS:
         return "read_workspace"
     if subcommand in GIT_FETCHES:
@@ -224,6 +288,62 @@ def _git(words: list[str]) -> str | None:
             return "system_privileged"
         return "version_control_mutation"
     return "version_control_mutation" if subcommand in GIT_CHANGES else None
+
+
+SSH_VALUE_OPTIONS = ("-i", "-p", "-o", "-l", "-L", "-R", "-D", "-J", "-F", "-b", "-c", "-e", "-m", "-w")
+
+
+def _ssh(words: list[str]) -> str | None:
+    """`ssh host command` runs the command on the host; a tunnel (`-L`, `-R`, `-D`) changes what
+    the host or this machine exposes; `ssh host` alone, or `-T`, opens a session and changes
+    nothing that the call shows."""
+    if any(word in ("-L", "-R", "-D") or word.startswith(("-L", "-R", "-D")) for word in words):
+        return "external_mutation"
+    rest = list(words)
+    while rest and rest[0].startswith("-"):
+        rest = rest[2:] if rest[0] in SSH_VALUE_OPTIONS else rest[1:]
+    if not rest:
+        return None
+    return "external_mutation" if rest[1:] else "network_read"
+
+
+def _cloud_operands(words: list[str]) -> list[str]:
+    """The operands of a cloud command: its words without the options, and without the value
+    of each option that takes one (`--profile dev`, `--acl public-read`)."""
+    operands: list[str] = []
+    rest = list(words)
+    while rest:
+        word = rest[0]
+        if word.startswith("-"):
+            rest = rest[2:] if word in CLOUD_VALUE_OPTIONS else rest[1:]
+        else:
+            operands.append(word)
+            rest = rest[1:]
+    return operands
+
+
+def _cloud(words: list[str]) -> str:
+    """A cloud CLI reads with a describe, list, get, show, print or download action and changes
+    with each other action. The action is in the operands (see `_cloud_operands`): the plain
+    words of letters, digits and hyphens up to the first argument that is a path, an address or
+    a value (`list.csv`, `s3://bucket`), and up to the first verb (a read prefix, a transfer or a
+    change), so neither the name of a file nor the name of a resource after the verb reads as
+    the action. A copy or a synchronization whose source, the operand after the action, is a
+    bucket address and whose destination, the next operand, is not one downloads, and reads."""
+    operands = _cloud_operands(words)
+    action: list[str] = []
+    for word in operands:
+        if not all(character.isalnum() or character == "-" for character in word):
+            break
+        action.append(word)
+        if word.startswith(CLOUD_READ_PREFIXES) or word in CLOUD_TRANSFERS or word in CLOUD_CHANGES:
+            break
+    if action and action[-1] in ("cp", "sync", "rsync"):
+        source, destination = (operands[len(action) : len(action) + 2] + ["", ""])[:2]
+        if "://" in source and destination and "://" not in destination:
+            return "network_read"
+    reads = any(word.startswith(CLOUD_READ_PREFIXES) for word in action)
+    return "network_read" if reads or "--dry-run" in words else "external_mutation"
 
 
 def _script_target(program: str, words: list[str]) -> str | None:
@@ -300,13 +420,34 @@ def _find(words: list[str]) -> str | None:
     return "read_workspace"
 
 
+def program_words(words: list[str], shells: bool = True) -> list[str]:
+    """The words of a simple command from its program on: the assignments (`VAR=value`) and
+    the wrappers (`sudo`, `env`, `timeout N`, `bash -c`, …) before it are dropped, with the
+    options of each wrapper (`sudo -n`, `env -i`) and the value of an option that takes one
+    (`sudo -u root`, `nice -n 10`); `timeout` also takes a duration. With `shells` false, a
+    shell with a script (`bash -c`) is the program, and its words stay."""
+    while words:
+        first = words[0]
+        if "=" in first and not first.startswith(("-", "/", ".")):
+            words = words[1:]
+        elif first in WRAPPERS:
+            values = WRAPPER_VALUE_OPTIONS.get(first, ())
+            words = words[1:]
+            while words and words[0].startswith("-"):
+                words = words[2:] if words[0] in values else words[1:]
+            if first == "timeout":
+                words = words[1:]
+        elif shells and first in SHELLS and words[1:2] == ["-c"]:
+            words = words[2:]
+        else:
+            break
+    return words
+
+
 def simple_operation(words: list[str], local: bool) -> str | None:
     """The operation of one simple command, or `None` for a program that no table names.
     `local` says that the only host of the line is the local host."""
-    while words and ("=" in words[0] and not words[0].startswith(("-", "/", "."))):
-        words = words[1:]
-    while words and words[0] in WRAPPERS:
-        words = words[2:] if words[0] == "timeout" else words[1:]
+    words = program_words(words)
     if not words:
         return "read_workspace"
     target = _redirect_target(words)
@@ -364,13 +505,31 @@ def _program_operation(program: str, arguments: list[str], local: bool) -> str |
         if action == "":
             return None
         return "network_read" if action in KUBECTL_READS else "external_mutation"
-    if program in ("docker", "podman"):
-        action = _first_of(arguments, DOCKER_READS, DOCKER_RUNS, DOCKER_SENDS)
+    if program in ("docker", "podman", "nerdctl"):
+        action = _first_of(arguments, DOCKER_READS, DOCKER_FETCHES, DOCKER_RUNS, DOCKER_SENDS)
         if action in DOCKER_READS:
             return "read_workspace"
+        if action in DOCKER_FETCHES:
+            return "network_read"
         if action in DOCKER_SENDS:
             return "external_mutation"
         return "local_execution" if action in DOCKER_RUNS else None
+    if program == "ssh":
+        return _ssh(arguments)
+    if program == "direnv":
+        return "local_execution" if subcommand == "allow" else "read_workspace"
+    if program == "tar":
+        # `t` lists; `x` extracts and `c` creates, each a write of files.
+        mode = arguments[0].lstrip("-") if arguments else ""
+        return "read_workspace" if mode.startswith(("t", "list")) else "write_workspace"
+    if program in DEPLOYERS:
+        if subcommand in DEPLOY_CHECKS:
+            return "build_test"
+        if subcommand in DEPLOY_READS or "--check" in arguments or "--dry-run" in arguments:
+            return "network_read"
+        return "external_mutation"
+    if program in CLOUDS:
+        return _cloud(arguments)
     if (program, subcommand) in MIGRATIONS:
         return "local_execution"
     if program == "sqlite3" and "-readonly" in arguments:
