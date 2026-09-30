@@ -1,6 +1,6 @@
 /**
  * The Permissions screen's reads and writes: the AI tab's one settings row,
- * and the Learned tab's list and its three writes.
+ * and the Learned tab's list, its detail and its one write.
  *
  * `GET /v1/permissions/ai` answers with the whole settings row — there is
  * no per-field endpoint and nothing here is paginated — so there is a single
@@ -9,23 +9,21 @@
  * invalidating: the install they start is `installing` before the
  * `ai_permissions_updated` event on the stream has a chance to say so.
  *
- * The learned approvals follow the app-wide list/detail convention instead:
+ * The learned rows follow the app-wide list/detail convention instead:
  * `GET /v1/permissions/learned` answers `{ items }`, unwrapped here so every
- * caller reads a plain array, and each write patches the row into the cache
- * itself (`cacheRow` / `dropRow`) for the same reason the repository screen
- * does — REST can land before the `learned_permission_*` event does.
+ * caller reads a plain array. Nothing but a decision writes a row — there is
+ * no `POST` or `PUT` — so the only write here is the delete, which drops it
+ * from the cache itself (`dropRow`) for the same reason the repository screen
+ * does — REST can land before the `learned_permission_deleted` event does.
  */
 
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query"
 import {
   api,
-  type CreateLearnedPermissionRequest,
-  cacheRow,
   dropRow,
   qk,
   type TestAiPermissionRequest,
   type UpdateAiPermissionsRequest,
-  type UpdateLearnedPermissionRequest,
   unwrap,
 } from "@/api"
 
@@ -64,7 +62,7 @@ export function useTestAiPermission() {
   })
 }
 
-/** `GET /v1/permissions/learned` — every approval, or one repository's. */
+/** `GET /v1/permissions/learned` — every recorded row, or one repository's. */
 export function learnedPermissionsQueryOptions(filters: { repository?: string } = {}) {
   return queryOptions({
     queryKey: qk.learnedPermissions.list(filters),
@@ -77,31 +75,11 @@ export function learnedPermissionsQueryOptions(filters: { repository?: string } 
   })
 }
 
-/** `GET /v1/permissions/learned/{id}` — one approval, for the detail view. */
+/** `GET /v1/permissions/learned/{id}` — one row, for the detail view. */
 export function learnedPermissionQueryOptions(id: string) {
   return queryOptions({
     queryKey: qk.learnedPermissions.detail(id),
     queryFn: () => unwrap(api().GET("/v1/permissions/learned/{id}", { params: { path: { id } } })),
-  })
-}
-
-/** `POST /v1/permissions/learned` — a manual approval, ahead of anything an agent runs. */
-export function useCreateLearnedPermission() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (body: CreateLearnedPermissionRequest) =>
-      unwrap(api().POST("/v1/permissions/learned", { body })),
-    onSuccess: (row) => cacheRow(queryClient, qk.learnedPermissions, row),
-  })
-}
-
-/** `PUT /v1/permissions/learned/{id}` — the tool name and the kind; nothing else moves. */
-export function useUpdateLearnedPermission() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: ({ id, body }: { id: string; body: UpdateLearnedPermissionRequest }) =>
-      unwrap(api().PUT("/v1/permissions/learned/{id}", { params: { path: { id } }, body })),
-    onSuccess: (row) => cacheRow(queryClient, qk.learnedPermissions, row),
   })
 }
 

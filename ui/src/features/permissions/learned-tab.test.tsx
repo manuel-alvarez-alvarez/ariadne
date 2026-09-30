@@ -3,20 +3,23 @@
 /**
  * The Learned tab against a stubbed daemon.
  *
- * Two rows, from two repositories, one from each source: what is worth
- * pinning is that the table joins a row's `repository_id` against the
- * registry for its path, that the `repository` filter narrows the list the
- * daemon's own way, that Add, Edit and Delete each send the contract's
- * request and toast a refusal rather than swallow it, and that the detail view
- * tells a console row's stored request from a manual row's absent one.
+ * Two rows, from two repositories, one that allowed and one that denied: what
+ * is worth pinning is that the table joins a row's `repository_id` against
+ * the registry for its path in the filter, that the `repository` filter
+ * narrows the list the daemon's own way, that the selected option's outcome
+ * reads from the matching entry in `options`, that there is no add or edit
+ * control left, that Delete still sends the contract's request and toasts a
+ * refusal rather than swallow it, and that the detail view renders every
+ * field — the JSON blocks included — and stays live on an `updated` event.
  */
 
-import { screen, waitFor, within } from "@testing-library/react"
+import { act, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it } from "vitest"
 
 import type { LearnedPermissionDto, RepositoryDto } from "@/api"
 import { Toaster } from "@/components/ui/sonner"
+import { dispatchDomainEvent } from "@/events/dispatch"
 import { shortId } from "@/lib/format"
 import { aLearnedPermission, aRepository } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
@@ -31,42 +34,38 @@ const REPO_B: RepositoryDto = aRepository({
   path: "/home/me/dev/sandbox",
 })
 
-const CONSOLE_ROW: LearnedPermissionDto = aLearnedPermission({
-  id: "01JLEARN0000000000000CON",
+const ALLOWED_ROW: LearnedPermissionDto = aLearnedPermission({
+  id: "01JLEARN0000000000000ALW",
   repository_id: REPO_A.id,
   tool_name: "Bash",
-  kind: "execute",
-  source: "console",
   tool_call: { title: "Bash", kind: "execute", rawInput: { command: "ls" } },
-  options: { choices: ["allow", "deny"] },
-  selected_option: "allow",
-  session_id: "01JSESS0000000000000000001",
-  task_id: "01JTASK0000000000000000001",
-  label: "allow",
-  danger: 0.12,
-  allow_threshold: 0.2,
-  deny_threshold: 0.8,
+  options: [
+    { optionId: "yes", name: "Allow", kind: "allow_once" },
+    { optionId: "no", name: "Deny", kind: "reject_once" },
+  ],
+  selected_option: "yes",
+  target: "learn",
+  output: null,
+  created_at: "2026-09-20T10:00:00.000Z",
+  updated_at: "2026-09-25T10:00:00.000Z",
 })
 
-const MANUAL_ROW: LearnedPermissionDto = aLearnedPermission({
-  id: "01JLEARN0000000000000MAN",
+const DENIED_ROW: LearnedPermissionDto = aLearnedPermission({
+  id: "01JLEARN0000000000000DNY",
   repository_id: REPO_B.id,
   tool_name: "Write",
-  kind: "edit",
-  source: "manual",
-})
-
-const FILE_ROW: LearnedPermissionDto = aLearnedPermission({
-  id: "01JLEARN0000000000000FIL",
-  repository_id: REPO_A.id,
-  tool_name: "Read",
-  kind: "read",
-  source: "console",
   tool_call: {
-    title: "Read",
-    kind: "read",
-    rawInput: { file_path: "/home/me/dev/ariadne/src/main.rs" },
+    title: "Write",
+    kind: "edit",
+    rawInput: { file_path: "/home/me/dev/sandbox/src/main.rs" },
   },
+  options: [
+    { optionId: "yes", name: "Allow", kind: "allow_once" },
+    { optionId: "no", name: "Reject", kind: "reject_once" },
+  ],
+  selected_option: "no",
+  target: "ai",
+  output: { label: "deny", danger: 0.91 },
 })
 
 interface Recorded {
@@ -77,15 +76,11 @@ interface Recorded {
 
 let requests: Recorded[] = []
 let rows: LearnedPermissionDto[] = []
-let createFailure: { status: number; code: string; message: string } | null = null
-let updateFailure: { status: number; code: string; message: string } | null = null
 let deleteFailure: { status: number; code: string; message: string } | null = null
 
 function stubDaemon() {
   requests = []
-  rows = [CONSOLE_ROW, MANUAL_ROW]
-  createFailure = null
-  updateFailure = null
+  rows = [ALLOWED_ROW, DENIED_ROW]
   deleteFailure = null
 
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
@@ -103,15 +98,6 @@ function stubDaemon() {
         const items = repository ? rows.filter((row) => row.repository_id === repository) : rows
         return jsonResponse({ items })
       }
-      if (request.method === "POST") {
-        if (createFailure) {
-          const { status, code, message } = createFailure
-          return errorResponse(status, code, message)
-        }
-        const created = aLearnedPermission({ id: "01JLEARN0000000000000NEW", ...body })
-        rows = [...rows, created]
-        return jsonResponse(created, 201)
-      }
     }
 
     const match = /^\/v1\/permissions\/learned\/(.+)$/.exec(url.pathname)
@@ -121,16 +107,7 @@ function stubDaemon() {
       if (request.method === "GET") {
         return row
           ? jsonResponse(row)
-          : errorResponse(404, "learned_permission_not_found", "no such approval")
-      }
-      if (request.method === "PUT") {
-        if (updateFailure) {
-          const { status, code, message } = updateFailure
-          return errorResponse(status, code, message)
-        }
-        const updated = { ...row, ...body } as LearnedPermissionDto
-        rows = rows.map((one) => (one.id === id ? updated : one))
-        return jsonResponse(updated)
+          : errorResponse(404, "learned_permission_not_found", "no such row")
       }
       if (request.method === "DELETE") {
         if (deleteFailure) {
@@ -151,26 +128,24 @@ beforeEach(() => {
 })
 
 describe("the table", () => {
-  it("shows each row's repository by its folder name, with the full path as a title", async () => {
+  it("shows a row's tool name, target, selected option outcome, created and updated", async () => {
     renderScreen(<LearnedPermissionsTab />)
 
     expect(await screen.findByText("Bash")).toBeDefined()
-    expect(screen.getByText("ariadne")).toBeDefined()
-    expect(screen.getByTitle(REPO_A.path)).toBeDefined()
-    expect(screen.getByText("Write")).toBeDefined()
-    expect(screen.getByText("sandbox")).toBeDefined()
-    expect(screen.getByTitle(REPO_B.path)).toBeDefined()
-    expect(screen.getByText("Console")).toBeDefined()
-    expect(screen.getByText("Manual")).toBeDefined()
-    expect(screen.getByText("2 approvals")).toBeDefined()
-  })
-
-  it("shows the AI label and danger where the model scored the row", async () => {
-    renderScreen(<LearnedPermissionsTab />)
-    await screen.findByText("Bash")
-
+    expect(screen.getByText("Learn")).toBeDefined()
     expect(screen.getByText("Allow")).toBeDefined()
-    expect(screen.getByText("· 0.12")).toBeDefined()
+    expect(screen.getByText("Write")).toBeDefined()
+    expect(screen.getByText("AI")).toBeDefined()
+    expect(screen.getByText("Reject")).toBeDefined()
+    expect(screen.getByText("2 rows")).toBeDefined()
+
+    // The Created and Updated columns, in that order: each cell is a `<time>`
+    // pinned to the row's own stamp — see `components/when.tsx`.
+    const row = screen.getByRole("row", { name: "Bash (Learn)" })
+    const stamps = row.querySelectorAll("time")
+    expect(stamps).toHaveLength(2)
+    expect(stamps[0]?.getAttribute("datetime")).toBe(ALLOWED_ROW.created_at)
+    expect(stamps[1]?.getAttribute("datetime")).toBe(ALLOWED_ROW.updated_at)
   })
 
   it("narrows the list to the repository picked in the filter", async () => {
@@ -186,7 +161,7 @@ describe("the table", () => {
   })
 
   it("shows an empty state once the filter matches nothing, with a way to clear it", async () => {
-    rows = [MANUAL_ROW]
+    rows = [DENIED_ROW]
     const user = userEvent.setup()
     renderScreen(<LearnedPermissionsTab />)
     await screen.findByText("Write")
@@ -194,37 +169,26 @@ describe("the table", () => {
     await user.click(screen.getByRole("combobox", { name: "Filter by repository" }))
     await user.click(await screen.findByRole("option", { name: REPO_A.path }))
 
-    expect(await screen.findByText("No approvals for this repository")).toBeDefined()
+    expect(await screen.findByText("No rows for this repository")).toBeDefined()
 
     await user.click(screen.getByRole("button", { name: "Clear filter" }))
 
     expect(await screen.findByText("Write")).toBeDefined()
   })
 
-  it("shows the tool name and the kind cut with an ellipsis, each with a title of the full value", async () => {
+  it("has no add or edit control", async () => {
     renderScreen(<LearnedPermissionsTab />)
     await screen.findByText("Bash")
 
-    const tool = screen.getByTitle("Bash")
-    expect(tool.className).toContain("truncate")
-    const kind = screen.getByTitle("execute")
-    expect(kind.className).toContain("truncate")
-  })
-
-  it("shows the Request column text: the command of a shell call, the path of a file call", async () => {
-    rows = [CONSOLE_ROW, FILE_ROW]
-    renderScreen(<LearnedPermissionsTab />)
-    await screen.findByText("Bash")
-
-    expect(screen.getByTitle("ls")).toBeDefined()
-    expect(screen.getByTitle("/home/me/dev/ariadne/src/main.rs")).toBeDefined()
+    expect(screen.queryByRole("button", { name: /add/i })).toBeNull()
+    expect(screen.queryByRole("button", { name: /edit/i })).toBeNull()
   })
 
   it("pins the actions cell to the trailing edge", async () => {
     renderScreen(<LearnedPermissionsTab />)
     await screen.findByText("Bash")
 
-    const actionsCell = screen.getByRole("button", { name: "Edit Bash" }).closest("td")
+    const actionsCell = screen.getByRole("button", { name: "Remove Bash" }).closest("td")
     expect(actionsCell).not.toBeNull()
     expect(actionsCell?.className).toContain("sticky")
     expect(actionsCell?.className).toContain("right-0")
@@ -235,7 +199,7 @@ describe("the table", () => {
     renderScreen(<LearnedPermissionsTab />)
     await screen.findByText("Bash")
 
-    const row = screen.getByRole("row", { name: "Bash in ariadne" })
+    const row = screen.getByRole("row", { name: "Bash (Learn)" })
     row.focus()
     await user.keyboard("{Enter}")
 
@@ -264,7 +228,7 @@ describe("the repository filter", () => {
   it("shows a readable label where the URL's repository id is not in the list", async () => {
     const missingId = "01JMISSING000000000000000"
     renderScreen(<LearnedPermissionsTab />, { route: `/permissions?repository=${missingId}` })
-    await screen.findByText("No approvals for this repository")
+    await screen.findByText("No rows for this repository")
 
     const trigger = screen.getByRole("combobox", { name: "Filter by repository" })
     expect(within(trigger).getByText(shortId(missingId))).toBeDefined()
@@ -272,101 +236,7 @@ describe("the repository filter", () => {
   })
 })
 
-describe("adding an approval", () => {
-  it("sends the repository, the tool name and the kind gathered in the form", async () => {
-    const user = userEvent.setup()
-    renderScreen(<LearnedPermissionsTab />)
-    await screen.findByText("Bash")
-
-    await user.click(screen.getByRole("button", { name: "Add approval" }))
-    const dialog = await screen.findByRole("dialog")
-    await user.click(within(dialog).getByRole("combobox", { name: "Repository" }))
-    const option = await screen.findByRole("option", { name: REPO_B.path })
-    expect(within(option).getByText("sandbox")).toBeDefined()
-    expect(within(option).getByText(REPO_B.path)).toBeDefined()
-    await user.click(option)
-    expect(within(dialog).getByRole("combobox", { name: "Repository" }).title).toBe(REPO_B.path)
-    await user.type(within(dialog).getByLabelText("Tool name"), "Read")
-    await user.type(within(dialog).getByLabelText("Kind"), "read")
-    await user.click(within(dialog).getByRole("button", { name: "Add approval" }))
-
-    await waitFor(() => {
-      const created = requests.find((request) => request.method === "POST")
-      expect(created?.body).toEqual({ repository_id: REPO_B.id, tool_name: "Read", kind: "read" })
-    })
-  })
-
-  it("toasts the daemon's own message on a refusal", async () => {
-    createFailure = {
-      status: 409,
-      code: "learned_permission_exists",
-      message: "this repository already approves Bash execute",
-    }
-    const user = userEvent.setup()
-    renderScreen(
-      <>
-        <Toaster />
-        <LearnedPermissionsTab />
-      </>,
-    )
-    await screen.findByText("Bash")
-
-    await user.click(screen.getByRole("button", { name: "Add approval" }))
-    const dialog = await screen.findByRole("dialog")
-    await user.click(within(dialog).getByRole("combobox", { name: "Repository" }))
-    await user.click(await screen.findByRole("option", { name: REPO_A.path }))
-    await user.type(within(dialog).getByLabelText("Tool name"), "Bash")
-    await user.type(within(dialog).getByLabelText("Kind"), "execute")
-    await user.click(within(dialog).getByRole("button", { name: "Add approval" }))
-
-    expect(await screen.findByText(/already approves Bash execute/)).toBeDefined()
-  })
-})
-
-describe("editing an approval", () => {
-  it("opens with the row's own values and sends the tool name and the kind", async () => {
-    const user = userEvent.setup()
-    renderScreen(<LearnedPermissionsTab />)
-    await screen.findByText("Bash")
-
-    await user.click(screen.getByRole("button", { name: "Edit Bash" }))
-    const dialog = await screen.findByRole("dialog")
-    const toolName = within(dialog).getByLabelText("Tool name") as HTMLInputElement
-    expect(toolName.value).toBe("Bash")
-    await user.clear(toolName)
-    await user.type(toolName, "Shell")
-    await user.click(within(dialog).getByRole("button", { name: "Save changes" }))
-
-    await waitFor(() => {
-      const updated = requests.filter((request) => request.method === "PUT").at(-1)
-      expect(updated?.body).toEqual({ tool_name: "Shell", kind: "execute" })
-    })
-  })
-
-  it("toasts the daemon's own message on a refusal", async () => {
-    updateFailure = {
-      status: 422,
-      code: "invalid_request",
-      message: "the tool name cannot be empty",
-    }
-    const user = userEvent.setup()
-    renderScreen(
-      <>
-        <Toaster />
-        <LearnedPermissionsTab />
-      </>,
-    )
-    await screen.findByText("Bash")
-
-    await user.click(screen.getByRole("button", { name: "Edit Bash" }))
-    const dialog = await screen.findByRole("dialog")
-    await user.click(within(dialog).getByRole("button", { name: "Save changes" }))
-
-    expect(await screen.findByText(/the tool name cannot be empty/)).toBeDefined()
-  })
-})
-
-describe("removing an approval", () => {
+describe("removing a row", () => {
   it("asks for confirmation, then sends the delete", async () => {
     const user = userEvent.setup()
     renderScreen(<LearnedPermissionsTab />)
@@ -374,7 +244,7 @@ describe("removing an approval", () => {
 
     await user.click(screen.getByRole("button", { name: "Remove Bash" }))
     expect(screen.getByText("Bash")).toBeDefined()
-    await user.click(await screen.findByRole("button", { name: "Remove approval" }))
+    await user.click(await screen.findByRole("button", { name: "Remove row" }))
 
     await waitFor(() => expect(screen.queryByText("Bash")).toBeNull())
     expect(requests.some((request) => request.method === "DELETE")).toBe(true)
@@ -407,36 +277,49 @@ describe("removing an approval", () => {
     await screen.findByText("Bash")
 
     await user.click(screen.getByRole("button", { name: "Remove Bash" }))
-    await user.click(await screen.findByRole("button", { name: "Remove approval" }))
+    await user.click(await screen.findByRole("button", { name: "Remove row" }))
 
     expect(await screen.findByText(/already removed/)).toBeDefined()
   })
 })
 
 describe("the detail view", () => {
-  it("shows the stored request of a console row, with the AI verdict and both thresholds", async () => {
+  it("shows every field, with the tool call, the options and a null output as JSON", async () => {
     const user = userEvent.setup()
     renderScreen(<LearnedPermissionsTab />)
     await user.click(await screen.findByText("Bash"))
 
-    expect(await screen.findByText(/"command": "ls"/)).toBeDefined()
-    expect(screen.getByText(/"choices"/)).toBeDefined()
-    expect(screen.getByText("allow")).toBeDefined()
-    expect(screen.getByText(CONSOLE_ROW.id)).toBeDefined()
-    expect(screen.getByText(REPO_A.id)).toBeDefined()
-    expect(screen.getByRole("link", { name: /^session/ })).toBeDefined()
-    expect(screen.getByRole("link", { name: /^task/ })).toBeDefined()
-    expect(screen.getByText("0.12")).toBeDefined()
-    expect(screen.getByText("0.20")).toBeDefined()
-    expect(screen.getByText("0.80")).toBeDefined()
+    const panel = within(await screen.findByRole("dialog"))
+    expect(panel.getByText(/"command": "ls"/)).toBeDefined()
+    expect(panel.getByText(/"optionId": "yes"/)).toBeDefined()
+    expect(panel.getByText("no model output")).toBeDefined()
+    expect(panel.getByText(ALLOWED_ROW.id)).toBeDefined()
+    expect(panel.getByText(REPO_A.id)).toBeDefined()
+    expect(panel.getByText("Learn")).toBeDefined()
   })
 
-  it("says a manual row recorded no request", async () => {
+  it("shows the model's output as JSON where it was called", async () => {
     const user = userEvent.setup()
     renderScreen(<LearnedPermissionsTab />)
     await user.click(await screen.findByText("Write"))
 
-    expect(await screen.findByText(/no request was recorded/)).toBeDefined()
-    expect(screen.queryByText(/"command"/)).toBeNull()
+    expect(await screen.findByText(/"label": "deny"/)).toBeDefined()
+    expect(screen.queryByText("no model output")).toBeNull()
+  })
+
+  it("refreshes the row on an `updated` event", async () => {
+    const { queryClient } = renderScreen(<LearnedPermissionsTab />)
+    await screen.findByText("Bash")
+
+    // The daemon's own row moves first, as it does in production — the event
+    // only ever follows a write the GET would already answer the same way.
+    const updated = { ...ALLOWED_ROW, selected_option: "no" }
+    rows = rows.map((row) => (row.id === updated.id ? updated : row))
+
+    act(() => {
+      dispatchDomainEvent(queryClient, { event: "learned_permission_updated", data: updated })
+    })
+
+    expect(await screen.findByText("Deny")).toBeDefined()
   })
 })

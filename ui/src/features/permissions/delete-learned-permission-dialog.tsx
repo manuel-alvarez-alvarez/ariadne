@@ -1,13 +1,13 @@
 /**
- * "Remove this approval?" — a plain confirm rather than `DeleteDialog`: nothing
- * else references a learned approval the way a goal references a repository,
- * so there is no "still in use" refusal to make room for, and a refusal of any
+ * "Remove this row?" — a plain confirm rather than `DeleteDialog`: nothing
+ * else references a learned row the way a goal references a repository, so
+ * there is no "still in use" refusal to make room for, and a refusal of any
  * other kind is toasted with the daemon's own message instead of held open in
  * the dialog.
  *
  * Named by the repository's folder and the request it matches, not only the
- * tool name: two approvals both called "Bash" are common, and the tool name
- * alone does not say which one is about to go.
+ * tool name: two rows both called "Bash" are common, and the tool name alone
+ * does not say which one is about to go.
  */
 
 import { toast } from "sonner"
@@ -27,7 +27,7 @@ export function DeleteLearnedPermissionDialog({
   open: boolean
   onOpenChange: (open: boolean) => void
   learned: LearnedPermissionDto | null
-  /** Every registered repository, to name the one this approval belongs to. */
+  /** Every registered repository, to name the one this row belongs to. */
   repositories: RepositoryDto[]
 }) {
   const deleteLearned = useDeleteLearnedPermission()
@@ -44,26 +44,26 @@ export function DeleteLearnedPermissionDialog({
       onClose={() => onOpenChange(false)}
       title={
         learned && repositoryPath
-          ? `Remove the approval for “${learned.tool_name}” in ${folderName(repositoryPath)}?`
-          : "Remove this approval?"
+          ? `Remove the row for “${learned.tool_name}” in ${folderName(repositoryPath)}?`
+          : "Remove this row?"
       }
       description={
         request
           ? `Matches “${request}”. The next matching request is asked for again.`
           : "The next matching request is asked for again."
       }
-      confirmLabel="Remove approval"
+      confirmLabel="Remove row"
       destructive
       pending={deleteLearned.isPending}
       onConfirm={() => {
         if (!learned) return
         deleteLearned.mutate(learned.id, {
           onSuccess: () => {
-            toast.success("Approval removed", { description: learned.tool_name })
+            toast.success("Row removed", { description: learned.tool_name })
             onOpenChange(false)
           },
           onError: (error) =>
-            toast.error("Could not remove the approval", { description: describeError(error) }),
+            toast.error("Could not remove the row", { description: describeError(error) }),
         })
       }}
     />

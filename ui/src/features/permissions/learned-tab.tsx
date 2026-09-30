@@ -1,7 +1,8 @@
 /**
- * The Learned tab: every approval a repository's agents no longer have to ask
- * for again, whichever permission mode left it — a console pick under `learn`
- * or `ai`, or one added by hand ahead of either.
+ * The Learned tab: every choice a repository's agents made, or had made for
+ * them — a console pick under `learn` or `ai`, or a denial the AI model
+ * reached on its own — kept so a future run of the same request answers the
+ * same way and so the choices can train the model that makes them.
  *
  * A repository is shown by its folder name — the last path segment, what a
  * person actually recognises it by — with the full path kept as a `title` and,
@@ -16,25 +17,26 @@
  * a matching option to exist.
  *
  * A row opens the same detail every field of it deserves
- * (`learned-permission-detail.tsx`); its own Edit and Delete stop that click
+ * (`learned-permission-detail.tsx`); its own Delete stops that click
  * from reaching the row underneath, the way every other table's row actions do
  * (`features/sessions/sessions-list.tsx`). The row is a Tab stop of its own
  * too, opening the same detail on Enter or Space, since a click is not the
  * only way in.
  *
  * The actions column is pinned to the trailing edge (`features/models/model-
- * table.tsx`'s pattern): a table wide enough to scroll must not carry Edit and
- * Remove off the screen with the columns that are only data.
+ * table.tsx`'s pattern): a table wide enough to scroll must not carry Remove
+ * off the screen with the columns that are only data.
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { PencilIcon, PlusIcon, ShieldCheckIcon, Trash2Icon } from "lucide-react"
+import { ShieldCheckIcon, Trash2Icon } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 
-import type { LearnedPermissionDto, LearnedPermissionLabel, LearnedPermissionSource } from "@/api"
+import type { LearnedPermissionDto } from "@/api"
 import { DataTable, RowAction } from "@/components/data-table"
 import { EmptyState } from "@/components/empty-state"
+import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import {
   Select,
@@ -45,14 +47,14 @@ import {
 } from "@/components/ui/select"
 import { TableCell, TableRow } from "@/components/ui/table"
 import { When } from "@/components/when"
+import { permissionModeLabel } from "@/features/repositories/permission-modes"
 import { repositoriesQueryOptions } from "@/features/repositories/queries"
 import { cn, folderName, plural, shortId } from "@/lib/format"
 
 import { DeleteLearnedPermissionDialog } from "./delete-learned-permission-dialog"
 import { LearnedPermissionDetail } from "./learned-permission-detail"
-import { LearnedPermissionFormDialog } from "./learned-permission-form-dialog"
 import { learnedPermissionsQueryOptions } from "./queries"
-import { requestSummary } from "./request-summary"
+import { selectedOptionInfo } from "./request-summary"
 
 /** The param the repository filter travels in, the daemon's own name for it. */
 const REPOSITORY_PARAM = "repository"
@@ -60,29 +62,21 @@ const REPOSITORY_PARAM = "repository"
 /** No filter, in the Select: the value an absent param stands for. */
 const ALL = "all"
 
-const SOURCE_LABELS: Record<LearnedPermissionSource, string> = {
-  console: "Console",
-  manual: "Manual",
-}
-
-const AI_LABELS: Record<LearnedPermissionLabel, string> = {
-  allow: "Allow",
-  ask: "Ask",
-  deny: "Deny",
-}
-
 /** The pinned actions column, held against the trailing edge — see `model-table.tsx`. */
 const PINNED = "sticky right-0 z-20 bg-inherit pe-3"
 
+const OUTCOME_TONE = {
+  allow: "bg-status-done-soft text-status-done-fg",
+  deny: "bg-status-danger-soft text-status-danger-fg",
+} as const
+
 const COLUMNS = [
-  { header: "Repository" },
   { header: "Tool" },
-  { header: "Kind" },
-  { header: "Request" },
-  { header: "Source" },
-  { header: "AI" },
-  { header: "Learned" },
-  { className: cn("w-24 text-right", PINNED) },
+  { header: "Target" },
+  { header: "Selected option" },
+  { header: "Created" },
+  { header: "Updated" },
+  { className: cn("w-16 text-right", PINNED) },
 ]
 
 export function LearnedPermissionsTab() {
@@ -92,8 +86,6 @@ export function LearnedPermissionsTab() {
   const repositories = useQuery(repositoriesQueryOptions())
   const learned = useQuery(learnedPermissionsQueryOptions({ repository: repositoryFilter }))
 
-  const [formOpen, setFormOpen] = useState(false)
-  const [editing, setEditing] = useState<LearnedPermissionDto | null>(null)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState<LearnedPermissionDto | null>(null)
   const [detailId, setDetailId] = useState<string | null>(null)
@@ -133,16 +125,6 @@ export function LearnedPermissionsTab() {
     setSearch(next, { replace: true })
   }
 
-  function openCreate() {
-    setEditing(null)
-    setFormOpen(true)
-  }
-
-  function openEdit(row: LearnedPermissionDto) {
-    setEditing(row)
-    setFormOpen(true)
-  }
-
   function openDelete(row: LearnedPermissionDto) {
     setDeleting(row)
     setDeleteOpen(true)
@@ -177,26 +159,20 @@ export function LearnedPermissionsTab() {
             ))}
           </SelectContent>
         </Select>
-
-        <Button onClick={openCreate}>
-          <PlusIcon />
-          Add approval
-        </Button>
       </div>
 
       {learned.data ? (
-        <p className="text-sm text-muted-foreground">{plural(learned.data.length, "approval")}</p>
+        <p className="text-sm text-muted-foreground">{plural(learned.data.length, "row")}</p>
       ) : null}
 
       <DataTable
         query={learned}
-        errorTitle="Could not load learned approvals"
+        errorTitle="Could not load the learned rows"
         columns={COLUMNS}
         pinnedEnd
         empty={
           <NoLearnedPermissions
             filtered={repositoryFilter !== undefined}
-            onCreate={openCreate}
             onClearFilter={() => setRepositoryFilter(null)}
           />
         }
@@ -204,20 +180,12 @@ export function LearnedPermissionsTab() {
         renderRow={(row) => (
           <LearnedPermissionRow
             row={row}
-            repositoryPath={pathById.get(row.repository_id) ?? row.repository_id}
             onOpen={() => setDetailId(row.id)}
-            onEdit={() => openEdit(row)}
             onDelete={() => openDelete(row)}
           />
         )}
       />
 
-      <LearnedPermissionFormDialog
-        open={formOpen}
-        onOpenChange={setFormOpen}
-        editing={editing}
-        repositories={repositories.data ?? []}
-      />
       <DeleteLearnedPermissionDialog
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
@@ -233,26 +201,20 @@ export function LearnedPermissionsTab() {
 
 function LearnedPermissionRow({
   row,
-  repositoryPath,
   onOpen,
-  onEdit,
   onDelete,
 }: {
   row: LearnedPermissionDto
-  repositoryPath: string
   onOpen: () => void
-  onEdit: () => void
   onDelete: () => void
 }) {
-  const folder = folderName(repositoryPath)
-  const request = requestSummary(row.tool_call)
+  const targetLabel = permissionModeLabel(row.target)
+  const option = selectedOptionInfo(row.options, row.selected_option)
 
   return (
     <TableRow
       tabIndex={0}
-      // Both facts a reader picks the row by, since the tool name alone
-      // repeats across repositories and the folder alone repeats across tools.
-      aria-label={`${row.tool_name} in ${folder}`}
+      aria-label={`${row.tool_name} (${targetLabel})`}
       className="cursor-pointer bg-background focus-visible:outline-none focus-visible:-outline-offset-2 focus-visible:ring-2 focus-visible:ring-ring/50"
       // Anywhere on the row opens the detail view; the row actions carry a
       // click of their own and must not also open it.
@@ -261,8 +223,8 @@ function LearnedPermissionRow({
         if (event.currentTarget.contains(target) && !target.closest("button")) onOpen()
       }}
       onKeyDown={(event) => {
-        // Only the row's own focus, not a keystroke bubbling up from Edit or
-        // Remove — a button already answers Enter and Space for itself.
+        // Only the row's own focus, not a keystroke bubbling up from Remove —
+        // a button already answers Enter and Space for itself.
         if (event.target !== event.currentTarget) return
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault()
@@ -270,42 +232,24 @@ function LearnedPermissionRow({
         }
       }}
     >
-      <TableCell className="max-w-28 truncate font-mono text-xs lg:max-w-56" title={repositoryPath}>
-        {folder}
-      </TableCell>
       <TableCell className="max-w-24 truncate font-mono text-xs lg:max-w-40" title={row.tool_name}>
         {row.tool_name}
       </TableCell>
-      <TableCell
-        className="max-w-20 truncate text-xs text-muted-foreground lg:max-w-32"
-        title={row.kind}
-      >
-        {row.kind}
-      </TableCell>
-      <TableCell
-        className="max-w-32 truncate font-mono text-xs lg:max-w-64"
-        title={request ?? undefined}
-      >
-        {request ?? <span className="text-muted-foreground">—</span>}
-      </TableCell>
-      <TableCell className="text-xs">{SOURCE_LABELS[row.source]}</TableCell>
+      <TableCell className="text-xs">{targetLabel}</TableCell>
       <TableCell className="text-xs">
-        {row.label ? (
-          <>
-            {AI_LABELS[row.label]}
-            {row.danger !== null && row.danger !== undefined ? (
-              <span className="text-muted-foreground"> · {row.danger.toFixed(2)}</span>
-            ) : null}
-          </>
+        {option.outcome ? (
+          <StatusBadge size="sm" label={option.label} tone={OUTCOME_TONE[option.outcome]} />
         ) : (
-          <span className="text-muted-foreground">—</span>
+          option.label
         )}
       </TableCell>
       <TableCell className="text-xs text-muted-foreground">
         <When at={row.created_at} format="age" label="learned" />
       </TableCell>
+      <TableCell className="text-xs text-muted-foreground">
+        <When at={row.updated_at} format="age" label="updated" />
+      </TableCell>
       <TableCell className={cn("text-right", PINNED)}>
-        <RowAction icon={<PencilIcon />} label={`Edit ${row.tool_name}`} onClick={onEdit} />
         <RowAction icon={<Trash2Icon />} label={`Remove ${row.tool_name}`} onClick={onDelete} />
       </TableCell>
     </TableRow>
@@ -314,34 +258,27 @@ function LearnedPermissionRow({
 
 function NoLearnedPermissions({
   filtered,
-  onCreate,
   onClearFilter,
 }: {
   filtered: boolean
-  onCreate: () => void
   onClearFilter: () => void
 }) {
   return (
     <EmptyState
       className="border-0 py-12"
       icon={<ShieldCheckIcon className="size-8" />}
-      title={filtered ? "No approvals for this repository" : "No learned approvals yet"}
+      title={filtered ? "No rows for this repository" : "Nothing learned yet"}
       description={
         filtered
           ? "Pick another repository, or clear the filter."
-          : "An approval is remembered the first time a console pick says to, or added here by hand."
+          : "A row is recorded the first time a repository's agents make a choice, or have one made for them."
       }
       action={
         filtered ? (
           <Button variant="outline" size="sm" onClick={onClearFilter}>
             Clear filter
           </Button>
-        ) : (
-          <Button variant="outline" size="sm" onClick={onCreate}>
-            <PlusIcon />
-            Add approval
-          </Button>
-        )
+        ) : undefined
       }
     />
   )

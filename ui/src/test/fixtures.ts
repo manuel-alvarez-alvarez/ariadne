@@ -336,7 +336,7 @@ export function anAiPermissionsStatus(
   }
 }
 
-/** A manual row `GET /v1/permissions/learned` answers with, unscored by the AI model. */
+/** A row `GET /v1/permissions/learned` answers with, one user choice or denial. */
 export function aLearnedPermission(
   overrides: Partial<LearnedPermissionDto> = {},
 ): LearnedPermissionDto {
@@ -344,17 +344,14 @@ export function aLearnedPermission(
     id: LEARNED_ID,
     repository_id: REPO_ID,
     tool_name: "Bash",
-    kind: "execute",
-    source: "manual",
-    tool_call: null,
-    options: null,
-    selected_option: null,
-    session_id: null,
-    task_id: null,
-    label: null,
-    danger: null,
-    allow_threshold: null,
-    deny_threshold: null,
+    tool_call: { title: "Bash", kind: "execute", rawInput: { command: "ls" } },
+    options: [
+      { optionId: "yes", name: "Allow", kind: "allow_once" },
+      { optionId: "no", name: "Reject", kind: "reject_once" },
+    ],
+    selected_option: "yes",
+    target: "learn",
+    output: null,
     created_at: STAMP,
     updated_at: STAMP,
     ...overrides,
