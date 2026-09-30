@@ -3,8 +3,7 @@
 
 Evaluators live under `evaluators/`, one package per backend, and register under a unique
 key; `list` prints them and `run --evaluator <key>` runs one: `setup`, `evaluate` per case,
-then `teardown`. `fixture --evaluator <key>` prints what a mode sends for each case, and what
-its rules and caps decide, with no model.
+then `teardown`. `fixture --evaluator <key>` prints what a mode sends, with no model.
 """
 from __future__ import annotations
 
@@ -21,8 +20,10 @@ from typing import Any
 from ai_bench import cases as cases_mod
 from ai_bench import db as db_mod
 from ai_bench import metrics, probe, registry, representations
-from ai_bench.derive import RULES, TAGS, derive
+from ai_bench.derive import TAGS, derive
 from ai_bench.evaluator import EvaluationResult, Evaluator, EvaluatorError
+
+HARD_RULE_NAMES = ("credential_transfer", "root_delete", "home_delete", "permission_tamper")
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_CASES = [HERE / "cases" / name for name in ("safe.jsonl", "elevated.jsonl", "adversarial-dev.jsonl")]
@@ -48,8 +49,7 @@ def evaluate_all(evaluator: Evaluator, cases: list[dict[str, Any]]) -> list[Eval
                     evaluation.danger,
                     evaluation.label,
                     latency_ms,
-                    evaluation.rule,
-                    evaluation.cap,
+                    evaluation.safe,
                     evaluation.p_allow,
                     evaluation.p_deny,
                 )
@@ -129,39 +129,26 @@ def print_selection(name: str, cases: list[dict[str, Any]], results: list[Evalua
     if any(result.p_allow is not None or result.p_deny is not None for result in results):
         print_probability_selection(name, cases, results, margin)
         return
+    safe_scale = any(result.safe is not None for result in results)
     try:
-        selection = metrics.select_thresholds(cases, results, margin)
+        selection = (metrics.select_noul_thresholds if safe_scale else metrics.select_thresholds)(cases, results, margin)
     except ValueError as exc:
         print("  %s" % exc)
         return
+    scale = "P(safe) " if safe_scale else ""
     if selection["has_pair"]:
-        print(
-            "  pair: allow_threshold %.4f / deny_threshold %.4f"
-            % (selection["allow_threshold"], selection["deny_threshold"])
-        )
+        print("  pair: %sallow_threshold %.4f / deny_threshold %.4f" % (scale, selection["allow_threshold"], selection["deny_threshold"]))
     else:
-        print(
-            "  no pair: allow_threshold %.4f is not under deny_threshold %.4f"
-            % (selection["allow_threshold"], selection["deny_threshold"])
-        )
-    if selection["decided"]:
-        print("  risky cases that a rule or a cap decides, off the allow bound: %d" % len(selection["decided"]))
-    if selection["rule_denied"]:
-        print("  broken hard rule, a rule denies %d safe or real case(s):" % len(selection["rule_denied"]))
-        for case_id in selection["rule_denied"]:
-            print("    %s" % case_id)
-    print("  nearest the allow bound:")
-    for case_id, danger in selection["nearest_allow"]:
-        print("    %-40s %.4f" % (case_id, danger))
-    print("  nearest the deny bound:")
-    for case_id, danger in selection["nearest_deny"]:
-        print("    %-40s %.4f" % (case_id, danger))
-    relabelled = [
-        metrics.at_thresholds(result, selection["allow_threshold"], selection["deny_threshold"]) for result in results
-    ]
+        relation = "deny_threshold is not under allow_threshold" if safe_scale else "allow_threshold is not under deny_threshold"
+        print("  no pair: %sallow_threshold %.4f / deny_threshold %.4f; %s" % (scale, selection["allow_threshold"], selection["deny_threshold"], relation))
+    for heading, key in (("allow", "nearest_allow"), ("deny", "nearest_deny")):
+        print("  nearest the %s bound:" % heading)
+        for case_id, value in selection[key]:
+            print("    %-40s %.4f" % (case_id, value))
+    relabel = metrics.at_noul_thresholds if safe_scale else metrics.at_thresholds
+    labelled = [relabel(result, selection["allow_threshold"], selection["deny_threshold"]) for result in results]
     print("  table at that pair:")
-    include_real = any(case["set"] == "real" for case in cases)
-    print_table([(name, metrics.summary(cases, relabelled))], include_real)
+    print_table([(name, metrics.summary(cases, labelled))], any(case["set"] == "real" for case in cases))
 
 
 def print_probability_selection(
@@ -176,12 +163,6 @@ def print_probability_selection(
         "  pair: allow_probability %.4f / deny_probability %.4f"
         % (selection["allow_probability"], selection["deny_probability"])
     )
-    if selection["decided"]:
-        print("  risky cases that a rule or a cap decides, off the allow bound: %d" % len(selection["decided"]))
-    if selection["rule_denied"]:
-        print("  broken hard rule, a rule denies %d safe or real case(s):" % len(selection["rule_denied"]))
-        for case_id in selection["rule_denied"]:
-            print("    %s" % case_id)
     print("  nearest the allow bound:")
     for case_id, probability in selection["nearest_allow"]:
         print("    %-40s %.4f" % (case_id, probability))
@@ -246,8 +227,7 @@ def write_scores(directory: Path, name: str, cases: list[dict[str, Any]], result
         writer = csv.writer(output, lineterminator="\n")
         writer.writerow(
             [
-                "id", "set", "expected", "danger", "label", "latency_ms", "operation", "risk_tags", "pair", "rule",
-                "cap", "p_allow", "p_deny",
+                "id", "set", "expected", "danger", "label", "latency_ms", "operation", "risk_tags", "pair", "safe", "p_allow", "p_deny",
             ]
         )
         writer.writerows(
@@ -261,8 +241,7 @@ def write_scores(directory: Path, name: str, cases: list[dict[str, Any]], result
                 case.get("operation") or "",
                 "|".join(case.get("risk_tags") or []),
                 case.get("pair") or "",
-                result.rule or "",
-                result.cap or "",
+                result.safe,
                 result.p_allow,
                 result.p_deny,
             ]
@@ -295,8 +274,7 @@ def read_scores(path: Path) -> tuple[list[dict[str, Any]], list[EvaluationResult
                         float(row["danger"]) if row["danger"] else None,
                         row["label"],
                         float(row["latency_ms"]),
-                        row.get("rule") or None,
-                        row.get("cap") or None,
+                        float(row["safe"]) if row.get("safe") else None,
                         float(row["p_allow"]) if row.get("p_allow") else None,
                         float(row["p_deny"]) if row.get("p_deny") else None,
                     )
@@ -374,8 +352,8 @@ def cmd_derive(args: argparse.Namespace) -> int:
         if case["set"] not in sets:
             sets.append(case["set"])
     rows = []
-    rule_ids: dict[str, list[str]] = {rule: [] for rule in RULES}
-    for kind, names in (("tag", TAGS), ("rule", RULES)):
+    rule_ids: dict[str, list[str]] = {rule: [] for rule in HARD_RULE_NAMES}
+    for kind, names in (("tag", TAGS), ("rule", HARD_RULE_NAMES)):
         for name in names:
             counts = dict.fromkeys(sets, 0)
             for case, result in derived_cases:
@@ -394,35 +372,21 @@ def cmd_derive(args: argparse.Namespace) -> int:
     for row in rows:
         print("  ".join(value.ljust(width) for value, width in zip(row, widths)))
     print("rule ids:")
-    for rule in RULES:
+    for rule in HARD_RULE_NAMES:
         print("  %s: %s" % (rule, ", ".join(rule_ids[rule]) or "-"))
     return 0
 
 
 def fixture_line(cls: type[Evaluator], case: dict[str, Any]) -> dict[str, Any]:
-    """What the mode `cls` sends for `case`, and what its rules and caps decide before the
-    model answers. `derived.rule` is the rule of the mode that denies the call, and
-    `derived.cap` the first tag of its caps that the call has; each is `None` where none does."""
+    """The contract request and derived facts, with no model."""
     _, module = contract_of(cls.key)
-    request = case["request"]
-    workspace = case.get("repository")
-    state = state_of(module, request, workspace)
+    request, workspace = case["request"], case.get("repository")
     derived = derive(request, workspace)
-    rules = getattr(module, "RULES", [])
-    caps = getattr(module, "CAPS", [])
     return {
-        "id": case["id"],
-        "request": request,
-        "workspace": workspace,
-        "model": getattr(cls, "model", None),
-        "state": state,
+        "id": case["id"], "request": request, "workspace": workspace,
+        "model": getattr(cls, "model", None), "state": state_of(module, request, workspace),
         "questions": module.QUESTIONS,
-        "derived": {
-            "operation": derived.operation_hint,
-            "risk_tags": derived.risk_tags,
-            "rule": derived.rule if derived.rule in rules else None,
-            "cap": next((tag for tag in caps if tag in derived.risk_tags), None),
-        },
+        "derived": {"operation": derived.operation_hint, "risk_tags": derived.risk_tags},
     }
 
 
@@ -490,7 +454,6 @@ def probe_cases(prober: Any, contracts: list[tuple[str, Any]], cases: list[dict[
                 "derived": {
                     "operation_hint": derived.operation_hint,
                     "risk_tags": derived.risk_tags,
-                    "rule": derived.rule,
                 },
                 "latency_ms": (time.perf_counter() - started) * 1000.0,
                 "probabilities": found,
@@ -602,68 +565,37 @@ def cmd_measure(args: argparse.Namespace) -> int:
     _, module = contract_of(args.evaluator)
     if any(args.evaluator not in record["probabilities"] for record in records):
         raise EvaluatorError("the probe records do not carry %s" % args.evaluator)
-    caps = list(getattr(module, "CAPS", [])) if args.caps is None else [tag for tag in args.caps.split(",") if tag]
-    rules = list(getattr(module, "RULES", [])) if args.rules is None else [rule for rule in args.rules.split(",") if rule]
-    for name, known in (("cap", TAGS), ("rule", RULES)):
-        for value in caps if name == "cap" else rules:
-            if value not in known:
-                raise EvaluatorError("unknown %s %r" % (name, value))
     temperatures = args.temperature or [module.TEMPERATURE]
     if any(temperature is None for temperature in temperatures):
         raise EvaluatorError("%s keeps the temperature of its checkpoint: give --temperature" % args.evaluator)
-    print("%s, caps: %s, rules: %s, margin %.2f" % (args.evaluator, ", ".join(caps) or "-", ", ".join(rules) or "-", args.margin))
+    print("%s, margin %.2f" % (args.evaluator, args.margin))
     if args.variable == "temperature":
         rows = []
+        safe_scale = module.QUESTIONS["decision"]["type"] == "noul"
+        score = module.safe if safe_scale else module.danger
         for temperature in temperatures:
-            found = probe.results(records, args.evaluator, module.QUESTIONS, module.danger, temperature, caps, rules)
-            if args.pair:
-                outcome = probe.at_pair(records, found, args.pair[0], args.pair[1])
-            else:
-                outcome = probe.outcome(records, found, args.margin)
+            found = probe.results(records, args.evaluator, module.QUESTIONS, score, temperature, safe_scale)
+            outcome = probe.at_pair(records, found, *args.pair, safe_scale=safe_scale) if args.pair else probe.outcome(records, found, args.margin)
             rows.append(["%.2f" % temperature, *outcome_row(outcome)])
-        print_rows(["temperature", *OUTCOME_HEADERS], rows)
-    elif args.variable == "caps":
-        rows = probe.cap_costs(records, args.evaluator, module.QUESTIONS, module.danger, temperatures[0], caps, rules, args.margin)
-        print_rows(
-            ["tag", "benign", "risky", "cost", "allow threshold", "benign allowed", "gain"],
-            [
-                [
-                    row["tag"],
-                    str(row["benign"]),
-                    str(row["risky"]),
-                    str(row["cost"]),
-                    "%.4f" % row["allow_threshold"],
-                    str(row["benign_allowed"]),
-                    "%+d" % row["gain"],
-                ]
-                for row in rows
-            ],
-        )
+        headers = ["temperature", *OUTCOME_HEADERS]
+        if safe_scale:
+            headers[1:3] = ["allow P(safe)", "deny P(safe)"]
+        print_rows(headers, rows)
     elif args.variable == "policy":
-        found = probe.probability_policy(records, args.evaluator, args.question, temperatures[0], caps, rules, args.margin)
+        found = probe.probability_policy(records, args.evaluator, args.question, temperatures[0], args.margin)
         print_rows(
             ["allow probability", "deny probability", "benign allowed", "adversarial denied", "risky allowed", "benign denied"],
-            [
-                [
-                    "%.4f" % found["allow_probability"],
-                    "%.4f" % found["deny_probability"],
-                    share(found["benign_allowed"], found["benign"]),
-                    share(found["adversarial_denied"], found["adversarial"]),
-                    str(found["risky_allowed"]),
-                    str(found["safe_denied"]),
-                ]
-            ],
+            [["%.4f" % found["allow_probability"], "%.4f" % found["deny_probability"],
+              share(found["benign_allowed"], found["benign"]), share(found["adversarial_denied"], found["adversarial"]),
+              str(found["risky_allowed"]), str(found["safe_denied"])]],
         )
     else:
         options = list(module.QUESTIONS[args.question]["criteria"])
         found = probe.choice_accuracy(records, args.evaluator, args.question, options)
-        print_rows(
-            ["operation", "correct"],
-            [
-                *([operation, share(hits, total)] for operation, (hits, total) in found["by_operation"].items()),
-                ["every operation", share(round((found["accuracy"] or 0) * found["count"]), found["count"])],
-            ],
-        )
+        print_rows(["operation", "correct"], [
+            *([operation, share(hits, total)] for operation, (hits, total) in found["by_operation"].items()),
+            ["every operation", share(round((found["accuracy"] or 0) * found["count"]), found["count"])],
+        ])
     return 0
 
 
@@ -728,12 +660,10 @@ def build_parser() -> argparse.ArgumentParser:
     probing.add_argument("--out", required=True, help="the JSON Lines file for the records")
     probing.set_defaults(func=cmd_probe)
     measure = subcommands.add_parser("measure", help="print one variable of a mode from probe records, with no model")
-    measure.add_argument("variable", choices=("temperature", "caps", "policy", "operation"))
+    measure.add_argument("variable", choices=("temperature", "policy", "operation"))
     measure.add_argument("targets", nargs="+", help="files of probe records; their records go together")
     measure.add_argument("--evaluator", required=True, help="the mode to measure, by key")
     measure.add_argument("--temperature", type=float, action="append", help="a temperature; repeat for each one (default: the one of the mode)")
-    measure.add_argument("--caps", help="tags that cap, with commas (default: the CAPS of the mode; '' for none)")
-    measure.add_argument("--rules", help="hard rules in use, with commas (default: the RULES of the mode; '' for none)")
     measure.add_argument("--margin", type=float, default=DEFAULT_MARGIN, help="selection margin (default: %s)" % DEFAULT_MARGIN)
     measure.add_argument("--pair", type=float, nargs=2, metavar=("ALLOW", "DENY"), help="temperature only: judge at this pair, not at the pair of the records")
     measure.add_argument("--question", default="decision", help="policy and operation: the name of the choice question (default: decision)")

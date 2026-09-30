@@ -11,7 +11,6 @@ import gc
 from typing import Any, ClassVar
 
 from ai_bench import decision
-from ai_bench.derive import derive
 from ai_bench.evaluator import Evaluation, Evaluator, EvaluatorError
 
 
@@ -91,26 +90,20 @@ class KevEvaluator(Evaluator):
 
 
 def evaluate_contract(evaluator: KevEvaluator, contract: Any, case: dict[str, Any]) -> Evaluation:
-    """One case under the contract module `contract`: a hard rule of its `RULES` denies with no
-    call to the model; else the model answers its `QUESTIONS` over its `state`, and a tag of
-    its `CAPS` keeps the call from `allow`."""
+    """Ask one contract question and apply its score or noul bounds."""
     request, workspace = case["request"], case.get("repository")
-    derived = derive(request, workspace)
-    if derived.rule in contract.RULES:
-        return decision.ruled(derived.rule)
     answer = evaluator.answer(contract.state(request, workspace), contract.QUESTIONS)
-    evaluation = decision.three_way(contract.danger(answer), contract.ALLOW_THRESHOLD, contract.DENY_THRESHOLD)
-    return decision.capped(evaluation, derived.risk_tags, contract.CAPS)
+    if contract.QUESTIONS["decision"]["type"] == "noul":
+        safe = contract.safe(answer)
+        return Evaluation(
+            None if safe is None else 1.0 - safe,
+            decision.noul_bounds(safe, contract.ALLOW_THRESHOLD, contract.DENY_THRESHOLD),
+            safe=safe,
+        )
+    return decision.three_way(contract.danger(answer), contract.ALLOW_THRESHOLD, contract.DENY_THRESHOLD)
 
 
 def evaluate_probability_contract(evaluator: KevEvaluator, contract: Any, case: dict[str, Any]) -> Evaluation:
-    """One case under the probability-policy contract `contract`: a hard rule of its `RULES`
-    denies with no call to the model; else the model answers its `QUESTIONS` over its `state`,
-    and `contract.decision` turns the answer into the label, with no call to `contract.CAPS`
-    here: `contract.decision` applies its own caps."""
     request, workspace = case["request"], case.get("repository")
-    derived = derive(request, workspace)
-    if derived.rule in contract.RULES:
-        return decision.ruled(derived.rule)
     answer = evaluator.answer(contract.state(request, workspace), contract.QUESTIONS)
-    return contract.decision(answer, derived)
+    return contract.decision(answer)

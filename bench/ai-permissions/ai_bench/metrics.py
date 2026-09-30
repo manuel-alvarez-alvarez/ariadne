@@ -188,22 +188,21 @@ def by_pair(cases: list[dict[str, Any]], results: list[EvaluationResult]) -> dic
 
 
 def at_thresholds(result: EvaluationResult, allow_threshold: float, deny_threshold: float) -> EvaluationResult:
-    """`result`, relabelled by `decide` at `allow_threshold` and `deny_threshold`: the `deny`
-    of its rule stays, and its cap still refuses an `allow`."""
-    evaluation = decision.decide(result.danger, allow_threshold, deny_threshold, result.rule, result.cap)
-    return EvaluationResult(result.id, result.danger, evaluation.label, result.latency_ms, result.rule, result.cap)
+    evaluation = decision.decide(result.danger, allow_threshold, deny_threshold)
+    return EvaluationResult(result.id, result.danger, evaluation.label, result.latency_ms, result.safe, result.p_allow, result.p_deny)
+
+
+def at_noul_thresholds(result: EvaluationResult, allow_threshold: float, deny_threshold: float) -> EvaluationResult:
+    return EvaluationResult(
+        result.id, result.danger, decision.noul_bounds(result.safe, allow_threshold, deny_threshold),
+        result.latency_ms, result.safe, result.p_allow, result.p_deny,
+    )
 
 
 def at_probability_thresholds(
     result: EvaluationResult, allow_probability: float, deny_probability: float
 ) -> EvaluationResult:
-    """`result`, relabelled by the probability policy at `allow_probability` and
-    `deny_probability`: the `deny` of its rule stays; with no usable `p_allow` or `p_deny`, or
-    with neither probability at its bound, the label is `ask`; with both at their bound, the
-    label is `ask`; its cap still refuses an `allow`."""
-    if result.rule is not None:
-        label = "deny"
-    elif result.p_allow is None or result.p_deny is None:
+    if result.p_allow is None or result.p_deny is None:
         label = "ask"
     else:
         allow_holds = result.p_allow >= allow_probability
@@ -211,131 +210,54 @@ def at_probability_thresholds(
         if allow_holds and deny_holds:
             label = "ask"
         elif allow_holds:
-            label = "allow" if result.cap is None else "ask"
+            label = "allow"
         elif deny_holds:
             label = "deny"
         else:
             label = "ask"
-    return EvaluationResult(
-        result.id, result.danger, label, result.latency_ms, result.rule, result.cap, result.p_allow, result.p_deny
-    )
+    return EvaluationResult(result.id, result.danger, label, result.latency_ms, result.safe, result.p_allow, result.p_deny)
 
 
 def select_thresholds(cases: list[dict[str, Any]], results: list[EvaluationResult], margin: float) -> dict[str, Any]:
-    """The widest allow/deny threshold pair `margin` clear of the nearest case on the wrong
-    side, and the five cases nearest each bound.
+    return _select_bounds(cases, results, margin, "danger")
 
-    `allow_threshold` is the lowest danger of every elevated and adversarial case that the
-    model alone decides, minus `margin`: a risky case with a rule or a cap is never `allow`,
-    so it does not bound the threshold, and `decided` names each one. `deny_threshold` is the
-    highest danger of every safe and real case, plus `margin`. `has_pair` is false when the
-    bounds cross. `rule_denied` names each safe or real case that a rule denies: no threshold
-    can allow that case, so each one breaks a hard rule of the winner rule."""
-    result_by_id = {result.id: result for result in results}
-    danger_by_id = {result.id: result.danger for result in results}
-    decided = [
-        case["id"]
-        for case in cases
-        if case["set"] in ("elevated", "adversarial")
-        and (result_by_id[case["id"]].rule is not None or result_by_id[case["id"]].cap is not None)
-    ]
-    rule_denied = [
-        case["id"] for case in cases if case["set"] in ("safe", "real") and result_by_id[case["id"]].rule is not None
-    ]
-    risky_dangers = [
-        danger_by_id[case["id"]]
-        for case in cases
-        if case["set"] in ("elevated", "adversarial")
-        and case["id"] not in decided
-        and danger_by_id[case["id"]] is not None
-    ]
-    safe_dangers = [
-        danger_by_id[case["id"]]
-        for case in cases
-        if case["set"] in ("safe", "real") and danger_by_id[case["id"]] is not None
-    ]
-    if not risky_dangers or not safe_dangers:
-        raise ValueError(
-            "selection needs at least one elevated/adversarial and one safe/real case with a usable danger score"
-        )
-    allow_threshold = min(risky_dangers) - margin
-    deny_threshold = max(safe_dangers) + margin
 
-    def nearest(bound: float, skip: list[str], count: int = 5) -> list[tuple[str, float]]:
-        usable = [
-            (case["id"], danger_by_id[case["id"]])
-            for case in cases
-            if danger_by_id[case["id"]] is not None and case["id"] not in skip
-        ]
-        usable.sort(key=lambda pair: (abs(pair[1] - bound), pair[0]))
-        return usable[:count]
+def select_noul_thresholds(cases: list[dict[str, Any]], results: list[EvaluationResult], margin: float) -> dict[str, Any]:
+    return _select_bounds(cases, results, margin, "safe")
 
+
+def _select_bounds(cases: list[dict[str, Any]], results: list[EvaluationResult], margin: float, field: str) -> dict[str, Any]:
+    values = {result.id: getattr(result, field) for result in results}
+    risky = [values[case["id"]] for case in cases if case["set"] in ("elevated", "adversarial") and values[case["id"]] is not None]
+    benign = [values[case["id"]] for case in cases if case["set"] in ("safe", "real") and values[case["id"]] is not None]
+    if not risky or not benign:
+        raise ValueError("selection needs at least one elevated/adversarial and one safe/real case with a usable %s score" % field)
+    if field == "safe":
+        allow_threshold, deny_threshold = max(risky) + margin, min(benign) - margin
+        has_pair = deny_threshold < allow_threshold
+    else:
+        allow_threshold, deny_threshold = min(risky) - margin, max(benign) + margin
+        has_pair = allow_threshold < deny_threshold
+    usable = [(case_id, value) for case_id, value in values.items() if value is not None]
+    def nearest(bound: float) -> list[tuple[str, float]]:
+        return sorted(usable, key=lambda pair: (abs(pair[1] - bound), pair[0]))[:5]
     return {
-        "allow_threshold": allow_threshold,
-        "deny_threshold": deny_threshold,
-        "has_pair": allow_threshold < deny_threshold,
-        "nearest_allow": nearest(allow_threshold, decided),
-        "nearest_deny": nearest(deny_threshold, []),
-        "decided": decided,
-        "rule_denied": rule_denied,
+        "allow_threshold": allow_threshold, "deny_threshold": deny_threshold,
+        "has_pair": has_pair, "nearest_allow": nearest(allow_threshold), "nearest_deny": nearest(deny_threshold),
     }
 
 
-def select_probability_thresholds(
-    cases: list[dict[str, Any]], results: list[EvaluationResult], margin: float
-) -> dict[str, Any]:
-    """The probability policy's pair, `margin` clear of the nearest case on the wrong side, and
-    the five cases nearest each bound.
-
-    `allow_probability` is the highest `p_allow` of every elevated and adversarial case that the
-    model alone decides, plus `margin`: a risky case with a rule or a cap is never `allow`, so
-    it does not bound the threshold, and `decided` names each one. `deny_probability` is the
-    highest `p_deny` of every safe and real case, plus `margin`. `rule_denied` names each safe
-    or real case that a rule denies: no threshold can allow that case, so each one breaks a hard
-    rule of the winner rule."""
-    result_by_id = {result.id: result for result in results}
-    decided = [
-        case["id"]
-        for case in cases
-        if case["set"] in ("elevated", "adversarial")
-        and (result_by_id[case["id"]].rule is not None or result_by_id[case["id"]].cap is not None)
-    ]
-    rule_denied = [
-        case["id"] for case in cases if case["set"] in ("safe", "real") and result_by_id[case["id"]].rule is not None
-    ]
-    risky_allow = [
-        result_by_id[case["id"]].p_allow
-        for case in cases
-        if case["set"] in ("elevated", "adversarial")
-        and case["id"] not in decided
-        and result_by_id[case["id"]].p_allow is not None
-    ]
-    safe_deny = [
-        result_by_id[case["id"]].p_deny
-        for case in cases
-        if case["set"] in ("safe", "real") and result_by_id[case["id"]].p_deny is not None
-    ]
-    if not risky_allow or not safe_deny:
-        raise ValueError(
-            "selection needs at least one elevated/adversarial and one safe/real case with a usable probability"
-        )
-    allow_probability = max(risky_allow) + margin
-    deny_probability = max(safe_deny) + margin
-
-    def nearest(field: str, bound: float, skip: list[str], count: int = 5) -> list[tuple[str, float]]:
-        usable = [
-            (case["id"], getattr(result_by_id[case["id"]], field))
-            for case in cases
-            if getattr(result_by_id[case["id"]], field) is not None and case["id"] not in skip
-        ]
-        usable.sort(key=lambda pair: (abs(pair[1] - bound), pair[0]))
-        return usable[:count]
-
+def select_probability_thresholds(cases: list[dict[str, Any]], results: list[EvaluationResult], margin: float) -> dict[str, Any]:
+    values = {result.id: result for result in results}
+    risky = [values[case["id"]].p_allow for case in cases if case["set"] in ("elevated", "adversarial") and values[case["id"]].p_allow is not None]
+    benign = [values[case["id"]].p_deny for case in cases if case["set"] in ("safe", "real") and values[case["id"]].p_deny is not None]
+    if not risky or not benign:
+        raise ValueError("selection needs at least one elevated/adversarial and one safe/real case with a usable probability")
+    allow_probability, deny_probability = max(risky) + margin, max(benign) + margin
+    def nearest(field: str, bound: float) -> list[tuple[str, float]]:
+        usable = [(result.id, getattr(result, field)) for result in results if getattr(result, field) is not None]
+        return sorted(usable, key=lambda pair: (abs(pair[1] - bound), pair[0]))[:5]
     return {
-        "allow_probability": allow_probability,
-        "deny_probability": deny_probability,
-        "nearest_allow": nearest("p_allow", allow_probability, decided),
-        "nearest_deny": nearest("p_deny", deny_probability, []),
-        "decided": decided,
-        "rule_denied": rule_denied,
+        "allow_probability": allow_probability, "deny_probability": deny_probability,
+        "nearest_allow": nearest("p_allow", allow_probability), "nearest_deny": nearest("p_deny", deny_probability),
     }

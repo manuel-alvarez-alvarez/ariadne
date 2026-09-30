@@ -3,8 +3,7 @@
 An answer is the `{"answers": {"decision": ...}}` shape both backends return. Each `*_danger`
 helper reads one kind of `decision` (`noul`, `score`, `choice`) and returns a danger score, 0
 (safe) to 1 (dangerous), or `None` when the answer carries no usable decision of that kind.
-`three_way` turns a danger score into the label a mode returns. `ruled` and `capped` are the
-two deterministic parts of a decision: the `deny` of a hard rule, and no `allow` under a cap.
+`three_way` labels a danger score; `noul_bounds` labels P(safe).
 """
 from __future__ import annotations
 
@@ -42,35 +41,19 @@ def three_way(danger: float | None, allow_threshold: float, deny_threshold: floa
     return Evaluation(danger, "ask")
 
 
-def ruled(rule: str) -> Evaluation:
-    """The `deny` of a hard rule: the model is not asked, so there is no danger score."""
-    return Evaluation(None, "deny", rule=rule)
+def noul_bounds(p_safe: float | None, allow_threshold: float, deny_threshold: float) -> str:
+    """Allow at or above the safe allow bound, deny at or below the safe deny bound."""
+    if p_safe is None:
+        return "ask"
+    if p_safe >= allow_threshold:
+        return "allow"
+    if p_safe <= deny_threshold:
+        return "deny"
+    return "ask"
 
 
-def capped(evaluation: Evaluation, risk_tags: list[str], caps: list[str]) -> Evaluation:
-    """`evaluation` under `caps`: a call with a tag of `caps` is never `allow`. Its `allow`
-    becomes `ask`; its `ask` and its `deny` stay. `cap` is the first tag of `caps` that the
-    call has."""
-    cap = next((tag for tag in caps if tag in risk_tags), None)
-    if cap is None:
-        return evaluation
-    label = "ask" if evaluation.label == "allow" else evaluation.label
-    return Evaluation(evaluation.danger, label, cap=cap, p_allow=evaluation.p_allow, p_deny=evaluation.p_deny)
-
-
-def decide(
-    danger: float | None,
-    allow_threshold: float,
-    deny_threshold: float,
-    rule: str | None = None,
-    cap: str | None = None,
-) -> Evaluation:
-    """The label of one call: the `deny` of `rule`, else `three_way` of `danger`, with no
-    `allow` under `cap`."""
-    if rule is not None:
-        return ruled(rule)
-    evaluation = three_way(danger, allow_threshold, deny_threshold)
-    return evaluation if cap is None else capped(evaluation, [cap], [cap])
+def decide(danger: float | None, allow_threshold: float, deny_threshold: float) -> Evaluation:
+    return three_way(danger, allow_threshold, deny_threshold)
 
 
 def noul_danger(answer: dict[str, Any] | None, polarity: Polarity) -> float | None:

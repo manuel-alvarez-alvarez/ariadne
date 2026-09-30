@@ -323,6 +323,8 @@ hardware facts in the card, with no Details popover`).
     `crates/`. It reads the daemon's install only at run time, for its model
     environments and weights (`~/.ariadne/ai-permissions`) and, with
     `--real`, approved requests from `~/.ariadne/ariadne.db`, read-only.
+    The benchmark keeps `kev_v26`, `kev_v27` and `kev_v28`, and adds
+    `kev_v29`. Rules and caps do not decide benchmark evaluations.
 34. `ai_bench.derive.derive(request, workspace)` is the benchmark's portable
     deterministic layer. It returns an optional operation hint, the ordered risk
     tags `outside_workspace`, `recursive`, `bulk`, `irreversible`, `remote`,
@@ -434,8 +436,8 @@ hardware facts in the card, with no Details popover`).
     evaluator (`id`,
     `set`, `expected`, `danger`, `label`, `latency_ms`, `operation`,
     `risk_tags` joined with `|`, `pair`, each of these three empty where
-    the case has none, then `rule` and `cap` of the evaluation, each empty
-    for a case that the model alone decides) and prints a table, per set, of
+    the case has none, and `safe`, which holds P(true) for a noul mode and
+    is empty for a score mode) and prints a table, per set, of
     the share of `allow`,
     `ask` and `deny`; `risky_allowed` (elevated or adversarial cases labelled
     `allow`) and `safe_denied` (safe or real cases labelled `deny`); two
@@ -448,7 +450,7 @@ hardware facts in the card, with no Details popover`).
     over every case), and `false_deny_rate` (safe or real cases labelled
     `deny`, over every safe or real case). `run.py report` prints that table
     again from CSVs, treating a missing `operation`, `risk_tags`, `pair`,
-    `rule` or `cap` column as empty. `run run --by operation`, `--by tag` or `--by pair`,
+    `safe` column as empty. `run run --by operation`, `--by tag` or `--by pair`,
     and `report` with the same option, print an extra table per evaluator:
     one row per operation or per risk tag (a case with two tags counts under
     each), with its case count, its share of `allow`, `ask` and `deny`, its
@@ -464,31 +466,29 @@ hardware facts in the card, with no Details popover`).
     the smallest `deny_threshold` is the highest danger of every safe and
     real case, plus the margin; `no pair` when `allow_threshold` is not
     under `deny_threshold`. It also prints the five cases nearest each
-    bound, and the table at that pair. `select` reads `rule` and `cap`: an
-    elevated or adversarial case with a rule or a cap is never `allow`, so it
-    does not bound `allow_threshold`, and `select` prints the number of
-    these cases; a safe or real case with a cap still bounds
-    `deny_threshold`; a safe or real case with a rule is `deny` at each pair,
-    and `select` prints its id under `broken hard rule`. The table at the
-    pair keeps the `deny` of each rule and gives no `allow` to a case with a
-    cap. `run.py fixture --evaluator <key>` loads no model and prints one
-    JSON line per case for a mode that is a contract: `id`, `request`,
-    `workspace`, `model`, `state`, `questions`, and `derived` with
-    `operation`, `risk_tags`, `rule` (the rule of the mode's `RULES` that
-    denies the call, or null) and `cap` (the first tag of the mode's `CAPS`
-    that the call has, or null); it takes `--cases`, `--heldout` and `--real`
-    as `run` does. `run.py probe --evaluator <key>... --out <file>` loads
+    bound, and the table at that pair. A noul mode uses P(safe): the allow
+    bound is the highest P(safe) of an elevated or adversarial case plus the
+    margin, and the deny bound is the lowest P(safe) of a safe or real case
+    minus the margin. It reports `no pair` when deny is not under allow.
+    `run.py fixture --evaluator <key>` loads no model and prints one JSON
+    line per case: `id`, `request`, `workspace`, `model`, `state`, `questions`,
+    and `derived` with `operation` and `risk_tags`. It accepts the same case
+    selection options as `run`.
+    `run.py probe --evaluator <key>... --out <file>` loads
     one Kev run one time, asks the questions of each mode at temperature
     1.0, the modes with one state in one request and a shared question one
     time, and writes one JSON line per case with the probabilities of each
     question. `run.py measure <variable> <files> --evaluator <key>` reads
     those records with no model and prints one variable of the mode:
     `temperature` (the pair, its margins and its outcome per temperature, or
-    at a given `--pair`), `caps` (the cost and the gain of each tag as one
-    more cap), `policy` (the probability policy over a `choice` between
+    at a given `--pair` on the safe scale for a noul mode), `policy`
+    (the probability policy over a `choice` between
     `allow`, `ask` and `deny`) or `operation` (the accuracy of a `choice`
     against the `operation` of the cases). A probe compares modes; the
-    thresholds of a mode come from a run. `run.sh` runs each evaluator in
+    thresholds of a mode come from a run. `kev_v29.safe(answer)` accepts only
+    finite P(true) from 0 to 1. It uses `noul_bounds`: allow at or above
+    `ALLOW_THRESHOLD`, deny at or below `DENY_THRESHOLD`, and ask otherwise.
+    Its danger is one minus P(true). `run.sh` runs each evaluator in
     its backend's virtual environment, which it creates when missing, then
     reports over all of them.
 36. Benchmark scores remain measurements from a local model, device, and
@@ -496,8 +496,7 @@ hardware facts in the card, with no Details popover`).
     at 2,000 characters of input, without seeing what runs later; elevated
     labels, long commands, and device precision remain limits. The derived
     facts read the command and the paths of a request, not the content that
-    it writes: a rule or a cap does not see an instruction in the text of an
-    edit. The probabilities of a question in a request of many questions
+    it writes. The probabilities of a question in a request of many questions
     differ from the ones of the question alone, by 0.001 of danger at the
     median.
 

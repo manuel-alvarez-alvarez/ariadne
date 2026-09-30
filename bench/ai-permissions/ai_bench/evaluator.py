@@ -20,31 +20,24 @@ class EvaluatorError(RuntimeError):
 
 @dataclass(frozen=True)
 class Evaluation:
-    """What one `evaluate` call decided: the danger score, 0 to 1 (None when the model gave no
-    usable answer, which gives `ask`), and the label, `allow`, `ask` or `deny`. `rule` names
-    the hard rule that denied the call with no model answer, and `cap` the tag that keeps the
-    call from `allow`; each is `None` on a call that the model alone decides. `p_allow` and
-    `p_deny` are the two probabilities a probability-policy mode decides from; `None` on a mode
-    that decides from the danger instead."""
+    """The score and label of one call. `safe` is P(true) for a noul mode."""
 
     danger: float | None
     label: Label
-    rule: str | None = None
-    cap: str | None = None
+    safe: float | None = None
     p_allow: float | None = None
     p_deny: float | None = None
 
 
 @dataclass(frozen=True)
 class EvaluationResult:
-    """One evaluation as the runner records it: the case it was for and how long it took."""
+    """One evaluation with its case id and latency."""
 
     id: str
     danger: float | None
     label: Label
     latency_ms: float
-    rule: str | None = None
-    cap: str | None = None
+    safe: float | None = None
     p_allow: float | None = None
     p_deny: float | None = None
 
