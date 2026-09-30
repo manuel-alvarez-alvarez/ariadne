@@ -16,6 +16,7 @@ import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it } from "vitest"
 
 import type { AiPermissionsStatusDto, TestAiPermissionResponse } from "@/api"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import { anAiPermissionsStatus } from "@/test/fixtures"
 import { daemonFetch, jsonResponse } from "@/test/harness"
 import { AiCard } from "./ai-card"
@@ -40,14 +41,18 @@ function renderCard(status: AiPermissionsStatusDto) {
   })
   const view = render(
     <QueryClientProvider client={queryClient}>
-      <AiCard status={status} />
+      <TooltipProvider delay={0}>
+        <AiCard status={status} />
+      </TooltipProvider>
     </QueryClientProvider>,
   )
   return {
     rerender: (next: AiPermissionsStatusDto) =>
       view.rerender(
         <QueryClientProvider client={queryClient}>
-          <AiCard status={next} />
+          <TooltipProvider delay={0}>
+            <AiCard status={next} />
+          </TooltipProvider>
         </QueryClientProvider>,
       ),
   }
@@ -114,6 +119,43 @@ it("puts Test a request and Refresh in one button group in the header", () => {
   expect(group).not.toBeNull()
   expect(group?.contains(refreshButton)).toBe(true)
   expect(testButton.closest("header")?.contains(group)).toBe(true)
+})
+
+it("renders the header buttons icon-only, with a tooltip naming each", async () => {
+  const status = anAiPermissionsStatus({ enabled: true, state: "ready" })
+  const user = userEvent.setup()
+  renderCard(status)
+
+  const testButton = screen.getByRole("button", { name: "Test a request" })
+  const refreshButton = screen.getByRole("button", { name: "Refresh" })
+  expect(testButton.textContent).toBe("")
+  expect(refreshButton.textContent).toBe("")
+
+  await user.tab() // the Enable switch, first in the header row
+  await user.tab()
+  expect(document.activeElement).toBe(testButton)
+  expect(await screen.findByText("Test a request")).toBeDefined()
+
+  await user.tab()
+  expect(document.activeElement).toBe(refreshButton)
+  expect(await screen.findByText("Refresh")).toBeDefined()
+})
+
+it("opens the Details popover with the full seven facts", async () => {
+  const status = anAiPermissionsStatus({
+    state: "ready",
+    installed_release: "kev@f1535963 jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101",
+    weights_present: true,
+    endpoint: "http://127.0.0.1:8901",
+  })
+  const user = userEvent.setup()
+  renderCard(status)
+
+  expect(screen.queryByText("http://127.0.0.1:8901")).toBeNull()
+  await user.click(screen.getByRole("button", { name: "Details" }))
+
+  expect(screen.getByText("http://127.0.0.1:8901")).toBeDefined()
+  expect(screen.getByText("Yes")).toBeDefined()
 })
 
 it("draws no marker for an ai_error answer", async () => {

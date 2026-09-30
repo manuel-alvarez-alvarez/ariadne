@@ -2,7 +2,7 @@
 id: ai-permission-mode
 status: current
 updated: 2026-09-30
-areas: [core, api, store, daemon]
+areas: [core, api, store, daemon, ui]
 commits: []
 tests:
   - crates/ariadne-daemon/tests/it/ai_permissions.rs
@@ -26,6 +26,8 @@ tests:
   - crates/ariadne-daemon/src/http/permissions.rs
   - crates/ariadne-daemon/src/config.rs
   - crates/ariadne-store/tests/store.rs
+  - ui/src/features/permissions/ai-card.test.tsx
+  - ui/src/features/permissions/permissions-page.test.tsx
 ---
 
 # The `ai` permission mode
@@ -154,6 +156,25 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 17. The routes of the model's old name are gone: nothing answers at them.
     Every error message, log line and the OpenAPI tag name the model "the AI
     permission model", never the package.
+
+## UI
+
+The Permissions screen's AI tab surfaces this settings row as one card, "AI"
+(015, rule 32): a header that is one row — the title, the state badge, the
+enabled switch and icon-only "Test a request" and "Refresh" buttons, each
+with a tooltip and an `aria-label` — the Flavour and Device selects of rules
+37 to 49 on one row, and this settings row's facts compacted to one muted
+status line (flavour, device, state, memory, GPU) with the full set behind a
+"Details" popover. The full UI contract, including the Thresholds section
+and the test dialog, is spec 015's own
+(`ui/src/features/permissions/permissions-page.test.tsx::puts the title, the
+badge, the switch and both icon buttons in one header row`, `::drops the old
+description line under the title`, `::the model pickers > puts Flavour and
+Device in one inline row`, `::shows the flavour, device, state, memory and
+GPU in one status line`, `::shows every fact the daemon answered with,
+behind Details`, `ui/src/features/permissions/ai-card.test.tsx::renders the
+header buttons icon-only, with a tooltip naming each`, `::opens the Details
+popover with the full seven facts`).
 
 ## Server
 

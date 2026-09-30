@@ -137,6 +137,26 @@ it("opens the test dialog from the header's Test a request button", async () => 
   expect(await screen.findByRole("dialog")).toBeDefined()
 })
 
+it("puts the title, the badge, the switch and both icon buttons in one header row", async () => {
+  renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
+
+  const header = (await screen.findByRole("heading", { name: "AI" })).closest("header")
+  expect(header).not.toBeNull()
+  expect(header?.contains(screen.getByText("Disabled"))).toBe(true)
+  expect(
+    header?.contains(screen.getByRole("switch", { name: "Enable the AI permission model" })),
+  ).toBe(true)
+  expect(header?.contains(screen.getByRole("button", { name: "Test a request" }))).toBe(true)
+  expect(header?.contains(screen.getByRole("button", { name: "Refresh" }))).toBe(true)
+})
+
+it("drops the old description line under the title", async () => {
+  renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
+
+  await screen.findByRole("switch", { name: "Enable the AI permission model" })
+  expect(screen.queryByText(/A model that runs on this machine/)).toBeNull()
+})
+
 describe("the state badge", () => {
   it("shows Disabled for the disabled state", async () => {
     current = anAiPermissionsStatus({ state: "disabled" })
@@ -167,7 +187,7 @@ describe("the state badge", () => {
   })
 })
 
-it("shows every fact the daemon answered with", async () => {
+it("shows every fact the daemon answered with, behind Details", async () => {
   current = anAiPermissionsStatus({
     state: "ready",
     installed_release: "kev@f1535963 jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101",
@@ -177,9 +197,14 @@ it("shows every fact the daemon answered with", async () => {
     last_refresh_at: "2026-01-01T00:00:00Z",
     last_error: null,
   })
+  const user = userEvent.setup()
   renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
 
   expect(await screen.findByText("Ready")).toBeDefined()
+  expect(screen.queryByText("http://127.0.0.1:8901")).toBeNull()
+
+  await user.click(await screen.findByRole("button", { name: "Details" }))
+
   expect(
     screen.getAllByText("kev@f1535963 jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101"),
   ).toHaveLength(2)
@@ -280,6 +305,19 @@ it("toasts the daemon's own message on a refused threshold, and puts the value b
 })
 
 describe("the model pickers", () => {
+  it("puts Flavour and Device in one inline row", async () => {
+    renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
+
+    const flavourField = (await screen.findByRole("combobox", { name: "Flavour" })).closest(
+      '[data-slot="field"]',
+    )
+    const deviceField = screen
+      .getByRole("combobox", { name: "Device" })
+      .closest('[data-slot="field"]')
+    expect(flavourField).not.toBeNull()
+    expect(flavourField?.parentElement).toBe(deviceField?.parentElement)
+  })
+
   it("disables an unsupported flavour and shows its reason", async () => {
     const user = userEvent.setup()
     renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
@@ -391,10 +429,11 @@ describe("the model pickers", () => {
   })
 })
 
-it("shows hardware facts with a GPU", async () => {
+it("shows the flavour, device, state, memory and GPU in one status line", async () => {
   renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
-  expect(await screen.findByText("64 GB")).toBeDefined()
-  expect(screen.getByText("Apple M4 Max (48 GB)")).toBeDefined()
+  expect(
+    await screen.findByText("4b on mlx · Disabled · 64 GB · Apple M4 Max (48 GB)"),
+  ).toBeDefined()
 })
 
 it("shows no GPU where the hardware probe found none", async () => {
@@ -402,8 +441,7 @@ it("shows no GPU where the hardware probe found none", async () => {
     hardware: { os: "linux", arch: "x86_64", memory_bytes: 1536 * 1024 ** 3, gpu: null },
   })
   renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
-  expect(await screen.findByText("No GPU")).toBeDefined()
-  expect(screen.getByText("1.5 TB")).toBeDefined()
+  expect(await screen.findByText("4b on mlx · Disabled · 1.5 TB · No GPU")).toBeDefined()
 })
 
 describe("Refresh", () => {

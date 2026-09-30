@@ -27,6 +27,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { ButtonGroup } from "@/components/ui/button-group"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
   Select,
   SelectContent,
@@ -35,6 +36,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { When } from "@/components/when"
 import { describeError } from "@/lib/format"
 
@@ -94,6 +96,25 @@ function flavourReason(
   return null
 }
 
+function gpuSummary(gpu: AiPermissionsStatusDto["hardware"]["gpu"]): string {
+  return gpu ? `${gpu.name} (${formatMemory(gpu.vram_bytes)})` : "No GPU"
+}
+
+/** The one line "Status and hardware" is compacted to; the full facts are behind "Details". */
+function statusSummary(status: AiPermissionsStatusDto): string {
+  return [
+    status.flavour,
+    "on",
+    status.device,
+    "·",
+    STATE_LABELS[status.state],
+    "·",
+    formatMemory(status.hardware.memory_bytes),
+    "·",
+    gpuSummary(status.hardware.gpu),
+  ].join(" ")
+}
+
 export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
   const update = useUpdateAiPermissions()
   const refresh = useRefreshAiPermissions()
@@ -122,41 +143,70 @@ export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
         </Alert>
       ) : null}
 
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <h2 className="font-heading text-base font-semibold">AI</h2>
-            <StatusBadge label={STATE_LABELS[status.state]} tone={STATE_TONE[status.state]} />
-          </div>
-          <p className="text-sm text-muted-foreground">
-            A model that runs on this machine and answers the ai permission mode's requests.
-          </p>
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <h2 className="font-heading text-base font-semibold">AI</h2>
+          <StatusBadge label={STATE_LABELS[status.state]} tone={STATE_TONE[status.state]} />
         </div>
 
-        <ButtonGroup>
-          <Button variant="outline" onClick={() => setTestOpen(true)}>
-            <FlaskConicalIcon data-icon="inline-start" />
-            Test a request
-          </Button>
-          <Button
-            variant="outline"
-            disabled={
-              status.state === "disabled" || status.state === "installing" || refresh.isPending
+        <div className="flex items-center gap-3">
+          <Switch
+            aria-label="Enable the AI permission model"
+            checked={status.enabled}
+            disabled={!status.python.ok || update.isPending}
+            onCheckedChange={(checked) =>
+              send(
+                { enabled: checked },
+                checked ? "Could not turn the model on" : "Could not turn the model off",
+              )
             }
-            pending={refresh.isPending}
-            onClick={() =>
-              refresh.mutate(undefined, {
-                onError: (error) =>
-                  toast.error("Could not refresh the model", {
-                    description: describeError(error),
-                  }),
-              })
-            }
-          >
-            <RefreshCwIcon data-icon="inline-start" />
-            Refresh
-          </Button>
-        </ButtonGroup>
+          />
+          <ButtonGroup>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    aria-label="Test a request"
+                    onClick={() => setTestOpen(true)}
+                  />
+                }
+              >
+                <FlaskConicalIcon />
+              </TooltipTrigger>
+              <TooltipContent>Test a request</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    aria-label="Refresh"
+                    disabled={
+                      status.state === "disabled" ||
+                      status.state === "installing" ||
+                      refresh.isPending
+                    }
+                    pending={refresh.isPending}
+                    onClick={() =>
+                      refresh.mutate(undefined, {
+                        onError: (error) =>
+                          toast.error("Could not refresh the model", {
+                            description: describeError(error),
+                          }),
+                      })
+                    }
+                  />
+                }
+              >
+                <RefreshCwIcon />
+              </TooltipTrigger>
+              <TooltipContent>Refresh</TooltipContent>
+            </Tooltip>
+          </ButtonGroup>
+        </div>
         <AiTestPanel
           open={testOpen}
           onOpenChange={setTestOpen}
@@ -165,21 +215,6 @@ export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
           onResult={setTestResult}
         />
       </header>
-
-      <Field orientation="horizontal">
-        <FieldLabel htmlFor="ai-enabled">Enable the AI permission model</FieldLabel>
-        <Switch
-          id="ai-enabled"
-          checked={status.enabled}
-          disabled={!status.python.ok || update.isPending}
-          onCheckedChange={(checked) =>
-            send(
-              { enabled: checked },
-              checked ? "Could not turn the model on" : "Could not turn the model off",
-            )
-          }
-        />
-      </Field>
       {!status.python.ok ? (
         <FieldDescription>{pythonReason(status.python)}</FieldDescription>
       ) : null}
@@ -196,72 +231,78 @@ export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
 
       <div className="flex flex-col gap-2">
         <SectionHeading>Model</SectionHeading>
-        <Field>
-          <FieldLabel htmlFor="ai-flavour">Flavour</FieldLabel>
-          <Select
-            value={status.flavour}
-            disabled={selectsDisabled}
-            onValueChange={(flavour) => send({ flavour }, "Could not change the model flavour")}
-          >
-            <SelectTrigger id="ai-flavour" aria-label="Flavour" className="w-48">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {status.flavours.map((option) => {
-                const runnable = option.devices.some((device) => device.can_run)
-                const reason = flavourReason(option.devices)
-                return (
-                  <SelectItem key={option.flavour} value={option.flavour} disabled={!runnable}>
-                    {option.flavour}
-                    {!runnable && reason ? ` — ${reason}` : ""}
+        <div className="flex flex-wrap gap-3">
+          <Field className="w-fit">
+            <FieldLabel htmlFor="ai-flavour">Flavour</FieldLabel>
+            <Select
+              value={status.flavour}
+              disabled={selectsDisabled}
+              onValueChange={(flavour) => send({ flavour }, "Could not change the model flavour")}
+            >
+              <SelectTrigger id="ai-flavour" aria-label="Flavour" className="w-48">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {status.flavours.map((option) => {
+                  const runnable = option.devices.some((device) => device.can_run)
+                  const reason = flavourReason(option.devices)
+                  return (
+                    <SelectItem key={option.flavour} value={option.flavour} disabled={!runnable}>
+                      {option.flavour}
+                      {!runnable && reason ? ` — ${reason}` : ""}
+                    </SelectItem>
+                  )
+                })}
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field className="w-fit">
+            <FieldLabel htmlFor="ai-device">Device</FieldLabel>
+            <Select
+              value={status.device}
+              disabled={selectsDisabled}
+              onValueChange={(device) =>
+                send({ flavour: status.flavour, device }, "Could not change the model device")
+              }
+            >
+              <SelectTrigger id="ai-device" aria-label="Device" className="w-48">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {selectedFlavour?.devices.map((option) => (
+                  <SelectItem key={option.device} value={option.device} disabled={!option.can_run}>
+                    {option.device}
+                    {option.slow ? " — slow on CPU" : ""}
+                    {!option.can_run && option.reason ? ` — ${option.reason}` : ""}
                   </SelectItem>
-                )
-              })}
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="ai-device">Device</FieldLabel>
-          <Select
-            value={status.device}
-            disabled={selectsDisabled}
-            onValueChange={(device) =>
-              send({ flavour: status.flavour, device }, "Could not change the model device")
-            }
-          >
-            <SelectTrigger id="ai-device" aria-label="Device" className="w-48">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {selectedFlavour?.devices.map((option) => (
-                <SelectItem key={option.device} value={option.device} disabled={!option.can_run}>
-                  {option.device}
-                  {option.slow ? " — slow on CPU" : ""}
-                  {!option.can_run && option.reason ? ` — ${option.reason}` : ""}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+        </div>
       </div>
 
       <div className="flex flex-col gap-2">
         <SectionHeading>Status and hardware</SectionHeading>
-        <FactList columns={3} framed={false}>
-          <Fact label="Installed release">{status.installed_release ?? "—"}</Fact>
-          <Fact label="Latest release">{status.latest_release ?? "—"}</Fact>
-          <Fact label="Weights present">{status.weights_present ? "Yes" : "No"}</Fact>
-          <Fact label="Endpoint">{status.endpoint ?? "—"}</Fact>
-          <Fact label="Last refresh">
-            <When at={status.last_refresh_at} format="age" />
-          </Fact>
-          <Fact label="Memory">{formatMemory(status.hardware.memory_bytes)}</Fact>
-          <Fact label="GPU">
-            {status.hardware.gpu
-              ? `${status.hardware.gpu.name} (${formatMemory(status.hardware.gpu.vram_bytes)})`
-              : "No GPU"}
-          </Fact>
-        </FactList>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm text-muted-foreground">{statusSummary(status)}</p>
+          <Popover>
+            <PopoverTrigger render={<Button variant="ghost" size="sm" />}>Details</PopoverTrigger>
+            <PopoverContent align="end" className="w-96">
+              <FactList columns={2} framed={false} className="sm:grid-cols-1">
+                <Fact label="Installed release">{status.installed_release ?? "—"}</Fact>
+                <Fact label="Latest release">{status.latest_release ?? "—"}</Fact>
+                <Fact label="Weights present">{status.weights_present ? "Yes" : "No"}</Fact>
+                <Fact label="Endpoint">{status.endpoint ?? "—"}</Fact>
+                <Fact label="Last refresh">
+                  <When at={status.last_refresh_at} format="age" />
+                </Fact>
+                <Fact label="Memory">{formatMemory(status.hardware.memory_bytes)}</Fact>
+                <Fact label="GPU">{gpuSummary(status.hardware.gpu)}</Fact>
+              </FactList>
+            </PopoverContent>
+          </Popover>
+        </div>
       </div>
     </div>
   )

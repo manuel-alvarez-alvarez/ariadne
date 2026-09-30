@@ -244,51 +244,57 @@ Out: the daemon endpoints themselves (012).
     row from the daemon's answer through the same `models` query key a switch
     write uses, and a refusal is toasted rather than swallowed, springing the
     picker back to what the daemon still says.
-32. The Permissions screen's AI tab holds one card, "AI", whose header carries
-    the title, a state badge — `disabled`, `installing`, `ready` or `failed` —
-    and the card's description at the left, and a joined button group at the
-    right holding "Test a request" and "Refresh", both `variant="outline"`,
-    wrapping below the title on a narrow window; below the header, the one
-    settings row `GET /v1/permissions/ai` answers with (022): a switch for
-    `enabled`, labelled "Enable the AI permission model", disabled with the
-    Python version found (or that none was) where the daemon has none new
-    enough to install into, with its Python reason directly under it; a
-    Thresholds section holding the allow and deny thresholds as one range
-    control, a two-handle slider from 0 to 1 in steps of 0.01 whose track is
-    cut into a green Allow zone, an amber Ask zone and a red Deny zone the
-    handles cannot cross, with a 0, 0.5, 1 scale of ticks and numbers under
-    the track, and two narrow number inputs in one row below that — "Allow
-    threshold" at the left end with a green dot and "Deny threshold" at the
-    right end with a red dot, each shown to four fixed decimals, step
-    0.0001 — that stay in step with the handles while either is dragged or
-    typed into, the digits settling to four decimals on mount, after a drag
-    and after a commit, and left alone while typed into; a Daily
-    refresh section holding a time field about 8rem wide, whose native clear
-    is what turns it off, sending `schedule: null` when it is blurred or
-    Enter is pressed; the Refresh button, disabled while the model is off or
-    already installing; an alert at the top of the card for the last error;
-    and a Status section with a fact list of the installed and latest
-    release, whether the weights are present, the endpoint, and the last
-    refresh's age. Every control sends its own change the moment it is
-    made — except the time field, which sends once after its edit — there is no
-    Save button, and a handle sends once, on release, never on every drag step
-    — and a refusal
-    is toasted with the daemon's own message and puts the control back to the
-    row the daemon still holds, the same as the agents screen's flag editor
-    and rank picker. The `ai_permissions_updated` event (012, 022) patches
-    the same query key any of those writes does, since the row has no list
-    beside it
-    (`ui/src/features/permissions/permissions-page.test.tsx::sends the typed
-    time once when the field is left`, `::shows the last error as an alert at
-    the top of the card`, `::joins Test a request and Refresh in one button
-    group in the card header`, `::opens the test dialog from the header's
-    Test a request button`, `::shows the Thresholds, Daily refresh and Status
-    section headings`, `::the state badge > shows Disabled for the disabled
-    state`, `::the state badge > shows Installing for the installing state`,
-    `::the state badge > shows Ready for the ready state`, `::the state badge
-    > shows Failed for the failed state`,
+32. The Permissions screen's AI tab holds one card, "AI", with an alert at the
+    top of the card for the last error, then a header that is one row: the
+    title, a state badge — `disabled`, `installing`, `ready` or `failed` —
+    the enabled switch, and a joined button group holding "Test a request"
+    and "Refresh" as icon-only buttons, both `variant="outline"` and
+    `size="icon"`, each with a tooltip and an `aria-label` carrying its full
+    text, Refresh disabled while the model is off or already installing and
+    showing a pending state while it runs, the group wrapping below the
+    title row on a narrow window. The card's old description line is gone.
+    Below the header, a Python reason line sits directly under it where the
+    daemon has no Python new enough to install into; the switch itself,
+    labelled "Enable the AI permission model" by its own `aria-label` rather
+    than by visible text, is disabled the same way. A Thresholds section
+    holds the allow and deny thresholds as one range control, a two-handle
+    slider from 0 to 1 in steps of 0.01 whose track is cut into a green Allow
+    zone, an amber Ask zone and a red Deny zone the handles cannot cross,
+    with a 0, 0.5, 1 scale of ticks and numbers under the track, and two
+    narrow number inputs in one row below that — "Allow threshold" at the
+    left end with a green dot and "Deny threshold" at the right end with a
+    red dot, each shown to four fixed decimals, step 0.0001 — that stay in
+    step with the handles while either is dragged or typed into, the digits
+    settling to four decimals on mount, after a drag and after a commit, and
+    left alone while typed into. A Model section holds the Flavour and
+    Device selects in one inline row. A Status and hardware section shows
+    one muted line — the flavour, the device, the state, the memory and the
+    GPU — with the installed and latest release, whether the weights are
+    present, the endpoint, and the last refresh's age behind a "Details"
+    popover. Every control sends its own change the moment it is made, there
+    is no Save button, and a handle sends once, on release, never on every
+    drag step — and a refusal is toasted with the daemon's own message and
+    puts the control back to the row the daemon still holds, the same as the
+    agents screen's flag editor and rank picker. The `ai_permissions_updated`
+    event (012, 022) patches the same query key any of those writes does,
+    since the row has no list beside it
+    (`ui/src/features/permissions/permissions-page.test.tsx::puts the title,
+    the badge, the switch and both icon buttons in one header row`, `::drops
+    the old description line under the title`, `::shows the last error as an
+    alert at the top of the card`, `::shows the Thresholds, Model and Status
+    and hardware section headings`, `::joins Test a request and Refresh in
+    one button group in the card header`, `::opens the test dialog from the
+    header's Test a request button`, `::the model pickers > puts Flavour and
+    Device in one inline row`, `::shows the flavour, device, state, memory
+    and GPU in one status line`, `::shows every fact the daemon answered
+    with, behind Details`, `::the state badge > shows Disabled for the
+    disabled state`, `::the state badge > shows Installing for the
+    installing state`, `::the state badge > shows Ready for the ready
+    state`, `::the state badge > shows Failed for the failed state`,
     `ui/src/features/permissions/ai-card.test.tsx::puts Test a request and
-    Refresh in one button group in the header`,
+    Refresh in one button group in the header`, `::renders the header
+    buttons icon-only, with a tooltip naming each`, `::opens the Details
+    popover with the full seven facts`,
     `ui/src/events/dispatch.test.ts::replaces the cached status whole, so a
     card that read installing reads ready`). The repository dialog's
     `PERMISSION_MODES` gains `ai`, and an `ai_disabled` refusal on it lands on
@@ -618,17 +624,36 @@ Out: the daemon endpoints themselves (012).
   model, its own branch and its own pick status each on its own line, and a
   clear gap between one author's block and the next
   (`ui/src/features/tasks/task-panel.test.tsx::shows every author's own branch, marking only the one the reviewers picked`).
-- The Permissions screen's card renders the enabled switch, the two
-  thresholds, the daily refresh, Refresh and the fact list, and nothing about
+- The Permissions screen's card renders the enabled switch, the model
+  pickers, the two thresholds, Refresh and the status line, and nothing about
   checkpoints or prompts
   (`ui/src/features/permissions/permissions-page.test.tsx::renders the
-  switch, the two thresholds, the schedule, Refresh and the facts, and
-  nothing about checkpoints or prompts`).
-- The Permissions screen's card shows every fact of the settings row, and the
-  error style holds the last one once there is one
+  switch, model pickers, thresholds, Refresh and facts without a refresh
+  time`).
+- The Permissions screen's card shows every fact of the settings row behind
+  Details, and the alert holds the last error once there is one
   (`ui/src/features/permissions/permissions-page.test.tsx::shows every fact
-  the daemon answered with`,
-  `::shows the last error in the error style, once there is one`).
+  the daemon answered with, behind Details`,
+  `::shows the last error as an alert at the top of the card`).
+- The card's header is one row with the title, the state badge, the enabled
+  switch and both icon buttons, and carries no description line any more
+  (`ui/src/features/permissions/permissions-page.test.tsx::puts the title,
+  the badge, the switch and both icon buttons in one header row`, `::drops
+  the old description line under the title`).
+- "Test a request" and "Refresh" render icon-only, each naming itself through
+  a tooltip and an `aria-label` rather than visible text
+  (`ui/src/features/permissions/ai-card.test.tsx::renders the header buttons
+  icon-only, with a tooltip naming each`).
+- The Flavour and Device selects share one inline row
+  (`ui/src/features/permissions/permissions-page.test.tsx::the model pickers
+  > puts Flavour and Device in one inline row`).
+- The status line names the flavour, the device, the state, the memory and
+  the GPU, and the full seven facts open from "Details"
+  (`ui/src/features/permissions/permissions-page.test.tsx::shows the
+  flavour, device, state, memory and GPU in one status line`,
+  `::shows no GPU where the hardware probe found none`,
+  `ui/src/features/permissions/ai-card.test.tsx::opens the Details popover
+  with the full seven facts`).
 - The switch sends `enabled` alone, and is disabled with the Python version
   found or that none was, where the daemon has none new enough
   (`ui/src/features/permissions/permissions-page.test.tsx::the enabled
@@ -684,10 +709,6 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/permissions/threshold-range.test.tsx::draws no danger
   marker where none is set, and one labelled with its value to four decimals
   where it is`).
-- The daily refresh field's native clear is what turns the schedule off
-  (`ui/src/features/permissions/permissions-page.test.tsx::the daily refresh
-  > sends the time picked`,
-  `::the daily refresh > sends null once it is cleared back to off`).
 - Refresh posts once, and is disabled while the model is off or already
   installing
   (`ui/src/features/permissions/permissions-page.test.tsx::Refresh > posts to
