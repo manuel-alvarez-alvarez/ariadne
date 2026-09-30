@@ -9,14 +9,10 @@
  * picker use. A refusal is toasted with the daemon's own message and the
  * control is left as it was, since the cached row was never touched.
  *
- * The schedule is the one control with an "off" state of its own: a time
- * input's native clear is what asks for it, so clearing it and picking a time
- * are the same gesture in both directions, and there is nothing to build for
- * it beyond reading an empty value as `null`.
  */
 
 import { FlaskConicalIcon, RefreshCwIcon } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { toast } from "sonner"
 
 import type {
@@ -31,7 +27,13 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { ButtonGroup } from "@/components/ui/button-group"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { When } from "@/components/when"
 import { describeError } from "@/lib/format"
@@ -69,15 +71,32 @@ function SectionHeading({ children }: { children: string }) {
   )
 }
 
+const MEMORY_FORMAT = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 })
+const MEMORY_UNITS = ["GB", "TB", "PB"]
+
+function formatMemory(bytes: number): string {
+  let value = bytes / 1024 ** 3
+  let unit = 0
+  while (value >= 1024 && unit < MEMORY_UNITS.length - 1) {
+    value /= 1024
+    unit += 1
+  }
+  return `${MEMORY_FORMAT.format(value)} ${MEMORY_UNITS[unit]}`
+}
+
+function flavourReason(
+  devices: AiPermissionsStatusDto["flavours"][number]["devices"],
+): string | null {
+  for (const device of ["cpu", "cuda", "mlx"] as const) {
+    const reason = devices.find((option) => option.device === device)?.reason
+    if (reason) return reason
+  }
+  return null
+}
+
 export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
   const update = useUpdateAiPermissions()
   const refresh = useRefreshAiPermissions()
-
-  // A typed buffer for the free-form fields, so a keystroke is not fought by
-  // the row the last one answered with — reset only when the daemon's own
-  // value actually moves (a write's own answer, another window, the stream).
-  const [schedule, setSchedule] = useState(status.schedule ?? "")
-  useEffect(() => setSchedule(status.schedule ?? ""), [status.schedule])
 
   // Held here, not in the test panel, because the range control needs the
   // danger too: this is what draws its marker, so a dragged or typed
@@ -90,6 +109,9 @@ export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
       onError: (error) => toast.error(failureTitle, { description: describeError(error) }),
     })
   }
+
+  const selectedFlavour = status.flavours.find(({ flavour }) => flavour === status.flavour)
+  const selectsDisabled = status.state === "installing" || update.isPending
 
   return (
     <div className="flex flex-col gap-4 rounded-xl border bg-card p-4">
@@ -173,35 +195,58 @@ export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
       </div>
 
       <div className="flex flex-col gap-2">
-        <SectionHeading>Daily refresh</SectionHeading>
+        <SectionHeading>Model</SectionHeading>
         <Field>
-          <FieldLabel htmlFor="ai-schedule">Daily refresh</FieldLabel>
-          <Input
-            id="ai-schedule"
-            type="time"
-            className="w-32"
-            value={schedule}
-            aria-label="Daily refresh"
-            onChange={(event) => setSchedule(event.target.value)}
-            onBlur={() => {
-              if (schedule === (status.schedule ?? "")) return
-              send(
-                { schedule: schedule === "" ? null : schedule },
-                "Could not change the daily refresh",
-              )
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") event.currentTarget.blur()
-            }}
-          />
-          <FieldDescription>
-            When the install runs again on its own, local time. Clear it to turn the refresh off.
-          </FieldDescription>
+          <FieldLabel htmlFor="ai-flavour">Flavour</FieldLabel>
+          <Select
+            value={status.flavour}
+            disabled={selectsDisabled}
+            onValueChange={(flavour) => send({ flavour }, "Could not change the model flavour")}
+          >
+            <SelectTrigger id="ai-flavour" aria-label="Flavour" className="w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {status.flavours.map((option) => {
+                const runnable = option.devices.some((device) => device.can_run)
+                const reason = flavourReason(option.devices)
+                return (
+                  <SelectItem key={option.flavour} value={option.flavour} disabled={!runnable}>
+                    {option.flavour}
+                    {!runnable && reason ? ` — ${reason}` : ""}
+                  </SelectItem>
+                )
+              })}
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="ai-device">Device</FieldLabel>
+          <Select
+            value={status.device}
+            disabled={selectsDisabled}
+            onValueChange={(device) =>
+              send({ flavour: status.flavour, device }, "Could not change the model device")
+            }
+          >
+            <SelectTrigger id="ai-device" aria-label="Device" className="w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {selectedFlavour?.devices.map((option) => (
+                <SelectItem key={option.device} value={option.device} disabled={!option.can_run}>
+                  {option.device}
+                  {option.slow ? " — slow on CPU" : ""}
+                  {!option.can_run && option.reason ? ` — ${option.reason}` : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </Field>
       </div>
 
       <div className="flex flex-col gap-2">
-        <SectionHeading>Status</SectionHeading>
+        <SectionHeading>Status and hardware</SectionHeading>
         <FactList columns={3} framed={false}>
           <Fact label="Installed release">{status.installed_release ?? "—"}</Fact>
           <Fact label="Latest release">{status.latest_release ?? "—"}</Fact>
@@ -209,6 +254,12 @@ export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
           <Fact label="Endpoint">{status.endpoint ?? "—"}</Fact>
           <Fact label="Last refresh">
             <When at={status.last_refresh_at} format="age" />
+          </Fact>
+          <Fact label="Memory">{formatMemory(status.hardware.memory_bytes)}</Fact>
+          <Fact label="GPU">
+            {status.hardware.gpu
+              ? `${status.hardware.gpu.name} (${formatMemory(status.hardware.gpu.vram_bytes)})`
+              : "No GPU"}
           </Fact>
         </FactList>
       </div>

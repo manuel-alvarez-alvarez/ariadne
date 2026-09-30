@@ -1017,7 +1017,7 @@
             "description": "no Python 3.12 or 3.13 to install into"
           },
           "422": {
-            "description": "invalid thresholds or a schedule that is not HH:MM"
+            "description": "invalid thresholds, or a flavour and device combination that cannot run"
           }
         }
       }
@@ -3072,6 +3072,10 @@
           "enabled",
           "allow_threshold",
           "deny_threshold",
+          "flavour",
+          "device",
+          "hardware",
+          "flavours",
           "python",
           "state",
           "weights_present"
@@ -3089,6 +3093,10 @@
             "description": "Danger at or above this value is denied, 0 to 1.",
             "example": 0.626
           },
+          "device": {
+            "$ref": "#/components/schemas/Device",
+            "description": "The device the flavour runs on: the best one the machine could run it\non, unless another was chosen."
+          },
           "enabled": {
             "type": "boolean",
             "description": "Whether the model answers permission requests at all."
@@ -3099,6 +3107,21 @@
               "null"
             ],
             "description": "Where the model server answers, once one is running (022, Server)."
+          },
+          "flavour": {
+            "$ref": "#/components/schemas/Flavour",
+            "description": "The Kev flavour chosen, `4b` by default where the machine can run it."
+          },
+          "flavours": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FlavourOptionsDto"
+            },
+            "description": "Every flavour with every device it might run on, in wire order."
+          },
+          "hardware": {
+            "$ref": "#/components/schemas/HardwareDto",
+            "description": "The machine the daemon runs on, probed afresh."
           },
           "installed_release": {
             "type": [
@@ -3131,14 +3154,6 @@
           },
           "python": {
             "$ref": "#/components/schemas/PythonDto"
-          },
-          "schedule": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "When the daily refresh runs, `HH:MM` in 24-hour local time. `null`\nturns the refresh off.",
-            "example": "03:30"
           },
           "state": {
             "$ref": "#/components/schemas/AiPermissionsState"
@@ -3442,6 +3457,43 @@
         "properties": {
           "id": {
             "type": "string"
+          }
+        }
+      },
+      "Device": {
+        "type": "string",
+        "description": "Where a Kev flavour runs.",
+        "enum": [
+          "mlx",
+          "cuda",
+          "cpu"
+        ]
+      },
+      "DeviceOptionDto": {
+        "type": "object",
+        "description": "Whether one device can run one flavour, and why not.",
+        "required": [
+          "device",
+          "can_run",
+          "slow"
+        ],
+        "properties": {
+          "can_run": {
+            "type": "boolean"
+          },
+          "device": {
+            "$ref": "#/components/schemas/Device"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it cannot, e.g. `needs 24 GB VRAM, found 8 GB`."
+          },
+          "slow": {
+            "type": "boolean",
+            "description": "A note only: the flavour can still be chosen on this device."
           }
         }
       },
@@ -3864,6 +3916,35 @@
         "description": "Body of `POST /v1/goals/{id}/finalize`: the orchestrator ends planning and\nexecution starts. The orchestrator's call, not the user's, and it carries\nnothing — the plan is the tasks it wrote.",
         "additionalProperties": false
       },
+      "Flavour": {
+        "type": "string",
+        "description": "A Kev flavour: how large a model to run.",
+        "enum": [
+          "0.8b",
+          "4b",
+          "9b",
+          "27b"
+        ]
+      },
+      "FlavourOptionsDto": {
+        "type": "object",
+        "description": "One flavour with every device it might run on.",
+        "required": [
+          "flavour",
+          "devices"
+        ],
+        "properties": {
+          "devices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeviceOptionDto"
+            }
+          },
+          "flavour": {
+            "$ref": "#/components/schemas/Flavour"
+          }
+        }
+      },
       "GoalDto": {
         "type": "object",
         "required": [
@@ -3962,6 +4043,58 @@
           "total": {
             "$ref": "#/components/schemas/TokenUsageDto",
             "description": "Every session of the goal summed, the orchestrator's included."
+          }
+        }
+      },
+      "GpuDto": {
+        "type": "object",
+        "description": "The GPU with the largest VRAM the daemon's probe found.",
+        "required": [
+          "name",
+          "vram_bytes"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "vram_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "HardwareDto": {
+        "type": "object",
+        "description": "The machine the daemon runs on, as far as choosing a Kev flavour and\ndevice cares.",
+        "required": [
+          "os",
+          "arch",
+          "memory_bytes"
+        ],
+        "properties": {
+          "arch": {
+            "type": "string",
+            "example": "aarch64"
+          },
+          "gpu": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GpuDto"
+              }
+            ]
+          },
+          "memory_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "os": {
+            "type": "string",
+            "example": "macos"
           }
         }
       },
@@ -5506,6 +5639,17 @@
             "format": "double",
             "description": "Danger at or above this value is denied. Values outside 0 to 1 are refused."
           },
+          "device": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Device",
+                "description": "A device with no flavour keeps the stored flavour."
+              }
+            ]
+          },
           "enabled": {
             "type": [
               "boolean",
@@ -5513,13 +5657,16 @@
             ],
             "description": "Turning it on starts an install; turning it off keeps the files."
           },
-          "schedule": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "`HH:MM` in 24-hour local time. Absent keeps the schedule; `null`\nturns it off.",
-            "example": "03:30"
+          "flavour": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Flavour",
+                "description": "A flavour with no device picks the best device that runs it."
+              }
+            ]
           }
         },
         "additionalProperties": false

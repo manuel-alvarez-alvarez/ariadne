@@ -83,7 +83,7 @@ beforeEach(() => {
   stubDaemon()
 })
 
-it("renders the switch, the two thresholds, the schedule, Refresh and the facts, and nothing about checkpoints or prompts", async () => {
+it("renders the switch, model pickers, thresholds, Refresh and facts without a refresh time", async () => {
   renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
 
   expect(
@@ -97,7 +97,9 @@ it("renders the switch, the two thresholds, the schedule, Refresh and the facts,
   }) as HTMLInputElement
   expect(allowThreshold.value).toBe("0.2000")
   expect(denyThreshold.value).toBe("0.8000")
-  expect(screen.getByLabelText("Daily refresh")).toBeDefined()
+  expect(screen.getByRole("combobox", { name: "Flavour" })).toBeDefined()
+  expect(screen.getByRole("combobox", { name: "Device" })).toBeDefined()
+  expect(screen.queryByLabelText("Daily refresh")).toBeNull()
   expect(screen.getByRole("button", { name: "Refresh" })).toBeDefined()
   expect(screen.queryByText("State")).toBeNull()
 
@@ -106,12 +108,12 @@ it("renders the switch, the two thresholds, the schedule, Refresh and the facts,
   expect(screen.queryByRole("button", { name: "Restore defaults" })).toBeNull()
 })
 
-it("shows the Thresholds, Daily refresh and Status section headings", async () => {
+it("shows the Thresholds, Model and Status and hardware section headings", async () => {
   renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
 
   expect(await screen.findByRole("heading", { name: "Thresholds" })).toBeDefined()
-  expect(screen.getByRole("heading", { name: "Daily refresh" })).toBeDefined()
-  expect(screen.getByRole("heading", { name: "Status" })).toBeDefined()
+  expect(screen.getByRole("heading", { name: "Model" })).toBeDefined()
+  expect(screen.getByRole("heading", { name: "Status and hardware" })).toBeDefined()
 })
 
 it("joins Test a request and Refresh in one button group in the card header", async () => {
@@ -277,38 +279,131 @@ it("toasts the daemon's own message on a refused threshold, and puts the value b
   await waitFor(() => expect(allowThreshold.value).toBe("0.2000"))
 })
 
-describe("the daily refresh", () => {
-  it("does not send when the field is left without an edit", async () => {
+describe("the model pickers", () => {
+  it("disables an unsupported flavour and shows its reason", async () => {
+    const user = userEvent.setup()
     renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
 
-    fireEvent.blur(await screen.findByLabelText("Daily refresh"))
+    await user.click(await screen.findByRole("combobox", { name: "Flavour" }))
 
-    expect(requests.filter((request) => request.method !== "GET")).toHaveLength(0)
+    expect(
+      (await screen.findByRole("option", { name: /27b — needs 64 GB memory/ })).getAttribute(
+        "data-disabled",
+      ),
+    ).not.toBeNull()
   })
 
-  it("sends the typed time once when the field is left", async () => {
+  it("shows the resource reason before an unavailable platform reason", async () => {
+    const user = userEvent.setup()
+    const status = anAiPermissionsStatus()
+    current = {
+      ...status,
+      flavours: status.flavours.map((option) =>
+        option.flavour === "27b"
+          ? {
+              ...option,
+              devices: [
+                {
+                  device: "mlx",
+                  can_run: false,
+                  reason: "MLX needs macOS on Apple Silicon",
+                  slow: false,
+                },
+                {
+                  device: "cuda",
+                  can_run: false,
+                  reason: "needs 24 GB VRAM, found 8 GB",
+                  slow: false,
+                },
+                {
+                  device: "cpu",
+                  can_run: false,
+                  reason: "needs 64 GB memory, found 32 GB",
+                  slow: false,
+                },
+              ],
+            }
+          : option,
+      ),
+    }
     renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
 
-    const schedule = await screen.findByLabelText("Daily refresh")
-    fireEvent.change(schedule, {
-      target: { value: "03:30" },
-    })
-    expect(requests.filter((request) => request.method !== "GET")).toHaveLength(0)
-    fireEvent.blur(schedule)
+    await user.click(await screen.findByRole("combobox", { name: "Flavour" }))
 
-    await waitFor(() => expect(lastWrite()?.body).toEqual({ schedule: "03:30" }))
-    expect(requests.filter((request) => request.method !== "GET")).toHaveLength(1)
+    expect(
+      await screen.findByRole("option", { name: /27b — needs 64 GB memory, found 32 GB/ }),
+    ).toBeDefined()
   })
 
-  it("sends null once it is cleared back to off", async () => {
-    current = anAiPermissionsStatus({ schedule: "03:30" })
+  it("disables an unavailable device and shows slow on CPU", async () => {
+    const user = userEvent.setup()
+    current = anAiPermissionsStatus({ flavour: "0.8b", device: "mlx" })
     renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
 
-    fireEvent.change(await screen.findByLabelText("Daily refresh"), { target: { value: "" } })
-    fireEvent.blur(screen.getByLabelText("Daily refresh"))
+    await user.click(await screen.findByRole("combobox", { name: "Device" }))
 
-    await waitFor(() => expect(lastWrite()?.body).toEqual({ schedule: null }))
+    expect(
+      (await screen.findByRole("option", { name: /cuda — CUDA is unavailable/ })).getAttribute(
+        "data-disabled",
+      ),
+    ).not.toBeNull()
+    expect(await screen.findByRole("option", { name: /cpu — slow on CPU/ })).toBeDefined()
   })
+
+  it("sends a flavour alone, then sends its flavour and device", async () => {
+    const user = userEvent.setup()
+    renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
+
+    await user.click(await screen.findByRole("combobox", { name: "Flavour" }))
+    await user.click(await screen.findByRole("option", { name: "0.8b" }))
+    await waitFor(() => expect(lastWrite()?.body).toEqual({ flavour: "0.8b" }))
+
+    await user.click(screen.getByRole("combobox", { name: "Device" }))
+    await user.click(screen.getByRole("option", { name: /cpu — slow on CPU/ }))
+    await waitFor(() => expect(lastWrite()?.body).toEqual({ flavour: "0.8b", device: "cpu" }))
+  })
+
+  it("disables both pickers while installing", async () => {
+    current = anAiPermissionsStatus({ state: "installing" })
+    renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
+
+    expect(
+      (await screen.findByRole("combobox", { name: "Flavour" })).hasAttribute("disabled"),
+    ).toBe(true)
+    expect(screen.getByRole("combobox", { name: "Device" }).hasAttribute("disabled")).toBe(true)
+  })
+
+  it("shows the flavour refusal message", async () => {
+    const user = userEvent.setup()
+    stubDaemon({ status: 422, code: "flavour_unsupported", message: "needs 24 GB VRAM" })
+    renderScreen(
+      <>
+        <Toaster />
+        <PermissionsPage />
+      </>,
+      { route: "/permissions?tab=ai" },
+    )
+
+    await user.click(await screen.findByRole("combobox", { name: "Flavour" }))
+    await user.click(await screen.findByRole("option", { name: "0.8b" }))
+
+    expect(await screen.findByText(/needs 24 GB VRAM/)).toBeDefined()
+  })
+})
+
+it("shows hardware facts with a GPU", async () => {
+  renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
+  expect(await screen.findByText("64 GB")).toBeDefined()
+  expect(screen.getByText("Apple M4 Max (48 GB)")).toBeDefined()
+})
+
+it("shows no GPU where the hardware probe found none", async () => {
+  current = anAiPermissionsStatus({
+    hardware: { os: "linux", arch: "x86_64", memory_bytes: 1536 * 1024 ** 3, gpu: null },
+  })
+  renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
+  expect(await screen.findByText("No GPU")).toBeDefined()
+  expect(screen.getByText("1.5 TB")).toBeDefined()
 })
 
 describe("Refresh", () => {

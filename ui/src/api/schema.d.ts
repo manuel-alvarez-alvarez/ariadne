@@ -1261,10 +1261,21 @@ export interface components {
              * @example 0.626
              */
             deny_threshold: number;
+            /**
+             * @description The device the flavour runs on: the best one the machine could run it
+             *     on, unless another was chosen.
+             */
+            device: components["schemas"]["Device"];
             /** @description Whether the model answers permission requests at all. */
             enabled: boolean;
             /** @description Where the model server answers, once one is running (022, Server). */
             endpoint?: string | null;
+            /** @description The Kev flavour chosen, `4b` by default where the machine can run it. */
+            flavour: components["schemas"]["Flavour"];
+            /** @description Every flavour with every device it might run on, in wire order. */
+            flavours: components["schemas"]["FlavourOptionsDto"][];
+            /** @description The machine the daemon runs on, probed afresh. */
+            hardware: components["schemas"]["HardwareDto"];
             /**
              * @description The pinned model package and run on disk.
              * @example kev@f1535963 jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101
@@ -1277,12 +1288,6 @@ export interface components {
             /** @description The pinned model package and run the last install used. */
             latest_release?: string | null;
             python: components["schemas"]["PythonDto"];
-            /**
-             * @description When the daily refresh runs, `HH:MM` in 24-hour local time. `null`
-             *     turns the refresh off.
-             * @example 03:30
-             */
-            schedule?: string | null;
             state: components["schemas"]["AiPermissionsState"];
             /** @description Whether the checkpoints of the last good install are on disk. */
             weights_present: boolean;
@@ -1445,6 +1450,20 @@ export interface components {
             id: string;
         };
         /**
+         * @description Where a Kev flavour runs.
+         * @enum {string}
+         */
+        Device: "mlx" | "cuda" | "cpu";
+        /** @description Whether one device can run one flavour, and why not. */
+        DeviceOptionDto: {
+            can_run: boolean;
+            device: components["schemas"]["Device"];
+            /** @description Why it cannot, e.g. `needs 24 GB VRAM, found 8 GB`. */
+            reason?: string | null;
+            /** @description A note only: the flavour can still be chosen on this device. */
+            slow: boolean;
+        };
+        /**
          * @description One domain event. Serialized as `{"event": "<kind>", "data": <payload>}`;
          *     on the SSE wire the kind becomes the `event:` field and the payload alone
          *     the `data:` field.
@@ -1574,6 +1593,16 @@ export interface components {
          *     nothing — the plan is the tasks it wrote.
          */
         FinalizePlanRequest: Record<string, never>;
+        /**
+         * @description A Kev flavour: how large a model to run.
+         * @enum {string}
+         */
+        Flavour: "0.8b" | "4b" | "9b" | "27b";
+        /** @description One flavour with every device it might run on. */
+        FlavourOptionsDto: {
+            devices: components["schemas"]["DeviceOptionDto"][];
+            flavour: components["schemas"]["Flavour"];
+        };
         GoalDto: {
             created_at: string;
             description: string;
@@ -1622,6 +1651,25 @@ export interface components {
             reviewers: components["schemas"]["TokenUsageDto"];
             /** @description Every session of the goal summed, the orchestrator's included. */
             total: components["schemas"]["TokenUsageDto"];
+        };
+        /** @description The GPU with the largest VRAM the daemon's probe found. */
+        GpuDto: {
+            name: string;
+            /** Format: int64 */
+            vram_bytes: number;
+        };
+        /**
+         * @description The machine the daemon runs on, as far as choosing a Kev flavour and
+         *     device cares.
+         */
+        HardwareDto: {
+            /** @example aarch64 */
+            arch: string;
+            gpu?: null | components["schemas"]["GpuDto"];
+            /** Format: int64 */
+            memory_bytes: number;
+            /** @example macos */
+            os: string;
         };
         /** @description Response of `GET /v1/health`. */
         HealthResponse: {
@@ -2367,14 +2415,10 @@ export interface components {
              * @description Danger at or above this value is denied. Values outside 0 to 1 are refused.
              */
             deny_threshold?: number | null;
+            device?: null | components["schemas"]["Device"];
             /** @description Turning it on starts an install; turning it off keeps the files. */
             enabled?: boolean | null;
-            /**
-             * @description `HH:MM` in 24-hour local time. Absent keeps the schedule; `null`
-             *     turns it off.
-             * @example 03:30
-             */
-            schedule?: string | null;
+            flavour?: null | components["schemas"]["Flavour"];
         };
         UpdateLearnedPermissionRequest: {
             kind?: string | null;
@@ -3216,7 +3260,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description invalid thresholds or a schedule that is not HH:MM */
+            /** @description invalid thresholds, or a flavour and device combination that cannot run */
             422: {
                 headers: {
                     [name: string]: unknown;

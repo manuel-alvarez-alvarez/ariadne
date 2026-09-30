@@ -282,7 +282,48 @@ export function anAiPermissionsStatus(
     enabled: false,
     allow_threshold: 0.2,
     deny_threshold: 0.8,
-    schedule: null,
+    flavour: "4b",
+    device: "mlx",
+    hardware: {
+      os: "macos",
+      arch: "aarch64",
+      memory_bytes: 64 * 1024 * 1024 * 1024,
+      gpu: { name: "Apple M4 Max", vram_bytes: 48 * 1024 * 1024 * 1024 },
+    },
+    flavours: [
+      {
+        flavour: "0.8b",
+        devices: [
+          { device: "mlx", can_run: true, reason: null, slow: false },
+          { device: "cuda", can_run: false, reason: "CUDA is unavailable", slow: false },
+          { device: "cpu", can_run: true, reason: null, slow: true },
+        ],
+      },
+      {
+        flavour: "4b",
+        devices: [
+          { device: "mlx", can_run: true, reason: null, slow: false },
+          { device: "cuda", can_run: false, reason: "CUDA is unavailable", slow: false },
+          { device: "cpu", can_run: false, reason: "needs 16 GB memory", slow: false },
+        ],
+      },
+      {
+        flavour: "9b",
+        devices: [
+          { device: "mlx", can_run: false, reason: "needs 32 GB memory", slow: false },
+          { device: "cuda", can_run: false, reason: "CUDA is unavailable", slow: false },
+          { device: "cpu", can_run: false, reason: "needs 32 GB memory", slow: false },
+        ],
+      },
+      {
+        flavour: "27b",
+        devices: [
+          { device: "mlx", can_run: false, reason: "needs 64 GB memory", slow: false },
+          { device: "cuda", can_run: false, reason: "CUDA is unavailable", slow: false },
+          { device: "cpu", can_run: false, reason: "needs 64 GB memory", slow: false },
+        ],
+      },
+    ],
     python: { path: "/usr/bin/python3", version: "3.12.1", ok: true },
     state: "disabled",
     installed_release: null,
