@@ -48,7 +48,7 @@ it("shows the track's three zones and the handles named for what they hold", () 
   expect(screen.getByText("Deny")).toBeDefined()
 })
 
-it("puts the zone labels on the track itself, centered on its own vertical middle", () => {
+it("puts the zone labels in a row above the track, off the coloured bar", () => {
   const { container } = render(
     <ThresholdRange allowThreshold={0.2} denyThreshold={0.8} mutate={mutate} />,
   )
@@ -56,11 +56,8 @@ it("puts the zone labels on the track itself, centered on its own vertical middl
   const track = container.querySelector('[data-slot="slider-track"]') as HTMLElement
   for (const text of ["Allow", "Ask", "Deny"]) {
     const label = screen.getByText(text)
-    expect(track.contains(label)).toBe(true)
-    // "top-1/2 -translate-y-1/2" centers the label on the track's own
-    // height, so it sits on the coloured bar rather than above or below it.
-    expect(label.className).toContain("top-1/2")
-    expect(label.className).toContain("-translate-y-1/2")
+    expect(track.contains(label)).toBe(false)
+    expect(label.compareDocumentPosition(track) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   }
 })
 
@@ -94,16 +91,26 @@ it("shows a zone-coloured dot beside each input's label", () => {
   expect(denyDot.getAttribute("aria-hidden")).toBe("true")
 })
 
-it("puts each input directly under its own handle", () => {
-  render(<ThresholdRange allowThreshold={0.2} denyThreshold={0.8} mutate={mutate} />)
+it("puts both inputs in one row below the track, not under the handles", () => {
+  const { container } = render(
+    <ThresholdRange allowThreshold={0.2} denyThreshold={0.8} mutate={mutate} />,
+  )
 
-  const allow = screen.getByRole("spinbutton", { name: "Allow threshold" }) as HTMLInputElement
-  const deny = screen.getByRole("spinbutton", { name: "Deny threshold" }) as HTMLInputElement
+  const row = container.querySelector('[data-slot="threshold-inputs"]') as HTMLElement
+  const allow = screen.getByRole("spinbutton", { name: "Allow threshold" })
+  const deny = screen.getByRole("spinbutton", { name: "Deny threshold" })
+  expect(row.contains(allow)).toBe(true)
+  expect(row.contains(deny)).toBe(true)
+  // Held in the flow of the row, so neither is cut at 0 or 1 nor laid over
+  // the other when the thresholds are close.
+  expect(allow.closest("div.absolute")).toBeNull()
+  expect(deny.closest("div.absolute")).toBeNull()
+})
 
-  const allowColumn = allow.closest("div.absolute") as HTMLElement
-  const denyColumn = deny.closest("div.absolute") as HTMLElement
-  expect(allowColumn.style.left).toBe("20%")
-  expect(denyColumn.style.left).toBe("80%")
+it("keeps the danger readout inside the card at either end of the track", () => {
+  render(<ThresholdRange allowThreshold={0.2} denyThreshold={0.8} danger={0} mutate={mutate} />)
+
+  expect((screen.getByText("0.0000") as HTMLElement).style.left).toMatch(/^clamp\(1\.75rem, 0%/)
 })
 
 it("formats an input to four decimals on first render, after a drag, and after a commit, but not while typing", () => {
@@ -176,8 +183,8 @@ it("draws no danger marker where none is set, and one labelled with its value to
 })
 
 function zoneLabels(container: HTMLElement): HTMLElement[] {
-  return Array.from(container.querySelectorAll("span.pointer-events-none.absolute")).filter(
-    (element) => element.className.includes("top-1/2"),
+  return Array.from(
+    container.querySelectorAll('[data-slot="threshold-zone-label"]'),
   ) as HTMLElement[]
 }
 
@@ -215,7 +222,7 @@ it("hides only the narrow zone label", () => {
 
   const labels = zoneLabels(container)
   expect(labels.length).toBe(3)
-  // Ask zone is 10% wide (< 15%), so only Ask is hidden
+  // Ask zone is 10% wide (< 12%), so only Ask is hidden
   expect(labels[0]?.className).toContain("opacity-100")
   expect(labels[1]?.className).toContain("opacity-0")
   expect(labels[2]?.className).toContain("opacity-100")

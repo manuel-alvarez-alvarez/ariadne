@@ -164,18 +164,19 @@ The Permissions screen's AI tab surfaces this settings row as one card, "AI"
 (015, rule 32): a header that is one row — the title, the state badge, the
 enabled switch and icon-only "Test a request" and "Refresh" buttons, each
 with a tooltip and an `aria-label` — the Flavour and Device selects of rules
-37 to 49 on one row, and this settings row's facts compacted to one muted
-status line (flavour, device, state, memory, GPU) with the full set behind a
-"Details" popover. The full UI contract, including the Thresholds section
+37 to 49 side by side across the card's width, each option naming the
+flavour or device, what it is, and where it runs or why it cannot, and this
+settings row's facts laid out in the card as a grid, with no "Details"
+popover. The full UI contract, including the Thresholds section
 and the test dialog, is spec 015's own
 (`ui/src/features/permissions/permissions-page.test.tsx::puts the title, the
 badge, the switch and both icon buttons in one header row`, `::drops the old
 description line under the title`, `::the model pickers > puts Flavour and
-Device in one inline row`, `::shows the flavour, device, state, memory and
-GPU in one status line`, `::shows every fact the daemon answered with,
-behind Details`, `ui/src/features/permissions/ai-card.test.tsx::renders the
-header buttons icon-only, with a tooltip naming each`, `::opens the Details
-popover with the full seven facts`).
+Device in one inline row`, `::shows what runs, the memory and the GPU as
+facts`, `::shows every fact the daemon answered with, with no Details
+button`, `ui/src/features/permissions/ai-card.test.tsx::renders the header
+buttons icon-only, with a tooltip naming each`, `::shows the status and
+hardware facts in the card, with no Details popover`).
 
 ## Server
 
@@ -631,28 +632,30 @@ popover with the full seven facts`).
 50. The desktop app renders `allow_threshold` and `deny_threshold` as one
     range control: a two-handle slider from 0 to 1 in steps of 0.01, its
     track cut into a green Allow zone, an amber Ask zone and a red Deny zone
-    the handles cannot cross, with the zone names Allow, Ask and Deny on the
-    track, centered on each zone and hidden where its own zone is too
-    narrow, and a small number input directly under each handle — a green
-    dot for the allow input, a red dot for the deny input — each held to
+    the handles cannot cross, with the zone names Allow, Ask and Deny in a
+    row above the track, centered on each zone and hidden where its own zone
+    is too narrow, and the two number inputs in one row below the track,
+    "Allow up to" at its start and "Deny from" at its end — a green dot for
+    the allow input, a red dot for the deny input — each held to
     four fixed decimals, step 0.0001, settled on mount, after a drag and
     after a commit, and left alone while typed into. A handle released at a
     new value, or a number field left or Entered, sends only the field that
     changed, clamped to 0–1; neither handle can reach or pass the other;
     each thumb carries `aria-valuetext` to four decimals. The control also
     takes an optional danger marker on the track, taller than the track,
-    with an accessible label to four decimals and that value written beside
-    it. A refusal is toasted with the daemon's own message and the row snaps
+    with an accessible label to four decimals and that value written in the
+    zone-label row above it, kept inside the card at either end. A refusal is toasted with the daemon's own message and the row snaps
     back to the value it still holds. The control has no tick row and no
     description of the three labels' meaning
     (`ui/src/features/permissions/threshold-range.test.tsx::shows the
     track's three zones and the handles named for what they hold`,
-    `::puts the zone labels on the track itself, centered on its own vertical middle`,
+    `::puts the zone labels in a row above the track, off the coloured bar`,
     `::shows no tick row and no threshold description`,
     `::shows the two number inputs, named and valued to four decimals for
     the row they hold`,
     `::shows a zone-coloured dot beside each input's label`,
-    `::puts each input directly under its own handle`,
+    `::puts both inputs in one row below the track, not under the handles`,
+    `::keeps the danger readout inside the card at either end of the track`,
     `::formats an input to four decimals on first render, after a drag, and
     after a commit, but not while typing`,
     `::draws no danger marker where none is set, and one labelled with its
@@ -1000,17 +1003,17 @@ popover with the full seven facts`).
 - The normalized state carries only the derived facts that the mode names,
   and an unknown fact is refused
   (`bench/ai-permissions/tests/test_evaluators.py::NormalizedStateTests`).
-- The range control of rule 50 shows the zone labels on the track, hidden
-  where a zone is too narrow, a small number input under each handle, and no
+- The range control of rule 50 shows the zone labels above the track, hidden
+  where a zone is too narrow, both number inputs in one row below it, and no
   tick row or description; a release or a left/Entered field sends the one
   field that changed and a refusal snaps the row back
   (`ui/src/features/permissions/threshold-range.test.tsx::shows the track's
   three zones and the handles named for what they hold`,
-  `::puts the zone labels on the track itself, centered on its own vertical middle`,
+  `::puts the zone labels in a row above the track, off the coloured bar`,
   `::shows no tick row and no threshold description`,
   `::shows the two number inputs, named and valued to four decimals for the
   row they hold`,
-  `::puts each input directly under its own handle`,
+  `::puts both inputs in one row below the track, not under the handles`,
   `::positions zone labels at the center of each zone and updates them when
   thresholds move`,
   `::hides only the narrow zone label`,

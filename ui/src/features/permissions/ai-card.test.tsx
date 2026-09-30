@@ -141,21 +141,21 @@ it("renders the header buttons icon-only, with a tooltip naming each", async () 
   expect(await screen.findByText("Refresh")).toBeDefined()
 })
 
-it("opens the Details popover with the full seven facts", async () => {
+it("shows the status and hardware facts in the card, with no Details popover", () => {
   const status = anAiPermissionsStatus({
     state: "ready",
     installed_release: "kev@f1535963 jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101",
     weights_present: true,
     endpoint: "http://127.0.0.1:8901",
   })
-  const user = userEvent.setup()
   renderCard(status)
 
-  expect(screen.queryByText("http://127.0.0.1:8901")).toBeNull()
-  await user.click(screen.getByRole("button", { name: "Details" }))
-
+  expect(screen.queryByRole("button", { name: "Details" })).toBeNull()
   expect(screen.getByText("http://127.0.0.1:8901")).toBeDefined()
-  expect(screen.getByText("Yes")).toBeDefined()
+  expect(screen.getByText("On disk")).toBeDefined()
+  expect(
+    screen.getByText("kev@f1535963 jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101"),
+  ).toBeDefined()
 })
 
 it("draws no marker for an ai_error answer", async () => {

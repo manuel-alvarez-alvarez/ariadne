@@ -1,7 +1,9 @@
 /**
  * The allow/deny threshold pair as one range control: a two-handle slider
- * over three coloured zones, with the zone labels on the track and a small
- * editable number under each handle. Both surfaces read and write the same
+ * over three coloured zones, the zone labels in a row above the track, and
+ * the two editable numbers in a row below it — held to the card's edges
+ * rather than under the handles, so neither is cut off at 0 or 1 nor laid
+ * over the other when the thresholds are close. Both surfaces read and write the same
  * pair, so a drag and a keystroke move each other in step, and neither
  * handle can pass the other.
  *
@@ -28,6 +30,15 @@ const INPUT_DECIMALS = 4
 
 const thumbClassName =
   "relative block size-3.5 shrink-0 rounded-full border border-ring bg-white ring-ring/50 transition-[color,box-shadow] select-none after:absolute after:-inset-2 hover:ring-3 focus-visible:ring-3 focus-visible:outline-hidden active:ring-3"
+
+const numberInputClassName =
+  "h-7 w-24 px-2 text-right text-xs tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+
+/** A label centred on `percent` of the track, kept `inset` from either end so
+ * its text never runs past the card. */
+function insetLeft(percent: number, inset = "1.75rem"): string {
+  return `clamp(${inset}, ${percent}%, calc(100% - ${inset}))`
+}
 
 function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value))
@@ -165,16 +176,44 @@ export function ThresholdRange({
   const zoneStart = Math.min(allowPercent, denyPercent)
   const zoneEnd = Math.max(allowPercent, denyPercent)
 
-  const allowZoneCenter = zoneStart / 2
-  const askZoneCenter = (zoneStart + zoneEnd) / 2
-  const denyZoneCenter = (zoneEnd + 100) / 2
-  const allowZoneWidth = zoneStart
-  const askZoneWidth = zoneEnd - zoneStart
-  const denyZoneWidth = 100 - zoneEnd
-  const minZoneWidthForLabel = 15
+  const dangerPercent = danger !== undefined ? clamp01(danger) * 100 : undefined
+  const minZoneWidthForLabel = 12
+  // A zone label gives way to the danger readout that shares its row.
+  const zones = [
+    { label: "Allow", center: zoneStart / 2, width: zoneStart },
+    { label: "Ask", center: (zoneStart + zoneEnd) / 2, width: zoneEnd - zoneStart },
+    { label: "Deny", center: (zoneEnd + 100) / 2, width: 100 - zoneEnd },
+  ].map((zone) => ({
+    ...zone,
+    shown:
+      zone.width >= minZoneWidthForLabel &&
+      (dangerPercent === undefined || Math.abs(zone.center - dangerPercent) > 10),
+  }))
 
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-1.5">
+      <div className="relative h-4 text-xs text-muted-foreground">
+        {zones.map((zone) => (
+          <span
+            key={zone.label}
+            data-slot="threshold-zone-label"
+            aria-hidden={!zone.shown}
+            className={`pointer-events-none absolute top-0 -translate-x-1/2 transition-opacity ${zone.shown ? "opacity-100" : "opacity-0"}`}
+            style={{ left: `${zone.center}%` }}
+          >
+            {zone.label}
+          </span>
+        ))}
+        {dangerPercent !== undefined ? (
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute top-0 -translate-x-1/2 font-medium text-foreground tabular-nums"
+            style={{ left: insetLeft(dangerPercent) }}
+          >
+            {formatDecimals(dangerPercent / 100)}
+          </span>
+        ) : null}
+      </div>
       <SliderPrimitive.Root
         value={[allowValue, denyValue]}
         min={0}
@@ -185,7 +224,7 @@ export function ThresholdRange({
         onValueChange={(value) => handleSliderChange(value as [number, number])}
         onValueCommitted={(value) => handleSliderCommit(value as [number, number])}
       >
-        <SliderPrimitive.Control className="relative flex w-full touch-none items-center select-none">
+        <SliderPrimitive.Control className="relative flex w-full touch-none items-center py-1.5 select-none">
           <SliderPrimitive.Track
             data-slot="slider-track"
             className="relative h-1.5 w-full grow rounded-full select-none"
@@ -204,40 +243,13 @@ export function ThresholdRange({
                 style={{ left: `${zoneEnd}%` }}
               />
             </div>
-            <span
-              className={`pointer-events-none absolute top-1/2 left-0 -translate-x-1/2 -translate-y-1/2 text-xs text-muted-foreground transition-opacity ${allowZoneWidth < minZoneWidthForLabel ? "opacity-0" : "opacity-100"}`}
-              style={{ left: `${allowZoneCenter}%` }}
-            >
-              Allow
-            </span>
-            <span
-              className={`pointer-events-none absolute top-1/2 left-0 -translate-x-1/2 -translate-y-1/2 text-xs text-muted-foreground transition-opacity ${askZoneWidth < minZoneWidthForLabel ? "opacity-0" : "opacity-100"}`}
-              style={{ left: `${askZoneCenter}%` }}
-            >
-              Ask
-            </span>
-            <span
-              className={`pointer-events-none absolute top-1/2 left-0 -translate-x-1/2 -translate-y-1/2 text-xs text-muted-foreground transition-opacity ${denyZoneWidth < minZoneWidthForLabel ? "opacity-0" : "opacity-100"}`}
-              style={{ left: `${denyZoneCenter}%` }}
-            >
-              Deny
-            </span>
-            {danger !== undefined ? (
-              <>
-                <div
-                  role="img"
-                  aria-label={`Danger ${formatDecimals(clamp01(danger))}`}
-                  className="pointer-events-none absolute top-1/2 h-3 w-0.5 -translate-x-1/2 -translate-y-1/2 bg-foreground"
-                  style={{ left: `${clamp01(danger) * 100}%` }}
-                />
-                <span
-                  aria-hidden="true"
-                  className="pointer-events-none absolute -top-4 -translate-x-1/2 text-[10px] text-muted-foreground"
-                  style={{ left: `${clamp01(danger) * 100}%` }}
-                >
-                  {formatDecimals(clamp01(danger))}
-                </span>
-              </>
+            {dangerPercent !== undefined ? (
+              <div
+                role="img"
+                aria-label={`Danger ${formatDecimals(dangerPercent / 100)}`}
+                className="pointer-events-none absolute top-1/2 h-3 w-0.5 -translate-x-1/2 -translate-y-1/2 bg-foreground"
+                style={{ left: `${dangerPercent}%` }}
+              />
             ) : null}
             <SliderPrimitive.Thumb
               index={0}
@@ -255,13 +267,14 @@ export function ThresholdRange({
         </SliderPrimitive.Control>
       </SliderPrimitive.Root>
 
-      <div className="relative h-9">
-        <div
-          className="absolute top-0 flex -translate-x-1/2 flex-col items-center gap-1"
-          style={{ left: `${allowPercent}%` }}
-        >
-          <Label htmlFor="ai-allow-threshold" className="gap-1">
+      <div
+        data-slot="threshold-inputs"
+        className="flex flex-wrap items-center justify-between gap-3"
+      >
+        <div className="flex items-center gap-2">
+          <Label htmlFor="ai-allow-threshold" className="gap-1.5 text-xs font-normal">
             <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-status-done" />
+            <span aria-hidden="true">Allow up to</span>
             <span className="sr-only">Allow threshold</span>
           </Label>
           <Input
@@ -271,18 +284,16 @@ export function ThresholdRange({
             max={1}
             step={INPUT_STEP}
             value={allowText}
-            className="h-6 w-16 px-1 text-center text-xs tabular-nums"
+            className={numberInputClassName}
             onChange={(event) => handleAllowTextChange(event.target.value)}
             onBlur={commitAllowText}
             onKeyDown={blurOnEnter}
           />
         </div>
-        <div
-          className="absolute top-0 flex -translate-x-1/2 flex-col items-center gap-1"
-          style={{ left: `${denyPercent}%` }}
-        >
-          <Label htmlFor="ai-deny-threshold" className="gap-1">
+        <div className="flex items-center gap-2">
+          <Label htmlFor="ai-deny-threshold" className="gap-1.5 text-xs font-normal">
             <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-status-danger" />
+            <span aria-hidden="true">Deny from</span>
             <span className="sr-only">Deny threshold</span>
           </Label>
           <Input
@@ -292,7 +303,7 @@ export function ThresholdRange({
             max={1}
             step={INPUT_STEP}
             value={denyText}
-            className="h-6 w-16 px-1 text-center text-xs tabular-nums"
+            className={numberInputClassName}
             onChange={(event) => handleDenyTextChange(event.target.value)}
             onBlur={commitDenyText}
             onKeyDown={blurOnEnter}

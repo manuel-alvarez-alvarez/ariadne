@@ -260,18 +260,22 @@ Out: the daemon endpoints themselves (012).
     holds the allow and deny thresholds as one range control, a two-handle
     slider from 0 to 1 in steps of 0.01 whose track is cut into a green Allow
     zone, an amber Ask zone and a red Deny zone the handles cannot cross,
-    with the zone names Allow, Ask and Deny on the track, centered on each
-    zone and hidden where its own zone is too narrow, and a small number
-    input directly under each handle — "Allow threshold" with a green dot
-    and "Deny threshold" with a red dot, each shown to four fixed decimals,
+    with the zone names Allow, Ask and Deny in a row above the track,
+    centered on each zone and hidden where its own zone is too narrow, and
+    the two number inputs in one row below the track, never cut at the
+    card's edge — "Allow threshold" ("Allow up to") with a green dot at its
+    start and "Deny threshold" ("Deny from") with a red dot at its end, each shown to four fixed decimals,
     step 0.0001 — that stay in step with the handles while either is dragged
     or typed into, the digits settling to four decimals on mount, after a
     drag and after a commit, and left alone while typed into. A Model
-    section holds the Flavour and Device selects in one inline row. A Status
-    and hardware section shows one muted line — the flavour, the device, the
-    state, the memory and the GPU — with the installed and latest release,
-    whether the weights are present, the endpoint, and the last refresh's
-    age behind a "Details" popover. Every control sends its own change the
+    section holds the Flavour and Device selects side by side across the
+    card's width; each option names the flavour or device, a line on what it
+    is, and a line on where it runs or why it cannot, the way the rank
+    picker's options carry their meaning. A Status and hardware section
+    lays its facts out in the card as a grid, with no "Details" popover:
+    what runs (flavour on device), the memory, the GPU, the machine, the
+    Python version, the weights, the last refresh's age, the endpoint, and
+    the installed and latest release. Every control sends its own change the
     moment it is made, there is no Save button, and a handle sends once, on
     release, never on every drag step — and a refusal is toasted with the
     daemon's own message and puts the control back to the row the daemon
@@ -285,16 +289,16 @@ Out: the daemon endpoints themselves (012).
     and hardware section headings`, `::joins Test a request and Refresh in
     one button group in the card header`, `::opens the test dialog from the
     header's Test a request button`, `::the model pickers > puts Flavour and
-    Device in one inline row`, `::shows the flavour, device, state, memory
-    and GPU in one status line`, `::shows every fact the daemon answered
-    with, behind Details`, `::the state badge > shows Disabled for the
+    Device in one inline row`, `::shows what runs, the memory and the GPU as
+    facts`, `::shows every fact the daemon answered with, with no Details
+    button`, `::the state badge > shows Disabled for the
     disabled state`, `::the state badge > shows Installing for the
     installing state`, `::the state badge > shows Ready for the ready
     state`, `::the state badge > shows Failed for the failed state`,
     `ui/src/features/permissions/ai-card.test.tsx::puts Test a request and
     Refresh in one button group in the header`, `::renders the header
-    buttons icon-only, with a tooltip naming each`, `::opens the Details
-    popover with the full seven facts`,
+    buttons icon-only, with a tooltip naming each`, `::shows the status and
+    hardware facts in the card, with no Details popover`,
     `ui/src/events/dispatch.test.ts::replaces the cached status whole, so a
     card that read installing reads ready`). The repository dialog's
     `PERMISSION_MODES` gains `ai`, and an `ai_disabled` refusal on it lands on
@@ -625,15 +629,16 @@ Out: the daemon endpoints themselves (012).
   clear gap between one author's block and the next
   (`ui/src/features/tasks/task-panel.test.tsx::shows every author's own branch, marking only the one the reviewers picked`).
 - The Permissions screen's card renders the enabled switch, the model
-  pickers, the two thresholds, Refresh and the status line, and nothing about
+  pickers, the two thresholds, Refresh and the status facts, and nothing about
   checkpoints or prompts
   (`ui/src/features/permissions/permissions-page.test.tsx::renders the
   switch, model pickers, thresholds, Refresh and facts without a refresh
   time`).
-- The Permissions screen's card shows every fact of the settings row behind
-  Details, and the alert holds the last error once there is one
+- The Permissions screen's card shows every fact of the settings row in the
+  card, with no Details button, and the alert holds the last error once there
+  is one
   (`ui/src/features/permissions/permissions-page.test.tsx::shows every fact
-  the daemon answered with, behind Details`,
+  the daemon answered with, with no Details button`,
   `::shows the last error as an alert at the top of the card`).
 - The card's header is one row with the title, the state badge, the enabled
   switch and both icon buttons, and carries no description line any more
@@ -647,13 +652,20 @@ Out: the daemon endpoints themselves (012).
 - The Flavour and Device selects share one inline row
   (`ui/src/features/permissions/permissions-page.test.tsx::the model pickers
   > puts Flavour and Device in one inline row`).
-- The status line names the flavour, the device, the state, the memory and
-  the GPU, and the full seven facts open from "Details"
-  (`ui/src/features/permissions/permissions-page.test.tsx::shows the
-  flavour, device, state, memory and GPU in one status line`,
+- The Status and hardware facts name what runs, the memory, the GPU and the
+  machine, and every other fact is in the card with no "Details" popover
+  (`ui/src/features/permissions/permissions-page.test.tsx::shows what runs,
+  the memory and the GPU as facts`,
   `::shows no GPU where the hardware probe found none`,
-  `ui/src/features/permissions/ai-card.test.tsx::opens the Details popover
-  with the full seven facts`).
+  `ui/src/features/permissions/ai-card.test.tsx::shows the status and
+  hardware facts in the card, with no Details popover`).
+- Each Flavour option names what the flavour is and the devices it runs on,
+  or why it runs on none, and each Device option names what the device is
+  and notes a slow or unavailable one
+  (`ui/src/features/permissions/permissions-page.test.tsx::the model pickers
+  > disables an unsupported flavour and shows its reason`,
+  `::the model pickers > disables an unavailable device and notes a slow
+  one`).
 - The switch sends `enabled` alone, and is disabled with the Python version
   found or that none was, where the daemon has none new enough
   (`ui/src/features/permissions/permissions-page.test.tsx::the enabled
@@ -663,9 +675,9 @@ Out: the daemon endpoints themselves (012).
   `::the enabled switch > is disabled and says not found, where no
   interpreter was found at all`).
 - The allow and deny thresholds render as one range control: a two-handle
-  slider over the three coloured zones with labels Allow, Ask and Deny on the
-  track, positioned at each zone's center and hidden where its own zone is
-  too narrow, and a small number input directly under each handle — a green
+  slider over the three coloured zones with labels Allow, Ask and Deny in a
+  row above the track, positioned at each zone's center and hidden where its
+  own zone is too narrow, and both number inputs in one row below it — a green
   dot for the allow input, a red dot for the deny input — each named for the
   threshold it holds and showing the row's own value to four fixed decimals,
   settled on mount, after a drag and after a commit, and left alone while
@@ -676,7 +688,8 @@ Out: the daemon endpoints themselves (012).
   `::shows the two number inputs, named and valued to four decimals for the
   row they hold`,
   `::shows a zone-coloured dot beside each input's label`,
-  `::puts each input directly under its own handle`,
+  `::puts both inputs in one row below the track, not under the handles`,
+  `::keeps the danger readout inside the card at either end of the track`,
   `::formats an input to four decimals on first render, after a drag, and
   after a commit, but not while typing`,
   `::positions zone labels at the center of each zone and updates them when

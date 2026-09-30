@@ -187,7 +187,7 @@ describe("the state badge", () => {
   })
 })
 
-it("shows every fact the daemon answered with, behind Details", async () => {
+it("shows every fact the daemon answered with, with no Details button", async () => {
   current = anAiPermissionsStatus({
     state: "ready",
     installed_release: "kev@f1535963 jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101",
@@ -197,19 +197,17 @@ it("shows every fact the daemon answered with, behind Details", async () => {
     last_refresh_at: "2026-01-01T00:00:00Z",
     last_error: null,
   })
-  const user = userEvent.setup()
   renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
 
   expect(await screen.findByText("Ready")).toBeDefined()
-  expect(screen.queryByText("http://127.0.0.1:8901")).toBeNull()
-
-  await user.click(await screen.findByRole("button", { name: "Details" }))
+  expect(screen.queryByRole("button", { name: "Details" })).toBeNull()
 
   expect(
     screen.getAllByText("kev@f1535963 jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101"),
   ).toHaveLength(2)
-  expect(screen.getByText("Yes")).toBeDefined()
+  expect(screen.getByText("On disk")).toBeDefined()
   expect(screen.getByText("http://127.0.0.1:8901")).toBeDefined()
+  expect(screen.getByText("3.12.1")).toBeDefined()
 })
 
 it("shows the last error as an alert at the top of the card", async () => {
@@ -325,7 +323,7 @@ describe("the model pickers", () => {
     await user.click(await screen.findByRole("combobox", { name: "Flavour" }))
 
     expect(
-      (await screen.findByRole("option", { name: /27b — needs 64 GB memory/ })).getAttribute(
+      (await screen.findByRole("option", { name: /^27b.*needs 64 GB memory/ })).getAttribute(
         "data-disabled",
       ),
     ).not.toBeNull()
@@ -369,11 +367,11 @@ describe("the model pickers", () => {
     await user.click(await screen.findByRole("combobox", { name: "Flavour" }))
 
     expect(
-      await screen.findByRole("option", { name: /27b — needs 64 GB memory, found 32 GB/ }),
+      await screen.findByRole("option", { name: /^27b.*needs 64 GB memory, found 32 GB/ }),
     ).toBeDefined()
   })
 
-  it("disables an unavailable device and shows slow on CPU", async () => {
+  it("disables an unavailable device and notes a slow one", async () => {
     const user = userEvent.setup()
     current = anAiPermissionsStatus({ flavour: "0.8b", device: "mlx" })
     renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
@@ -381,11 +379,11 @@ describe("the model pickers", () => {
     await user.click(await screen.findByRole("combobox", { name: "Device" }))
 
     expect(
-      (await screen.findByRole("option", { name: /cuda — CUDA is unavailable/ })).getAttribute(
+      (await screen.findByRole("option", { name: /^cuda.*CUDA is unavailable/ })).getAttribute(
         "data-disabled",
       ),
     ).not.toBeNull()
-    expect(await screen.findByRole("option", { name: /cpu — slow on CPU/ })).toBeDefined()
+    expect(await screen.findByRole("option", { name: /^cpu.*Slow for 0\.8b/ })).toBeDefined()
   })
 
   it("sends a flavour alone, then sends its flavour and device", async () => {
@@ -393,11 +391,11 @@ describe("the model pickers", () => {
     renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
 
     await user.click(await screen.findByRole("combobox", { name: "Flavour" }))
-    await user.click(await screen.findByRole("option", { name: "0.8b" }))
+    await user.click(await screen.findByRole("option", { name: /^0\.8b/ }))
     await waitFor(() => expect(lastWrite()?.body).toEqual({ flavour: "0.8b" }))
 
     await user.click(screen.getByRole("combobox", { name: "Device" }))
-    await user.click(screen.getByRole("option", { name: /cpu — slow on CPU/ }))
+    await user.click(screen.getByRole("option", { name: /^cpu/ }))
     await waitFor(() => expect(lastWrite()?.body).toEqual({ flavour: "0.8b", device: "cpu" }))
   })
 
@@ -423,17 +421,17 @@ describe("the model pickers", () => {
     )
 
     await user.click(await screen.findByRole("combobox", { name: "Flavour" }))
-    await user.click(await screen.findByRole("option", { name: "0.8b" }))
+    await user.click(await screen.findByRole("option", { name: /^0\.8b/ }))
 
     expect(await screen.findByText(/needs 24 GB VRAM/)).toBeDefined()
   })
 })
 
-it("shows the flavour, device, state, memory and GPU in one status line", async () => {
+it("shows what runs, the memory and the GPU as facts", async () => {
   renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
-  expect(
-    await screen.findByText("4b on mlx · Disabled · 64 GB · Apple M4 Max (48 GB)"),
-  ).toBeDefined()
+  expect(await screen.findByText("4b on mlx")).toBeDefined()
+  expect(screen.getByText("64 GB")).toBeDefined()
+  expect(screen.getByText("Apple M4 Max (48 GB)")).toBeDefined()
 })
 
 it("shows no GPU where the hardware probe found none", async () => {
@@ -441,7 +439,9 @@ it("shows no GPU where the hardware probe found none", async () => {
     hardware: { os: "linux", arch: "x86_64", memory_bytes: 1536 * 1024 ** 3, gpu: null },
   })
   renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
-  expect(await screen.findByText("4b on mlx · Disabled · 1.5 TB · No GPU")).toBeDefined()
+  expect(await screen.findByText("1.5 TB")).toBeDefined()
+  expect(screen.getByText("No GPU")).toBeDefined()
+  expect(screen.getByText("linux · x86_64")).toBeDefined()
 })
 
 describe("Refresh", () => {
