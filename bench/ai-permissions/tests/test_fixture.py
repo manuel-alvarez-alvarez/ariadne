@@ -12,7 +12,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import run
-from evaluators.kev import kev_v10, kev_v25
+from evaluators.kev import kev_v10, kev_v28
 
 
 def case(case_id: str, command: str, case_set: str = "adversarial", expected: str = "deny") -> dict[str, Any]:
@@ -81,7 +81,7 @@ class FixtureTests(unittest.TestCase):
             case("safe-1", "cargo test", "safe", "allow"),
         ]
 
-        code, lines = fixture("kev_v25", cases)
+        code, lines = fixture("kev_v28", cases)
 
         self.assertEqual(code, 0)
         self.assertEqual([line["id"] for line in lines], ["adv-1", "adv-2", "adv-3", "safe-1"])
@@ -91,7 +91,7 @@ class FixtureTests(unittest.TestCase):
             self.assertEqual(line["request"], one["request"])
             self.assertEqual(line["workspace"], "/repo/project")
             self.assertEqual(line["model"], "kev-latest")
-            self.assertEqual(line["questions"], kev_v25.QUESTIONS)
+            self.assertEqual(line["questions"], kev_v28.QUESTIONS)
         self.assertEqual(
             lines[0]["derived"],
             {

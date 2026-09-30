@@ -2,7 +2,7 @@
 
 `allow` when P(level 0) is at or over `ALLOW_PROBABILITY`; `deny` when P(the last level) is at
 or over `DENY_PROBABILITY`; `ask` otherwise, and `ask` when both hold. The rules and the caps
-apply as in `kev_v25`.
+apply as in `kev_v25`. The two bounds are the ones of 2026-09-30 over every set.
 """
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ from .kev_v25 import CAPS, FACTS, QUESTIONS, RULES, danger, state  # noqa: F401,
 
 RUN = KevEvaluator.run
 TEMPERATURE = 1.0
-ALLOW_PROBABILITY = 0.8520
-DENY_PROBABILITY = 0.2443
+ALLOW_PROBABILITY = 0.7875
+DENY_PROBABILITY = 0.4446
 
 
 def decision(answer: dict[str, Any], derived: Any) -> Evaluation:

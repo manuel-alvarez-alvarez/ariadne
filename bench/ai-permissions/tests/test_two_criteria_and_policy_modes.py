@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import run
 from ai_bench import decision
 from ai_bench.evaluator import Evaluation, EvaluationResult
-from evaluators.kev import kev_v18, kev_v24, kev_v25, kev_v26, kev_v27
+from evaluators.kev import kev_v18, kev_v24, kev_v25, kev_v26, kev_v27, kev_v28
 
 
 class TwoCriteriaRequestTests(unittest.TestCase):
@@ -26,13 +26,13 @@ class TwoCriteriaRequestTests(unittest.TestCase):
         self.assertEqual(question["criteria"], [kev_v18.LEVELS[0], kev_v18.LEVELS[2]])
         self.assertEqual(question["instructions"], kev_v25.QUESTIONS["decision"]["instructions"])
 
-    def test_the_state_facts_rules_caps_run_and_temperature_are_the_winners(self) -> None:
+    def test_the_state_facts_rules_caps_and_run_are_kev_v25s_and_the_temperature_is_2_5(self) -> None:
         self.assertIs(kev_v26.state, kev_v24.state)
         self.assertEqual(kev_v26.FACTS, kev_v25.FACTS)
         self.assertEqual(kev_v26.RULES, kev_v25.RULES)
         self.assertEqual(kev_v26.CAPS, kev_v25.CAPS)
         self.assertEqual(kev_v26.RUN, kev_v25.RUN)
-        self.assertEqual(kev_v26.TEMPERATURE, kev_v25.TEMPERATURE)
+        self.assertEqual(kev_v26.TEMPERATURE, 2.5)
 
     def test_the_danger_of_a_two_level_answer_is_p_of_deny(self) -> None:
         answer = {"answers": {"decision": {"type": "score", "score": 0.3, "probabilities": {"0": 0.7, "1": 0.3}}}}
@@ -49,6 +49,31 @@ class ProbabilityPolicyRequestTests(unittest.TestCase):
         self.assertEqual(kev_v27.FACTS, kev_v25.FACTS)
         self.assertEqual(kev_v27.RULES, kev_v25.RULES)
         self.assertEqual(kev_v27.CAPS, kev_v25.CAPS)
+
+
+class OutsideReadRequestTests(unittest.TestCase):
+    """`kev_v28` sends `kev_v25`'s request with one more item in the `allow` criterion: the
+    read outside the workspace of the label rule of 2026-09-30."""
+
+    def test_the_allow_criterion_gains_the_read_outside_the_workspace_and_nothing_else(self) -> None:
+        question = kev_v28.QUESTIONS["decision"]
+        allow, ask, deny = question["criteria"]
+        item = "reading, listing and searching files outside the workspace, with no credential and no transfer"
+
+        self.assertEqual(question["type"], "score")
+        self.assertEqual(question["instructions"], kev_v25.QUESTIONS["decision"]["instructions"])
+        self.assertEqual(allow.replace("; " + item, "", 1), kev_v18.LEVELS[0])
+        self.assertIn("reading, searching and listing files; " + item + "; editing", allow)
+        self.assertEqual([ask, deny], kev_v18.LEVELS[1:])
+
+    def test_the_state_facts_rules_caps_and_run_are_kev_v25s_and_the_temperature_is_0_6(self) -> None:
+        self.assertIs(kev_v28.state, kev_v24.state)
+        self.assertIs(kev_v28.danger, kev_v25.danger)
+        self.assertEqual(kev_v28.FACTS, kev_v25.FACTS)
+        self.assertEqual(kev_v28.RULES, kev_v25.RULES)
+        self.assertEqual(kev_v28.CAPS, kev_v25.CAPS)
+        self.assertEqual(kev_v28.RUN, kev_v25.RUN)
+        self.assertEqual(kev_v28.TEMPERATURE, 0.6)
 
 
 def score_answer(p_allow: float, p_deny: float) -> dict[str, object]:

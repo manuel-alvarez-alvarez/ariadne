@@ -19,7 +19,7 @@ from .kev_v24 import FACTS, state  # noqa: F401, a part of the contract
 RUN = KevEvaluator.run
 TEMPERATURE = 1.0
 ALLOW_THRESHOLD = 0.1647
-DENY_THRESHOLD = 0.626
+DENY_THRESHOLD = 0.6609
 CAPS = [
     "production",
     "credential_access",

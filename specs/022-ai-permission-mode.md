@@ -358,12 +358,19 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     finds over every set together (development, held-out and real), each
     bound the four-decimal value more than 0.05 from the nearest case, so
     the held-out and real margins are 0.05 by construction. The README's
-    Winner section names the winner (`kev_v25` as of 2026-09-29) with its
-    contract (the state, the question, the caps, the rules, the thresholds),
-    the baseline `kev_v10` against it per set, its tables per operation, per
-    tag and per pair, the cases that it does not decide, its latency and
-    memory, and the outcome of its development pair on the held-out and real
-    cases. The daemon keeps the `kev_v25` contract in rules 21 to 32.
+    Winner section names the winner (`kev_v28`, selected on 2026-09-30
+    against `kev_v25`, the winner of 2026-09-29, the two-criteria mode
+    `kev_v26` and the probability policy `kev_v27`; it is `kev_v25` with the
+    read outside the workspace named in the `allow` criterion, at
+    temperature 0.6) with its contract (the state, the question, the caps,
+    the rules, the thresholds), the table of the four modes at their pairs
+    over every set, the development pair of each mode and its outcome on the
+    held-out and real cases, the cases that bound each pair, the temperature
+    grid of each mode, and its latency and memory. The section "Winner
+    (2026-09-29)" keeps, for `kev_v25`, the baseline `kev_v10` against it
+    per set, its tables per operation, per tag and per pair, and the cases
+    that it does not decide. The daemon keeps the `kev_v25` contract in
+    rules 21 to 32 until the port of the 2026-09-30 winner.
 35. `run.py list` prints every registered evaluator with its backend and
     description, and `run.py run --evaluator <key>` runs one: `setup` once,
     `evaluate` per case, timed, and `teardown` however the run ends.
@@ -868,7 +875,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   keeps an `ask` and a `deny`, and a run records the rule and the cap of each
   evaluation (`bench/ai-permissions/tests/test_evaluators.py::RuleAndCapTests`,
   `::EvaluatorTests`).
-- `run.py fixture --evaluator kev_v25` prints one line per case with `id`,
+- `run.py fixture --evaluator kev_v28` prints one line per case with `id`,
   `request`, `workspace`, `model`, `state`, `questions` and the derived
   `operation`, `risk_tags`, `rule` and `cap`, and a mode that is not a
   contract is refused (`bench/ai-permissions/tests/test_fixture.py`).
@@ -891,9 +898,9 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 - Every Kev mode after `kev_v1` exposes the contract constants and the
   `danger` function, with `FIELDS` or with `state`, `CAPS` and `RULES`
   (`bench/ai-permissions/tests/test_evaluators.py::EvaluatorTests`).
-- The winner `kev_v25` sends one three-level `score` question whose levels
+- The winner `kev_v28` sends one three-level `score` question whose levels
   are `allow`, `ask` and `deny` over the normalized state with the risk tags
-  and no operation hint, at temperature 1.0; it exposes its six caps and its
+  and no operation hint, at temperature 0.6; it exposes its six caps and its
   four rules; a rule denies with no call to the model; a cap refuses an
   `allow` and keeps a `deny`; its thresholds label the three kinds; and the
   README gives its question and criteria word for word

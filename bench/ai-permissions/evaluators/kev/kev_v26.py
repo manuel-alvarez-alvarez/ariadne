@@ -2,8 +2,10 @@
 
 The `allow` and `deny` criteria are `kev_v25`'s, word for word; the `ask` criterion is dropped.
 `danger` is the expected level over the last one, so it is P(deny) directly. The state, the
-`FACTS`, the `RULES`, the `CAPS`, the `RUN` and the `TEMPERATURE` are `kev_v25`'s. The two
-thresholds on the danger give the label, `ask` the band between them, as in `kev_v25`.
+`FACTS`, the `RULES`, the `CAPS` and the `RUN` are `kev_v25`'s. The temperature is 2.5, the best
+of the grid 0.5 to 3.0 on the development cases: at 1.0 the allow threshold is under 0 and the mode
+allows nothing. The two thresholds on the danger give the label, `ask` the band between them, as in
+`kev_v25`. The pair is the one of 2026-09-30 over every set.
 """
 from __future__ import annotations
 
@@ -22,9 +24,9 @@ from .kev_v25 import CAPS, RULES  # noqa: F401, a part of the contract
 LEVELS = [THREE_LEVELS[0], THREE_LEVELS[2]]
 QUESTIONS = {"decision": {"type": "score", "instructions": QUESTION, "criteria": LEVELS}}
 RUN = KevEvaluator.run
-TEMPERATURE = 1.0
-ALLOW_THRESHOLD = 0.1647
-DENY_THRESHOLD = 0.626
+TEMPERATURE = 2.5
+ALLOW_THRESHOLD = 0.1626
+DENY_THRESHOLD = 0.6393
 
 
 @register
