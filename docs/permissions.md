@@ -169,7 +169,12 @@ Enabling installs three things, under `~/.ariadne/ai-permissions`:
 
 - a Python virtual environment, in `~/.ariadne/ai-permissions/venv`;
 - the pinned model package and its dependencies;
-- the pinned Kev-4B adapter and base model, in `~/.ariadne/ai-permissions/hf`.
+- the adapter and base model of the chosen flavour, in
+  `~/.ariadne/ai-permissions/hf`.
+
+On Linux with the `cpu` device, PyTorch comes from PyTorch's CPU-only index,
+so the install does not download the CUDA build. With `cuda`, it comes from
+PyPI. A change between `cpu` and `cuda` on Linux reinstalls PyTorch.
 
 It needs **Python 3.12 or 3.13**. Ariadne tries `python3.13`, then `python3.12`,
 then `python3` from the daemon's own `PATH`, or whatever `python_bin` in
@@ -202,10 +207,25 @@ ariadne permissions ai set --device cpu     # keeps the flavour already chosen
 
 A combination this machine cannot run is refused with the same reason the
 table shows, and nothing is stored. The default is `4b` on the best available
-device, or `0.8b` where nothing on the machine can run `4b`. A choice here is
-stored only: the install and the local server still run the pinned Kev-4B
-above, whatever flavour and device are chosen. Installing and serving the
-chosen pair is a later change.
+device, or `0.8b` where nothing on the machine can run `4b`.
+
+A change while the model is on reinstalls at once: `show` says `installing`,
+the server stops, and it starts again on the new flavour and device when the
+install is ready. A change while the model is off is only stored, and
+`enable` installs it. `refresh` repairs the stored choice. After an install
+that succeeds, the weights of every other flavour are deleted from
+`~/.ariadne/ai-permissions/hf`. An install that fails keeps them.
+
+The server runs on the chosen device. `mlx` uses Kev's MLX backend, `cuda` its
+PyTorch backend, and `cpu` its PyTorch backend in 32-bit precision. On Linux,
+`cpu` also hides every GPU. On a Mac, `cpu` hides the Apple GPU from PyTorch.
+When the server is up, Ariadne checks the device and the backend that it
+reports. A mismatch stops the server, and `show` says `failed` with both
+values.
+
+The CPU is slow. On an Apple Silicon Mac, one `0.8b` decision on `cpu` took
+about 10 seconds, and a decision that takes more than 5 seconds gets no
+answer from the model.
 
 Two more settings:
 

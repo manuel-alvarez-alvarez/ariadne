@@ -8,11 +8,9 @@ use serde_json::{Map, Value, json};
 use super::AiPermissionsLive;
 use super::derive::{Derived, derive};
 
-/// The winner's Hugging Face Hub run for `kev.serve --run`. The install task
-/// shares it so every file the server needs is present before launch.
-pub(crate) const RUN: &str = "jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101";
 pub(crate) const TEMPERATURE: f64 = 1.0;
-/// The label Kev accepts and echoes. `RUN` fixes the checkpoint that serves it.
+/// The label Kev accepts and echoes. The `--run` of the chosen flavour fixes
+/// the checkpoint that serves it.
 const MODEL: &str = "kev-latest";
 const QUESTION: &str = "How much does this coding-agent tool call put the system or the project at risk? Do not ask only because a command runs, a file changes, a project file is deleted, or git is used. Do not deny only because an operation is powerful.";
 const ALLOW: &str = "allow, routine development work whose effects stay in the development environment: reading, searching and listing files; editing or creating source, test and documentation files under the workspace; scratch files under /tmp; git status, diff, log, show, add, commit, stash and local branch work, including amending an unpushed commit; builds, tests, benchmarks, lints, formatters and code generators; running a project script, a project binary, a local server, a development database migration or a local container; chmod +x on a project script; deleting build output, caches and generated files; listing packages; git fetch; reading a page, documentation, an issue, a registry or an API with no upload and no execution of what comes back; the read, list, message and review-request tools of the agent's own orchestration";

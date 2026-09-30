@@ -19,16 +19,18 @@ use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::stream::DomainEvent;
 use ariadne_core::PermissionMode;
 use ariadne_daemon::ai_permissions::AiPermissions;
+use ariadne_daemon::ai_permissions::hardware::HardwareOverride;
 use ariadne_daemon::bus::EventBus;
 use ariadne_daemon::timeouts::Timeouts;
 use ariadne_store::Store;
 
 use common::{
-    Harness, HarnessBuilder, TIMEOUT, delete, eventually, harness, next_event, post, post_json,
-    put_json, shared_script,
+    Harness, HarnessBuilder, QUIET, TIMEOUT, delete, eventually, harness, next_event, post,
+    post_json, put_json, shared_script,
 };
 
-const PIN: &str = "kev@f1535963 jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101";
+/// The release of 4b on `mlx`, the choice [`with_ai_permissions`]'s Mac settles on.
+const PIN: &str = "kev@f1535963 jaredpalmer/kev-4b@139fdd94 on mlx";
 const RUN: &str = "jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101";
 const KEV_COMMIT: &str = "f1535963cea021439370c23127bc970b6788e730";
 
@@ -52,8 +54,9 @@ fn python_printing(version: &str) -> String {
 fn installer(record: &std::path::Path, hold: &str, status: &str) -> Vec<String> {
     let script = shared_script(
         "#!/bin/sh\n\
-         printf '%s\\n%s\\n%s\\n' \
-           \"$AI_PERMISSIONS_HOME\" \"$AI_PERMISSIONS_RUN\" \"$AI_PERMISSIONS_KEV_COMMIT\" > \"$1\"\n\
+         printf '%s\\n%s\\n%s\\n%s\\n%s\\n' \
+           \"$AI_PERMISSIONS_HOME\" \"$AI_PERMISSIONS_RUN\" \"$AI_PERMISSIONS_KEV_COMMIT\" \
+           \"$AI_PERMISSIONS_FLAVOUR\" \"$AI_PERMISSIONS_DEVICE\" > \"$1\"\n\
          if [ -n \"$2\" ]; then\n\
            while [ ! -f \"$2\" ]; do sleep 0.05; done\n\
          fi\n\
@@ -70,7 +73,8 @@ fn installer(record: &std::path::Path, hold: &str, status: &str) -> Vec<String> 
     ]
 }
 
-/// What the installer recorded: its home, run and Kev commit, in that order.
+/// What the installer recorded: its home, run, Kev commit, flavour and
+/// device, in that order.
 fn recorded(record: &std::path::Path) -> Vec<String> {
     std::fs::read_to_string(record)
         .unwrap_or_default()
@@ -81,9 +85,22 @@ fn recorded(record: &std::path::Path) -> Vec<String> {
 
 // -- the harness -------------------------------------------------------------
 
-/// A daemon whose Python is new enough. The install itself is the caller's to configure.
+/// A daemon whose Python is new enough, on a 64 GB Apple Silicon Mac, which
+/// settles on 4b on `mlx`. The install itself is the caller's to configure.
 fn with_ai_permissions(python: &str) -> HarnessBuilder {
-    harness().python_bin(python_printing(python))
+    harness()
+        .python_bin(python_printing(python))
+        .ai_permissions_hardware(machine("macos", "aarch64", 64, None))
+}
+
+fn machine(os: &str, arch: &str, memory_gb: u64, vram_gb: Option<u64>) -> HardwareOverride {
+    HardwareOverride {
+        os: os.into(),
+        arch: arch.into(),
+        memory_gb,
+        gpu_name: vram_gb.map(|_| "test-gpu".to_string()),
+        vram_gb,
+    }
 }
 
 async fn status(h: &Harness) -> AiPermissionsStatusDto {
@@ -208,6 +225,8 @@ async fn turning_the_model_on_starts_the_install_and_reports_it_ready() {
                 .to_string(),
             RUN.to_string(),
             KEV_COMMIT.to_string(),
+            "4b".to_string(),
+            "mlx".to_string(),
         ]
     );
 
@@ -724,4 +743,164 @@ async fn the_doctor_reports_the_interpreter_the_model_needs() {
     assert_eq!(report.python.path, None);
     assert_eq!(report.python.version, None);
     assert!(!report.python.ok);
+}
+
+/// Each choice installs its own flavour on its own device: the installer
+/// gets the flavour, the device and the flavour's `--run`, and the release
+/// names all three. Every choice after the first is a switch of a model that
+/// is on, so it starts its install at once.
+#[tokio::test]
+async fn the_install_gets_the_run_flavour_and_device_of_each_choice() {
+    let record = tempfile::NamedTempFile::new().unwrap();
+    let h = harness()
+        .python_bin(python_printing("3.13.1"))
+        .ai_permissions_hardware(machine("linux", "x86_64", 256, Some(256)))
+        .ai_permissions_installer(installer(record.path(), "", "0"))
+        .await;
+    let choices = [
+        (
+            "0.8b",
+            "cpu",
+            "jaredpalmer/kev-0.8b@9a45d25eb2ab761841196625383fa1dff0e56c1e",
+            "kev@f1535963 jaredpalmer/kev-0.8b@9a45d25e on cpu",
+        ),
+        (
+            "4b",
+            "cuda",
+            "jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101",
+            "kev@f1535963 jaredpalmer/kev-4b@139fdd94 on cuda",
+        ),
+        (
+            "9b",
+            "cpu",
+            "jaredpalmer/kev-9b@2629c06a5aeb0feb3b9783bafed17ed8f39ecf5c",
+            "kev@f1535963 jaredpalmer/kev-9b@2629c06a on cpu",
+        ),
+        (
+            "27b",
+            "cuda",
+            "jaredpalmer/kev-27b@01b81998019be550f0ae858727df49bac9511195",
+            "kev@f1535963 jaredpalmer/kev-27b@01b81998 on cuda",
+        ),
+    ];
+    for (index, (flavour, device, run, release)) in choices.into_iter().enumerate() {
+        let body = match index {
+            0 => json!({"enabled": true, "flavour": flavour, "device": device}),
+            _ => json!({"flavour": flavour, "device": device}),
+        };
+        let started: AiPermissionsStatusDto = h.json(update(body), StatusCode::OK).await;
+        assert_eq!(started.state, AiPermissionsState::Installing, "{flavour}");
+        let ready = settles_on(&h, AiPermissionsState::Ready).await;
+        assert_eq!(ready.installed_release.as_deref(), Some(release));
+        assert_eq!(
+            recorded(record.path())[1..],
+            [
+                run.to_string(),
+                KEV_COMMIT.to_string(),
+                flavour.to_string(),
+                device.to_string(),
+            ]
+        );
+    }
+}
+
+/// A switch while the model is off is only stored: nothing installs until
+/// the model is turned on, and then the stored choice is what installs.
+#[tokio::test]
+async fn a_switch_while_off_is_only_stored_and_the_next_turn_on_installs_it() {
+    let record = tempfile::NamedTempFile::new().unwrap();
+    let h = with_ai_permissions("3.13.1")
+        .ai_permissions_installer(installer(record.path(), "", "0"))
+        .await;
+    let _: AiPermissionsStatusDto = h
+        .json(update(json!({"enabled": true})), StatusCode::OK)
+        .await;
+    settles_on(&h, AiPermissionsState::Ready).await;
+    let _: AiPermissionsStatusDto = h
+        .json(update(json!({"enabled": false})), StatusCode::OK)
+        .await;
+    std::fs::write(record.path(), "").unwrap();
+
+    let stored: AiPermissionsStatusDto = h
+        .json(update(json!({"flavour": "0.8b"})), StatusCode::OK)
+        .await;
+    assert_eq!(stored.state, AiPermissionsState::Disabled);
+    assert_eq!(stored.flavour.as_str(), "0.8b");
+    tokio::time::sleep(QUIET).await;
+    assert!(recorded(record.path()).is_empty(), "nothing installed");
+    assert_eq!(status(&h).await.installed_release.as_deref(), Some(PIN));
+
+    let _: AiPermissionsStatusDto = h
+        .json(update(json!({"enabled": true})), StatusCode::OK)
+        .await;
+    let ready = settles_on(&h, AiPermissionsState::Ready).await;
+    assert_eq!(
+        ready.installed_release.as_deref(),
+        Some("kev@f1535963 jaredpalmer/kev-0.8b@9a45d25e on mlx")
+    );
+    assert_eq!(recorded(record.path())[3..], ["0.8b", "mlx"]);
+}
+
+/// A switch that installs well deletes the Hugging Face cache folders of
+/// every other flavour. One that fails keeps them, so the weights that
+/// worked are still there; a refresh then repairs the stored choice.
+#[tokio::test]
+async fn a_successful_switch_deletes_the_other_flavours_weights_and_a_failed_one_keeps_them() {
+    let outcome = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(outcome.path(), "0").unwrap();
+    let h = with_ai_permissions("3.13.1")
+        .ai_permissions_installer(vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "exit \"$(cat \"$1\")\"".into(),
+            "installer".into(),
+            outcome.path().display().to_string(),
+        ])
+        .await;
+    let _: AiPermissionsStatusDto = h
+        .json(update(json!({"enabled": true})), StatusCode::OK)
+        .await;
+    settles_on(&h, AiPermissionsState::Ready).await;
+    let hub = h.launcher.cfg.root.join("ai-permissions/hf/hub");
+    let kept = [
+        "models--jaredpalmer--kev-0.8b",
+        "models--Qwen--Qwen3.5-0.8B-Base",
+    ];
+    let others = [
+        "models--jaredpalmer--kev-4b",
+        "models--Qwen--Qwen3.5-4B-Base",
+        "models--jaredpalmer--kev-9b",
+    ];
+    for folder in kept.iter().chain(&others) {
+        std::fs::create_dir_all(hub.join(folder).join("snapshots")).unwrap();
+    }
+
+    std::fs::write(outcome.path(), "1").unwrap();
+    let _: AiPermissionsStatusDto = h
+        .json(update(json!({"flavour": "0.8b"})), StatusCode::OK)
+        .await;
+    settles_on(&h, AiPermissionsState::Failed).await;
+    for folder in kept.iter().chain(&others) {
+        assert!(hub.join(folder).exists(), "a failed switch keeps {folder}");
+    }
+
+    std::fs::write(outcome.path(), "0").unwrap();
+    let _: AiPermissionsStatusDto = h
+        .json(post("/v1/permissions/ai/refresh"), StatusCode::ACCEPTED)
+        .await;
+    let ready = settles_on(&h, AiPermissionsState::Ready).await;
+    assert_eq!(
+        ready.installed_release.as_deref(),
+        Some("kev@f1535963 jaredpalmer/kev-0.8b@9a45d25e on mlx"),
+        "the refresh repaired the stored choice"
+    );
+    for folder in kept {
+        assert!(
+            hub.join(folder).exists(),
+            "the chosen flavour keeps {folder}"
+        );
+    }
+    for folder in others {
+        assert!(!hub.join(folder).exists(), "{folder} is deleted");
+    }
 }

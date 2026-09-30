@@ -64,7 +64,7 @@ pub struct AiPermissions {
     hardware_override: Option<HardwareOverride>,
     /// The command that stands in for the whole install, in the suite.
     installer: Option<Vec<String>>,
-    /// The command that stands in for `kev.serve` in integration tests.
+    /// The command that stands in for the server's Python in integration tests.
     serve_command: Option<Vec<String>>,
     /// The `ai_permissions_endpoint` config key, which wins over [`AiPermissions::set_endpoint`].
     configured_endpoint: Option<String>,
@@ -182,6 +182,22 @@ impl AiPermissions {
             .unwrap_or(Flavour::Kev4B)
     }
 
+    /// The flavour and device an install puts on disk and the server runs:
+    /// the pair `status` reports.
+    pub(crate) async fn chosen(&self) -> (Flavour, Device) {
+        let hardware = self.hardware().await;
+        let row = self.store.ai_permission_settings().await.ok();
+        let flavour = row
+            .as_ref()
+            .and_then(|row| Flavour::parse(&row.flavour))
+            .unwrap_or(Flavour::Kev4B);
+        let device = row
+            .as_ref()
+            .and_then(|row| row.device.as_deref())
+            .and_then(Device::parse);
+        effective_pair(&hardware, flavour, device)
+    }
+
     /// Fill a `NULL` stored device with the best device that runs the stored
     /// flavour. An install from before flavours existed keeps `4b` and gets a
     /// device without a fresh choice; a fresh row does the same at its first
@@ -245,14 +261,12 @@ impl AiPermissions {
         let _ = self.server_tx.send(server::Command::Reconcile);
     }
 
+    /// The interpreter the server runs under: the venv's Python, or the
+    /// command the suite stands in for it. The server adds the entry point.
     pub(crate) fn serve_command(&self) -> Vec<String> {
-        self.serve_command.clone().unwrap_or_else(|| {
-            vec![
-                self.home.join("venv/bin/python").display().to_string(),
-                "-m".to_string(),
-                "kev.serve".to_string(),
-            ]
-        })
+        self.serve_command
+            .clone()
+            .unwrap_or_else(|| vec![self.home.join("venv/bin/python").display().to_string()])
     }
 
     /// Reap the server and its process group before daemon shutdown finishes.

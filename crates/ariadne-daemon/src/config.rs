@@ -44,8 +44,9 @@ pub struct Config {
     /// downloading two gigabytes. Set by the test harness alone: it is not a
     /// key of `config.toml`.
     pub ai_permissions_installer: Option<Vec<String>>,
-    /// A command that stands in for the model server in the suite. Like the
-    /// installer seam, it is not a `config.toml` key.
+    /// A command that stands in for the model server's Python in the suite:
+    /// the daemon adds the entry point and the arguments. Like the installer
+    /// seam, it is not a `config.toml` key.
     pub ai_permissions_serve_command: Option<Vec<String>>,
     /// Where the model server answers, in place of one the daemon started.
     /// Set by the test harness alone, for the same reason.

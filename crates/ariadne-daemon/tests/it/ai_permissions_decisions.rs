@@ -530,8 +530,8 @@ async fn a_confident_allow_runs_at_once_and_reports_ai() {
 }
 
 /// A `kev.serve` that records its pid, loads for as long as its second
-/// argument says, and then allows every request with the calibrated
-/// danger 0.05.
+/// argument says, reports the device its environment chose, and then allows
+/// every request with the calibrated danger 0.05.
 const SLOW_SERVER: &str = r#"#!/usr/bin/env python3
 import http.server, json, os, sys, time
 with open(sys.argv[1], 'w') as f:
@@ -544,10 +544,15 @@ ANSWER = json.dumps({"model": "kev-latest",
     "answers": {"decision": {"type": "score", "score": 0.1,
                                   "probabilities": {"0": 0.9, "1": 0.1, "2": 0.0}}},
     "usage": {}, "latency_ms": 12.3}).encode()
+BACKEND = os.environ['KEV_BACKEND']
+DEVICE = 'mps' if BACKEND == 'mlx' else 'cpu' if os.environ.get('KEV_DTYPE') == 'fp32' else 'cuda'
+CARD = json.dumps({"models": [{"name": "kev-latest", "device": DEVICE, "backend": BACKEND}]}).encode()
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200 if self.path == '/v1/models' else 404)
         self.end_headers()
+        if self.path == '/v1/models':
+            self.wfile.write(CARD)
     def do_POST(self):
         self.rfile.read(int(self.headers.get('content-length', 0)))
         self.send_response(200)

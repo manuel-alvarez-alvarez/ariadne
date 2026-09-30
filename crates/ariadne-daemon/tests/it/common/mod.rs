@@ -235,7 +235,8 @@ impl HarnessBuilder {
         self
     }
 
-    /// Run `cmd` as the model server instead of the installed `kev.serve`.
+    /// Run `cmd` as the model server's Python instead of the venv's: the
+    /// daemon adds the entry point and the arguments after it.
     pub(crate) fn ai_permissions_serve_command(mut self, cmd: Vec<String>) -> Self {
         self.ai_permissions_serve_command = Some(cmd);
         self

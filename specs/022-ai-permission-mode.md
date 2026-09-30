@@ -83,11 +83,13 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
    `<home>/ai-permissions/venv` with a supported Python interpreter. It rebuilds
    a venv made by another interpreter, while retaining `<home>/ai-permissions/hf`.
    It installs `kev[serve]` from git at commit `f1535963cea021439370c23127bc970b6788e730`,
-   downloads adapter `jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101`,
-   and downloads base `Qwen/Qwen3.5-4B-Base@1001bb4d826a52d1f399e183466143f4da7b741b`
-   under `HF_HOME=<home>/ai-permissions/hf`.
+   and downloads the adapter and the base that `pins` gives for the chosen
+   flavour (rule 39) under `HF_HOME=<home>/ai-permissions/hf`. The chosen
+   flavour and device are the pair `status` reports (rule 44). On Linux,
+   PyTorch comes first (rule 46).
 8. An install that ends well writes `installed_release`, `latest_release` as
-   `kev@f1535963 jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101`,
+   `kev@<short commit> <adapter>@<short adapter revision> on <device>`, for
+   example `kev@f1535963 jaredpalmer/kev-0.8b@9a45d25e on cpu`,
    `weights_present`, `state = ready` and `last_refresh_at`, and clears
    `last_error`. One that fails at any step writes `state = failed` and
    `last_error`, and leaves the install before it on disk: the files of a
@@ -115,11 +117,13 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     still enabled, in the same statement that checks it, so the model stays
     `disabled`. Turning it on again while that install still runs answers
     `installing` again, and the install's end is the state it settles on.
+    A new flavour or device on a model that is on starts an install at once
+    (rule 47).
     That `installing` is guarded the same way: a turn-off that lands after
     the write that turned the model on and before it keeps its `disabled`, so
     no order of the two requests leaves a model that is off at `installing`.
 12. `POST /v1/permissions/ai/refresh` runs the install again on the settings
-    as they stand, and answers 202 with `state = installing`. It is refused
+    as they stand, so it repairs the stored flavour and device, and answers 202 with `state = installing`. It is refused
     with 409 `ai_disabled` while the model is off, and 409 `ai_busy` while an
     install is running. A refresh reinstalls the same pins to repair
     the installation; it never upgrades them. Refresh is manual only: nothing
@@ -136,7 +140,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
    `<home>/config.toml`, listed by `ariadned --help` and read by
     `--check-config`. The test seam `ai_permissions_installer` — a command
     the daemon runs in place of the venv, package and weights, with the
-    model home, run and Kev commit in its
+    model home, run, Kev commit, flavour and device in its
    environment, its exit status deciding the install and its stderr becoming
     `last_error` — `ai_permissions_serve_command`,
     `ai_permissions_endpoint` and `ai_permissions_hardware` are settings of
@@ -155,8 +159,8 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 
 18. While the model is enabled and its install is ready, the daemon runs
     `<home>/ai-permissions/venv/bin/python -m kev.serve` as its child, in a
-    process group of its own, with `--run` the pinned Hugging Face Hub run
-    `decide::RUN` names, `--host`
+    process group of its own, with `--run` the Hugging Face Hub run of the
+    chosen flavour, `<adapter>@<adapter_revision>`, `--host`
     and `--port` an available loopback port. `HF_HOME` is
     `<home>/ai-permissions/hf` and `HF_HUB_OFFLINE=1`, so nothing downloads at
     startup: the install leaves everything the run needs on disk first. The
@@ -171,7 +175,8 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     unsuccessful health wait it clears that endpoint and kills the whole
     process group. A refresh restarts the server once: the daemon compares
     the row's `last_refresh_at` with the one its server started on, and
-    starts a new server when they differ.
+    starts a new server when they differ. A server that answers is then
+    checked against the chosen device (rule 48).
 20. An unexpectedly exited server clears its endpoint and restarts with a
     capped backoff that starts at `Timeouts::ai_permissions_serve_restart`,
     1, 2, 4 … 60 seconds. A disabled model is not restarted.
@@ -186,10 +191,12 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     exact winner criteria. `answers.decision.score`, divided by the highest
     level index, is the danger.
 22. The status and update request do not carry the checkpoint or prompt texts.
-23. The server passes `--run`, `decide::RUN`'s value, and `KEV_TEMPERATURE=1.0`
-    to `kev.serve`; the installer downloads what that run needs onto disk before
-    the model is ready. The installer receives `AI_PERMISSIONS_HOME`,
-    `AI_PERMISSIONS_RUN`, and `AI_PERMISSIONS_KEV_COMMIT`.
+23. The server passes `--run`, the run of the chosen flavour, and
+    `KEV_TEMPERATURE=1.0` to `kev.serve`; the installer downloads what that run
+    needs onto disk before the model is ready. The installer seam receives
+    `AI_PERMISSIONS_HOME`, `AI_PERMISSIONS_RUN` (the run of the chosen
+    flavour), `AI_PERMISSIONS_KEV_COMMIT`, `AI_PERMISSIONS_FLAVOUR` and
+    `AI_PERMISSIONS_DEVICE`.
 24. The default allow threshold is 0.1647 and the default deny threshold is
     0.626. The store migration replaces the former default pair, 0.1338 and
     0.5345, on an existing settings row and preserves another chosen pair.
@@ -213,8 +220,8 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     `permission_options`. Empty values and the empty `derived` object are
     absent. The operation hint is not in the state.
 27. The request carries `model = kev-latest`, a label Kev accepts and echoes
-    without using: the checkpoint actually served is fixed by `decide::RUN` at
-    launch (rule 18). The one question is named `decision`, has type `score`,
+    without using: the checkpoint actually served is fixed by the `--run` of
+    the chosen flavour at launch (rule 18). The one question is named `decision`, has type `score`,
     and carries the built-in instruction and three criteria. Kev's score
     probabilities must be finite values from 0 to 1. The decision keeps the
     probabilities object on both permission events and the test response.
@@ -464,8 +471,8 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     (`cpu`). The user chooses a flavour and a device, but only a combination
     this machine can run. `crates/ariadne-daemon/src/ai_permissions/hardware.rs`
     probes the machine; `flavours.rs` holds the pins and the memory rule that
-    decide what runs. Installing and serving the chosen pair on a change is a
-    later task's; here a choice only is stored.
+    decide what runs. The install and the server use the chosen pair (rules
+    46 to 49).
 38. The probe reports `Hardware { os, arch, memory_bytes, gpu }`, `gpu` an
     optional `Gpu { name, vram_bytes }`. `os` and `arch` are the daemon's own
     `std::env::consts`. Total RAM is read from `sysctl hw.memsize` on macOS and
@@ -541,6 +548,48 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     flavour, the device, the hardware, and a table of every flavour and
     device with `can run`, the reason and the slow note. `ariadne doctor`'s
     `ready` line names the flavour and device, e.g. `ready kev-4b on mlx`.
+46. The package install depends on the OS and the device. On Linux with `cpu`,
+    the install runs `pip install "torch>=2.6,<2.9" --index-url
+    https://download.pytorch.org/whl/cpu` before Kev, so pip does not download
+    the CUDA build. On Linux with `cuda`, it runs `pip install
+    "torch>=2.6,<2.9"` from PyPI. The venv file `ariadne-torch-device` names
+    the device its PyTorch was installed for. When that file names another
+    device, or no device, the install runs `pip uninstall -y torch` first,
+    because pip keeps an installed version that meets the range. On macOS the
+    install runs the Kev install only, as before.
+47. A `PUT` that changes the flavour or the device of a model that is on, and
+    that does not turn it off, starts an install at once and answers
+    `state = installing`. The server stops, because the state is not
+    `ready`, and starts again on the new pair when the install writes its
+    new `last_refresh_at` (rule 19). A switch while an install runs answers
+    `installing` and joins that install. When an install ends, it writes its
+    outcome and releases the install. It then reads the stored pair. Where
+    the model is on and the pair differs from the installed one, it starts
+    another install. A switch that lands at any time before the release is
+    thus installed, and one after the read starts its own install. A `PUT`
+    on a model that is off only stores the pair; `enable` installs it.
+48. The server gets the environment of the chosen device: `mlx` sets
+    `KEV_BACKEND=mlx`; `cuda` sets `KEV_BACKEND=torch`; `cpu` sets
+    `KEV_BACKEND=torch` and `KEV_DTYPE=fp32`, and on Linux also
+    `CUDA_VISIBLE_DEVICES=""`. On macOS, `cpu` runs `python -c` with a fixed
+    launcher in place of `-m kev.serve`. The launcher sets
+    `torch.backends.mps.is_available` to return `False`, and then runs the
+    module `kev.serve` as `__main__` with the same arguments. After
+    `/v1/models` answers, the daemon reads the `device` and `backend` of its
+    first model. They must be `mps`/`mlx` for `mlx`, `cuda`/`torch` for
+    `cuda`, and `cpu`/`torch` for `cpu`. A mismatch stops the server and
+    writes `state = failed` with a `last_error` that names both pairs, for
+    example `the AI permission model server runs on cpu via torch, but the
+    chosen device mlx needs mps via mlx`. A failed model does not restart.
+49. After an install succeeds, the daemon deletes the Hugging Face cache
+    folders of the adapter and the base of every other flavour, for example
+    `<home>/ai-permissions/hf/hub/models--jaredpalmer--kev-4b` and
+    `models--Qwen--Qwen3.5-4B-Base`. It deletes nothing after an install
+    that fails, so a failed switch keeps the weights that worked. It skips
+    the deletion where it sees that the stored pair changed during the
+    install. The check and the deletion are not atomic: a switch that lands
+    between them can lose the cache of its pair. The reinstall of rule 47
+    then downloads that cache again.
 
 ## Acceptance criteria
 
@@ -746,6 +795,35 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   falls back to the flavour and device a fresh row would settle on rather
   than reporting that unsupported pair
   (`ai_permissions_flavours.rs::a_16gb_linux_box_that_cannot_run_4b_keeps_its_device_unset`).
+- Each flavour and device installs with its own run, flavour and device in
+  the installer environment, and the release names them
+  (`ai_permissions.rs::the_install_gets_the_run_flavour_and_device_of_each_choice`).
+- The Linux `cpu` pip call takes PyTorch from the CPU index and the `cuda`
+  call does not; a change of device uninstalls PyTorch first
+  (`ai_permissions/install.rs::tests::the_linux_cpu_pip_call_uses_the_cpu_torch_index_and_cuda_does_not`);
+  macOS installs Kev alone
+  (`::the_macos_pip_call_is_kev_alone`).
+- A switch while on reinstalls at once and restarts the server on the new
+  flavour
+  (`ai_permissions_server.rs::a_switch_while_on_reinstalls_and_restarts_the_server_on_the_new_flavour`);
+  a switch that lands as an install ends, before the install is released,
+  is still installed and served
+  (`ai_permissions_server.rs::a_switch_as_the_install_ends_is_still_installed_and_served`);
+  a switch while off is only stored, and `enable` installs it
+  (`ai_permissions.rs::a_switch_while_off_is_only_stored_and_the_next_turn_on_installs_it`).
+- A successful install deletes the other flavours' cache folders, a failed
+  one keeps them, and `refresh` repairs the stored choice
+  (`ai_permissions.rs::a_successful_switch_deletes_the_other_flavours_weights_and_a_failed_one_keeps_them`).
+- The server gets the environment of its device: `mlx` and the macOS `cpu`
+  launcher
+  (`ai_permissions_server.rs::on_a_mac_mlx_takes_the_mlx_backend_and_cpu_the_launcher`),
+  and `cuda` and the Linux `cpu`
+  (`::on_linux_cuda_takes_torch_and_cpu_hides_every_gpu`). The launcher
+  hides MPS and runs `kev.serve` as `__main__` with the same arguments
+  (`ai_permissions/server.rs::tests::the_macos_cpu_launcher_hides_mps_and_runs_kev_serve_as_main`).
+- A server whose `/v1/models` reports another device stops, and the model
+  fails with both pairs named
+  (`ai_permissions_server.rs::a_server_that_reports_the_wrong_device_fails_the_model`).
 - The benchmark validates every committed case file and uses development files
   by default (`bench/ai-permissions/run.py validate bench/ai-permissions/cases/`);
   a safe case labelled anything but `allow`, or an elevated or adversarial
@@ -832,10 +910,14 @@ from its `serve` extra (not the unrelated PyPI package of the same name). The
 daemon keeps to its interface: `<venv>/bin/python -m kev.serve --run <run>
 --host <host> --port <port>`, `HF_HOME`, `HF_HUB_OFFLINE=1` and
 `KEV_TEMPERATURE=1.0` so nothing
-downloads once the model is serving, and `GET /v1/models` for health. `<run>`
-is `decide::RUN`, the Hugging Face Hub id
-`jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101`, which
-the installer downloads onto disk before the server is ready.
+downloads once the model is serving, `KEV_BACKEND` and `KEV_DTYPE` for the
+device (`kev/checkpoint.py`, `kev/serve.py`), and `GET /v1/models` for health
+and for the device, backend and precision it serves on. `<run>` is the
+Hugging Face Hub id of the chosen flavour, for example
+`jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101`, which the
+installer downloads onto disk before the server is ready. Kev takes CUDA,
+then MPS, then the CPU by itself (`kev/device.py`), which is why `cpu` hides
+the others.
 
 `crates/ariadne-core/src/lib.rs`,
 `crates/ariadne-api/src/permissions.rs`,

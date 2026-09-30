@@ -254,16 +254,22 @@ pub(super) async fn update(
         state: (req.enabled == Some(false) && before.enabled).then(|| "disabled".to_string()),
         ..Default::default()
     };
+    // A new flavour or device on a model that stays on is installed at once;
+    // on a model that is off, it is only stored until the model is turned on.
+    let switching = before.enabled
+        && req.enabled != Some(false)
+        && chosen.is_some_and(|pair| pair != (before.flavour, before.device));
     let status = state.ai_permissions.write(update).await;
     // Turning the model off while an install runs does not stop the install: its
     // end is written, and the model stays off (`AiPermissions::install`).
-    if !turning_on {
+    if !turning_on && !switching {
         return Ok(Json(status));
     }
     match state.ai_permissions.install().await {
         Some(started) => Ok(Json(started)),
-        // Turned off and on again while the first install still runs: that
-        // install is the one to wait for.
+        // Turned off and on again, or switched, while an install still runs:
+        // that install is the one to wait for, and it installs the stored
+        // choice before it ends.
         None => Ok(Json(state.ai_permissions.rejoin_install().await)),
     }
 }
