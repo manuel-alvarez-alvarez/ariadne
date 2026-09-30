@@ -60,6 +60,13 @@ async fn learned_permissions_keep_one_row_per_repository_tool_and_raw_input() {
         serde_json::json!({"command": "echo first", "description": "Print"});
     again.target = "ai".into();
     again.output = Some(serde_json::json!({"label": "deny", "danger": 0.9}));
+    let first_updated_at = chrono::DateTime::parse_from_rfc3339(&first.updated_at)
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let next_millisecond = first_updated_at + chrono::Duration::milliseconds(20);
+    while chrono::Utc::now() < next_millisecond {
+        tokio::task::yield_now().await;
+    }
     let second = store.record_learned_permission(again).await.unwrap();
     assert!(matches!(
         changes.recv().await.unwrap(),
