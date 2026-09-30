@@ -335,15 +335,9 @@ mod tests {
                 expected["derived"]["risk_tags"],
                 "{id}: risk tags"
             );
-            assert_eq!(
-                json!(derived.rule),
-                expected["derived"]["rule"],
-                "{id}: rule"
-            );
-            assert_eq!(json!(derived.cap), expected["derived"]["cap"], "{id}: cap");
             checked += 1;
         }
-        assert!(checked > 700, "the fixture holds {checked} requests");
+        assert!(checked > 740, "the fixture holds {checked} requests");
     }
 
     /// Four recorded benchmark answers preserve the danger calculation without

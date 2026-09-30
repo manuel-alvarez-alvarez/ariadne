@@ -15,8 +15,37 @@ const ORDER: [&str; 12] = [
     "read_workspace",
 ];
 
-const WRAPPERS: [&str; 9] = [
-    "sudo", "doas", "time", "nohup", "command", "exec", "nice", "xargs", "timeout",
+const WRAPPERS: [&str; 10] = [
+    "sudo", "doas", "time", "nohup", "command", "exec", "nice", "xargs", "timeout", "env",
+];
+
+fn wrapper_value_options(wrapper: &str) -> &'static [&'static str] {
+    match wrapper {
+        "sudo" => &[
+            "-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-T", "-U", "--user", "--group",
+            "--chdir", "--host", "--prompt", "--role", "--type",
+        ],
+        "doas" => &["-u", "-C"],
+        "env" => &[
+            "-u",
+            "-C",
+            "-S",
+            "-P",
+            "--unset",
+            "--chdir",
+            "--split-string",
+        ],
+        "nice" => &["-n", "--adjustment"],
+        "timeout" => &["-k", "-s", "--kill-after", "--signal"],
+        "exec" => &["-a"],
+        "xargs" => &["-I", "-n", "-P", "-L", "-s", "-d", "-E", "-a"],
+        _ => &[],
+    }
+}
+
+const SHELLS: [&str; 3] = ["sh", "bash", "zsh"];
+const INTERPRETERS: [&str; 10] = [
+    "sh", "bash", "zsh", "python", "python3", "node", "ruby", "perl", "deno", "bun",
 ];
 const READS: [&str; 49] = [
     "ls",
@@ -108,9 +137,6 @@ const CHECK_TARGETS: [&str; 13] = [
     "bench",
 ];
 const RUN_TARGETS: [&str; 5] = ["dev", "start", "serve", "preview", "watch"];
-const INTERPRETERS: [&str; 10] = [
-    "sh", "bash", "zsh", "python", "python3", "node", "ruby", "perl", "deno", "bun",
-];
 const HOST_INSTALLERS: [&str; 11] = [
     "brew", "apt", "apt-get", "yum", "dnf", "pacman", "apk", "pipx", "gem", "port", "snap",
 ];
@@ -141,6 +167,228 @@ const UPLOADS: [&str; 11] = [
     "--upload-file",
     "--post-file",
     "--post-data",
+];
+
+const GIT_LFS_READS: [&str; 6] = ["ls-files", "status", "env", "version", "logs", "locks"];
+const GIT_LFS_FETCHES: [&str; 3] = ["pull", "fetch", "clone"];
+
+const DEPLOYERS: [&str; 13] = [
+    "terraform",
+    "tofu",
+    "pulumi",
+    "serverless",
+    "sls",
+    "vercel",
+    "fly",
+    "flyctl",
+    "heroku",
+    "netlify",
+    "ansible",
+    "ansible-playbook",
+    "helm",
+];
+const DEPLOY_READS: [&str; 19] = [
+    "plan", "preview", "show", "output", "state", "status", "logs", "list", "ls", "version",
+    "whoami", "env", "get", "history", "diff", "template", "info", "releases", "domains",
+];
+const DEPLOY_CHECKS: [&str; 4] = ["fmt", "validate", "lint", "check"];
+
+const CLOUDS: [&str; 4] = ["aws", "gcloud", "az", "doctl"];
+const CLOUD_READ_PREFIXES: [&str; 10] = [
+    "describe", "list", "get", "show", "print-", "ls", "version", "help", "whoami", "download",
+];
+const CLOUD_VALUE_OPTIONS: &[&str] = &[
+    "--profile",
+    "--region",
+    "--output",
+    "-o",
+    "--endpoint-url",
+    "--query",
+    "--color",
+    "--cli-binary-format",
+    "--ca-bundle",
+    "--cli-read-timeout",
+    "--cli-connect-timeout",
+    "--project",
+    "--account",
+    "--configuration",
+    "--format",
+    "--zone",
+    "--impersonate-service-account",
+    "--billing-project",
+    "--verbosity",
+    "--subscription",
+    "--resource-group",
+    "-g",
+    "--name",
+    "-n",
+    "--location",
+    "-l",
+    "--file",
+    "-f",
+    "--container-name",
+    "-c",
+    "--account-name",
+    "--account-key",
+    "--sas-token",
+    "--acl",
+    "--sse",
+    "--sse-c",
+    "--sse-c-key",
+    "--sse-kms-key-id",
+    "--storage-class",
+    "--exclude",
+    "--include",
+    "--content-type",
+    "--content-encoding",
+    "--content-disposition",
+    "--content-language",
+    "--cache-control",
+    "--expires",
+    "--metadata",
+    "--metadata-directive",
+    "--grants",
+    "--source-region",
+    "--request-payer",
+    "--expected-size",
+    "--page-size",
+    "--max-items",
+    "--starting-token",
+    "--filters",
+    "--filter",
+    "--context",
+    "--function-name",
+    "--bucket",
+    "--key",
+    "--body",
+    "--payload",
+    "--cluster",
+    "--service",
+    "--stack-name",
+    "--template-file",
+    "--parameters",
+    "--tags",
+    "--tag",
+    "-t",
+    "--image",
+    "--machine-type",
+    "--size",
+    "--count",
+    "--instance-ids",
+    "--table-name",
+    "--queue-url",
+    "--topic-arn",
+    "--message",
+    "--role-arn",
+    "--policy-arn",
+    "--user-name",
+    "--group-name",
+    "--secret-id",
+    "--parameter-name",
+    "--vault-name",
+    "--id",
+];
+const CLOUD_TRANSFERS: [&str; 6] = ["cp", "sync", "mv", "rsync", "upload", "upload-batch"];
+const CLOUD_CHANGES: &[&str] = &[
+    "create",
+    "delete",
+    "update",
+    "set",
+    "add",
+    "remove",
+    "deploy",
+    "run",
+    "start",
+    "stop",
+    "apply",
+    "invoke",
+    "publish",
+    "terminate",
+    "restart",
+    "reboot",
+    "import",
+    "export",
+    "enable",
+    "disable",
+    "attach",
+    "detach",
+    "put",
+    "rm",
+    "mb",
+    "rb",
+    "login",
+    "logout",
+    "revoke",
+    "activate",
+    "deactivate",
+    "copy",
+    "move",
+    "scale",
+    "resize",
+    "submit",
+    "cancel",
+    "execute",
+    "send",
+    "register",
+    "deregister",
+    "configure",
+    "init",
+    "push",
+    "pull",
+    "tag",
+    "untag",
+    "reset",
+    "rotate",
+    "grant",
+    "assign",
+    "ssh",
+    "scp",
+    "exec",
+    "up",
+    "browse",
+    "open",
+    "purge",
+    "wait",
+];
+
+const SSH_VALUE_OPTIONS: [&str; 14] = [
+    "-i", "-p", "-o", "-l", "-L", "-R", "-D", "-J", "-F", "-b", "-c", "-e", "-m", "-w",
+];
+
+// A change of a file under one of these directories, or of a shell startup file, changes the host.
+const SYSTEM_DIRECTORIES: [&str; 10] = [
+    "/etc/",
+    "/usr/",
+    "/bin/",
+    "/sbin/",
+    "/System/",
+    "/Library/",
+    "/var/",
+    "/opt/",
+    "/boot/",
+    "/private/etc/",
+];
+const STARTUP_FILES: [&str; 8] = [
+    ".bashrc",
+    ".bash_profile",
+    ".bash_login",
+    ".profile",
+    ".zshrc",
+    ".zshenv",
+    ".zprofile",
+    ".zlogin",
+];
+const LOCK_FILES: [&str; 10] = [
+    "Cargo.lock",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "bun.lockb",
+    "poetry.lock",
+    "uv.lock",
+    "Gemfile.lock",
+    "go.sum",
+    "composer.lock",
 ];
 
 pub(super) fn rank(operation: &str) -> usize {
@@ -211,55 +459,21 @@ pub(super) fn comments(command: &str) -> Vec<String> {
 }
 
 fn changes_the_host(path: &str) -> bool {
-    const DIRECTORIES: [&str; 10] = [
-        "/etc/",
-        "/usr/",
-        "/bin/",
-        "/sbin/",
-        "/System/",
-        "/Library/",
-        "/var/",
-        "/opt/",
-        "/boot/",
-        "/private/etc/",
-    ];
-    const STARTUP: [&str; 8] = [
-        ".bashrc",
-        ".bash_profile",
-        ".bash_login",
-        ".profile",
-        ".zshrc",
-        ".zshenv",
-        ".zprofile",
-        ".zlogin",
-    ];
     let name = path
         .trim_end_matches('/')
         .rsplit('/')
         .next()
         .unwrap_or_default();
-    DIRECTORIES
+    SYSTEM_DIRECTORIES
         .iter()
         .any(|directory| path.starts_with(directory))
-        || STARTUP.contains(&name)
+        || STARTUP_FILES.contains(&name)
 }
 
 pub(super) fn write_operation(path: &str) -> &'static str {
-    const LOCKS: [&str; 10] = [
-        "Cargo.lock",
-        "package-lock.json",
-        "pnpm-lock.yaml",
-        "yarn.lock",
-        "bun.lockb",
-        "poetry.lock",
-        "uv.lock",
-        "Gemfile.lock",
-        "go.sum",
-        "composer.lock",
-    ];
     if changes_the_host(path) {
         "system_privileged"
-    } else if LOCKS.contains(&path.rsplit('/').next().unwrap_or_default()) {
+    } else if LOCK_FILES.contains(&path.rsplit('/').next().unwrap_or_default()) {
         "dependency_change"
     } else {
         "write_workspace"
@@ -301,8 +515,23 @@ fn first_of<'a>(words: &'a [&str], groups: &[&[&str]]) -> &'a str {
         .unwrap_or_default()
 }
 
+/// The words of a git command from its subcommand on: the global options
+/// before it are dropped, and `-C <path>` and `-c <name>=<value>` each take
+/// the next word as their value.
+pub(super) fn git_words<'a>(words: &'a [&'a str]) -> &'a [&'a str] {
+    let mut rest = words;
+    while rest.first().is_some_and(|word| word.starts_with('-')) {
+        rest = if matches!(rest[0], "-C" | "-c") {
+            drop_front(rest, 2)
+        } else {
+            drop_front(rest, 1)
+        };
+    }
+    rest
+}
+
 fn git(words: &[&str]) -> Option<&'static str> {
-    const READS: [&str; 20] = [
+    const READS: [&str; 19] = [
         "status",
         "diff",
         "log",
@@ -322,10 +551,9 @@ fn git(words: &[&str]) -> Option<&'static str> {
         "count-objects",
         "whatchanged",
         "name-rev",
-        "help",
     ];
     const FETCHES: [&str; 3] = ["fetch", "clone", "ls-remote"];
-    const CHANGES: [&str; 27] = [
+    const CHANGES: [&str; 24] = [
         "add",
         "commit",
         "checkout",
@@ -350,19 +578,19 @@ fn git(words: &[&str]) -> Option<&'static str> {
         "subtree",
         "bundle",
         "gc",
-        "tag",
-        "branch",
-        "stash",
     ];
-    let mut rest = words;
-    while rest.first().is_some_and(|word| word.starts_with('-')) {
-        rest = if matches!(rest[0], "-C" | "-c") && rest.len() >= 2 {
-            &rest[2..]
-        } else {
-            &rest[1..]
-        };
-    }
+    let rest = git_words(words);
     let (&subcommand, arguments) = rest.split_first()?;
+    if subcommand == "lfs" {
+        let action = first_plain(arguments);
+        return Some(if GIT_LFS_READS.contains(&action) {
+            "read_workspace"
+        } else if GIT_LFS_FETCHES.contains(&action) {
+            "network_read"
+        } else {
+            "version_control_mutation"
+        });
+    }
     if READS.contains(&subcommand) {
         return Some("read_workspace");
     }
@@ -546,6 +774,143 @@ fn find(words: &[&str]) -> Option<&'static str> {
     Some("read_workspace")
 }
 
+fn ssh(words: &[&str]) -> Option<&'static str> {
+    if words.iter().any(|word| {
+        matches!(*word, "-L" | "-R" | "-D")
+            || ["-L", "-R", "-D"]
+                .iter()
+                .any(|prefix| word.starts_with(prefix))
+    }) {
+        return Some("external_mutation");
+    }
+    let mut rest = words;
+    while rest.first().is_some_and(|word| word.starts_with('-')) {
+        rest = drop_front(
+            rest,
+            if SSH_VALUE_OPTIONS.contains(&rest[0]) {
+                2
+            } else {
+                1
+            },
+        );
+    }
+    if rest.is_empty() {
+        return None;
+    }
+    Some(if rest.len() > 1 {
+        "external_mutation"
+    } else {
+        "network_read"
+    })
+}
+
+fn cloud_operands<'a>(words: &'a [&'a str]) -> Vec<&'a str> {
+    let mut operands = Vec::new();
+    let mut rest = words;
+    while let Some(&word) = rest.first() {
+        if word.starts_with('-') {
+            rest = drop_front(
+                rest,
+                if CLOUD_VALUE_OPTIONS.contains(&word) {
+                    2
+                } else {
+                    1
+                },
+            );
+        } else {
+            operands.push(word);
+            rest = drop_front(rest, 1);
+        }
+    }
+    operands
+}
+
+fn cloud(words: &[&str]) -> &'static str {
+    let operands = cloud_operands(words);
+    let mut action: Vec<&str> = Vec::new();
+    for &word in &operands {
+        if !word.chars().all(|c| c.is_alphanumeric() || c == '-') {
+            break;
+        }
+        action.push(word);
+        if CLOUD_READ_PREFIXES
+            .iter()
+            .any(|prefix| word.starts_with(prefix))
+            || CLOUD_TRANSFERS.contains(&word)
+            || CLOUD_CHANGES.contains(&word)
+        {
+            break;
+        }
+    }
+    if matches!(action.last(), Some(&"cp") | Some(&"sync") | Some(&"rsync")) {
+        let rest = drop_front(&operands, action.len());
+        let source = rest.first().copied().unwrap_or("");
+        let destination = rest.get(1).copied().unwrap_or("");
+        if source.contains("://") && !destination.is_empty() && !destination.contains("://") {
+            return "network_read";
+        }
+    }
+    let reads = action.iter().any(|word| {
+        CLOUD_READ_PREFIXES
+            .iter()
+            .any(|prefix| word.starts_with(prefix))
+    });
+    if reads || words.contains(&"--dry-run") {
+        "network_read"
+    } else {
+        "external_mutation"
+    }
+}
+
+fn drop_front<'a>(words: &'a [&'a str], n: usize) -> &'a [&'a str] {
+    words.get(n..).unwrap_or(&[])
+}
+
+/// The words of a simple command from its program on: the assignments and the
+/// wrappers before it are dropped, with the options of each wrapper and the
+/// value of an option that takes one. With `shells` false, a shell with a
+/// script (`bash -c`) is the program, and its words stay.
+pub(super) fn program_words<'a>(words: &'a [&'a str], shells: bool) -> &'a [&'a str] {
+    let mut words = words;
+    while let Some(&first) = words.first() {
+        if first.contains('=') && !first.starts_with(['-', '/', '.']) {
+            words = drop_front(words, 1);
+        } else if WRAPPERS.contains(&first) {
+            let values = wrapper_value_options(first);
+            words = drop_front(words, 1);
+            while words.first().is_some_and(|word| word.starts_with('-')) {
+                words = drop_front(words, if values.contains(&words[0]) { 2 } else { 1 });
+            }
+            if first == "timeout" {
+                words = drop_front(words, 1);
+            }
+        } else if shells && SHELLS.contains(&first) && words.get(1).copied() == Some("-c") {
+            words = drop_front(words, 2);
+        } else {
+            break;
+        }
+    }
+    words
+}
+
+fn simple_operation<'a>(words: &'a [&'a str], local: bool) -> Option<&'static str> {
+    let words = program_words(words, true);
+    if words.is_empty() {
+        return Some("read_workspace");
+    }
+    let target = redirect_target(words);
+    let found = program_operation(words[0], &words[1..], local);
+    let (Some(target), Some(found_operation)) = (target, found) else {
+        return found;
+    };
+    let written = write_operation(target);
+    Some(if rank(written) < rank(found_operation) {
+        written
+    } else {
+        found_operation
+    })
+}
+
 fn program_operation(program: &str, arguments: &[&str], local: bool) -> Option<&'static str> {
     let subcommand = first_plain(arguments);
     if program == "find" {
@@ -673,22 +1038,62 @@ fn program_operation(program: &str, arguments: &[&str], local: bool) -> Option<&
             "external_mutation"
         });
     }
-    if matches!(program, "docker" | "podman") {
+    if matches!(program, "docker" | "podman" | "nerdctl") {
         let reads = ["ps", "images", "logs", "inspect", "version", "info"];
+        let fetches = ["pull", "search"];
         let runs = [
             "build", "run", "exec", "compose", "start", "stop", "restart",
         ];
         let sends = ["push", "login"];
-        let action = first_of(arguments, &[&reads, &runs, &sends]);
-        return if reads.contains(&action) {
-            Some("read_workspace")
-        } else if sends.contains(&action) {
-            Some("external_mutation")
-        } else if runs.contains(&action) {
-            Some("local_execution")
+        let action = first_of(arguments, &[&reads, &fetches, &runs, &sends]);
+        if reads.contains(&action) {
+            return Some("read_workspace");
+        }
+        if fetches.contains(&action) {
+            return Some("network_read");
+        }
+        if sends.contains(&action) {
+            return Some("external_mutation");
+        }
+        return runs.contains(&action).then_some("local_execution");
+    }
+    if program == "ssh" {
+        return ssh(arguments);
+    }
+    if program == "direnv" {
+        return Some(if subcommand == "allow" {
+            "local_execution"
         } else {
-            None
-        };
+            "read_workspace"
+        });
+    }
+    if program == "tar" {
+        let mode = arguments
+            .first()
+            .map_or("", |first| first.trim_start_matches('-'));
+        return Some(if mode.starts_with('t') || mode.starts_with("list") {
+            "read_workspace"
+        } else {
+            "write_workspace"
+        });
+    }
+    if DEPLOYERS.contains(&program) {
+        if DEPLOY_CHECKS.contains(&subcommand) {
+            return Some("build_test");
+        }
+        return Some(
+            if DEPLOY_READS.contains(&subcommand)
+                || arguments.contains(&"--check")
+                || arguments.contains(&"--dry-run")
+            {
+                "network_read"
+            } else {
+                "external_mutation"
+            },
+        );
+    }
+    if CLOUDS.contains(&program) {
+        return Some(cloud(arguments));
     }
     if matches!(
         (program, subcommand),
@@ -731,36 +1136,6 @@ fn program_operation(program: &str, arguments: &[&str], local: bool) -> Option<&
         return Some("local_execution");
     }
     None
-}
-
-fn simple_operation<'a>(words: &'a [&'a str], local: bool) -> Option<&'static str> {
-    let mut words = words;
-    while words
-        .first()
-        .is_some_and(|word| word.contains('=') && !word.starts_with(['-', '/', '.']))
-    {
-        words = &words[1..];
-    }
-    while words.first().is_some_and(|word| WRAPPERS.contains(word)) {
-        words = if words[0] == "timeout" && words.len() >= 2 {
-            &words[2..]
-        } else {
-            &words[1..]
-        };
-    }
-    if words.is_empty() {
-        return Some("read_workspace");
-    }
-    let target = redirect_target(words);
-    let found = program_operation(words[0], &words[1..], local)?;
-    target.map_or(Some(found), |target| {
-        let written = write_operation(target);
-        Some(if rank(written) < rank(found) {
-            written
-        } else {
-            found
-        })
-    })
 }
 
 pub(super) fn operation(command: &str, local: bool) -> Option<&'static str> {
