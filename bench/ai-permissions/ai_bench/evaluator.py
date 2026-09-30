@@ -23,12 +23,16 @@ class Evaluation:
     """What one `evaluate` call decided: the danger score, 0 to 1 (None when the model gave no
     usable answer, which gives `ask`), and the label, `allow`, `ask` or `deny`. `rule` names
     the hard rule that denied the call with no model answer, and `cap` the tag that keeps the
-    call from `allow`; each is `None` on a call that the model alone decides."""
+    call from `allow`; each is `None` on a call that the model alone decides. `p_allow` and
+    `p_deny` are the two probabilities a probability-policy mode decides from; `None` on a mode
+    that decides from the danger instead."""
 
     danger: float | None
     label: Label
     rule: str | None = None
     cap: str | None = None
+    p_allow: float | None = None
+    p_deny: float | None = None
 
 
 @dataclass(frozen=True)
@@ -41,6 +45,8 @@ class EvaluationResult:
     latency_ms: float
     rule: str | None = None
     cap: str | None = None
+    p_allow: float | None = None
+    p_deny: float | None = None
 
 
 class Evaluator(ABC):

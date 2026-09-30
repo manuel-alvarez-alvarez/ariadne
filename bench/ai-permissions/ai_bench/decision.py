@@ -55,7 +55,7 @@ def capped(evaluation: Evaluation, risk_tags: list[str], caps: list[str]) -> Eva
     if cap is None:
         return evaluation
     label = "ask" if evaluation.label == "allow" else evaluation.label
-    return Evaluation(evaluation.danger, label, cap=cap)
+    return Evaluation(evaluation.danger, label, cap=cap, p_allow=evaluation.p_allow, p_deny=evaluation.p_deny)
 
 
 def decide(
@@ -102,6 +102,22 @@ def score_danger(answer: dict[str, Any] | None) -> float | None:
         return None
     danger = float(score) / last_level
     return danger if _is_probability(danger) else None
+
+
+def score_bounds(answer: dict[str, Any] | None) -> tuple[float, float] | None:
+    """A `score` answer's P(level 0) and P(the last level): the probability policy's two
+    numbers. `None` on the conditions that make `score_danger` unusable, or a `probabilities`
+    with no entry for level 0 or the last level."""
+    decision = _decision(answer)
+    probabilities = decision.get("probabilities") if decision is not None else None
+    if decision is None or not isinstance(probabilities, dict) or len(probabilities) < 2:
+        return None
+    if not all(_is_probability(probability) for probability in probabilities.values()):
+        return None
+    last_level = len(probabilities) - 1
+    if "0" not in probabilities or str(last_level) not in probabilities:
+        return None
+    return float(probabilities["0"]), float(probabilities[str(last_level)])
 
 
 def choice_danger(answer: dict[str, Any] | None, weights: dict[str, float]) -> float | None:

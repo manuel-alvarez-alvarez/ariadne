@@ -44,7 +44,14 @@ def evaluate_all(evaluator: Evaluator, cases: list[dict[str, Any]]) -> list[Eval
                 raise EvaluatorError("%s: invalid label %r for %s" % (evaluator.key, evaluation.label, case["id"]))
             results.append(
                 EvaluationResult(
-                    case["id"], evaluation.danger, evaluation.label, latency_ms, evaluation.rule, evaluation.cap
+                    case["id"],
+                    evaluation.danger,
+                    evaluation.label,
+                    latency_ms,
+                    evaluation.rule,
+                    evaluation.cap,
+                    evaluation.p_allow,
+                    evaluation.p_deny,
                 )
             )
         return results
@@ -119,6 +126,9 @@ def print_table(rows: list[tuple[str, dict[str, Any]]], include_real: bool) -> N
 def print_selection(name: str, cases: list[dict[str, Any]], results: list[EvaluationResult], margin: float) -> None:
     print()
     print("%s selection (margin %.2f)" % (name, margin))
+    if any(result.p_allow is not None or result.p_deny is not None for result in results):
+        print_probability_selection(name, cases, results, margin)
+        return
     try:
         selection = metrics.select_thresholds(cases, results, margin)
     except ValueError as exc:
@@ -148,6 +158,39 @@ def print_selection(name: str, cases: list[dict[str, Any]], results: list[Evalua
         print("    %-40s %.4f" % (case_id, danger))
     relabelled = [
         metrics.at_thresholds(result, selection["allow_threshold"], selection["deny_threshold"]) for result in results
+    ]
+    print("  table at that pair:")
+    include_real = any(case["set"] == "real" for case in cases)
+    print_table([(name, metrics.summary(cases, relabelled))], include_real)
+
+
+def print_probability_selection(
+    name: str, cases: list[dict[str, Any]], results: list[EvaluationResult], margin: float
+) -> None:
+    try:
+        selection = metrics.select_probability_thresholds(cases, results, margin)
+    except ValueError as exc:
+        print("  %s" % exc)
+        return
+    print(
+        "  pair: allow_probability %.4f / deny_probability %.4f"
+        % (selection["allow_probability"], selection["deny_probability"])
+    )
+    if selection["decided"]:
+        print("  risky cases that a rule or a cap decides, off the allow bound: %d" % len(selection["decided"]))
+    if selection["rule_denied"]:
+        print("  broken hard rule, a rule denies %d safe or real case(s):" % len(selection["rule_denied"]))
+        for case_id in selection["rule_denied"]:
+            print("    %s" % case_id)
+    print("  nearest the allow bound:")
+    for case_id, probability in selection["nearest_allow"]:
+        print("    %-40s %.4f" % (case_id, probability))
+    print("  nearest the deny bound:")
+    for case_id, probability in selection["nearest_deny"]:
+        print("    %-40s %.4f" % (case_id, probability))
+    relabelled = [
+        metrics.at_probability_thresholds(result, selection["allow_probability"], selection["deny_probability"])
+        for result in results
     ]
     print("  table at that pair:")
     include_real = any(case["set"] == "real" for case in cases)
@@ -202,7 +245,10 @@ def write_scores(directory: Path, name: str, cases: list[dict[str, Any]], result
     with (directory / (safe_name + ".csv")).open("w", newline="", encoding="utf-8") as output:
         writer = csv.writer(output, lineterminator="\n")
         writer.writerow(
-            ["id", "set", "expected", "danger", "label", "latency_ms", "operation", "risk_tags", "pair", "rule", "cap"]
+            [
+                "id", "set", "expected", "danger", "label", "latency_ms", "operation", "risk_tags", "pair", "rule",
+                "cap", "p_allow", "p_deny",
+            ]
         )
         writer.writerows(
             [
@@ -217,6 +263,8 @@ def write_scores(directory: Path, name: str, cases: list[dict[str, Any]], result
                 case.get("pair") or "",
                 result.rule or "",
                 result.cap or "",
+                result.p_allow,
+                result.p_deny,
             ]
             for case, result in zip(cases, results)
         )
@@ -249,6 +297,8 @@ def read_scores(path: Path) -> tuple[list[dict[str, Any]], list[EvaluationResult
                         float(row["latency_ms"]),
                         row.get("rule") or None,
                         row.get("cap") or None,
+                        float(row["p_allow"]) if row.get("p_allow") else None,
+                        float(row["p_deny"]) if row.get("p_deny") else None,
                     )
                 )
     except OSError as exc:

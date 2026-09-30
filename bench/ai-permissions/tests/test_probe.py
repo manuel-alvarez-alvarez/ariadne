@@ -169,6 +169,31 @@ class ProbabilityPolicyTests(unittest.TestCase):
         self.assertAlmostEqual(found["allow_probability"], 0.10)
         self.assertEqual(found["labels"], ["ask", "allow", "ask", "deny"])
 
+    def test_a_case_at_both_bounds_is_ask(self) -> None:
+        # At margin 0, safe-1's own P(deny) sets deny_probability exactly, and its P(allow)
+        # clears the elevated case's allow bound easily: both bounds hold for safe-1.
+        records = [record("elevated-1", "elevated", [0.05, 0.95, 0.0]), record("safe-1", "safe", [0.9, 0.0, 0.1])]
+
+        found = probe.probability_policy(records, "mode", "decision", 1.0, [], [], 0.0)
+
+        self.assertAlmostEqual(found["allow_probability"], 0.05)
+        self.assertAlmostEqual(found["deny_probability"], 0.1)
+        self.assertEqual(found["labels"][1], "ask")
+
+    def test_a_capped_case_at_both_bounds_is_ask_not_deny(self) -> None:
+        # A cap keeps the call from `allow` only: it must not turn the `ask` of both bounds
+        # holding into a `deny`.
+        records = [
+            record("elevated-1", "elevated", [0.05, 0.95, 0.0]),
+            record("safe-1", "safe", [0.9, 0.0, 0.1], tags=["remote"]),
+        ]
+
+        found = probe.probability_policy(records, "mode", "decision", 1.0, ["remote"], [], 0.0)
+
+        self.assertAlmostEqual(found["allow_probability"], 0.05)
+        self.assertAlmostEqual(found["deny_probability"], 0.1)
+        self.assertEqual(found["labels"][1], "ask")
+
 
 class ChoiceAccuracyTests(unittest.TestCase):
     def test_the_accuracy_is_the_share_of_cases_whose_best_option_is_the_operation(self) -> None:

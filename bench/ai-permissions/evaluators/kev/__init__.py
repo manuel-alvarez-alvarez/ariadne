@@ -101,3 +101,16 @@ def evaluate_contract(evaluator: KevEvaluator, contract: Any, case: dict[str, An
     answer = evaluator.answer(contract.state(request, workspace), contract.QUESTIONS)
     evaluation = decision.three_way(contract.danger(answer), contract.ALLOW_THRESHOLD, contract.DENY_THRESHOLD)
     return decision.capped(evaluation, derived.risk_tags, contract.CAPS)
+
+
+def evaluate_probability_contract(evaluator: KevEvaluator, contract: Any, case: dict[str, Any]) -> Evaluation:
+    """One case under the probability-policy contract `contract`: a hard rule of its `RULES`
+    denies with no call to the model; else the model answers its `QUESTIONS` over its `state`,
+    and `contract.decision` turns the answer into the label, with no call to `contract.CAPS`
+    here: `contract.decision` applies its own caps."""
+    request, workspace = case["request"], case.get("repository")
+    derived = derive(request, workspace)
+    if derived.rule in contract.RULES:
+        return decision.ruled(derived.rule)
+    answer = evaluator.answer(contract.state(request, workspace), contract.QUESTIONS)
+    return contract.decision(answer, derived)

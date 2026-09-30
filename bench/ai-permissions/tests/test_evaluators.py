@@ -63,7 +63,7 @@ class EvaluatorTests(unittest.TestCase):
     def test_every_registered_evaluator_is_a_concrete_kev_or_laya_mode(self) -> None:
         registered = registry.load_all()
         # `kev_v12` and `kev_v13` were local experiments: no module has these keys.
-        kev = [*range(1, 12), *range(14, 26)]
+        kev = [*range(1, 12), *range(14, 28)]
         self.assertEqual(sorted(registered), sorted(["kev_v%d" % n for n in kev] + ["laya_v1"]))
         for key, cls in registered.items():
             self.assertEqual(cls.key, key)
@@ -94,7 +94,14 @@ class EvaluatorTests(unittest.TestCase):
                 self.assertEqual(cls.run, module.RUN)
                 self.assertEqual(cls.temperature, module.TEMPERATURE)
                 self.assertTrue(module.TEMPERATURE is None or isinstance(module.TEMPERATURE, float))
-                self.assertLess(module.ALLOW_THRESHOLD, module.DENY_THRESHOLD)
+                if hasattr(module, "ALLOW_PROBABILITY"):
+                    # A probability-policy mode: `decision` reads `ALLOW_PROBABILITY` and
+                    # `DENY_PROBABILITY` off the answer instead of two thresholds on the danger.
+                    self.assertIsInstance(module.ALLOW_PROBABILITY, float)
+                    self.assertIsInstance(module.DENY_PROBABILITY, float)
+                    self.assertTrue(callable(module.decision))
+                else:
+                    self.assertLess(module.ALLOW_THRESHOLD, module.DENY_THRESHOLD)
                 self.assertTrue(callable(module.danger))
                 self.assertIsNone(module.danger({"answers": {}}))
 
