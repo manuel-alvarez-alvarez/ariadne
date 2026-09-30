@@ -579,7 +579,7 @@ async fn the_recorded_outside_workspace_read_is_allowed() {
 /// argument says, reports the device its environment chose, and then allows
 /// every request with the calibrated danger 0.05.
 const SLOW_SERVER: &str = r#"#!/usr/bin/env python3
-import http.server, json, os, sys, time
+import http.server, json, os, socketserver, sys, time
 with open(sys.argv[1], 'w') as f:
     f.write(str(os.getpid()) + '\n')
 time.sleep(float(sys.argv[2]))
@@ -606,7 +606,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(ANSWER)
     def log_message(self, *args): pass
-http.server.HTTPServer((host, port), Handler).serve_forever()
+class Server(socketserver.TCPServer):
+    # Not `http.server.HTTPServer`: it looks up the name of its host as it
+    # binds, and that lookup takes 35 s on a GitHub macOS runner.
+    allow_reuse_address = True
+Server((host, port), Handler).serve_forever()
 "#;
 
 #[tokio::test]

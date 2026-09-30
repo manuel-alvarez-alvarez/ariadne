@@ -16,7 +16,7 @@ use crate::common::{Harness, TIMEOUT, eventually, harness, post, put_json, share
 /// `/v1/models` reports, `device/backend`, or `-` to report the ones its
 /// environment chose, as Kev would.
 const SERVER: &str = r#"#!/usr/bin/env python3
-import http.server, json, os, sys
+import http.server, json, os, socketserver, sys
 record, report = sys.argv[1], sys.argv[2]
 args = sys.argv[3:]
 host = args[args.index('--host') + 1]
@@ -38,7 +38,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path == '/v1/models':
             self.wfile.write(card)
     def log_message(self, *args): pass
-http.server.HTTPServer((host, port), Handler).serve_forever()
+class Server(socketserver.TCPServer):
+    # Not `http.server.HTTPServer`: it looks up the name of its host as it
+    # binds, and that lookup takes 35 s on a GitHub macOS runner.
+    allow_reuse_address = True
+Server((host, port), Handler).serve_forever()
 "#;
 
 /// The run of 4b, what a 64 GB Mac settles on.
@@ -188,7 +192,19 @@ async fn a_refresh_and_an_unexpected_exit_restart_the_server() {
     let _: AiPermissionsStatusDto = h
         .json(post("/v1/permissions/ai/refresh"), StatusCode::ACCEPTED)
         .await;
-    let second = next_server(record.path(), Some(first)).await.pid;
+    let second = next_server(record.path(), Some(first)).await;
+    // Kill it once it is served: before its device check, the daemon reads
+    // no card from it and fails the model rather than restarting it.
+    let endpoint = format!("http://127.0.0.1:{}", second.arg_after("--port"));
+    eventually(TIMEOUT, "the new server to be served", || async {
+        h.get::<AiPermissionsStatusDto>("/v1/permissions/ai")
+            .await
+            .endpoint
+            .as_deref()
+            == Some(endpoint.as_str())
+    })
+    .await;
+    let second = second.pid;
     let status = std::process::Command::new("/bin/kill")
         .args(["-9", &second.to_string()])
         .status()
