@@ -395,7 +395,7 @@ describe("the model pickers", () => {
     await waitFor(() => expect(lastWrite()?.body).toEqual({ flavour: "0.8b" }))
 
     await user.click(screen.getByRole("combobox", { name: "Device" }))
-    await user.click(screen.getByRole("option", { name: /^cpu/ }))
+    await user.click(await screen.findByRole("option", { name: /^cpu/ }))
     await waitFor(() => expect(lastWrite()?.body).toEqual({ flavour: "0.8b", device: "cpu" }))
   })
 

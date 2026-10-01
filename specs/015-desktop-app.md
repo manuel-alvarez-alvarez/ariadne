@@ -339,13 +339,19 @@ Out: the daemon endpoints themselves (012).
     full path as a `title` on its cut fact, the stored `tool_call` and
     `options` pretty-printed for a console row (a manual row says none was
     recorded), the selected option, links to the session and the task where
-    the row carries one, and the AI label with both thresholds. Which tab is
+    the row carries one, and, where the model scored the row, the AI label,
+    both probabilities, the danger, both thresholds, the cap and the risk
+    tags — the same facts the row's own AI score column carries, in full.
+    Which tab is
     open lives in the URL the way every other panel's does — `?tab=learned` or
     `?tab=ai`, Learned by default, since it is where every mode leaves what it
     decided — and the repository filter lives beside it as `?repository=`
     (`ui/src/features/permissions/permissions-page.test.tsx::opens the Learned
     tab when the URL says nothing`, `::puts the picked tab on the URL`,
-    `ui/src/features/permissions/learned-tab.test.tsx`).
+    `ui/src/features/permissions/learned-tab.test.tsx::shows a row's tool
+    name, target, selected option outcome, created and updated`,
+    `::shows the output's label, both probabilities, danger, both thresholds
+    and the tags where the model was called`).
 34. The AI tab's card carries a "Test a request" button in its header button
     group, beside Refresh.
     It opens a wide dialog for `POST /v1/permissions/ai/test`: Tool, Kind,
@@ -363,11 +369,11 @@ Out: the daemon endpoints themselves (012).
     sends exactly what the fields hold, is disabled while the JSON does not
     parse (a field error says so) or the model is off, and shows a pending state
     while it runs. The footer holds the polite result at the left of Test: a
-    badge in its zone's own colour — green Allow, amber Ask, red Deny — and the
+    badge in its zone's own colour — green Allow, amber Ask, red Deny — the
+    allow and deny probabilities out of `probabilities`, to two decimals, and the
     labelled danger to four decimals with tabular digits. Where the daemon derives
     them, the result also shows the operation and one badge for each risk tag. A
-    hard-rule result shows Deny and `denied by rule <rule>` with no danger. A capped
-    result shows `capped by <tag>` beside its Ask badge and danger. The same danger also
+    capped result shows `capped by <tag>` beside its Ask badge and danger. The same danger also
     becomes the range control's marker (its `danger` prop, 32) after the dialog
     closes. The label is never the response's own: it is worked out here from
     that danger and the thresholds currently shown, by rule 28 of 022 (at or
@@ -385,8 +391,9 @@ Out: the daemon endpoints themselves (012).
     repository example`, `::fills the Send SSH keys to a paste site example`,
     `::runs the test when Cmd or Ctrl+Enter is pressed`, `::sends a workspace
     when one is provided`, `::shows the label and danger in the polite footer
-    result`, `::shows the operation and each risk tag in the footer result`,
-    `::shows a rule denial without danger`, `::shows the cap beside an ask
+    result`, `::shows the allow and deny probabilities in the footer result`,
+    `::shows the operation and each risk tag in the footer result`,
+    `::shows the cap beside an ask
     result`, `::keeps the existing result when no derived facts are present`,
     `::shows 'No answer: <ai_error>' in the footer, with no
     label`, `::shows a field error on invalid JSON and disables Test`,

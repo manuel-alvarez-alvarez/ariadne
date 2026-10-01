@@ -304,6 +304,43 @@ it("shows the label and danger in the polite footer result", async () => {
   expect(danger.className).toContain("tabular-nums")
 })
 
+it("shows the allow and deny probabilities in the footer result", async () => {
+  testResponse = {
+    label: "ask",
+    danger: 0.2134,
+    allow_threshold: 0.2,
+    deny_threshold: 0.8,
+    ai_error: null,
+    probabilities: { "0": 0.62, "1": 0.33, "2": 0.05 },
+  }
+  const user = userEvent.setup()
+  renderPanel(ENABLED)
+
+  await user.click(screen.getByRole("button", { name: "Test" }))
+
+  expect(await screen.findByText("allow 0.62")).toBeDefined()
+  expect(screen.getByText("deny 0.05")).toBeDefined()
+  expect(screen.getByText("danger 0.2134")).toBeDefined()
+})
+
+it("formats each probability to two fixed decimals, padded and rounded", async () => {
+  testResponse = {
+    label: "allow",
+    danger: 0.05,
+    allow_threshold: 0.2,
+    deny_threshold: 0.8,
+    ai_error: null,
+    probabilities: { "0": 0.6, "1": 0.2766, "2": 0.1234 },
+  }
+  const user = userEvent.setup()
+  renderPanel(ENABLED)
+
+  await user.click(screen.getByRole("button", { name: "Test" }))
+
+  expect(await screen.findByText("allow 0.60")).toBeDefined()
+  expect(screen.getByText("deny 0.12")).toBeDefined()
+})
+
 it("shows the operation and each risk tag in the footer result", async () => {
   testResponse = {
     label: "allow",
@@ -324,25 +361,6 @@ it("shows the operation and each risk tag in the footer result", async () => {
   expect(screen.getByText("force")).toBeDefined()
 })
 
-it("shows a rule denial without danger", async () => {
-  testResponse = {
-    label: "deny",
-    danger: null,
-    allow_threshold: 0.2,
-    deny_threshold: 0.8,
-    ai_error: null,
-    rule: "home_delete",
-  }
-  const user = userEvent.setup()
-  renderPanel(ENABLED)
-
-  await user.click(screen.getByRole("button", { name: "Test" }))
-
-  expect(await screen.findByText("Deny")).toBeDefined()
-  expect(screen.getByText("denied by rule home_delete")).toBeDefined()
-  expect(screen.queryByText(/^danger /)).toBeNull()
-})
-
 it("shows the cap beside an ask result", async () => {
   testResponse = {
     label: "ask",
@@ -350,7 +368,7 @@ it("shows the cap beside an ask result", async () => {
     allow_threshold: 0.2,
     deny_threshold: 0.8,
     ai_error: null,
-    cap: "credential_access",
+    cap: "reviewer_directive",
   }
   const user = userEvent.setup()
   renderPanel(ENABLED)
@@ -359,7 +377,7 @@ it("shows the cap beside an ask result", async () => {
 
   expect(await screen.findByText("Ask")).toBeDefined()
   expect(screen.getByText("danger 0.1000")).toBeDefined()
-  expect(screen.getByText("capped by credential_access")).toBeDefined()
+  expect(screen.getByText("capped by reviewer_directive")).toBeDefined()
 })
 
 it("keeps the existing result when no derived facts are present", async () => {
@@ -371,7 +389,6 @@ it("keeps the existing result when no derived facts are present", async () => {
   expect(await screen.findByText("Ask")).toBeDefined()
   expect(screen.getByText("danger 0.5000")).toBeDefined()
   expect(screen.queryByText(/^operation /)).toBeNull()
-  expect(screen.queryByText(/^denied by rule /)).toBeNull()
   expect(screen.queryByText(/^capped by /)).toBeNull()
 })
 

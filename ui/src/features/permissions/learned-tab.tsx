@@ -51,6 +51,7 @@ import { permissionModeLabel } from "@/features/repositories/permission-modes"
 import { repositoriesQueryOptions } from "@/features/repositories/queries"
 import { cn, folderName, plural, shortId } from "@/lib/format"
 
+import { AI_LABEL_TEXT, AI_LABEL_TONE, parseAiOutput } from "./ai-output"
 import { DeleteLearnedPermissionDialog } from "./delete-learned-permission-dialog"
 import { LearnedPermissionDetail } from "./learned-permission-detail"
 import { learnedPermissionsQueryOptions } from "./queries"
@@ -74,6 +75,7 @@ const COLUMNS = [
   { header: "Tool" },
   { header: "Target" },
   { header: "Selected option" },
+  { header: "AI score" },
   { header: "Created" },
   { header: "Updated" },
   { className: cn("w-16 text-right", PINNED) },
@@ -210,6 +212,7 @@ function LearnedPermissionRow({
 }) {
   const targetLabel = permissionModeLabel(row.target)
   const option = selectedOptionInfo(row.options, row.selected_option)
+  const ai = parseAiOutput(row.output)
 
   return (
     <TableRow
@@ -241,6 +244,34 @@ function LearnedPermissionRow({
           <StatusBadge size="sm" label={option.label} tone={OUTCOME_TONE[option.outcome]} />
         ) : (
           option.label
+        )}
+      </TableCell>
+      <TableCell className="text-xs">
+        {ai ? (
+          <span className="flex flex-wrap items-center gap-1.5">
+            {ai.label ? (
+              <StatusBadge
+                size="sm"
+                label={AI_LABEL_TEXT[ai.label]}
+                tone={AI_LABEL_TONE[ai.label]}
+              />
+            ) : null}
+            {ai.allowProbability !== null ? (
+              <span className="tabular-nums text-muted-foreground">
+                allow {ai.allowProbability.toFixed(2)}
+              </span>
+            ) : null}
+            {ai.denyProbability !== null ? (
+              <span className="tabular-nums text-muted-foreground">
+                deny {ai.denyProbability.toFixed(2)}
+              </span>
+            ) : null}
+            {ai.danger !== null ? (
+              <span className="tabular-nums text-muted-foreground">{ai.danger.toFixed(4)}</span>
+            ) : null}
+          </span>
+        ) : (
+          <span className="text-muted-foreground">—</span>
         )}
       </TableCell>
       <TableCell className="text-xs text-muted-foreground">

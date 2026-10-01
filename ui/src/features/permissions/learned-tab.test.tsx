@@ -65,7 +65,17 @@ const DENIED_ROW: LearnedPermissionDto = aLearnedPermission({
   ],
   selected_option: "no",
   target: "ai",
-  output: { label: "deny", danger: 0.91 },
+  output: {
+    label: "deny",
+    danger: 0.91,
+    allow_threshold: 0.0531,
+    deny_threshold: 0.6522,
+    probabilities: { "0": 0.01, "1": 0.08, "2": 0.91 },
+    cap: "reviewer_directive",
+    risk_tags: ["remote", "force"],
+    operation: "execute",
+    ai_error: null,
+  },
 })
 
 interface Recorded {
@@ -138,6 +148,16 @@ describe("the table", () => {
     expect(screen.getByText("AI")).toBeDefined()
     expect(screen.getByText("Reject")).toBeDefined()
     expect(screen.getByText("2 rows")).toBeDefined()
+
+    // The AI score column: a label badge and the danger for a row the model
+    // scored, an em dash for one that was never called (`ALLOWED_ROW`).
+    const allowedRow = screen.getByRole("row", { name: "Bash (Learn)" })
+    expect(within(allowedRow).getByText("—")).toBeDefined()
+    const deniedRow = screen.getByRole("row", { name: "Write (AI)" })
+    expect(within(deniedRow).getByText("Deny")).toBeDefined()
+    expect(within(deniedRow).getByText("allow 0.01")).toBeDefined()
+    expect(within(deniedRow).getByText("deny 0.91")).toBeDefined()
+    expect(within(deniedRow).getByText("0.9100")).toBeDefined()
 
     // The Created and Updated columns, in that order: each cell is a `<time>`
     // pinned to the row's own stamp — see `components/when.tsx`.
@@ -298,12 +318,21 @@ describe("the detail view", () => {
     expect(panel.getByText("Learn")).toBeDefined()
   })
 
-  it("shows the model's output as JSON where it was called", async () => {
+  it("shows the output's label, both probabilities, danger, both thresholds, the cap and the tags where the model was called", async () => {
     const user = userEvent.setup()
     renderScreen(<LearnedPermissionsTab />)
     await user.click(await screen.findByText("Write"))
 
-    expect(await screen.findByText(/"label": "deny"/)).toBeDefined()
+    const panel = within(await screen.findByRole("dialog"))
+    expect(panel.getByText("Deny")).toBeDefined()
+    expect(panel.getByText("0.9100")).toBeDefined()
+    expect(panel.getByText("0.01")).toBeDefined()
+    expect(panel.getByText("0.91")).toBeDefined()
+    expect(panel.getByText("0.0531")).toBeDefined()
+    expect(panel.getByText("0.6522")).toBeDefined()
+    expect(panel.getByText("reviewer_directive")).toBeDefined()
+    expect(panel.getByText("remote")).toBeDefined()
+    expect(panel.getByText("force")).toBeDefined()
     expect(screen.queryByText("no model output")).toBeNull()
   })
 

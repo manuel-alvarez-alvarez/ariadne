@@ -1252,13 +1252,13 @@ export interface components {
             /**
              * Format: double
              * @description Danger at or below this value is allowed, 0 to 1.
-             * @example 0.0886
+             * @example 0.0531
              */
             allow_threshold: number;
             /**
              * Format: double
              * @description Danger at or above this value is denied, 0 to 1.
-             * @example 0.6256
+             * @example 0.6522
              */
             deny_threshold: number;
             /**
@@ -2367,8 +2367,6 @@ export interface components {
             probabilities?: unknown;
             /** @description The ordered risk tags derived from the complete request. */
             risk_tags?: string[] | null;
-            /** @description The hard rule that denied the request. */
-            rule?: string | null;
         };
         /**
          * @description Tokens spent, as the agents' own transcripts report them.

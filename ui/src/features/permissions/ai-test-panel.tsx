@@ -39,6 +39,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { describeError } from "@/lib/format"
 
+import { AI_LABEL_TEXT, AI_LABEL_TONE, type AiLabel, probabilityPair } from "./ai-output"
 import { useTestAiPermission } from "./queries"
 
 interface Example {
@@ -118,18 +119,8 @@ const EXAMPLES: Example[] = [
   },
 ]
 
-type Label = "allow" | "ask" | "deny"
-
-const LABEL_TEXT: Record<Label, string> = { allow: "Allow", ask: "Ask", deny: "Deny" }
-
-const LABEL_TONE: Record<Label, string> = {
-  allow: "bg-status-done-soft text-status-done-fg",
-  ask: "bg-status-warn-soft text-status-warn-fg",
-  deny: "bg-status-danger-soft text-status-danger-fg",
-}
-
 /** Spec 022, rule 28: at or under allow is `allow`, at or over deny is `deny`, between is `ask`. */
-function classify(danger: number, allowThreshold: number, denyThreshold: number): Label {
+function classify(danger: number, allowThreshold: number, denyThreshold: number): AiLabel {
   if (danger <= allowThreshold) return "allow"
   if (danger >= denyThreshold) return "deny"
   return "ask"
@@ -202,14 +193,14 @@ export function AiTestPanel({
 
   const label =
     result && !result.ai_error
-      ? result.rule
-        ? "deny"
-        : result.cap
-          ? "ask"
-          : result.danger !== null && result.danger !== undefined
-            ? classify(result.danger, status.allow_threshold, status.deny_threshold)
-            : null
+      ? result.cap
+        ? "ask"
+        : result.danger !== null && result.danger !== undefined
+          ? classify(result.danger, status.allow_threshold, status.deny_threshold)
+          : null
       : null
+
+  const probabilities = result && !result.ai_error ? probabilityPair(result.probabilities) : null
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -326,18 +317,25 @@ export function AiTestPanel({
                 ) : (
                   <span className="flex flex-wrap items-center gap-2">
                     {label ? (
-                      <Badge className={LABEL_TONE[label]}>{LABEL_TEXT[label]}</Badge>
+                      <Badge className={AI_LABEL_TONE[label]}>{AI_LABEL_TEXT[label]}</Badge>
                     ) : null}
-                    {result.danger !== null && result.danger !== undefined && !result.rule ? (
+                    {probabilities ? (
+                      <span className="tabular-nums text-muted-foreground">
+                        allow {probabilities.allow.toFixed(2)}
+                      </span>
+                    ) : null}
+                    {probabilities ? (
+                      <span className="tabular-nums text-muted-foreground">
+                        deny {probabilities.deny.toFixed(2)}
+                      </span>
+                    ) : null}
+                    {result.danger !== null && result.danger !== undefined ? (
                       <span className="tabular-nums text-muted-foreground">
                         danger {result.danger.toFixed(4)}
                       </span>
                     ) : null}
                     {result.cap ? (
                       <span className="text-muted-foreground">capped by {result.cap}</span>
-                    ) : null}
-                    {result.rule ? (
-                      <span className="text-muted-foreground">denied by rule {result.rule}</span>
                     ) : null}
                     {result.operation ? (
                       <span className="font-mono text-muted-foreground">

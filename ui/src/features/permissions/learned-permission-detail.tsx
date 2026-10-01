@@ -8,9 +8,10 @@
  * `learned_permission_updated` patches, so an update made elsewhere shows up
  * here without a round trip through the row that opened it.
  *
- * `tool_call`, `options` and `output` are shown pretty-printed, the whole
- * request, the choices it was given and what the model made of it; `output`
- * is `null` wherever the model was never called, which says so instead.
+ * `tool_call` and `options` are shown pretty-printed, the whole request and
+ * the choices it was given; `output` is read into its own facts — the label,
+ * both probabilities, the danger, both thresholds, the cap and the risk tags
+ * — and is `null` wherever the model was never called, which says so instead.
  */
 
 import { useQuery } from "@tanstack/react-query"
@@ -21,6 +22,7 @@ import { ErrorState } from "@/components/error-state"
 import { Fact, FactList } from "@/components/fact-list"
 import { PanelSheet } from "@/components/panel-sheet"
 import { StatusBadge } from "@/components/status-badge"
+import { Badge } from "@/components/ui/badge"
 import { SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { When } from "@/components/when"
@@ -28,6 +30,7 @@ import { permissionModeLabel } from "@/features/repositories/permission-modes"
 import { repositoriesQueryOptions } from "@/features/repositories/queries"
 import { shortId } from "@/lib/format"
 
+import { AI_LABEL_TEXT, AI_LABEL_TONE, parseAiOutput } from "./ai-output"
 import { learnedPermissionQueryOptions } from "./queries"
 import { selectedOptionInfo } from "./request-summary"
 
@@ -72,6 +75,7 @@ function LearnedPermissionDetailView({ learned }: { learned: LearnedPermissionDt
     repositories.data?.find((repository) => repository.id === learned.repository_id)?.path ??
     learned.repository_id
   const option = selectedOptionInfo(learned.options, learned.selected_option)
+  const ai = parseAiOutput(learned.output)
 
   return (
     <div className="flex flex-col gap-4">
@@ -106,10 +110,64 @@ function LearnedPermissionDetailView({ learned }: { learned: LearnedPermissionDt
         </Fact>
       </FactList>
 
+      {ai ? (
+        <FactList columns={2}>
+          <Fact label="AI label">
+            {ai.label ? (
+              <StatusBadge
+                size="sm"
+                label={AI_LABEL_TEXT[ai.label]}
+                tone={AI_LABEL_TONE[ai.label]}
+              />
+            ) : (
+              "—"
+            )}
+          </Fact>
+          <Fact label="Danger">
+            <span className="tabular-nums">{ai.danger !== null ? ai.danger.toFixed(4) : "—"}</span>
+          </Fact>
+          <Fact label="Allow probability">
+            <span className="tabular-nums">
+              {ai.allowProbability !== null ? ai.allowProbability.toFixed(2) : "—"}
+            </span>
+          </Fact>
+          <Fact label="Deny probability">
+            <span className="tabular-nums">
+              {ai.denyProbability !== null ? ai.denyProbability.toFixed(2) : "—"}
+            </span>
+          </Fact>
+          <Fact label="Allow threshold">
+            <span className="tabular-nums">
+              {ai.allowThreshold !== null ? ai.allowThreshold.toFixed(4) : "—"}
+            </span>
+          </Fact>
+          <Fact label="Deny threshold">
+            <span className="tabular-nums">
+              {ai.denyThreshold !== null ? ai.denyThreshold.toFixed(4) : "—"}
+            </span>
+          </Fact>
+          <Fact label="Cap">{ai.cap ?? "—"}</Fact>
+          <Fact label="Risk tags" className="sm:col-span-2">
+            {ai.riskTags && ai.riskTags.length > 0 ? (
+              <span className="flex flex-wrap gap-1">
+                {ai.riskTags.map((tag) => (
+                  <Badge key={tag} variant="outline">
+                    {tag}
+                  </Badge>
+                ))}
+              </span>
+            ) : (
+              "—"
+            )}
+          </Fact>
+        </FactList>
+      ) : (
+        <p className="text-sm text-muted-foreground">no model output</p>
+      )}
+
       <div className="flex flex-col gap-3">
         <JsonBlock label="Tool call" value={learned.tool_call} />
         <JsonBlock label="Options" value={learned.options} />
-        <JsonBlock label="Output" value={learned.output} emptyText="no model output" />
       </div>
     </div>
   )
