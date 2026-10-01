@@ -5,7 +5,9 @@
 //! the capabilities it declares, the configuration options it offers, the
 //! reply to each prompt — updates of any kind (message and thought chunks, a
 //! plan, tool calls and as many updates of each as the test lists), a
-//! permission request, the stop reason, an exit mid-turn, or a pause
+//! permission request, the stop reason, an exit mid-turn, a stdin closed
+//! before the turn's answer (`close_stdin`), after which the agent reads
+//! nothing more and stays up until it is killed, or a pause
 //! (`wait_for`) a test holds the turn open on after its updates went out,
 //! during which a `session/cancel` ends the turn as `cancelled`, with the
 //! turn's usage, unless `ignore_cancel` says otherwise, and during which
@@ -436,6 +438,10 @@ def send(message):
 
 
 def read():
+    # A stdin the turn closed reads nothing more: the agent stays up, its
+    # stdout open, until it is killed.
+    while stdin.closed:
+        time.sleep(0.05)
     line = stdin.readline()
     if not line:
         sys.exit(0)
@@ -554,6 +560,10 @@ def respond(request):
                 time.sleep(0.01)
         if "exit" in turn:
             sys.exit(int(turn["exit"]))
+        if turn.get("close_stdin"):
+            # Closed before the answer goes out, so the next request the
+            # client writes finds no reader.
+            stdin.close()
         # A cancelled turn reports what it spent too, as ACP has it.
         response = {"stopReason": stop_reason}
         if "usage" in turn:

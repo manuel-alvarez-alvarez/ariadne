@@ -10,16 +10,24 @@
 
 use crate::common;
 
+use std::path::PathBuf;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use serde_json::json;
+use tokio::sync::mpsc::UnboundedSender;
 
 use ariadne_api::SESSION_HEADER;
 use ariadne_api::error::ErrorBody;
 use ariadne_api::messages::MessageDto;
 use ariadne_core::{Actor, MessageKind, Seat, SessionStatus, TaskStatus};
 use ariadne_daemon::scheduler::{self, SchedEvent};
+use ariadne_store::{AgentSession, EventFilter};
 
-use common::{Cast, TIMEOUT, as_session, eventually, get, harness, sh, test_pin};
+use common::acp;
+use common::{
+    Cast, Harness, TIMEOUT, as_session, eventually, get, harness, post_json, sh, test_pin,
+};
 
 fn messages_uri(cast: &Cast) -> String {
     format!("/v1/tasks/{}/messages", cast.task.id)
@@ -1451,6 +1459,426 @@ async fn a_message_a_read_hands_over_is_never_handed_over_as_a_prompt() {
         h.store.get_message(&after.id).await.unwrap().is_delivered(),
         "and the one that did go out is stamped too"
     );
+}
+
+/// An author whose agent sits inside a turn until the test writes the file
+/// this answers with: the agent of a task that waits for an answer inside
+/// one turn. The reviewer is the session the test writes to the author as.
+async fn author_held_in_a_turn(h: &Harness) -> (Cast, AgentSession, AgentSession, PathBuf) {
+    author_held_in(h, json!({})).await
+}
+
+/// [`author_held_in_a_turn`], with `ending` added to the held turn's script:
+/// what the agent does once the test lets the turn go.
+async fn author_held_in(
+    h: &Harness,
+    ending: serde_json::Value,
+) -> (Cast, AgentSession, AgentSession, PathBuf) {
+    let release = h.at("release-turn");
+    let mut turn = json!({"wait_for": release.display().to_string(), "updates": [], "stop_reason": "end_turn"});
+    turn.as_object_mut()
+        .unwrap()
+        .extend(ending.as_object().unwrap().clone());
+    let mut held = acp::script();
+    held["prompts"] = json!([turn]);
+    h.agent.reprogram(held);
+    let cast = h.active_cast().await;
+    let author = h
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
+        .await;
+    h.agent_runs(&author).await;
+    h.set_status(&author, SessionStatus::Idle).await;
+    let reviewer = h
+        .session(
+            &cast.goal,
+            Some(&cast.task),
+            Seat::Reviewer,
+            &cast.reviewer.id,
+        )
+        .await;
+    let (status, _) = h
+        .send(post_json(
+            &format!("/v1/sessions/{}/console/input", author.id),
+            json!({"text": "HOLD: wait for the reviewer's answer."}),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let reached = h.at("release-turn.reached");
+    eventually(TIMEOUT, "the author's turn to be held open", async || {
+        reached.exists()
+    })
+    .await;
+    (cast, author, reviewer, release)
+}
+
+/// One scheduler pass over the task, run to its end.
+async fn pass(sched: &UnboundedSender<SchedEvent>, cast: &Cast) {
+    sched
+        .send(SchedEvent::TaskChanged(cast.task.id.clone()))
+        .unwrap();
+    scheduler::flush_for_test(sched).await;
+}
+
+/// The kind of every event this session stored, in order.
+async fn event_kinds(h: &Harness, session: &AgentSession) -> Vec<String> {
+    h.store
+        .list_events(EventFilter {
+            session_id: Some(session.id.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|event| event.kind)
+        .collect()
+}
+
+/// The prompts this session's agent was sent that carry `body`.
+fn prompts_carrying(h: &Harness, session: &AgentSession, body: &str) -> usize {
+    h.prompts_to(session)
+        .iter()
+        .filter(|prompt| prompt.contains(body))
+        .count()
+}
+
+/// A message to an agent mid-turn reaches it through a read.
+///
+/// The agent waits for an answer inside one turn, and polls the channel. The
+/// scheduler queues the message behind that turn, which never ends while the
+/// agent waits, so a stamp at the queue would hide the message from every
+/// poll. The stamp is at the read instead, and the queued prompt is then
+/// skipped. The second message, which arrives as a prompt after the turn,
+/// proves the queue was walked past the first.
+#[tokio::test]
+async fn a_message_to_an_agent_mid_turn_reaches_it_through_a_read() {
+    let h = harness().await;
+    let (cast, author, reviewer, release) = author_held_in_a_turn(&h).await;
+    let write = |body: &'static str| {
+        h.json::<MessageDto>(
+            as_session(
+                &messages_uri(&cast),
+                &reviewer.id,
+                message("author", Some(&cast.author.id), body),
+            ),
+            StatusCode::CREATED,
+        )
+    };
+
+    let first = write("FIRST: the bound is the caller's.").await;
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    pass(&sched, &cast).await;
+    assert!(
+        !h.store.get_message(&first.id).await.unwrap().is_delivered(),
+        "a message queued behind a turn is not stamped"
+    );
+
+    let read: Vec<MessageDto> = h
+        .json(
+            read_as(&format!("{}?deliver=true", messages_uri(&cast)), &author.id),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(
+        read.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        [first.id.as_str()],
+        "the agent mid-turn reads the queued message"
+    );
+    assert!(read[0].delivered_at.is_some(), "{read:?}");
+
+    std::fs::write(&release, "go").unwrap();
+    eventually(TIMEOUT, "the held turn to end", async || {
+        event_kinds(&h, &author)
+            .await
+            .iter()
+            .any(|kind| kind == "stop")
+    })
+    .await;
+    write("SECOND: and the inner one stays.").await;
+    sched
+        .send(SchedEvent::TaskChanged(cast.task.id.clone()))
+        .unwrap();
+    eventually(
+        TIMEOUT,
+        "the second message to arrive as a prompt",
+        async || h.prompted(&author).contains("SECOND:"),
+    )
+    .await;
+    assert_eq!(
+        prompts_carrying(&h, &author, "FIRST:"),
+        0,
+        "a message the agent read was typed at it as well: {}",
+        h.prompted(&author)
+    );
+}
+
+/// A message queued behind a turn is stamped when its prompt goes out, and
+/// not before.
+#[tokio::test]
+async fn a_message_queued_behind_a_turn_is_stamped_when_its_prompt_goes_out() {
+    let h = harness().await;
+    let (cast, author, reviewer, release) = author_held_in_a_turn(&h).await;
+    let sent: MessageDto = h
+        .json(
+            as_session(
+                &messages_uri(&cast),
+                &reviewer.id,
+                message(
+                    "author",
+                    Some(&cast.author.id),
+                    "QUEUED: the bound is the caller's.",
+                ),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    pass(&sched, &cast).await;
+    assert!(
+        !h.store.get_message(&sent.id).await.unwrap().is_delivered(),
+        "a message queued behind a turn is not stamped"
+    );
+
+    std::fs::write(&release, "go").unwrap();
+    eventually(TIMEOUT, "the queued prompt to go out", async || {
+        h.prompted(&author).contains("QUEUED:")
+    })
+    .await;
+    assert!(
+        h.store.get_message(&sent.id).await.unwrap().is_delivered(),
+        "the driver claims the message before its prompt goes out"
+    );
+    let inbox: Vec<MessageDto> = h
+        .json(
+            read_as(&format!("{}?deliver=true", messages_uri(&cast)), &author.id),
+            StatusCode::OK,
+        )
+        .await;
+    assert!(
+        inbox.is_empty(),
+        "a read handed over a message the agent had as a prompt: {inbox:?}"
+    );
+}
+
+/// A message is queued once, however many scheduler passes hand it while
+/// the turn it waits behind runs.
+///
+/// The message is unstamped while it waits, so every pass hands it again.
+/// The message written after the turn proves the queue is walked to its end.
+#[tokio::test]
+async fn a_message_is_queued_once_across_scheduler_passes() {
+    let h = harness().await;
+    let (cast, author, reviewer, release) = author_held_in_a_turn(&h).await;
+    let write = |body: &'static str| {
+        h.json::<MessageDto>(
+            as_session(
+                &messages_uri(&cast),
+                &reviewer.id,
+                message("author", Some(&cast.author.id), body),
+            ),
+            StatusCode::CREATED,
+        )
+    };
+
+    write("ONCE: the bound is the caller's.").await;
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    pass(&sched, &cast).await;
+    pass(&sched, &cast).await;
+
+    std::fs::write(&release, "go").unwrap();
+    eventually(TIMEOUT, "the queued prompt to go out", async || {
+        h.prompted(&author).contains("ONCE:")
+    })
+    .await;
+    write("AFTER: and the inner one stays.").await;
+    sched
+        .send(SchedEvent::TaskChanged(cast.task.id.clone()))
+        .unwrap();
+    eventually(
+        TIMEOUT,
+        "the next message to arrive as a prompt",
+        async || h.prompted(&author).contains("AFTER:"),
+    )
+    .await;
+    assert_eq!(
+        prompts_carrying(&h, &author, "ONCE:"),
+        1,
+        "{}",
+        h.prompted(&author)
+    );
+}
+
+/// Messages keep their order across a read and the queue: a read mid-turn
+/// returns every queued message, oldest first, and none of them is typed at
+/// the agent after the turn.
+#[tokio::test]
+async fn messages_keep_their_order_across_a_read_and_the_queue() {
+    let h = harness().await;
+    let (cast, author, reviewer, release) = author_held_in_a_turn(&h).await;
+    let write = |body: &'static str| {
+        h.json::<MessageDto>(
+            as_session(
+                &messages_uri(&cast),
+                &reviewer.id,
+                message("author", Some(&cast.author.id), body),
+            ),
+            StatusCode::CREATED,
+        )
+    };
+
+    let older = write("OLDER: the bound is the caller's.").await;
+    let newer = write("NEWER: and the inner one stays.").await;
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    pass(&sched, &cast).await;
+
+    let read: Vec<MessageDto> = h
+        .json(
+            read_as(&format!("{}?deliver=true", messages_uri(&cast)), &author.id),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(
+        read.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        [older.id.as_str(), newer.id.as_str()],
+        "a read returns the queued messages oldest first"
+    );
+
+    std::fs::write(&release, "go").unwrap();
+    write("THIRD: the caller retries too.").await;
+    sched
+        .send(SchedEvent::TaskChanged(cast.task.id.clone()))
+        .unwrap();
+    eventually(
+        TIMEOUT,
+        "the third message to arrive as a prompt",
+        async || h.prompted(&author).contains("THIRD:"),
+    )
+    .await;
+    let prompted = h.prompted(&author);
+    assert!(
+        !prompted.contains("OLDER:") && !prompted.contains("NEWER:"),
+        "a message the agent read was typed at it as well: {prompted}"
+    );
+}
+
+/// A message whose prompt the agent answered with an error stays delivered.
+///
+/// The error is the agent's answer, so the agent read the prompt and has the
+/// text. Only a prompt the driver never wrote gives its claim back. The
+/// driver's `session.error` comes after that decision, so it is what the test
+/// waits for.
+#[tokio::test]
+async fn a_message_the_agent_answered_with_an_error_stays_delivered() {
+    let h = harness().await;
+    let mut refusing = acp::script();
+    refusing["unsupported_methods"] = json!(["session/prompt"]);
+    h.agent.reprogram(refusing);
+    let cast = h.active_cast().await;
+    let author = h
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
+        .await;
+    h.agent_runs(&author).await;
+    h.set_status(&author, SessionStatus::Idle).await;
+    let reviewer = h
+        .session(
+            &cast.goal,
+            Some(&cast.task),
+            Seat::Reviewer,
+            &cast.reviewer.id,
+        )
+        .await;
+    let sent: MessageDto = h
+        .json(
+            as_session(
+                &messages_uri(&cast),
+                &reviewer.id,
+                message(
+                    "author",
+                    Some(&cast.author.id),
+                    "REFUSED: the bound is the caller's.",
+                ),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    pass(&sched, &cast).await;
+    eventually(TIMEOUT, "the agent's error to end the driver", async || {
+        event_kinds(&h, &author)
+            .await
+            .iter()
+            .any(|kind| kind == "session.error")
+    })
+    .await;
+    assert!(
+        h.prompted(&author).contains("REFUSED:"),
+        "the prompt reached the agent: {}",
+        h.prompted(&author)
+    );
+    assert!(
+        h.store.get_message(&sent.id).await.unwrap().is_delivered(),
+        "an error answer gave the claim back, so the message would go out again"
+    );
+}
+
+/// A claimed message whose prompt the agent's stdin never took gives its
+/// claim back, and reaches the agent's next launch.
+///
+/// The agent closes its stdin as it ends the held turn, so the queued
+/// prompt finds no reader: the driver claims the message, the write fails,
+/// and the connection goes down with the prompt unwritten. A stamp kept
+/// there would hide the message from every later pass and every read.
+#[tokio::test]
+async fn an_unwritten_prompt_gives_its_message_back_for_the_relaunch() {
+    let h = harness().await;
+    let (cast, author, reviewer, release) = author_held_in(&h, json!({"close_stdin": true})).await;
+    let sent: MessageDto = h
+        .json(
+            as_session(
+                &messages_uri(&cast),
+                &reviewer.id,
+                message(
+                    "author",
+                    Some(&cast.author.id),
+                    "UNWRITTEN: the bound is the caller's.",
+                ),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    pass(&sched, &cast).await;
+    // The scheduler puts the author back on its feet, and the next launch is
+    // an agent that reads what it is sent.
+    let mut next = acp::script();
+    next["stored_sessions"] = json!(["stub-session"]);
+    h.agent.reprogram(next);
+
+    std::fs::write(&release, "go").unwrap();
+    eventually(
+        TIMEOUT,
+        "the message to reach the relaunched agent",
+        async || h.prompted(&author).contains("UNWRITTEN:"),
+    )
+    .await;
+    assert_eq!(
+        prompts_carrying(&h, &author, "UNWRITTEN:"),
+        1,
+        "{}",
+        h.prompted(&author)
+    );
+    assert!(
+        event_kinds(&h, &author)
+            .await
+            .iter()
+            .any(|kind| kind == "session_end"),
+        "the message reached a later launch, not the one whose stdin closed"
+    );
+    eventually(TIMEOUT, "the relaunch to stamp the message", async || {
+        h.store.get_message(&sent.id).await.unwrap().is_delivered()
+    })
+    .await;
 }
 
 /// A change request reaches its author once.

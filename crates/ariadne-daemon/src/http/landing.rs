@@ -188,8 +188,8 @@ pub(super) async fn list_task_messages(
 /// with `deliver` is the second way a message reaches the agent it is for —
 /// the first is the prompt the scheduler hands over — so it obeys the one
 /// rule both of them obey: it takes only what is addressed to the calling
-/// session's own agent and still undelivered, and it stamps every row it
-/// returns. A message handed over here is handed over once.
+/// session's own agent and still undelivered, and it returns only the rows
+/// it claimed. A message handed over here is handed over once.
 ///
 /// `goal_id` is the goal the channel belongs to, and a delivering session
 /// must be of that goal. A stamp is spent once and cannot be given back, so
@@ -241,7 +241,12 @@ pub(super) async fn read_channel(
     let waiting = state.store.list_messages(filter).await?;
     let mut handed = Vec::with_capacity(waiting.len());
     for message in waiting {
-        state.store.mark_message_delivered(&message.id).await?;
+        // A claim, not a plain stamp: the runtime may claim the same row in
+        // the same instant to send it as a prompt, and only the winner hands
+        // it over.
+        if !state.store.mark_message_delivered(&message.id).await? {
+            continue;
+        }
         // Read back rather than answered as it was read: the row the caller
         // is given carries the stamp this call put on it.
         handed.push(state.store.get_message(&message.id).await?);

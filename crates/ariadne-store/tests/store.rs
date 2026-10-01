@@ -1313,7 +1313,8 @@ async fn a_review_still_being_announced_owns_none_of_the_verdicts_before_it() {
 }
 
 /// A message goes to exactly one recipient and is delivered once: the stamp is
-/// what says which of them have reached their agent.
+/// what says which of them have reached their agent, and the claim that puts
+/// it there answers true once and false after.
 #[tokio::test]
 async fn a_message_is_delivered_once_and_the_stamp_says_so() {
     let w = World::new().await;
@@ -1350,13 +1351,19 @@ async fn a_message_is_delivered_once_and_the_stamp_says_so() {
         .unwrap();
     assert_eq!(waiting.len(), 1);
 
-    store.mark_message_delivered(&asked.id).await.unwrap();
+    assert!(
+        store.mark_message_delivered(&asked.id).await.unwrap(),
+        "the first claim is the one that stamps"
+    );
     let delivered = store.get_message(&asked.id).await.unwrap();
     let at = delivered.delivered_at.clone().expect("stamped");
 
-    // Stamping twice keeps the first time: a message typed twice is a bug in
-    // the caller, and overwriting the stamp would hide it.
-    store.mark_message_delivered(&asked.id).await.unwrap();
+    // A second claim loses and keeps the first time: the prompt and the read
+    // race for one row, and only one of them may hand it over.
+    assert!(
+        !store.mark_message_delivered(&asked.id).await.unwrap(),
+        "a claim on a stamped row answers that it lost"
+    );
     assert_eq!(
         store.get_message(&asked.id).await.unwrap().delivered_at,
         Some(at)

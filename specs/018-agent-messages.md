@@ -1,7 +1,7 @@
 ---
 id: agent-messages
 status: current
-updated: 2026-09-24
+updated: 2026-10-01
 areas: [core, store, api, daemon, mcp, cli, ui]
 commits: [1b09ac10]
 tests:
@@ -9,6 +9,7 @@ tests:
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-daemon/tests/it/multi_author_tasks.rs
+  - crates/ariadne-daemon/src/acp_transport.rs
 ---
 
 # Agent messages
@@ -68,14 +69,24 @@ and the wording of the text a message arrives in (006).
 9. The daemon delivers a message by handing it to the recipient's ACP agent
    as a `session/prompt` (009, 021), so it arrives as a turn. There is no
    inbox to poll. A message to an agent mid-turn is queued by the runtime
-   behind that turn. `delivered_at` is stamped when the runtime takes the
-   text, so a message still undelivered is one waiting for a live agent to
-   take it.
+   behind that turn. `delivered_at` says the agent has the text. It is
+   stamped when the prompt goes out or when a read returns the message, and
+   never when the prompt is queued. A queued message is unstamped, so a read
+   returns it: an agent that waits for an answer inside one turn still gets
+   it.
    `delivered_at` is the one gate on every way a message reaches an agent,
    and a message that carries it is never handed over again — across a
    resume of the recipient, a relaunch, or a restart of the daemon. There
    are three ways, and each one stamps what it hands over:
-   - the prompt above;
+   - the prompt above. The driver claims the message right before it writes
+     the `session/prompt`: one write that stamps the row only where it is
+     unstamped. Where a read took the message first, the claim fails and the
+     driver skips the prompt. A message is queued once for each launch,
+     however many scheduler passes hand it. A prompt counts as written once
+     the agent's stdin took its whole line. A prompt that was never written
+     gives its claim back when its launch ends — a failed write, a closed
+     connection or a kill — so the message reaches the next launch. A written
+     prompt keeps the stamp, an error answer included: the agent can read it;
    - a briefing that carries the message whole: the reviewer's for a review
      request (12), and the author's for the change requests that closed its
      review. A briefing that carries a message is its delivery, so the prompt
@@ -85,7 +96,9 @@ and the wording of the text a message arrives in (006).
      its own branch and no briefing carries a verdict, so there the prompt
      transport is what carries a change request;
    - a default `read_messages` (013), which answers with the undelivered
-     messages addressed to the calling session's own agent and stamps them.
+     messages addressed to the calling session's own agent and claims them.
+     It returns only the rows it claimed, so a message the driver claimed in
+     the same instant is left out.
      The daemon narrows that read to the caller rather than to what the
      caller asked for: a read that stamps is a delivery, and no agent may
      spend another's. A delivering session must be of the channel's own goal:
@@ -145,6 +158,7 @@ and the wording of the text a message arrives in (006).
   moving (`agent_messages.rs::agents_write_to_each_other_without_leaving_the_task`).
 - The message is handed to the recipient's agent as a prompt, names the
   sender by its skills, carries no id to answer on, and is stamped delivered
+  once the prompt went out
   (`agent_messages.rs::a_message_is_handed_to_the_agent_it_was_sent_to`).
 - An agent can write to the orchestrator, and it reaches the orchestrator's
   agent
@@ -185,8 +199,27 @@ and the wording of the text a message arrives in (006).
   so a task the author has just sent for review stays under review rather
   than going back to its author
   (`agent_messages.rs::a_review_is_not_closed_by_the_answers_to_the_review_before_it`).
-- A message is delivered once, and the stamp says which have gone
+- A message is delivered once, and the stamp says which have gone. The claim
+  answers true once and false after
   (`store.rs::a_message_is_delivered_once_and_the_stamp_says_so`).
+- A message to an agent mid-turn stays unstamped in the queue, and a read
+  returns it stamped. Its queued prompt is skipped after the turn
+  (`agent_messages.rs::a_message_to_an_agent_mid_turn_reaches_it_through_a_read`).
+- A message queued behind a turn is stamped when its prompt goes out, and a
+  read after that returns nothing
+  (`agent_messages.rs::a_message_queued_behind_a_turn_is_stamped_when_its_prompt_goes_out`).
+- A message is queued once across scheduler passes, and one prompt carries
+  it (`agent_messages.rs::a_message_is_queued_once_across_scheduler_passes`).
+- A read mid-turn returns the queued messages oldest first, and no prompt
+  carries them after the turn
+  (`agent_messages.rs::messages_keep_their_order_across_a_read_and_the_queue`).
+- A message whose prompt the agent answered with an error stays stamped
+  (`agent_messages.rs::a_message_the_agent_answered_with_an_error_stays_delivered`).
+- A claimed message whose prompt the agent's stdin never took gives its
+  claim back, and reaches the agent after the relaunch
+  (`agent_messages.rs::an_unwritten_prompt_gives_its_message_back_for_the_relaunch`).
+  A prompt counts as written once its whole line is taken
+  (`acp_transport.rs::a_prompt_counts_once_its_whole_line_is_written`).
 - A message handed to an agent as a prompt is gone from what a default
   `read_messages` gives that agent, and a read of the whole thread holds it
   (`agent_messages.rs::a_message_handed_over_as_a_prompt_is_absent_from_a_default_read`).
@@ -229,5 +262,7 @@ and the wording of the text a message arrives in (006).
 `crates/ariadne-core/src/lib.rs` (`MessageKind`),
 `crates/ariadne-store/src/messages.rs`,
 `crates/ariadne-daemon/src/scheduler/messages.rs` (the transport),
-`crates/ariadne-daemon/src/http/landing.rs` (`send`),
+`crates/ariadne-daemon/src/acp.rs` (the claim before the prompt),
+`crates/ariadne-daemon/src/acp_transport.rs` (the write witness),
+`crates/ariadne-daemon/src/http/landing.rs` (`send`, `read_channel`),
 `crates/ariadne-cli/src/commands/mcp/tools.rs`.

@@ -6,10 +6,11 @@
 //! had nowhere to ask. Everything an agent says is a message now, and what
 //! tells them apart is [`MessageKind`].
 //!
-//! A message has exactly one recipient. The daemon hands it to that
-//! recipient as a prompt and stamps `delivered_at`, so an undelivered message
-//! is one still waiting for its recipient to be free — see
-//! `scheduler::messages`.
+//! A message has exactly one recipient. `delivered_at` says the recipient's
+//! agent has the text. It is stamped when the prompt that carries it goes
+//! out, or when a delivering read returns it, and never when a prompt is only
+//! queued. An undelivered message is one its agent does not have yet, and a
+//! read still hands it over — see `scheduler::messages`.
 
 use ariadne_core::id::new_id;
 use ariadne_core::{Actor, MessageKind};
@@ -275,14 +276,29 @@ impl Store {
         Ok(())
     }
 
-    /// Stamp a message as delivered: the runtime handed it to the recipient's
-    /// agent as a prompt.
+    /// Claim a message for delivery: stamp it, and answer whether this call
+    /// is the one that did.
     ///
-    /// Idempotent, and the first stamp is the one kept: a message handed twice
-    /// is a bug in the caller, and overwriting the time would hide it.
-    pub async fn mark_message_delivered(&self, id: &str) -> Result<()> {
-        sqlx::query("UPDATE messages SET delivered_at = ? WHERE id = ? AND delivered_at IS NULL")
-            .bind(now())
+    /// The runtime claims a message right before its prompt goes out, and a
+    /// delivering read claims what it returns. The two can race for one
+    /// row, and the claim is one write gated on the row being unstamped, so
+    /// exactly one of them wins. The first stamp is the one kept: a second
+    /// claim answers false and leaves the time as it was.
+    pub async fn mark_message_delivered(&self, id: &str) -> Result<bool> {
+        let claimed = sqlx::query(
+            "UPDATE messages SET delivered_at = ? WHERE id = ? AND delivered_at IS NULL",
+        )
+        .bind(now())
+        .bind(id)
+        .execute(self.w())
+        .await?;
+        Ok(claimed.rows_affected() == 1)
+    }
+
+    /// Give a claim back: the prompt it was made for never went out, so the
+    /// message waits for the next live agent again.
+    pub async fn unmark_message_delivered(&self, id: &str) -> Result<()> {
+        sqlx::query("UPDATE messages SET delivered_at = NULL WHERE id = ?")
             .bind(id)
             .execute(self.w())
             .await?;

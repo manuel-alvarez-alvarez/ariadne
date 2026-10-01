@@ -40,7 +40,7 @@ use ariadne_core::{PermissionMode, TokenUsage};
 use ariadne_store::Store;
 
 use crate::acp_calls::PromptTurn;
-use crate::acp_transport::pipes;
+use crate::acp_transport::{PromptWrites, witnessed_pipes};
 use crate::ai_permissions::AiPermissions;
 use crate::ai_permissions::decide::{Decision, decide, prepare};
 use crate::http::classify::summarize;
@@ -180,6 +180,10 @@ impl PromptSource {
 struct Prompt {
     text: String,
     source: PromptSource,
+    /// The agent message this prompt carries (018). The driver claims it
+    /// right before the prompt goes out. A nudge, a briefing and console
+    /// input carry none.
+    message_id: Option<String>,
 }
 
 /// The commands the agent most recently offered for this session.
@@ -297,6 +301,10 @@ struct RunningAgent {
     /// sent at once if the agent is between turns and queued, in order,
     /// behind whichever one is running.
     prompts: mpsc::UnboundedSender<Prompt>,
+    /// The agent messages in `prompts` that the driver has not taken off yet.
+    /// A scheduler pass hands every unstamped message again, and one already
+    /// queued here is not queued twice.
+    queued_messages: HashSet<String>,
     /// The reply channel while the agent waits on one permission request.
     permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
     /// The turn in flight, shared with the driver that fills it.
@@ -445,18 +453,67 @@ impl AcpRuntime {
     /// Errs where there is nobody here to hear it: no agent runs for this
     /// session.
     pub(crate) fn send_prompt(&self, session_id: &str, text: String) -> Result<()> {
-        self.inner
+        self.queue_daemon_prompt(session_id, text, None)
+    }
+
+    /// Hand the running agent an agent message as a prompt, the way
+    /// [`Self::send_prompt`] does. The driver claims the message right
+    /// before the prompt goes out, and skips the prompt where a read took
+    /// the message first (018).
+    ///
+    /// A message still queued for this agent is not queued again: the
+    /// hand-over answers `Ok` and changes nothing.
+    pub(crate) fn send_message(
+        &self,
+        session_id: &str,
+        message_id: &str,
+        text: String,
+    ) -> Result<()> {
+        self.queue_daemon_prompt(session_id, text, Some(message_id))
+    }
+
+    fn queue_daemon_prompt(
+        &self,
+        session_id: &str,
+        text: String,
+        message_id: Option<&str>,
+    ) -> Result<()> {
+        let mut running = self.inner.running.lock().expect("acp registry lock");
+        let agent = running
+            .get_mut(session_id)
+            .ok_or_else(|| anyhow!("no ACP agent is running for session {session_id}"))?;
+        if let Some(id) = message_id
+            && !agent.queued_messages.insert(id.to_string())
+        {
+            return Ok(());
+        }
+        let sent = agent.prompts.send(Prompt {
+            text,
+            source: PromptSource::Daemon,
+            message_id: message_id.map(str::to_string),
+        });
+        if sent.is_err()
+            && let Some(id) = message_id
+        {
+            agent.queued_messages.remove(id);
+        }
+        sent.map_err(|_| anyhow!("the ACP agent for session {session_id} is no longer listening"))
+    }
+
+    /// Take a message off this launch's queue: the driver is about to claim
+    /// it, and a later hand-over may queue it again. A relaunch has a queue
+    /// of its own, which this leaves alone.
+    fn dequeue_message(&self, session_id: &str, launch_id: &str, message_id: &str) {
+        if let Some(agent) = self
+            .inner
             .running
             .lock()
             .expect("acp registry lock")
-            .get(session_id)
-            .ok_or_else(|| anyhow!("no ACP agent is running for session {session_id}"))?
-            .prompts
-            .send(Prompt {
-                text,
-                source: PromptSource::Daemon,
-            })
-            .map_err(|_| anyhow!("the ACP agent for session {session_id} is no longer listening"))
+            .get_mut(session_id)
+            .filter(|agent| agent.launch_id == launch_id)
+        {
+            agent.queued_messages.remove(message_id);
+        }
     }
 
     /// Test support: leave this session's registry entry exactly as it is —
@@ -504,6 +561,7 @@ impl AcpRuntime {
             .send(Prompt {
                 text,
                 source: PromptSource::Console,
+                message_id: None,
             })
             .map_err(|_| anyhow!("the ACP agent for session {session_id} is no longer listening"))
     }
@@ -687,6 +745,7 @@ impl AcpRuntime {
                     launch_id: launch.launch_id.clone(),
                     stop,
                     prompts,
+                    queued_messages: HashSet::new(),
                     permission: permission.clone(),
                     turn: turn.clone(),
                     task_id: task_id.clone(),
@@ -833,6 +892,8 @@ impl AcpRuntime {
         let (turn, permission) = (io.turn.clone(), io.permission.clone());
         let closing = Arc::new(AtomicBool::new(false));
         let turn_ended = Arc::new(Notify::new());
+        let in_flight = MessageInFlight::default();
+        let transport = witnessed_pipes(io.stdin, io.stdout, in_flight.writes.clone());
         // What the connection's handlers need. They run on its dispatch
         // loop, one message at a time, which is the order the transport's own
         // loop gave them.
@@ -866,7 +927,7 @@ impl AcpRuntime {
                     },
                     agent_client_protocol::on_receive_request!(),
                 )
-                .connect_with(pipes(io.stdin, io.stdout), async |cx| {
+                .connect_with(transport, async |cx| {
                     // Everything that sends from outside the driver waits on
                     // this: a cancel before it simply finds nothing running.
                     let _ = outbound.connection.set(cx.clone());
@@ -879,6 +940,7 @@ impl AcpRuntime {
                         closing.clone(),
                         turn_ended.clone(),
                     );
+                    rpc.in_flight = in_flight.clone();
                     protocol_outcome = Some(
                         run_protocol(&mut rpc, &launch.cwd, &launch.config, prompts, io.ready)
                             .await,
@@ -905,6 +967,14 @@ impl AcpRuntime {
         // it held with it — the store's event order among them, which the
         // session's last words below take again.
         drop(protocol);
+        // A claimed message whose prompt never reached the agent's stdin —
+        // the write failed, or a kill came first — waits for the next live
+        // agent, or for a read, again (018).
+        if let Some(message_id) = in_flight.unwritten()
+            && let Err(error) = self.inner.store.unmark_message_delivered(&message_id).await
+        {
+            tracing::warn!(session = %launch.session_id, message = %message_id, error = %format!("{error:#}"), "releasing the message failed");
+        }
         // The conversation's outcome where it reached one; otherwise the
         // link's, so a connection that failed before the protocol could say
         // anything is still reported.
@@ -1143,6 +1213,8 @@ struct Rpc {
     turn_ended: Arc<Notify>,
     /// This launch's turn reports; nobody listening costs nothing.
     reports: Followers,
+    /// The agent message whose prompt is going out.
+    in_flight: MessageInFlight,
 }
 
 impl Rpc {
@@ -1165,6 +1237,7 @@ impl Rpc {
             closing,
             turn_ended,
             reports,
+            in_flight: MessageInFlight::default(),
         }
     }
 
@@ -1696,6 +1769,7 @@ async fn run_protocol(
         let prompt = Prompt {
             text: prompt.to_string(),
             source: PromptSource::Daemon,
+            message_id: None,
         };
         prompt_once(rpc, &session_id, &config.system_prompt, &prompt).await?;
     }
@@ -1711,7 +1785,8 @@ async fn run_protocol(
 /// `prompts` for this loop to come back around, and is sent the moment it
 /// does. Only one turn is ever in flight — `prompt_once` does not return
 /// until the agent's response does — so nothing here is sent while another
-/// `session/prompt` is outstanding.
+/// `session/prompt` is outstanding. A prompt that carries an agent message
+/// is claimed before it goes out, and skipped where the claim fails.
 async fn serve_with_input(
     rpc: &mut Rpc,
     session_id: &str,
@@ -1728,12 +1803,82 @@ async fn serve_with_input(
         tokio::select! {
             prompt = prompts.recv(), if console_open && !closing.load(Ordering::SeqCst) => {
                 match prompt {
-                    Some(prompt) => prompt_once(rpc, session_id, system_prompt, &prompt).await?,
+                    Some(prompt) => {
+                        if !claim_message(rpc, &prompt).await {
+                            continue;
+                        }
+                        // A failed turn leaves its claim to the driver, which
+                        // gives it back where the prompt was never written.
+                        prompt_once(rpc, session_id, system_prompt, &prompt).await?;
+                        rpc.in_flight.settle();
+                    }
                     None => console_open = false,
                 }
             }
             () = rpc.connection.incoming_closed() => return Ok(()),
         }
+    }
+}
+
+/// Claim the agent message a prompt carries, right before the prompt goes
+/// out (018). Answers whether the prompt goes out. A prompt that carries no
+/// message always does. One whose message a read already took does not:
+/// the agent has that text, and the prompt would say it twice.
+async fn claim_message(rpc: &Rpc, prompt: &Prompt) -> bool {
+    let Some(id) = &prompt.message_id else {
+        return true;
+    };
+    let sink = &rpc.sink;
+    sink.runtime
+        .dequeue_message(&sink.session_id, &sink.launch_id, id);
+    match sink.runtime.inner.store.mark_message_delivered(id).await {
+        Ok(true) => {
+            rpc.in_flight.claim(id);
+            true
+        }
+        Ok(false) => {
+            tracing::debug!(session = %sink.session_id, message = %id, "a read took the message first; its prompt is skipped");
+            false
+        }
+        // Unclaimed, so the next scheduler pass hands it again.
+        Err(error) => {
+            tracing::warn!(session = %sink.session_id, message = %id, error = %format!("{error:#}"), "claiming the message failed");
+            false
+        }
+    }
+}
+
+/// The agent message whose prompt is going out, and whether that prompt was
+/// written. It lives outside the protocol, so the driver still reads it after
+/// a failed write or a kill took the protocol down.
+#[derive(Clone, Default)]
+struct MessageInFlight {
+    claimed: Arc<Mutex<Option<String>>>,
+    writes: PromptWrites,
+}
+
+impl MessageInFlight {
+    /// The driver claimed this message, and its prompt goes out next.
+    fn claim(&self, message_id: &str) {
+        self.writes.reset();
+        *self.claimed.lock().expect("message in flight lock") = Some(message_id.to_string());
+    }
+
+    /// The prompt's turn ended: the agent had the text.
+    fn settle(&self) {
+        self.claimed.lock().expect("message in flight lock").take();
+    }
+
+    /// The claimed message whose prompt the agent's stdin never took whole.
+    /// A prompt that was written keeps its claim, whatever came after: the
+    /// agent may have read it.
+    fn unwritten(&self) -> Option<String> {
+        let claimed = self
+            .claimed
+            .lock()
+            .expect("message in flight lock")
+            .take()?;
+        (!self.writes.written()).then_some(claimed)
     }
 }
 

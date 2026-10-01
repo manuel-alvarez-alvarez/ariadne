@@ -7,11 +7,13 @@
 //! as a turn.
 //!
 //! A message to an agent mid-turn is queued behind the turn by the runtime.
-//! `delivered_at` is what says which have gone: it is stamped when the
-//! runtime takes the text, and a message that is still NULL is one still
-//! waiting for a live agent to take it.
+//! `delivered_at` says the agent has the text. Nothing stamps a message when
+//! it is queued: the driver claims it right before its prompt goes out, and a
+//! delivering read claims what it returns. A queued message is unstamped, so
+//! an agent that waits inside its turn still gets it through a read. Its
+//! prompt is then skipped, because the claim fails.
 
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use ariadne_core::{Actor, MessageKind, PromptKind, Seat};
 use ariadne_store::{AgentSession, Message, MessageFilter, SessionFilter};
@@ -111,15 +113,10 @@ impl super::Scheduler {
                 kind = %message.kind,
                 "delivering a message to the agent it is for"
             );
-            // Stamped once the runtime took it: one it refused — the agent
-            // went away between the lookup and the hand-off — waits for the
-            // next pass.
-            if !self.hand_prompt(&session, text) {
-                continue;
-            }
-            if let Err(e) = self.store.mark_message_delivered(&message.id).await {
-                warn!(message = %message.id, error = %e, "stamping the message failed");
-            }
+            // Stamped by nobody here: the driver claims it when its prompt
+            // goes out. One the runtime refused — the agent went away
+            // between the lookup and the hand-off — waits for the next pass.
+            self.hand_message(&session, &message.id, text);
         }
     }
 

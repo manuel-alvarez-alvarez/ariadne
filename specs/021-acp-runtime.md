@@ -1,7 +1,7 @@
 ---
 id: acp-runtime
 status: current
-updated: 2026-09-26
+updated: 2026-10-01
 areas: [daemon]
 commits: []
 tests:
@@ -182,6 +182,12 @@ gone (009).
    at once between turns and queued in order behind a running one. Console
    input (008) arrives the same way, except that a pending `ask` takes it as
    the answer (rule 9): only a person's input ever answers a permission.
+   A prompt that carries an agent message is claimed right before it goes
+   out, and skipped when the claim fails: a read took the message first
+   (018). A message already in the queue is not queued again. The runtime
+   watches the agent's stdin for each `session/prompt` line written whole. A
+   claimed prompt that was never written gives its claim back when its launch
+   ends. A written one keeps it, an error answer included.
 11. The child is reaped whenever it ends. Its own exit ends the session on
    the record: `session.error` first if the protocol failed, then
    `session_end`. Killing the session kills the child and retires the row;

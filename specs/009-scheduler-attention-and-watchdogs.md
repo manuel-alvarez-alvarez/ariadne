@@ -1,7 +1,7 @@
 ---
 id: scheduler-attention-and-watchdogs
 status: current
-updated: 2026-09-24
+updated: 2026-10-01
 areas: [daemon]
 commits: [f68b8ec1, 506e9d76, 7add2a61, a69b953f, 29e6d84e]
 tests:
@@ -55,11 +55,16 @@ the ACP runtime that takes a prompt (021).
    `session/prompt` (021). The runtime sends it at once to an agent between
    turns and queues it behind a running turn. A live reviewer that owes a
    verdict on a new review request is handed that briefing at once, after its
-   worktree moves to the branch it is asked to review.
+   worktree moves to the branch it is asked to review. An agent message is
+   handed with its id, and the scheduler stamps nothing: the stamp is the
+   driver's, when the prompt goes out (018).
 7. A pass never waits on a delivery: the runtime queues each prompt, so a
    pass with several agents to nudge hands them all their prompt at once.
+   A message still unstamped is handed again on every pass, and the runtime
+   queues it once.
 8. A prompt the runtime refuses, because no agent runs for the session, gives
-   the nudge it was spent on back, so the next pass sends it again.
+   the nudge it was spent on back, so the next pass sends it again. A
+   message it refuses stays unstamped, and the next pass hands it again.
 9. One clock governs a quiet agent: how long since the session was heard
    from at all. On that clock sit a nudge at 180 s, the user at 600 s, and at
    1800 s the agent killed and put back on its feet (`QUIET_NUDGE_SECS`,

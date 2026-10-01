@@ -287,7 +287,25 @@ impl Scheduler {
     /// One it refused — no agent runs for the session — gives a nudge spent
     /// on it back, so the next pass over this session sends it again.
     fn hand_prompt(&mut self, session: &AgentSession, text: String) -> bool {
-        match self.launcher.acp.send_prompt(&session.id, text) {
+        let handed = self.launcher.acp.send_prompt(&session.id, text);
+        self.handed(session, handed)
+    }
+
+    /// [`Self::hand_prompt`] for an agent message: the runtime stamps it
+    /// when the prompt goes out, and queues it once however many passes
+    /// hand it.
+    fn hand_message(&mut self, session: &AgentSession, message_id: &str, text: String) {
+        let handed = self
+            .launcher
+            .acp
+            .send_message(&session.id, message_id, text);
+        self.handed(session, handed);
+    }
+
+    /// Whether the runtime took a prompt, with a refused one's nudge given
+    /// back.
+    fn handed(&mut self, session: &AgentSession, handed: anyhow::Result<()>) -> bool {
+        match handed {
             Ok(()) => true,
             Err(e) => {
                 warn!(session = %session.id, error = %format!("{e:#}"), "handing the agent a prompt failed");
