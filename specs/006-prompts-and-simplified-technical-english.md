@@ -96,11 +96,13 @@ they describe (003, 004, 005) — and what a skill is (017).
 9. Two of those rules are read off the text by test: sentence length, and a
    list of banned words (`utilise`, `prior to`, `in order to`, `ensure`,
    `should`, `may`).
-10. STE binds what the agents write too — turn text and visible reasoning,
+10. After a question, end your turn. Do not poll `read_messages`. Ariadne
+    delivers the answer as a new turn.
+11. STE binds what the agents write too — turn text and visible reasoning,
     task titles and descriptions, review summaries, verdicts, failure reasons,
     commit subjects and bodies, and pull request text — and that rule lives in
     the session rules, where no edit of a skill can remove it.
-11. Every default text is capped in size, per text and in total, and the caps
+12. Every default text is capped in size, per text and in total, and the caps
     come down to what a rewrite fits in. Moving a cap is a decision argued in
     the test's own documentation, never a way round a failing assertion. The
     shipped skill documents are capped on their own scale, since a skill is
@@ -133,6 +135,9 @@ they describe (003, 004, 005) — and what a skill is (017).
 - The seat text and the two skills that name a commit make the task one commit
   and each review answer one more. No skill repeats the review answer or the
   amend (`defaults.rs::a_task_is_one_commit_and_a_review_answer_is_one_more`).
+- The author and reviewer playbooks end the turn after a question and do not
+  poll for the answer (`defaults.rs::an_author_ends_the_turn_after_a_question_and_does_not_poll`,
+  `::a_reviewer_ends_the_turn_after_a_question_and_does_not_poll`).
 - Every default names only placeholders its kind can fill in
   (`defaults.rs::every_default_names_only_placeholders_its_kind_can_fill_in`),
   and every allowed placeholder is one a builder actually passes

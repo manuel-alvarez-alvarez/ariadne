@@ -226,7 +226,7 @@ pub fn default_landing_prompt(landing: Landing) -> &'static str {
 /// made *with* the user — the orchestrator is the one seat that talks to
 /// them — it writes no code, and a point it cannot settle goes to the user
 /// rather than being decided alone.
-const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"You plan one Ariadne goal into tasks, with the user. Never write code. Ask the user where you are blocked."#;
+const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"Plan one goal with the user. Never write code. Ask the user where blocked. After a question, end your turn. Do not poll `read_messages`. Ariadne delivers the answer as a new turn."#;
 
 /// Author persona and playbook: what it may touch, what it writes, and the
 /// one place `request_review` is explained. Landing is its own too, but the
@@ -250,8 +250,8 @@ const AUTHOR_SYSTEM_PROMPT: &str = r#"You own one Ariadne task, from its first c
 1. Read task and criteria. If stuck, call `fail_task` with the reason in STE.
 2. Implement only that task. Refactor nothing. Obey `AGENTS.md`, `CLAUDE.md` and `CONTRIBUTING.md`. Commit once in STE. Add a commit per review answer. Never amend. Add requested tests. Run changed tests and lint once before the commit. After the commit, run `git status`; leave nothing shown. Run the repository's generate step; leave no changes. Never run the whole suite: the reviewer runs it before each verdict; the landing runs it once.
 3. Write no authorship trailer, no tool trailer, no mention of Ariadne. Leave signing to git.
-4. Call `request_review` with a short STE summary: change, reason, verification. End your turn after it. Do not poll. Ariadne wakes you with a verdict or message. Apply every verdict on the same branch and call again. Explain disagreements in that summary.
-5. Ask reviewers or the orchestrator unanswered questions with `send_message`. Answer their questions. If the task is wrong, call `fail_task` and explain.
+4. Call `request_review` with a short STE summary: change, reason, verification. End your turn after it. Do not poll. Ariadne wakes you with a verdict or message. Apply each verdict on the branch and call again. Explain disagreement.
+5. Ask reviewers or orchestrator with `send_message`. After a question, end turn. Do not poll `read_messages`. Ariadne sends answers as turns. Call `fail_task` if wrong.
 6. Every reviewer approves, and Ariadne briefs you to end the task."#;
 
 /// Reviewer persona and playbook, and the one place the verdict rule is
@@ -262,7 +262,7 @@ const REVIEWER_SYSTEM_PROMPT: &str = r#"You review one Ariadne task. An approval
 2. Read the task, its acceptance criteria and the author's summary. Call `get_diff` for the change. Read the code around it.
 3. Judge the change on the task and no more: correctness, edge cases, error handling, conventions, tests and clarity. Judge each test by reading its setup, action and assertions. Never change code to see whether a test fails.
 4. Wait for every check. Use each result in your verdict. Where something blocks the review, request changes and name it.
-5. `send_message` to ask the author what the change does not answer, and to answer what it asks you. A question is not a verdict.
+5. Use `send_message` for questions. After a question, end turn. Do not poll `read_messages`. Ariadne sends answers as turns. Questions give no verdict.
 6. Call `submit_verdict` once per review you are asked for. Put that SHA in every verdict. It is the verdict, and nothing else counts. Approve with a note on what you checked. Or request changes: list files and functions, with each item must-fix or optional. Write the verdict in STE."#;
 
 /// Initial briefing of an orchestrator session: the goal, and the
@@ -1386,6 +1386,33 @@ mod tests {
             !author.contains("Make small commits"),
             "the author seat text still asks for small commits"
         );
+    }
+
+    #[test]
+    fn an_author_ends_the_turn_after_a_question_and_does_not_poll() {
+        let author = default_system_prompt(Seat::Author);
+        for rule in [
+            "After a question, end turn.",
+            "Do not poll `read_messages`.",
+            "Ariadne sends answers as turns.",
+        ] {
+            assert!(author.contains(rule), "the author seat text and \"{rule}\"");
+        }
+    }
+
+    #[test]
+    fn a_reviewer_ends_the_turn_after_a_question_and_does_not_poll() {
+        let reviewer = default_system_prompt(Seat::Reviewer);
+        for rule in [
+            "After a question, end turn.",
+            "Do not poll `read_messages`.",
+            "Ariadne sends answers as turns.",
+        ] {
+            assert!(
+                reviewer.contains(rule),
+                "the reviewer seat text and \"{rule}\""
+            );
+        }
     }
 
     /// Each landing briefing is the procedure of one merge strategy, whole,

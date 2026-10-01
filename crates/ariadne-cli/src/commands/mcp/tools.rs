@@ -687,7 +687,7 @@ impl AriadneMcp {
     // ---- everyone ----
 
     #[tool(
-        description = "Send one message to another agent, `to` is an agent id from `get_task`, or `orchestrator`. Use it only to ask questions or to answer questions, no confirmations, no thanks, and nothing about what you are going to do next."
+        description = "Send one message. Set `to` to an agent id from `get_task` or `orchestrator`. Ask or answer questions only. Send no confirmations, thanks, or plans. After a question, end your turn. Do not poll `read_messages`. Ariadne delivers the answer as a new turn."
     )]
     async fn send_message(
         &self,
@@ -875,6 +875,23 @@ mod tests {
                 tool.name,
                 described.len()
             );
+        }
+    }
+
+    #[test]
+    fn send_message_tells_agents_to_end_the_turn_after_a_question() {
+        let tool = AriadneMcp::tool_router()
+            .list_all()
+            .into_iter()
+            .find(|tool| tool.name == "send_message")
+            .expect("the send_message tool");
+        let description = tool.description.expect("the description");
+        for rule in [
+            "After a question, end your turn.",
+            "Do not poll `read_messages`.",
+            "Ariadne delivers the answer as a new turn.",
+        ] {
+            assert!(description.contains(rule), "the description and \"{rule}\"");
         }
     }
 
