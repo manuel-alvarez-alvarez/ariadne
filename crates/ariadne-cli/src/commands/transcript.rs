@@ -639,7 +639,8 @@ mod tests {
                     "label": "ask",
                     "danger": 0.41,
                     "allow_threshold": 0.2,
-                    "deny_threshold": 0.8
+                    "deny_threshold": 0.8,
+                    "probabilities": {"0": 0.62, "1": 0.33, "2": 0.05}
                 }),
             ),
             event("answer", "permission.replied", json!({"option_id": "yes"})),
@@ -653,7 +654,9 @@ mod tests {
             .expect("the question is printed");
         assert_eq!(
             output.lines().nth(question + 1),
-            Some("  AI said ask (danger 0.41, allow 0.20, deny 0.80)"),
+            Some(
+                "  AI said ask (allow 0.62, deny 0.05, danger 0.41; allow up to 0.20, deny from 0.80)"
+            ),
             "{output}"
         );
         assert!(output.contains("answer: Allow\n"), "{output}");
@@ -664,26 +667,56 @@ mod tests {
             json!({
                 "tool_name": "Bash", "tool_input": {"command": "cat ~/.aws/credentials"},
                 "options": [{"optionId": "yes", "name": "Allow"}],
-                "label": "ask", "danger": 0.081, "cap": "credential_access"
+                "label": "ask", "danger": 0.081, "cap": "reviewer_directive",
+                "allow_threshold": 0.09, "deny_threshold": 0.63,
+                "probabilities": {"0": 0.82, "1": 0.16, "2": 0.02}
             }),
         )];
         let output = render::transcript(&fold(&capped), Some(80), false);
         assert!(
-            output.contains("AI said ask (danger 0.08, capped by credential_access)"),
+            output.contains("allow 0.82, deny 0.02, danger 0.08; allow up to 0.09, deny from 0.63; capped by reviewer_directive"),
             "{output}"
         );
+    }
 
-        let ruled = [event(
-            "ask",
-            "permission_request",
-            json!({
-                "tool_name": "Bash", "tool_input": {"command": "rm -rf ~"},
-                "options": [{"optionId": "yes", "name": "Allow"}],
-                "label": "deny", "rule": "home_delete"
-            }),
-        )];
-        let output = render::transcript(&fold(&ruled), Some(80), false);
-        assert!(output.contains("rule home_delete said deny"), "{output}");
+    #[test]
+    fn a_transcript_answer_shows_both_ai_probabilities() {
+        for (label, probabilities, danger, expected) in [
+            (
+                "allow",
+                json!({"0": 0.91, "1": 0.08, "2": 0.01}),
+                0.04,
+                "allowed by AI (allow 0.91, deny 0.01, danger 0.04; allow up to 0.09, deny from 0.63)",
+            ),
+            (
+                "deny",
+                json!({"0": 0.01, "1": 0.11, "2": 0.88}),
+                0.93,
+                "denied by AI (allow 0.01, deny 0.88, danger 0.93; allow up to 0.09, deny from 0.63)",
+            ),
+        ] {
+            let events = [
+                event(
+                    "ask",
+                    "permission_request",
+                    json!({
+                        "tool_name": "Bash", "tool_input": {"command": "ls -la"},
+                        "options": [{"optionId": "yes", "name": "Allow"}]
+                    }),
+                ),
+                event(
+                    "answer",
+                    "permission.replied",
+                    json!({
+                        "option_id": "yes", "decided_by": "ai", "label": label,
+                        "danger": danger, "allow_threshold": 0.09, "deny_threshold": 0.63,
+                        "probabilities": probabilities
+                    }),
+                ),
+            ];
+            let output = render::transcript(&fold(&events), Some(160), false);
+            assert!(output.contains(expected), "{output}");
+        }
     }
 
     #[test]

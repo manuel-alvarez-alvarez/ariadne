@@ -62,10 +62,10 @@ pub(crate) enum AiPermissionsCommand {
         .required(true)
         .multiple(true))]
     Set {
-        /// Allow danger at or below this value, 0 to 1
+        /// Allow danger at or below this value, 0 to 1 (default 0.0531)
         #[arg(long, value_parser = parse_threshold)]
         allow_threshold: Option<f64>,
-        /// Deny danger at or above this value, 0 to 1
+        /// Deny danger at or above this value, 0 to 1 (default 0.6522)
         #[arg(long, value_parser = parse_threshold)]
         deny_threshold: Option<f64>,
         /// The Kev flavour to run: 0.8b, 4b, 9b or 27b
@@ -260,10 +260,12 @@ fn parse_json(text: &str) -> Result<serde_json::Value, String> {
 
 fn test_one_line(response: &TestAiPermissionResponse) -> String {
     let answer = match (&response.label, response.danger, &response.ai_error) {
-        (Some(label), Some(danger), None) => format!(
-            "{label} (danger {danger:.2}; allow {:.2}, deny {:.2})",
-            response.allow_threshold, response.deny_threshold
-        ),
+        (Some(label), Some(_), None) => {
+            let metrics = ariadne_api::permissions::ai_permission_metrics(
+                &serde_json::to_value(response).expect("AI permission response serializes"),
+            );
+            metrics.map_or_else(|| label.clone(), |metrics| format!("{label} ({metrics})"))
+        }
         (Some(label), None, None) => label.clone(),
         (_, _, Some(error)) => format!("no answer: {error}"),
         _ => "no answer".to_string(),
@@ -276,9 +278,6 @@ fn test_one_line(response: &TestAiPermissionResponse) -> String {
         && !tags.is_empty()
     {
         facts.push(format!("tags {}", tags.join(", ")));
-    }
-    if let Some(rule) = &response.rule {
-        facts.push(format!("rule {rule}"));
     }
     if let Some(cap) = &response.cap {
         facts.push(format!("cap {cap}"));
@@ -671,19 +670,28 @@ mod tests {
     fn test_prints_the_score_line_and_names_no_answer() {
         let answered = TestAiPermissionResponse {
             label: Some("ask".into()),
-            danger: Some(0.4129),
-            allow_threshold: 0.2,
-            deny_threshold: 0.8,
+            danger: Some(0.21),
+            allow_threshold: 0.09,
+            deny_threshold: 0.63,
             ai_error: None,
-            operation: Some("external_mutation".into()),
-            risk_tags: Some(vec!["remote".into()]),
-            rule: None,
+            operation: Some("read_workspace".into()),
+            risk_tags: Some(vec![]),
             cap: None,
-            probabilities: Some(serde_json::json!({"0": 0.2, "1": 0.8, "2": 0.0})),
+            probabilities: Some(serde_json::json!({"0": 0.62, "1": 0.33, "2": 0.05})),
         };
         assert_eq!(
             test_one_line(&answered),
-            "ask (danger 0.41; allow 0.20, deny 0.80); operation external_mutation; tags remote"
+            "ask (allow 0.62, deny 0.05, danger 0.21; allow up to 0.09, deny from 0.63); operation read_workspace"
+        );
+        let mut capped = answered.clone();
+        capped.danger = Some(0.02);
+        capped.probabilities = Some(serde_json::json!({"0": 0.96, "1": 0.03, "2": 0.01}));
+        capped.operation = Some("destructive_or_exfiltration".into());
+        capped.risk_tags = Some(vec!["reviewer_directive".into()]);
+        capped.cap = Some("reviewer_directive".into());
+        assert_eq!(
+            test_one_line(&capped),
+            "ask (allow 0.96, deny 0.01, danger 0.02; allow up to 0.09, deny from 0.63); operation destructive_or_exfiltration; tags reviewer_directive; cap reviewer_directive"
         );
         assert_eq!(
             test_one_line(&TestAiPermissionResponse {
@@ -694,7 +702,6 @@ mod tests {
                 ai_error: Some("timed out".into()),
                 operation: None,
                 risk_tags: Some(vec![]),
-                rule: None,
                 cap: None,
                 probabilities: None,
             }),
@@ -823,7 +830,6 @@ mod tests {
                 ai_error: None,
                 operation: Some("read_workspace".into()),
                 risk_tags: Some(vec![]),
-                rule: None,
                 cap: None,
                 probabilities: Some(json!({"0": 0.9, "1": 0.1, "2": 0.0})),
             })

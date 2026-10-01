@@ -45,7 +45,7 @@ ariadne permissions ai test --tool Bash --kind execute \
   --input '{"command":"git status"}' --option Allow --option Reject
 ```
 
-It prints a line such as `ask (danger 0.41; allow 0.13, deny 0.53)`. Repeat
+It prints a line such as `ask (allow 0.62, deny 0.05, danger 0.21; allow up to 0.09, deny from 0.63)`. Repeat
 `--option` for each offered option; the first represents an allowing option.
 `--input` must be valid JSON. `--format json` prints the full response.
 
@@ -446,8 +446,8 @@ ariadne permissions ai refresh --wait           # install again, on the settings
 ariadne permissions ai disable                  # keeps the files
 ```
 
-The allow threshold defaults to `0.1338`, and the deny threshold defaults to
-`0.5345`. Each must be from 0 to 1, and the allow threshold must be lower than
+The allow threshold defaults to `0.0531`, and the deny threshold defaults to
+`0.6522`. Each must be from 0 to 1, and the allow threshold must be lower than
 the deny threshold. The daemon refuses an invalid pair without changing either
 setting.
 

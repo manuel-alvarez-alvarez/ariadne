@@ -222,8 +222,8 @@ hardware facts in the card, with no Details popover`).
     `AI_PERMISSIONS_HOME`, `AI_PERMISSIONS_RUN` (the run of the chosen
     flavour), `AI_PERMISSIONS_KEV_COMMIT`, `AI_PERMISSIONS_FLAVOUR` and
     `AI_PERMISSIONS_DEVICE`.
-24. The default allow threshold is 0.0886 and the default deny threshold is
-    0.6256.
+24. The default allow threshold is 0.0531. The default deny threshold is
+    0.6522. A new migration resets every stored pair to these values.
 
 ## Decisions
 
@@ -234,85 +234,65 @@ hardware facts in the card, with no Details popover`).
     started daemon are still the model's. The daemon then posts to
     `{endpoint}/v1/systemone` and waits at most
     `Timeouts::ai_permissions_decision`, five seconds by default.
-26. The daemon derives an operation, ordered risk tags and a hard rule from
-    the complete request under rule 34. The live workspace is the session's
-    working directory; the test endpoint takes a nullable workspace. An
-    unknown workspace gives no `outside_workspace` tag. The normalized state
-    carries `task.workspace`; `request.tool`, `request.kind` and the compact
-    JSON `request.input`, cut at 2,000 characters; `derived.risk_tags` and
-    `derived.outside_workspace`; and the option names in
-    `permission_options`. Empty values and the empty `derived` object are
-    absent. The operation hint is not in the state.
+26. The daemon derives an operation and ordered risk tags from the complete
+    request under rule 34. The live workspace is the session's working
+    directory. The test endpoint takes a nullable workspace. An unknown
+    workspace gives no `outside_workspace` tag. The normalized state carries
+    `task.workspace`; `request.tool`, `request.kind` and compact JSON
+    `request.input`, cut at 2,000 characters; `derived.risk_tags` and
+    `derived.outside_workspace`; and names in `permission_options`.
+    Empty values and an empty `derived` object are absent. The operation hint
+    stays out of the state.
 27. The request carries `model = kev-latest`, a label Kev accepts and echoes
     without using: the checkpoint actually served is fixed by the `--run` of
     the chosen flavour at launch (rule 18). The one question is named `decision`, has type `score`,
     and carries the built-in instruction and three criteria. Kev's score
     probabilities must be finite values from 0 to 1. The decision keeps the
     probabilities object on both permission events and the test response.
-28. The four winner rules are `credential_transfer`, `root_delete`,
-    `home_delete` and `permission_tamper`. A matching rule denies before the
-    model is called and has no danger. Otherwise, danger is the score
-    divided by the highest level index. Danger at or below
-    `allow_threshold` is `allow`; danger at or above `deny_threshold` is
-    `deny`; danger between them is `ask`. An allow selects the allowing
-    option. A deny selects an option whose kind is `reject_once`, never
-    `reject_always`. The winner caps are `production`, `credential_access`,
-    `credential_transfer`, `privileged`, `download_and_execute` and
-    `unknown_destination`. The first cap on a call changes a model `allow`
-    to `ask`; an `ask` and a `deny` keep their label.
-29. An ask, a capped allow, an allow without an allowing option, and an unanswered decision
-    follow `learn` (021, rule 9): a matching allowed row is selected,
-    otherwise the console is asked, and its answer is recorded.
-    A model or rule deny without a `reject_once` option asks the console. The model is
-    unavailable, and a warning is logged, when `live()` is absent, its call
-    fails or times out, or its answer is malformed.
-30. A model allow is never recorded. A model deny, a rule deny and every
-    console answer, allow or deny, write the row of their key with
-    `target = ai` (021, rule 9). Where the model was called, its `output` is
-    the model decision: `label`, `danger`, `allow_threshold`,
-    `deny_threshold`, `probabilities`, `operation`, `risk_tags`, `rule`,
-    `cap`, and `error` where the model gave no answer. A hard rule denies
-    before the model is called, and an unavailable model is never called, so
-    their rows have a null `output`. A row with a
-    denying option never answers a request.
-31. `permission.replied` carries `decided_by`: `ai`, `rule`, `learned` (an
-    allowed row),
-    `console`, or `auto`, and always the keys `label`, `danger`, `allow_threshold`,
-    `deny_threshold`, `ai_error`, `operation`, `risk_tags`, `rule`, `cap` and
-    `probabilities`. Whenever the model answered, whoever
-    decided, `label` is `allow`, `ask` or `deny`, `danger` is its danger
-    score, and both thresholds are the settings that score was held to.
-    `ai_error` is `unavailable`, `failed`, `timed out` or `malformed` where
-    the model was asked and gave no answer. Each is null otherwise, and all
-    five original fields are null outside `ai`. A rule reply has
-    `decided_by = rule`, `label = deny`, its rule name, and no danger or
-    probabilities. In `ai`, `operation` is the derived hint or null and
-    `risk_tags` is the ordered list. `cap` and `probabilities` are present
-    when a model answer has them. The five new fields are null outside `ai`.
-    The `permission_request` carries the same
-    fields. The model has answered before the console is asked. In `ai`, each
-    reply also logs one `AI permission decision` line at INFO with the tool,
-    `decided_by` and those fields. While a question waits, the console
-    shows under its call why the model left it to a person —
-    `AI said ask (danger 0.08, capped by credential_access)`,
-    `rule home_delete said deny`, or `AI timed out`
-    (`ariadne_api::permissions::ai_permission_note`) — and
-    `ariadne session logs` prints it under the question. The answered line
-    is the option chosen, `allowed by AI (danger 0.06)`, or
-    `denied by AI (danger 0.93)` for a reply of the
-    model, or `denied by rule home_delete`. The reply's event summary (012,
-    rule 13) names the reason too.
-32. `POST /v1/permissions/ai/test` scores one supplied request without
-    selecting an option, writing a learned approval or store row, or publishing
-    an event. It takes `tool`, nullable `kind`, JSON `input`, nullable
-    option names and a nullable `workspace`; it builds the same model state as
-    rule 26, treating its first
-    option as allowing. Its 200 response carries the label and danger, or an
-    `unavailable`, `failed`, `timed out`, or `malformed` error, with the current
-    thresholds in either case, and the derived operation, risk tags, rule,
-    cap and model probabilities where they have values. It refuses an empty tool with 422
-    `invalid_request` and an off model with 409 `ai_disabled`; an enabled model
-    still starting waits under rule 25.
+28. The daemon calls the model for every AI permission request. It divides
+    the score by the highest level index to get danger. Danger at or below
+    `allow_threshold` allows. Danger at or above `deny_threshold` denies.
+    Danger between them asks. An allow selects an allowing option. A deny
+    selects only `reject_once`. The sole cap is `reviewer_directive`.
+    This tag changes a model allow to ask. It leaves ask and deny unchanged.
+    No tag directly denies a request.
+29. An ask, a capped allow, an allow without an allowing option, and an
+    unanswered decision follow `learn` (021, rule 9). A matching allowed row
+    answers. Otherwise, the console asks and records its answer. A model deny
+    without `reject_once` also asks the console. The model is unavailable when
+    `live()` is absent, its call fails or times out, or its answer is malformed.
+30. A model allow writes no learned row. A model deny and every console answer
+    write a row with `target = ai` (021, rule 9). A called model writes
+    `label`, `danger`, `allow_threshold`, `deny_threshold`, `probabilities`,
+    `operation`, `risk_tags`, `cap`, and `ai_error` when it gave no answer.
+    An unavailable model leaves `output` null. A denying row never answers a
+    later request.
+31. `permission.replied` and `permission_request` carry `decided_by`, `label`,
+    `danger`, `allow_threshold`, `deny_threshold`, `ai_error`, `operation`,
+    `risk_tags`, `cap`, and `probabilities`. `decided_by` is `ai`, `learned`,
+    `console`, or `auto` on a reply. A waiting request has null `decided_by`.
+    Each answered model reply has its label, danger, thresholds and
+    probabilities. The probabilities have keys `0`, `1`, and `2`. Key `0`
+    is the allow probability. Key `2` is the deny probability. `ai_error` is
+    `unavailable`, `failed`, `timed out`, or `malformed` when no answer arrives.
+    Derived facts appear on AI requests. Other modes have null AI fields.
+    The daemon logs each AI permission reply with the same fields.
+    The console and `ariadne session logs` show a waiting reason such as
+    `AI said ask (allow 0.62, deny 0.05, danger 0.21; allow up to 0.09, deny from 0.63)`.
+    A cap adds `; capped by reviewer_directive` inside the parentheses.
+    Errors retain their existing words, such as `AI timed out`.
+    An AI answer shows `allowed by AI (allow 0.91, deny 0.01, danger 0.04; allow up to 0.09, deny from 0.63)`
+    or `denied by AI (allow 0.01, deny 0.88, danger 0.93; allow up to 0.09, deny from 0.63)`.
+    The event summary uses the same reason.
+32. `POST /v1/permissions/ai/test` scores one request without selecting an
+    option, writing a row, or publishing an event. It accepts `tool`, nullable
+    `kind`, JSON `input`, nullable option names, and a nullable `workspace`.
+    It uses the same state as rule 26 and treats the first option as allowing.
+    Its response carries the label, danger, thresholds, operation, risk tags,
+    cap and probabilities where available. An unanswered request returns
+    `unavailable`, `failed`, `timed out`, or `malformed`. An empty tool gets
+    422 `invalid_request`. An off model gets 409 `ai_disabled`.
+
 
 ## Benchmark
 
@@ -719,12 +699,12 @@ hardware facts in the card, with no Details popover`).
 
 ## Acceptance criteria
 
-- A fresh daemon is off, at allow threshold 0.0886 and deny threshold 0.6256,
+- A fresh daemon is off, at allow threshold 0.0531 and deny threshold 0.6522,
   and reports
   the interpreter it probed
   (`ai_permissions.rs::the_settings_start_at_the_defaults_with_the_interpreter_probed`).
 - A test request sends the shared normalized state for its workspace and returns
-  its label, danger, thresholds and five decision facts without an event; an off model refuses it and an enabled model
+  its label, danger, thresholds and four decision facts without an event; an off model refuses it and an enabled model
   with no live endpoint reports `unavailable`
   (`ai_permissions_decisions.rs::a_test_request_scores_the_same_model_state_without_publishing_or_learning`,
   `::a_test_request_reports_unavailable_or_a_model_error_without_failing_the_endpoint`,
@@ -787,7 +767,7 @@ hardware facts in the card, with no Details popover`).
   (`ai_permissions/server.rs::tests::the_server_dies_when_the_daemon_end_of_its_pipe_closes`,
   `::the_guard_exits_with_the_server_status`).
 - The four paths, both threshold fields in both schemas, the flavour and
-  device shapes, test workspace, five test response fields, the doctor's
+  device shapes, test workspace, four test response fields, the doctor's
   `python` and the event kind are in the OpenAPI document
   (`ai_permissions.rs::the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document`),
   and the doctor reports the interpreter apart from the tools
@@ -798,13 +778,14 @@ hardware facts in the card, with no Details popover`).
   (`store.rs::the_ai_permission_settings_are_one_row_that_takes_partial_writes`).
 - A fresh database seeds the default threshold pair
   (`store.rs::a_fresh_database_seeds_the_ai_permission_defaults`).
+- A database with an old pair resets both thresholds and keeps other settings
+  (`store.rs::the_ai_permission_threshold_migration_resets_an_existing_pair`).
 - `python_bin` and `nvidia_smi_bin` are read from `config.toml`, and
   `ai_permissions_release_url` and `ai_permissions_hardware` are refused,
   and the test seams are not keys of it
   (`config.rs::tests::the_ai_permissions_keys_a_user_may_set_are_read_and_the_test_seams_are_not`).
-- Every fixture request builds its recorded model, questions, normalized state
-  and derived facts, one
-  request per kind of call
+- More than 800 fixture requests build their recorded model, questions,
+  normalized state, operation, risk tags and cap
   (`ai_permissions::decide::tests::every_fixture_request_builds_its_recorded_contract`).
 - Danger at or below the allow threshold selects the allowing option, records
   `decided_by: "ai"` and `label: "allow"`, raises no attention, and sends the benchmarked state and
@@ -855,17 +836,10 @@ hardware facts in the card, with no Details popover`).
 - A winner cap changes a model allow to a console question and keeps the cap,
   danger and derived facts on both events
   (`ai_permissions_decisions.rs::a_cap_changes_a_model_allow_to_a_console_question`).
-- A winner rule selects `reject_once` without a model request or attention,
-  writes a row with a null `output`, and reports `decided_by = rule`,
-  `label = deny`, its rule and no danger
-  (`ai_permissions_decisions.rs::a_hard_rule_denies_without_the_model_or_attention_and_is_recorded`).
-- A winner rule without `reject_once` asks the console and records its answer
-  with a null `output`
-  (`ai_permissions_decisions.rs::a_hard_rule_without_a_one_time_reject_asks_and_records_the_choice`).
 - A model allow writes no row
   (`ai_permissions_decisions.rs::a_confident_allow_runs_at_once_and_reports_ai`).
 - A console answer after a model deny keeps every `output` key, and a
-  malformed answer records its `error`
+  malformed answer records its `ai_error`
   (`ai_permissions_decisions.rs::a_deny_without_a_rejecting_option_waits_for_the_console`,
   `::a_malformed_answer_warns_and_waits_for_the_console`), and an unavailable
   model leaves a null `output`
@@ -878,7 +852,7 @@ hardware facts in the card, with no Details popover`).
 - A stopped or timed-out model warns and asks the console
   (`ai_permissions_decisions.rs::a_stopped_model_warns_and_waits_for_the_console`,
   `::a_model_timeout_waits_for_the_console`).
-- A missing answer field or a probability outside 0 to 1 is malformed, warns
+- A missing answer field, a missing level, or an invalid probability is malformed, warns
   and asks the console (`ai_permissions_decisions.rs::a_malformed_answer_warns_and_waits_for_the_console`,
   `::a_test_request_returns_each_model_call_error_in_its_response`).
 - A model disabled after the repository chose `ai` asks the console
@@ -887,13 +861,12 @@ hardware facts in the card, with no Details popover`).
   (`acp_runtime.rs::auto_approves_a_permission_request_with_the_allowing_option`,
   `acp_console.rs::ask_raises_attention_and_a_console_answer_unblocks_the_turn`,
   `::learn_remembers_an_approval_per_repository_across_a_daemon_restart`).
-- A reply of the model renders its decider and danger, including
-  `denied by AI (danger 0.93)`, and a waiting question renders both thresholds
+- A model reply renders both probabilities, danger and both thresholds.
+  A waiting question and `ariadne session logs` render the same facts.
+  The event summary names the same reason
   (`ariadne-console::tui::picker::tests::ai_answers_name_the_model_and_the_danger`,
-  `::a_waiting_question_says_why_the_model_left_it_and_its_answer_does_not`).
-- The shared note renders `allow`, `ask`, `deny`, a cap and a waiting rule.
-  The event summary renders `denied by AI` and `denied by rule home_delete`
-  (`ariadne_api::permissions::tests::a_reply_names_why_the_model_did_not_decide_it`,
+  `commands/transcript.rs::tests::a_transcript_answer_shows_both_ai_probabilities`,
+  `commands/transcript.rs::tests::a_question_says_why_the_ai_permission_model_left_it_to_the_console`,
   `http/classify.rs::tests::an_answered_permission_says_who_answered_and_why_the_model_did_not`).
 - The CLI sends both threshold fields and nothing else, and `show` prints
   every field, the hardware and the flavour and device table
@@ -906,8 +879,8 @@ hardware facts in the card, with no Details popover`).
   `::set_prints_the_daemons_flavour_unsupported_refusal`); `--schedule` and
   `--no-schedule` are gone (`rg -i schedule crates specs docs` outside `ui/`
   finds no AI-permission hit).
-- The CLI test command sends `--workspace` and prints the operation, tags,
-  rule and cap when present (`cli/tests.rs::every_permissions_verb_parses`,
+- The CLI test command sends `--workspace` and prints both probabilities,
+  danger, thresholds, operation, tags and cap when present (`cli/tests.rs::every_permissions_verb_parses`,
   `commands/permissions.rs::tests::test_prints_the_score_line_and_names_no_answer`).
 - A 64 GB Mac offers 0.8b, 4b and 9b on `mlx` and `cpu`, never `cuda` or 27b
   on `mlx`; a Linux box with no GPU offers `cpu` only; a Linux box with a

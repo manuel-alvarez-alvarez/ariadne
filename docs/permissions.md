@@ -101,13 +101,6 @@ kind, the compact JSON of its raw input (cut at 2,000 characters), the option
 names, and the risk tags. Empty values are left out. The operation is reported
 with the decision but is not sent to the model.
 
-Four narrow rules deny before the model runs: transferring a known credential
-with an external upload command, recursively deleting the filesystem root,
-recursively deleting the home directory, and attempts to disable or bypass
-agent permissions. A rule uses a one-time reject option. If the agent offers
-no one-time reject, the console asks instead. A rule denial is recorded, but a
-denied row never answers a later request.
-
 The model answers one question: “How much does this coding-agent tool call put
 the system or the project at risk?” It scores the request as routine work to
 allow, consequential work to ask about, or unacceptable work to deny. Routine
@@ -119,40 +112,33 @@ for dangerous. Ariadne
 allows a request at or below the allow threshold, denies one at or above the
 deny threshold, and asks between them. A denial selects only a one-time reject
 option. When the agent offers no one-time reject, the console asks instead;
-the model never selects a permanent rejection. A model allow also becomes an
-ask when the request has a `production`, `credential_access`,
-`credential_transfer`, `privileged`, `download_and_execute`, or
-`unknown_destination` tag.
+the model never selects a permanent rejection. A model allow becomes an ask when the request has the
+`reviewer_directive` tag. This is the only cap. No tag denies a request.
 
 An ask, an allow without an allowing option, an unavailable model, or a failed
-request falls back to `learn`: an allowed row is used, or the console
-asks you. Every console answer and every model denial is recorded; a model
-allow is not. The answered console line names the model and danger
-score when it decided.
+request falls back to `learn`. An allowed row answers; otherwise, the console
+asks you. Every console answer and every model denial is recorded. A model
+allow is not recorded.
 
-When a request comes to you, the console says why under the call, while it
-asks — for example `AI said ask (danger 0.08, capped by credential_access)`,
-`rule home_delete said deny`, or `AI timed out`. `ariadne session logs` prints the same line
-under the question. Afterwards, `ariadne events --kind permission.replied`
-and the desktop app's activity tab say who answered and why the model did
-not:
+The model returns allow, ask, and deny probabilities. The console shows the
+allow probability from level `0` and the deny probability from level `2`.
+It shows both probabilities, danger, and both thresholds to two decimals.
+It shows the reason under a waiting call. `ariadne session logs` prints the
+same reason under the question. The answer and event summary use these words:
 
 ```text
-allowed by AI (danger 0.06)
-denied by AI (danger 0.93)
-denied by rule home_delete
-allow-once in the console — AI said ask (danger 0.41, allow 0.20, deny 0.80)
-allow-once in the console — AI said ask (danger 0.08, capped by credential_access)
-allow-once in the console — AI said allow (danger 0.04, allow 0.05, deny 0.80)
+allowed by AI (allow 0.91, deny 0.01, danger 0.04; allow up to 0.09, deny from 0.63)
+denied by AI (allow 0.01, deny 0.88, danger 0.93; allow up to 0.09, deny from 0.63)
+allow-once in the console — AI said ask (allow 0.62, deny 0.05, danger 0.21; allow up to 0.09, deny from 0.63)
+allow-once in the console — AI said ask (allow 0.96, deny 0.01, danger 0.02; allow up to 0.09, deny from 0.63; capped by reviewer_directive)
 allow-once in the console — AI unavailable
 ```
 
 `AI said allow` means no allowing option was available. `AI said deny` means
 no one-time reject option was available. `AI said ask` means the danger fell
-between the two thresholds.
-`AI unavailable`, `failed`, `timed out` and `malformed` mean the model gave
-no answer at all. The daemon log has one `AI permission decision` line per
-request with the same fields.
+between the thresholds or the cap held an allow. `AI unavailable`, `failed`,
+`timed out`, and `malformed` mean the model gave no answer. The daemon log
+records each decision with its fields.
 
 Turn it on, look at it, and install it again:
 
@@ -171,10 +157,11 @@ ariadne permissions ai test --tool Bash --kind execute \
   --workspace "$PWD"
 ```
 
-The command prints the label, danger and thresholds, plus the operation, tags,
-rule and cap where present. For example: `allow (danger 0.05; allow 0.16,
-deny 0.63); operation read_workspace`. Use `--format json` for the response
-fields and model probabilities.
+The command prints the label, both probabilities, danger and thresholds. It
+also prints the operation, tags and cap where present. For example:
+`ask (allow 0.62, deny 0.05, danger 0.21; allow up to 0.09, deny from 0.63); operation read_workspace`.
+For a capped allow, it adds `tags reviewer_directive; cap reviewer_directive`.
+Use `--format json` for the response fields and all model probabilities.
 It does not select an option, save an approval, or add an event. The model
 must be enabled; `ai_disabled` means turn it on first. Invalid `--input` JSON
 is refused locally. If the enabled model cannot answer, the command prints
@@ -250,10 +237,9 @@ Two more settings:
 ariadne permissions ai set --allow-threshold 0.2 --deny-threshold 0.8
 ```
 
-The allow threshold defaults to `0.0886`, and the deny threshold defaults to
-`0.6256`. Both take values from 0 to 1, and the allow threshold must stay below
-the deny threshold. Upgrading to the 2026-09-30 winner resets both stored
-thresholds because its changed question has a different score scale.
+The allow threshold defaults to `0.0531`, and the deny threshold defaults to
+`0.6522`. Both take values from 0 to 1, and the allow threshold must stay below
+the deny threshold. Upgrading to the 2026-10-01 winner resets both stored thresholds to this pair.
 Lower the allow threshold to ask about more requests.
 Lower the deny threshold to reject more dangerous requests without asking.
 Set either or both with `ariadne permissions ai set --allow-threshold <value>
@@ -262,11 +248,11 @@ refresh` reinstalls the same pinned package, adapter and base to repair them,
 and nothing runs it on a schedule.
 
 The [AI permission benchmark](../bench/ai-permissions/README.md) selected
-Kev-4B with the three-level score question, temperature 0.6, the derived risk
-tags, four rules, six caps, and thresholds 0.0886 and 0.6256. On the audited
-cases of 2026-09-30, it allowed 428 of 584 safe cases and 190 of 301 real
-requests. It allowed no elevated or adversarial case and denied no safe or
-real request.
+Kev-4B with the three-level score question, temperature 0.6, derived risk
+tags, one `reviewer_directive` cap, and thresholds 0.0531 and 0.6522.
+On its audited sets, the pair allowed 381 of 645 safe cases and 141 of 299
+real requests. It allowed no elevated or adversarial case. It denied no safe
+or real request.
 
 The real-request sample changes over time.
 The model reads one request at a time and sees at most 2,000 characters of its

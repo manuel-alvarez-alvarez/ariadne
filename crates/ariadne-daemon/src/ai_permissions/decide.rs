@@ -31,8 +31,6 @@ pub(crate) struct Score {
 /// The policy outcome for one request, with its model or derived evidence.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Decision {
-    /// A hard rule rejected the request before a model call.
-    Rule { derived: Derived },
     /// The request can run without asking a person.
     Allow { score: Score, derived: Derived },
     /// The request is rejected without asking a person.
@@ -50,8 +48,7 @@ pub(crate) enum Decision {
 impl Decision {
     pub(crate) fn derived(&self) -> &Derived {
         match self {
-            Self::Rule { derived }
-            | Self::Allow { derived, .. }
+            Self::Allow { derived, .. }
             | Self::Deny { derived, .. }
             | Self::Ask { derived, .. }
             | Self::Unanswered { derived, .. } => derived,
@@ -63,15 +60,7 @@ impl Decision {
             Self::Allow { score, .. } | Self::Deny { score, .. } | Self::Ask { score, .. } => {
                 Some(score)
             }
-            Self::Rule { .. } | Self::Unanswered { .. } => None,
-        }
-    }
-
-    /// Return the hard rule name only when that rule made the decision.
-    pub(crate) fn rule(&self) -> Option<&'static str> {
-        match self {
-            Self::Rule { derived } => derived.rule,
-            _ => None,
+            Self::Unanswered { .. } => None,
         }
     }
 
@@ -84,19 +73,13 @@ impl Decision {
     }
 }
 
-/// A request body and its facts, ready for either a hard rule or Kev.
+/// A request body and its facts, ready for Kev.
 pub(crate) struct Prepared {
     body: Value,
     derived: Derived,
 }
 
 impl Prepared {
-    pub(crate) fn hard_rule(&self) -> Option<Decision> {
-        self.derived.rule.map(|_| Decision::Rule {
-            derived: self.derived.clone(),
-        })
-    }
-
     pub(crate) fn unanswered(&self, reason: &'static str) -> Decision {
         Decision::Unanswered {
             reason,
@@ -218,7 +201,8 @@ pub(crate) fn test_call(
 fn danger(answer: &Value) -> Option<(f64, Value)> {
     let decision = answer.pointer("/answers/decision")?.as_object()?;
     let probabilities = decision.get("probabilities")?.as_object()?;
-    if probabilities.len() < 2
+    if probabilities.len() != 3
+        || !(0..3).all(|level| probabilities.contains_key(&level.to_string()))
         || !probabilities.values().all(|probability| {
             probability.as_f64().is_some_and(|probability| {
                 probability.is_finite() && (0.0..=1.0).contains(&probability)
@@ -335,9 +319,10 @@ mod tests {
                 expected["derived"]["risk_tags"],
                 "{id}: risk tags"
             );
+            assert_eq!(json!(derived.cap), expected["derived"]["cap"], "{id}: cap");
             checked += 1;
         }
-        assert!(checked > 740, "the fixture holds {checked} requests");
+        assert!(checked > 800, "the fixture holds {checked} requests");
     }
 
     /// Four recorded benchmark answers preserve the danger calculation without

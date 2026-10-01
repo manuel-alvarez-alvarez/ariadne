@@ -1597,6 +1597,13 @@ fn permissions_group_prints_help_and_refuses_the_old_flat_commands() {
 /// from a typo.
 #[test]
 fn permissions_set_refuses_a_bad_threshold_flavour_or_device_locally() {
+    let Err(help) = try_parse(&["ariadne", "permissions", "ai", "set", "--help"]) else {
+        panic!("help ends parsing");
+    };
+    let help = help.to_string();
+    assert!(help.contains("default 0.0531"), "{help}");
+    assert!(help.contains("default 0.6522"), "{help}");
+
     for flag in ["--allow-threshold", "--deny-threshold"] {
         let Err(err) = try_parse(&["ariadne", "permissions", "ai", "set", flag, "1.5"]) else {
             panic!("1.5 is out of range");

@@ -257,26 +257,21 @@ pub(super) async fn test(
     );
     let prepared =
         crate::ai_permissions::decide::prepare(&tool_call, &options, workspace.as_deref());
-    let decision = if let Some(decision) = prepared.hard_rule() {
-        decision
-    } else {
-        match state.ai_permissions.live_once_started().await {
-            Some(live) => {
-                crate::ai_permissions::decide::decide(
-                    &live,
-                    &prepared,
-                    state.ai_permissions.decision_timeout(),
-                )
-                .await
-            }
-            None => prepared.unanswered("unavailable"),
+    let decision = match state.ai_permissions.live_once_started().await {
+        Some(live) => {
+            crate::ai_permissions::decide::decide(
+                &live,
+                &prepared,
+                state.ai_permissions.decision_timeout(),
+            )
+            .await
         }
+        None => prepared.unanswered("unavailable"),
     };
     let label = match &decision {
         crate::ai_permissions::decide::Decision::Allow { .. } => Some("allow".into()),
         crate::ai_permissions::decide::Decision::Ask { .. } => Some("ask".into()),
-        crate::ai_permissions::decide::Decision::Deny { .. }
-        | crate::ai_permissions::decide::Decision::Rule { .. } => Some("deny".into()),
+        crate::ai_permissions::decide::Decision::Deny { .. } => Some("deny".into()),
         crate::ai_permissions::decide::Decision::Unanswered { .. } => None,
     };
     let score = decision.score();
@@ -294,7 +289,6 @@ pub(super) async fn test(
         },
         operation: derived.operation.map(str::to_string),
         risk_tags: Some(derived.risk_tags.iter().map(ToString::to_string).collect()),
-        rule: decision.rule().map(str::to_string),
         cap: decision.cap().map(str::to_string),
         probabilities: score.map(|score| score.probabilities.clone()),
     };

@@ -1434,32 +1434,26 @@ impl RuntimeIncoming {
                 &params["options"],
                 Some(&self.workspace),
             );
-            if let Some(decision) = prepared.hard_rule() {
-                Some(decision)
-            } else {
-                match self.sink.runtime.inner.ai_permissions.as_ref() {
-                    Some(ai_permissions) => match ai_permissions.live_once_started().await {
-                        Some(live) => Some(
-                            decide(
-                                &live,
-                                &prepared,
-                                self.sink.runtime.inner.timeouts.ai_permissions_decision,
-                            )
-                            .await,
-                        ),
-                        None => {
-                            tracing::warn!(
-                                "AI permission model is unavailable for a permission decision"
-                            );
-                            Some(prepared.unanswered("unavailable"))
-                        }
-                    },
+            match self.sink.runtime.inner.ai_permissions.as_ref() {
+                Some(ai_permissions) => match ai_permissions.live_once_started().await {
+                    Some(live) => Some(
+                        decide(
+                            &live,
+                            &prepared,
+                            self.sink.runtime.inner.timeouts.ai_permissions_decision,
+                        )
+                        .await,
+                    ),
                     None => {
                         tracing::warn!(
                             "AI permission model is unavailable for a permission decision"
                         );
                         Some(prepared.unanswered("unavailable"))
                     }
+                },
+                None => {
+                    tracing::warn!("AI permission model is unavailable for a permission decision");
+                    Some(prepared.unanswered("unavailable"))
                 }
             }
         } else {
@@ -1470,13 +1464,11 @@ impl RuntimeIncoming {
             Some(Decision::Allow { .. }) => {
                 approved_option(params).filter(|option| allowing_option(params, option))
             }
-            Some(Decision::Deny { .. } | Decision::Rule { .. }) => rejecting_option(params),
+            Some(Decision::Deny { .. }) => rejecting_option(params),
             _ => None,
         };
-        let deny_without_option = matches!(
-            &ai_permissions_decision,
-            Some(Decision::Deny { .. } | Decision::Rule { .. })
-        ) && ai_permissions_selection.is_none();
+        let deny_without_option = matches!(&ai_permissions_decision, Some(Decision::Deny { .. }))
+            && ai_permissions_selection.is_none();
         let waiting = matches!(self.permission_mode, PermissionMode::Ask)
             || deny_without_option
             || (remembers && !learned && ai_permissions_selection.is_none());
@@ -1487,7 +1479,7 @@ impl RuntimeIncoming {
         let label = match &ai_permissions_decision {
             Some(Decision::Allow { .. }) => Some("allow"),
             Some(Decision::Ask { .. }) => Some("ask"),
-            Some(Decision::Deny { .. } | Decision::Rule { .. }) => Some("deny"),
+            Some(Decision::Deny { .. }) => Some("deny"),
             Some(Decision::Unanswered { .. }) | None => None,
         };
         let score = ai_permissions_decision.as_ref().and_then(Decision::score);
@@ -1502,12 +1494,9 @@ impl RuntimeIncoming {
         let derived = ai_permissions_decision.as_ref().map(Decision::derived);
         let operation = derived.and_then(|derived| derived.operation);
         let risk_tags = derived.map(|derived| derived.risk_tags.clone());
-        let rule = ai_permissions_decision.as_ref().and_then(Decision::rule);
         let cap = ai_permissions_decision.as_ref().and_then(Decision::cap);
         let request_decided_by = if waiting {
             None
-        } else if matches!(&ai_permissions_decision, Some(Decision::Rule { .. })) {
-            Some("rule")
         } else if ai_permissions_selection.is_some() {
             Some("ai")
         } else if learned {
@@ -1524,7 +1513,6 @@ impl RuntimeIncoming {
             ("ai_error", json!(ai_error)),
             ("operation", json!(operation)),
             ("risk_tags", json!(risk_tags)),
-            ("rule", json!(rule)),
             ("cap", json!(cap)),
             ("probabilities", json!(probabilities)),
         ] {
@@ -1535,9 +1523,6 @@ impl RuntimeIncoming {
         self.sink.emit("permission_request", payload).await;
         let (selected, decided_by) = match receiver {
             Some(receiver) => (self.wait_for_permission(params, receiver).await?, "console"),
-            None if matches!(&ai_permissions_decision, Some(Decision::Rule { .. })) => {
-                (ai_permissions_selection, "rule")
-            }
             None if ai_permissions_selection.is_some() => (ai_permissions_selection, "ai"),
             None if learned => (approved_option(params), "learned"),
             None => (approved_option(params), "auto"),
@@ -1553,7 +1538,6 @@ impl RuntimeIncoming {
                 ai_error,
                 operation,
                 risk_tags = ?risk_tags,
-                rule,
                 cap,
                 probabilities = ?probabilities,
                 "AI permission decision"
@@ -1562,32 +1546,30 @@ impl RuntimeIncoming {
         // Every choice a person makes, and every denial, is training data
         // for the model: allows the daemon made itself are not.
         let recorded = match decided_by {
-            "console" | "rule" => true,
+            "console" => true,
             "ai" => matches!(&ai_permissions_decision, Some(Decision::Deny { .. })),
             _ => false,
         };
         if let Some(selected_option) = selected.clone().filter(|_| recorded)
             && !self.repository_id.is_empty()
         {
-            // A hard rule and an unavailable model decide without a model
-            // call, so they have no output.
+            // An unavailable model has no output.
             let output = ai_permissions_decision
                 .as_ref()
                 .filter(|decision| {
                     !matches!(
                         decision,
-                        Decision::Rule { .. }
-                            | Decision::Unanswered {
-                                reason: "unavailable",
-                                ..
-                            }
+                        Decision::Unanswered {
+                            reason: "unavailable",
+                            ..
+                        }
                     )
                 })
                 .map(|_| {
                     json!({"label": label, "danger": danger,
                        "allow_threshold": allow_threshold, "deny_threshold": deny_threshold,
                        "probabilities": probabilities, "operation": operation,
-                       "risk_tags": risk_tags, "rule": rule, "cap": cap, "error": ai_error})
+                       "risk_tags": risk_tags, "cap": cap, "ai_error": ai_error})
                 });
             self.sink
                 .runtime
@@ -1616,7 +1598,7 @@ impl RuntimeIncoming {
                        "decided_by": decided_by, "label": label, "danger": danger,
                        "allow_threshold": allow_threshold, "deny_threshold": deny_threshold,
                        "ai_error": ai_error, "operation": operation,
-                       "risk_tags": risk_tags, "rule": rule, "cap": cap,
+                       "risk_tags": risk_tags, "cap": cap,
                        "probabilities": probabilities}),
             )
             .await;

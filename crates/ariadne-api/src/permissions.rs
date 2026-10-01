@@ -221,10 +221,10 @@ pub struct AiPermissionsStatusDto {
     /// Whether the model answers permission requests at all.
     pub enabled: bool,
     /// Danger at or below this value is allowed, 0 to 1.
-    #[schema(example = 0.0886)]
+    #[schema(example = 0.0531)]
     pub allow_threshold: f64,
     /// Danger at or above this value is denied, 0 to 1.
-    #[schema(example = 0.6256)]
+    #[schema(example = 0.6522)]
     pub deny_threshold: f64,
     /// The Kev flavour chosen, `4b` by default where the machine can run it.
     pub flavour: Flavour,
@@ -303,8 +303,6 @@ pub struct TestAiPermissionResponse {
     pub operation: Option<String>,
     /// The ordered risk tags derived from the complete request.
     pub risk_tags: Option<Vec<String>>,
-    /// The hard rule that denied the request.
-    pub rule: Option<String>,
     /// The first cap that changed an allow into an ask.
     pub cap: Option<String>,
     /// Kev's probabilities for the decision question.
@@ -313,38 +311,30 @@ pub struct TestAiPermissionResponse {
 
 /// Why the AI permission model did not decide a `permission.replied`, in the
 /// words `ariadne events`, the desktop app and the console all use:
-/// `AI said ask (danger 0.41, allow 0.20, deny 0.80)`, `AI timed out`. `None` where
-/// the model had no part in the reply: a mode other than `ai`, or a reply
-/// the model made itself.
+/// `AI said ask (allow 0.62, deny 0.05, danger 0.21; allow up to 0.09, deny from 0.63)`,
+/// or `AI timed out`. Return `None` when the model had no part in the reply.
 pub fn ai_permission_note(reply: &serde_json::Value) -> Option<String> {
     let text = |key: &str| reply.get(key).and_then(serde_json::Value::as_str);
-    if let Some(rule) = text("rule") {
-        return Some(format!("rule {rule} said deny"));
-    }
-    if let (Some(label), Some(danger), Some(cap)) = (
-        text("label"),
-        reply.get("danger").and_then(serde_json::Value::as_f64),
-        text("cap"),
-    ) {
-        return Some(format!(
-            "AI said {label} (danger {danger:.2}, capped by {cap})"
-        ));
-    }
-    if let (Some(label), Some(danger), Some(allow), Some(deny)) = (
-        text("label"),
-        reply.get("danger").and_then(serde_json::Value::as_f64),
-        reply
-            .get("allow_threshold")
-            .and_then(serde_json::Value::as_f64),
-        reply
-            .get("deny_threshold")
-            .and_then(serde_json::Value::as_f64),
-    ) {
-        return Some(format!(
-            "AI said {label} (danger {danger:.2}, allow {allow:.2}, deny {deny:.2})"
-        ));
+    if let (Some(label), Some(metrics)) = (text("label"), ai_permission_metrics(reply)) {
+        let cap = text("cap").map_or(String::new(), |cap| format!("; capped by {cap}"));
+        return Some(format!("AI said {label} ({metrics}{cap})"));
     }
     text("ai_error").map(|error| format!("AI {error}"))
+}
+
+/// Format the model probabilities, danger and the two danger thresholds.
+pub fn ai_permission_metrics(reply: &serde_json::Value) -> Option<String> {
+    let number = |key: &str| reply.get(key).and_then(serde_json::Value::as_f64);
+    let probabilities = reply.get("probabilities")?.as_object()?;
+    let last = probabilities.len().checked_sub(1)?.to_string();
+    let allow_probability = probabilities.get("0")?.as_f64()?;
+    let deny_probability = probabilities.get(&last)?.as_f64()?;
+    let danger = number("danger")?;
+    let allow = number("allow_threshold")?;
+    let deny = number("deny_threshold")?;
+    Some(format!(
+        "allow {allow_probability:.2}, deny {deny_probability:.2}, danger {danger:.2}; allow up to {allow:.2}, deny from {deny:.2}"
+    ))
 }
 
 #[cfg(test)]
@@ -357,22 +347,20 @@ mod tests {
     fn a_reply_names_why_the_model_did_not_decide_it() {
         for label in ["allow", "ask", "deny"] {
             assert_eq!(
-                ai_permission_note(&json!({"label": label, "danger": 0.4129,
-                                            "allow_threshold": 0.2,
-                                            "deny_threshold": 0.8})),
+                ai_permission_note(&json!({"label": label, "danger": 0.21,
+                    "probabilities": {"0": 0.62, "1": 0.33, "2": 0.05},
+                    "allow_threshold": 0.09, "deny_threshold": 0.63})),
                 Some(format!(
-                    "AI said {label} (danger 0.41, allow 0.20, deny 0.80)"
+                    "AI said {label} (allow 0.62, deny 0.05, danger 0.21; allow up to 0.09, deny from 0.63)"
                 ))
             );
         }
         assert_eq!(
-            ai_permission_note(&json!({"label": "ask", "danger": 0.081,
-                                        "cap": "credential_access"})),
-            Some("AI said ask (danger 0.08, capped by credential_access)".into())
-        );
-        assert_eq!(
-            ai_permission_note(&json!({"label": "deny", "rule": "home_delete"})),
-            Some("rule home_delete said deny".into())
+            ai_permission_note(&json!({"label": "ask", "danger": 0.02,
+                "probabilities": {"0": 0.96, "1": 0.03, "2": 0.01},
+                "allow_threshold": 0.09, "deny_threshold": 0.63,
+                "cap": "reviewer_directive"})),
+            Some("AI said ask (allow 0.96, deny 0.01, danger 0.02; allow up to 0.09, deny from 0.63; capped by reviewer_directive)".into())
         );
         assert_eq!(
             ai_permission_note(&json!({"ai_error": "timed out"})),

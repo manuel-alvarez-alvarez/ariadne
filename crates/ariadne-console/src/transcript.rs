@@ -271,7 +271,7 @@ pub enum TranscriptItem {
         options: Vec<PermissionOption>,
         answer: Option<String>,
         /// Why the AI permission model left the question to a person, where
-        /// it had a part: `AI said ask (danger 0.41, allow 0.20, deny 0.80)`.
+        /// it had a part: `AI said ask (allow 0.62, deny 0.05, danger 0.21; allow up to 0.09, deny from 0.63)`.
         ai_note: Option<String>,
     },
     SystemNote {
@@ -590,17 +590,12 @@ pub fn permission_answer(payload: &Value, options: &[PermissionOption]) -> Strin
     let Some(id) = string_at(payload, "/option_id") else {
         return "cancelled".into();
     };
-    if payload.get("decided_by").and_then(Value::as_str) == Some("rule")
-        && let Some(rule) = payload.get("rule").and_then(Value::as_str)
-    {
-        return format!("denied by rule {rule}");
-    }
     if payload.get("decided_by").and_then(Value::as_str) == Some("ai")
-        && let Some(danger) = payload.get("danger").and_then(Value::as_f64)
+        && let Some(metrics) = ariadne_api::permissions::ai_permission_metrics(payload)
     {
         return match payload.get("label").and_then(Value::as_str) {
-            Some("deny") => format!("denied by AI (danger {danger:.2})"),
-            _ => format!("allowed by AI (danger {danger:.2})"),
+            Some("deny") => format!("denied by AI ({metrics})"),
+            _ => format!("allowed by AI ({metrics})"),
         };
     }
     options

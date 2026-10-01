@@ -205,7 +205,7 @@ async fn a_fresh_database_seeds_the_ai_permission_defaults() {
     .fetch_one(&mut connection)
     .await
     .unwrap();
-    assert_eq!((allow, deny), (0.0886, 0.6256));
+    assert_eq!((allow, deny), (0.0531, 0.6522));
     assert_eq!(flavour, "4b");
     assert_eq!(device, None, "the daemon fills it at startup");
 
@@ -3823,6 +3823,33 @@ async fn a_checkpoint_folds_the_write_ahead_log_back_in() {
     );
 }
 
+/// Opening a database from the preceding migration resets both thresholds.
+#[tokio::test]
+async fn the_ai_permission_threshold_migration_resets_an_existing_pair() {
+    let (store, dir) = test_store().await;
+    let path = dir.path().join("test.db");
+    drop(store);
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE ai_permission_settings SET enabled = 1, allow_threshold = 0.2, deny_threshold = 0.8, flavour = '9b' WHERE id = 1")
+        .execute(&pool).await.unwrap();
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 2")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    let upgraded = Store::open(&path).await.unwrap();
+    let settings = upgraded.ai_permission_settings().await.unwrap();
+    assert_eq!(
+        (settings.allow_threshold, settings.deny_threshold),
+        (0.0531, 0.6522)
+    );
+    assert!(settings.enabled);
+    assert_eq!(settings.flavour, "9b");
+}
+
 /// The AI permission settings are one row, seeded with the defaults a fresh daemon
 /// answers with. A write moves the columns it names and leaves the rest, and
 /// the row survives a reopen: an install that ran for minutes must not be
@@ -3833,8 +3860,8 @@ async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
 
     let defaults = store.ai_permission_settings().await.unwrap();
     assert!(!defaults.enabled);
-    assert_eq!(defaults.allow_threshold, 0.0886);
-    assert_eq!(defaults.deny_threshold, 0.6256);
+    assert_eq!(defaults.allow_threshold, 0.0531);
+    assert_eq!(defaults.deny_threshold, 0.6522);
     assert_eq!(defaults.flavour, "4b");
     assert_eq!(defaults.device, None);
     assert_eq!(defaults.state, "disabled");
@@ -3855,7 +3882,7 @@ async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
         .await
         .unwrap();
     assert_eq!(partly_chosen.allow_threshold, 0.2);
-    assert_eq!(partly_chosen.deny_threshold, 0.6256);
+    assert_eq!(partly_chosen.deny_threshold, 0.6522);
     let chosen = store
         .update_ai_permission_settings(AiPermissionSettingsUpdate {
             deny_threshold: Some(0.8),

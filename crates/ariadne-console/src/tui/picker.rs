@@ -528,33 +528,47 @@ mod tests {
             "permission.replied",
             "answered",
             json!({"option_id": "option-0", "decided_by": "ai",
-                   "label": "deny", "danger": 0.93}),
+                   "label": "deny", "danger": 0.93,
+                   "allow_threshold": 0.09, "deny_threshold": 0.63,
+                   "probabilities": {"0": 0.01, "1": 0.11, "2": 0.88}}),
         ));
         console.apply(&event("agent_message", "done", json!({"text": "done"})));
 
         console.commit(&mut terminal).unwrap();
         let shown = screen(&terminal);
 
-        assert!(shown.contains("↳ denied by AI (danger 0.93)"), "{shown}");
+        assert!(
+            shown.contains("denied by AI (allow 0.01, deny 0.88"),
+            "{shown}"
+        );
+        assert!(shown.contains("danger 0.93; allow up to 0.09"), "{shown}");
+        assert!(shown.contains("deny from 0.63)"), "{shown}");
 
         let mut console = Console::new(header());
-        let mut rule_terminal = crate::tui::testing::terminal();
+        let mut terminal = crate::tui::testing::terminal();
         console.apply(&asked_with(
             "Allow this edit?",
-            &["Reject"],
+            &["Allow", "Reject"],
             json!({"toolCallId": "edit", "kind": "edit",
                    "rawInput": {"file_path": "src/main.rs"}}),
         ));
         console.apply(&event(
             "permission.replied",
             "answered",
-            json!({"option_id": "option-0", "decided_by": "rule",
-                   "label": "deny", "rule": "home_delete"}),
+            json!({"option_id": "option-0", "decided_by": "ai",
+                   "label": "allow", "danger": 0.04,
+                   "allow_threshold": 0.09, "deny_threshold": 0.63,
+                   "probabilities": {"0": 0.91, "1": 0.08, "2": 0.01}}),
         ));
         console.apply(&event("agent_message", "done", json!({"text": "done"})));
-        console.commit(&mut rule_terminal).unwrap();
-        let shown = screen(&rule_terminal);
-        assert!(shown.contains("↳ denied by rule home_delete"), "{shown}");
+        console.commit(&mut terminal).unwrap();
+        let shown = screen(&terminal);
+        assert!(
+            shown.contains("allowed by AI (allow 0.91, deny 0.01"),
+            "{shown}"
+        );
+        assert!(shown.contains("danger 0.04; allow up to 0.09"), "{shown}");
+        assert!(shown.contains("deny from 0.63)"), "{shown}");
     }
 
     #[test]
@@ -570,12 +584,16 @@ mod tests {
         asked.payload["danger"] = json!(0.41);
         asked.payload["allow_threshold"] = json!(0.2);
         asked.payload["deny_threshold"] = json!(0.8);
+        asked.payload["probabilities"] = json!({"0": 0.62, "1": 0.33, "2": 0.05});
         console.apply(&asked);
 
-        let waiting = pane(&console, 60, 12);
+        let waiting = pane(&console, 140, 12);
         let question = row_of(&waiting, "Allow this edit?").expect("the question is drawn");
         assert_eq!(
-            row_of(&waiting, "AI said ask (danger 0.41, allow 0.20, deny 0.80)"),
+            row_of(
+                &waiting,
+                "AI said ask (allow 0.62, deny 0.05, danger 0.41; allow up to 0.20, deny from 0.80)"
+            ),
             Some(question + 2),
             "the model's reason is under the head, before the options: {waiting}"
         );
@@ -599,32 +617,25 @@ mod tests {
             "the answer does not repeat it: {shown}"
         );
 
-        for (fields, expected) in [
-            (
-                json!({"label": "ask", "danger": 0.081, "cap": "credential_access"}),
-                "AI said ask (danger 0.08, capped by credential_access)",
-            ),
-            (
-                json!({"label": "deny", "rule": "home_delete"}),
-                "rule home_delete said deny",
-            ),
-        ] {
-            let mut console = Console::new(header());
-            let mut asked = asked_with(
-                "Allow this edit?",
-                &["Always Allow", "Reject"],
-                json!({"toolCallId": "edit", "kind": "edit",
-                       "rawInput": {"file_path": "src/main.rs"}}),
-            );
-            asked
-                .payload
-                .as_object_mut()
-                .unwrap()
-                .extend(fields.as_object().unwrap().clone());
-            console.apply(&asked);
-            let waiting = pane(&console, 80, 12);
-            assert!(waiting.contains(expected), "{waiting}");
-        }
+        let mut console = Console::new(header());
+        let mut asked = asked_with(
+            "Allow this edit?",
+            &["Always Allow", "Reject"],
+            json!({"toolCallId": "edit", "kind": "edit",
+                   "rawInput": {"file_path": "src/main.rs"}}),
+        );
+        asked.payload["label"] = json!("ask");
+        asked.payload["danger"] = json!(0.081);
+        asked.payload["allow_threshold"] = json!(0.09);
+        asked.payload["deny_threshold"] = json!(0.63);
+        asked.payload["probabilities"] = json!({"0": 0.82, "1": 0.16, "2": 0.02});
+        asked.payload["cap"] = json!("reviewer_directive");
+        console.apply(&asked);
+        let waiting = pane(&console, 140, 12);
+        assert!(
+            waiting.contains("capped by reviewer_directive"),
+            "{waiting}"
+        );
     }
 
     #[test]

@@ -132,8 +132,8 @@ async fn the_settings_start_at_the_defaults_with_the_interpreter_probed() {
 
     let status = status(&h).await;
     assert!(!status.enabled);
-    assert_eq!(status.allow_threshold, 0.0886);
-    assert_eq!(status.deny_threshold, 0.6256);
+    assert_eq!(status.allow_threshold, 0.0531);
+    assert_eq!(status.deny_threshold, 0.6522);
     assert_eq!(status.state, AiPermissionsState::Disabled);
     assert_eq!(status.installed_release, None);
     assert_eq!(status.latest_release, None);
@@ -703,12 +703,31 @@ async fn the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document() {
         schemas["TestAiPermissionRequest"]["properties"]["workspace"].is_object(),
         "workspace is absent from the test request"
     );
-    for field in ["operation", "risk_tags", "rule", "cap", "probabilities"] {
+    for field in ["operation", "risk_tags", "cap", "probabilities"] {
         assert!(
             schemas["TestAiPermissionResponse"]["properties"][field].is_object(),
             "{field} is absent from the test response"
         );
     }
+    assert_eq!(
+        schemas["TestAiPermissionResponse"]["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        [
+            "ai_error",
+            "allow_threshold",
+            "cap",
+            "danger",
+            "deny_threshold",
+            "label",
+            "operation",
+            "probabilities",
+            "risk_tags"
+        ]
+    );
 
     // The doctor's report carries the interpreter the AI permission model installs into.
     assert!(schemas["DaemonReportDto"]["properties"]["python"].is_object());
