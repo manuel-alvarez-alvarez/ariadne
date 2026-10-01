@@ -20,13 +20,15 @@ class EvaluatorError(RuntimeError):
 
 @dataclass(frozen=True)
 class Evaluation:
-    """The score and label of one call. `safe` is P(true) for a noul mode."""
+    """The score and label of one call. `safe` is P(true) for a noul mode. `cap` names the
+    tag that keeps the call from `allow`, `None` on a call that the model alone decides."""
 
     danger: float | None
     label: Label
     safe: float | None = None
     p_allow: float | None = None
     p_deny: float | None = None
+    cap: str | None = None
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,7 @@ class EvaluationResult:
     safe: float | None = None
     p_allow: float | None = None
     p_deny: float | None = None
+    cap: str | None = None
 
 
 class Evaluator(ABC):

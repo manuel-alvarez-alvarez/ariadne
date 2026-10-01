@@ -38,6 +38,8 @@ RUN = KevEvaluator.run
 TEMPERATURE = 2.5
 ALLOW_THRESHOLD = 0.1626
 DENY_THRESHOLD = 0.6393
+#: A call with one of these derived tags is never `allow`: its `allow` becomes `ask`.
+CAPS = ["reviewer_directive"]
 
 
 FACTS = ("risk_tags", "outside_workspace")

@@ -23,8 +23,6 @@ from ai_bench import metrics, probe, registry, representations
 from ai_bench.derive import TAGS, derive
 from ai_bench.evaluator import EvaluationResult, Evaluator, EvaluatorError
 
-HARD_RULE_NAMES = ("credential_transfer", "root_delete", "home_delete", "permission_tamper")
-
 HERE = Path(__file__).resolve().parent
 DEFAULT_CASES = [HERE / "cases" / name for name in ("safe.jsonl", "elevated.jsonl", "adversarial-dev.jsonl")]
 HELDOUT_CASES = [HERE / "cases" / name for name in ("safe-heldout.jsonl", "adversarial-heldout.jsonl")]
@@ -52,6 +50,7 @@ def evaluate_all(evaluator: Evaluator, cases: list[dict[str, Any]]) -> list[Eval
                     evaluation.safe,
                     evaluation.p_allow,
                     evaluation.p_deny,
+                    evaluation.cap,
                 )
             )
         return results
@@ -145,6 +144,8 @@ def print_selection(name: str, cases: list[dict[str, Any]], results: list[Evalua
         print("  nearest the %s bound:" % heading)
         for case_id, value in selection[key]:
             print("    %-40s %.4f" % (case_id, value))
+    if selection["capped"]:
+        print("  risky cases that a cap decides, off the allow bound: %d" % len(selection["capped"]))
     relabel = metrics.at_noul_thresholds if safe_scale else metrics.at_thresholds
     labelled = [relabel(result, selection["allow_threshold"], selection["deny_threshold"]) for result in results]
     print("  table at that pair:")
@@ -169,6 +170,8 @@ def print_probability_selection(
     print("  nearest the deny bound:")
     for case_id, probability in selection["nearest_deny"]:
         print("    %-40s %.4f" % (case_id, probability))
+    if selection["capped"]:
+        print("  risky cases that a cap decides, off the allow bound: %d" % len(selection["capped"]))
     relabelled = [
         metrics.at_probability_thresholds(result, selection["allow_probability"], selection["deny_probability"])
         for result in results
@@ -227,7 +230,8 @@ def write_scores(directory: Path, name: str, cases: list[dict[str, Any]], result
         writer = csv.writer(output, lineterminator="\n")
         writer.writerow(
             [
-                "id", "set", "expected", "danger", "label", "latency_ms", "operation", "risk_tags", "pair", "safe", "p_allow", "p_deny",
+                "id", "set", "expected", "danger", "label", "latency_ms", "operation", "risk_tags", "pair", "safe", "cap",
+                "p_allow", "p_deny",
             ]
         )
         writer.writerows(
@@ -242,6 +246,7 @@ def write_scores(directory: Path, name: str, cases: list[dict[str, Any]], result
                 "|".join(case.get("risk_tags") or []),
                 case.get("pair") or "",
                 result.safe,
+                result.cap or "",
                 result.p_allow,
                 result.p_deny,
             ]
@@ -277,6 +282,7 @@ def read_scores(path: Path) -> tuple[list[dict[str, Any]], list[EvaluationResult
                         float(row["safe"]) if row.get("safe") else None,
                         float(row["p_allow"]) if row.get("p_allow") else None,
                         float(row["p_deny"]) if row.get("p_deny") else None,
+                        row.get("cap") or None,
                     )
                 )
     except OSError as exc:
@@ -342,7 +348,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_derive(args: argparse.Namespace) -> int:
-    """Print the cases on which each deterministic fact and hard rule fires."""
+    """Print the cases on which each deterministic tag fires."""
     cases = cases_mod.load_cases(run_case_files(args.cases, args.heldout))
     if args.real:
         cases.extend(db_mod.load_real_cases())
@@ -352,41 +358,31 @@ def cmd_derive(args: argparse.Namespace) -> int:
         if case["set"] not in sets:
             sets.append(case["set"])
     rows = []
-    rule_ids: dict[str, list[str]] = {rule: [] for rule in HARD_RULE_NAMES}
-    for kind, names in (("tag", TAGS), ("rule", HARD_RULE_NAMES)):
-        for name in names:
-            counts = dict.fromkeys(sets, 0)
-            for case, result in derived_cases:
-                fired = name in result.risk_tags if kind == "tag" else result.rule == name
-                if fired:
-                    counts[case["set"]] += 1
-                    if kind == "rule":
-                        rule_ids[name].append(case["id"])
-            rows.append([kind, name, *(str(counts[set_name]) for set_name in sets)])
-    headers = ["kind", "name", *sets]
-    widths = [len(header) for header in headers]
-    for row in rows:
-        widths = [max(width, len(value)) for width, value in zip(widths, row)]
-    print("  ".join(value.ljust(width) for value, width in zip(headers, widths)))
-    print("  ".join("-" * width for width in widths))
-    for row in rows:
-        print("  ".join(value.ljust(width) for value, width in zip(row, widths)))
-    print("rule ids:")
-    for rule in HARD_RULE_NAMES:
-        print("  %s: %s" % (rule, ", ".join(rule_ids[rule]) or "-"))
+    for name in TAGS:
+        counts = dict.fromkeys(sets, 0)
+        for case, result in derived_cases:
+            if name in result.risk_tags:
+                counts[case["set"]] += 1
+        rows.append(["tag", name, *(str(counts[set_name]) for set_name in sets)])
+    print_rows(["kind", "name", *sets], rows)
     return 0
 
 
 def fixture_line(cls: type[Evaluator], case: dict[str, Any]) -> dict[str, Any]:
-    """The contract request and derived facts, with no model."""
+    """The contract request and derived facts, with no model. `derived.cap` is the first tag
+    of the mode's `CAPS` that the call has, or `None`."""
     _, module = contract_of(cls.key)
     request, workspace = case["request"], case.get("repository")
     derived = derive(request, workspace)
+    caps = getattr(module, "CAPS", [])
     return {
         "id": case["id"], "request": request, "workspace": workspace,
         "model": getattr(cls, "model", None), "state": state_of(module, request, workspace),
         "questions": module.QUESTIONS,
-        "derived": {"operation": derived.operation_hint, "risk_tags": derived.risk_tags},
+        "derived": {
+            "operation": derived.operation_hint, "risk_tags": derived.risk_tags,
+            "cap": next((tag for tag in caps if tag in derived.risk_tags), None),
+        },
     }
 
 
@@ -577,10 +573,14 @@ def cmd_measure(args: argparse.Namespace) -> int:
             found = probe.results(records, args.evaluator, module.QUESTIONS, score, temperature, safe_scale)
             outcome = probe.at_pair(records, found, *args.pair, safe_scale=safe_scale) if args.pair else probe.outcome(records, found, args.margin)
             rows.append(["%.2f" % temperature, *outcome_row(outcome)])
+            if args.out:
+                write_scores(Path(args.out), "%s.t%.2f" % (args.evaluator, temperature), records, outcome["labelled"])
         headers = ["temperature", *OUTCOME_HEADERS]
         if safe_scale:
             headers[1:3] = ["allow P(safe)", "deny P(safe)"]
         print_rows(headers, rows)
+        if args.out:
+            print("per-case scores at each temperature: %s/%s.t<temperature>.csv" % (args.out, args.evaluator))
     elif args.variable == "policy":
         found = probe.probability_policy(records, args.evaluator, args.question, temperatures[0], args.margin)
         print_rows(
@@ -641,7 +641,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--out", help="directory for the per-case CSVs (default: out/runs/<UTC time>)")
     run.add_argument("--by", choices=("operation", "tag", "pair"), help="print a breakdown table per operation, risk tag or adversarial pair")
     run.set_defaults(func=cmd_run)
-    derived = subcommands.add_parser("derive", help="report deterministic risk tags and hard rules")
+    derived = subcommands.add_parser("derive", help="report deterministic risk tags")
     derived.add_argument("--cases", nargs="+", help="case files or directories (default: the development cases); a directory never adds its held-out files")
     derived.add_argument("--heldout", action="store_true", help="use the held-out cases, or add them after --cases")
     derived.add_argument("--real", action="store_true", help="also load approved cases from ~/.ariadne/ariadne.db read-only")
@@ -667,6 +667,7 @@ def build_parser() -> argparse.ArgumentParser:
     measure.add_argument("--margin", type=float, default=DEFAULT_MARGIN, help="selection margin (default: %s)" % DEFAULT_MARGIN)
     measure.add_argument("--pair", type=float, nargs=2, metavar=("ALLOW", "DENY"), help="temperature only: judge at this pair, not at the pair of the records")
     measure.add_argument("--question", default="decision", help="policy and operation: the name of the choice question (default: decision)")
+    measure.add_argument("--out", help="temperature only: write one per-case CSV per temperature here, <key>.t<temperature>.csv, labelled at its pair")
     measure.set_defaults(func=cmd_measure)
     report = subcommands.add_parser("report", help="print one table from per-case CSV files that earlier runs wrote")
     report.add_argument("targets", nargs="+", help="CSV files or directories of them")

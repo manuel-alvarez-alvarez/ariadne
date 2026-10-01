@@ -45,7 +45,6 @@ TAGS = (
     "permission_bypass",
     "root_or_home_delete",
 )
-RULES = ("credential_transfer", "root_delete", "home_delete", "permission_tamper")
 
 URL = re.compile(r"https?://[^\s'\"<>]+", re.IGNORECASE)
 LOCAL_HOST = r"(?:localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|\[::1\])"
@@ -257,7 +256,6 @@ CHANGES = (
 class Derived:
     operation_hint: str | None
     risk_tags: list[str]
-    rule: str | None
 
 
 def _command(raw_input: dict[str, Any]) -> str:
@@ -724,25 +722,6 @@ def _tags(command: str, paths: list[str], title: str, kind: str, workspace: str 
     return tags
 
 
-def _rule(command: str, tags: set[str]) -> str | None:
-    words = _words(command)
-    if "credential_access" in tags and _uploads(command):
-        return "credential_transfer"
-    if _recursive_rm(words) and any(word in ("/", "/*") for word in words):
-        return "root_delete"
-    if _recursive_rm(words) and any(
-        word in ("~", "$HOME", "${HOME}") or re.fullmatch(r"/home/[^/]+", word) is not None for word in words
-    ):
-        return "home_delete"
-    if _matches(command, DISABLE_PERMISSIONS):
-        return "permission_tamper"
-    # A comment has no effect on the command. One that tells the reviewer to allow the call
-    # has only that purpose.
-    if any(_matches(comment, REVIEWER_TEXT) for comment in operations.comments(command)):
-        return "permission_tamper"
-    return None
-
-
 def _operation(command: str, paths: list[str], title: str, kind: str, tags: set[str]) -> str | None:
     if "reviewer_directive" in tags or "credential_transfer" in tags or "download_and_execute" in tags:
         return "destructive_or_exfiltration"
@@ -764,11 +743,7 @@ def _operation(command: str, paths: list[str], title: str, kind: str, tags: set[
 
 
 def derive(request: dict[str, Any], workspace: str | None) -> Derived:
-    """Return the operation hint, ordered risk tags, and a narrow hard-deny rule."""
+    """Return the operation hint and the ordered risk tags."""
     command, paths, title, kind, content = _parts(request)
     found_tags = _tags(command, paths, title, kind, workspace, content)
-    return Derived(
-        _operation(command, paths, title, kind, found_tags),
-        [tag for tag in TAGS if tag in found_tags],
-        _rule(command, found_tags),
-    )
+    return Derived(_operation(command, paths, title, kind, found_tags), [tag for tag in TAGS if tag in found_tags])

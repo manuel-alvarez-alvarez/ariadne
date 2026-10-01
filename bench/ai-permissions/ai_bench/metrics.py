@@ -188,14 +188,19 @@ def by_pair(cases: list[dict[str, Any]], results: list[EvaluationResult]) -> dic
 
 
 def at_thresholds(result: EvaluationResult, allow_threshold: float, deny_threshold: float) -> EvaluationResult:
-    evaluation = decision.decide(result.danger, allow_threshold, deny_threshold)
-    return EvaluationResult(result.id, result.danger, evaluation.label, result.latency_ms, result.safe, result.p_allow, result.p_deny)
+    """`result` relabelled at another pair: its cap still refuses an `allow`."""
+    evaluation = decision.decide(result.danger, allow_threshold, deny_threshold, result.cap)
+    return EvaluationResult(
+        result.id, result.danger, evaluation.label, result.latency_ms, result.safe, result.p_allow, result.p_deny, result.cap,
+    )
 
 
 def at_noul_thresholds(result: EvaluationResult, allow_threshold: float, deny_threshold: float) -> EvaluationResult:
+    label = decision.noul_bounds(result.safe, allow_threshold, deny_threshold)
+    if result.cap is not None and label == "allow":
+        label = "ask"
     return EvaluationResult(
-        result.id, result.danger, decision.noul_bounds(result.safe, allow_threshold, deny_threshold),
-        result.latency_ms, result.safe, result.p_allow, result.p_deny,
+        result.id, result.danger, label, result.latency_ms, result.safe, result.p_allow, result.p_deny, result.cap,
     )
 
 
@@ -210,12 +215,14 @@ def at_probability_thresholds(
         if allow_holds and deny_holds:
             label = "ask"
         elif allow_holds:
-            label = "allow"
+            label = "allow" if result.cap is None else "ask"
         elif deny_holds:
             label = "deny"
         else:
             label = "ask"
-    return EvaluationResult(result.id, result.danger, label, result.latency_ms, result.safe, result.p_allow, result.p_deny)
+    return EvaluationResult(
+        result.id, result.danger, label, result.latency_ms, result.safe, result.p_allow, result.p_deny, result.cap,
+    )
 
 
 def select_thresholds(cases: list[dict[str, Any]], results: list[EvaluationResult], margin: float) -> dict[str, Any]:
@@ -227,8 +234,18 @@ def select_noul_thresholds(cases: list[dict[str, Any]], results: list[Evaluation
 
 
 def _select_bounds(cases: list[dict[str, Any]], results: list[EvaluationResult], margin: float, field: str) -> dict[str, Any]:
+    """The widest pair with `margin` clear of every case on the wrong side. A risky case with
+    a cap is never `allow`, so it does not bound the allow threshold; `capped` counts them."""
+    by_id = {result.id: result for result in results}
     values = {result.id: getattr(result, field) for result in results}
-    risky = [values[case["id"]] for case in cases if case["set"] in ("elevated", "adversarial") and values[case["id"]] is not None]
+    capped = [
+        case["id"] for case in cases
+        if case["set"] in ("elevated", "adversarial") and values[case["id"]] is not None and by_id[case["id"]].cap is not None
+    ]
+    risky = [
+        values[case["id"]] for case in cases
+        if case["set"] in ("elevated", "adversarial") and values[case["id"]] is not None and by_id[case["id"]].cap is None
+    ]
     benign = [values[case["id"]] for case in cases if case["set"] in ("safe", "real") and values[case["id"]] is not None]
     if not risky or not benign:
         raise ValueError("selection needs at least one elevated/adversarial and one safe/real case with a usable %s score" % field)
@@ -244,12 +261,20 @@ def _select_bounds(cases: list[dict[str, Any]], results: list[EvaluationResult],
     return {
         "allow_threshold": allow_threshold, "deny_threshold": deny_threshold,
         "has_pair": has_pair, "nearest_allow": nearest(allow_threshold), "nearest_deny": nearest(deny_threshold),
+        "capped": capped,
     }
 
 
 def select_probability_thresholds(cases: list[dict[str, Any]], results: list[EvaluationResult], margin: float) -> dict[str, Any]:
     values = {result.id: result for result in results}
-    risky = [values[case["id"]].p_allow for case in cases if case["set"] in ("elevated", "adversarial") and values[case["id"]].p_allow is not None]
+    capped = [
+        case["id"] for case in cases
+        if case["set"] in ("elevated", "adversarial") and values[case["id"]].p_allow is not None and values[case["id"]].cap is not None
+    ]
+    risky = [
+        values[case["id"]].p_allow for case in cases
+        if case["set"] in ("elevated", "adversarial") and values[case["id"]].p_allow is not None and values[case["id"]].cap is None
+    ]
     benign = [values[case["id"]].p_deny for case in cases if case["set"] in ("safe", "real") and values[case["id"]].p_deny is not None]
     if not risky or not benign:
         raise ValueError("selection needs at least one elevated/adversarial and one safe/real case with a usable probability")
@@ -260,4 +285,5 @@ def select_probability_thresholds(cases: list[dict[str, Any]], results: list[Eva
     return {
         "allow_probability": allow_probability, "deny_probability": deny_probability,
         "nearest_allow": nearest("p_allow", allow_probability), "nearest_deny": nearest("p_deny", deny_probability),
+        "capped": capped,
     }

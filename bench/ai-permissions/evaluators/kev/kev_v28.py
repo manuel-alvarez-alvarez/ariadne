@@ -47,8 +47,10 @@ LEVELS = ['allow, routine development work whose effects stay in the development
 QUESTIONS = {"decision": {"type": "score", "instructions": QUESTION, "criteria": LEVELS}}
 RUN = KevEvaluator.run
 TEMPERATURE = 0.6
-ALLOW_THRESHOLD = 0.0886
-DENY_THRESHOLD = 0.6256
+ALLOW_THRESHOLD = 0.0531
+DENY_THRESHOLD = 0.6522
+#: A call with one of these derived tags is never `allow`: its `allow` becomes `ask`.
+CAPS = ["reviewer_directive"]
 
 
 FACTS = ("risk_tags", "outside_workspace")

@@ -11,6 +11,7 @@ import gc
 from typing import Any, ClassVar
 
 from ai_bench import decision
+from ai_bench.derive import derive
 from ai_bench.evaluator import Evaluation, Evaluator, EvaluatorError
 
 
@@ -90,20 +91,25 @@ class KevEvaluator(Evaluator):
 
 
 def evaluate_contract(evaluator: KevEvaluator, contract: Any, case: dict[str, Any]) -> Evaluation:
-    """Ask one contract question and apply its score or noul bounds."""
+    """Ask one contract question, apply its score or noul bounds, then its `CAPS`: a tag of
+    `CAPS` on the call keeps it from `allow`."""
     request, workspace = case["request"], case.get("repository")
     answer = evaluator.answer(contract.state(request, workspace), contract.QUESTIONS)
     if contract.QUESTIONS["decision"]["type"] == "noul":
         safe = contract.safe(answer)
-        return Evaluation(
+        evaluation = Evaluation(
             None if safe is None else 1.0 - safe,
             decision.noul_bounds(safe, contract.ALLOW_THRESHOLD, contract.DENY_THRESHOLD),
             safe=safe,
         )
-    return decision.three_way(contract.danger(answer), contract.ALLOW_THRESHOLD, contract.DENY_THRESHOLD)
+    else:
+        evaluation = decision.three_way(contract.danger(answer), contract.ALLOW_THRESHOLD, contract.DENY_THRESHOLD)
+    return decision.capped(evaluation, derive(request, workspace).risk_tags, getattr(contract, "CAPS", []))
 
 
 def evaluate_probability_contract(evaluator: KevEvaluator, contract: Any, case: dict[str, Any]) -> Evaluation:
+    """Ask one contract question, let `contract.decision` label the answer, then apply its
+    `CAPS` as `evaluate_contract` does."""
     request, workspace = case["request"], case.get("repository")
     answer = evaluator.answer(contract.state(request, workspace), contract.QUESTIONS)
-    return contract.decision(answer)
+    return decision.capped(contract.decision(answer), derive(request, workspace).risk_tags, getattr(contract, "CAPS", []))
