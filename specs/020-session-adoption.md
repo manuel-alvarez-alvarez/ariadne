@@ -1,7 +1,7 @@
 ---
 id: outside-session-resume
 status: current
-updated: 2026-09-25
+updated: 2026-10-02
 areas: [api, daemon, store]
 commits: []
 tests:
@@ -11,6 +11,7 @@ tests:
   - crates/ariadne-daemon/tests/it/stored_conversations.rs
   - crates/ariadne-daemon/tests/it/stored_conversations_opencode.rs
   - crates/ariadne-daemon/src/stored_conversations.rs
+  - crates/ariadne-daemon/src/acp_sessions.rs
   - crates/ariadne-store/tests/store.rs
 ---
 
@@ -47,11 +48,19 @@ The ACP runtime belongs to 021.
    in-memory snapshot of every agent's stored sessions and the moment it was
    taken, resumed ones included, over both sources (items 17 and 18); nothing
    of it is written to disk. The
-   snapshot is taken on the first listing request, again when a request
-   carries `refresh=true`, and again when it is older than 60 seconds at
-   request time. A request inside that minute asks no agent, and neither
-   does a request no outside session can answer: `kind=ariadne`, or one
-   narrowed by a goal, task, status, seat or attention.
+   daemon takes the first snapshot in the background when it starts, once
+   its first discovery has run; a request that comes while it is taken
+   waits for it. The snapshot is taken again when a request carries
+   `refresh=true`, and again when it is older than 60 seconds at request
+   time. A request inside that minute asks no agent, and neither does a
+   request no outside session can answer: `kind=ariadne`, or one narrowed
+   by a goal, task, status, seat or attention.
+   A snapshot asks the agents over `session/list` and reads the disk at the
+   same time. Requests that find the snapshot stale together wait for one
+   refresh, so each agent is asked once; a `refresh=true` request takes a
+   snapshot started after it came. A refresh holds up no request that
+   reads a fresh snapshot, and no request no outside session can answer:
+   that one reads the snapshot as it stands.
 3. A session whose agent and internal id already occur on an Ariadne session
    row is not an outside session and is never listed. A row's agent is read
    off its `model` column, which always holds `<agent>:<model>`. The rows
@@ -226,6 +235,18 @@ The ACP runtime belongs to 021.
 - A request no outside session can answer asks no agent, even with
   `refresh=true`
   (`session_list.rs::a_page_with_no_room_for_an_outside_session_asks_no_agent`).
+- The first `kind=outside` request after start and discovery reads the
+  snapshot taken at start and asks no agent again
+  (`session_list.rs::the_first_outside_request_after_start_reads_the_warm_snapshot`),
+  and a request that comes while that snapshot is taken waits for it and
+  takes no second one
+  (`::a_request_during_the_start_snapshot_waits_for_it`).
+- A `kind=ariadne` request returns while an outside refresh still runs
+  (`session_list.rs::an_ariadne_page_returns_while_an_outside_refresh_runs`).
+- Requests that find the snapshot stale together ask each agent once
+  (`session_list.rs::concurrent_stale_requests_ask_each_agent_once`).
+- A snapshot asks the agents and reads the disk at the same time
+  (`crates/ariadne-daemon/src/acp_sessions.rs::tests::the_two_sources_are_asked_at_the_same_time`).
 - A resumed outside session is in the page once, as an Ariadne session, and
   without a refresh
   (`session_list.rs::a_resumed_outside_session_is_listed_once_as_an_ariadne_session`).

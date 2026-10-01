@@ -14,6 +14,7 @@
 
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -78,6 +79,9 @@ pub(crate) struct Snapshot {
     taken_at: DateTime<Utc>,
     /// The same moment, monotonic, for the age.
     taken: Instant,
+    /// When the agents were first asked for it, for a `refresh` that came
+    /// while it was being taken.
+    started: Instant,
 }
 
 impl Snapshot {
@@ -105,7 +109,12 @@ impl Snapshot {
 /// the disk.
 #[derive(Clone)]
 pub struct OutsideSessions {
-    snapshot: Arc<Mutex<Option<Arc<Snapshot>>>>,
+    /// The snapshot as it stands. It is locked only to read or to replace it,
+    /// never while one is taken, so a refresh holds up no reader.
+    snapshot: Arc<std::sync::Mutex<Option<Arc<Snapshot>>>>,
+    /// Held while a snapshot is taken: requests that find it stale together
+    /// wait here for the one refresh.
+    refreshing: Arc<Mutex<()>>,
     pub(crate) resumes: Arc<Mutex<()>>,
     /// The second source: the conversations the agents left on disk.
     readers: Arc<DiskConversations>,
@@ -123,6 +132,7 @@ impl OutsideSessions {
     pub fn with_transcripts(homes: &TranscriptHomes) -> Self {
         Self {
             snapshot: Arc::default(),
+            refreshing: Arc::default(),
             resumes: Arc::default(),
             readers: Arc::new(DiskConversations::new(homes)),
         }
@@ -133,26 +143,56 @@ impl OutsideSessions {
         &self.readers
     }
 
+    /// Take the first snapshot in the background, for a daemon whose
+    /// discovery has just run. The refresh is held before this returns, so a
+    /// request that comes while it runs waits for it rather than taking a
+    /// second one.
+    pub async fn warm(&self, registry: &AgentRegistry) {
+        let refreshing = self.refreshing.clone().lock_owned().await;
+        let (outside, registry) = (self.clone(), registry.clone());
+        tokio::spawn(async move {
+            let _refreshing = refreshing;
+            outside.take(&registry).await;
+        });
+    }
+
     /// The snapshot as it stands, or a new one where there is none yet, where
     /// `refresh` asks for one, or where the current one is older than
     /// [`SNAPSHOT_MAX_AGE`]. Requests that find it stale together wait on
-    /// one another, so each agent is asked once for the lot.
+    /// one refresh, so each agent is asked once for the lot; a `refresh`
+    /// takes only a snapshot started after it was asked.
     pub(crate) async fn snapshot(&self, registry: &AgentRegistry, refresh: bool) -> Arc<Snapshot> {
-        let mut current = self.snapshot.lock().await;
-        if let Some(snapshot) = current.as_ref()
-            && !refresh
-            && snapshot.taken.elapsed() < SNAPSHOT_MAX_AGE
-        {
-            return snapshot.clone();
+        let asked = Instant::now();
+        let usable = |snapshot: &Arc<Snapshot>| {
+            snapshot.taken.elapsed() < SNAPSHOT_MAX_AGE && (!refresh || snapshot.started >= asked)
+        };
+        if let Some(snapshot) = self.current().filter(usable) {
+            return snapshot;
         }
-        let listed = registry.stored_sessions().await;
+        let _refreshing = self.refreshing.lock().await;
+        // The refresh this request waited on may have answered it already.
+        if let Some(snapshot) = self.current().filter(usable) {
+            return snapshot;
+        }
+        self.take(registry).await
+    }
+
+    /// A new snapshot, over both sources at once, in place of the current one.
+    async fn take(&self, registry: &AgentRegistry) -> Arc<Snapshot> {
+        let started = Instant::now();
+        let sessions = gather(registry.stored_sessions(), self.disk_sessions(registry)).await;
         let snapshot = Arc::new(Snapshot {
-            sessions: merge(listed, self.disk_sessions(registry).await),
+            sessions,
             taken_at: Utc::now(),
             taken: Instant::now(),
+            started,
         });
-        *current = Some(snapshot.clone());
+        *self.snapshot.lock().expect("the snapshot lock") = Some(snapshot.clone());
         snapshot
+    }
+
+    fn current(&self) -> Option<Arc<Snapshot>> {
+        self.snapshot.lock().expect("the snapshot lock").clone()
     }
 
     /// The conversations on disk of every agent this daemon has, read off the
@@ -181,17 +221,27 @@ impl OutsideSessions {
 
     /// The snapshot as it stands, however old, or an empty one where none
     /// has been taken yet — for a page no outside session can be in, which
-    /// has no reason to ask an agent anything.
-    pub(crate) async fn cached(&self) -> Arc<Snapshot> {
-        if let Some(snapshot) = self.snapshot.lock().await.as_ref() {
-            return snapshot.clone();
-        }
-        Arc::new(Snapshot {
-            sessions: Vec::new(),
-            taken_at: Utc::now(),
-            taken: Instant::now(),
+    /// has no reason to ask an agent anything, or to wait for a refresh.
+    pub(crate) fn cached(&self) -> Arc<Snapshot> {
+        self.current().unwrap_or_else(|| {
+            Arc::new(Snapshot {
+                sessions: Vec::new(),
+                taken_at: Utc::now(),
+                taken: Instant::now(),
+                started: Instant::now(),
+            })
         })
     }
+}
+
+/// Both sources, asked at the same time, as one: what the agents answer over
+/// ACP and what they left on disk. Neither waits for the other.
+async fn gather(
+    listed: impl Future<Output = Vec<OutsideSessionDto>>,
+    disk: impl Future<Output = Vec<OutsideSessionDto>>,
+) -> Vec<OutsideSessionDto> {
+    let (listed, disk) = tokio::join!(listed, disk);
+    merge(listed, disk)
 }
 
 /// The two sources as one: every session `listed` over ACP, and every one on
@@ -580,5 +630,47 @@ impl Cursor {
     fn decode(cursor: &str) -> Option<Self> {
         let bytes = URL_SAFE_NO_PAD.decode(cursor).ok()?;
         serde_json::from_slice(&bytes).ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(id: &str) -> OutsideSessionDto {
+        OutsideSessionDto {
+            agent_id: "agent".into(),
+            internal_session_id: id.into(),
+            working_directory: "/work".into(),
+            last_activity_at: "2026-01-01T00:00:00.000Z".into(),
+            first_prompt: id.into(),
+        }
+    }
+
+    /// The two sources are asked at the same time: each waits at a barrier
+    /// only the other can lift, so one asked after the other never ends.
+    #[tokio::test]
+    async fn the_two_sources_are_asked_at_the_same_time() {
+        let barrier = tokio::sync::Barrier::new(2);
+        let source = |id: &'static str| {
+            let barrier = &barrier;
+            async move {
+                barrier.wait().await;
+                vec![row(id)]
+            }
+        };
+
+        let sessions = tokio::time::timeout(
+            Duration::from_secs(30),
+            gather(source("listed"), source("disk")),
+        )
+        .await
+        .expect("both sources to answer");
+
+        let ids: Vec<&str> = sessions
+            .iter()
+            .map(|session| session.internal_session_id.as_str())
+            .collect();
+        assert_eq!(ids, ["listed", "disk"]);
     }
 }

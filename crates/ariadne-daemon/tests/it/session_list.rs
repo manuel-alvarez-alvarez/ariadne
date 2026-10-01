@@ -609,6 +609,113 @@ async fn a_second_request_asks_no_agent_again_but_a_refresh_does() {
     assert_eq!(stub.calls_of("session/list").len(), 2);
 }
 
+/// A stub that lists [`five_sessions`] once the file `marker` exists, and a
+/// harness that waits on it as long as a test can.
+async fn held_listing(dir: &std::path::Path, marker: &std::path::Path) -> (StubAcpAgent, Harness) {
+    let mut setup = listing_script(five_sessions(Utc::now()), None);
+    setup["session_list_wait_for"] = json!(marker.to_str().unwrap());
+    let stub = stub_acp_agent(dir, setup);
+    let h = harness_waiting(
+        &stub,
+        Timeouts {
+            probe: common::TIMEOUT,
+            ..Timeouts::default()
+        },
+    )
+    .await;
+    (stub, h)
+}
+
+/// Wait until the stub has been asked for its list `count` times.
+async fn listed_times(stub: &StubAcpAgent, count: usize) {
+    common::eventually(
+        common::TIMEOUT,
+        "the agent to be asked for its list",
+        || async { stub.calls_of("session/list").len() >= count },
+    )
+    .await;
+}
+
+/// The snapshot the daemon takes at start, once discovery has run, answers
+/// the first `kind=outside` request: no agent is asked again.
+#[tokio::test]
+async fn the_first_outside_request_after_start_reads_the_warm_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(dir.path(), listing_script(five_sessions(Utc::now()), None));
+    let h = harness_with(&stub).await;
+
+    h.state.outside_sessions.warm(&h.state.agent_registry).await;
+    listed_times(&stub, 1).await;
+    let page = listing(&h, "kind=outside").await;
+
+    assert_eq!(ids(&page), ["s5", "s4", "s3", "s2", "s1"]);
+    assert_eq!(stub.calls_of("session/list").len(), 1);
+}
+
+/// A request that comes while the start snapshot is still being taken waits
+/// for it, and takes no second one.
+#[tokio::test]
+async fn a_request_during_the_start_snapshot_waits_for_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join("list");
+    let (stub, h) = held_listing(dir.path(), &marker).await;
+
+    h.state.outside_sessions.warm(&h.state.agent_registry).await;
+    let (page, ()) = tokio::join!(listing(&h, "kind=outside"), async {
+        listed_times(&stub, 1).await;
+        std::fs::write(&marker, "").unwrap();
+    });
+
+    assert_eq!(ids(&page), ["s5", "s4", "s3", "s2", "s1"]);
+    assert_eq!(stub.calls_of("session/list").len(), 1);
+}
+
+/// A `kind=ariadne` request does not wait for an outside refresh. The agent
+/// holds its list until the Ariadne page has come back, so the outside page
+/// has the agent's sessions only where the Ariadne one came first.
+#[tokio::test]
+async fn an_ariadne_page_returns_while_an_outside_refresh_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join("list");
+    let (stub, h) = held_listing(dir.path(), &marker).await;
+    let session = ariadne_session(&h, "Ship the UI", "stub").await;
+
+    let (outside, ariadne) = tokio::join!(listing(&h, "kind=outside"), async {
+        listed_times(&stub, 1).await;
+        let page = listing(&h, "kind=ariadne").await;
+        std::fs::write(&marker, "").unwrap();
+        page
+    });
+
+    assert_eq!(ids(&ariadne), [session.id.as_str()]);
+    assert_eq!(ids(&outside), ["s5", "s4", "s3", "s2", "s1"]);
+}
+
+/// Requests that find no snapshot together share one refresh: the agent is
+/// asked once for all of them.
+#[tokio::test]
+async fn concurrent_stale_requests_ask_each_agent_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join("list");
+    let (stub, h) = held_listing(dir.path(), &marker).await;
+
+    let (first, second, third, ()) = tokio::join!(
+        listing(&h, "kind=outside"),
+        listing(&h, "kind=outside"),
+        listing(&h, ""),
+        async {
+            listed_times(&stub, 1).await;
+            std::fs::write(&marker, "").unwrap();
+        }
+    );
+
+    assert_eq!(stub.calls_of("session/list").len(), 1);
+    for page in [&first, &second, &third] {
+        assert_eq!(ids(page), ["s5", "s4", "s3", "s2", "s1"]);
+        assert_eq!(page.snapshot_at, first.snapshot_at);
+    }
+}
+
 /// A page no outside session can be in — one kind of Ariadne's, or narrowed
 /// by a goal, task, status, seat or attention — asks no agent for one.
 #[tokio::test]

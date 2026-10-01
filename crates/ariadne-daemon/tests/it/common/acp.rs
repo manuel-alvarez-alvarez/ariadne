@@ -15,7 +15,8 @@
 //! after `session/new`, and `between_turn_updates` sends once a test creates
 //! its marker file — and the stored sessions a load or resume finds, which
 //! `session/list` answers whole, or `session_page_size` at a time behind a `nextCursor` — and never
-//! answers a page from `session_list_stall_from` on, and how long the agent
+//! answers a page from `session_list_stall_from` on, nor any before the file
+//! `session_list_wait_for` names exists, and how long the agent
 //! takes to come up at all (`start_delay`, in seconds). With `writer_child`
 //! it is codex-acp's shape: the conversation is written by a child process
 //! the agent starts, which outlives the agent by [`WRITER_LINGER_SECS`]
@@ -502,6 +503,10 @@ def respond(request):
     if method == "session/close":
         return {}
     if method == "session/list":
+        # An agent that holds its list until the test lets it go.
+        marker = script.get("session_list_wait_for")
+        while marker and not os.path.exists(marker):
+            time.sleep(0.01)
         sessions = script.get("session_list", [])
         size = script.get("session_page_size")
         if not size:

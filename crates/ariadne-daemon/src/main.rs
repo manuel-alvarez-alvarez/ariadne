@@ -152,6 +152,10 @@ async fn main() -> Result<()> {
         config.prevent_sleep,
         ariadne_daemon::timeouts::Timeouts::default(),
     );
+    let outside_sessions = ariadne_daemon::acp_sessions::OutsideSessions::from_env();
+    // The first listing then finds the snapshot taken, or being taken, rather
+    // than asking every agent itself.
+    outside_sessions.warm(&agent_registry).await;
     let state = AppState {
         store,
         started_at: Instant::now(),
@@ -161,7 +165,7 @@ async fn main() -> Result<()> {
         events,
         logs,
         agent_registry,
-        outside_sessions: ariadne_daemon::acp_sessions::OutsideSessions::from_env(),
+        outside_sessions,
         ai_permissions,
     };
     let ai_permissions_shutdown = state.ai_permissions.clone();

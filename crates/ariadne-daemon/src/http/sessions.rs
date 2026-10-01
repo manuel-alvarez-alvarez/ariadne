@@ -140,7 +140,7 @@ pub(super) async fn list(
             .snapshot(&state.agent_registry, q.refresh.unwrap_or(false))
             .await
     } else {
-        state.outside_sessions.cached().await
+        state.outside_sessions.cached()
     };
     let page = crate::acp_sessions::page(
         &snapshot,
