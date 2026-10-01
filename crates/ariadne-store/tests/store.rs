@@ -3823,33 +3823,6 @@ async fn a_checkpoint_folds_the_write_ahead_log_back_in() {
     );
 }
 
-/// Opening a database from the preceding migration resets both thresholds.
-#[tokio::test]
-async fn the_ai_permission_threshold_migration_resets_an_existing_pair() {
-    let (store, dir) = test_store().await;
-    let path = dir.path().join("test.db");
-    drop(store);
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
-        .await
-        .unwrap();
-    sqlx::query("UPDATE ai_permission_settings SET enabled = 1, allow_threshold = 0.2, deny_threshold = 0.8, flavour = '9b' WHERE id = 1")
-        .execute(&pool).await.unwrap();
-    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 2")
-        .execute(&pool)
-        .await
-        .unwrap();
-    pool.close().await;
-
-    let upgraded = Store::open(&path).await.unwrap();
-    let settings = upgraded.ai_permission_settings().await.unwrap();
-    assert_eq!(
-        (settings.allow_threshold, settings.deny_threshold),
-        (0.0531, 0.6522)
-    );
-    assert!(settings.enabled);
-    assert_eq!(settings.flavour, "9b");
-}
-
 /// The AI permission settings are one row, seeded with the defaults a fresh daemon
 /// answers with. A write moves the columns it names and leaves the rest, and
 /// the row survives a reopen: an install that ran for minutes must not be

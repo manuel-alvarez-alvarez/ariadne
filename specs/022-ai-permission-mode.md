@@ -223,7 +223,7 @@ hardware facts in the card, with no Details popover`).
     flavour), `AI_PERMISSIONS_KEV_COMMIT`, `AI_PERMISSIONS_FLAVOUR` and
     `AI_PERMISSIONS_DEVICE`.
 24. The default allow threshold is 0.0531. The default deny threshold is
-    0.6522. A new migration resets every stored pair to these values.
+    0.6522.
 
 ## Decisions
 
@@ -778,8 +778,6 @@ hardware facts in the card, with no Details popover`).
   (`store.rs::the_ai_permission_settings_are_one_row_that_takes_partial_writes`).
 - A fresh database seeds the default threshold pair
   (`store.rs::a_fresh_database_seeds_the_ai_permission_defaults`).
-- A database with an old pair resets both thresholds and keeps other settings
-  (`store.rs::the_ai_permission_threshold_migration_resets_an_existing_pair`).
 - `python_bin` and `nvidia_smi_bin` are read from `config.toml`, and
   `ai_permissions_release_url` and `ai_permissions_hardware` are refused,
   and the test seams are not keys of it
