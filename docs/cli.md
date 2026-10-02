@@ -296,6 +296,9 @@ replacement draws plain instead.
 | Shift+Enter, Alt+Enter, Ctrl-J | Starts a new line without sending. Shift+Enter needs a terminal that reports it through the kitty keyboard protocol; Alt+Enter and Ctrl-J work in every terminal |
 | `\` then Enter | Removes the final backslash and starts a new line without sending |
 | ↑, ↓ | Moves by a wrapped row; at the first or last row, moves through prompt history |
+| Home | Moves to the start of the line |
+| End | Moves to the end of the line |
+| Delete | Deletes the character after the cursor |
 | Ctrl-A, Ctrl-E | Moves to the start or the end of the line |
 | Ctrl-U, Ctrl-K | Deletes to the start or the end of the line |
 | Ctrl-W | Deletes the word before the cursor |
@@ -346,7 +349,7 @@ every turn it ever ran; during `--follow`, `--kind` also narrows new events.
 Use `ariadne session send <session-id> "Please explain the failure"`
 when a script or a one-line response is enough. When a session is waiting on a
 permission request, the console shows the call it asks about — its head line,
-and the whole command or the diff under it — and then its choices; pick one
+the rest of the command or the diff under it — and then its choices; pick one
 with the arrow keys or its number key. See
 [Permission modes](permissions.md).
 
@@ -354,7 +357,6 @@ with the arrow keys or its number key. See
 ─ permission ───────────────────────────────────
 Bash
 ○ $ cargo build
-    cargo build
     cargo nextest run
 ❯ 1. Allow
   2. Reject

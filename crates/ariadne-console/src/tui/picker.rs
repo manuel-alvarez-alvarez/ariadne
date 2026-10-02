@@ -158,10 +158,16 @@ fn body(tool: &Tool, width: usize, fold: usize) -> Vec<Line<'static>> {
         && command.lines().count() > 1
     {
         lines.extend(folded_top(
-            wrap(command.trim_end(), width.saturating_sub(4))
-                .into_iter()
-                .map(|line| Line::from(vec![Span::raw("    "), Span::styled(line, DIM)]))
-                .collect(),
+            wrap(
+                command
+                    .split_once('\n')
+                    .map_or(command.as_str(), |(_, rest)| rest)
+                    .trim_end(),
+                width.saturating_sub(4),
+            )
+            .into_iter()
+            .map(|line| Line::from(vec![Span::raw("    "), Span::styled(line, DIM)]))
+            .collect(),
             fold,
         ));
     }
@@ -293,6 +299,30 @@ mod tests {
             row_of(&shown, "-fn a() {}") < row_of(&shown, "+fn b() {}")
                 && row_of(&shown, "+fn b() {}") < row_of(&shown, "❯ 1. Reject"),
             "the diff is above the options: {shown}"
+        );
+    }
+
+    #[test]
+    fn a_two_line_execute_command_draws_the_first_line_once_in_the_head() {
+        let mut console = Console::new(header());
+        let mut terminal = terminal();
+        console.apply(&event(
+            "permission_request",
+            "Permission requested for Bash",
+            json!({"tool_name": "Bash",
+                   "acp": {"toolCallId": "run", "kind": "execute",
+                           "rawInput": {"command": "cargo build\ncargo nextest run"}},
+                   "options": [{"optionId": "no", "name": "Reject"},
+                               {"optionId": "yes", "name": "Allow"}]}),
+        ));
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        let shown = screen(&terminal);
+
+        assert_eq!(shown.matches("cargo build").count(), 1, "{shown}");
+        assert_eq!(shown.matches("cargo nextest run").count(), 1, "{shown}");
+        assert!(
+            row_of(&shown, "○ $ cargo build") < row_of(&shown, "    cargo nextest run"),
+            "the command body follows its head: {shown}"
         );
     }
 

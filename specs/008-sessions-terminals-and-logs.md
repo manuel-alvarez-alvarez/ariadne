@@ -512,8 +512,9 @@ goal id to a seat (014).
     own otherwise. The terminal is in bracketed paste, so a paste arrives as
     one event: it goes into the box at the cursor with its line breaks kept,
     and sends nothing until Enter. The box has the shell's line-editing keys:
-    Ctrl-A and Ctrl-E to the start and the end of the line, Ctrl-U and Ctrl-K
-    deleting to them, Ctrl-W deleting the word before the cursor, and
+    Home and End, or Ctrl-A and Ctrl-E, to the start and the end of the line,
+    Delete deleting after the cursor, Ctrl-U and Ctrl-K deleting to them,
+    Ctrl-W deleting the word before the cursor, and
     Alt-Left and Alt-Right — or Alt-B and Alt-F, which is what a terminal
     that sends the readline sequences for them gives — moving by word.
     Ctrl-O toggles the console's fold state, folded or whole, for the rest of
@@ -1055,6 +1056,9 @@ goal id to a seat (014).
   (`::enter_posts_the_permission_option_the_picker_is_on`), without consuming
   a trailing input backslash
   (`ariadne-console/tui/input.rs::permission_enter_keeps_a_trailing_backslash_for_the_input`).
+- A two-line execute command draws its first line once in the head and its
+  second line in the body
+  (`ariadne-console/tui/picker.rs::a_two_line_execute_command_draws_the_first_line_once_in_the_head`).
 - A question with a diff of 200 lines in a room of 12 rows shows the question,
   both rules and each option
   (`ariadne-console/tui/picker.rs::a_question_with_a_long_diff_shows_the_question_both_rules_and_each_option_in_twelve_rows`).
