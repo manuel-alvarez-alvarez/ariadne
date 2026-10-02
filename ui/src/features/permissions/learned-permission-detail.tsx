@@ -15,6 +15,7 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
+import { toast } from "sonner"
 
 import type { LearnedPermissionDto } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
@@ -23,15 +24,22 @@ import { Fact, FactList } from "@/components/fact-list"
 import { PanelSheet } from "@/components/panel-sheet"
 import { StatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { When } from "@/components/when"
 import { permissionModeLabel } from "@/features/repositories/permission-modes"
 import { repositoriesQueryOptions } from "@/features/repositories/queries"
-import { shortId } from "@/lib/format"
+import { describeError, shortId } from "@/lib/format"
 
 import { AI_LABEL_TEXT, AI_LABEL_TONE, parseAiOutput } from "./ai-output"
-import { learnedPermissionQueryOptions } from "./queries"
+import { learnedPermissionQueryOptions, useUpdateLearnedPermission } from "./queries"
 import { selectedOptionInfo } from "./request-summary"
 
 const OUTCOME_TONE = {
@@ -70,6 +78,7 @@ export function LearnedPermissionDetail({ id, onClose }: { id: string; onClose: 
 
 function LearnedPermissionDetailView({ learned }: { learned: LearnedPermissionDto }) {
   const repositories = useQuery(repositoriesQueryOptions())
+  const update = useUpdateLearnedPermission()
 
   const repositoryPath =
     repositories.data?.find((repository) => repository.id === learned.repository_id)?.path ??
@@ -93,6 +102,53 @@ function LearnedPermissionDetailView({ learned }: { learned: LearnedPermissionDt
         </Fact>
         <Fact label="Tool">
           <span className="font-mono text-xs">{learned.tool_name}</span>
+        </Fact>
+        <Fact label="Level" className="capitalize">
+          {learned.level}
+        </Fact>
+        <Fact label="Family">
+          <span className="font-mono text-xs">{learned.family}</span>
+        </Fact>
+        <Fact label="Key" className="sm:col-span-2">
+          <span className="break-all font-mono text-xs">{learned.key}</span>
+        </Fact>
+        <Fact label="Risk tags" className="sm:col-span-2">
+          {learned.risk_tags.length > 0 ? (
+            <span className="flex flex-wrap gap-1">
+              {learned.risk_tags.map((tag) => (
+                <Badge key={tag} variant="outline">
+                  {tag}
+                </Badge>
+              ))}
+            </span>
+          ) : (
+            "—"
+          )}
+        </Fact>
+        <Fact label="Scope">
+          <Select
+            value={learned.scope}
+            onValueChange={(scope) => {
+              update.mutate(
+                { id: learned.id, body: { scope: scope as "repository" | "all" } },
+                {
+                  onError: (error) =>
+                    toast.error("Could not update scope", { description: describeError(error) }),
+                },
+              )
+            }}
+            disabled={update.isPending}
+          >
+            <SelectTrigger aria-label="Scope" size="sm">
+              <SelectValue>
+                {learned.scope === "all" ? "All repositories" : "This repository"}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="repository">This repository</SelectItem>
+              <SelectItem value="all">All repositories</SelectItem>
+            </SelectContent>
+          </Select>
         </Fact>
         <Fact label="Target">{permissionModeLabel(learned.target)}</Fact>
         <Fact label="Selected option">

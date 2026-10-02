@@ -20,10 +20,12 @@
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query"
 import {
   api,
+  cacheRow,
   dropRow,
   qk,
   type TestAiPermissionRequest,
   type UpdateAiPermissionsRequest,
+  type UpdateLearnedPermissionRequest,
   unwrap,
 } from "@/api"
 
@@ -80,6 +82,21 @@ export function learnedPermissionQueryOptions(id: string) {
   return queryOptions({
     queryKey: qk.learnedPermissions.detail(id),
     queryFn: () => unwrap(api().GET("/v1/permissions/learned/{id}", { params: { path: { id } } })),
+  })
+}
+
+/** `PUT /v1/permissions/learned/{id}` — change only where this row answers. */
+export function useUpdateLearnedPermission() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: UpdateLearnedPermissionRequest }) =>
+      unwrap(
+        api().PUT("/v1/permissions/learned/{id}", {
+          params: { path: { id } },
+          body,
+        }),
+      ),
+    onSuccess: (row) => cacheRow(queryClient, qk.learnedPermissions, row),
   })
 }
 

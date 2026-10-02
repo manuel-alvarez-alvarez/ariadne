@@ -7,7 +7,7 @@
       "name": "Apache-2.0",
       "identifier": "Apache-2.0"
     },
-    "version": "0.9.0"
+    "version": "0.10.0"
   },
   "paths": {
     "/v1/acp-agents": {
@@ -1144,6 +1144,51 @@
             }
           },
           "404": {
+            "description": ""
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "permissions"
+        ],
+        "summary": "Widen or narrow a learned row: the only write a person makes on one.",
+        "operationId": "update_learned",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLearnedPermissionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearnedPermissionDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          },
+          "422": {
             "description": ""
           }
         }
@@ -4044,11 +4089,16 @@
       },
       "LearnedPermissionDto": {
         "type": "object",
-        "description": "One user choice or denial of an ACP permission request, keyed by the\nrepository, the tool name and the canonical `rawInput`.",
+        "description": "One user choice or denial of an ACP permission request, keyed by the\nrepository, the tool name, the level and the normalized input.",
         "required": [
           "id",
           "repository_id",
           "tool_name",
+          "key",
+          "level",
+          "family",
+          "risk_tags",
+          "scope",
           "tool_call",
           "options",
           "selected_option",
@@ -4061,8 +4111,21 @@
           "created_at": {
             "type": "string"
           },
+          "family": {
+            "type": "string",
+            "description": "The command family of a `Bash` request, such as `git rebase`, else\nthe tool name.",
+            "example": "git rebase"
+          },
           "id": {
             "type": "string"
+          },
+          "key": {
+            "type": "string",
+            "description": "The kept fields of `rawInput` as compact JSON with sorted keys, its\none-time values replaced by placeholders such as `<HASH>`.",
+            "example": "{\"command\":\"git rebase main\"}"
+          },
+          "level": {
+            "$ref": "#/components/schemas/LearnedPermissionLevel"
           },
           "options": {
             "description": "The ACP `options`."
@@ -4072,6 +4135,16 @@
           },
           "repository_id": {
             "type": "string"
+          },
+          "risk_tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The derived risk tags of the request. The row answers only a request\nwhose tags are all among them."
+          },
+          "scope": {
+            "$ref": "#/components/schemas/LearnedPermissionScope"
           },
           "selected_option": {
             "type": "string",
@@ -4093,6 +4166,23 @@
             "type": "string"
           }
         }
+      },
+      "LearnedPermissionLevel": {
+        "type": "string",
+        "description": "How much of a request a learned permission answers for.",
+        "enum": [
+          "once",
+          "command",
+          "family"
+        ]
+      },
+      "LearnedPermissionScope": {
+        "type": "string",
+        "description": "Where a learned permission answers.",
+        "enum": [
+          "repository",
+          "all"
+        ]
       },
       "LearnedPermissionTarget": {
         "type": "string",
@@ -5517,6 +5607,19 @@
                 "description": "A flavour with no device picks the best device that runs it."
               }
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateLearnedPermissionRequest": {
+        "type": "object",
+        "description": "Widen a row to every repository, or narrow it back to its own.",
+        "required": [
+          "scope"
+        ],
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/LearnedPermissionScope"
           }
         },
         "additionalProperties": false

@@ -73,6 +73,10 @@ const OUTCOME_TONE = {
 
 const COLUMNS = [
   { header: "Tool" },
+  { header: "Level" },
+  { header: "Family" },
+  { header: "Key" },
+  { header: "Scope" },
   { header: "Target" },
   { header: "Selected option" },
   { header: "AI score" },
@@ -237,6 +241,16 @@ function LearnedPermissionRow({
     >
       <TableCell className="max-w-24 truncate font-mono text-xs lg:max-w-40" title={row.tool_name}>
         {row.tool_name}
+      </TableCell>
+      <TableCell className="text-xs capitalize">{row.level}</TableCell>
+      <TableCell className="max-w-28 truncate font-mono text-xs" title={row.family}>
+        {row.family}
+      </TableCell>
+      <TableCell className="max-w-48 truncate font-mono text-xs" title={row.key}>
+        {row.key}
+      </TableCell>
+      <TableCell className="text-xs">
+        {row.scope === "all" ? "All repositories" : "This repository"}
       </TableCell>
       <TableCell className="text-xs">{targetLabel}</TableCell>
       <TableCell className="text-xs">

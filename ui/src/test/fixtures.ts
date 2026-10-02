@@ -344,6 +344,11 @@ export function aLearnedPermission(
     id: LEARNED_ID,
     repository_id: REPO_ID,
     tool_name: "Bash",
+    key: '{"command":"ls"}',
+    level: "command",
+    family: "ls",
+    risk_tags: [],
+    scope: "repository",
     tool_call: { title: "Bash", kind: "execute", rawInput: { command: "ls" } },
     options: [
       { optionId: "yes", name: "Allow", kind: "allow_once" },

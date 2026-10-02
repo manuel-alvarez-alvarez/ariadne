@@ -15,6 +15,7 @@
 
 import { act, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { toast } from "sonner"
 import { beforeEach, describe, expect, it } from "vitest"
 
 import type { LearnedPermissionDto, RepositoryDto } from "@/api"
@@ -38,6 +39,11 @@ const ALLOWED_ROW: LearnedPermissionDto = aLearnedPermission({
   id: "01JLEARN0000000000000ALW",
   repository_id: REPO_A.id,
   tool_name: "Bash",
+  level: "command",
+  family: "git status",
+  key: '{"command":"git status --short --branch --untracked-files=all"}',
+  risk_tags: ["remote", "force"],
+  scope: "repository",
   tool_call: { title: "Bash", kind: "execute", rawInput: { command: "ls" } },
   options: [
     { optionId: "yes", name: "Allow", kind: "allow_once" },
@@ -54,6 +60,11 @@ const DENIED_ROW: LearnedPermissionDto = aLearnedPermission({
   id: "01JLEARN0000000000000DNY",
   repository_id: REPO_B.id,
   tool_name: "Write",
+  level: "family",
+  family: "file write",
+  key: '{"file_path":"/home/me/dev/sandbox/src/main.rs"}',
+  risk_tags: ["remote", "force"],
+  scope: "all",
   tool_call: {
     title: "Write",
     kind: "edit",
@@ -87,11 +98,13 @@ interface Recorded {
 let requests: Recorded[] = []
 let rows: LearnedPermissionDto[] = []
 let deleteFailure: { status: number; code: string; message: string } | null = null
+let scopeFailure: { status: number; code: string; message: string } | null = null
 
 function stubDaemon() {
   requests = []
   rows = [ALLOWED_ROW, DENIED_ROW]
   deleteFailure = null
+  scopeFailure = null
 
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(String(input), init)
@@ -127,6 +140,16 @@ function stubDaemon() {
         rows = rows.filter((one) => one.id !== id)
         return new Response(null, { status: 204 })
       }
+      if (request.method === "PUT") {
+        if (!row) return errorResponse(404, "learned_permission_not_found", "no such row")
+        if (scopeFailure) {
+          const { status, code, message } = scopeFailure
+          return errorResponse(status, code, message)
+        }
+        const updated = { ...row, scope: body?.scope as LearnedPermissionDto["scope"] }
+        rows = rows.map((one) => (one.id === id ? updated : one))
+        return jsonResponse(updated)
+      }
     }
 
     throw new Error(`unhandled request ${request.method} ${url.pathname}`)
@@ -134,6 +157,7 @@ function stubDaemon() {
 }
 
 beforeEach(() => {
+  toast.dismiss()
   stubDaemon()
 })
 
@@ -166,6 +190,18 @@ describe("the table", () => {
     expect(stamps).toHaveLength(2)
     expect(stamps[0]?.getAttribute("datetime")).toBe(ALLOWED_ROW.created_at)
     expect(stamps[1]?.getAttribute("datetime")).toBe(ALLOWED_ROW.updated_at)
+  })
+
+  it("shows each row's level, family, key and scope, cutting a long key to one line", async () => {
+    renderScreen(<LearnedPermissionsTab />)
+
+    const row = await screen.findByRole("row", { name: "Bash (Learn)" })
+    expect(within(row).getByText("command")).toBeDefined()
+    expect(within(row).getByText("git status")).toBeDefined()
+    expect(within(row).getByText("This repository")).toBeDefined()
+    const key = within(row).getByTitle(ALLOWED_ROW.key)
+    expect(key.className).toContain("truncate")
+    expect(key.className).toContain("max-w-")
   })
 
   it("narrows the list to the repository picked in the filter", async () => {
@@ -315,7 +351,30 @@ describe("the detail view", () => {
     expect(panel.getByText("no model output")).toBeDefined()
     expect(panel.getByText(ALLOWED_ROW.id)).toBeDefined()
     expect(panel.getByText(REPO_A.id)).toBeDefined()
+    expect(panel.getByText("command")).toBeDefined()
+    expect(panel.getByText("git status")).toBeDefined()
+    expect(panel.getByText(ALLOWED_ROW.key)).toBeDefined()
+    expect(panel.getByText("remote")).toBeDefined()
+    expect(panel.getByText("force")).toBeDefined()
+    expect(panel.getByRole("combobox", { name: "Scope" }).textContent).toContain("This repository")
     expect(panel.getByText("Learn")).toBeDefined()
+  })
+
+  it("sends only scope when widening a row to all repositories", async () => {
+    const user = userEvent.setup()
+    renderScreen(<LearnedPermissionsTab />)
+    await user.click(await screen.findByText("Bash"))
+
+    await user.click(await screen.findByRole("combobox", { name: "Scope" }))
+    await user.click(await screen.findByRole("option", { name: "All repositories" }))
+
+    await waitFor(() =>
+      expect(requests).toContainEqual({
+        method: "PUT",
+        path: `/v1/permissions/learned/${ALLOWED_ROW.id}`,
+        body: { scope: "all" },
+      }),
+    )
   })
 
   it("shows the output's label, both probabilities, danger, both thresholds, the cap and the tags where the model was called", async () => {
@@ -331,8 +390,8 @@ describe("the detail view", () => {
     expect(panel.getByText("0.0531")).toBeDefined()
     expect(panel.getByText("0.6522")).toBeDefined()
     expect(panel.getByText("reviewer_directive")).toBeDefined()
-    expect(panel.getByText("remote")).toBeDefined()
-    expect(panel.getByText("force")).toBeDefined()
+    expect(panel.getAllByText("remote")).toHaveLength(2)
+    expect(panel.getAllByText("force")).toHaveLength(2)
     expect(screen.queryByText("no model output")).toBeNull()
   })
 
@@ -350,5 +409,28 @@ describe("the detail view", () => {
     })
 
     expect(await screen.findByText("Deny")).toBeDefined()
+  })
+
+  it("toasts a scope refusal and restores the saved value", async () => {
+    scopeFailure = {
+      status: 422,
+      code: "invalid_request",
+      message: "scope must be all or repository",
+    }
+    const user = userEvent.setup()
+    renderScreen(
+      <>
+        <Toaster />
+        <LearnedPermissionsTab />
+      </>,
+    )
+    await user.click(await screen.findByText("Bash"))
+
+    const scope = await screen.findByRole("combobox", { name: "Scope", hidden: true })
+    await user.click(scope)
+    await user.click(await screen.findByRole("option", { name: "All repositories" }))
+
+    expect(await screen.findByText(/scope must be all or repository/)).toBeDefined()
+    expect(scope.textContent).toContain("This repository")
   })
 })

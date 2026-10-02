@@ -73,6 +73,7 @@ export type TestAiPermissionRequest = Schemas["TestAiPermissionRequest"]
 export type TestAiPermissionResponse = Schemas["TestAiPermissionResponse"]
 
 export type LearnedPermissionDto = Schemas["LearnedPermissionDto"]
+export type UpdateLearnedPermissionRequest = Schemas["UpdateLearnedPermissionRequest"]
 
 /**
  * Every domain event carried by `GET /v1/events/stream`, as a tagged union.

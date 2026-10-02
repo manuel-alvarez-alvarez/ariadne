@@ -34,7 +34,14 @@ import {
   type RepositoryDto,
   type TaskDto,
 } from "@/api"
-import { aGoal, anAiPermissionsStatus, aRepository, aSession, aTask } from "@/test/fixtures"
+import {
+  aGoal,
+  aLearnedPermission,
+  anAiPermissionsStatus,
+  aRepository,
+  aSession,
+  aTask,
+} from "@/test/fixtures"
 import { dispatchDomainEvent, invalidateEverything } from "./dispatch"
 
 const REPOSITORY: RepositoryDto = aRepository({
@@ -278,18 +285,9 @@ describe("ai permissions events", () => {
 })
 
 describe("learned permission events", () => {
-  const learned = {
-    id: "01JLEARNED000000000000001",
+  const learned = aLearnedPermission({
     repository_id: REPOSITORY.id,
-    tool_name: "Bash",
-    tool_call: { title: "Bash", kind: "execute", rawInput: { command: "ls" } },
-    options: [{ optionId: "yes", name: "Allow", kind: "allow_once" }],
-    selected_option: "yes",
-    target: "learn",
-    output: null,
-    created_at: "2026-09-28T10:00:00.000Z",
-    updated_at: "2026-09-28T10:00:00.000Z",
-  } as const
+  })
 
   it("patches created and updated details and refetches lists", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -302,6 +300,7 @@ describe("learned permission events", () => {
     const updated = { ...learned, tool_name: "Shell" }
     dispatch(queryClient, { event: "learned_permission_updated", data: updated })
     expect(queryClient.getQueryData(qk.learnedPermissions.detail(learned.id))).toEqual(updated)
+    expect(stale(queryClient, list)).toBe(true)
   })
 
   it("removes a deleted detail and refetches lists", () => {

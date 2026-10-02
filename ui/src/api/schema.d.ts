@@ -545,7 +545,8 @@ export interface paths {
             cookie?: never;
         };
         get: operations["permissions_get_learned"];
-        put?: never;
+        /** Widen or narrow a learned row: the only write a person makes on one. */
+        put: operations["permissions_update_learned"];
         post?: never;
         delete: operations["permissions_delete_learned"];
         options?: never;
@@ -1712,16 +1713,35 @@ export interface components {
         Landing: "merge" | "pull_request" | "none";
         /**
          * @description One user choice or denial of an ACP permission request, keyed by the
-         *     repository, the tool name and the canonical `rawInput`.
+         *     repository, the tool name, the level and the normalized input.
          */
         LearnedPermissionDto: {
             created_at: string;
+            /**
+             * @description The command family of a `Bash` request, such as `git rebase`, else
+             *     the tool name.
+             * @example git rebase
+             */
+            family: string;
             id: string;
+            /**
+             * @description The kept fields of `rawInput` as compact JSON with sorted keys, its
+             *     one-time values replaced by placeholders such as `<HASH>`.
+             * @example {"command":"git rebase main"}
+             */
+            key: string;
+            level: components["schemas"]["LearnedPermissionLevel"];
             /** @description The ACP `options`. */
             options: unknown;
             /** @description The model decision, when the model was called; null otherwise. */
             output: unknown;
             repository_id: string;
+            /**
+             * @description The derived risk tags of the request. The row answers only a request
+             *     whose tags are all among them.
+             */
+            risk_tags: string[];
+            scope: components["schemas"]["LearnedPermissionScope"];
             /** @description The option id of the final choice. */
             selected_option: string;
             /** @description The repository permission mode at the time of the decision. */
@@ -1735,6 +1755,16 @@ export interface components {
             tool_name: string;
             updated_at: string;
         };
+        /**
+         * @description How much of a request a learned permission answers for.
+         * @enum {string}
+         */
+        LearnedPermissionLevel: "once" | "command" | "family";
+        /**
+         * @description Where a learned permission answers.
+         * @enum {string}
+         */
+        LearnedPermissionScope: "repository" | "all";
         /**
          * @description The repository permission mode a learned permission was decided under.
          * @enum {string}
@@ -2417,6 +2447,10 @@ export interface components {
             /** @description Turning it on starts an install; turning it off keeps the files. */
             enabled?: boolean | null;
             flavour?: null | components["schemas"]["Flavour"];
+        };
+        /** @description Widen a row to every repository, or narrow it back to its own. */
+        UpdateLearnedPermissionRequest: {
+            scope: components["schemas"]["LearnedPermissionScope"];
         };
         /** @description Partial update; absent fields stay unchanged. */
         UpdateRepositoryRequest: {
@@ -3367,6 +3401,43 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    permissions_update_learned: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateLearnedPermissionRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearnedPermissionDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

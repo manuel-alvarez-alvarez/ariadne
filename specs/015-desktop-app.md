@@ -318,7 +318,9 @@ Out: the daemon endpoints themselves (012).
     `tool_call.rawInput` — where the daemon keeps the agent's own arguments
     (`crates/ariadne-daemon/src/acp.rs`), never on the call itself — else the
     call compacted to one line, cut with an ellipsis and a `title` of the full
-    text, the source (`console` or `manual`), the AI
+    text, the source (`console` or `manual`), the level, family, normalized
+    key and scope beside the tool. The key is one line with an ellipsis and a
+    `title` of its full value, the AI
     label and danger where the model scored the row, and how long ago it was
     learned. A row is a Tab stop that opens its detail on Enter or Space as
     well as a click, under an accessible name of its tool and its repository's
@@ -336,12 +338,16 @@ Out: the daemon endpoints themselves (012).
     row's own request rather than only the tool name, and a refusal from any
     of the three is toasted with the daemon's own message rather than held on
     the dialog. A row opens a detail panel with every field, the repository's
-    full path as a `title` on its cut fact, the stored `tool_call` and
+    full path as a `title` on its cut fact, its level, family, normalized key,
+    risk tags and scope, the stored `tool_call` and
     `options` pretty-printed for a console row (a manual row says none was
     recorded), the selected option, links to the session and the task where
     the row carries one, and, where the model scored the row, the AI label,
     both probabilities, the danger, both thresholds, the cap and the risk
-    tags — the same facts the row's own AI score column carries, in full.
+    tags — the same facts the row's own AI score column carries, in full. Its
+    Scope control selects This repository or All repositories and sends only
+    `scope` to `PUT /v1/permissions/learned/{id}`. A refusal toasts the
+    daemon's message and restores the stored scope.
     Which tab is
     open lives in the URL the way every other panel's does — `?tab=learned` or
     `?tab=ai`, Learned by default, since it is where every mode leaves what it
@@ -350,8 +356,14 @@ Out: the daemon endpoints themselves (012).
     tab when the URL says nothing`, `::puts the picked tab on the URL`,
     `ui/src/features/permissions/learned-tab.test.tsx::shows a row's tool
     name, target, selected option outcome, created and updated`,
+    `::shows each row's level, family, key and scope, cutting a long key to
+    one line`, `::shows every field, with the tool call, the options and a
+    null output as JSON`, `::sends only scope when widening a row to all
+    repositories`, `::toasts a scope refusal and restores the saved value`,
     `::shows the output's label, both probabilities, danger, both thresholds
-    and the tags where the model was called`).
+    and the tags where the model was called`,
+    `ui/src/events/dispatch.test.ts::patches created and updated details and
+    refetches lists`).
 34. The AI tab's card carries a "Test a request" button in its header button
     group, beside Refresh.
     It opens a wide dialog for `POST /v1/permissions/ai/test`: Tool, Kind,

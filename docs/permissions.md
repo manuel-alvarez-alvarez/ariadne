@@ -144,8 +144,12 @@ offered options, the selected option, the permission mode at the time
 was called. The AI permission model always reads the original input, not the
 key.
 
-Manage these rows with `ariadne permissions learned list`, `show`, and `rm`.
-You cannot add or edit a row by hand.
+Manage these rows with `ariadne permissions learned list`, `show`, and `rm`,
+or in the desktop app's **Permissions** screen. Its Learned tab shows each
+row's tool, level, family, normalized key and scope. Open a row to see its
+risk tags, selected option, target, model output and raw input. Change Scope
+there between **This repository** and **All repositories** to widen or narrow
+the row. You cannot add or edit a row by hand.
 
 ## The AI permission model
 
