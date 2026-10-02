@@ -1,12 +1,13 @@
 ---
 id: prompts-and-simplified-technical-english
 status: current
-updated: 2026-09-21
-areas: [prompts, store, core, mcp]
+updated: 2026-10-03
+areas: [prompts, store, core, mcp, daemon]
 commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
   - crates/ariadne-store/src/defaults.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
+  - crates/ariadne-daemon/src/agents/handoff.rs
   - crates/ariadne-daemon/tests/it/prompts.rs
   - crates/ariadne-daemon/tests/it/skill_documents.rs
   - crates/ariadne-core/src/lib.rs
@@ -21,10 +22,12 @@ the English all of it is written in.
 
 In: the layers of text (system prompt, skill index, lifecycle briefing,
 landing briefing), what each layer states, rendering and placeholder
-validation, the STE rules, and the size caps.
+validation, the STE rules, the size caps, and the handoff text a session
+switch hands the new agent in place of the conversation it cannot resume.
 
 Out: the wording of any one procedure — those belong to the spec of the thing
-they describe (003, 004, 005) — and what a skill is (017).
+they describe (003, 004, 005) — what a skill is (017), and the switch itself,
+which is not yet built.
 
 ## Behavior
 
@@ -108,6 +111,34 @@ they describe (003, 004, 005) — and what a skill is (017).
     shipped skill documents are capped on their own scale, since a skill is
     read once and on purpose rather than carried by every turn.
 
+13. The handoff is a text built from a session's stored events for a
+    session switched to another coding agent (021): no ACP agent can resume
+    another's conversation, so the new agent gets this instead, as its
+    history. `handoff_text` (`crates/ariadne-daemon/src/agents/handoff.rs`)
+    folds the events the same way the console does (008), and opens the text
+    with one line that names it as the history of the session the agent
+    continues and tells it to go on from where that history ends.
+14. One entry follows per kept event, oldest first, each under its own
+    marker: a `user_prompt_submit` whole under `user` where its source is
+    `console`, and folded to its first six lines with a count of the rest
+    under `daemon` where its source is `daemon`; an `agent_message` whole
+    under `agent`; a `plan` as a checklist, headed by how many of its entries
+    are complete; a paired `pre_tool_use` and `post_tool_use` as the head
+    line the console draws for the call — the command, the path, the
+    pattern, or the title — then its output and its diff, each folded to
+    their last ten lines with a count of what is hidden; a call with no end
+    renders its head alone; a `permission_request` and its
+    `permission.replied` as one line, the head of the call and the option
+    chosen; and a `session.error` as one line, its message.
+    `agent_thought`, `stop`, `session_start` and `session_end` are left out.
+15. Every entry is fenced in a character reserved to the fence alone, and
+    stripped from the entry's own text first, so nothing a tool's output or
+    a diff carries can forge the fence and close the block early.
+16. The text is kept under a budget of characters: the newest entries are
+    kept whole and the oldest dropped first, and an entry is never cut in
+    the middle. A line in the dropped entries' place counts how many there
+    were. A budget that fits every entry writes no such line.
+
 ## Acceptance criteria
 
 - Every default text obeys the two readable STE rules
@@ -171,11 +202,41 @@ they describe (003, 004, 005) — and what a skill is (017).
 - Every shipped skill document is within its cap (`defaults.rs::skill_size_caps_hold`).
 - Every session is told to load a deferred tool before it calls it
   (`mcp.rs::every_session_is_told_to_load_a_deferred_tool_before_it_calls_it`).
+- A console-sourced prompt renders whole and a daemon-sourced one folds to
+  six lines with a count of the rest
+  (`handoff.rs::a_console_prompt_renders_whole_and_a_daemon_prompt_folds_to_six_lines_with_a_count`),
+  and an agent message renders whole
+  (`::an_agent_message_renders_whole`).
+- A thought is left out of the handoff
+  (`handoff.rs::a_thought_is_left_out`), and so are `stop`, `session_start`
+  and `session_end`
+  (`::stop_session_start_and_session_end_are_left_out`).
+- A tool call and its end render as one entry with the head and the folded
+  output (`handoff.rs::a_tool_call_and_its_end_render_as_one_entry_with_the_head_and_the_folded_output`),
+  its diff folds the same way
+  (`::a_diff_is_folded_the_same_way_as_output`), and a call with no end
+  renders its head alone (`::a_call_with_no_end_renders_its_head_alone`).
+- A plan renders as a checklist (`handoff.rs::a_plan_renders_as_a_checklist`).
+- A permission request renders as one line with the option chosen
+  (`handoff.rs::a_permission_request_renders_as_one_line_with_the_option_chosen`),
+  and a session error renders as one line with its message
+  (`::a_session_error_renders_as_one_line_with_its_message`).
+- An entry's own text cannot forge the fence and close its block early
+  (`handoff.rs::an_entrys_own_text_cannot_forge_a_fence_and_close_the_block_early`).
+- A budget that fits every entry writes no count line
+  (`handoff.rs::a_budget_that_fits_every_entry_writes_no_count_line`), the
+  newest entries survive a small budget behind one line that counts what
+  was left out
+  (`::the_newest_entries_survive_a_small_budget_and_one_line_counts_what_was_left_out`),
+  and no entry is cut in the middle at any budget from zero to the whole
+  text (`::no_entry_is_cut_in_the_middle_at_any_budget`).
 
 ## Sources
 
 `crates/ariadne-store/src/defaults.rs` (every default text and the STE rules),
 `crates/ariadne-daemon/src/agents/prompts.rs` (assembly),
+`crates/ariadne-daemon/src/agents/handoff.rs` (the handoff text of a session
+switch),
 `crates/ariadne-core/src/lib.rs` (`PromptKind`, placeholder validation),
 `crates/ariadne-cli/src/commands/mcp.rs` (session rules),
 `crates/ariadne-daemon/src/agents/mod.rs` (`write_skills`).

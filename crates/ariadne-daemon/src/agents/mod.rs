@@ -3,6 +3,7 @@
 //! environment, and the launch file the ACP runtime drives it from.
 
 mod acp;
+mod handoff;
 pub mod prompts;
 
 use std::path::{Path, PathBuf};
@@ -13,6 +14,8 @@ use ariadne_core::Seat;
 use ariadne_core::acp::LaunchConfig;
 
 pub use acp::{plan_resume, plan_spawn};
+#[allow(unused_imports)] // the session-switch task wires handoff_text to its endpoint
+pub(crate) use handoff::handoff_text;
 
 /// Everything an adapter needs to plan a spawn. Prompt assembly happens in
 /// the launcher; adapters only deal with delivery mechanics.
