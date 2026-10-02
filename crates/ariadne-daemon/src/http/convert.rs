@@ -151,7 +151,7 @@ pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
         context_size: s.context_size.and_then(|value| u64::try_from(value).ok()),
         .. id, goal_id, task_id, task_agent_id, model, effort, internal_session_id,
            worktree_path, attention_since,
-           last_activity_at, created_at, ended_at, title
+           last_activity_at, created_at, ended_at, title, switched_from
     }
 }
 

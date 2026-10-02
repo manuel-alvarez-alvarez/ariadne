@@ -5,6 +5,7 @@ use axum::http::{HeaderMap, StatusCode};
 
 use ariadne_api::sessions::{
     NewSessionRequest, ResumeOutsideSessionRequest, SessionDto, SessionPageDto, SessionPageQuery,
+    SwitchSessionRequest,
 };
 use ariadne_core::models::agent_of;
 use ariadne_store::SessionFilter;
@@ -211,6 +212,45 @@ pub(super) async fn kill(
         .map_err(|e| ApiError::conflict(e.to_string()))?;
     let session = state.store.get_session(&id).await?;
     Ok(Json(session_dto_of(&state.store, session).await?))
+}
+
+/// Switch a session to another model or agent: the session ends, and a new
+/// one starts on the same seat, on the pin named, in a new conversation. The
+/// answer is the new session, which names the old one in `switched_from`.
+///
+/// The pin is checked as `POST /v1/sessions` checks it, a model turned off
+/// included. A session of a cancelled goal is refused.
+#[utoipa::path(post, path = "/v1/sessions/{id}/switch", tag = "sessions",
+    operation_id = "switch_session",
+    params(("id" = String, Path, description = "session id")),
+    request_body = SwitchSessionRequest,
+    responses((status = 200, body = SessionDto), (status = 400), (status = 404), (status = 409)))]
+pub(super) async fn switch(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<SwitchSessionRequest>,
+) -> ApiResult<Json<SessionDto>> {
+    let session = state.store.get_session(&id).await?;
+    let pin = super::pins::chosen(
+        &state.store,
+        &state.agent_registry,
+        Some(&req.model),
+        req.effort.as_deref(),
+    )
+    .await?;
+    if let Some(goal_id) = session.goal_id.as_deref()
+        && state.store.get_goal(goal_id).await?.status() == ariadne_core::GoalStatus::Cancelled
+    {
+        return Err(ApiError::conflict(
+            "cannot switch a session of a cancelled goal",
+        ));
+    }
+    let switched = state
+        .launcher
+        .switch_session(&id, &pin.model, pin.effort.as_deref(), "requested")
+        .await
+        .map_err(|error| ApiError::conflict(format!("{error:#}")))?;
+    Ok(Json(session_dto_of(&state.store, switched).await?))
 }
 
 /// Body of the internal debug-spawn endpoint.

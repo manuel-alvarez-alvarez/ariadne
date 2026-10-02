@@ -116,6 +116,26 @@ impl Store {
         Ok(goal)
     }
 
+    /// Move a goal's orchestrator onto another model and effort: the pin its
+    /// next spawn and resume run on.
+    pub async fn set_goal_pin(&self, id: &str, pin: &AgentPin) -> Result<Goal> {
+        let (model, effort) = AgentPin::columns(pin);
+        let n = sqlx::query("UPDATE goals SET model = ?, effort = ?, updated_at = ? WHERE id = ?")
+            .bind(&model)
+            .bind(&effort)
+            .bind(now())
+            .bind(id)
+            .execute(self.w())
+            .await?
+            .rows_affected();
+        if n == 0 {
+            return Err(not_found("goal", id));
+        }
+        let goal = self.get_goal(id).await?;
+        self.publish(Change::GoalUpdated(goal.clone()));
+        Ok(goal)
+    }
+
     /// Announce a goal as it now stands, for a write that changed something
     /// a goal is read with rather than the goal row itself — the usage of a
     /// session under it, which rides in the goal's own fat event.

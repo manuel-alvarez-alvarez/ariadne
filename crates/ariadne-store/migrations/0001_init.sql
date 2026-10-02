@@ -326,11 +326,17 @@ CREATE TABLE agent_sessions (
     -- A loose session's own title: the first prompt of the conversation it
     -- resumed, or the first one typed into it. NULL on a task's or a goal's
     -- session, which goes by its work's title.
-    title               TEXT
+    title               TEXT,
+    -- The session this one replaced on its seat, on another pin, in a new
+    -- conversation. NULL for every session no switch started.
+    switched_from       TEXT REFERENCES agent_sessions (id) ON DELETE SET NULL
 );
 CREATE INDEX idx_sessions_task ON agent_sessions (task_id);
 CREATE INDEX idx_sessions_status ON agent_sessions (status);
 CREATE INDEX idx_sessions_attention ON agent_sessions (attention_reason);
+-- One successor per switched session: two switches of one session race to
+-- this index, and the second is refused.
+CREATE UNIQUE INDEX idx_sessions_switched_from ON agent_sessions (switched_from);
 
 -- What each agent session has spent, as the transcripts under it report it.
 --

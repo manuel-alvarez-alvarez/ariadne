@@ -4,7 +4,7 @@ use ariadne_core::id::new_id;
 use ariadne_core::{AttentionReason, Seat, SessionStatus};
 
 use crate::query::Filtered;
-use crate::{AgentSession, Change, Result, Store, not_found, now};
+use crate::{AgentSession, Change, Result, Store, StoreError, not_found, now};
 
 /// [`SessionStatus::is_live`] in SQL, in the one place SQL has to know it.
 const LIVE_STATUSES: &str = " AND status IN ('starting', 'running', 'idle')";
@@ -50,11 +50,47 @@ pub struct SessionFilter {
 impl Store {
     /// Create a session row before spawning; its id becomes ARIADNE_SESSION_ID.
     pub async fn create_session(&self, new: NewSession) -> Result<AgentSession> {
+        self.insert_session(new, None).await
+    }
+
+    /// Create the session a switch starts in place of `switched_from`: a new
+    /// row on the same seat, which names the row it replaced.
+    pub async fn create_switched_session(
+        &self,
+        new: NewSession,
+        switched_from: &str,
+    ) -> Result<AgentSession> {
+        self.insert_session(new, Some(switched_from))
+            .await
+            .map_err(|e| match e {
+                StoreError::Db(sqlx::Error::Database(ref db)) if db.is_unique_violation() => {
+                    StoreError::Conflict(format!("session {switched_from} is already switched"))
+                }
+                other => other,
+            })
+    }
+
+    /// The session a switch started in place of `id`, if one did.
+    pub async fn switched_successor(&self, id: &str) -> Result<Option<AgentSession>> {
+        Ok(
+            sqlx::query_as("SELECT * FROM agent_sessions WHERE switched_from = ?")
+                .bind(id)
+                .fetch_optional(self.r())
+                .await?,
+        )
+    }
+
+    async fn insert_session(
+        &self,
+        new: NewSession,
+        switched_from: Option<&str>,
+    ) -> Result<AgentSession> {
         let id = new_id();
         sqlx::query(
             "INSERT INTO agent_sessions (id, goal_id, task_id, seat, task_agent_id, model,
-                                         effort, worktree_path, status, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?)",
+                                         effort, worktree_path, status, created_at,
+                                         switched_from)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?)",
         )
         .bind(&id)
         .bind(&new.goal_id)
@@ -65,6 +101,7 @@ impl Store {
         .bind(&new.effort)
         .bind(&new.worktree_path)
         .bind(now())
+        .bind(switched_from)
         .execute(self.w())
         .await?;
         let session = self.get_session(&id).await?;

@@ -1,7 +1,7 @@
 ---
 id: models-effort-and-pins
 status: current
-updated: 2026-09-24
+updated: 2026-10-03
 areas: [core, api, store, daemon, cli]
 commits: [090c5158, e94647fd, d94042f4, c42ebeee, 305ad2fb, a69b953f, 03f9c8b7]
 tests:
@@ -10,6 +10,7 @@ tests:
   - crates/ariadne-daemon/tests/it/acp_discovery.rs
   - crates/ariadne-daemon/tests/it/pins.rs
   - crates/ariadne-daemon/tests/it/resume.rs
+  - crates/ariadne-daemon/tests/it/switch.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - ui/src/features/agents/agents-page.test.tsx
@@ -61,7 +62,8 @@ orchestrator decides (003).
 10. A goal carries the orchestrator's pin. Every other pin sits on the agent
     the task staffs (017), one per author and per reviewer.
 11. A session freezes its pin at its first launch: a re-pin steers the next
-    spawn, never the conversation already running.
+    spawn, never the conversation already running. A switch moves the
+    seat's pin, and starts a new session on it in a new conversation (008).
 12. The registry holds the agents of the shipped ACP registry index that the
     daemon's `PATH` holds — `claude-acp` (command `claude-agent-acp`),
     `codex-acp` (`codex-acp`) and `opencode` (`opencode acp`) among them —
@@ -172,6 +174,11 @@ orchestrator decides (003).
   (`resume.rs::a_resumed_author_stays_on_the_model_its_session_started_on`,
   `::a_running_reviewer_keeps_the_model_its_session_started_on`,
   `::an_orchestrator_respawn_stays_on_the_goals_pin`).
+- A switch moves the seat's pin: the staffed agent's for an author and a
+  reviewer, the goal's for an orchestrator
+  (`switch.rs::a_switched_author_starts_a_new_session_briefed_with_the_handoff`,
+  `::a_switched_reviewer_starts_a_new_session_on_the_review_it_owes`,
+  `::a_switched_orchestrator_moves_the_goals_pin`).
 - The registry lists its three built-ins and a configured agent
   (`acp_discovery.rs::the_api_lists_the_three_known_agents_and_one_user_agent`),
   and refreshes its cache on demand (`::discovery_refreshes_on_demand`).

@@ -134,7 +134,7 @@ impl AppState {
         goals::list_goal_messages, goals::post_goal_message, landing::diff,
         landing::record_pull_request, landing::pick_winner,
         sessions::list, sessions::create, sessions::resume_outside,
-        sessions::get, sessions::kill, sessions::resume,
+        sessions::get, sessions::kill, sessions::resume, sessions::switch,
         console::snapshot, console::stream, console::input, console::cancel,
         terminal::terminal,
         events::list, stream::stream,
@@ -252,6 +252,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{id}", get(sessions::get))
         .route("/v1/sessions/{id}/kill", post(sessions::kill))
         .route("/v1/sessions/{id}/resume", post(sessions::resume))
+        .route("/v1/sessions/{id}/switch", post(sessions::switch))
         .route("/v1/sessions/{id}/console", get(console::snapshot))
         .route("/v1/sessions/{id}/console/stream", get(console::stream))
         .route("/v1/sessions/{id}/console/input", post(console::input))

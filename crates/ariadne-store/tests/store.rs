@@ -451,6 +451,7 @@ async fn the_schema_names_agents_by_registry_id_alone() {
             "launched_at",
             "launch_id",
             "title",
+            "switched_from",
         ]
     );
     let config: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info(?)")

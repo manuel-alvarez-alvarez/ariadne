@@ -1,13 +1,14 @@
 ---
 id: sessions-terminals-and-logs
 status: current
-updated: 2026-10-02
+updated: 2026-10-03
 areas: [daemon, store, cli]
 commits: [e4816cf6, 39937143, a69b953f, 7880c022]
 tests:
   - crates/ariadne-daemon/src/bus.rs
   - crates/ariadne-daemon/src/http/console.rs
   - crates/ariadne-daemon/tests/it/resume.rs
+  - crates/ariadne-daemon/tests/it/switch.rs
   - crates/ariadne-daemon/tests/it/acp_console.rs
   - crates/ariadne-daemon/tests/it/acp_terminal.rs
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
@@ -592,6 +593,40 @@ goal id to a seat (014).
     as every prompt is, the text of the box to console input (rule 27): the
     daemon sends it to the agent as a command where its first word names a
     listed command.
+
+### Switching a session
+
+32. `POST /v1/sessions/{id}/switch` moves a session to another model or
+    agent. The body is `SwitchSessionRequest`: a `model`, `<agent>:<model>`,
+    and an optional `effort`. The answer is the `SessionDto` of the new
+    session. A switch to the same agent takes the same path.
+33. The switch ends the old session. Its agent is cancelled, killed and
+    reaped before the new agent starts. The old row keeps a
+    `session.switched` event, `{session_id, to, model, effort, reason}`, and
+    is marked `exited`. `reason` is `requested` for the endpoint.
+34. The new session is a new row on the same goal, task, seat, staffed
+    agent and worktree, on the new pin. Its `switched_from` names the old
+    row. It runs in a new conversation, and it is launched through the spawn
+    path: a launch id, a launch file and the MCP server, as every spawn.
+35. The switch moves the seat's pin (011): the goal's pin for an
+    orchestrator, and the staffed agent's pin for an author or a reviewer. A
+    later spawn or resume of the seat runs on it. A loose session has no
+    seat pin, and nothing is moved.
+36. The new agent's first prompt is the seat's fresh briefing, a blank line,
+    the handoff of the old session's stored events (at most 240 000
+    characters), a blank line, and the resume text: the author's resume
+    text, the orchestrator's resume briefing, or the briefing of the review
+    a reviewer owes. A loose session gets the handoff alone.
+37. The event stream announces the old session as updated and the new one
+    as created. The old row's attention is cleared as a superseded
+    session's.
+38. The pin is refused as `POST /v1/sessions` refuses it, a model turned off
+    included (`400`). An unknown session is `404`, and a session of a
+    cancelled goal is `409`.
+39. A session has at most one successor. A switch of a session already
+    switched is `409`, and of two switches at once one is refused. A switch
+    whose seat holds another live agent once the old one is gone is `409`,
+    and starts nothing.
 
 ## Acceptance criteria
 
@@ -1274,6 +1309,28 @@ goal id to a seat (014).
   stream (`console.rs::a_transcript_log_uses_its_snapshot_for_table_and_json_output`,
   `::a_followed_log_uses_the_console_event_stream`). Chunks stream under one
   block header (`::followed_chunks_stream_text_under_one_block_header`).
+
+- A switched author gets a new row that names the old one, the old row is
+  `exited` with its `session.switched` event, the first prompt is the
+  briefing, the handoff and the resume text in that order, and the
+  author's pin moves
+  (`switch.rs::a_switched_author_starts_a_new_session_briefed_with_the_handoff`).
+  A reviewer and an orchestrator switch the same way, and the goal's pin
+  moves for the orchestrator
+  (`::a_switched_reviewer_starts_a_new_session_on_the_review_it_owes`,
+  `::a_switched_orchestrator_moves_the_goals_pin`). A loose session gets the
+  handoff alone (`::a_switched_loose_session_gets_the_handoff_alone`).
+- A switch mid-turn cancels the turn and reaps the old agent before the new
+  one starts
+  (`switch.rs::a_session_switched_mid_turn_is_cancelled_and_killed_before_the_new_one_starts`).
+- A cancelled goal's session and an unknown session are refused
+  (`switch.rs::a_session_of_a_cancelled_goal_is_not_switched`), and so is a
+  model turned off or an unknown agent
+  (`::a_switch_to_a_model_that_is_turned_off_is_refused`).
+- A session already switched is refused, and starts no second agent
+  (`switch.rs::a_session_already_switched_is_not_switched_again`), and two
+  switches at once start one successor
+  (`::two_switches_of_one_session_at_once_start_one_successor`).
 
 ## Known gap
 

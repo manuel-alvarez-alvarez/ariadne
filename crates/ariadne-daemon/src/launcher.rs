@@ -11,15 +11,17 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow};
 
 use ariadne_core::models::agent_of;
-use ariadne_core::{PermissionMode, PromptKind, Seat, SessionStatus, TaskStatus};
+use ariadne_core::{GoalStatus, PermissionMode, PromptKind, Seat, SessionStatus, TaskStatus};
 use ariadne_store::{
-    AgentSession, NewSession, Repository, SessionFilter, Store, Task, TaskAgent, TaskFilter,
-    author_branch,
+    AgentPin, AgentSession, NewAgentEvent, NewSession, Repository, SessionFilter, Store, Task,
+    TaskAgent, TaskFilter, author_branch,
 };
 
 use crate::acp::{AcpLaunch, AcpRuntime};
 use crate::acp_discovery::AgentRegistry;
-use crate::agents::{SpawnCtx, SpawnPlan, plan_resume, plan_spawn, prompts, write_skills};
+use crate::agents::{
+    SpawnCtx, SpawnPlan, handoff_text, plan_resume, plan_spawn, prompts, write_skills,
+};
 use crate::branch::BranchWatchers;
 use crate::config::Config;
 use crate::gitwt::{BranchHasNoCommits, GitManager};
@@ -1146,6 +1148,316 @@ impl Launcher {
         }
     }
 
+    /// What the author of a task is picked up with, whether its session
+    /// ended, went quiet or was switched: its profile's template for the
+    /// situation, rendered.
+    ///
+    /// Two situations, and the task's status tells them apart. An approved
+    /// task is one the author is landing, and what it is picked up with is
+    /// the landing briefing — the whole procedure, which is what a session
+    /// that ended over it has to be given back. Anything earlier is work in
+    /// the worktree, and the resume nudge is what that wants.
+    pub(crate) async fn author_resume_text(&self, task: &Task) -> Result<String> {
+        // On a task the reviewers picked a winner for, the branch every
+        // briefing names is the winner's own: that is the change that lands.
+        let seen = match self
+            .review_branch(task, task.picked_agent_id.as_deref())
+            .await?
+        {
+            Some(branch) => Task {
+                branch,
+                ..task.clone()
+            },
+            None => task.clone(),
+        };
+        if task.status() == TaskStatus::Approved {
+            let repo = self.store.get_repository(&task.repo_id).await?;
+            // The procedure is the task's: how this task ends was agreed with
+            // the user when it was written, and it is the whole of what
+            // decides which of the three the author runs.
+            return Ok(prompts::landing_briefing(
+                task.landing_prompt_text(),
+                &seen,
+                &repo,
+            ));
+        }
+        let template = prompts::template_for(PromptKind::AuthorResume);
+        Ok(prompts::author_resume_briefing(template, &seen))
+    }
+
+    /// Switch a session onto another pin: end it, and start a new session
+    /// on the same seat, on `model` and `effort`, in a new conversation.
+    ///
+    /// The old agent is cancelled, killed and reaped before anything new
+    /// starts, so two agents never work on one seat. The old row is marked
+    /// `exited` and keeps a `session.switched` event naming its successor
+    /// and `reason`. The seat's pin moves with the switch, so a later spawn
+    /// or resume of the seat runs on the new one; a loose session has no
+    /// seat pin to move.
+    ///
+    /// The new agent has no conversation to resume. It is briefed as a fresh
+    /// spawn of its seat is, then handed the old session's history
+    /// ([`handoff_text`]), then told what a resume would have told it. A
+    /// loose session has no briefing and no resume text: it gets the history
+    /// alone.
+    pub(crate) async fn switch_session(
+        &self,
+        session_id: &str,
+        model: &str,
+        effort: Option<&str>,
+        reason: &str,
+    ) -> Result<AgentSession> {
+        let old = self.store.get_session(session_id).await?;
+        if let Some(goal_id) = old.goal_id.as_deref()
+            && self.store.get_goal(goal_id).await?.status() == GoalStatus::Cancelled
+        {
+            anyhow::bail!("cannot switch a session of a cancelled goal");
+        }
+        // One successor per session: a switch repeated against the old id
+        // would start a second agent on the seat. Two switches that race past
+        // this check meet the unique index on `switched_from` instead.
+        if let Some(successor) = self.store.switched_successor(&old.id).await? {
+            anyhow::bail!(
+                "session {} is already switched, to session {}",
+                old.id,
+                successor.id
+            );
+        }
+        // Read before the kill: the branch a reviewer's caller set is what
+        // tells which review it owes on a task with several authors.
+        let review_branch = self.acp.task_branch(&old.id);
+        self.acp.kill_and_wait(&old.id).await;
+        // The old agent is gone, so a live agent on the seat now is another
+        // session's: the seat is taken, and this switch starts nothing.
+        if let (Some(goal_id), Some(seat)) = (old.goal_id.as_deref(), old.seat()) {
+            self.assert_no_live_session(
+                goal_id,
+                old.task_id.as_deref(),
+                seat,
+                old.task_agent_id.as_deref(),
+            )
+            .await?;
+        }
+
+        let plan = match old.seat() {
+            None => self.loose_switch(&old)?,
+            Some(Seat::Orchestrator) => self.orchestrator_switch(&old).await?,
+            Some(Seat::Author) => self.author_switch(&old).await?,
+            Some(Seat::Reviewer) => self.reviewer_switch(&old, review_branch).await?,
+        };
+        let events = self.store.list_session_events(&old.id).await?;
+        let handoff = handoff_text(&events, HANDOFF_BUDGET);
+        let prompt = [plan.briefing, Some(handoff), plan.resume]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        let pin = AgentPin {
+            model: model.to_string(),
+            effort: effort.map(str::to_string),
+        };
+        let session = self
+            .store
+            .create_switched_session(
+                NewSession {
+                    goal_id: old.goal_id.clone(),
+                    task_id: old.task_id.clone(),
+                    seat: old.seat(),
+                    task_agent_id: old.task_agent_id.clone(),
+                    model: pin.model.clone(),
+                    effort: pin.effort.clone(),
+                    worktree_path: plan.worktree.clone(),
+                },
+                &old.id,
+            )
+            .await?;
+        self.store
+            .create_event(NewAgentEvent {
+                session_id: Some(old.id.clone()),
+                task_id: old.task_id.clone(),
+                kind: "session.switched".into(),
+                payload: serde_json::json!({
+                    "session_id": old.id,
+                    "to": session.id,
+                    "model": pin.model,
+                    "effort": pin.effort,
+                    "reason": reason,
+                }),
+            })
+            .await?;
+        self.store
+            .set_session_status(&old.id, SessionStatus::Exited)
+            .await?;
+        match (old.seat(), &old.task_agent_id, &old.goal_id) {
+            (Some(Seat::Orchestrator), _, Some(goal_id)) => {
+                self.store.set_goal_pin(goal_id, &pin).await?;
+            }
+            (Some(Seat::Author | Seat::Reviewer), Some(agent_id), _) => {
+                self.store.set_agent_pin(agent_id, &pin).await?;
+            }
+            _ => {}
+        }
+
+        if session.seat.is_none() {
+            if let Some(title) = &old.title {
+                self.store
+                    .set_session_title_if_unset(&session.id, title)
+                    .await?;
+            }
+            let result = self.launch_loose(&session, plan.cwd, None, &prompt).await;
+            if result.is_err() {
+                self.store
+                    .set_session_status(&session.id, SessionStatus::Failed)
+                    .await?;
+            }
+            result?;
+            // A loose session has no seat to find its siblings by: the
+            // row it replaced is the one superseded.
+            self.store.clear_session_attention(&old.id).await?;
+        } else {
+            if old.seat() == Some(Seat::Reviewer) {
+                self.acp.set_task_branch(&session.id, plan.task_branch);
+            }
+            self.spawn(&session, plan.cwd, prompt).await?;
+        }
+        self.store
+            .get_session(&session.id)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Where a switched loose session goes on: the directory it ran in.
+    fn loose_switch(&self, old: &AgentSession) -> Result<SwitchPlan> {
+        let cwd = old
+            .worktree_path
+            .as_deref()
+            .map(PathBuf::from)
+            .filter(|path| path.is_dir())
+            .context("the loose session's working directory is gone")?;
+        Ok(SwitchPlan {
+            worktree: old.worktree_path.clone(),
+            cwd,
+            briefing: None,
+            resume: None,
+            task_branch: None,
+        })
+    }
+
+    /// The orchestrator's switch: the first repository, the goal's briefing,
+    /// and the nudge a quiet orchestrator gets.
+    async fn orchestrator_switch(&self, old: &AgentSession) -> Result<SwitchPlan> {
+        let goal_id = old.goal_id.as_deref().context("session has no goal")?;
+        let goal = self.store.get_goal(goal_id).await?;
+        let repos = self.store.list_goal_repositories(goal_id).await?;
+        let repo = repos.first().context("goal has no repos")?;
+        let template = prompts::template_for(PromptKind::OrchestratorBriefing);
+        let briefing = prompts::orchestrator_briefing(template, &goal, &repos);
+        let template = prompts::template_for(PromptKind::OrchestratorResume);
+        let resume = prompts::orchestrator_resume_briefing(template, &goal);
+        Ok(SwitchPlan {
+            worktree: None,
+            cwd: PathBuf::from(&repo.path),
+            briefing: Some(briefing),
+            resume: Some(resume),
+            task_branch: None,
+        })
+    }
+
+    /// The author's switch: the worktree it worked in, its task's briefing,
+    /// and what a resume of it would say.
+    async fn author_switch(&self, old: &AgentSession) -> Result<SwitchPlan> {
+        let task_id = old.task_id.as_deref().context("session has no task")?;
+        let agent_id = old
+            .task_agent_id
+            .as_deref()
+            .context("session has no staffed agent")?;
+        let task = self.store.get_task(task_id).await?;
+        let goal = self.store.get_goal(&task.goal_id).await?;
+        let repo = self.store.get_repository(&task.repo_id).await?;
+        let seat = self.author_seat(&task, agent_id).await?;
+        let keep = old.worktree_path.as_deref().map(PathBuf::from);
+        let worktree = self.author_worktree(&task, &repo, keep, &seat).await?;
+        let task = self.store.get_task(task_id).await?;
+        let mut deps = Vec::new();
+        for dep_id in self.store.list_task_dependencies(&task.id).await? {
+            deps.push(self.store.get_task(&dep_id).await?);
+        }
+        let template = prompts::template_for(PromptKind::AuthorBriefing);
+        let seen = seat.task_as_seen(&task, Some(worktree.display().to_string()));
+        let briefing = prompts::author_briefing(template, &seen, &goal, &repo, &deps);
+        let resume = self.author_resume_text(&task).await?;
+        Ok(SwitchPlan {
+            worktree: Some(worktree.display().to_string()),
+            cwd: worktree,
+            briefing: Some(briefing),
+            resume: Some(resume),
+            task_branch: None,
+        })
+    }
+
+    /// The reviewer's switch: its worktree at the tip of the branch under
+    /// review, its briefing, and the briefing of the review it owes.
+    ///
+    /// `branch` is the branch the old session was reviewing. On a task with
+    /// several authors it names the author whose review is owed; anywhere
+    /// else the review is the task's own.
+    async fn reviewer_switch(
+        &self,
+        old: &AgentSession,
+        branch: Option<String>,
+    ) -> Result<SwitchPlan> {
+        let task_id = old.task_id.as_deref().context("session has no task")?;
+        let agent_id = old
+            .task_agent_id
+            .as_deref()
+            .context("session has no staffed agent")?;
+        let task = self.store.get_task(task_id).await?;
+        let goal = self.store.get_goal(&task.goal_id).await?;
+        let repo = self.store.get_repository(&task.repo_id).await?;
+        let authors = self.store.list_task_authors(task_id).await?;
+        let author = match authors.len() {
+            0 | 1 => None,
+            _ => authors
+                .iter()
+                .find(|a| Some(author_branch(&task.branch, a.ordinal)) == branch)
+                .map(|a| a.id.clone()),
+        };
+        let branch = self.review_branch(&task, author.as_deref()).await?;
+        let worktree = self
+            .reviewer_worktree(&task, agent_id, branch.as_deref())
+            .await?;
+        let summary = match &author {
+            Some(author_id) => Some(verdict_addressed_to(
+                author_id,
+                self.store
+                    .author_review_summary(task_id, author_id)
+                    .await?
+                    .as_deref(),
+            )),
+            None => self.store.review_summary(&task.id).await?,
+        };
+        let seen = match &branch {
+            Some(branch) => Task {
+                branch: branch.clone(),
+                ..task.clone()
+            },
+            None => task.clone(),
+        };
+        let template = prompts::template_for(PromptKind::ReviewerBriefing);
+        let briefing =
+            prompts::reviewer_briefing(template, &seen, &goal, &repo, summary.as_deref());
+        let template = prompts::template_for(PromptKind::ReviewerResume);
+        let resume = prompts::reviewer_resume_briefing(template, &seen, summary.as_deref());
+        Ok(SwitchPlan {
+            worktree: Some(worktree.display().to_string()),
+            cwd: worktree,
+            briefing: Some(briefing),
+            resume: Some(resume),
+            task_branch: Some(branch.unwrap_or(task.branch)),
+        })
+    }
+
     /// Kill a session's agent process — the daemon-owned child — and mark
     /// the session exited.
     pub async fn kill_session(&self, session_id: &str) -> Result<()> {
@@ -1364,6 +1676,22 @@ impl Launcher {
         self.git.prune_worktrees(&repo_path).await.ok();
         Ok(())
     }
+}
+
+/// The most of a switched session's history its successor is handed, in
+/// characters.
+const HANDOFF_BUDGET: usize = 240_000;
+
+/// What a switch starts its new session with, by seat: where it runs, and
+/// the briefing and resume text around the handoff.
+struct SwitchPlan {
+    /// The worktree the new row records.
+    worktree: Option<String>,
+    cwd: PathBuf,
+    briefing: Option<String>,
+    resume: Option<String>,
+    /// The branch a reviewer reviews, which its permission keys name.
+    task_branch: Option<String>,
 }
 
 /// One author's place on a task: the agent row, the branch it owns, and

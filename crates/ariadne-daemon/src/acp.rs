@@ -840,6 +840,16 @@ impl AcpRuntime {
         self.take_down(session_id);
     }
 
+    /// [`Self::kill`], and wait until the driver has cancelled the turn and
+    /// reaped the child: for a caller that starts another agent on the same
+    /// work under another session id, which no launch of this one waits for.
+    pub(crate) async fn kill_and_wait(&self, session_id: &str) {
+        self.take_down(session_id);
+        for reaped in self.ending_for(session_id) {
+            let _ = reaped.await;
+        }
+    }
+
     /// [`Self::kill`]: the agent moves from the running to the ending.
     fn take_down(&self, session_id: &str) {
         let Some(agent) = self

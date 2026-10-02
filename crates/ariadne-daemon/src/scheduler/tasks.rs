@@ -1197,32 +1197,7 @@ impl super::Scheduler {
     /// that ended over it has to be given back. Anything earlier is work in
     /// the worktree, and the resume nudge is what that wants.
     async fn resume_text(&self, task: &Task) -> anyhow::Result<String> {
-        // On a task the reviewers picked a winner for, the branch every
-        // briefing names is the winner's own: that is the change that lands.
-        let seen = match self
-            .launcher
-            .review_branch(task, task.picked_agent_id.as_deref())
-            .await?
-        {
-            Some(branch) => Task {
-                branch,
-                ..task.clone()
-            },
-            None => task.clone(),
-        };
-        if task.status() == TaskStatus::Approved {
-            let repo = self.store.get_repository(&task.repo_id).await?;
-            // The procedure is the task's: how this task ends was agreed with
-            // the user when it was written, and it is the whole of what
-            // decides which of the three the author runs.
-            return Ok(prompts::landing_briefing(
-                task.landing_prompt_text(),
-                &seen,
-                &repo,
-            ));
-        }
-        let template = prompts::template_for(PromptKind::AuthorResume);
-        Ok(prompts::author_resume_briefing(template, &seen))
+        self.launcher.author_resume_text(task).await
     }
 
     /// The session that was last this task's, of the ones `which` picks out,

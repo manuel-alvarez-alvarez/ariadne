@@ -34,7 +34,6 @@ const INTRO: &str =
 
 /// Render `events` as the handoff text a new agent reads in place of the
 /// conversation it cannot resume, kept under `budget` characters.
-#[allow(dead_code)] // the session-switch task wires this to its endpoint
 pub(crate) fn handoff_text(events: &[AgentEvent], budget: usize) -> String {
     let dtos: Vec<_> = events.iter().cloned().map(event_dto).collect();
     let entries: Vec<String> = fold(&dtos).iter().filter_map(render_entry).collect();

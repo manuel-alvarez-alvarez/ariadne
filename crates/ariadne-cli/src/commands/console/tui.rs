@@ -479,6 +479,7 @@ mod tests {
             created_at: "2026-01-01T00:00:00Z".into(),
             ended_at: None,
             title: None,
+            switched_from: None,
         };
 
         let header = super::header(&client, session).await;

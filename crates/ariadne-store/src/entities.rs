@@ -428,6 +428,9 @@ pub struct AgentSession {
     /// resumed, or the first one typed into it. None on a task's or a goal's
     /// session, which goes by its work's title.
     pub title: Option<String>,
+    /// The session this one replaced on its seat, when a switch started it:
+    /// the same seat on another pin, in a new conversation.
+    pub switched_from: Option<String>,
 }
 
 impl AgentSession {

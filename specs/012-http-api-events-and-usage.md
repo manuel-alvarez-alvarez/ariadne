@@ -1,12 +1,13 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-09-26
+updated: 2026-10-03
 areas: [api, daemon]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
   - crates/ariadne-daemon/tests/it/events.rs
   - crates/ariadne-daemon/tests/it/session_list.rs
+  - crates/ariadne-daemon/tests/it/switch.rs
   - crates/ariadne-daemon/tests/it/unknown_fields.rs
   - crates/ariadne-daemon/tests/it/logs.rs
   - crates/ariadne-daemon/tests/it/doctor.rs
@@ -66,8 +67,10 @@ and the ACP runtime that reports the agent events (021).
    the kind, the `summary` (rule 13) and the time — and carries no payload.
    The whole event, payload included, is what `GET /v1/events` answers and
    what the session's console stream carries (021).
-8. A session is read and driven over HTTP through its row, its kill and
-   resume, and its console (`/v1/sessions/{id}/console`, `/console/input`,
+8. A session is read and driven over HTTP through its row, its kill,
+   resume and switch (`POST /v1/sessions/{id}/switch`, body
+   `SwitchSessionRequest`, answer the new `SessionDto` with `switched_from`,
+   008), and its console (`/v1/sessions/{id}/console`, `/console/input`,
    `/console/stream`, `/console/cancel`, 008, 021). The one WebSocket,
    `/console/terminal` (008), serves that same console drawn as terminal
    bytes for an emulator, and reads the emulator's keys and size; its
@@ -257,6 +260,11 @@ and the ACP runtime that reports the agent events (021).
     each with the complete DTO.
 
 ## Acceptance criteria
+
+- `POST /v1/sessions/{id}/switch` is in the OpenAPI document with
+  `SwitchSessionRequest`, and answers a `SessionDto` that carries
+  `switched_from`
+  (`switch.rs::the_switch_endpoint_is_in_the_openapi_document`).
 
 - Learned permission routes list, get, delete and widen or narrow by `PUT`,
   refuse `POST` with 405, publish complete events for a create, an update by
