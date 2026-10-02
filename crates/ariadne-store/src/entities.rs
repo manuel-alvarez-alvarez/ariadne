@@ -211,6 +211,16 @@ pub struct LearnedPermission {
     pub id: String,
     pub repository_id: String,
     pub tool_name: String,
+    /// The normalized input the row answers for.
+    pub key: String,
+    /// `once`, `command` or `family`.
+    pub level: String,
+    /// The command family, else the tool name.
+    pub family: String,
+    /// The derived risk tags of the request, as a JSON array.
+    pub risk_tags: String,
+    /// `repository` or `all`.
+    pub scope: String,
     /// The ACP `toolCall` as JSON, its `rawInput` with sorted keys.
     pub tool_call: String,
     /// The ACP `options` as JSON.

@@ -726,6 +726,10 @@ async fn an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval() 
     assert_eq!(learned.len(), 1);
     assert_eq!(learned[0].target, "ai");
     assert_eq!(learned[0].selected_option, "yes");
+    assert_eq!(learned[0].key, r#"{"command":"cargo test -p app"}"#);
+    assert_eq!(learned[0].level, "command");
+    assert_eq!(learned[0].family, "cargo test");
+    assert_eq!(learned[0].scope, "repository");
 
     let again = h
         .task_on(
@@ -751,6 +755,32 @@ async fn an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval() 
         server.requests.lock().unwrap().len(),
         2,
         "the model decides first each time"
+    );
+}
+
+/// The model reads the raw input: a commit in the command reaches it as the
+/// agent sent it, not as the learned key's `<HASH>`.
+#[tokio::test]
+async fn the_model_receives_the_raw_input_and_not_the_learned_key() {
+    let sha = "94f07c0b878adfa965c6b6438dad1dedb4578e9f";
+    let server = ModelServer::answer(0.05).await;
+    let mut scripted = permission_script();
+    scripted["prompts"][0]["permission"]["toolCall"]["rawInput"] =
+        json!({"command": format!("git show {sha} 2>&1 | tail -60")});
+    let (h, cast, _agent_dir) =
+        ai_permissions_harness_with(&server, 0.05, Timeouts::default(), scripted).await;
+
+    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    eventually(TIMEOUT, "the AI-approved turn to finish", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+
+    let requests = server.requests.lock().unwrap();
+    let input = requests[0]["state"]["request"]["input"].as_str().unwrap();
+    assert_eq!(
+        input,
+        json!({"command": format!("git show {sha} 2>&1 | tail -60")}).to_string()
     );
 }
 

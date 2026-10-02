@@ -195,10 +195,24 @@ impl Launcher {
                 .await?;
         }
         // The repository the session works in answers its permission
-        // requests, and holds what `learn` remembers.
+        // requests, and holds what `learn` remembers. A learned key names its
+        // checkout and the session's branch by placeholders: an author's
+        // own branch, the branch a reviewer's caller set for its review,
+        // else the task's.
+        let mut task_branch = None;
         let repository = match &session.task_id {
             Some(task_id) => {
                 let task = self.store.get_task(task_id).await?;
+                task_branch = Some(match (&session.task_agent_id, session.seat()) {
+                    (Some(agent_id), Some(Seat::Author)) => {
+                        let agent = self.store.get_task_agent(agent_id).await?;
+                        author_branch(&task.branch, agent.ordinal)
+                    }
+                    _ => self
+                        .acp
+                        .task_branch(&session.id)
+                        .unwrap_or_else(|| task.branch.clone()),
+                });
                 Some(self.store.get_repository(&task.repo_id).await?)
             }
             None if session.goal_id.is_some() => Some(
@@ -221,13 +235,14 @@ impl Launcher {
         };
         // A loose session outside every registered checkout has no
         // repository to ask, and nowhere to remember an approval.
-        let (repository_id, permission_mode) = repository.map_or_else(
-            || (String::new(), PermissionMode::Auto),
+        let (repository_id, repository_path, permission_mode) = repository.map_or_else(
+            || (String::new(), String::new(), PermissionMode::Auto),
             |repo| {
                 let mode = repo.permission_mode();
-                (repo.id, mode)
+                (repo.id, repo.path, mode)
             },
         );
+        self.acp.set_task_branch(&session.id, task_branch);
         let agent_id = agent_of(&session.model);
         let command = self.registry.command_of(agent_id).with_context(|| {
             format!(
@@ -255,6 +270,7 @@ impl Launcher {
                 cwd: plan.cwd,
                 config: plan.config,
                 repository_id,
+                repository_path,
                 permission_mode,
             })
             .await
@@ -822,7 +838,7 @@ impl Launcher {
     /// that author's branch, and its briefing carries that author's summary.
     /// `None` reads the task's own branch and summary, which is the whole of
     /// a one-author task.
-    pub(crate) async fn spawn_reviewer_for(
+    pub async fn spawn_reviewer_for(
         &self,
         task_id: &str,
         agent_id: &str,
@@ -859,6 +875,10 @@ impl Launcher {
                 worktree_path: Some(worktree.display().to_string()),
             })
             .await?;
+        self.acp.set_task_branch(
+            &session.id,
+            Some(branch.clone().unwrap_or_else(|| task.branch.clone())),
+        );
 
         let summary = match author {
             Some(author_id) => Some(verdict_addressed_to(
@@ -970,6 +990,8 @@ impl Launcher {
             .store
             .restart_session(&previous.id, Some(&worktree.display().to_string()))
             .await?;
+        self.acp
+            .set_task_branch(&session.id, Some(branch.unwrap_or(task.branch)));
 
         self.launch_resumed(&session, worktree, &internal, instruction)
             .await

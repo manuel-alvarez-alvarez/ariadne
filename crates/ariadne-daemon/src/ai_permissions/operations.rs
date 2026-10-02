@@ -19,7 +19,7 @@ const WRAPPERS: [&str; 10] = [
     "sudo", "doas", "time", "nohup", "command", "exec", "nice", "xargs", "timeout", "env",
 ];
 
-fn wrapper_value_options(wrapper: &str) -> &'static [&'static str] {
+pub(crate) fn wrapper_value_options(wrapper: &str) -> &'static [&'static str] {
     match wrapper {
         "sudo" => &[
             "-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-T", "-U", "--user", "--group",
@@ -450,7 +450,7 @@ fn scan(command: &str) -> (Vec<String>, Vec<String>) {
     )
 }
 
-fn simple_commands(command: &str) -> Vec<String> {
+pub(crate) fn simple_commands(command: &str) -> Vec<String> {
     scan(command).0
 }
 
@@ -518,7 +518,7 @@ fn first_of<'a>(words: &'a [&str], groups: &[&[&str]]) -> &'a str {
 /// The words of a git command from its subcommand on: the global options
 /// before it are dropped, and `-C <path>` and `-c <name>=<value>` each take
 /// the next word as their value.
-pub(super) fn git_words<'a>(words: &'a [&'a str]) -> &'a [&'a str] {
+pub(crate) fn git_words<'a>(words: &'a [&'a str]) -> &'a [&'a str] {
     let mut rest = words;
     while rest.first().is_some_and(|word| word.starts_with('-')) {
         rest = if matches!(rest[0], "-C" | "-c") {
@@ -870,7 +870,7 @@ fn drop_front<'a>(words: &'a [&'a str], n: usize) -> &'a [&'a str] {
 /// wrappers before it are dropped, with the options of each wrapper and the
 /// value of an option that takes one. With `shells` false, a shell with a
 /// script (`bash -c`) is the program, and its words stay.
-pub(super) fn program_words<'a>(words: &'a [&'a str], shells: bool) -> &'a [&'a str] {
+pub(crate) fn program_words<'a>(words: &'a [&'a str], shells: bool) -> &'a [&'a str] {
     let mut words = words;
     while let Some(&first) = words.first() {
         if first.contains('=') && !first.starts_with(['-', '/', '.']) {

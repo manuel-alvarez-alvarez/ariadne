@@ -954,6 +954,11 @@ impl super::Scheduler {
             warn!(task = %task.id, reviewer = %reviewer_id, error = %format!("{e:#}"), "moving the reviewer's worktree failed");
             return Ok(false);
         }
+        // Its learned keys name the branch it reviews now.
+        self.launcher.acp.set_task_branch(
+            &session.id,
+            Some(author_branch(&task.branch, author.ordinal)),
+        );
         // Counted as briefed only once the prompt has actually gone out: a
         // live agent's runtime entry can be gone in the moment between the
         // worktree move above and this hand-off — a process just killed, one

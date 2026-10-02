@@ -91,7 +91,7 @@ async fn permission_decider(h: &Harness, session_id: &str) -> String {
 fn permission_script() -> serde_json::Value {
     permission_script_for(
         json!({"toolCallId": "call-1", "title": "Write", "kind": "write",
-                                 "rawInput": {"path": "src/main.rs"}}),
+                                 "rawInput": {"file_path": "src/main.rs"}}),
     )
 }
 
@@ -1249,9 +1249,14 @@ async fn learn_remembers_an_approval_per_repository_across_a_daemon_restart() {
     assert_eq!(learned.created_at, denial.created_at);
     assert!(learned.updated_at > denial.updated_at);
     assert_eq!(learned.tool_name, "Write");
+    assert_eq!(learned.key, r#"{"file_path":"src/main.rs"}"#);
+    assert_eq!(learned.level, "command");
+    assert_eq!(learned.family, "Write");
+    assert_eq!(learned.risk_tags, "[]");
+    assert_eq!(learned.scope, "repository");
     assert_eq!(learned.selected_option, "yes");
     let tool_call: serde_json::Value = serde_json::from_str(&learned.tool_call).unwrap();
-    assert_eq!(tool_call["rawInput"]["path"], "src/main.rs");
+    assert_eq!(tool_call["rawInput"]["file_path"], "src/main.rs");
     let options: serde_json::Value = serde_json::from_str(&learned.options).unwrap();
     assert_eq!(options.as_array().unwrap().len(), 2);
 
@@ -1350,21 +1355,42 @@ fn bash_call(command: &str) -> serde_json::Value {
            "rawInput": {"command": command}})
 }
 
-/// Record an allowing console choice for `tool_call` under the repository.
-async fn allowed_row(h: &Harness, cast: &Cast, tool_call: serde_json::Value) {
+/// A `command` row for a `Bash` `command` of `family` with no risk tags,
+/// whose selected option is `yes`.
+fn bash_row(
+    cast: &Cast,
+    command: &str,
+    family: &str,
+    options: serde_json::Value,
+) -> ariadne_store::NewLearnedPermission {
+    ariadne_store::NewLearnedPermission {
+        repository_id: cast.repo.id.clone(),
+        tool_name: "Bash".into(),
+        key: json!({"command": command}).to_string(),
+        level: "command".into(),
+        family: family.into(),
+        risk_tags: vec![],
+        scope: "repository".into(),
+        tool_call: bash_call(command),
+        options,
+        selected_option: "yes".into(),
+        target: "learn".into(),
+        output: None,
+    }
+}
+
+/// Record an allowing console choice for `command` under the repository.
+async fn allowed_row(h: &Harness, cast: &Cast, command: &str, family: &str) {
     h.store
-        .record_learned_permission(ariadne_store::NewLearnedPermission {
-            repository_id: cast.repo.id.clone(),
-            tool_name: "Bash".into(),
-            tool_call,
-            options: json!([
+        .record_learned_permission(bash_row(
+            cast,
+            command,
+            family,
+            json!([
                 {"optionId": "no", "name": "Reject", "kind": "reject_once"},
                 {"optionId": "yes", "name": "Allow", "kind": "allow_once"},
             ]),
-            selected_option: "yes".into(),
-            target: "learn".into(),
-            output: None,
-        })
+        ))
         .await
         .unwrap();
 }
@@ -1432,7 +1458,7 @@ async fn an_allowed_row_does_not_allow_another_command_of_the_same_tool() {
     let cast = acp_cast(&h).await;
     h.set_permission_mode(&cast.repo, PermissionMode::Learn)
         .await;
-    allowed_row(&h, &cast, bash_call("cargo build")).await;
+    allowed_row(&h, &cast, "cargo build", "cargo build").await;
 
     asked(&h, &cast.task.id).await;
 }
@@ -1452,19 +1478,284 @@ async fn a_row_with_an_unknown_allow_kind_never_auto_allows() {
     h.set_permission_mode(&cast.repo, PermissionMode::Learn)
         .await;
     h.store
-        .record_learned_permission(ariadne_store::NewLearnedPermission {
-            repository_id: cast.repo.id.clone(),
-            tool_name: "Bash".into(),
-            tool_call: bash_call("cargo test"),
-            options: json!([{"optionId": "yes", "name": "Allow", "kind": "allow_invalid"}]),
-            selected_option: "yes".into(),
-            target: "learn".into(),
-            output: None,
-        })
+        .record_learned_permission(bash_row(
+            &cast,
+            "cargo test",
+            "cargo test",
+            json!([{"optionId": "yes", "name": "Allow", "kind": "allow_invalid"}]),
+        ))
         .await
         .unwrap();
 
     asked(&h, &cast.task.id).await;
+}
+
+/// `learn` answers a request that differs from an approved one only by a
+/// commit, a `description` and an output filter: both share one key.
+#[tokio::test]
+async fn learn_answers_a_request_that_differs_only_by_one_time_values() {
+    let request = |raw_input: serde_json::Value| {
+        json!({
+            "permission": {
+                "toolCall": {"toolCallId": "call-1", "name": "Bash", "title": "git show",
+                             "kind": "execute", "rawInput": raw_input},
+                "options": [
+                    {"optionId": "no", "name": "Reject", "kind": "reject_once"},
+                    {"optionId": "yes", "name": "Allow", "kind": "allow_once"},
+                ],
+            },
+            "updates": [],
+            "stop_reason": "end_turn",
+        })
+    };
+    let mut scripted = script();
+    scripted["prompts"] = json!([
+        request(
+            json!({"command": "git show --stat 94f07c0b878adfa965c6b6438dad1dedb4578e9f",
+                       "description": "Show the merge"})
+        ),
+        request(
+            json!({"command": "git show --stat ff3c04a5 2>&1 | tail -60",
+                       "description": "Show what the docs commit changed"})
+        ),
+    ]);
+    let root = tempfile::tempdir().unwrap();
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness().home(home_with_stub(&root, &stub)).await;
+    let cast = acp_cast(&h).await;
+    h.set_permission_mode(&cast.repo, PermissionMode::Learn)
+        .await;
+
+    let session = asked(&h, &cast.task.id).await;
+    let (status, _) = h.send(post_console_input(&session.id, "yes")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "the approved turn to finish", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    let (status, _) = h.send(post_console_input(&session.id, "go on")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "the second request to be answered", || async {
+        stub.messages().iter().any(|message| {
+            message.get("id").and_then(serde_json::Value::as_str) == Some("permission-2")
+        }) && h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+
+    assert_eq!(h.attention(&session).await, None);
+    let deciders: Vec<String> = h
+        .store
+        .list_events(EventFilter {
+            session_id: Some(session.id.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|event| event.kind == "permission.replied")
+        .map(|event| serde_json::from_str::<serde_json::Value>(&event.payload).unwrap())
+        .map(|payload| payload["decided_by"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(deciders, ["console", "learned"]);
+    let learned = h
+        .store
+        .list_learned_permissions(Some(&cast.repo.id))
+        .await
+        .unwrap();
+    assert_eq!(learned.len(), 1, "a learned answer records nothing");
+    assert_eq!(learned[0].key, r#"{"command":"git show --stat <HASH>"}"#);
+    assert_eq!(learned[0].family, "git show");
+}
+
+/// A row answers only a request whose risk tags it holds all of: a row with
+/// no tags does not answer `rm -rf build`, whose key it shares, and the
+/// console answer then takes the request's tags into that same row.
+#[tokio::test]
+async fn a_row_without_the_requests_risk_tags_does_not_answer_it() {
+    let root = tempfile::tempdir().unwrap();
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(
+        agent_dir.path(),
+        permission_script_for(bash_call("rm -rf build")),
+    );
+    let h = harness().home(home_with_stub(&root, &stub)).await;
+    let cast = acp_cast(&h).await;
+    h.set_permission_mode(&cast.repo, PermissionMode::Learn)
+        .await;
+    allowed_row(&h, &cast, "rm -rf build", "rm").await;
+
+    let session = asked(&h, &cast.task.id).await;
+    let (status, _) = h.send(post_console_input(&session.id, "yes")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "the approved turn to finish", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    let learned = h
+        .store
+        .list_learned_permissions(Some(&cast.repo.id))
+        .await
+        .unwrap();
+    assert_eq!(learned.len(), 1, "the request has the row's key");
+    let tags: Vec<String> = serde_json::from_str(&learned[0].risk_tags).unwrap();
+    assert!(tags.contains(&"recursive".to_string()), "{tags:?}");
+}
+
+/// The second author of a task works on a branch of its own, the task's
+/// with a suffix: its key names that branch `<BRANCH>` whole, and leaves the
+/// first author's branch, the task's, as it is.
+#[tokio::test]
+async fn a_second_authors_branch_is_the_branch_placeholder() {
+    let root = tempfile::tempdir().unwrap();
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(agent_dir.path(), script());
+    let h = harness().home(home_with_stub(&root, &stub)).await;
+    let cast = acp_cast(&h).await;
+    h.set_permission_mode(&cast.repo, PermissionMode::Learn)
+        .await;
+    let author = || NewTaskAgent::new(Seat::Author, ["coding"], common::test_pin());
+    let task = h
+        .store
+        .create_task(NewTask {
+            goal_id: cast.goal.id.clone(),
+            repo_id: cast.repo.id.clone(),
+            title: "Contested push".into(),
+            description: "do things".into(),
+            agents: vec![
+                author(),
+                author(),
+                NewTaskAgent::new(Seat::Reviewer, ["code-review"], common::test_pin()),
+            ],
+            depends_on: vec![],
+            landing: None,
+        })
+        .await
+        .unwrap();
+    let second = h.store.list_task_authors(&task.id).await.unwrap().remove(1);
+    let branch = ariadne_store::author_branch(&task.branch, second.ordinal);
+    assert_ne!(branch, task.branch);
+    stub.reprogram(permission_script_for(bash_call(&format!(
+        "git push origin {branch} && git log {}",
+        task.branch
+    ))));
+    ready(&h, &task.id).await;
+
+    let session = h
+        .launcher
+        .spawn_author_agent(&task.id, &second.id)
+        .await
+        .unwrap();
+    eventually(TIMEOUT, "the permission attention", || async {
+        h.attention(&session).await == Some(AttentionReason::WaitingPermission)
+    })
+    .await;
+    let (status, _) = h.send(post_console_input(&session.id, "yes")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "the approved turn to finish", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    let learned = h
+        .store
+        .list_learned_permissions(Some(&cast.repo.id))
+        .await
+        .unwrap();
+    assert_eq!(learned.len(), 1);
+    assert_eq!(
+        learned[0].key,
+        json!({"command": format!("git push origin <BRANCH> && git log {}", task.branch)})
+            .to_string()
+    );
+}
+
+/// A reviewer of the second author reviews that author's branch: its key
+/// names that branch `<BRANCH>`, and leaves the task's own as it is.
+#[tokio::test]
+async fn a_reviewer_of_a_second_author_names_the_reviewed_branch() {
+    let root = tempfile::tempdir().unwrap();
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(agent_dir.path(), script());
+    let h = harness().home(home_with_stub(&root, &stub)).await;
+    let cast = acp_cast(&h).await;
+    h.set_permission_mode(&cast.repo, PermissionMode::Learn)
+        .await;
+    let author = || NewTaskAgent::new(Seat::Author, ["coding"], common::test_pin());
+    let task = h
+        .store
+        .create_task(NewTask {
+            goal_id: cast.goal.id.clone(),
+            repo_id: cast.repo.id.clone(),
+            title: "Contested review".into(),
+            description: "do things".into(),
+            agents: vec![
+                author(),
+                author(),
+                NewTaskAgent::new(Seat::Reviewer, ["code-review"], common::test_pin()),
+            ],
+            depends_on: vec![],
+            landing: None,
+        })
+        .await
+        .unwrap();
+    let second = h.store.list_task_authors(&task.id).await.unwrap().remove(1);
+    let reviewer = h
+        .store
+        .list_task_reviewers(&task.id)
+        .await
+        .unwrap()
+        .remove(0);
+    let branch = ariadne_store::author_branch(&task.branch, second.ordinal);
+    ready(&h, &task.id).await;
+    let writing = h
+        .launcher
+        .spawn_author_agent(&task.id, &second.id)
+        .await
+        .unwrap();
+    eventually(TIMEOUT, "the second author's turn to finish", || async {
+        h.session_status(&writing).await == SessionStatus::Idle
+    })
+    .await;
+    stub.reprogram(permission_script_for(bash_call(&format!(
+        "git diff {}...{branch}",
+        task.branch
+    ))));
+
+    let session = h
+        .launcher
+        .spawn_reviewer_for(&task.id, &reviewer.id, Some(&second.id))
+        .await
+        .unwrap();
+    // No review is open, so nobody waits on the reviewer and no attention
+    // rises: the request itself is what the test waits for.
+    eventually(TIMEOUT, "the permission request", || async {
+        h.store
+            .list_events(EventFilter {
+                session_id: Some(session.id.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .iter()
+            .any(|event| event.kind == "permission_request")
+    })
+    .await;
+    let (status, _) = h.send(post_console_input(&session.id, "yes")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "the approved turn to finish", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    let learned = h
+        .store
+        .list_learned_permissions(Some(&cast.repo.id))
+        .await
+        .unwrap();
+    assert_eq!(learned.len(), 1);
+    assert_eq!(
+        learned[0].key,
+        json!({"command": format!("git diff {}...<BRANCH>", task.branch)}).to_string()
+    );
 }
 
 /// A request with no `rawInput` gets a row, but even an allowing row never

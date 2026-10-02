@@ -160,22 +160,68 @@ gone (009).
    first allowing option, then the first option, and cancels only an empty
    list. `ask` records the request in the console, raises session attention
    and blocks until console input selects an option. `learn` does the same
-   for a request whose key has no allowing row. The key is the repository,
-   the tool name and the canonical `rawInput` (JSON with sorted keys). The
-   tool name is `toolCall.name`, else `toolCall._meta.claudeCode.toolName`,
-   else `toolCall.title`, else `toolCall.toolCallId`. The table
-   `learned_permissions` keeps one row per key, with the `toolCall`, the
-   `options`, the selected option, the `target` and the model `output`.
-   `target` is the permission mode at the time of the decision. Every console
-   choice writes the row of its key, in every mode, allow or deny. A model
-   deny, a rule deny and a cap deny write it too. A model allow, a learned
-   allow and an `auto` allow write nothing. A write on an existing key keeps
-   its id and `created_at` and replaces the rest. In `learn` and `ai` only, a
-   row whose selected option has kind `allow_once` or `allow_always` selects
-   the allowing option without the console. A denied row never auto-allows
-   and never auto-denies. A request with no `rawInput` never auto-allows. In
-   `ai`, the AI permission model decides first (022), then `learn` handles
-   every answer that is not a confident allow or deny.
+   for a request that no allowing row answers. The tool name is
+   `toolCall.name`, else `toolCall._meta.claudeCode.toolName`, else
+   `toolCall.title`, else `toolCall.toolCallId`.
+   The table `learned_permissions` keeps one row per repository, tool name,
+   level and key (`learned_key::normalize`). The key is made from
+   `rawInput` in four steps:
+   - The fields per tool. `Bash` keeps `command`. `Edit`, `Write`, `Read`,
+     `MultiEdit` and `NotebookEdit` keep `file_path`. An `mcp__` tool keeps every field but
+     `body`, `summary`, `description`, `title` and `reason`. `WebFetch` keeps
+     the host of `url` as `{"host": …}`. `WebSearch` keeps no field. Every
+     other tool keeps every field but `description`.
+   - The Bash command. A leading `cd <path>` followed by `&&`, `;` or a
+     newline goes, where the path is the worktree, the repository or a
+     directory under one of them; a relative path without `..` counts as
+     under the worktree. Every `2>&1` goes. A trailing pipe chain goes where
+     every program in it is `tail`, `head`, `wc`, `cat`, `sort` or `uniq`
+     and none of it redirects or substitutes.
+   - The placeholders, in every string value. The repository path becomes
+     `<REPO>`, the worktree `<WORKTREE>` and the session's branch
+     `<BRANCH>`, the longest first, then the home directory `<HOME>`. Then
+     a `/tmp/…` or `/private/tmp/…` path becomes `<TMP>`, a whole word of 7
+     to 64 hex characters in either case, with a letter and a digit,
+     `<HASH>`, and an Ariadne id (`0` and 25 of `[0-9a-z]`, a whole word)
+     `<ID>`. Numbers stay. An
+     orchestrator and a loose session have no branch. An author's branch is
+     its own, the task branch with a suffix for a second author. A
+     reviewer's is the branch it reviews, the task branch or one author's,
+     and it changes when a live reviewer is moved to the next author's
+     review. Another author's branch stays as it is.
+   - The key is the compact JSON of the kept fields with sorted keys:
+     `git rebase main 2>&1 | tail -40` with a `description` is
+     `{"command":"git rebase main"}`, and a `merge_commit` of any SHA is
+     `{"merge_commit":"<HASH>"}`.
+   The family of a `Bash` request is the program of the first simple command
+   of the normalized command, after `NAME=value` assignments and the wrappers
+   `sudo`, `env`, `time`, `nohup`, `timeout`, `nice`, `command` and `exec`,
+   with their options, the value of an option that takes one (`time -f`,
+   `-o`), and the duration of `timeout`. For `git`, `cargo`, `npm`, `npx`,
+   `pnpm`, `yarn`, `go`, `docker`, `gh`, `make`, `kubectl`, `pip`, `pip3`
+   and `brew`, the
+   first argument that does not start with `-` follows, after the global
+   options of `git`: `git push`, `cargo nextest`, `ls`. The family of every
+   other tool is the tool name.
+   The level is `once`, `command` or `family`, and the scope `repository` or
+   `all`. Each row keeps the key, the level, the family, the request's
+   derived risk tags (022) in `derive` order, the scope, the whole `toolCall`
+   with its `rawInput` keys sorted, the `options`, the selected option, the
+   `target` and the model `output`. `target` is the permission mode at the
+   time of the decision. Every console choice writes the row of its key at
+   level `command` with scope `repository`, in every mode, allow or deny. A
+   model deny, a rule deny and a cap deny write it too. A model allow, a
+   learned allow and an `auto` allow write nothing. A write on an existing
+   key keeps its id and `created_at`, and replaces the rest, the scope
+   included. In
+   `learn` and `ai` only, the `command` row of the request's key answers it
+   when its selected option has kind `allow_once` or `allow_always` and
+   every derived risk tag of the request is among the row's. A denied row
+   never auto-allows and never auto-denies. A request with no `rawInput`
+   never auto-allows, and a session outside every repository records and
+   answers nothing. The AI permission model reads the raw input, not the key.
+   In `ai`, the AI permission model decides first (022), then `learn`
+   handles every answer that is not a confident allow or deny.
 10. After a turn ends the agent stays up and the runtime keeps serving it.
    Everything the daemon says to the agent after the launch — a scheduler
    nudge, a review briefing, an agent message — is a `session/prompt`, sent
@@ -257,19 +303,44 @@ gone (009).
 - An allowed `Bash` row does not auto-allow another command
   (`acp_console.rs::an_allowed_row_does_not_allow_another_command_of_the_same_tool`).
 - A request with no `rawInput` gets a row but never auto-allows
-  (`acp_console.rs::a_request_without_raw_input_never_auto_allows`,
-  `store.rs::learned_permissions_without_raw_input_keep_one_row`).
-- The same request under another `toolCallId` keeps one row: it updates the
-  selected option and `updated_at`, and keeps the id and `created_at`
-  (`store.rs::learned_permissions_keep_one_row_per_repository_tool_and_raw_input`).
-- A fresh database holds the table with its ten columns
-  (`store.rs::a_fresh_database_holds_the_ten_learned_permission_columns`).
+  (`acp_console.rs::a_request_without_raw_input_never_auto_allows`).
+- `learn` answers a request that differs from an approved one only by a SHA,
+  a `description` and a `2>&1 | tail -60`
+  (`acp_console.rs::learn_answers_a_request_that_differs_only_by_one_time_values`),
+  and a row whose risk tags lack one of the request's does not answer it
+  (`::a_row_without_the_requests_risk_tags_does_not_answer_it`).
+- The key keeps the fields of each tool, drops a `cd` into the worktree, a
+  `2>&1` and an output filter, and replaces one-time values in order
+  (`learned_key.rs::the_four_forms_of_one_rebase_give_one_key`,
+  `::two_finish_task_inputs_with_different_shas_give_one_key`,
+  `::two_edits_of_one_file_give_one_key`,
+  `::two_verdicts_with_different_bodies_give_one_key`,
+  `::a_cd_into_the_worktree_and_an_output_filter_are_dropped`,
+  `::a_cd_elsewhere_and_a_writing_filter_are_kept`,
+  `::the_worktree_the_repository_the_branch_and_the_home_are_replaced_in_order`,
+  `::a_session_without_a_branch_keeps_the_branch_name`,
+  `::one_time_values_are_placeholders_and_numbers_are_kept`,
+  `::an_uppercase_hash_is_a_placeholder`,
+  `::only_the_sessions_own_branch_is_the_branch_placeholder`,
+  `acp_console.rs::a_second_authors_branch_is_the_branch_placeholder`,
+  `::a_reviewer_of_a_second_author_names_the_reviewed_branch`,
+  `multi_author_tasks.rs::a_live_reviewer_is_briefed_for_the_next_author_without_the_quiet_clock`,
+  `::a_fetch_keys_on_its_host_and_a_search_on_nothing`), and the family is
+  the program and its subcommand
+  (`::the_family_is_the_program_and_its_subcommand`).
+- Two writes with one repository, tool name, level and key keep one row: the
+  second keeps the id and `created_at` and sets the scope, and the row
+  carries the key, the level, the family, the tags and the scope
+  (`store.rs::learned_permissions_keep_one_row_per_repository_tool_level_and_key`).
+- A fresh database holds the table with its fifteen columns
+  (`store.rs::a_fresh_database_holds_the_fifteen_learned_permission_columns`).
 - A repository set to `ai` asks the AI permission model first. A confident
   allow proceeds; every other outcome uses a learned approval or asks the
   console
   (`ai_permissions_decisions.rs::a_confident_allow_runs_at_once_and_reports_ai`,
   `::an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval`,
-  `::a_review_answer_waits_for_the_console`).
+  `::a_review_answer_waits_for_the_console`), and the model reads the raw
+  input (`::the_model_receives_the_raw_input_and_not_the_learned_key`).
 - Console input reaches the agent and queues behind a running turn
   (`acp_console.rs::posted_input_reaches_the_agent_and_queues_behind_a_running_turn`).
 - An offered command reaches the agent without the system prompt; every other
@@ -347,5 +418,7 @@ transport), `crates/ariadne-daemon/src/acp_calls.rs` (the methods it calls),
 SDK's),
 `crates/ariadne-daemon/src/transcript.rs` (the transcript reader),
 `crates/ariadne-daemon/src/launcher.rs` (the launch, liveness and kill),
+`crates/ariadne-daemon/src/learned_key.rs` (the learned key and family),
+`crates/ariadne-store/src/permissions.rs` (the learned rows),
 `crates/ariadne-daemon/src/scheduler/mod.rs` (the prompt delivery),
 `crates/ariadne-daemon/tests/it/common/acp.rs` (the scriptable stub agent).

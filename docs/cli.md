@@ -449,10 +449,11 @@ ariadne permissions learned show <id>
 ariadne permissions learned rm <id>
 ```
 
-`list` accepts a repository id or path, and shows the tool, the permission
-mode at the time (`target`) and the selected option. `show` prints every
-field, with the tool call, the options and the model output as formatted
-JSON. Only a permission decision writes a row, so there is no `add` or
+`list` accepts a repository id or path, and shows the tool, the level, the
+family, the key, the scope, the permission mode at the time (`target`) and
+the selected option. `show` prints every field, the risk tags included, with
+the tool call (its original input included), the options and the model
+output as formatted JSON. Only a permission decision writes a row, so there is no `add` or
 `edit`. Add `--format json` to any verb for JSON output.
 
 `ariadne permissions ai` manages the AI permission model behind the `ai` permission

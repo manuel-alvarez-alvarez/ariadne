@@ -31,8 +31,49 @@ impl LearnedPermissionTarget {
     }
 }
 
+/// How much of a request a learned permission answers for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LearnedPermissionLevel {
+    /// This one request.
+    Once,
+    /// Every request with the same key.
+    Command,
+    /// Every request of the same command family.
+    Family,
+}
+
+impl LearnedPermissionLevel {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Once => "once",
+            Self::Command => "command",
+            Self::Family => "family",
+        }
+    }
+}
+
+/// Where a learned permission answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LearnedPermissionScope {
+    /// The repository the request came from.
+    Repository,
+    /// Every repository.
+    All,
+}
+
+impl LearnedPermissionScope {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Repository => "repository",
+            Self::All => "all",
+        }
+    }
+}
+
 /// One user choice or denial of an ACP permission request, keyed by the
-/// repository, the tool name and the canonical `rawInput`.
+/// repository, the tool name, the level and the normalized input.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct LearnedPermissionDto {
     pub id: String,
@@ -40,6 +81,19 @@ pub struct LearnedPermissionDto {
     /// `toolCall.name`, else `toolCall._meta.claudeCode.toolName`, else `toolCall.title`.
     #[schema(example = "Bash")]
     pub tool_name: String,
+    /// The kept fields of `rawInput` as compact JSON with sorted keys, its
+    /// one-time values replaced by placeholders such as `<HASH>`.
+    #[schema(example = r#"{"command":"git rebase main"}"#)]
+    pub key: String,
+    pub level: LearnedPermissionLevel,
+    /// The command family of a `Bash` request, such as `git rebase`, else
+    /// the tool name.
+    #[schema(example = "git rebase")]
+    pub family: String,
+    /// The derived risk tags of the request. The row answers only a request
+    /// whose tags are all among them.
+    pub risk_tags: Vec<String>,
+    pub scope: LearnedPermissionScope,
     /// The ACP `toolCall`, its `rawInput` with sorted keys.
     pub tool_call: serde_json::Value,
     /// The ACP `options`.

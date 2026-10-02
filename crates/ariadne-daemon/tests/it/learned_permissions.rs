@@ -1,5 +1,6 @@
 use ariadne_api::permissions::{
-    LearnedPermissionDto, LearnedPermissionTarget, LearnedPermissionsResponse,
+    LearnedPermissionDto, LearnedPermissionLevel, LearnedPermissionScope, LearnedPermissionTarget,
+    LearnedPermissionsResponse,
 };
 use ariadne_api::stream::DomainEvent;
 use ariadne_store::{NewLearnedPermission, NewRepository};
@@ -12,6 +13,11 @@ fn choice(repository_id: &str, selected: &str) -> NewLearnedPermission {
     NewLearnedPermission {
         repository_id: repository_id.into(),
         tool_name: "Bash".into(),
+        key: r#"{"command":"cargo test"}"#.into(),
+        level: "command".into(),
+        family: "cargo test".into(),
+        risk_tags: vec!["background_process".into()],
+        scope: "repository".into(),
         tool_call: json!({"toolCallId": "call-1", "name": "Bash", "title": "cargo test",
                           "rawInput": {"command": "cargo test"}}),
         options: json!([
@@ -54,6 +60,25 @@ async fn learned_permission_routes_read_and_delete_and_publish_fat_events() {
             .contains(&json!("output")),
         "output is a required nullable field"
     );
+    let dto = &openapi["components"]["schemas"]["LearnedPermissionDto"];
+    for field in ["key", "level", "family", "risk_tags", "scope"] {
+        assert!(
+            dto["properties"][field].is_object(),
+            "{field} is a property"
+        );
+        assert!(
+            dto["required"].as_array().unwrap().contains(&json!(field)),
+            "{field} is required"
+        );
+    }
+    assert_eq!(
+        openapi["components"]["schemas"]["LearnedPermissionLevel"]["enum"],
+        json!(["once", "command", "family"])
+    );
+    assert_eq!(
+        openapi["components"]["schemas"]["LearnedPermissionScope"]["enum"],
+        json!(["repository", "all"])
+    );
 
     h.store
         .record_learned_permission(choice(&repo.id, "no"))
@@ -81,6 +106,11 @@ async fn learned_permission_routes_read_and_delete_and_publish_fat_events() {
     assert_eq!(updated.selected_option, "yes");
     assert_eq!(updated.target, LearnedPermissionTarget::Ai);
     assert_eq!(updated.tool_name, "Bash");
+    assert_eq!(updated.key, r#"{"command":"cargo test"}"#);
+    assert_eq!(updated.level, LearnedPermissionLevel::Command);
+    assert_eq!(updated.family, "cargo test");
+    assert_eq!(updated.risk_tags, ["background_process"]);
+    assert_eq!(updated.scope, LearnedPermissionScope::Repository);
     assert_eq!(
         updated.tool_call["rawInput"],
         json!({"command": "cargo test"})

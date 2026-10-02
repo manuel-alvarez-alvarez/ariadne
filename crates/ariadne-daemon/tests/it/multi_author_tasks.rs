@@ -858,6 +858,11 @@ async fn a_live_reviewer_is_briefed_for_the_next_author_without_the_quiet_clock(
         sh(&reviewer_worktree, "git rev-parse HEAD"),
         sh(&repo, &format!("git rev-parse {second_branch}")),
     );
+    // And its learned keys name that branch `<BRANCH>` from here on.
+    assert_eq!(
+        h.launcher.acp.task_branch(&reviewer_session.id),
+        Some(second_branch)
+    );
 }
 
 /// A settlement the daemon died in is finished by the daemon that comes

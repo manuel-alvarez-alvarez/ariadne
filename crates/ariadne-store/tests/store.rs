@@ -17,9 +17,14 @@ fn bash_choice(repository_id: &str, call_id: &str, selected: &str) -> NewLearned
     NewLearnedPermission {
         repository_id: repository_id.into(),
         tool_name: "Bash".into(),
+        key: r#"{"command":"git show <HASH>"}"#.into(),
+        level: "command".into(),
+        family: "git show".into(),
+        risk_tags: vec![],
+        scope: "repository".into(),
         tool_call: serde_json::json!({
-            "toolCallId": call_id, "title": "echo first", "kind": "execute",
-            "rawInput": {"description": "Print", "command": "echo first"},
+            "toolCallId": call_id, "title": "git show", "kind": "execute",
+            "rawInput": {"description": "Show", "command": "git show 94f07c0b"},
         }),
         options: serde_json::json!([
             {"optionId": "yes", "kind": "allow_once"},
@@ -31,11 +36,13 @@ fn bash_choice(repository_id: &str, call_id: &str, selected: &str) -> NewLearned
     }
 }
 
-/// The same request twice, under another `toolCallId` and with its
-/// `rawInput` keys in another order, keeps one row: the second choice
-/// replaces the first, and the row keeps its id and `created_at`.
+/// Two choices with one repository, tool name, level and key keep one row:
+/// the second replaces the first, scope included, and keeps its id and
+/// `created_at`; the row carries the key, the level, the family, the tags
+/// and the scope.
+/// The raw input is kept whole, its keys sorted.
 #[tokio::test]
-async fn learned_permissions_keep_one_row_per_repository_tool_and_raw_input() {
+async fn learned_permissions_keep_one_row_per_repository_tool_level_and_key() {
     let (store, _dir) = test_store().await;
     let repo = store
         .create_repository(NewRepository {
@@ -47,17 +54,18 @@ async fn learned_permissions_keep_one_row_per_repository_tool_and_raw_input() {
         .await
         .unwrap();
     let mut changes = store.watch_changes().expect("the only watcher");
-    let first = store
-        .record_learned_permission(bash_choice(&repo.id, "call-1", "yes"))
-        .await
-        .unwrap();
+    let mut widened = bash_choice(&repo.id, "call-1", "yes");
+    widened.scope = "all".into();
+    let first = store.record_learned_permission(widened).await.unwrap();
+    assert_eq!(first.scope, "all");
     assert!(matches!(
         changes.recv().await.unwrap(),
         Change::LearnedPermissionCreated(_)
     ));
     let mut again = bash_choice(&repo.id, "call-2", "no");
     again.tool_call["rawInput"] =
-        serde_json::json!({"command": "echo first", "description": "Print"});
+        serde_json::json!({"command": "git show ff3c04a5 2>&1", "description": "Show it"});
+    again.risk_tags = vec!["remote".into(), "force".into()];
     again.target = "ai".into();
     again.output = Some(serde_json::json!({"label": "deny", "danger": 0.9}));
     let first_updated_at = chrono::DateTime::parse_from_rfc3339(&first.updated_at)
@@ -76,6 +84,11 @@ async fn learned_permissions_keep_one_row_per_repository_tool_and_raw_input() {
     assert_eq!(second.id, first.id);
     assert_eq!(second.created_at, first.created_at);
     assert!(second.updated_at > first.updated_at);
+    assert_eq!(second.key, r#"{"command":"git show <HASH>"}"#);
+    assert_eq!(second.level, "command");
+    assert_eq!(second.family, "git show");
+    assert_eq!(second.risk_tags, r#"["remote","force"]"#);
+    assert_eq!(second.scope, "repository", "a later choice sets the scope");
     assert_eq!(second.selected_option, "no");
     assert_eq!(second.target, "ai");
     assert_eq!(
@@ -87,8 +100,8 @@ async fn learned_permissions_keep_one_row_per_repository_tool_and_raw_input() {
     assert!(
         second
             .tool_call
-            .contains(r#""rawInput":{"command":"echo first","description":"Print"}"#),
-        "rawInput is stored with sorted keys: {}",
+            .contains(r#""rawInput":{"command":"git show ff3c04a5 2>&1","description":"Show it"}"#),
+        "rawInput is stored whole with sorted keys: {}",
         second.tool_call
     );
     assert_eq!(
@@ -99,24 +112,30 @@ async fn learned_permissions_keep_one_row_per_repository_tool_and_raw_input() {
         vec![second.clone()]
     );
 
-    let other = store
-        .find_learned_permission(
-            &repo.id,
-            "Bash",
-            &serde_json::json!({"command": "echo other"}),
-        )
-        .await
-        .unwrap();
-    assert_eq!(other, None, "another command is another key");
-    let found = store
-        .find_learned_permission(
-            &repo.id,
-            "Bash",
-            &serde_json::json!({"description": "Print", "command": "echo first"}),
-        )
-        .await
-        .unwrap();
-    assert_eq!(found, Some(second.clone()));
+    let find = |level: &'static str, key: &'static str| {
+        let store = store.clone();
+        let repo_id = repo.id.clone();
+        async move {
+            store
+                .find_learned_permission(&repo_id, "Bash", level, key)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(
+        find("command", r#"{"command":"git log"}"#).await,
+        None,
+        "another key is another row"
+    );
+    assert_eq!(
+        find("family", r#"{"command":"git show <HASH>"}"#).await,
+        None,
+        "another level is another row"
+    );
+    assert_eq!(
+        find("command", r#"{"command":"git show <HASH>"}"#).await,
+        Some(second.clone())
+    );
 
     let deleted = store.delete_learned_permission(&first.id).await.unwrap();
     assert_eq!(deleted.id, first.id);
@@ -129,36 +148,20 @@ async fn learned_permissions_keep_one_row_per_repository_tool_and_raw_input() {
     );
 }
 
-/// Requests without a `rawInput` share one key per tool.
+/// A fresh database holds the learned permissions table with exactly its
+/// fifteen columns.
 #[tokio::test]
-async fn learned_permissions_without_raw_input_keep_one_row() {
-    let (store, _dir) = test_store().await;
-    let repo = store
-        .create_repository(NewRepository {
-            path: "/tmp/learned-repo".into(),
-            base_branch: "main".into(),
-            description: None,
-            permission_mode: None,
-        })
-        .await
-        .unwrap();
-    for call_id in ["call-1", "call-2"] {
-        let mut choice = bash_choice(&repo.id, call_id, "yes");
-        choice.tool_call.as_object_mut().unwrap().remove("rawInput");
-        store.record_learned_permission(choice).await.unwrap();
-    }
-    assert_eq!(store.list_learned_permissions(None).await.unwrap().len(), 1);
-}
-
-/// A fresh database holds the learned permissions table with exactly its ten
-/// columns.
-#[tokio::test]
-async fn a_fresh_database_holds_the_ten_learned_permission_columns() {
+async fn a_fresh_database_holds_the_fifteen_learned_permission_columns() {
     use sqlx::Connection;
     let expected = [
         "id",
         "repository_id",
         "tool_name",
+        "key",
+        "level",
+        "family",
+        "risk_tags",
+        "scope",
         "tool_call",
         "options",
         "selected_option",

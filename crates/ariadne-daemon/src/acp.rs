@@ -43,8 +43,10 @@ use crate::acp_calls::PromptTurn;
 use crate::acp_transport::{PromptWrites, witnessed_pipes};
 use crate::ai_permissions::AiPermissions;
 use crate::ai_permissions::decide::{Decision, decide, prepare};
+use crate::ai_permissions::derive::derive;
 use crate::http::classify::summarize;
 use crate::http::events::ingest_event;
+use crate::learned_key::{Facts, Key, normalize};
 use crate::scheduler::SchedEvent;
 use crate::timeouts::Timeouts;
 use crate::transcript::{LaunchTranscript, TranscriptHomes};
@@ -112,6 +114,9 @@ pub struct AcpLaunch {
     pub config: LaunchConfig,
     /// Repository this session works in. Learned approvals are scoped here.
     pub repository_id: String,
+    /// That repository's checkout, empty where there is none: a learned
+    /// key names it `<REPO>`.
+    pub repository_path: String,
     /// The repository's permission mode, resolved before the launch.
     pub permission_mode: PermissionMode,
 }
@@ -142,6 +147,10 @@ struct Inner {
     /// relaunch finds no running entry left to take down, and the old agent
     /// still holds the conversation the relaunch resumes.
     ending: Mutex<HashMap<String, Vec<(String, Reaped)>>>,
+    /// The branch each session works on, by Ariadne session id: what a
+    /// learned key names `<BRANCH>`. Shared with the session's runtime, so a
+    /// live reviewer moved to another author's branch keys on that one.
+    branches: Mutex<HashMap<String, SessionBranch>>,
     /// Wakes the scheduler after an event lands, the way the HTTP ingestion
     /// does — present once a scheduler is running.
     scheduler: OnceLock<mpsc::UnboundedSender<SchedEvent>>,
@@ -153,6 +162,10 @@ struct Inner {
     consoles: Mutex<HashMap<String, broadcast::Sender<AgentEventDto>>>,
     ai_permissions: Option<AiPermissions>,
 }
+
+/// The branch one session works on, shared between the runtime and the
+/// launcher that moves it.
+type SessionBranch = Arc<Mutex<Option<String>>>;
 
 /// Resolves once a driver has killed and reaped its child. Shared, so that
 /// every launch of the session waits on the same reap.
@@ -398,11 +411,37 @@ impl AcpRuntime {
                 running: Mutex::new(HashMap::new()),
                 user_resumed: Mutex::default(),
                 ending: Mutex::new(HashMap::new()),
+                branches: Mutex::default(),
                 scheduler: OnceLock::new(),
                 consoles: Mutex::new(HashMap::new()),
                 ai_permissions: None,
             }),
         }
+    }
+
+    /// Set the branch a session works on: an author's own, or the one a
+    /// reviewer reviews. Its learned keys name it `<BRANCH>` from the next
+    /// permission request on, a running agent's included.
+    pub fn set_task_branch(&self, session_id: &str, branch: Option<String>) {
+        *self.branch_of(session_id).lock().expect("ACP branch lock") = branch;
+    }
+
+    /// The branch a session works on, where one was set.
+    pub fn task_branch(&self, session_id: &str) -> Option<String> {
+        self.branch_of(session_id)
+            .lock()
+            .expect("ACP branch lock")
+            .clone()
+    }
+
+    fn branch_of(&self, session_id: &str) -> SessionBranch {
+        self.inner
+            .branches
+            .lock()
+            .expect("ACP branches lock")
+            .entry(session_id.to_string())
+            .or_default()
+            .clone()
     }
 
     /// Give this runtime the daemon's AI permission model before it is shared.
@@ -903,6 +942,13 @@ impl AcpRuntime {
             repository_id: launch.repository_id.clone(),
             permission_mode: launch.permission_mode,
             workspace: launch.cwd.display().to_string(),
+            key_facts: Facts {
+                repository: launch.repository_path.clone(),
+                worktree: launch.cwd.display().to_string(),
+                branch: None,
+                home: std::env::var("HOME").unwrap_or_default(),
+            },
+            branch: self.branch_of(&launch.session_id),
             pending_permission: permission.clone(),
             reports: io.reports.clone(),
         };
@@ -1266,6 +1312,10 @@ struct RuntimeIncoming {
     repository_id: String,
     permission_mode: PermissionMode,
     workspace: String,
+    /// What a learned key replaces with placeholders, but the branch.
+    key_facts: Facts,
+    /// The session's branch, which a reviewer's can change while it runs.
+    branch: SessionBranch,
     pending_permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
     reports: Followers,
 }
@@ -1424,6 +1474,24 @@ impl RuntimeIncoming {
         let mut payload = tool_payload(session_id.clone(), &params["toolCall"]);
         payload["options"] = params.get("options").cloned().unwrap_or_default();
         let signature = permission_signature(&params["toolCall"]);
+        // The learned row's key and the request's risk tags. The model reads
+        // neither: it is given the raw input.
+        let key = normalize(
+            &signature.tool_name,
+            signature.raw_input.as_ref().unwrap_or(&Value::Null),
+            &Facts {
+                branch: self.branch.lock().expect("ACP branch lock").clone(),
+                ..self.key_facts.clone()
+            },
+        );
+        let request_tags: Vec<String> = derive(
+            &json!({"toolCall": params["toolCall"], "options": params["options"]}),
+            Some(&self.workspace),
+        )
+        .risk_tags
+        .into_iter()
+        .map(str::to_string)
+        .collect();
         let remembers = matches!(
             self.permission_mode,
             PermissionMode::Learn | PermissionMode::Ai
@@ -1459,7 +1527,7 @@ impl RuntimeIncoming {
         } else {
             None
         };
-        let learned = remembers && self.learned_allow(&signature).await;
+        let learned = remembers && self.learned_allow(&signature, &key, &request_tags).await;
         let ai_permissions_selection = match &ai_permissions_decision {
             Some(Decision::Allow { .. }) => {
                 approved_option(params).filter(|option| allowing_option(params, option))
@@ -1578,6 +1646,11 @@ impl RuntimeIncoming {
                 .record_learned_permission(ariadne_store::NewLearnedPermission {
                     repository_id: self.repository_id.clone(),
                     tool_name: signature.tool_name.clone(),
+                    key: key.key.clone(),
+                    level: "command".into(),
+                    family: key.family.clone(),
+                    risk_tags: request_tags.clone(),
+                    scope: "repository".into(),
                     tool_call: params["toolCall"].clone(),
                     options: params.get("options").cloned().unwrap_or_default(),
                     selected_option,
@@ -1605,13 +1678,16 @@ impl RuntimeIncoming {
         Ok(json!({"outcome": outcome}))
     }
 
-    /// Whether this repository holds an allowing choice for the request's
-    /// key. A request with no `rawInput` never matches one.
-    async fn learned_allow(&self, signature: &PermissionSignature) -> bool {
-        let Some(raw_input) = &signature.raw_input else {
-            return false;
-        };
-        if self.repository_id.is_empty() {
+    /// Whether this repository holds an allowing `command` row for the
+    /// request's key whose risk tags hold every tag of the request. A
+    /// request with no `rawInput` never matches one.
+    async fn learned_allow(
+        &self,
+        signature: &PermissionSignature,
+        key: &Key,
+        request_tags: &[String],
+    ) -> bool {
+        if signature.raw_input.is_none() || self.repository_id.is_empty() {
             return false;
         }
         let row = self
@@ -1619,11 +1695,18 @@ impl RuntimeIncoming {
             .runtime
             .inner
             .store
-            .find_learned_permission(&self.repository_id, &signature.tool_name, raw_input)
+            .find_learned_permission(
+                &self.repository_id,
+                &signature.tool_name,
+                "command",
+                &key.key,
+            )
             .await;
         row.ok().flatten().is_some_and(|row| {
             let options = serde_json::from_str::<Value>(&row.options).unwrap_or_default();
+            let row_tags = serde_json::from_str::<Vec<String>>(&row.risk_tags).unwrap_or_default();
             allowing_option(&json!({ "options": options }), &row.selected_option)
+                && request_tags.iter().all(|tag| row_tags.contains(tag))
         })
     }
 

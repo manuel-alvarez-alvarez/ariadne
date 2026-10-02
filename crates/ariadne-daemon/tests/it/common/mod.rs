@@ -624,6 +624,7 @@ impl Harness {
                     mcp_servers: Vec::new(),
                 },
                 repository_id,
+                repository_path: String::new(),
                 permission_mode: PermissionMode::Auto,
             })
             .await

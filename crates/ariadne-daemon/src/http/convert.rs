@@ -8,7 +8,9 @@
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::goals::{GoalDto, GoalUsageDto};
 use ariadne_api::messages::MessageDto;
-use ariadne_api::permissions::{LearnedPermissionDto, LearnedPermissionTarget};
+use ariadne_api::permissions::{
+    LearnedPermissionDto, LearnedPermissionLevel, LearnedPermissionScope, LearnedPermissionTarget,
+};
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::sessions::{OutsideSessionDto, SessionDto, SessionEntryDto, SessionKind};
 use ariadne_api::skills::{SkillDto, SkillSeat};
@@ -165,6 +167,18 @@ pub(crate) fn learned_permission_dto(row: store::LearnedPermission) -> LearnedPe
             _ => LearnedPermissionTarget::Ask,
         },
         output: row.output.as_deref().map(json),
+        level: match row.level.as_str() {
+            "once" => LearnedPermissionLevel::Once,
+            "family" => LearnedPermissionLevel::Family,
+            _ => LearnedPermissionLevel::Command,
+        },
+        scope: match row.scope.as_str() {
+            "all" => LearnedPermissionScope::All,
+            _ => LearnedPermissionScope::Repository,
+        },
+        risk_tags: serde_json::from_str(&row.risk_tags).unwrap_or_default(),
+        key: row.key,
+        family: row.family,
         id: row.id,
         repository_id: row.repository_id,
         tool_name: row.tool_name,

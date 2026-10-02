@@ -239,7 +239,10 @@ and the ACP runtime that reports the agent events (021).
     `/v1/permissions/learned` for list, get and delete. There is no create or
     update route: only a permission decision writes a row. Lists can filter
     by repository and return newest first. `LearnedPermissionDto` is `id`,
-    `repository_id`, `tool_name`, `tool_call` (JSON), `options` (JSON),
+    `repository_id`, `tool_name`, `key` (the normalized input), `level`
+    (`once`, `command` or `family`), `family`, `risk_tags` (an array of
+    strings), `scope` (`repository` or `all`), `tool_call` (JSON, the raw
+    input whole), `options` (JSON),
     `selected_option`, `target` (`auto`, `ask`, `learn` or `ai`), `output`
     (JSON or null), `created_at` and `updated_at`. A new row publishes
     `learned_permission_created`, a write on an existing key
@@ -249,8 +252,9 @@ and the ACP runtime that reports the agent events (021).
 ## Acceptance criteria
 
 - Learned permission routes list, get and delete, refuse `POST` and `PUT`
-  with 405, and publish complete events for a create, an update by key and a
-  delete
+  with 405, publish complete events for a create, an update by key and a
+  delete, and the OpenAPI document names `key`, `level`, `family`,
+  `risk_tags` and `scope`, with `level` and `scope` as enums
   (`learned_permissions.rs::learned_permission_routes_read_and_delete_and_publish_fat_events`).
 
 - An HTTP mutation emits a fat event

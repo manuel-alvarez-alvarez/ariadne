@@ -67,24 +67,66 @@ rules. These rows are training data for the permission model. An allow that
 Ariadne made without you (by the model, by a learned row, or in `auto`) is not
 recorded.
 
-A row is kept per repository, tool name, and tool input. The tool name is the
+A row is kept per repository, tool name, and key. The tool name is the
 agent's own name for the tool, such as `Bash`, `Read` or
-`mcp__ariadne__create_task`, or else the title of the call. The tool input is
-the `rawInput` of the call. So an allowed `Bash` command allows only that same
-command, not another one. A later answer for the same request replaces the
-answer in its row.
+`mcp__ariadne__create_task`, or else the title of the call. The key is the
+part of the tool input that says what the call does, with the values that
+change from one call to the next taken out. Ariadne makes it in four steps:
+
+1. It keeps only the fields that say what the call does:
+
+   | Tool | Fields kept |
+   | --- | --- |
+   | `Bash` | `command` |
+   | `Edit`, `Write`, `Read`, `MultiEdit`, `NotebookEdit` | `file_path` |
+   | an MCP tool (`mcp__…`) | every field except `body`, `summary`, `description`, `title` and `reason` |
+   | `WebFetch` | the host of the URL |
+   | `WebSearch` | none |
+   | any other tool | every field except `description` |
+
+2. In a `Bash` command, it removes a leading `cd` into the worktree or the
+   repository (or a directory under one of them), every `2>&1`, and a pipe at
+   the end into `tail`, `head`, `wc`, `cat`, `sort` or `uniq`.
+3. It replaces the repository path with `<REPO>`, the worktree with
+   `<WORKTREE>`, the session's branch with `<BRANCH>`, and your home
+   directory with `<HOME>`. The session's branch is the author's own
+   branch, or for a reviewer the branch it reviews now; another author's
+   branch stays as it is. It replaces a path under `/tmp` with `<TMP>`, a commit hash or another
+   hex string of 7 to 64 characters, in either case, with `<HASH>`, and an
+   Ariadne id with `<ID>`. Numbers stay as they are.
+4. It writes the fields that are left as JSON, with sorted keys.
+
+So `git rebase main`, `git rebase main 2>&1` and `git rebase main 2>&1 |
+tail -40` share the key `{"command":"git rebase main"}`. A `finish_task`
+call keys as `{"merge_commit":"<HASH>"}` whatever commit it names. An edit
+keys on its file, whatever text it changes. An allowed `Bash` command still
+allows only that command, not another one. A later answer for the same key
+replaces the answer in its row.
+
+Each row also has a family, a level, risk tags, and a scope. The family of a
+`Bash` row is its program, with the subcommand for `git`, `cargo`, `npm` and
+similar tools: `git rebase`, `cargo nextest`, `ls`. The family of any other
+row is the tool name. The level is `once`, `command` or `family`, and every
+row Ariadne writes now has the level `command`. The risk tags are the tags
+the request was given when it was recorded, such as `recursive` or
+`remote`. The scope is `repository`.
 
 In `learn` and `ai` only, a row whose answer allowed the request allows a later
-request with the same repository, tool name, and input, without asking you. A
+request with the same repository, tool name, and key, without asking you. It
+does so only when every risk tag of the later request is also on the row. The
+parts of a call that the key leaves out, such as its description, can add a
+tag, and then you are asked again. A
 row whose answer denied the request never answers it: the request is asked
 again. A request without `rawInput` is recorded but never allowed from a row.
 An approval for one repository does not grant it in another. The rows survive
 a daemon restart. Change the repository to `ask` when you want to review a
 matching request again.
 
-Each row keeps the complete ACP tool call, the offered options, the selected
-option, the permission mode at the time (`target`), and the model decision
-(`output`) when the AI permission model was called.
+Each row keeps the complete ACP tool call with its original input, the
+offered options, the selected option, the permission mode at the time
+(`target`), and the model decision (`output`) when the AI permission model
+was called. The AI permission model always reads the original input, not the
+key.
 
 Manage these rows with `ariadne permissions learned list`, `show`, and `rm`.
 You cannot add or edit a row by hand.

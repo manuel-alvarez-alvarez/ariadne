@@ -257,12 +257,16 @@ hardware facts in the card, with no Details popover`).
     This tag changes a model allow to ask. It leaves ask and deny unchanged.
     No tag directly denies a request.
 29. An ask, a capped allow, an allow without an allowing option, and an
-    unanswered decision follow `learn` (021, rule 9). A matching allowed row
-    answers. Otherwise, the console asks and records its answer. A model deny
+    unanswered decision follow `learn` (021, rule 9). An allowed `command`
+    row of the request's normalized key answers, where every derived risk
+    tag of the request is among the row's. Otherwise, the console asks and
+    records its answer. The model itself reads the raw input, never the key. A model deny
     without `reject_once` also asks the console. The model is unavailable when
     `live()` is absent, its call fails or times out, or its answer is malformed.
 30. A model allow writes no learned row. A model deny and every console answer
-    write a row with `target = ai` (021, rule 9). A called model writes
+    write the row of the request's key with `target = ai`, level `command`,
+    the family, the derived risk tags and scope `repository` (021, rule 9).
+    A called model writes
     `label`, `danger`, `allow_threshold`, `deny_threshold`, `probabilities`,
     `operation`, `risk_tags`, `cap`, and `ai_error` when it gave no answer.
     An unavailable model leaves `output` null. A denying row never answers a

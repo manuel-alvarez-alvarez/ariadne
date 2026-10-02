@@ -208,9 +208,11 @@ same binary also serves (013).
     `ai permissions` is `ok` for `disabled`, `installing` and `ready <release>`, and a
     warning for `failed: <last_error>`.
 34. `ariadne permissions learned` lists, shows and removes learned
-    permissions. `list` shows the columns id, repository, tool, target,
-    selected, created and updated. `show` prints every field, with the JSON
-    fields pretty-printed. There is no `add` or `edit`. A repository can be an
+    permissions. `list` shows the columns id, repository, tool, level,
+    family, key, scope, target, selected, created and updated. `show` prints
+    every field: the level, the family, the key, the risk tags and the scope
+    among them, and the JSON fields pretty-printed, the raw input in the
+    tool call included. There is no `add` or `edit`. A repository can be an
     id or path, and every verb supports JSON.
 
 ## Acceptance criteria
@@ -218,7 +220,8 @@ same binary also serves (013).
 - `permissions learned` provides list, show and remove commands, and `add`
   and `edit` do not parse
   (`cli/tests.rs::every_learned_permissions_verb_parses_and_add_and_edit_are_gone`).
-- `list` and `show` print the new fields
+- `list` and `show` print the level, the family, the key and the scope,
+  and `show` the raw input
   (`commands::permissions::tests::learned_list_and_show_print_the_new_fields`).
 
 - The command tree is well formed and every command is classified

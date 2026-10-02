@@ -10,11 +10,11 @@
 //! [`AiPermissionsStatusDto`], and every change to it is published as `ai_permissions_updated`.
 
 pub(crate) mod decide;
-mod derive;
+pub(crate) mod derive;
 pub mod flavours;
 pub mod hardware;
 pub mod install;
-mod operations;
+pub(crate) mod operations;
 pub mod python;
 mod server;
 

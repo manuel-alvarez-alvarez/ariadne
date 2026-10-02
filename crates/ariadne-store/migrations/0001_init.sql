@@ -203,12 +203,17 @@ INSERT INTO ai_permission_settings (id, updated_at)
 VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 
 -- Training data for the permission model: one row per user choice and per
--- denial, allow or deny, keyed by the repository, the tool name and the
--- canonical `rawInput` of the ACP `toolCall`.
+-- denial, allow or deny, keyed by the repository, the tool name, the level
+-- and the normalized input of the ACP `toolCall` (021, rule 9).
 CREATE TABLE learned_permissions (
     id              TEXT PRIMARY KEY,
     repository_id   TEXT NOT NULL REFERENCES repositories (id) ON DELETE CASCADE,
     tool_name       TEXT NOT NULL,
+    key             TEXT NOT NULL,              -- the kept fields of `rawInput`, with placeholders
+    level           TEXT NOT NULL CHECK (level IN ('once', 'command', 'family')),
+    family          TEXT NOT NULL,              -- the command family, else the tool name
+    risk_tags       TEXT NOT NULL,              -- the derived risk tags, a JSON array
+    scope           TEXT NOT NULL DEFAULT 'repository' CHECK (scope IN ('repository', 'all')),
     tool_call       TEXT NOT NULL,              -- the ACP `toolCall`, `rawInput` with sorted keys
     options         TEXT NOT NULL,              -- the ACP `options`
     selected_option TEXT NOT NULL,              -- the option id of the final choice
@@ -220,7 +225,7 @@ CREATE TABLE learned_permissions (
 CREATE INDEX idx_learned_permissions_repository
 ON learned_permissions (repository_id, created_at DESC);
 CREATE UNIQUE INDEX idx_learned_permissions_key
-ON learned_permissions (repository_id, tool_name, ifnull(tool_call -> '$.rawInput', 'null'));
+ON learned_permissions (repository_id, tool_name, level, key);
 
 -- The agents staffed on a task. An agent has no identity of its own: it is a
 -- model of a registry agent, an effort, a brief and a set of skills, and its seat

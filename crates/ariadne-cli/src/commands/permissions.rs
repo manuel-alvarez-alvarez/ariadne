@@ -107,6 +107,10 @@ fn learned_row(row: &LearnedPermissionDto, now: chrono::DateTime<chrono::Utc>) -
         row.id.clone(),
         row.repository_id.clone(),
         row.tool_name.clone(),
+        row.level.as_str().into(),
+        row.family.clone(),
+        row.key.clone(),
+        row.scope.as_str().into(),
         row.target.as_str().into(),
         row.selected_option.clone(),
         age(&row.created_at, now),
@@ -118,6 +122,10 @@ const LEARNED_LIST: &[Column] = &[
     col("id", UNCAPPED).id(),
     col("repository", UNCAPPED),
     col("tool", 28),
+    col("level", 7),
+    col("family", 20),
+    col("key", 60),
+    col("scope", 10),
     col("target", 6),
     col("selected", 20),
     col("created", UNCAPPED),
@@ -165,6 +173,14 @@ fn print_learned(row: &LearnedPermissionDto) {
     print_kv(&learned_fields(row));
 }
 
+/// The risk tags as a comma-separated list, or a dash where there are none.
+fn tags(risk_tags: &[String]) -> String {
+    match risk_tags.is_empty() {
+        true => "-".into(),
+        false => risk_tags.join(", "),
+    }
+}
+
 /// Every field of a learned choice, its JSON fields pretty-printed.
 fn learned_fields(row: &LearnedPermissionDto) -> Vec<(&'static str, Kv)> {
     let json = |value: &serde_json::Value| serde_json::to_string_pretty(value).unwrap_or_default();
@@ -172,6 +188,11 @@ fn learned_fields(row: &LearnedPermissionDto) -> Vec<(&'static str, Kv)> {
         ("id", Kv::id(row.id.clone())),
         ("repository", row.repository_id.clone().into()),
         ("tool", row.tool_name.clone().into()),
+        ("level", row.level.as_str().into()),
+        ("family", row.family.clone().into()),
+        ("key", row.key.clone().into()),
+        ("risk tags", tags(&row.risk_tags).into()),
+        ("scope", row.scope.as_str().into()),
         ("target", row.target.as_str().into()),
         ("selected option", row.selected_option.clone().into()),
         ("tool call", json(&row.tool_call).into()),
@@ -554,7 +575,13 @@ mod tests {
             id: "01J00000000000000000000001".into(),
             repository_id: "01J00000000000000000000002".into(),
             tool_name: "Bash".into(),
-            tool_call: json!({"toolCallId": "call-1", "rawInput": {"command": "cargo test"}}),
+            key: r#"{"command":"git show <HASH>"}"#.into(),
+            level: ariadne_api::permissions::LearnedPermissionLevel::Command,
+            family: "git show".into(),
+            risk_tags: vec!["remote".into(), "force".into()],
+            scope: ariadne_api::permissions::LearnedPermissionScope::Repository,
+            tool_call: json!({"toolCallId": "call-1",
+                              "rawInput": {"command": "git show 94f07c0b 2>&1 | tail -5"}}),
             options: json!([{"optionId": "yes", "kind": "allow_once"}]),
             selected_option: "yes".into(),
             target: ariadne_api::permissions::LearnedPermissionTarget::Ai,
@@ -596,8 +623,9 @@ mod tests {
         server.abort();
     }
 
-    /// `list` shows the target and the selected option beside the tool,
-    /// and `show` prints every field with the JSON fields pretty-printed.
+    /// `list` shows the level, the family, the key and the scope, then the
+    /// target and the selected option, beside the tool; `show` prints every
+    /// field with the JSON fields pretty-printed, the raw input included.
     #[test]
     fn learned_list_and_show_print_the_new_fields() {
         let row = learned();
@@ -614,22 +642,47 @@ mod tests {
                 "id",
                 "repository",
                 "tool",
+                "level",
+                "family",
+                "key",
+                "scope",
                 "target",
                 "selected",
                 "created",
                 "updated"
             ]
         );
-        assert_eq!(listed[2..5], ["Bash", "ai", "yes"]);
+        assert_eq!(
+            listed[2..9],
+            [
+                "Bash",
+                "command",
+                "git show",
+                r#"{"command":"git show <HASH>"}"#,
+                "repository",
+                "ai",
+                "yes"
+            ]
+        );
 
         let text = crate::output::kv_block(&learned_fields(&row), &crate::output::View::plain());
         for expected in [
             "01J00000000000000000000001",
             "01J00000000000000000000002",
+            "level",
+            "command",
+            "family",
+            "git show",
+            "key",
+            r#"{"command":"git show <HASH>"}"#,
+            "risk tags",
+            "remote, force",
+            "scope",
+            "repository",
             "target",
             "selected option",
             "\"toolCallId\": \"call-1\"",
-            "\"command\": \"cargo test\"",
+            "\"command\": \"git show 94f07c0b 2>&1 | tail -5\"",
             "\"kind\": \"allow_once\"",
             "\"danger\": 0.41",
             "created",
