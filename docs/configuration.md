@@ -28,6 +28,13 @@ python_bin = "/opt/python3.12/bin/python3"
 nvidia_smi_bin = "/opt/bin/nvidia-smi"
                                    # the nvidia-smi the AI permission model's hardware
                                    # probe runs to find a GPU (default: nvidia-smi on PATH).
+auto_switch = true                 # automatically switch to a different agent
+                                   # or model when the current one is exhausted
+                                   # (default); false keeps waiting for input
+exhausted_patterns = [             # patterns that match exhausted-model errors;
+  "^.*Your.*quota.*exceeded.*$",   # replaces the shipped list if set; each
+  "^.*rate.*limit.*exceeded.*$",   # pattern is a regex matched against the
+]                                  # error message returned by the model
 
 [[acp_agents]]                     # an agent of your own, or one the registry
 id = "my-agent"                    # names under another command

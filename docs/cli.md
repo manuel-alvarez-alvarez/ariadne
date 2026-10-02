@@ -415,8 +415,28 @@ permission requests are answered belongs to the repository, not the task:
 ariadne repo update <repo-id> --permission-mode ask
 ```
 
-See [Permission modes](permissions.md) and [Resuming a session](resuming-sessions.md)
-for the related session workflows.
+## Exhausted models and automatic switching
+
+When a model runs out of tokens, reaches a rate limit, or hits another quota
+exhaustion, the daemon can switch to another agent or model. Set `auto_switch`
+to `false` in the configuration to wait for input instead.
+
+The daemon picks a replacement in this order: another agent at the same rank,
+then the same agent at the same rank, then one rank up, then one rank down. For
+example, a `balanced` model tries another balanced agent, then itself, then
+`frontier`, then `fast`.
+When the current model has no rank, or when nothing fits, the daemon flags the
+session `exhausted` and waits. OpenCode's silent retries are not detected, so a
+token limit there cannot trigger a switch.
+
+Switch to another agent or model yourself at any time:
+
+```sh
+ariadne session switch <id> --model codex-acp:<model-id>
+```
+
+See [Configuration](configuration.md) and [Resuming a session](resuming-sessions.md)
+for the related configuration and session workflows.
 
 ## AI permissions
 

@@ -100,6 +100,16 @@ The daemon streams: events, agent consoles and its own log, over a REST API with
 console is also served as terminal bytes over a WebSocket, for a terminal emulator.
 </td>
 </tr>
+<tr>
+<td width="50%" valign="top">
+<h4>🔄 Switch agents or models live</h4>
+<code>ariadne session switch</code> moves to another agent or model mid-conversation: stop, start fresh with
+what the old session knew, and the seat follows. When a model exhausts its quota, the daemon switches
+automatically.
+</td>
+<td width="50%" valign="top">
+</td>
+</tr>
 </table>
 
 ## Ariadne Desktop

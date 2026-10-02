@@ -106,6 +106,26 @@ Once resumed, the session is no longer an outside one. List it again and it
 shows under its own row, not as an outside session a second time; `attach
 <id>` still reaches it, now as the session id rather than the internal id. It keeps the first prompt it was listed with as its title.
 
+## Switching to another agent
+
+Change the agent or model a session uses without stopping the conversation:
+
+```sh
+ariadne session switch <id> --model codex-acp:<model-id>
+ariadne session switch <id> --model claude-acp:<model-id> --effort high
+```
+
+Ariadne Desktop shows a Switch button on the session screen.
+
+A switch to another agent or a different model ends the conversation and
+starts a new session on the same seat. The new session reads the old
+one's prompts, the agent's messages, and the tool calls, folded up, with
+the newest kept, under a cap. The seat's pin moves with the new session,
+so later spawns and resumes reach the new one.
+
+A switch to the same agent keeps the conversation: the agent takes the new
+model in place.
+
 ## When it refuses
 
 Listing asks every registry agent that advertises `session/list`, and reads
