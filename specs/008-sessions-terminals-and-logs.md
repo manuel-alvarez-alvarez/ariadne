@@ -917,6 +917,8 @@ goal id to a seat (014).
 - Two live blocks have one blank line between them, and the scrollback one,
   not two
   (`ariadne-console/tui/chrome.rs::two_live_blocks_have_one_blank_line_between_them_as_in_the_scrollback`).
+- An unchanged live block renders once until its width or fold state changes
+  (`ariadne-console/tui/mod.rs::an_unchanged_live_block_renders_once_until_its_width_or_fold_changes`).
 - A tab in a tool's output takes the columns to the next tab stop
   (`ariadne-console/tui/blocks.rs::a_tab_in_a_tool_output_takes_the_columns_to_the_next_tab_stop`),
   and a call whose raw output is a structure draws its content text

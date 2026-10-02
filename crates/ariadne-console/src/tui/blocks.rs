@@ -14,6 +14,21 @@ use crate::transcript::{PlanEntry, Tool, TranscriptItem};
 
 use super::picker::permission;
 
+#[cfg(test)]
+std::thread_local! {
+    static RENDERS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(super) fn reset_renders() {
+    RENDERS.set(0);
+}
+
+#[cfg(test)]
+pub(super) fn renders() -> usize {
+    RENDERS.get()
+}
+
 /// A thought and a tool's output are context, not the answer: they are folded
 /// to this many lines with a count of what was left out. The output keeps its
 /// last lines, which is where a command says how it went.
@@ -41,6 +56,8 @@ pub(super) fn block(
     picked: Option<usize>,
     whole: bool,
 ) -> Vec<Line<'static>> {
+    #[cfg(test)]
+    RENDERS.set(RENDERS.get() + 1);
     let width = width.max(8);
     match item {
         TranscriptItem::UserPrompt { text, source, .. } if source.as_deref() == Some("daemon") => {

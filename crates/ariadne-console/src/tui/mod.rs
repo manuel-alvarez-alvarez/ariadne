@@ -24,7 +24,7 @@
 //! takes the backend as an argument, so one that answers no cursor query
 //! proves the viewport still opens, and still grows and shrinks.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
 use std::time::Duration;
@@ -222,6 +222,22 @@ pub struct Console {
     /// Escape closed the suggestion list: it stays closed until the box is
     /// empty again.
     dismissed: bool,
+    /// Rendered transcript blocks, reused until their input, width or fold changes.
+    blocks: RefCell<BlockCache>,
+    /// The pending question found for the current transcript state.
+    asking: Cell<Option<Option<usize>>>,
+}
+
+#[derive(Default)]
+struct BlockCache {
+    width: u16,
+    whole: bool,
+    lines: Vec<Option<CachedBlock>>,
+}
+
+struct CachedBlock {
+    queued: bool,
+    lines: Vec<Line<'static>>,
 }
 
 /// Where the attach banner is.
@@ -261,7 +277,14 @@ impl Console {
             suggested: 0,
             scrolled: Cell::new(0),
             dismissed: false,
+            blocks: RefCell::new(BlockCache::default()),
+            asking: Cell::new(None),
         }
+    }
+
+    fn invalidate_blocks(&mut self) {
+        self.blocks.get_mut().lines.clear();
+        self.asking.set(None);
     }
 
     /// Draw the whole transcript again, from a cleared terminal, once a
@@ -332,6 +355,7 @@ impl Console {
         events: &[AgentEventDto],
         now: chrono::DateTime<chrono::Utc>,
     ) {
+        self.invalidate_blocks();
         self.input.sync_history(
             events
                 .iter()
@@ -381,6 +405,7 @@ impl Console {
     /// as `now` rather than at the moment the event is folded in. See
     /// [`Console::snapshot_at`].
     pub(crate) fn apply_at(&mut self, event: &AgentEventDto, now: chrono::DateTime<chrono::Utc>) {
+        self.invalidate_blocks();
         if self.follow_commands(event) {
             return;
         }
@@ -515,6 +540,7 @@ impl Console {
     /// The turn goes back to idle with it: nothing was asked of the agent, so
     /// a spinner saying it is thinking would be a spinner over nothing.
     pub fn failed(&mut self, text: &str) {
+        self.invalidate_blocks();
         // A typed prompt the daemon refused is never confirmed: it is no
         // longer queued, and holds nothing after it out of the scrollback.
         if self
@@ -573,12 +599,17 @@ impl Console {
 
     /// The pending permission question, if one is waiting for an answer.
     fn question(&self) -> Option<usize> {
-        self.items.iter().rposition(|item| {
+        if let Some(asking) = self.asking.get() {
+            return asking;
+        }
+        let asking = self.items.iter().rposition(|item| {
             matches!(
                 item,
                 TranscriptItem::PermissionQuestion { answer: None, .. }
             )
-        })
+        });
+        self.asking.set(Some(asking));
+        asking
     }
 
     fn options(&self, at: usize) -> &[PermissionOption] {
@@ -615,6 +646,7 @@ impl Console {
         }
         if ctrl && key.code == KeyCode::Char('o') {
             self.whole = !self.whole;
+            self.invalidate_blocks();
             return Action::None;
         }
 
@@ -682,6 +714,7 @@ impl Console {
     /// Put a just-typed prompt on the transcript straight away, rather than
     /// after the round trip that confirms it.
     fn show_pending(&mut self, text: &str) {
+        self.invalidate_blocks();
         self.pending.push_back(self.items.len());
         self.items.push(TranscriptItem::UserPrompt {
             meta: transcript::ItemMeta {
@@ -772,20 +805,47 @@ impl Console {
             pieces.push(lines);
         }
         let end = self.settled().max(next);
-        for item in self.items.iter().take(end).skip(next) {
-            pieces.push(self.piece(item, width));
+        for (at, item) in self.items.iter().enumerate().take(end).skip(next) {
+            pieces.push(self.piece(at, item, width));
         }
         (pieces, end)
     }
 
     /// The lines one item takes in the scrollback: its block, and the blank
     /// line under it where the block draws anything.
-    fn piece(&self, item: &TranscriptItem, width: u16) -> Vec<Line<'static>> {
-        let mut lines = block(item, usize::from(width), None, self.whole);
+    fn piece(&self, at: usize, item: &TranscriptItem, width: u16) -> Vec<Line<'static>> {
+        let mut lines = self.block(at, item, width, false);
         if !lines.is_empty() {
             lines.push(Line::default());
         }
         lines
+    }
+
+    fn block(
+        &self,
+        at: usize,
+        item: &TranscriptItem,
+        width: u16,
+        queued: bool,
+    ) -> Vec<Line<'static>> {
+        let mut cache = self.blocks.borrow_mut();
+        if cache.width != width || cache.whole != self.whole {
+            cache.width = width;
+            cache.whole = self.whole;
+            cache.lines.clear();
+        }
+        if cache.lines.len() <= at {
+            cache.lines.resize_with(at + 1, || None);
+        }
+        let cached = &mut cache.lines[at];
+        if cached.as_ref().is_none_or(|cached| cached.queued != queued) {
+            let lines = match queued {
+                true => blocks::queued(item, usize::from(width), self.whole),
+                false => block(item, usize::from(width), None, self.whole),
+            };
+            *cached = Some(CachedBlock { queued, lines });
+        }
+        cached.as_ref().expect("cached above").lines.clone()
     }
 
     /// Move every finished line into the terminal's own buffer, whether it
@@ -823,10 +883,11 @@ impl Console {
         );
         let (pieces, from) = self.finished(size.width);
         let finished: usize = pieces.iter().map(Vec::len).sum();
-        let written = self.unfinished(from, size.width, room).len();
+        let asking = self.question();
+        let written = self.unfinished(from, size.width, room, asking).len();
         let over = (finished + written).saturating_sub(usize::from(room));
         self.emit(terminal, pieces, over.min(finished))?;
-        terminal.draw(|frame| self.render(frame))?;
+        terminal.draw(|frame| self.render_with_question(frame, asking))?;
         Ok(())
     }
 
@@ -847,8 +908,8 @@ impl Console {
         // Every item is done with now, the one being written and an
         // unanswered question too: each goes as the block it is.
         let (mut pieces, from) = self.finished(width);
-        for item in self.items.iter().skip(from) {
-            pieces.push(self.piece(item, width));
+        for (at, item) in self.items.iter().enumerate().skip(from) {
+            pieces.push(self.piece(at, item, width));
         }
         let count = pieces.iter().map(Vec::len).sum();
         self.emit(terminal, pieces, count)?;
@@ -1322,6 +1383,32 @@ mod tests {
         }
 
         assert_eq!(crate::markdown::GRAMMARS_BUILT.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn an_unchanged_live_block_renders_once_until_its_width_or_fold_changes() {
+        let mut terminal = pane();
+        let mut console = Console::new(header());
+        let text = "# Report\n\n```rust\nfn main() { println!(\"hello\"); }\n```\n".repeat(20);
+        console.apply(&event(
+            "agent_message_chunk",
+            "chunk",
+            json!({"text": text}),
+        ));
+        blocks::reset_renders();
+
+        console.show(&mut terminal).unwrap();
+        console.show(&mut terminal).unwrap();
+        console.show(&mut terminal).unwrap();
+        assert_eq!(blocks::renders(), 1, "idle ticks reuse the rendered block");
+
+        terminal.backend_mut().under_mut().resize(60, 36);
+        console.show(&mut terminal).unwrap();
+        assert_eq!(blocks::renders(), 2, "a resize renders at the new width");
+
+        console.key(ctrl('o'));
+        console.show(&mut terminal).unwrap();
+        assert_eq!(blocks::renders(), 3, "ctrl-o renders at the new fold state");
     }
 
     /// A cancelled turn leaves its call as it was, and nothing will end it:

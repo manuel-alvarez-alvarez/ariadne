@@ -17,7 +17,6 @@ use ariadne_api::usage::TokenUsageDto;
 
 use crate::theme::{AGENT, DIM, GAP, SEPARATOR, SPINNER, TOKENS_IN, TOKENS_OUT, TOOL};
 
-use super::blocks::{block, queued};
 use super::picker::picker;
 use super::{Console, Link, Turn};
 
@@ -98,6 +97,10 @@ impl Console {
     /// Draw the viewport: what is being written, the status row, the
     /// suggestion list while it is open, the box and the footer.
     pub fn render(&self, frame: &mut Draw) {
+        self.render_with_question(frame, self.question());
+    }
+
+    pub(super) fn render_with_question(&self, frame: &mut Draw, asking: Option<usize>) {
         let area = frame.area();
         let suggested = self.suggestion_rows(area.width, area.height);
         let [live, pinned] = Layout::vertical([
@@ -113,7 +116,7 @@ impl Console {
         ])
         .areas(pinned);
 
-        self.draw_live(frame, live);
+        self.draw_live(frame, live, asking);
         self.draw_status(frame, status);
         self.draw_suggestions(frame, suggestions);
         self.input.draw(frame, input, self.hint());
@@ -127,9 +130,18 @@ impl Console {
     /// line separates two blocks, as in the scrollback. The head of a long
     /// block is in it too: the area draws the tail, on its last rows (008).
     pub fn live_lines(&self, width: u16, height: u16) -> Vec<Line<'static>> {
+        self.live_lines_with_question(width, height, self.question())
+    }
+
+    fn live_lines_with_question(
+        &self,
+        width: u16,
+        height: u16,
+        asking: Option<usize>,
+    ) -> Vec<Line<'static>> {
         let (pieces, from) = self.finished(width);
         let mut lines = pieces.concat();
-        lines.extend(self.unfinished(from, width, height));
+        lines.extend(self.unfinished(from, width, height, asking));
         lines
     }
 
@@ -138,19 +150,22 @@ impl Console {
     /// waiting for its answer, folded to `height` rows, one blank line
     /// between two of them. They are under the finished ones, which end on
     /// their blank line, and go into the scrollback once they are finished.
-    pub(super) fn unfinished(&self, from: usize, width: u16, height: u16) -> Vec<Line<'static>> {
-        let width = usize::from(width);
+    pub(super) fn unfinished(
+        &self,
+        from: usize,
+        width: u16,
+        height: u16,
+        asking: Option<usize>,
+    ) -> Vec<Line<'static>> {
+        let block_width = width;
+        let width = usize::from(block_width);
         let height = usize::from(height);
-        let asking = self.question();
         let mut blocks = Vec::new();
         for (at, item) in self.items.iter().enumerate().skip(from) {
             if Some(at) == asking {
                 continue;
             }
-            blocks.push(match self.pending.contains(&at) {
-                true => queued(item, width, self.whole),
-                false => block(item, width, None, self.whole),
-            });
+            blocks.push(self.block(at, item, block_width, self.pending.contains(&at)));
         }
         // The picker is what the keys act on, so it is drawn last, above the
         // box, whatever came after it — a snapshot taken mid-turn ends on the
@@ -177,8 +192,8 @@ impl Console {
     /// last rows: the live area is bottom-aligned, so the transcript ends
     /// where the status row begins, and the rows over it are blank only
     /// while it is shorter than the area (008).
-    fn draw_live(&self, frame: &mut Draw, area: Rect) {
-        let lines = self.live_lines(area.width, area.height);
+    fn draw_live(&self, frame: &mut Draw, area: Rect, asking: Option<usize>) {
+        let lines = self.live_lines_with_question(area.width, area.height, asking);
         // The tail is what is happening now; the head of a long block in
         // work is held back from the scrollback until the block is finished.
         let skip = lines.len().saturating_sub(usize::from(area.height));
