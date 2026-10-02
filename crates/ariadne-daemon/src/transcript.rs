@@ -26,6 +26,8 @@ use serde_json::Value;
 /// Where the agents keep their transcripts.
 #[derive(Debug, Clone)]
 pub struct TranscriptHomes {
+    /// The persisted index of transcript fields used by outside listings.
+    pub listing_cache: PathBuf,
     /// Codex's home: `$CODEX_HOME`, else `~/.codex`.
     pub codex: PathBuf,
     /// Claude Code's home: `$CLAUDE_CONFIG_DIR`, else `~/.claude`.
@@ -47,6 +49,8 @@ impl TranscriptHomes {
                 .map_or_else(|| home.join(default), PathBuf::from)
         };
         Self {
+            listing_cache: dir("ARIADNE_HOME", ".ariadne")
+                .join("outside-session-listing-cache.json"),
             codex: dir("CODEX_HOME", ".codex"),
             claude: dir("CLAUDE_CONFIG_DIR", ".claude"),
             opencode: dir("XDG_DATA_HOME", ".local/share").join("opencode"),
@@ -367,6 +371,7 @@ mod tests {
 
     fn homes(dir: &Path) -> TranscriptHomes {
         TranscriptHomes {
+            listing_cache: dir.join("outside-session-listing-cache.json"),
             codex: dir.join("codex"),
             claude: dir.join("claude"),
             opencode: dir.join("opencode"),

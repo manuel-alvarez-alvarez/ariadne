@@ -26,7 +26,8 @@
 //! one row. So a listing reads no file it has read unchanged, and the figures
 //! of a page are read from the files of that page's rows alone. The two reads
 //! stand for one stamp, so a file read again for a page is read again for the
-//! listing with it.
+//! listing with it. Claude and Codex listing reads persist across daemon
+//! restarts; figures remain in memory.
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
@@ -37,6 +38,7 @@ use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use chrono::{DateTime, SecondsFormat, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Sqlite, query_as};
@@ -58,6 +60,9 @@ const CODEX_FIGURES_TAIL_BYTES: u64 = 64 * 1024;
 
 /// The registry agent OpenCode's database belongs to.
 const OPENCODE_AGENT_ID: &str = "opencode-acp";
+
+/// The on-disk shape of the listing cache.
+const LISTING_CACHE_VERSION: u32 = 1;
 
 /// What one stored conversation ran on and what it spent.
 ///
@@ -93,14 +98,16 @@ pub(crate) trait StoredConversations: Send + Sync {
 /// The disk readers of one daemon, by registry agent id.
 pub(crate) struct DiskConversations {
     readers: HashMap<String, Box<dyn StoredConversations>>,
+    listing_cache: Arc<Mutex<ListingCaches>>,
 }
 
 impl DiskConversations {
     /// The readers a daemon runs with, reading under `homes`. Register an
     /// agent's reader here, and nowhere else.
     pub(crate) fn new(homes: &TranscriptHomes) -> Self {
-        let claude = ClaudeConversations::new(homes.claude.clone());
-        let codex = CodexConversations::new(homes.codex.clone());
+        let listing_cache = Arc::new(Mutex::new(ListingCaches::load(homes.listing_cache.clone())));
+        let claude = ClaudeConversations::new(homes.claude.clone(), listing_cache.clone());
+        let codex = CodexConversations::new(homes.codex.clone(), listing_cache.clone());
         let opencode = OpencodeConversations::new(homes.opencode.join("opencode.db"));
         Self {
             readers: [
@@ -119,6 +126,7 @@ impl DiskConversations {
             ]
             .into_iter()
             .collect(),
+            listing_cache,
         }
     }
 
@@ -126,7 +134,7 @@ impl DiskConversations {
     /// the agent id its reader is registered by. An agent with no reader, and
     /// an agent this daemon does not have, contribute nothing.
     pub(crate) fn conversations(&self, agents: &[String]) -> Vec<OutsideSessionDto> {
-        agents
+        let sessions = agents
             .iter()
             .filter_map(|agent_id| Some((agent_id, self.readers.get(agent_id)?)))
             .flat_map(|(agent_id, reader)| {
@@ -135,7 +143,12 @@ impl DiskConversations {
                     session
                 })
             })
-            .collect()
+            .collect();
+        self.listing_cache
+            .lock()
+            .expect("the listing cache lock")
+            .save_if_dirty();
+        sessions
     }
 
     /// The figures of the conversations `asked` names, by `(agent id, internal
@@ -202,7 +215,7 @@ pub(crate) async fn fill_page(readers: &Arc<DiskConversations>, page: &mut [Sess
 /// and running token total of its last turn.
 struct CodexConversations {
     home: PathBuf,
-    cache: Mutex<HashMap<PathBuf, CodexCached>>,
+    listing_cache: Arc<Mutex<ListingCaches>>,
 }
 
 /// What one rollout held when it was last read.
@@ -216,28 +229,32 @@ struct CodexCached {
 struct CodexListed {
     internal_session_id: String,
     working_directory: String,
+    title: String,
     has_turn: bool,
     last_activity_at: String,
 }
 
 impl CodexConversations {
-    fn new(home: PathBuf) -> Self {
+    fn new(home: PathBuf, listing_cache: Arc<Mutex<ListingCaches>>) -> Self {
         Self {
             home,
-            cache: Mutex::default(),
+            listing_cache,
         }
     }
 }
 
 impl StoredConversations for CodexConversations {
     fn conversations(&self) -> Vec<OutsideSessionDto> {
-        let mut cache = self.cache.lock().expect("the rollout cache lock");
+        let mut cache = self.listing_cache.lock().expect("the listing cache lock");
         let mut sessions = Vec::new();
         let mut found = HashSet::new();
         for (path, stamp) in codex_rollouts(&self.home) {
-            let fresh = cache.get(&path).is_some_and(|cached| cached.stamp == stamp);
+            let fresh = cache
+                .codex
+                .get(&path)
+                .is_some_and(|cached| cached.stamp == stamp);
             if !fresh {
-                cache.insert(
+                cache.codex.insert(
                     path.clone(),
                     CodexCached {
                         stamp,
@@ -245,37 +262,46 @@ impl StoredConversations for CodexConversations {
                         figures: None,
                     },
                 );
+                cache.dirty = true;
             }
-            let cached = &cache[&path];
+            let cached = &cache.codex[&path];
             if cached.listed.has_turn && !cached.listed.internal_session_id.is_empty() {
                 sessions.push(OutsideSessionDto {
                     agent_id: String::new(),
                     internal_session_id: cached.listed.internal_session_id.clone(),
                     working_directory: cached.listed.working_directory.clone(),
                     last_activity_at: cached.listed.last_activity_at.clone(),
-                    first_prompt: String::new(),
+                    first_prompt: cached.listed.title.clone(),
                 });
             }
             found.insert(path);
         }
-        cache.retain(|path, _| found.contains(path));
+        let before = cache.codex.len();
+        cache.codex.retain(|path, _| found.contains(path));
+        cache.dirty |= cache.codex.len() != before;
         sessions
     }
 
     fn figures(&self, internal_session_id: &str) -> Option<Figures> {
-        let mut cache = self.cache.lock().expect("the rollout cache lock");
+        let mut cache = self.listing_cache.lock().expect("the listing cache lock");
         let (path, cached) = cache
+            .codex
             .iter_mut()
             .find(|(_, cached)| cached.listed.internal_session_id == internal_session_id)?;
+        let mut changed = false;
         if let Some(stamp) = stamp_of(path).filter(|stamp| *stamp != cached.stamp) {
             cached.listed = read_codex_listed(path, &stamp);
             cached.stamp = stamp;
             cached.figures = None;
+            changed = true;
         }
         if cached.figures.is_none() {
             cached.figures = Some(read_codex_figures(path));
         }
-        cached.figures.clone()
+        let figures = cached.figures.clone();
+        cache.dirty |= changed;
+        cache.save_if_dirty();
+        figures
     }
 }
 
@@ -316,6 +342,7 @@ fn read_codex_listed(path: &Path, stamp: &Stamp) -> CodexListed {
     let mut listed = CodexListed {
         internal_session_id: String::new(),
         working_directory: String::new(),
+        title: String::new(),
         has_turn: false,
         last_activity_at: stamp.modified.map(moment).unwrap_or_default(),
     };
@@ -416,7 +443,7 @@ struct ClaudeConversations {
     home: PathBuf,
     /// What each transcript held when it was last read, by internal session
     /// id — which is the stem of its file.
-    cache: Mutex<HashMap<String, Cached>>,
+    listing_cache: Arc<Mutex<ListingCaches>>,
 }
 
 /// One transcript as it was last read.
@@ -433,7 +460,7 @@ struct Cached {
 }
 
 /// What a file is read by: its size and its modification time.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 struct Stamp {
     size: u64,
     modified: Option<SystemTime>,
@@ -449,26 +476,175 @@ struct Listed {
     last_activity_at: String,
 }
 
+/// Both agents' listing fields, shared so one atomic write keeps the complete
+/// cache file.
+struct ListingCaches {
+    path: PathBuf,
+    claude: HashMap<String, Cached>,
+    codex: HashMap<PathBuf, CodexCached>,
+    dirty: bool,
+}
+
+/// The versioned JSON document stored in Ariadne's home directory.
+#[derive(Serialize, Deserialize)]
+struct SavedListingCache {
+    version: u32,
+    claude: Vec<SavedListingEntry>,
+    codex: Vec<SavedListingEntry>,
+}
+
+/// The listing fields kept for one transcript. Figures stay only in memory.
+#[derive(Serialize, Deserialize)]
+struct SavedListingEntry {
+    path: PathBuf,
+    stamp: Stamp,
+    internal_session_id: String,
+    working_directory: String,
+    title: String,
+    has_turn: bool,
+    last_activity_at: String,
+}
+
+impl ListingCaches {
+    fn load(path: PathBuf) -> Self {
+        let saved = std::fs::read(&path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<SavedListingCache>(&bytes).ok())
+            .filter(|saved| saved.version == LISTING_CACHE_VERSION);
+        let Some(saved) = saved else {
+            return Self {
+                path,
+                claude: HashMap::new(),
+                codex: HashMap::new(),
+                dirty: true,
+            };
+        };
+        let claude = saved
+            .claude
+            .into_iter()
+            .map(|entry| {
+                let id = entry.internal_session_id.clone();
+                (
+                    id,
+                    Cached {
+                        path: entry.path,
+                        stamp: entry.stamp,
+                        listed: Listed {
+                            working_directory: entry.working_directory,
+                            title: entry.title,
+                            has_turn: entry.has_turn,
+                            last_activity_at: entry.last_activity_at,
+                        },
+                        figures: None,
+                    },
+                )
+            })
+            .collect();
+        let codex = saved
+            .codex
+            .into_iter()
+            .map(|entry| {
+                let path = entry.path.clone();
+                (
+                    path,
+                    CodexCached {
+                        stamp: entry.stamp,
+                        listed: CodexListed {
+                            internal_session_id: entry.internal_session_id,
+                            working_directory: entry.working_directory,
+                            title: entry.title,
+                            has_turn: entry.has_turn,
+                            last_activity_at: entry.last_activity_at,
+                        },
+                        figures: None,
+                    },
+                )
+            })
+            .collect();
+        Self {
+            path,
+            claude,
+            codex,
+            dirty: false,
+        }
+    }
+
+    fn save_if_dirty(&mut self) {
+        if !self.dirty {
+            return;
+        }
+        let saved = SavedListingCache {
+            version: LISTING_CACHE_VERSION,
+            claude: self
+                .claude
+                .iter()
+                .map(|(id, cached)| SavedListingEntry {
+                    path: cached.path.clone(),
+                    stamp: cached.stamp,
+                    internal_session_id: id.clone(),
+                    working_directory: cached.listed.working_directory.clone(),
+                    title: cached.listed.title.clone(),
+                    has_turn: cached.listed.has_turn,
+                    last_activity_at: cached.listed.last_activity_at.clone(),
+                })
+                .collect(),
+            codex: self
+                .codex
+                .iter()
+                .map(|(path, cached)| SavedListingEntry {
+                    path: path.clone(),
+                    stamp: cached.stamp,
+                    internal_session_id: cached.listed.internal_session_id.clone(),
+                    working_directory: cached.listed.working_directory.clone(),
+                    title: cached.listed.title.clone(),
+                    has_turn: cached.listed.has_turn,
+                    last_activity_at: cached.listed.last_activity_at.clone(),
+                })
+                .collect(),
+        };
+        let Ok(bytes) = serde_json::to_vec(&saved) else {
+            return;
+        };
+        let name = self
+            .path
+            .file_name()
+            .unwrap_or_else(|| OsStr::new("outside-session-listing-cache.json"))
+            .to_string_lossy();
+        let temporary = self
+            .path
+            .with_file_name(format!(".{name}.{}.tmp", std::process::id()));
+        if let Err(error) =
+            std::fs::write(&temporary, bytes).and_then(|()| std::fs::rename(&temporary, &self.path))
+        {
+            let _ = std::fs::remove_file(&temporary);
+            tracing::warn!(error = %error, path = %self.path.display(), "writing the transcript listing cache failed");
+            return;
+        }
+        self.dirty = false;
+    }
+}
+
 impl ClaudeConversations {
-    fn new(home: PathBuf) -> Self {
+    fn new(home: PathBuf, listing_cache: Arc<Mutex<ListingCaches>>) -> Self {
         Self {
             home,
-            cache: Mutex::default(),
+            listing_cache,
         }
     }
 }
 
 impl StoredConversations for ClaudeConversations {
     fn conversations(&self) -> Vec<OutsideSessionDto> {
-        let mut cache = self.cache.lock().expect("the transcript cache lock");
+        let mut cache = self.listing_cache.lock().expect("the listing cache lock");
         let mut sessions = Vec::new();
         let mut found: HashSet<String> = HashSet::new();
         for (id, path, stamp) in transcripts(&self.home) {
             let fresh = cache
+                .claude
                 .get(&id)
                 .is_some_and(|cached| cached.path == path && cached.stamp == stamp);
             if !fresh {
-                cache.insert(
+                cache.claude.insert(
                     id.clone(),
                     Cached {
                         listed: read_listed(&path, &stamp),
@@ -477,8 +653,9 @@ impl StoredConversations for ClaudeConversations {
                         figures: None,
                     },
                 );
+                cache.dirty = true;
             }
-            let cached = &cache[&id];
+            let cached = &cache.claude[&id];
             if cached.listed.has_turn {
                 sessions.push(OutsideSessionDto {
                     agent_id: String::new(),
@@ -491,27 +668,34 @@ impl StoredConversations for ClaudeConversations {
             found.insert(id);
         }
         // A conversation whose file is gone is gone: nothing keeps its reads.
-        cache.retain(|id, _| found.contains(id));
+        let before = cache.claude.len();
+        cache.claude.retain(|id, _| found.contains(id));
+        cache.dirty |= cache.claude.len() != before;
         sessions
     }
 
     fn figures(&self, internal_session_id: &str) -> Option<Figures> {
-        let mut cache = self.cache.lock().expect("the transcript cache lock");
-        let cached = cache.get_mut(internal_session_id)?;
+        let mut cache = self.listing_cache.lock().expect("the listing cache lock");
+        let cached = cache.claude.get_mut(internal_session_id)?;
         // A file that has grown since the listing is read again whole: what it
         // holds now is what the page answers. What the listing shows is read
         // again with it, because the stamp stands for both reads — one moved on
         // without the other would leave the next listing showing what this file
         // said before, and calling it fresh.
+        let mut changed = false;
         if let Some(stamp) = stamp_of(&cached.path).filter(|stamp| *stamp != cached.stamp) {
             cached.listed = read_listed(&cached.path, &stamp);
             cached.stamp = stamp;
             cached.figures = None;
+            changed = true;
         }
         if cached.figures.is_none() {
             cached.figures = Some(read_figures(&cached.path));
         }
-        cached.figures.clone()
+        let figures = cached.figures.clone();
+        cache.dirty |= changed;
+        cache.save_if_dirty();
+        figures
     }
 }
 

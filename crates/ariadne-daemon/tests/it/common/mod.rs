@@ -410,6 +410,7 @@ impl HarnessBuilder {
 /// directory, so no test reads the transcripts of the machine it runs on.
 fn transcript_homes(dir: &Path) -> TranscriptHomes {
     TranscriptHomes {
+        listing_cache: dir.join("outside-session-listing-cache.json"),
         codex: dir.join("codex"),
         claude: dir.join("claude"),
         opencode: dir.join("opencode"),

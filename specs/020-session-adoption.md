@@ -168,7 +168,15 @@ The ACP runtime belongs to 021.
     file of one of its own rows, and neither read is made again while the file
     stands where it did. The two reads stand for one moment: a file a page finds
     grown is read again for the listing as well, so the next listing shows what
-    it holds now.
+    it holds now. The Claude and Codex readers save their listing reads together
+    in one versioned JSON file under Ariadne's home. Each saved entry holds its
+    path, stamp, working directory, title, turn presence and last activity;
+    model, effort and usage figures stay in memory. A new reader uses an entry
+    only while its path has the saved stamp, removes entries for files now gone,
+    and writes the cache only after its contents change. A write replaces the
+    file atomically through a temporary file. A missing or malformed file, or
+    one with an unknown version, is no cache: the readers scan the transcripts
+    and replace it with the current version.
 21. OpenCode's reader goes to its own database instead of its files:
     `$XDG_DATA_HOME/opencode`, else `~/.local/share/opencode`, then
     `opencode.db`, one SQLite file OpenCode itself may hold open. It is opened
@@ -279,6 +287,18 @@ The ACP runtime belongs to 021.
 - A conversation that grew after a page read its figures is listed by what it
   holds now
   (`stored_conversations.rs::a_transcript_that_grew_under_a_page_is_listed_by_what_it_holds_now`).
+- New Claude and Codex readers return the same rows from saved listing fields
+  without reading unchanged transcripts again
+  (`stored_conversations.rs::a_new_reader_reads_no_unchanged_transcript_again`).
+- A new reader reads a transcript with a changed stamp and returns its new
+  listing fields
+  (`stored_conversations.rs::a_new_reader_reads_a_transcript_that_changed_after_the_save`).
+- A new reader drops a deleted transcript from both its listing and the saved
+  cache
+  (`stored_conversations.rs::a_new_reader_removes_a_deleted_transcripts_saved_entry`).
+- Corrupt and unknown-version listing caches cause a full scan and are replaced
+  with the current cache version
+  (`stored_conversations.rs::corrupt_and_unknown_listing_caches_fall_back_to_a_full_scan`).
 - The disk half keeps the order, the cursor and the 7-day window of the
   listing
   (`stored_conversations.rs::the_disk_half_keeps_the_order_the_cursor_and_the_window`).
