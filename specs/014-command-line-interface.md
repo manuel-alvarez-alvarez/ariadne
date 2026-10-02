@@ -178,6 +178,11 @@ same binary also serves (013).
     in `--dir` or the current directory, sent to the daemon as an absolute
     path. It prints the session's status line, or with `--attach` opens its
     console at once. The first prompt typed into it is its title.
+31a. `session switch <id> --model AGENT:MODEL [--effort EFFORT]` switches
+    the session to a new conversation on the requested pin, preserving its
+    seat. It refuses `--model default` locally; `--effort default` leaves
+    effort unpinned. It prints the new session id and pin, or the full DTO
+    with `--format json`; daemon refusals print whole.
 32. `ariadne permissions ai` manages the AI permission model behind the `ai`
     permission mode (022); `ariadne permissions` prints the group help and
     accepts no flat command. `show` is a key-value block of the whole status,
@@ -434,7 +439,11 @@ same binary also serves (013).
   (`cli/tests.rs::session_send_takes_an_id_and_the_text_to_send`);
   `session new` starts a loose session on a model, in the current directory
   or the one `--dir` names, sent as an absolute path
-  (`commands/session.rs::new_starts_a_session_in_the_directory_as_an_absolute_path`); and
+  (`commands/session.rs::new_starts_a_session_in_the_directory_as_an_absolute_path`);
+  `session switch` posts its pin and prints the returned session, while
+  `default` is refused locally
+  (`session.rs::switch_posts_the_pin_and_returns_the_new_session`,
+  `cli/tests.rs::session_switch_requires_a_model_and_accepts_effort_default`); and
   `session logs` reads the snapshot and follows the console stream
   (`commands/console.rs::a_transcript_log_uses_its_snapshot_for_table_and_json_output`,
   `::a_followed_log_uses_the_console_event_stream`).

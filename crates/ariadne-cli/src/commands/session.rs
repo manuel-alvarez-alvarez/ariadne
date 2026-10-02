@@ -5,7 +5,7 @@ use clap::Subcommand;
 
 use ariadne_api::sessions::{
     ConsoleInputRequest, NewSessionRequest, SessionDto, SessionEntryDto, SessionKind,
-    SessionPageDto, SessionPageQuery,
+    SessionPageDto, SessionPageQuery, SwitchSessionRequest,
 };
 use ariadne_api::stream::EventStreamQuery;
 use ariadne_client::{Client, SseEvent};
@@ -15,7 +15,9 @@ use ariadne_core::{AttentionReason, Seat, SessionStatus};
 use super::attention::reason_label;
 use super::follow;
 use super::resolve::{self, Kind};
-use super::{Subject, confirm, one_of, parse_effort, parse_model, query_path};
+use super::{
+    Subject, confirm, one_of, parse_effort, parse_effort_or_default, parse_model, query_path,
+};
 use crate::cli::values::Spelling;
 use crate::output::{
     Column, Format, Kv, UNCAPPED, age, at, col, dash, empty_state, moment, note, ok_id_line, print,
@@ -156,6 +158,18 @@ pub(crate) enum SessionCommand {
         #[arg(long)]
         attach: bool,
     },
+    /// Switch a session to another model or agent
+    Switch {
+        /// Session id
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::session_ids))]
+        id: String,
+        /// Model to run: AGENT:MODEL
+        #[arg(long, value_name = "MODEL", value_parser = parse_switch_model, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
+        model: String,
+        /// Reasoning effort; `default` leaves the effort unpinned
+        #[arg(long, value_name = "EFFORT", value_parser = parse_effort_or_default, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::efforts_or_default))]
+        effort: Option<String>,
+    },
     /// Show a session
     Inspect {
         /// Session id
@@ -207,6 +221,13 @@ pub(crate) enum SessionCommand {
         #[arg(short, long)]
         yes: bool,
     },
+}
+
+fn parse_switch_model(model: &str) -> std::result::Result<String, String> {
+    if model == "default" {
+        return Err("`default` is no model — a model is required".into());
+    }
+    parse_model(model)
 }
 
 pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result<()> {
@@ -290,6 +311,28 @@ pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) ->
                         s.status.as_str(),
                     )
                 )
+            })?;
+        }
+        SessionCommand::Switch { id, model, effort } => {
+            let id = resolve::id(client, Kind::Session, &id).await?;
+            let effort = effort.filter(|effort| effort != "default");
+            let s: SessionDto = client
+                .post_json(
+                    &format!("/v1/sessions/{id}/switch"),
+                    &SwitchSessionRequest { model, effort },
+                )
+                .await?;
+            print(format, &s, || {
+                let pin = match s.effort.as_deref() {
+                    Some(effort) => format!("{} @ {effort}", s.model),
+                    None => s.model.clone(),
+                };
+                let line = ok_id_line(view().color, view().quiet, "session", &s.id);
+                if view().quiet {
+                    println!("{line}");
+                } else {
+                    println!("{line} · {pin}");
+                }
             })?;
         }
         SessionCommand::Inspect { id } => {
@@ -989,6 +1032,57 @@ mod tests {
                     "working_directory": cwd.display().to_string(),
                 }),
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn switch_posts_the_pin_and_returns_the_new_session() {
+        use axum::Router;
+        use axum::extract::State;
+        use axum::routing::post;
+
+        type Bodies = std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>;
+        async fn switch(
+            State(bodies): State<Bodies>,
+            axum::Json(body): axum::Json<serde_json::Value>,
+        ) -> axum::Json<SessionDto> {
+            bodies.lock().unwrap().push(body);
+            axum::Json(SessionDto {
+                model: "other-agent:model-x".into(),
+                effort: Some("high".into()),
+                switched_from: Some("01h00000000000000000000001".into()),
+                ..session("01h00000000000000000000002", "goal", None)
+            })
+        }
+
+        let bodies = Bodies::default();
+        let app = Router::new()
+            .route(
+                "/v1/sessions/01h00000000000000000000001/switch",
+                post(switch),
+            )
+            .with_state(bodies.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = Client::tcp(format!("http://{address}"));
+
+        run(
+            &client,
+            SessionCommand::Switch {
+                id: "01h00000000000000000000001".into(),
+                model: "other-agent:model-x".into(),
+                effort: Some("high".into()),
+            },
+            Format::Json,
+        )
+        .await
+        .unwrap();
+        server.abort();
+
+        assert_eq!(
+            *bodies.lock().unwrap(),
+            [serde_json::json!({"model": "other-agent:model-x", "effort": "high"})]
         );
     }
 

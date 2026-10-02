@@ -140,6 +140,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("session new", true),
     ("session resume", true),
     ("session send", true),
+    ("session switch", true),
     ("skill create", true),
     ("skill get", true),
     ("skill inspect", true),
@@ -801,6 +802,33 @@ fn a_line_with_no_model_is_a_usage_error() {
     .to_string();
     assert!(err.contains("no model after the `:`"), "{err}");
     assert!(err.contains("a model is required"), "{err}");
+}
+
+#[test]
+fn session_switch_requires_a_model_and_accepts_effort_default() {
+    let err = try_parse(&[
+        "ariadne",
+        "session",
+        "switch",
+        "01SESSION",
+        "--model",
+        "default",
+    ])
+    .err()
+    .expect("default is no model")
+    .to_string();
+    assert!(err.contains("a model is required"), "{err}");
+    try_parse(&[
+        "ariadne",
+        "session",
+        "switch",
+        "01SESSION",
+        "--model",
+        "codex-acp:gpt-5",
+        "--effort",
+        "default",
+    ])
+    .expect("switch pin parses");
 }
 
 /// The other half of a pin, on every line a model is chosen on: `--effort`
