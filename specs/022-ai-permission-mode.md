@@ -278,11 +278,14 @@ hardware facts in the card, with no Details popover`).
     Derived facts appear on AI requests. Other modes have null AI fields.
     The daemon logs each AI permission reply with the same fields.
     The console and `ariadne session logs` show a waiting reason such as
-    `AI said ask (allow 0.62, deny 0.05, danger 0.21; allow up to 0.09, deny from 0.63)`.
-    A cap adds `; capped by reviewer_directive` inside the parentheses.
+    `AI said ask · allow 62%, deny 5% · danger 21% (allow up to 5%, deny from 65%)`,
+    the decision, both probabilities and the danger each a whole percent,
+    then the two thresholds in parentheses. Risk tags follow as `· tags: a,
+    b`, and a cap as `· capped by reviewer_directive`; either is left out
+    where the reply carries none.
     Errors retain their existing words, such as `AI timed out`.
-    An AI answer shows `allowed by AI (allow 0.91, deny 0.01, danger 0.04; allow up to 0.09, deny from 0.63)`
-    or `denied by AI (allow 0.01, deny 0.88, danger 0.93; allow up to 0.09, deny from 0.63)`.
+    An AI answer shows `AI allowed · allow 99%, deny 0% · danger 1% (allow up to 5%, deny from 65%)`
+    or `AI denied · allow 1%, deny 88% · danger 93% (allow up to 5%, deny from 65%)`.
     The event summary uses the same reason.
 32. `POST /v1/permissions/ai/test` scores one request without selecting an
     option, writing a row, or publishing an event. It accepts `tool`, nullable

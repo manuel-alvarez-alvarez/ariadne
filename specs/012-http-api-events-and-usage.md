@@ -129,8 +129,8 @@ and the ACP runtime that reports the agent events (021).
     verbatim.
     A `permission.replied` reads as who answered and, where the AI
     permission model had a part, why it did not decide (022, rule 31):
-    `allowed by AI (0.83, threshold 0.70)`,
-    `allow-once in the console — AI said escalate (0.41, threshold 0.70)`,
+    `AI allowed · allow 99%, deny 0% · danger 1% (allow up to 5%, deny from 65%)`,
+    `allow-once in the console — AI said ask · allow 62%, deny 5% · danger 21% (allow up to 5%, deny from 65%)`,
     `allow-once, learned`.
     A path under the payload's `cwd` is printed relative to it, and the cwd
     itself is never printed. The summary is

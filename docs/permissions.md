@@ -122,15 +122,16 @@ allow is not recorded.
 
 The model returns allow, ask, and deny probabilities. The console shows the
 allow probability from level `0` and the deny probability from level `2`.
-It shows both probabilities, danger, and both thresholds to two decimals.
-It shows the reason under a waiting call. `ariadne session logs` prints the
-same reason under the question. The answer and event summary use these words:
+It shows the decision, both probabilities, danger, and both thresholds, each
+as a whole percent. It shows the reason under a waiting call. `ariadne session
+logs` prints the same reason under the question. The answer and event summary
+use these words:
 
 ```text
-allowed by AI (allow 0.91, deny 0.01, danger 0.04; allow up to 0.09, deny from 0.63)
-denied by AI (allow 0.01, deny 0.88, danger 0.93; allow up to 0.09, deny from 0.63)
-allow-once in the console — AI said ask (allow 0.62, deny 0.05, danger 0.21; allow up to 0.09, deny from 0.63)
-allow-once in the console — AI said ask (allow 0.96, deny 0.01, danger 0.02; allow up to 0.09, deny from 0.63; capped by reviewer_directive)
+AI allowed · allow 99%, deny 0% · danger 1% (allow up to 5%, deny from 65%)
+AI denied · allow 1%, deny 88% · danger 93% (allow up to 5%, deny from 65%)
+allow-once in the console — AI said ask · allow 62%, deny 5% · danger 21% (allow up to 5%, deny from 65%)
+allow-once in the console — AI said ask · allow 96%, deny 1% · danger 2% (allow up to 5%, deny from 65%) · tags: reviewer_directive · capped by reviewer_directive
 allow-once in the console — AI unavailable
 ```
 
@@ -157,10 +158,10 @@ ariadne permissions ai test --tool Bash --kind execute \
   --workspace "$PWD"
 ```
 
-The command prints the label, both probabilities, danger and thresholds. It
-also prints the operation, tags and cap where present. For example:
-`ask (allow 0.62, deny 0.05, danger 0.21; allow up to 0.09, deny from 0.63); operation read_workspace`.
-For a capped allow, it adds `tags reviewer_directive; cap reviewer_directive`.
+The command prints the label, both probabilities, danger and thresholds as
+whole percentages, then the operation. For example:
+`ask · allow 62%, deny 5% · danger 21% (allow up to 5%, deny from 65%); operation read_workspace`.
+For a capped allow, the percentages are followed by `· tags: reviewer_directive · capped by reviewer_directive`.
 Use `--format json` for the response fields and all model probabilities.
 It does not select an option, save an approval, or add an event. The model
 must be enabled; `ai_disabled` means turn it on first. Invalid `--input` JSON

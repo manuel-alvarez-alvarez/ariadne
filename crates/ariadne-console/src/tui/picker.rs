@@ -559,20 +559,21 @@ mod tests {
             "answered",
             json!({"option_id": "option-0", "decided_by": "ai",
                    "label": "deny", "danger": 0.93,
-                   "allow_threshold": 0.09, "deny_threshold": 0.63,
+                   "allow_threshold": 0.0531, "deny_threshold": 0.6522,
                    "probabilities": {"0": 0.01, "1": 0.11, "2": 0.88}}),
         ));
         console.apply(&event("agent_message", "done", json!({"text": "done"})));
 
         console.commit(&mut terminal).unwrap();
         let shown = screen(&terminal);
+        let bare = |text: &str| text.split_whitespace().collect::<String>();
 
         assert!(
-            shown.contains("denied by AI (allow 0.01, deny 0.88"),
+            bare(&shown).contains(&bare(
+                "AI denied · allow 1%, deny 88% · danger 93% (allow up to 5%, deny from 65%)"
+            )),
             "{shown}"
         );
-        assert!(shown.contains("danger 0.93; allow up to 0.09"), "{shown}");
-        assert!(shown.contains("deny from 0.63)"), "{shown}");
 
         let mut console = Console::new(header());
         let mut terminal = crate::tui::testing::terminal();
@@ -587,18 +588,19 @@ mod tests {
             "answered",
             json!({"option_id": "option-0", "decided_by": "ai",
                    "label": "allow", "danger": 0.04,
-                   "allow_threshold": 0.09, "deny_threshold": 0.63,
+                   "allow_threshold": 0.0531, "deny_threshold": 0.6522,
                    "probabilities": {"0": 0.91, "1": 0.08, "2": 0.01}}),
         ));
         console.apply(&event("agent_message", "done", json!({"text": "done"})));
         console.commit(&mut terminal).unwrap();
         let shown = screen(&terminal);
+        let bare = |text: &str| text.split_whitespace().collect::<String>();
         assert!(
-            shown.contains("allowed by AI (allow 0.91, deny 0.01"),
+            bare(&shown).contains(&bare(
+                "AI allowed · allow 91%, deny 1% · danger 4% (allow up to 5%, deny from 65%)"
+            )),
             "{shown}"
         );
-        assert!(shown.contains("danger 0.04; allow up to 0.09"), "{shown}");
-        assert!(shown.contains("deny from 0.63)"), "{shown}");
     }
 
     #[test]
@@ -622,7 +624,7 @@ mod tests {
         assert_eq!(
             row_of(
                 &waiting,
-                "AI said ask (allow 0.62, deny 0.05, danger 0.41; allow up to 0.20, deny from 0.80)"
+                "AI said ask · allow 62%, deny 5% · danger 41% (allow up to 20%, deny from 80%)"
             ),
             Some(question + 2),
             "the model's reason is under the head, before the options: {waiting}"

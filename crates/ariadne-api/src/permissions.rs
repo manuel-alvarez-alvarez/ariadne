@@ -311,18 +311,31 @@ pub struct TestAiPermissionResponse {
 
 /// Why the AI permission model did not decide a `permission.replied`, in the
 /// words `ariadne events`, the desktop app and the console all use:
-/// `AI said ask (allow 0.62, deny 0.05, danger 0.21; allow up to 0.09, deny from 0.63)`,
-/// or `AI timed out`. Return `None` when the model had no part in the reply.
+/// `AI said ask · allow 62%, deny 5% · danger 21% (allow up to 5%, deny from 65%)`,
+/// or `AI timed out`. A reply the model itself decided reads `AI allowed` or
+/// `AI denied` in place of `AI said <label>`. Return `None` when the model had
+/// no part in the reply.
 pub fn ai_permission_note(reply: &serde_json::Value) -> Option<String> {
     let text = |key: &str| reply.get(key).and_then(serde_json::Value::as_str);
     if let (Some(label), Some(metrics)) = (text("label"), ai_permission_metrics(reply)) {
-        let cap = text("cap").map_or(String::new(), |cap| format!("; capped by {cap}"));
-        return Some(format!("AI said {label} ({metrics}{cap})"));
+        let decision = match text("decided_by") {
+            Some("ai") if label == "deny" => "AI denied".to_string(),
+            Some("ai") => "AI allowed".to_string(),
+            _ => format!("AI said {label}"),
+        };
+        return Some(format!("{decision} · {metrics}"));
     }
     text("ai_error").map(|error| format!("AI {error}"))
 }
 
-/// Format the model probabilities, danger and the two danger thresholds.
+/// A probability or a danger score, rounded to a whole percent.
+fn percent(value: f64) -> i64 {
+    (value * 100.0).round() as i64
+}
+
+/// Format the model probabilities, danger and the two danger thresholds as
+/// whole percentages, followed by the risk tags and the cap where the reply
+/// carries them.
 pub fn ai_permission_metrics(reply: &serde_json::Value) -> Option<String> {
     let number = |key: &str| reply.get(key).and_then(serde_json::Value::as_f64);
     let probabilities = reply.get("probabilities")?.as_object()?;
@@ -332,9 +345,28 @@ pub fn ai_permission_metrics(reply: &serde_json::Value) -> Option<String> {
     let danger = number("danger")?;
     let allow = number("allow_threshold")?;
     let deny = number("deny_threshold")?;
-    Some(format!(
-        "allow {allow_probability:.2}, deny {deny_probability:.2}, danger {danger:.2}; allow up to {allow:.2}, deny from {deny:.2}"
-    ))
+    let mut metrics = format!(
+        "allow {}%, deny {}% · danger {}% (allow up to {}%, deny from {}%)",
+        percent(allow_probability),
+        percent(deny_probability),
+        percent(danger),
+        percent(allow),
+        percent(deny)
+    );
+    if let Some(tags) = reply.get("risk_tags").and_then(serde_json::Value::as_array)
+        && !tags.is_empty()
+    {
+        let tags = tags
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect::<Vec<_>>()
+            .join(", ");
+        metrics.push_str(&format!(" · tags: {tags}"));
+    }
+    if let Some(cap) = reply.get("cap").and_then(serde_json::Value::as_str) {
+        metrics.push_str(&format!(" · capped by {cap}"));
+    }
+    Some(metrics)
 }
 
 #[cfg(test)]
@@ -349,18 +381,38 @@ mod tests {
             assert_eq!(
                 ai_permission_note(&json!({"label": label, "danger": 0.21,
                     "probabilities": {"0": 0.62, "1": 0.33, "2": 0.05},
-                    "allow_threshold": 0.09, "deny_threshold": 0.63})),
+                    "allow_threshold": 0.0531, "deny_threshold": 0.6522})),
                 Some(format!(
-                    "AI said {label} (allow 0.62, deny 0.05, danger 0.21; allow up to 0.09, deny from 0.63)"
+                    "AI said {label} · allow 62%, deny 5% · danger 21% (allow up to 5%, deny from 65%)"
                 ))
             );
         }
         assert_eq!(
+            ai_permission_note(
+                &json!({"decided_by": "ai", "label": "allow", "danger": 0.01,
+                "probabilities": {"0": 0.99, "1": 0.01, "2": 0.0},
+                "allow_threshold": 0.0531, "deny_threshold": 0.6522})
+            ),
+            Some(
+                "AI allowed · allow 99%, deny 0% · danger 1% (allow up to 5%, deny from 65%)"
+                    .into()
+            )
+        );
+        assert_eq!(
+            ai_permission_note(&json!({"decided_by": "ai", "label": "deny", "danger": 0.93,
+                "probabilities": {"0": 0.01, "1": 0.11, "2": 0.88},
+                "allow_threshold": 0.0531, "deny_threshold": 0.6522})),
+            Some(
+                "AI denied · allow 1%, deny 88% · danger 93% (allow up to 5%, deny from 65%)"
+                    .into()
+            )
+        );
+        assert_eq!(
             ai_permission_note(&json!({"label": "ask", "danger": 0.02,
                 "probabilities": {"0": 0.96, "1": 0.03, "2": 0.01},
-                "allow_threshold": 0.09, "deny_threshold": 0.63,
-                "cap": "reviewer_directive"})),
-            Some("AI said ask (allow 0.96, deny 0.01, danger 0.02; allow up to 0.09, deny from 0.63; capped by reviewer_directive)".into())
+                "allow_threshold": 0.0531, "deny_threshold": 0.6522,
+                "cap": "reviewer_directive", "risk_tags": ["reviewer_directive"]})),
+            Some("AI said ask · allow 96%, deny 1% · danger 2% (allow up to 5%, deny from 65%) · tags: reviewer_directive · capped by reviewer_directive".into())
         );
         assert_eq!(
             ai_permission_note(&json!({"ai_error": "timed out"})),

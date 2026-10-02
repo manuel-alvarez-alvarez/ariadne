@@ -655,7 +655,7 @@ mod tests {
         assert_eq!(
             output.lines().nth(question + 1),
             Some(
-                "  AI said ask (allow 0.62, deny 0.05, danger 0.41; allow up to 0.20, deny from 0.80)"
+                "  AI said ask · allow 62%, deny 5% · danger 41% (allow up to 20%, deny from 80%)"
             ),
             "{output}"
         );
@@ -668,13 +668,14 @@ mod tests {
                 "tool_name": "Bash", "tool_input": {"command": "cat ~/.aws/credentials"},
                 "options": [{"optionId": "yes", "name": "Allow"}],
                 "label": "ask", "danger": 0.081, "cap": "reviewer_directive",
-                "allow_threshold": 0.09, "deny_threshold": 0.63,
+                "risk_tags": ["reviewer_directive"],
+                "allow_threshold": 0.0531, "deny_threshold": 0.6522,
                 "probabilities": {"0": 0.82, "1": 0.16, "2": 0.02}
             }),
         )];
         let output = render::transcript(&fold(&capped), Some(80), false);
         assert!(
-            output.contains("allow 0.82, deny 0.02, danger 0.08; allow up to 0.09, deny from 0.63; capped by reviewer_directive"),
+            output.contains("allow 82%, deny 2% · danger 8% (allow up to 5%, deny from 65%) · tags: reviewer_directive · capped by reviewer_directive"),
             "{output}"
         );
     }
@@ -686,13 +687,13 @@ mod tests {
                 "allow",
                 json!({"0": 0.91, "1": 0.08, "2": 0.01}),
                 0.04,
-                "allowed by AI (allow 0.91, deny 0.01, danger 0.04; allow up to 0.09, deny from 0.63)",
+                "AI allowed · allow 91%, deny 1% · danger 4% (allow up to 5%, deny from 65%)",
             ),
             (
                 "deny",
                 json!({"0": 0.01, "1": 0.11, "2": 0.88}),
                 0.93,
-                "denied by AI (allow 0.01, deny 0.88, danger 0.93; allow up to 0.09, deny from 0.63)",
+                "AI denied · allow 1%, deny 88% · danger 93% (allow up to 5%, deny from 65%)",
             ),
         ] {
             let events = [
@@ -709,7 +710,7 @@ mod tests {
                     "permission.replied",
                     json!({
                         "option_id": "yes", "decided_by": "ai", "label": label,
-                        "danger": danger, "allow_threshold": 0.09, "deny_threshold": 0.63,
+                        "danger": danger, "allow_threshold": 0.0531, "deny_threshold": 0.6522,
                         "probabilities": probabilities
                     }),
                 ),

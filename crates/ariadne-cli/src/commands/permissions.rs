@@ -264,28 +264,15 @@ fn test_one_line(response: &TestAiPermissionResponse) -> String {
             let metrics = ariadne_api::permissions::ai_permission_metrics(
                 &serde_json::to_value(response).expect("AI permission response serializes"),
             );
-            metrics.map_or_else(|| label.clone(), |metrics| format!("{label} ({metrics})"))
+            metrics.map_or_else(|| label.clone(), |metrics| format!("{label} · {metrics}"))
         }
         (Some(label), None, None) => label.clone(),
         (_, _, Some(error)) => format!("no answer: {error}"),
         _ => "no answer".to_string(),
     };
-    let mut facts = Vec::new();
-    if let Some(operation) = &response.operation {
-        facts.push(format!("operation {operation}"));
-    }
-    if let Some(tags) = &response.risk_tags
-        && !tags.is_empty()
-    {
-        facts.push(format!("tags {}", tags.join(", ")));
-    }
-    if let Some(cap) = &response.cap {
-        facts.push(format!("cap {cap}"));
-    }
-    if facts.is_empty() {
-        answer
-    } else {
-        format!("{answer}; {}", facts.join("; "))
+    match &response.operation {
+        Some(operation) => format!("{answer}; operation {operation}"),
+        None => answer,
     }
 }
 
@@ -671,8 +658,8 @@ mod tests {
         let answered = TestAiPermissionResponse {
             label: Some("ask".into()),
             danger: Some(0.21),
-            allow_threshold: 0.09,
-            deny_threshold: 0.63,
+            allow_threshold: 0.0531,
+            deny_threshold: 0.6522,
             ai_error: None,
             operation: Some("read_workspace".into()),
             risk_tags: Some(vec![]),
@@ -681,7 +668,7 @@ mod tests {
         };
         assert_eq!(
             test_one_line(&answered),
-            "ask (allow 0.62, deny 0.05, danger 0.21; allow up to 0.09, deny from 0.63); operation read_workspace"
+            "ask · allow 62%, deny 5% · danger 21% (allow up to 5%, deny from 65%); operation read_workspace"
         );
         let mut capped = answered.clone();
         capped.danger = Some(0.02);
@@ -691,7 +678,7 @@ mod tests {
         capped.cap = Some("reviewer_directive".into());
         assert_eq!(
             test_one_line(&capped),
-            "ask (allow 0.96, deny 0.01, danger 0.02; allow up to 0.09, deny from 0.63); operation destructive_or_exfiltration; tags reviewer_directive; cap reviewer_directive"
+            "ask · allow 96%, deny 1% · danger 2% (allow up to 5%, deny from 65%) · tags: reviewer_directive · capped by reviewer_directive; operation destructive_or_exfiltration"
         );
         assert_eq!(
             test_one_line(&TestAiPermissionResponse {

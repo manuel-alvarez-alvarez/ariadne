@@ -45,7 +45,7 @@ ariadne permissions ai test --tool Bash --kind execute \
   --input '{"command":"git status"}' --option Allow --option Reject
 ```
 
-It prints a line such as `ask (allow 0.62, deny 0.05, danger 0.21; allow up to 0.09, deny from 0.63)`. Repeat
+It prints a line such as `ask · allow 62%, deny 5% · danger 21% (allow up to 5%, deny from 65%)`. Repeat
 `--option` for each offered option; the first represents an allowing option.
 `--input` must be valid JSON. `--format json` prints the full response.
 

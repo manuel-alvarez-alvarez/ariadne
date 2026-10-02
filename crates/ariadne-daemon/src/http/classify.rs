@@ -135,17 +135,14 @@ pub(crate) fn summarize(kind: &str, payload: &serde_json::Value) -> String {
 
 /// An answered permission request: the option chosen and who chose it, and,
 /// where the AI permission model had a part, why it did not decide —
-/// `allow-once in the console — AI said ask (allow 0.62, deny 0.05, danger 0.21; allow up to 0.09, deny from 0.63)`,
-/// `allowed by AI (allow 0.91, deny 0.01, danger 0.04; allow up to 0.09, deny from 0.63)`.
+/// `allow-once in the console — AI said ask · allow 62%, deny 5% · danger 21% (allow up to 5%, deny from 65%)`,
+/// `AI allowed · allow 91%, deny 1% · danger 4% (allow up to 5%, deny from 65%)`.
 fn permission_reply_summary(payload: &serde_json::Value) -> String {
     let decided_by = non_empty_str(payload.get("decided_by"));
     if decided_by == Some("ai")
-        && let Some(metrics) = ariadne_api::permissions::ai_permission_metrics(payload)
+        && let Some(note) = ariadne_api::permissions::ai_permission_note(payload)
     {
-        return match non_empty_str(payload.get("label")) {
-            Some("deny") => format!("denied by AI ({metrics})"),
-            _ => format!("allowed by AI ({metrics})"),
-        };
+        return note;
     }
     let option = non_empty_str(payload.get("option_id")).unwrap_or("cancelled");
     let answer = match decided_by {
@@ -520,33 +517,33 @@ mod tests {
         assert_eq!(
             reply(
                 json!({"decided_by": "ai", "label": "deny", "danger": 0.9312,
-                "allow_threshold": 0.09, "deny_threshold": 0.63,
+                "allow_threshold": 0.0531, "deny_threshold": 0.6522,
                 "probabilities": {"0": 0.01, "1": 0.11, "2": 0.88}})
             ),
-            "denied by AI (allow 0.01, deny 0.88, danger 0.93; allow up to 0.09, deny from 0.63)"
+            "AI denied · allow 1%, deny 88% · danger 93% (allow up to 5%, deny from 65%)"
         );
         assert_eq!(
             reply(
                 json!({"decided_by": "ai", "label": "allow", "danger": 0.0412,
-                "allow_threshold": 0.09, "deny_threshold": 0.63,
+                "allow_threshold": 0.0531, "deny_threshold": 0.6522,
                 "probabilities": {"0": 0.91, "1": 0.08, "2": 0.01}})
             ),
-            "allowed by AI (allow 0.91, deny 0.01, danger 0.04; allow up to 0.09, deny from 0.63)"
+            "AI allowed · allow 91%, deny 1% · danger 4% (allow up to 5%, deny from 65%)"
         );
         assert_eq!(
             reply(
-                json!({"label": "ask", "danger": 0.21, "allow_threshold": 0.09,
-                "deny_threshold": 0.63, "probabilities": {"0": 0.62, "1": 0.33, "2": 0.05}})
+                json!({"label": "ask", "danger": 0.21, "allow_threshold": 0.0531,
+                "deny_threshold": 0.6522, "probabilities": {"0": 0.62, "1": 0.33, "2": 0.05}})
             ),
-            "allow-once in the console — AI said ask (allow 0.62, deny 0.05, danger 0.21; allow up to 0.09, deny from 0.63)"
+            "allow-once in the console — AI said ask · allow 62%, deny 5% · danger 21% (allow up to 5%, deny from 65%)"
         );
         assert_eq!(
             reply(
-                json!({"label": "ask", "danger": 0.02, "allow_threshold": 0.09,
-                "deny_threshold": 0.63, "probabilities": {"0": 0.96, "1": 0.03, "2": 0.01},
-                "cap": "reviewer_directive"})
+                json!({"label": "ask", "danger": 0.02, "allow_threshold": 0.0531,
+                "deny_threshold": 0.6522, "probabilities": {"0": 0.96, "1": 0.03, "2": 0.01},
+                "cap": "reviewer_directive", "risk_tags": ["reviewer_directive"]})
             ),
-            "allow-once in the console — AI said ask (allow 0.96, deny 0.01, danger 0.02; allow up to 0.09, deny from 0.63; capped by reviewer_directive)"
+            "allow-once in the console — AI said ask · allow 96%, deny 1% · danger 2% (allow up to 5%, deny from 65%) · tags: reviewer_directive · capped by reviewer_directive"
         );
         assert_eq!(
             reply(json!({"ai_error": "unavailable"})),
