@@ -27,6 +27,7 @@ tests:
   - crates/ariadne-console/src/tui/picker.rs
   - crates/ariadne-console/src/tui/viewport.rs
   - crates/ariadne-console/src/tui/scenario.rs
+  - crates/ariadne-console/src/tui/testing.rs
   - crates/ariadne-console/src/theme.rs
 ---
 
@@ -1268,4 +1269,5 @@ goal id to a seat (014).
 `crates/ariadne-console/src/tui/commands.rs`,
 `crates/ariadne-console/src/tui/input.rs`,
 `crates/ariadne-console/src/tui/picker.rs`,
+`crates/ariadne-console/src/tui/testing.rs`,
 `crates/ariadne-console/src/tui/viewport.rs`.

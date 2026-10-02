@@ -425,7 +425,6 @@ fn blank(cell: &Cell) -> bool {
 #[cfg(test)]
 mod tests {
     use std::convert::Infallible;
-    use std::sync::{Arc, Mutex};
 
     use futures_util::stream;
     use ratatui::backend::{Backend, ClearType, TestBackend, WindowSize};
@@ -909,40 +908,6 @@ mod tests {
                 .starts_with(" enter send"),
             "{shown}"
         );
-    }
-
-    /// The bytes [`AnsiBackend`] wrote, readable while the terminal owns it.
-    #[derive(Clone, Default)]
-    struct Tap(Arc<Mutex<Vec<u8>>>);
-
-    impl std::io::Write for Tap {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl Tap {
-        /// Every row a terminal of 72 by 40 shows once it has read the
-        /// bytes, the blank ones too.
-        fn screen(&self) -> Vec<String> {
-            let mut parser = vt100::Parser::new(40, 72, 0);
-            parser.process(&self.0.lock().unwrap());
-            parser
-                .screen()
-                .rows(0, 72)
-                .map(|row| row.trim_end().to_string())
-                .collect()
-        }
-
-        /// The bytes written since the last take, as text.
-        fn take(&self) -> String {
-            String::from_utf8_lossy(&std::mem::take(&mut *self.0.lock().unwrap())).to_string()
-        }
     }
 
     /// Everything `emulator` has shown, row by row: its scrollback, then its

@@ -1,8 +1,11 @@
 //! Test doubles and helpers the modules of the pane share.
 
+use std::sync::{Arc, Mutex};
+
 use futures_util::stream;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
+use ratatui::layout::Position;
 use ratatui::{TerminalOptions, Viewport};
 use serde_json::json;
 use tokio::sync::mpsc;
@@ -10,6 +13,62 @@ use unicode_width::UnicodeWidthStr;
 
 use super::viewport::VIEWPORT;
 use super::*;
+use crate::ansi::Window;
+
+/// Bytes written by an ANSI backend while its terminal owns it.
+#[derive(Clone, Default)]
+pub(crate) struct Tap(pub(crate) Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for Tap {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Tap {
+    /// Every row a terminal of 72 by 40 shows after reading the bytes.
+    pub(crate) fn screen(&self) -> Vec<String> {
+        let mut parser = vt100::Parser::new(40, 72, 0);
+        parser.process(&self.0.lock().unwrap());
+        parser
+            .screen()
+            .rows(0, 72)
+            .map(|row| row.trim_end().to_string())
+            .collect()
+    }
+
+    /// Take the bytes written since the last read as text.
+    pub(crate) fn take(&self) -> String {
+        String::from_utf8_lossy(&std::mem::take(&mut *self.0.lock().unwrap())).to_string()
+    }
+
+    /// Read the terminal rows at `window`'s size and scrollback position.
+    pub(crate) fn screen_at(&self, window: &Window, back: usize) -> Vec<String> {
+        let size = window.size();
+        let mut parser = vt100::Parser::new(size.height, size.width, back);
+        parser.process(&self.0.lock().unwrap());
+        parser.screen_mut().set_scrollback(back);
+        parser
+            .screen()
+            .contents()
+            .lines()
+            .map(|row| row.trim_end().to_string())
+            .collect()
+    }
+
+    pub(crate) fn cursor(&self, window: &Window) -> Position {
+        let size = window.size();
+        let mut parser = vt100::Parser::new(size.height, size.width, 0);
+        parser.process(&self.0.lock().unwrap());
+        let (y, x) = parser.screen().cursor_position();
+        Position { x, y }
+    }
+}
 
 /// A daemon console, as far as the pane can tell: a snapshot, deltas of
 /// its own, and deltas it answers a post with — which is what makes a

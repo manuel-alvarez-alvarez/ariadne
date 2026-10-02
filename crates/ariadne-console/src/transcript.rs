@@ -570,7 +570,7 @@ fn unified(path: &str, old: &str, new: &str) -> String {
         .to_string()
 }
 
-fn permission_options(payload: &Value) -> Vec<PermissionOption> {
+pub fn permission_options(payload: &Value) -> Vec<PermissionOption> {
     payload
         .get("options")
         .and_then(Value::as_array)

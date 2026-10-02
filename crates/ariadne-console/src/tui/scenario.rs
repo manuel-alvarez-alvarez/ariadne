@@ -4,8 +4,6 @@
 //! drawn at three sizes on ratatui's test backend and, byte for byte, on the
 //! ANSI backend read back by a terminal emulator.
 
-use std::sync::{Arc, Mutex};
-
 use ratatui::Terminal;
 use ratatui::backend::{Backend, TestBackend};
 use ratatui::layout::{Position, Rect};
@@ -15,21 +13,6 @@ use unicode_width::UnicodeWidthStr;
 use crate::ansi::{AnsiBackend, Window};
 use crate::tui::testing::*;
 use crate::tui::*;
-
-/// The bytes the ANSI backend wrote since they were last read.
-#[derive(Clone, Default)]
-struct Tap(Arc<Mutex<Vec<u8>>>);
-
-impl std::io::Write for Tap {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
 
 /// One console drawn on both backends from the same events and keys.
 struct Pair {

@@ -56,7 +56,7 @@ mod viewport;
 #[cfg(test)]
 mod scenario;
 #[cfg(test)]
-mod testing;
+pub(crate) mod testing;
 
 pub use viewport::{Anchored, Screen, open};
 
@@ -124,6 +124,18 @@ pub struct Header {
 }
 
 impl Header {
+    /// Build the header from a session and its task or goal context.
+    pub fn for_session(
+        session: &SessionDto,
+        title: Option<String>,
+        repository: Option<String>,
+    ) -> Self {
+        let mut header = Self::of(Some(session));
+        header.task = title;
+        header.repository = repository;
+        header
+    }
+
     pub fn of(session: Option<&SessionDto>) -> Self {
         session.map_or_else(
             || Self {
@@ -147,13 +159,6 @@ impl Header {
                 usage: session.usage,
             },
         )
-    }
-
-    /// Add the task (or goal) and repository the session row does not hold.
-    pub fn with_task(mut self, title: Option<String>, repository: Option<String>) -> Self {
-        self.task = title;
-        self.repository = repository;
-        self
     }
 }
 

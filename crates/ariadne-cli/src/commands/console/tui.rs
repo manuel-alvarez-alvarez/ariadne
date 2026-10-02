@@ -114,7 +114,7 @@ async fn header(client: &Client, session: SessionDto) -> Header {
         },
         (None, None) => (session.title.clone(), None),
     };
-    Header::of(Some(&session)).with_task(title, repository)
+    Header::for_session(&session, title, repository)
 }
 
 fn repository_name(path: &str) -> Option<String> {
