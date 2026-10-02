@@ -840,4 +840,39 @@ mod tests {
         assert_eq!(output.matches("AGENT").count(), 1, "{output}");
         assert!(output.contains("answer: Allow"), "{output}");
     }
+
+    #[test]
+    fn session_logs_name_the_family_row_that_answered() {
+        let events = [
+            event(
+                "ask",
+                "permission_request",
+                json!({
+                    "tool_name": "Bash", "options": [{"optionId": "allow-once", "name": "Allow once"}]
+                }),
+            ),
+            event(
+                "answer",
+                "permission.replied",
+                json!({
+                    "option_id": "allow-once", "decided_by": "learned",
+                    "learned_level": "family", "learned_key": "git rebase"
+                }),
+            ),
+        ];
+        let output = render::transcript(&fold(&events), Some(80), false);
+        assert!(
+            output.contains("Allow once, learned · family git rebase"),
+            "{output}"
+        );
+        let mut renderer = render::StreamRenderer::new(None, false);
+        let streamed: String = events
+            .iter()
+            .map(|event| renderer.event(event, &Filters::default()))
+            .collect();
+        assert!(
+            streamed.contains("answer: Allow once, learned · family git rebase"),
+            "{streamed}"
+        );
+    }
 }

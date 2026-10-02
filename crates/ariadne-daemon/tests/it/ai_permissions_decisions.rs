@@ -509,7 +509,8 @@ async fn a_confident_allow_runs_at_once_and_reports_ai() {
                "label": "allow", "danger": 0.05, "allow_threshold": 0.05,
                "deny_threshold": 0.8,
                "ai_error": null, "operation": "build_test", "risk_tags": [],
-               "cap": null,
+               "cap": null, "console_option_id": null,
+               "learned_id": null, "learned_level": null, "learned_key": null,
                "probabilities": {"0": 0.9, "1": 0.1, "2": 0.0}})
     );
     assert!(
@@ -702,7 +703,7 @@ async fn an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval() 
     let asked = h.launcher.spawn_author(&cast.task.id).await.unwrap();
     wait_for_question(&h, &asked).await;
     assert_eq!(
-        h.send(answer(&asked.id, "yes")).await.0,
+        h.send(answer(&asked.id, "command")).await.0,
         StatusCode::NO_CONTENT
     );
     eventually(TIMEOUT, "the console-approved turn to finish", || async {
@@ -817,7 +818,7 @@ async fn a_cap_changes_a_model_allow_to_a_console_question() {
             .contains("note to reviewer")
     );
     drop(requests);
-    let reply = answered(&h, &session.id, "no").await;
+    let reply = answered(&h, &session.id, "reject").await;
     assert_eq!(reply["decided_by"], "console");
     assert_eq!(reply["cap"], "reviewer_directive");
 }
@@ -889,7 +890,7 @@ async fn a_deny_without_a_rejecting_option_waits_for_the_console() {
                "deny_threshold": 0.8, "ai_error": null})
     );
     assert_eq!(
-        answered(&h, &session.id, "yes").await["decided_by"],
+        answered(&h, &session.id, "once").await["decided_by"],
         "console"
     );
     let learned = h
@@ -924,6 +925,40 @@ async fn a_deny_without_a_rejecting_option_waits_for_the_console() {
 }
 
 #[tokio::test]
+async fn a_console_reject_uses_the_only_agent_rejection_option() {
+    let server = ModelServer::answer(0.99).await;
+    let mut scripted = permission_script();
+    scripted["prompts"][0]["permission"]["options"] = json!([
+        {"optionId": "never", "name": "Reject always", "kind": "reject_always"},
+        {"optionId": "yes", "name": "Allow", "kind": "allow_once"}
+    ]);
+    let (h, cast, _agent_dir) =
+        ai_permissions_harness_with(&server, 0.2, Timeouts::default(), scripted).await;
+
+    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    wait_for_question(&h, &session).await;
+    let request = permission_request(&h, &session.id).await;
+    assert_eq!(
+        request["options"][3],
+        json!({
+            "optionId": "reject", "name": "Reject", "kind": "reject_once"
+        })
+    );
+    assert_eq!(request["agent_options"][0]["optionId"], "never");
+    let reply = answered(&h, &session.id, "reject").await;
+    assert_eq!(reply["option_id"], "never");
+    assert_eq!(reply["console_option_id"], "reject");
+    let learned = h
+        .store
+        .list_learned_permissions(Some(&cast.repo.id))
+        .await
+        .unwrap();
+    assert_eq!(learned.len(), 1);
+    assert_eq!(learned[0].level, "once");
+    assert_eq!(learned[0].selected_option, "never");
+}
+
+#[tokio::test]
 async fn an_allow_without_an_allowing_option_waits_for_the_console() {
     let server = ModelServer::answer(0.01).await;
     let mut scripted = permission_script();
@@ -935,7 +970,7 @@ async fn an_allow_without_an_allowing_option_waits_for_the_console() {
     let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
     wait_for_question(&h, &session).await;
     assert_eq!(
-        model_part(&answered(&h, &session.id, "no").await),
+        model_part(&answered(&h, &session.id, "reject").await),
         json!({"label": "allow", "danger": 0.01, "allow_threshold": 0.2,
                "deny_threshold": 0.8,
                "ai_error": null})
@@ -960,7 +995,7 @@ async fn a_malformed_answer_warns_and_waits_for_the_console() {
         "{snapshot:?}"
     );
     assert_eq!(
-        model_part(&answered(&h, &session.id, "no").await),
+        model_part(&answered(&h, &session.id, "reject").await),
         json!({"label": null, "danger": null, "allow_threshold": null,
                "deny_threshold": null,
                "ai_error": "malformed"})
@@ -996,7 +1031,7 @@ async fn a_stopped_model_warns_and_waits_for_the_console() {
         "failed"
     );
     assert_eq!(
-        model_part(&answered(&h, &session.id, "no").await),
+        model_part(&answered(&h, &session.id, "reject").await),
         json!({"label": null, "danger": null, "allow_threshold": null,
                "deny_threshold": null,
                "ai_error": "failed"})
@@ -1015,7 +1050,7 @@ async fn a_model_timeout_waits_for_the_console() {
     let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
     wait_for_question(&h, &session).await;
     assert_eq!(
-        model_part(&answered(&h, &session.id, "no").await),
+        model_part(&answered(&h, &session.id, "reject").await),
         json!({"label": null, "danger": null, "allow_threshold": null,
                "deny_threshold": null,
                "ai_error": "timed out"})
@@ -1037,7 +1072,7 @@ async fn a_disabled_model_waits_for_the_console() {
     wait_for_question(&h, &session).await;
     assert!(server.requests.lock().unwrap().is_empty());
     assert_eq!(
-        model_part(&answered(&h, &session.id, "no").await),
+        model_part(&answered(&h, &session.id, "reject").await),
         json!({"label": null, "danger": null, "allow_threshold": null,
                "deny_threshold": null,
                "ai_error": "unavailable"})

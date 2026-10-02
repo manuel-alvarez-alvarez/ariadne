@@ -3,6 +3,33 @@
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
+/// The fields in a `permission.replied` event payload.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PermissionReplyDto {
+    pub session_id: serde_json::Value,
+    pub option_id: Option<String>,
+    pub console_option_id: Option<String>,
+    pub decided_by: String,
+    pub label: Option<String>,
+    pub danger: Option<f64>,
+    pub allow_threshold: Option<f64>,
+    pub deny_threshold: Option<f64>,
+    pub ai_error: Option<String>,
+    pub operation: Option<String>,
+    pub risk_tags: Option<Vec<String>>,
+    pub cap: Option<String>,
+    pub probabilities: Option<serde_json::Value>,
+    /// The row that answered without a console choice.
+    #[schema(required = true)]
+    pub learned_id: Option<String>,
+    /// `command` or `family` when a row answered.
+    #[schema(required = true)]
+    pub learned_level: Option<String>,
+    /// The normalized command key or family of the answering row.
+    #[schema(required = true)]
+    pub learned_key: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AgentEventDto {
     pub id: String,

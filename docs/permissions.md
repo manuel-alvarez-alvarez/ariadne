@@ -43,9 +43,9 @@ remove it.
 | Mode | Behaviour | Use it when |
 | --- | --- | --- |
 | `auto` | Ariadne selects an allowing option automatically. | You accept the agent's requested tool access by default. |
-| `ask` | Ariadne shows every permission request in the console and waits for your answer. | You want to approve or deny each request yourself. |
-| `learn` | Ariadne asks the first time, then allows a matching request that you allowed before. | You want review at first use without repeating the same approval. |
-| `ai` | The AI permission model decides first; an uncertain answer falls back to `learn`. | You want local model review with remembered console approvals as a fallback. |
+| `ask` | Ariadne shows every request with the agent's choices and waits for your answer. Each answer applies once. | You want to approve or deny each request yourself. |
+| `learn` | Ariadne offers Allow once, Allow this command, Allow every family call, and Reject when the agent supports them. A matching remembered approval answers later requests. | You want to choose how broadly each approval applies. |
+| `ai` | The AI permission model decides first; an uncertain answer falls back to the `learn` choices. | You want local model review with remembered console approvals as a fallback. |
 
 For `ask` and a new `learn` request, `ariadne attention` marks the session as
 waiting. Open it with `ariadne attach <session-id>`. The console shows the
@@ -56,8 +56,9 @@ same console in a terminal pane, so the same picker and the same keys answer
 it there. All of them send the selected answer to the same session.
 
 `auto` chooses an allowing option when one exists. If the request offers no
-options, it is cancelled. In `learn`, only an allowing answer allows a later
-request. A denied request is asked again.
+options, it is cancelled. In `learn` and `ai`, Ariadne shows the three allow
+choices only if the agent offers an allowing option, and Reject only if it
+offers a rejecting option. Reject and Allow once ask again next time.
 
 ## What `learn` remembers
 
@@ -67,7 +68,7 @@ rules. These rows are training data for the permission model. An allow that
 Ariadne made without you (by the model, by a learned row, or in `auto`) is not
 recorded.
 
-A row is kept per repository, tool name, and key. The tool name is the
+A row is kept per repository, tool name, level, and key. The tool name is the
 agent's own name for the tool, such as `Bash`, `Read` or
 `mcp__ariadne__create_task`, or else the title of the call. The key is the
 part of the tool input that says what the call does, with the values that
@@ -106,15 +107,23 @@ replaces the answer in its row.
 Each row also has a family, a level, risk tags, and a scope. The family of a
 `Bash` row is its program, with the subcommand for `git`, `cargo`, `npm` and
 similar tools: `git rebase`, `cargo nextest`, `ls`. The family of any other
-row is the tool name. The level is `once`, `command` or `family`, and every
-row Ariadne writes now has the level `command`. The risk tags are the tags
+row is the tool name. Choose **Allow once** for this request only, **Allow this
+command** for its normalized key, or **Allow every git rebase call** for every
+request in the `git rebase` family. **Reject** rejects this request only.
+These choices record a row at level `once`, `command`, `family` or `once`,
+respectively. In `ask`, each answer records a `once` row. The risk tags are the tags
 the request was given when it was recorded, such as `recursive` or
 `remote`. A row is for the repository it was written in: its scope is
 `repository`.
 
-In `learn` and `ai` only, a row whose answer allowed the request allows a later
-request with the same repository, tool name, and key, without asking you. It
-does so only when every risk tag of the later request is also on the row. The
+In `learn` and `ai` only, an allowing `command` row answers the same normalized
+key. If none answers, an allowing `family` row answers another call in the same
+family. Both require the same tool name and a row from this repository, or a
+row widened to all repositories. A `once` row never
+answers a later request. Every risk tag of the later request must also be on
+the answering row. For example, an approval for the `git push` family from
+`git push origin main` does not answer `git push --force origin main`: the
+second call has a `force` tag that the row lacks. The
 parts of a call that the key leaves out, such as its description, can add a
 tag, and then you are asked again. A
 row whose answer denied the request never answers it: the request is asked

@@ -930,6 +930,10 @@ goal id to a seat (014).
 - A permission question draws the call's head and its command or its diff
   above the options
   (`ariadne-console/tui/picker.rs::a_permission_question_draws_the_call_above_its_options`),
+  showing the agent's options in `ask` and the available `Allow once`, `Allow
+  this command`, `Allow every <family> call`, and `Reject` choices in `learn`
+  and `ai` (`ariadne-daemon/acp_console.rs::family_choice_answers_later_rebase_calls_but_not_other_families`,
+  `ariadne-console/tui/picker.rs::learned_choices_draw_and_the_answer_names_the_family`),
   and while it waits the picker is on the screen whatever came after it and
   however long its diff
   (`::a_pending_picker_is_on_the_screen_whatever_came_after_it_and_however_long_its_diff`).
@@ -1147,6 +1151,9 @@ goal id to a seat (014).
 - An answered question draws `↳ ` and the option chosen, and no other option
   name and no frame
   (`ariadne-console/tui/picker.rs::an_answered_question_draws_the_chosen_option_and_no_other`).
+  An answer from a row names its level and, for a family row, its family
+  (`::learned_choices_draw_and_the_answer_names_the_family`,
+  `ariadne-cli/commands/transcript.rs::session_logs_name_the_family_row_that_answered`).
 - A question of 200 columns and a long option name wrap in a pane of 80
   columns with no character lost
   (`ariadne-console/tui/picker.rs::a_question_of_200_columns_and_a_long_option_name_wrap_in_80_without_losing_a_character`).

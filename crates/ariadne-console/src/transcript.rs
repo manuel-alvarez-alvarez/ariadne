@@ -595,11 +595,23 @@ pub fn permission_answer(payload: &Value, options: &[PermissionOption]) -> Strin
     {
         return note;
     }
-    options
+    let choice_id = string_at(payload, "/console_option_id").unwrap_or_else(|| id.clone());
+    let answer = options
         .iter()
-        .find(|option| option.id == id)
+        .find(|option| option.id == choice_id)
         .map(|option| option.name.clone())
-        .unwrap_or(id)
+        .unwrap_or(id);
+    if payload.get("decided_by").and_then(Value::as_str) == Some("learned") {
+        match string_at(payload, "/learned_level").as_deref() {
+            Some("command") => return format!("{answer}, learned · command"),
+            Some("family") => {
+                let family = string_at(payload, "/learned_key").unwrap_or_default();
+                return format!("{answer}, learned · family {family}");
+            }
+            _ => {}
+        }
+    }
+    answer
 }
 
 #[cfg(test)]

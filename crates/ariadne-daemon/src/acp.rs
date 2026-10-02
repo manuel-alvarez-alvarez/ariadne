@@ -33,7 +33,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{Notify, broadcast, mpsc, oneshot};
 
-use ariadne_api::events::{AgentEventDto, IngestEventRequest};
+use ariadne_api::events::{AgentEventDto, IngestEventRequest, PermissionReplyDto};
 use ariadne_core::acp::LaunchConfig;
 use ariadne_core::id::new_id;
 use ariadne_core::{PermissionMode, TokenUsage};
@@ -1537,7 +1537,11 @@ impl RuntimeIncoming {
         } else {
             None
         };
-        let learned = remembers && self.learned_allow(&signature, &key, &request_tags).await;
+        let learned = if remembers && allowing_agent_option(params).is_some() {
+            self.learned_allow(&signature, &key, &request_tags).await
+        } else {
+            None
+        };
         let ai_permissions_selection = match &ai_permissions_decision {
             Some(Decision::Allow { .. }) => {
                 approved_option(params).filter(|option| allowing_option(params, option))
@@ -1549,7 +1553,11 @@ impl RuntimeIncoming {
             && ai_permissions_selection.is_none();
         let waiting = matches!(self.permission_mode, PermissionMode::Ask)
             || deny_without_option
-            || (remembers && !learned && ai_permissions_selection.is_none());
+            || (remembers && learned.is_none() && ai_permissions_selection.is_none());
+        if waiting && remembers {
+            payload["agent_options"] = payload["options"].clone();
+            payload["options"] = learned_choices(params, &key.family);
+        }
         // What the model made of the request, whoever answers it: the
         // question shows it while it waits, and the reply keeps it, so a
         // reader asking why the console was asked finds the score it fell
@@ -1577,7 +1585,7 @@ impl RuntimeIncoming {
             None
         } else if ai_permissions_selection.is_some() {
             Some("ai")
-        } else if learned {
+        } else if learned.is_some() {
             Some("learned")
         } else {
             Some("auto")
@@ -1593,17 +1601,56 @@ impl RuntimeIncoming {
             ("risk_tags", json!(risk_tags)),
             ("cap", json!(cap)),
             ("probabilities", json!(probabilities)),
+            (
+                "learned_id",
+                json!(
+                    learned
+                        .as_ref()
+                        .filter(|_| request_decided_by == Some("learned"))
+                        .map(|row| &row.id)
+                ),
+            ),
+            (
+                "learned_level",
+                json!(
+                    learned
+                        .as_ref()
+                        .filter(|_| request_decided_by == Some("learned"))
+                        .map(|row| &row.level)
+                ),
+            ),
+            (
+                "learned_key",
+                json!(
+                    learned
+                        .as_ref()
+                        .filter(|_| request_decided_by == Some("learned"))
+                        .map(|row| &row.key)
+                ),
+            ),
         ] {
             payload[key] = value;
         }
         let receiver = waiting.then(|| self.begin_permission());
         self.end_text().await;
-        self.sink.emit("permission_request", payload).await;
-        let (selected, decided_by) = match receiver {
-            Some(receiver) => (self.wait_for_permission(params, receiver).await?, "console"),
-            None if ai_permissions_selection.is_some() => (ai_permissions_selection, "ai"),
-            None if learned => (approved_option(params), "learned"),
-            None => (approved_option(params), "auto"),
+        self.sink.emit("permission_request", payload.clone()).await;
+        let (selected, decided_by, console_choice) = match receiver {
+            Some(receiver) => {
+                let choice = self.wait_for_permission(&payload, receiver).await?;
+                let selected = if remembers {
+                    match choice.as_deref() {
+                        Some("once" | "command" | "family") => allowing_agent_option(params),
+                        Some("reject") => console_rejecting_option(params),
+                        _ => None,
+                    }
+                } else {
+                    choice.clone()
+                };
+                (selected, "console", choice)
+            }
+            None if ai_permissions_selection.is_some() => (ai_permissions_selection, "ai", None),
+            None if learned.is_some() => (allowing_agent_option(params), "learned", None),
+            None => (approved_option(params), "auto", None),
         };
         if self.permission_mode == PermissionMode::Ai {
             tracing::info!(
@@ -1649,6 +1696,12 @@ impl RuntimeIncoming {
                        "probabilities": probabilities, "operation": operation,
                        "risk_tags": risk_tags, "cap": cap, "ai_error": ai_error})
                 });
+            let level = match (decided_by, console_choice.as_deref()) {
+                ("console", Some("command")) => "command",
+                ("console", Some("family")) => "family",
+                ("console", _) => "once",
+                _ => "command",
+            };
             self.sink
                 .runtime
                 .inner
@@ -1656,8 +1709,12 @@ impl RuntimeIncoming {
                 .record_learned_permission(ariadne_store::NewLearnedPermission {
                     repository_id: self.repository_id.clone(),
                     tool_name: signature.tool_name.clone(),
-                    key: key.key.clone(),
-                    level: "command".into(),
+                    key: if level == "family" {
+                        key.family.clone()
+                    } else {
+                        key.key.clone()
+                    },
+                    level: level.into(),
                     family: key.family.clone(),
                     risk_tags: request_tags.clone(),
                     scope: "repository".into(),
@@ -1674,50 +1731,63 @@ impl RuntimeIncoming {
             || json!({"outcome": "cancelled"}),
             |option_id| json!({"outcome": "selected", "optionId": option_id}),
         );
-        self.sink
-            .emit(
-                "permission.replied",
-                json!({"session_id": session_id, "option_id": selected,
-                       "decided_by": decided_by, "label": label, "danger": danger,
-                       "allow_threshold": allow_threshold, "deny_threshold": deny_threshold,
-                       "ai_error": ai_error, "operation": operation,
-                       "risk_tags": risk_tags, "cap": cap,
-                       "probabilities": probabilities}),
-            )
-            .await;
+        let learned_reply = learned.as_ref().filter(|_| decided_by == "learned");
+        let reply = PermissionReplyDto {
+            session_id,
+            option_id: selected,
+            console_option_id: console_choice,
+            decided_by: decided_by.into(),
+            label: label.map(str::to_string),
+            danger,
+            allow_threshold,
+            deny_threshold,
+            ai_error: ai_error.map(str::to_string),
+            operation: operation.map(str::to_string),
+            risk_tags: risk_tags.map(|tags| tags.into_iter().map(str::to_string).collect()),
+            cap: cap.map(str::to_string),
+            probabilities,
+            learned_id: learned_reply.map(|row| row.id.clone()),
+            learned_level: learned_reply.map(|row| row.level.clone()),
+            learned_key: learned_reply.map(|row| row.key.clone()),
+        };
+        self.sink.emit("permission.replied", json!(reply)).await;
         Ok(json!({"outcome": outcome}))
     }
 
-    /// Whether this repository holds an allowing `command` row for the
-    /// request's key whose risk tags hold every tag of the request. A
+    /// Find an allowing command row, then a family row, whose risk tags hold
+    /// every tag of the request. A
     /// request with no `rawInput` never matches one.
     async fn learned_allow(
         &self,
         signature: &PermissionSignature,
         key: &Key,
         request_tags: &[String],
-    ) -> bool {
+    ) -> Option<ariadne_store::LearnedPermission> {
         if signature.raw_input.is_none() || self.repository_id.is_empty() {
-            return false;
+            return None;
         }
-        let row = self
-            .sink
-            .runtime
-            .inner
-            .store
-            .find_learned_permission(
-                &self.repository_id,
-                &signature.tool_name,
-                "command",
-                &key.key,
-            )
-            .await;
-        row.ok().flatten().is_some_and(|row| {
-            let options = serde_json::from_str::<Value>(&row.options).unwrap_or_default();
-            let row_tags = serde_json::from_str::<Vec<String>>(&row.risk_tags).unwrap_or_default();
-            allowing_option(&json!({ "options": options }), &row.selected_option)
-                && request_tags.iter().all(|tag| row_tags.contains(tag))
-        })
+        for (level, row_key) in [("command", &key.key), ("family", &key.family)] {
+            let row = self
+                .sink
+                .runtime
+                .inner
+                .store
+                .find_learned_permission(&self.repository_id, &signature.tool_name, level, row_key)
+                .await
+                .ok()
+                .flatten();
+            if let Some(row) = row {
+                let options = serde_json::from_str::<Value>(&row.options).unwrap_or_default();
+                let row_tags =
+                    serde_json::from_str::<Vec<String>>(&row.risk_tags).unwrap_or_default();
+                if allowing_option(&json!({ "options": options }), &row.selected_option)
+                    && request_tags.iter().all(|tag| row_tags.contains(tag))
+                {
+                    return Some(row);
+                }
+            }
+        }
+        None
     }
 
     /// Make the input path answer the permission request now visible to the
@@ -1731,13 +1801,13 @@ impl RuntimeIncoming {
     /// Wait for the console answer after its request was published.
     async fn wait_for_permission(
         &self,
-        params: &Value,
+        choices: &Value,
         receiver: oneshot::Receiver<String>,
     ) -> Result<Option<String>> {
         let answer = receiver
             .await
             .map_err(|_| anyhow!("ACP permission answer channel closed"))?;
-        Ok(permission_option(params, &answer))
+        Ok(permission_option(choices, &answer))
     }
 }
 
@@ -2380,6 +2450,38 @@ fn approved_option(params: &Value) -> Option<String> {
         .or_else(|| options.first().and_then(option_id))
 }
 
+/// Prefer a one-time agent approval for a console or learned answer.
+fn allowing_agent_option(params: &Value) -> Option<String> {
+    let options = params.get("options").and_then(Value::as_array)?;
+    for kind in ["allow_once", "allow_always"] {
+        if let Some(id) = options
+            .iter()
+            .find(|option| option.get("kind").and_then(Value::as_str) == Some(kind))
+            .and_then(|option| option.get("optionId"))
+            .and_then(Value::as_str)
+        {
+            return Some(id.to_string());
+        }
+    }
+    None
+}
+
+/// The choices Ariadne offers when a request in `learn` or `ai` reaches the console.
+fn learned_choices(params: &Value, family: &str) -> Value {
+    let mut choices = Vec::new();
+    if allowing_agent_option(params).is_some() {
+        choices.extend([
+            json!({"optionId": "once", "name": "Allow once", "kind": "allow_once"}),
+            json!({"optionId": "command", "name": "Allow this command", "kind": "allow_always"}),
+            json!({"optionId": "family", "name": format!("Allow every {family} call"), "kind": "allow_always"}),
+        ]);
+    }
+    if console_rejecting_option(params).is_some() {
+        choices.push(json!({"optionId": "reject", "name": "Reject", "kind": "reject_once"}));
+    }
+    Value::Array(choices)
+}
+
 /// The first one-time rejection. A permanent rejection is never selected by
 /// the model because it changes future requests too.
 fn rejecting_option(params: &Value) -> Option<String> {
@@ -2391,6 +2493,21 @@ fn rejecting_option(params: &Value) -> Option<String> {
         .get("optionId")
         .and_then(Value::as_str)
         .map(str::to_string)
+}
+
+/// Keep a rejection available to a person when the agent offers only a
+/// permanent rejection. A model still uses [`rejecting_option`] alone.
+fn console_rejecting_option(params: &Value) -> Option<String> {
+    rejecting_option(params).or_else(|| {
+        params
+            .get("options")
+            .and_then(Value::as_array)?
+            .iter()
+            .find(|option| option.get("kind").and_then(Value::as_str) == Some("reject_always"))?
+            .get("optionId")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    })
 }
 
 /// The key of a learned permission, with the repository the request came

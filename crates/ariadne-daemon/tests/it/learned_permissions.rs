@@ -63,6 +63,13 @@ async fn learned_permission_routes_read_and_delete_and_publish_fat_events() {
         "output is a required nullable field"
     );
     let dto = &openapi["components"]["schemas"]["LearnedPermissionDto"];
+    let reply = &openapi["components"]["schemas"]["PermissionReplyDto"];
+    for field in ["learned_id", "learned_level", "learned_key"] {
+        assert!(
+            reply["properties"][field].is_object(),
+            "{field} is absent from the reply"
+        );
+    }
     for field in ["key", "level", "family", "risk_tags", "scope"] {
         assert!(
             dto["properties"][field].is_object(),

@@ -288,6 +288,59 @@ mod tests {
     }
 
     #[test]
+    fn learned_choices_draw_and_the_answer_names_the_family() {
+        let mut console = Console::new(header());
+        let request = event(
+            "permission_request",
+            "Permission requested for Bash",
+            json!({
+                "tool_name": "Bash", "acp": {"toolCallId": "run", "kind": "execute",
+                    "rawInput": {"command": "git rebase main"}},
+                "options": [
+                    {"optionId": "once", "name": "Allow once", "kind": "allow_once"},
+                    {"optionId": "command", "name": "Allow this command", "kind": "allow_always"},
+                    {"optionId": "family", "name": "Allow every git rebase call", "kind": "allow_always"},
+                    {"optionId": "reject", "name": "Reject", "kind": "reject_once"}
+                ]
+            }),
+        );
+        console.apply(&request);
+        let shown = pane(&console, 80, 12);
+        for choice in [
+            "1. Allow once",
+            "2. Allow this command",
+            "3. Allow every git rebase call",
+            "4. Reject",
+        ] {
+            assert!(shown.contains(choice), "{shown}");
+        }
+        let mut answered_by_console = Console::new(header());
+        answered_by_console.apply(&request);
+        answered_by_console.apply(&event(
+            "permission.replied",
+            "answered",
+            json!({
+                "option_id": "yes", "console_option_id": "family", "decided_by": "console"
+            }),
+        ));
+        let shown = pane(&answered_by_console, 80, 12);
+        assert!(shown.contains("Allow every git rebase call"), "{shown}");
+        console.apply(&event(
+            "permission.replied",
+            "answered",
+            json!({
+                "option_id": "yes", "decided_by": "learned", "learned_level": "family",
+                "learned_key": "git rebase"
+            }),
+        ));
+        let shown = pane(&console, 80, 12);
+        assert!(
+            shown.contains("yes, learned · family git rebase"),
+            "{shown}"
+        );
+    }
+
+    #[test]
     fn a_two_line_execute_command_draws_the_first_line_once_in_the_head() {
         let mut console = Console::new(header());
         let mut terminal = terminal();

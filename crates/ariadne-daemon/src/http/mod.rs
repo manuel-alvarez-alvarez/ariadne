@@ -147,7 +147,7 @@ impl AppState {
         ariadne_api::stream::DomainEvent, ariadne_api::stream::ResyncDto,
         ariadne_api::stream::HeartbeatDto,
         ariadne_api::events::AgentEventDto, ariadne_api::events::AgentEventSummaryDto,
-        ariadne_api::events::EventOrder,
+        ariadne_api::events::EventOrder, ariadne_api::events::PermissionReplyDto,
         ariadne_api::logs::LogLineDto, ariadne_api::logs::LogSnapshotResponse,
     )),
     tags(

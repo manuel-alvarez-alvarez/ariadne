@@ -145,11 +145,24 @@ fn permission_reply_summary(payload: &serde_json::Value) -> String {
         return note;
     }
     let option = non_empty_str(payload.get("option_id")).unwrap_or("cancelled");
-    let answer = match decided_by {
+    let mut answer = match decided_by {
         Some("console") => format!("{option} in the console"),
         Some(decider) => format!("{option}, {decider}"),
         None => option.to_string(),
     };
+    if decided_by == Some("learned") {
+        match non_empty_str(payload.get("learned_level")) {
+            Some("command") => answer.push_str(" · command"),
+            Some("family") => {
+                answer.push_str(" · family");
+                if let Some(family) = non_empty_str(payload.get("learned_key")) {
+                    answer.push(' ');
+                    answer.push_str(family);
+                }
+            }
+            _ => {}
+        }
+    }
     match ariadne_api::permissions::ai_permission_note(payload) {
         Some(note) => format!("{answer} — {note}"),
         None => answer,
@@ -552,6 +565,11 @@ mod tests {
         assert_eq!(
             reply(json!({"decided_by": "learned"})),
             "allow-once, learned"
+        );
+        assert_eq!(
+            reply(json!({"decided_by": "learned", "learned_level": "family",
+                         "learned_key": "git rebase"})),
+            "allow-once, learned · family git rebase"
         );
         assert_eq!(reply(json!({"decided_by": "auto"})), "allow-once, auto");
         assert_eq!(

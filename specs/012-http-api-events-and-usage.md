@@ -134,7 +134,7 @@ and the ACP runtime that reports the agent events (021).
     permission model had a part, why it did not decide (022, rule 31):
     `AI allowed · allow 99%, deny 0% · danger 1% (allow up to 5%, deny from 65%)`,
     `allow-once in the console — AI said ask · allow 62%, deny 5% · danger 21% (allow up to 5%, deny from 65%)`,
-    `allow-once, learned`.
+    `allow-once, learned · command`, or `allow-once, learned · family git rebase`.
     A path under the payload's `cwd` is printed relative to it, and the cwd
     itself is never printed. The summary is
     flattened to one line and cut at 200 characters with a trailing `…`,
@@ -258,6 +258,13 @@ and the ACP runtime that reports the agent events (021).
     `learned_permission_created`, a write on an existing key or a `PUT`
     `learned_permission_updated`, and a delete `learned_permission_deleted`,
     each with the complete DTO.
+    `permission.replied` carries nullable `learned_id`, `learned_level` and
+    `learned_key`. A `permission_request` answered without the console carries
+    the same row fields. They are null when no row answered. The reply schema
+    names all three fields
+    (`learned_permissions.rs::learned_permission_routes_read_and_delete_and_publish_fat_events`),
+    and an ACP family answer publishes their values
+    (`acp_console.rs::family_choice_answers_later_rebase_calls_but_not_other_families`).
 
 ## Acceptance criteria
 

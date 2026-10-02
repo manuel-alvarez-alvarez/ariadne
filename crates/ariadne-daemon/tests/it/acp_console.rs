@@ -1204,7 +1204,7 @@ async fn learn_remembers_an_approval_per_repository_across_a_daemon_restart() {
         h.attention(&denied).await == Some(AttentionReason::WaitingPermission)
     })
     .await;
-    let (status, _) = h.send(post_console_input(&denied.id, "no")).await;
+    let (status, _) = h.send(post_console_input(&denied.id, "reject")).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     eventually(TIMEOUT, "the denied turn to finish", || async {
         h.session_status(&denied).await == SessionStatus::Idle
@@ -1232,7 +1232,7 @@ async fn learn_remembers_an_approval_per_repository_across_a_daemon_restart() {
         || async { h.attention(&approved).await == Some(AttentionReason::WaitingPermission) },
     )
     .await;
-    let (status, _) = h.send(post_console_input(&approved.id, "yes")).await;
+    let (status, _) = h.send(post_console_input(&approved.id, "command")).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     eventually(TIMEOUT, "the approved turn to finish", || async {
         h.session_status(&approved).await == SessionStatus::Idle
@@ -1244,11 +1244,18 @@ async fn learn_remembers_an_approval_per_repository_across_a_daemon_restart() {
         .list_learned_permissions(Some(&cast.repo.id))
         .await
         .unwrap();
-    assert_eq!(learned.len(), 1, "the approval replaced the denial");
-    let learned = &learned[0];
-    assert_eq!(learned.id, denial.id);
-    assert_eq!(learned.created_at, denial.created_at);
-    assert!(learned.updated_at > denial.updated_at);
+    assert_eq!(
+        learned.len(),
+        2,
+        "the one-time denial and command approval remain separate"
+    );
+    assert!(
+        learned
+            .iter()
+            .any(|row| row.id == denial.id && row.level == "once")
+    );
+    let learned = learned.iter().find(|row| row.level == "command").unwrap();
+    assert_ne!(learned.id, denial.id);
     assert_eq!(learned.tool_name, "Write");
     assert_eq!(learned.key, r#"{"file_path":"src/main.rs"}"#);
     assert_eq!(learned.level, "command");
@@ -1319,7 +1326,7 @@ async fn widening_a_row_to_all_answers_a_second_repository() {
     let task_b = h.task_on(&goal_b, &repo_b, "task-b", 1, pin.clone()).await;
 
     let session_a = asked(&h, &cast_a.task.id).await;
-    let (status, _) = h.send(post_console_input(&session_a.id, "yes")).await;
+    let (status, _) = h.send(post_console_input(&session_a.id, "command")).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     eventually(TIMEOUT, "repository A's turn to finish", || async {
         h.session_status(&session_a).await == SessionStatus::Idle
@@ -1394,7 +1401,7 @@ async fn ai_asks_once_and_remembers_the_approval_as_learn_does() {
         h.attention(&asked).await == Some(AttentionReason::WaitingPermission)
     })
     .await;
-    let (status, _) = h.send(post_console_input(&asked.id, "yes")).await;
+    let (status, _) = h.send(post_console_input(&asked.id, "command")).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     eventually(TIMEOUT, "the approved turn to finish", || async {
         h.session_status(&asked).await == SessionStatus::Idle
@@ -1492,6 +1499,215 @@ async fn asked(h: &Harness, task_id: &str) -> ariadne_store::AgentSession {
     session
 }
 
+async fn permission_event(h: &Harness, session_id: &str, kind: &str) -> serde_json::Value {
+    let events = h
+        .store
+        .list_events(EventFilter {
+            session_id: Some(session_id.to_string()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let event = events.into_iter().find(|event| event.kind == kind).unwrap();
+    serde_json::from_str(&event.payload).unwrap()
+}
+
+#[tokio::test]
+async fn family_choice_answers_later_rebase_calls_but_not_other_families() {
+    let root = tempfile::tempdir().unwrap();
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(
+        agent_dir.path(),
+        permission_script_for(bash_call("git rebase main 2>&1")),
+    );
+    let h = harness().home(home_with_stub(&root, &stub)).await;
+    let cast = acp_cast(&h).await;
+    h.set_permission_mode(&cast.repo, PermissionMode::Learn)
+        .await;
+
+    let first = asked(&h, &cast.task.id).await;
+    let request = permission_event(&h, &first.id, "permission_request").await;
+    assert_eq!(
+        request["options"],
+        json!([
+            {"optionId":"once","name":"Allow once","kind":"allow_once"},
+            {"optionId":"command","name":"Allow this command","kind":"allow_always"},
+            {"optionId":"family","name":"Allow every git rebase call","kind":"allow_always"},
+            {"optionId":"reject","name":"Reject","kind":"reject_once"}
+        ])
+    );
+    assert_eq!(
+        request["agent_options"],
+        json!([
+            {"optionId":"no","name":"Reject","kind":"reject_once"},
+            {"optionId":"yes","name":"Allow","kind":"allow_once"}
+        ])
+    );
+    assert_eq!(request["learned_id"], serde_json::Value::Null);
+    h.send(post_console_input(&first.id, "family")).await;
+    eventually(TIMEOUT, "the family answer", || async {
+        h.session_status(&first).await == SessionStatus::Idle
+    })
+    .await;
+    assert_eq!(
+        stub.messages()
+            .iter()
+            .find(|message| message["id"] == "permission-1")
+            .unwrap()["result"]["outcome"]["optionId"],
+        "yes"
+    );
+    let rows = h
+        .store
+        .list_learned_permissions(Some(&cast.repo.id))
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        (&rows[0].level, &rows[0].key),
+        (&"family".to_string(), &"git rebase".to_string())
+    );
+
+    stub.reprogram(permission_script_for(bash_call(
+        "git rebase --autostash main | tail -5",
+    )));
+    let second_task = h
+        .task_on(
+            &cast.goal,
+            &cast.repo,
+            "Second rebase",
+            1,
+            common::test_pin(),
+        )
+        .await;
+    ready(&h, &second_task.id).await;
+    let second = h.launcher.spawn_author(&second_task.id).await.unwrap();
+    eventually(TIMEOUT, "the learned answer", || async {
+        h.session_status(&second).await == SessionStatus::Idle
+    })
+    .await;
+    assert_eq!(h.attention(&second).await, None);
+    let reply = permission_event(&h, &second.id, "permission.replied").await;
+    assert_eq!(reply["decided_by"], "learned");
+    assert_eq!(reply["learned_id"], rows[0].id);
+    assert_eq!(reply["learned_level"], "family");
+    assert_eq!(reply["learned_key"], "git rebase");
+    let request = permission_event(&h, &second.id, "permission_request").await;
+    assert_eq!(request["learned_level"], "family");
+
+    stub.reprogram(permission_script_for(bash_call("cargo nextest run")));
+    let third_task = h
+        .task_on(
+            &cast.goal,
+            &cast.repo,
+            "Other family",
+            1,
+            common::test_pin(),
+        )
+        .await;
+    asked(&h, &third_task.id).await;
+}
+
+#[tokio::test]
+async fn a_family_row_keeps_the_force_tag_guard() {
+    let root = tempfile::tempdir().unwrap();
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(
+        agent_dir.path(),
+        permission_script_for(bash_call("git push origin main")),
+    );
+    let h = harness().home(home_with_stub(&root, &stub)).await;
+    let cast = acp_cast(&h).await;
+    h.set_permission_mode(&cast.repo, PermissionMode::Learn)
+        .await;
+    let first = asked(&h, &cast.task.id).await;
+    h.send(post_console_input(&first.id, "family")).await;
+    eventually(TIMEOUT, "the family answer", || async {
+        h.session_status(&first).await == SessionStatus::Idle
+    })
+    .await;
+    let rows = h
+        .store
+        .list_learned_permissions(Some(&cast.repo.id))
+        .await
+        .unwrap();
+    assert_eq!(rows[0].level, "family");
+    assert_eq!(rows[0].key, "git push");
+    let tags: Vec<String> = serde_json::from_str(&rows[0].risk_tags).unwrap();
+    assert!(tags.contains(&"remote".to_string()));
+
+    stub.reprogram(permission_script_for(bash_call(
+        "git push --force origin main",
+    )));
+    let second_task = h
+        .task_on(&cast.goal, &cast.repo, "Force push", 1, common::test_pin())
+        .await;
+    let second = asked(&h, &second_task.id).await;
+    let request = permission_event(&h, &second.id, "permission_request").await;
+    assert_eq!(request["learned_id"], serde_json::Value::Null);
+}
+
+#[tokio::test]
+async fn once_and_reject_choices_record_once_and_ask_again() {
+    let root = tempfile::tempdir().unwrap();
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(agent_dir.path(), permission_script());
+    let h = harness().home(home_with_stub(&root, &stub)).await;
+    let cast = acp_cast(&h).await;
+    h.set_permission_mode(&cast.repo, PermissionMode::Learn)
+        .await;
+    let first = asked(&h, &cast.task.id).await;
+    h.send(post_console_input(&first.id, "once")).await;
+    eventually(TIMEOUT, "the once answer", || async {
+        h.session_status(&first).await == SessionStatus::Idle
+    })
+    .await;
+    let rows = h
+        .store
+        .list_learned_permissions(Some(&cast.repo.id))
+        .await
+        .unwrap();
+    assert_eq!(
+        (rows[0].level.as_str(), rows[0].selected_option.as_str()),
+        ("once", "yes")
+    );
+
+    let second_task = h
+        .task_on(&cast.goal, &cast.repo, "Ask twice", 1, common::test_pin())
+        .await;
+    let second = asked(&h, &second_task.id).await;
+    h.send(post_console_input(&second.id, "reject")).await;
+    eventually(TIMEOUT, "the reject answer", || async {
+        h.session_status(&second).await == SessionStatus::Idle
+    })
+    .await;
+    let rows = h
+        .store
+        .list_learned_permissions(Some(&cast.repo.id))
+        .await
+        .unwrap();
+    assert_eq!(
+        (rows[0].level.as_str(), rows[0].selected_option.as_str()),
+        ("once", "no")
+    );
+    let replies: Vec<_> = stub
+        .messages()
+        .into_iter()
+        .filter(|message| message["id"] == "permission-1")
+        .collect();
+    assert_eq!(replies[1]["result"]["outcome"]["optionId"], "no");
+
+    let third_task = h
+        .task_on(
+            &cast.goal,
+            &cast.repo,
+            "Ask third time",
+            1,
+            common::test_pin(),
+        )
+        .await;
+    asked(&h, &third_task.id).await;
+}
+
 /// `ask` records the console choice under the tool's own name, and never
 /// auto-allows from a row: the same request asks again.
 #[tokio::test]
@@ -1507,6 +1723,15 @@ async fn ask_records_the_console_choice_and_never_auto_allows() {
     h.set_permission_mode(&cast.repo, PermissionMode::Ask).await;
 
     let session = asked(&h, &cast.task.id).await;
+    let request = permission_event(&h, &session.id, "permission_request").await;
+    assert_eq!(
+        request["options"],
+        json!([
+            {"optionId": "no", "name": "Reject", "kind": "reject_once"},
+            {"optionId": "yes", "name": "Allow", "kind": "allow_once"}
+        ])
+    );
+    assert!(request.get("agent_options").is_none());
     let (status, _) = h.send(post_console_input(&session.id, "yes")).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     eventually(TIMEOUT, "the answered turn to finish", || async {
@@ -1521,6 +1746,7 @@ async fn ask_records_the_console_choice_and_never_auto_allows() {
     assert_eq!(learned.len(), 1);
     assert_eq!(learned[0].tool_name, "Bash");
     assert_eq!(learned[0].target, "ask");
+    assert_eq!(learned[0].level, "once");
     assert_eq!(learned[0].selected_option, "yes");
     assert_eq!(learned[0].output, None);
 
@@ -1614,7 +1840,7 @@ async fn learn_answers_a_request_that_differs_only_by_one_time_values() {
         .await;
 
     let session = asked(&h, &cast.task.id).await;
-    let (status, _) = h.send(post_console_input(&session.id, "yes")).await;
+    let (status, _) = h.send(post_console_input(&session.id, "command")).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     eventually(TIMEOUT, "the approved turn to finish", || async {
         h.session_status(&session).await == SessionStatus::Idle
@@ -1672,7 +1898,7 @@ async fn a_row_without_the_requests_risk_tags_does_not_answer_it() {
     allowed_row(&h, &cast, "rm -rf build", "rm").await;
 
     let session = asked(&h, &cast.task.id).await;
-    let (status, _) = h.send(post_console_input(&session.id, "yes")).await;
+    let (status, _) = h.send(post_console_input(&session.id, "command")).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     eventually(TIMEOUT, "the approved turn to finish", || async {
         h.session_status(&session).await == SessionStatus::Idle
@@ -1736,7 +1962,7 @@ async fn a_second_authors_branch_is_the_branch_placeholder() {
         h.attention(&session).await == Some(AttentionReason::WaitingPermission)
     })
     .await;
-    let (status, _) = h.send(post_console_input(&session.id, "yes")).await;
+    let (status, _) = h.send(post_console_input(&session.id, "command")).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     eventually(TIMEOUT, "the approved turn to finish", || async {
         h.session_status(&session).await == SessionStatus::Idle
@@ -1826,7 +2052,7 @@ async fn a_reviewer_of_a_second_author_names_the_reviewed_branch() {
             .any(|event| event.kind == "permission_request")
     })
     .await;
-    let (status, _) = h.send(post_console_input(&session.id, "yes")).await;
+    let (status, _) = h.send(post_console_input(&session.id, "command")).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     eventually(TIMEOUT, "the approved turn to finish", || async {
         h.session_status(&session).await == SessionStatus::Idle
@@ -1861,7 +2087,7 @@ async fn a_request_without_raw_input_never_auto_allows() {
         .await;
 
     let session = asked(&h, &cast.task.id).await;
-    let (status, _) = h.send(post_console_input(&session.id, "yes")).await;
+    let (status, _) = h.send(post_console_input(&session.id, "command")).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     eventually(TIMEOUT, "the approved turn to finish", || async {
         h.session_status(&session).await == SessionStatus::Idle

@@ -273,7 +273,9 @@ hardware facts in the card, with no Details popover`).
     later request.
 31. `permission.replied` and `permission_request` carry `decided_by`, `label`,
     `danger`, `allow_threshold`, `deny_threshold`, `ai_error`, `operation`,
-    `risk_tags`, `cap`, and `probabilities`. `decided_by` is `ai`, `learned`,
+    `risk_tags`, `cap`, `probabilities`, `learned_id`, `learned_level` and
+    `learned_key`. The three learned fields name the row that answered;
+    otherwise they are null. `decided_by` is `ai`, `learned`,
     `console`, or `auto` on a reply. A waiting request has null `decided_by`.
     Each answered model reply has its label, danger, thresholds and
     probabilities. The probabilities have keys `0`, `1`, and `2`. Key `0`
@@ -290,6 +292,12 @@ hardware facts in the card, with no Details popover`).
     Errors retain their existing words, such as `AI timed out`.
     An AI answer shows `AI allowed · allow 99%, deny 0% · danger 1% (allow up to 5%, deny from 65%)`
     or `AI denied · allow 1%, deny 88% · danger 93% (allow up to 5%, deny from 65%)`.
+    A learned reply reads `allow-once, learned · command` or `allow-once,
+    learned · family git rebase`, with the level and family in the console
+    answer and session logs too
+    (`ariadne-daemon/http/classify.rs::an_answered_permission_says_who_answered_and_why_the_model_did_not`,
+    `ariadne-console/tui/picker.rs::learned_choices_draw_and_the_answer_names_the_family`,
+    `ariadne-cli/commands/transcript.rs::session_logs_name_the_family_row_that_answered`).
     The event summary uses the same reason.
 32. `POST /v1/permissions/ai/test` scores one request without selecting an
     option, writing a row, or publishing an event. It accepts `tool`, nullable

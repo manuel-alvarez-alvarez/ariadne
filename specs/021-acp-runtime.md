@@ -160,7 +160,15 @@ gone (009).
    first allowing option, then the first option, and cancels only an empty
    list. `ask` records the request in the console, raises session attention
    and blocks until console input selects an option. `learn` does the same
-   for a request that no allowing row answers. The tool name is
+   for a request that no allowing row answers. In `learn` and `ai`, a console
+   question offers `once` (Allow once), `command` (Allow this command),
+   `family` (Allow every `<family>` call), then `reject` (Reject). It offers
+   the allow choices only if the agent offers an allowing option, and Reject
+   only if the agent offers a rejecting option. The request keeps the agent's
+   options as `agent_options`; `ask` keeps them as `options`. A console answer
+   selects the agent's first `allow_once`, else first `allow_always`, or its
+   first `reject_once`, else its first `reject_always` when that is its only
+   rejecting kind. The tool name is
    `toolCall.name`, else `toolCall._meta.claudeCode.toolName`, else
    `toolCall.title`, else `toolCall.toolCallId`.
    The table `learned_permissions` keeps one row per repository, tool name,
@@ -208,31 +216,38 @@ gone (009).
    derived risk tags (022) in `derive` order, the scope, the whole `toolCall`
    with its `rawInput` keys sorted, the `options`, the selected option, the
    `target` and the model `output`. `target` is the permission mode at the
-   time of the decision. Every console choice writes the row of its key at
-   level `command` with scope `repository`, in every mode, allow or deny. A
+   time of the decision. A console choice in `learn` or `ai` writes a row at
+   level `once`, `command`, `family`, or `once` for the four choices in that
+   order. A `family` row uses its family as its key; every other row uses the
+   normalized key. A console choice in `ask` writes at level `once`. All use
+   scope `repository`. A
    model deny, a rule deny and a cap deny write it too. A model allow, a
    learned allow and an `auto` allow write nothing. A write on an existing
    key keeps its id and `created_at`, and replaces the rest, the scope
-   included. In
-   `learn` and `ai` only, the `command` row that answers the request's key is
-   the repository's own where one exists, else a row of scope `all` from any
-   repository with the same tool name, level and key; it answers when its
-   selected option has kind `allow_once` or `allow_always` and
-   every derived risk tag of the request is among the row's. A row is
-   written with scope `repository`, and a person widens it to `all`, or
-   narrows it back, with `PUT /v1/permissions/learned/{id}` (012, rule 26),
-   which keeps its key, its level and everything else about it. A denied row
+   included. In `learn` and `ai` only, an allowing `command` row for the
+   normalized key answers first, then an allowing `family` row for the family.
+   At each level, the repository's own row takes precedence where one exists;
+   otherwise a row of scope `all` from any repository can answer when its
+   tool name, level and key match. The selected agent option must have kind
+   `allow_once` or `allow_always`. At both levels, every derived risk tag of
+   the request must be among the row's tags. A row is written with scope
+   `repository`, and a person widens it to `all`, or narrows it back, with
+   `PUT /v1/permissions/learned/{id}` (012, rule 26), which keeps its key,
+   its level and everything else about it. A `once` row never answers a later
+   request. A denied row
    never auto-allows and never auto-denies. A request with no `rawInput`
    never auto-allows, and a session outside every repository records and
    answers nothing. The AI permission model reads the raw input, not the key.
    In `ai`, the AI permission model decides first (022), then `learn`
    handles every answer that is not a confident allow or deny.
+   The answering row's id, level and key appear on `permission_request` and
+   `permission.replied`; all three are null if no row answered.
 10. After a turn ends the agent stays up and the runtime keeps serving it.
    Everything the daemon says to the agent after the launch — a scheduler
    nudge, a review briefing, an agent message — is a `session/prompt`, sent
    at once between turns and queued in order behind a running one. Console
-   input (008) arrives the same way, except that a pending `ask` takes it as
-   the answer (rule 9): only a person's input ever answers a permission.
+   input (008) arrives the same way, except that a pending permission question takes it as
+   the answer (rule 9): only a person's input selects a console choice.
    A prompt that carries an agent message is claimed right before it goes
    out, and skipped when the claim fails: a read took the message first
    (018). A message already in the queue is not queued again. The runtime
@@ -260,6 +275,18 @@ gone (009).
 
 ## Acceptance criteria
 
+- `learn` publishes four choices and preserves the agent choices, records a
+  family answer, reuses it for another call in that family, and asks about a
+  different family
+  (`acp_console.rs::family_choice_answers_later_rebase_calls_but_not_other_families`).
+- A `git push` family row with `remote` does not answer a force push with the
+  extra `force` tag (`acp_console.rs::a_family_row_keeps_the_force_tag_guard`).
+- `once` and `reject` record only a one-time row and ask again
+  (`acp_console.rs::once_and_reject_choices_record_once_and_ask_again`).
+- A console Reject choice remains available when the agent offers only
+  `reject_always` (`ai_permissions_decisions.rs::a_console_reject_uses_the_only_agent_rejection_option`).
+- `ask` keeps the agent's choices and records a one-time row
+  (`acp_console.rs::ask_records_the_console_choice_and_never_auto_allows`).
 - An author runs end to end — the handshake in order, the worktree, the
   `ariadne` MCP server, the model and effort pins, the briefing behind the
   system prompt as the first prompt, the events in the store, the captured
