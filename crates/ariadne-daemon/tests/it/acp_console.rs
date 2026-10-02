@@ -16,6 +16,7 @@ use serde_json::json;
 
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::goals::GoalDto;
+use ariadne_api::permissions::{LearnedPermissionDto, LearnedPermissionScope};
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::tasks::TaskDto;
 use ariadne_api::usage::TokenUsageDto;
@@ -32,7 +33,7 @@ use ariadne_daemon::http::{self, AppState};
 use common::acp::{StubAcpAgent, discovery_settled, registry_home, script, stub_acp_agent};
 use common::{
     Cast, Harness, QUIET, RUNS_OUT, TIMEOUT, as_session, eventually, expect_sse, get, harness,
-    next_sse_message, parse_sse, post, post_json, sse_is_closed,
+    next_event, next_sse_message, parse_sse, post, post_json, put_json, sse_is_closed,
 };
 
 /// A task whose author runs on the registry agent `stub`, in a real repo,
@@ -1288,6 +1289,91 @@ async fn learn_remembers_an_approval_per_repository_across_a_daemon_restart() {
     assert_eq!(replies.len(), 3, "each stub process got one reply");
     assert_eq!(replies[2]["result"]["outcome"]["optionId"], "yes");
     assert_eq!(permission_decider(&h, &session.id).await, "learned");
+}
+
+/// A row a console choice writes is its own repository's: a matching request
+/// in a second repository is still asked. Widening that row to `all` with
+/// `PUT` then answers the second repository's matching request too, decided
+/// by the learned row rather than the console.
+#[tokio::test]
+async fn widening_a_row_to_all_answers_a_second_repository() {
+    let root = tempfile::tempdir().unwrap();
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(
+        agent_dir.path(),
+        permission_script_for(bash_call("cargo test")),
+    );
+    let h = harness().home(home_with_stub(&root, &stub)).await;
+    let cast_a = acp_cast(&h).await;
+    h.set_permission_mode(&cast_a.repo, PermissionMode::Learn)
+        .await;
+
+    h.git_repo("repo-b");
+    let repo_b = h.repository(&h.at("repo-b")).await;
+    h.set_permission_mode(&repo_b, PermissionMode::Learn).await;
+    let pin = AgentPin {
+        model: "stub:test-model".into(),
+        effort: None,
+    };
+    let goal_b = h.goal_on(&repo_b, pin.clone()).await;
+    let task_b = h.task_on(&goal_b, &repo_b, "task-b", 1, pin.clone()).await;
+
+    let session_a = asked(&h, &cast_a.task.id).await;
+    let (status, _) = h.send(post_console_input(&session_a.id, "yes")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "repository A's turn to finish", || async {
+        h.session_status(&session_a).await == SessionStatus::Idle
+    })
+    .await;
+    let row = h
+        .store
+        .list_learned_permissions(Some(&cast_a.repo.id))
+        .await
+        .unwrap()
+        .remove(0);
+    assert_eq!(row.scope, "repository");
+
+    // Repository B is asked too: A's row answers nothing outside A. Left
+    // waiting rather than answered, so it writes no row of B's own — the
+    // widened row below is what the final request must prove, not this one.
+    asked(&h, &task_b.id).await;
+
+    let mut rx = h.bus.subscribe();
+    let widened: LearnedPermissionDto = h
+        .json(
+            put_json(
+                &format!("/v1/permissions/learned/{}", row.id),
+                json!({"scope": "all"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(widened.id, row.id);
+    assert_eq!(widened.scope, LearnedPermissionScope::All);
+    let event = next_event(&mut rx, |event| {
+        event.event.kind() == "learned_permission_updated"
+    })
+    .await;
+    let DomainEvent::LearnedPermissionUpdated(published) = event.event else {
+        unreachable!()
+    };
+    assert_eq!(published.scope, LearnedPermissionScope::All);
+
+    let again_b = h.task_on(&goal_b, &repo_b, "task-b-again", 1, pin).await;
+    ready(&h, &again_b.id).await;
+    let session_again = h.launcher.spawn_author(&again_b.id).await.unwrap();
+    eventually(
+        TIMEOUT,
+        "the widened permission's turn to finish",
+        || async { h.session_status(&session_again).await == SessionStatus::Idle },
+    )
+    .await;
+    assert_eq!(
+        h.attention(&session_again).await,
+        None,
+        "the all-scoped row answers the second repository without asking"
+    );
+    assert_eq!(permission_decider(&h, &session_again.id).await, "learned");
 }
 
 /// `ai` answers each request through the model (022). Until it does, it is

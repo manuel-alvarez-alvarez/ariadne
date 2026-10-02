@@ -23,8 +23,9 @@ use ariadne_api::doctor::DaemonReportDto;
 use ariadne_api::error::ErrorBody;
 use ariadne_api::models::{ModelDto, SetModelRankRequest};
 use ariadne_api::permissions::{
-    AiPermissionsStatusDto, LearnedPermissionDto, LearnedPermissionsResponse,
-    TestAiPermissionRequest, TestAiPermissionResponse, UpdateAiPermissionsRequest,
+    AiPermissionsStatusDto, LearnedPermissionDto, LearnedPermissionScope,
+    LearnedPermissionsResponse, TestAiPermissionRequest, TestAiPermissionResponse,
+    UpdateAiPermissionsRequest, UpdateLearnedPermissionRequest,
 };
 use ariadne_api::skills::SkillDto;
 use ariadne_api::{HealthResponse, VersionResponse};
@@ -343,6 +344,19 @@ impl Client {
     ) -> Result<LearnedPermissionDto, ClientError> {
         self.get_json(&format!("/v1/permissions/learned/{id}"))
             .await
+    }
+
+    /// Widen a row to every repository, or narrow it back to its own.
+    pub async fn update_learned_permission(
+        &self,
+        id: &str,
+        scope: LearnedPermissionScope,
+    ) -> Result<LearnedPermissionDto, ClientError> {
+        self.put_json(
+            &format!("/v1/permissions/learned/{id}"),
+            &UpdateLearnedPermissionRequest { scope },
+        )
+        .await
     }
 
     pub async fn delete_learned_permission(&self, id: &str) -> Result<(), ClientError> {

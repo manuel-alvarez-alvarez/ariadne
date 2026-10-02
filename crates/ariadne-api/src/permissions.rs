@@ -70,6 +70,21 @@ impl LearnedPermissionScope {
             Self::All => "all",
         }
     }
+
+    pub fn parse(wire: &str) -> Option<Self> {
+        Some(match wire {
+            "repository" => Self::Repository,
+            "all" => Self::All,
+            _ => return None,
+        })
+    }
+}
+
+/// Widen a row to every repository, or narrow it back to its own.
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateLearnedPermissionRequest {
+    pub scope: LearnedPermissionScope,
 }
 
 /// One user choice or denial of an ACP permission request, keyed by the

@@ -109,7 +109,8 @@ similar tools: `git rebase`, `cargo nextest`, `ls`. The family of any other
 row is the tool name. The level is `once`, `command` or `family`, and every
 row Ariadne writes now has the level `command`. The risk tags are the tags
 the request was given when it was recorded, such as `recursive` or
-`remote`. The scope is `repository`.
+`remote`. A row is for the repository it was written in: its scope is
+`repository`.
 
 In `learn` and `ai` only, a row whose answer allowed the request allows a later
 request with the same repository, tool name, and key, without asking you. It
@@ -118,9 +119,24 @@ parts of a call that the key leaves out, such as its description, can add a
 tag, and then you are asked again. A
 row whose answer denied the request never answers it: the request is asked
 again. A request without `rawInput` is recorded but never allowed from a row.
-An approval for one repository does not grant it in another. The rows survive
+An approval for one repository does not grant it in another — unless you
+widen the row, see below. The rows survive
 a daemon restart. Change the repository to `ask` when you want to review a
 matching request again.
+
+Widen a row to every repository with `ariadne permissions learned scope
+<id> all`, and narrow it back to its own with `ariadne permissions learned
+scope <id> repository`:
+
+```sh
+ariadne permissions learned scope <id> all
+ariadne permissions learned scope <id> repository
+```
+
+A row of scope `all` answers a matching request — the same tool name, level
+and key, and every risk tag still covered — in every repository, not only the
+one it was written in. A repository with a row of its own for that key keeps
+using its own row; the `all` row answers only a repository that holds none.
 
 Each row keeps the complete ACP tool call with its original input, the
 offered options, the selected option, the permission mode at the time

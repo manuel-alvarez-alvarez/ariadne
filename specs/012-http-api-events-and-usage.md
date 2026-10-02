@@ -236,25 +236,35 @@ and the ACP runtime that reports the agent events (021).
     can build it, and an install publishes one as readily as a write does.
     The event belongs to no goal or task, so a filtered stream carries none.
 26. Learned permissions (021, rule 9) are exposed under
-    `/v1/permissions/learned` for list, get and delete. There is no create or
-    update route: only a permission decision writes a row. Lists can filter
+    `/v1/permissions/learned` for list, get and delete, and
+    `PUT /v1/permissions/learned/{id}` for the one write a person makes on a
+    row directly: widening it to every repository, or narrowing it back to
+    its own. There is no create route: only a permission decision writes a
+    new row. Lists can filter
     by repository and return newest first. `LearnedPermissionDto` is `id`,
     `repository_id`, `tool_name`, `key` (the normalized input), `level`
     (`once`, `command` or `family`), `family`, `risk_tags` (an array of
     strings), `scope` (`repository` or `all`), `tool_call` (JSON, the raw
     input whole), `options` (JSON),
     `selected_option`, `target` (`auto`, `ask`, `learn` or `ai`), `output`
-    (JSON or null), `created_at` and `updated_at`. A new row publishes
-    `learned_permission_created`, a write on an existing key
+    (JSON or null), `created_at` and `updated_at`. `PUT`'s body is
+    `UpdateLearnedPermissionRequest`, one field, `scope`: it answers 200 with
+    the updated `LearnedPermissionDto`, 404 `learned_permission_not_found` for
+    an id no row holds, and 422 `invalid_request` for a scope that is neither
+    `repository` nor `all`. A new row publishes
+    `learned_permission_created`, a write on an existing key or a `PUT`
     `learned_permission_updated`, and a delete `learned_permission_deleted`,
     each with the complete DTO.
 
 ## Acceptance criteria
 
-- Learned permission routes list, get and delete, refuse `POST` and `PUT`
-  with 405, publish complete events for a create, an update by key and a
-  delete, and the OpenAPI document names `key`, `level`, `family`,
-  `risk_tags` and `scope`, with `level` and `scope` as enums
+- Learned permission routes list, get, delete and widen or narrow by `PUT`,
+  refuse `POST` with 405, publish complete events for a create, an update by
+  key or by `PUT`, and a delete, and the OpenAPI document names `key`,
+  `level`, `family`, `risk_tags`, `scope` and `UpdateLearnedPermissionRequest`,
+  with `level` and `scope` as enums. `PUT` answers 404
+  `learned_permission_not_found` for an unknown id and 422 `invalid_request`
+  for a scope that is neither `repository` nor `all`
   (`learned_permissions.rs::learned_permission_routes_read_and_delete_and_publish_fat_events`).
 
 - An HTTP mutation emits a fat event

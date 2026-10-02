@@ -30,8 +30,10 @@ fn choice(repository_id: &str, selected: &str) -> NewLearnedPermission {
     }
 }
 
-/// The routes read and delete recorded choices; nothing writes one but a
-/// decision, so `POST` and `PUT` are gone. Each change publishes its event.
+/// The routes read, delete and widen or narrow recorded choices; nothing
+/// creates one but a decision, so `POST` is gone. `PUT` only ever changes
+/// `scope`, and refuses an unknown id or a scope that is neither
+/// `repository` nor `all`. Each change publishes its event.
 #[tokio::test]
 async fn learned_permission_routes_read_and_delete_and_publish_fat_events() {
     let h = harness().await;
@@ -49,10 +51,10 @@ async fn learned_permission_routes_read_and_delete_and_publish_fat_events() {
     let openapi: serde_json::Value = h.get("/api-docs/openapi.json").await;
     assert!(openapi["paths"]["/v1/permissions/learned"]["get"].is_object());
     assert!(openapi["paths"]["/v1/permissions/learned"]["post"].is_null());
-    assert!(openapi["paths"]["/v1/permissions/learned/{id}"]["put"].is_null());
+    assert!(openapi["paths"]["/v1/permissions/learned/{id}"]["put"].is_object());
     assert!(openapi["paths"]["/v1/permissions/learned/{id}"]["delete"].is_object());
     assert!(openapi["components"]["schemas"]["CreateLearnedPermissionRequest"].is_null());
-    assert!(openapi["components"]["schemas"]["UpdateLearnedPermissionRequest"].is_null());
+    assert!(openapi["components"]["schemas"]["UpdateLearnedPermissionRequest"].is_object());
     assert!(
         openapi["components"]["schemas"]["LearnedPermissionDto"]["required"]
             .as_array()
@@ -147,13 +149,48 @@ async fn learned_permission_routes_read_and_delete_and_publish_fat_events() {
         ))
         .await;
     assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
-    let (status, _) = h
-        .send(put_json(
-            &format!("/v1/permissions/learned/{}", updated.id),
-            json!({"tool_name": "Shell"}),
-        ))
+
+    let missing_id = h
+        .error(
+            put_json(
+                "/v1/permissions/learned/unknown-row",
+                json!({"scope": "all"}),
+            ),
+            StatusCode::NOT_FOUND,
+        )
         .await;
-    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(missing_id.error.code, "learned_permission_not_found");
+
+    let bad_scope = h
+        .error(
+            put_json(
+                &format!("/v1/permissions/learned/{}", updated.id),
+                json!({"scope": "global"}),
+            ),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    assert_eq!(bad_scope.error.code, "invalid_request");
+
+    let widened: LearnedPermissionDto = h
+        .json(
+            put_json(
+                &format!("/v1/permissions/learned/{}", updated.id),
+                json!({"scope": "all"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(widened.id, updated.id);
+    assert_eq!(widened.scope, LearnedPermissionScope::All);
+    let event = next_event(&mut rx, |event| {
+        event.event.kind() == "learned_permission_updated"
+    })
+    .await;
+    let DomainEvent::LearnedPermissionUpdated(published) = event.event else {
+        unreachable!()
+    };
+    assert_eq!(published, widened);
 
     let (status, _) = h
         .send(delete(&format!("/v1/permissions/learned/{}", updated.id)))

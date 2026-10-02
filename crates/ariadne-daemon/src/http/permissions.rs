@@ -11,7 +11,7 @@ use axum::http::StatusCode;
 use ariadne_api::permissions::{
     AiPermissionsStatusDto, Device, LearnedPermissionDto, LearnedPermissionQuery,
     LearnedPermissionsResponse, TestAiPermissionRequest, TestAiPermissionResponse,
-    UpdateAiPermissionsRequest,
+    UpdateAiPermissionsRequest, UpdateLearnedPermissionRequest,
 };
 use ariadne_store::{AiPermissionSettingsUpdate, StoreError};
 
@@ -61,6 +61,25 @@ pub(super) async fn delete_learned(
         .await
         .map_err(learned_error)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Widen or narrow a learned row: the only write a person makes on one.
+#[utoipa::path(put, path = "/v1/permissions/learned/{id}", tag = "permissions",
+    params(("id" = String, Path)),
+    request_body = UpdateLearnedPermissionRequest,
+    responses((status = 200, body = LearnedPermissionDto), (status = 404), (status = 422)))]
+pub(super) async fn update_learned(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateLearnedPermissionRequest>,
+) -> ApiResult<Json<LearnedPermissionDto>> {
+    state
+        .store
+        .update_learned_permission_scope(&id, req.scope.as_str())
+        .await
+        .map(learned_permission_dto)
+        .map(Json)
+        .map_err(learned_error)
 }
 
 fn learned_error(error: StoreError) -> ApiError {

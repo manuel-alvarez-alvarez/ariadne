@@ -4,8 +4,9 @@ use anyhow::Result;
 use clap::Subcommand;
 
 use ariadne_api::permissions::{
-    AiPermissionsState, AiPermissionsStatusDto, Device, Flavour, LearnedPermissionDto, PythonDto,
-    TestAiPermissionRequest, TestAiPermissionResponse, UpdateAiPermissionsRequest,
+    AiPermissionsState, AiPermissionsStatusDto, Device, Flavour, LearnedPermissionDto,
+    LearnedPermissionScope, PythonDto, TestAiPermissionRequest, TestAiPermissionResponse,
+    UpdateAiPermissionsRequest,
 };
 use ariadne_client::Client;
 
@@ -36,6 +37,12 @@ pub(crate) enum LearnedPermissionsCommand {
     Show { id: String },
     /// Remove a learned choice
     Rm { id: String },
+    /// Widen a row to every repository, or narrow it back to its own
+    Scope {
+        id: String,
+        #[arg(value_parser = parse_scope)]
+        scope: LearnedPermissionScope,
+    },
 }
 
 #[derive(Subcommand)]
@@ -166,7 +173,19 @@ async fn run_learned(
                 Ok(())
             }
         }
+        LearnedPermissionsCommand::Scope { id, scope } => {
+            let row = client.update_learned_permission(&id, scope).await?;
+            print(format, &row, || print_learned(&row))
+        }
     }
+}
+
+/// `--scope` (positional), refused locally before anything is sent: the
+/// daemon would refuse the same value with a 422, but a round trip is not
+/// needed to know `repository` or `all` from a typo.
+fn parse_scope(s: &str) -> Result<LearnedPermissionScope, String> {
+    LearnedPermissionScope::parse(s)
+        .ok_or_else(|| format!("scope must be repository or all, not `{s}`"))
 }
 
 fn print_learned(row: &LearnedPermissionDto) {
@@ -621,6 +640,77 @@ mod tests {
             }
         }
         server.abort();
+    }
+
+    /// `scope` sends the new scope and nothing else, and prints the widened
+    /// row back.
+    #[tokio::test]
+    async fn scope_sends_the_new_scope_and_nothing_else() {
+        let seen = Arc::new(Mutex::new(None));
+        async fn put_handler(
+            State(seen): State<Arc<Mutex<Option<serde_json::Value>>>>,
+            Json(req): Json<serde_json::Value>,
+        ) -> Json<LearnedPermissionDto> {
+            *seen.lock().unwrap() = Some(req);
+            Json(LearnedPermissionDto {
+                scope: LearnedPermissionScope::All,
+                ..learned()
+            })
+        }
+        let app = Router::new()
+            .route("/v1/permissions/learned/{id}", put(put_handler))
+            .with_state(seen.clone());
+        let (client, server) = serve(app).await;
+
+        run(
+            &client,
+            PermissionsCommand::Learned(LearnedPermissionsCommand::Scope {
+                id: "01J00000000000000000000001".into(),
+                scope: LearnedPermissionScope::All,
+            }),
+            Format::Json,
+        )
+        .await
+        .unwrap();
+        server.abort();
+
+        assert_eq!(
+            seen.lock().unwrap().take().unwrap(),
+            json!({"scope": "all"})
+        );
+    }
+
+    /// The daemon's refusal of an unknown id survives whole.
+    #[tokio::test]
+    async fn scope_prints_the_daemons_not_found_refusal() {
+        async fn refused() -> (StatusCode, Json<ErrorBody>) {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorBody::new(
+                    "learned_permission_not_found",
+                    "learned permission 01J00000000000000000000099 not found",
+                )),
+            )
+        }
+        let app = Router::new().route("/v1/permissions/learned/{id}", put(refused));
+        let (client, server) = serve(app).await;
+
+        let err = run(
+            &client,
+            PermissionsCommand::Learned(LearnedPermissionsCommand::Scope {
+                id: "01J00000000000000000000099".into(),
+                scope: LearnedPermissionScope::All,
+            }),
+            Format::Table,
+        )
+        .await
+        .unwrap_err();
+        server.abort();
+
+        assert_eq!(
+            err.downcast_ref::<ClientError>().unwrap().human(),
+            "learned permission 01J00000000000000000000099 not found"
+        );
     }
 
     /// `list` shows the level, the family, the key and the scope, then the

@@ -1,6 +1,7 @@
-//! Learned ACP permission choices, scoped to one repository: every user
-//! choice and every denial, one row per repository, tool name, level and
-//! normalized input (021, rule 9).
+//! Learned ACP permission choices: every user choice and every denial, one
+//! row per repository, tool name, level and normalized input (021, rule 9).
+//! A row is written for its own repository, but one widened to scope `all`
+//! answers a matching request in any repository that holds none of its own.
 
 use ariadne_core::id::new_id;
 use serde_json::Value;
@@ -30,7 +31,9 @@ pub struct NewLearnedPermission {
 }
 
 impl Store {
-    /// The row for this request's key at this level, when one exists.
+    /// The repository's own row for this request's key at this level, when
+    /// one exists; else a row of scope `all` from any repository with the
+    /// same tool name, level and key.
     pub async fn find_learned_permission(
         &self,
         repository_id: &str,
@@ -38,7 +41,7 @@ impl Store {
         level: &str,
         key: &str,
     ) -> Result<Option<LearnedPermission>> {
-        Ok(sqlx::query_as(
+        let own: Option<LearnedPermission> = sqlx::query_as(
             "SELECT * FROM learned_permissions
               WHERE repository_id = ? AND tool_name = ? AND level = ? AND key = ?",
         )
@@ -47,7 +50,43 @@ impl Store {
         .bind(level)
         .bind(key)
         .fetch_optional(self.r())
+        .await?;
+        if own.is_some() {
+            return Ok(own);
+        }
+        Ok(sqlx::query_as(
+            "SELECT * FROM learned_permissions
+              WHERE scope = 'all' AND tool_name = ? AND level = ? AND key = ?
+              ORDER BY created_at DESC, id DESC LIMIT 1",
+        )
+        .bind(tool_name)
+        .bind(level)
+        .bind(key)
+        .fetch_optional(self.r())
         .await?)
+    }
+
+    /// Widen or narrow one row to `repository` or `all`, and bump its
+    /// `updated_at`.
+    pub async fn update_learned_permission_scope(
+        &self,
+        id: &str,
+        scope: &str,
+    ) -> Result<LearnedPermission> {
+        let ts = now();
+        let result =
+            sqlx::query("UPDATE learned_permissions SET scope = ?, updated_at = ? WHERE id = ?")
+                .bind(scope)
+                .bind(&ts)
+                .bind(id)
+                .execute(self.w())
+                .await?;
+        if result.rows_affected() == 0 {
+            return Err(not_found("learned permission", id));
+        }
+        let row = self.get_learned_permission(id).await?;
+        self.publish(Change::LearnedPermissionUpdated(row.clone()));
+        Ok(row)
     }
 
     pub async fn list_learned_permissions(

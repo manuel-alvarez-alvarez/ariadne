@@ -207,12 +207,16 @@ same binary also serves (013).
     warning naming the version that is too old or that none was found;
     `ai permissions` is `ok` for `disabled`, `installing` and `ready <release>`, and a
     warning for `failed: <last_error>`.
-34. `ariadne permissions learned` lists, shows and removes learned
-    permissions. `list` shows the columns id, repository, tool, level,
+34. `ariadne permissions learned` lists, shows, removes and widens or narrows
+    learned permissions. `list` shows the columns id, repository, tool, level,
     family, key, scope, target, selected, created and updated. `show` prints
     every field: the level, the family, the key, the risk tags and the scope
     among them, and the JSON fields pretty-printed, the raw input in the
-    tool call included. There is no `add` or `edit`. A repository can be an
+    tool call included. `scope <id> <all|repository>` sends the chosen scope
+    to `PUT /v1/permissions/learned/{id}` (012, rule 26) and prints the
+    updated row; a scope that is neither word is refused locally, before
+    anything is sent, and the daemon's own refusal of an unknown id or a bad
+    scope prints whole. There is no `add` or `edit`. A repository can be an
     id or path, and every verb supports JSON.
 
 ## Acceptance criteria
@@ -223,6 +227,12 @@ same binary also serves (013).
 - `list` and `show` print the level, the family, the key and the scope,
   and `show` the raw input
   (`commands::permissions::tests::learned_list_and_show_print_the_new_fields`).
+- `scope` parses `all` and `repository` and refuses any other value locally
+  (`cli/tests.rs::permissions_learned_scope_parses_and_refuses_a_bad_value_locally`),
+  sends `{"scope": "all"}` and nothing else
+  (`commands::permissions::tests::scope_sends_the_new_scope_and_nothing_else`),
+  and prints the daemon's refusal of an unknown id whole
+  (`::scope_prints_the_daemons_not_found_refusal`).
 
 - The command tree is well formed and every command is classified
   (`cli/tests.rs::the_command_tree_is_well_formed`,

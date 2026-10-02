@@ -186,6 +186,106 @@ async fn a_fresh_database_holds_the_fifteen_learned_permission_columns() {
     assert_eq!(columns, expected);
 }
 
+/// A repository's own row for a key wins over an `all` row of another
+/// repository with the same tool name, level and key; an `all` row answers
+/// for a repository that holds none of its own.
+#[tokio::test]
+async fn a_repository_row_wins_over_an_all_row_of_another_repository() {
+    let (store, _dir) = test_store().await;
+    let repo_a = store
+        .create_repository(NewRepository {
+            path: "/tmp/learned-repo-a".into(),
+            base_branch: "main".into(),
+            description: None,
+            permission_mode: Some(PermissionMode::Learn),
+        })
+        .await
+        .unwrap();
+    let repo_b = store
+        .create_repository(NewRepository {
+            path: "/tmp/learned-repo-b".into(),
+            base_branch: "main".into(),
+            description: None,
+            permission_mode: Some(PermissionMode::Learn),
+        })
+        .await
+        .unwrap();
+    let repo_c = store
+        .create_repository(NewRepository {
+            path: "/tmp/learned-repo-c".into(),
+            base_branch: "main".into(),
+            description: None,
+            permission_mode: Some(PermissionMode::Learn),
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store
+            .find_learned_permission(
+                &repo_b.id,
+                "Bash",
+                "command",
+                r#"{"command":"git show <HASH>"}"#
+            )
+            .await
+            .unwrap(),
+        None,
+        "no row anywhere yet"
+    );
+
+    let mut widened = bash_choice(&repo_a.id, "call-1", "yes");
+    widened.scope = "all".into();
+    let all_row = store.record_learned_permission(widened).await.unwrap();
+
+    assert_eq!(
+        store
+            .find_learned_permission(
+                &repo_b.id,
+                "Bash",
+                "command",
+                r#"{"command":"git show <HASH>"}"#
+            )
+            .await
+            .unwrap(),
+        Some(all_row.clone()),
+        "the all-scoped row answers a repository that holds none of its own"
+    );
+
+    let own = store
+        .record_learned_permission(bash_choice(&repo_b.id, "call-2", "no"))
+        .await
+        .unwrap();
+    assert_eq!(own.scope, "repository");
+
+    assert_eq!(
+        store
+            .find_learned_permission(
+                &repo_b.id,
+                "Bash",
+                "command",
+                r#"{"command":"git show <HASH>"}"#
+            )
+            .await
+            .unwrap(),
+        Some(own),
+        "the repository's own row wins over another repository's all-scoped row"
+    );
+    assert_eq!(
+        store
+            .find_learned_permission(
+                &repo_c.id,
+                "Bash",
+                "command",
+                r#"{"command":"git show <HASH>"}"#
+            )
+            .await
+            .unwrap(),
+        Some(all_row),
+        "a third repository with no row of its own still gets the all-scoped row"
+    );
+}
+
 /// A fresh database seeds the AI permission settings with the winner's
 /// threshold pair, the `4b` flavour and a `NULL` device for the daemon to fill
 /// at startup, and has no schedule columns.

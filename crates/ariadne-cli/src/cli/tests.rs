@@ -125,6 +125,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("permissions ai show", true),
     ("permissions learned list", true),
     ("permissions learned rm", true),
+    ("permissions learned scope", true),
     ("permissions learned show", true),
     ("permissions ai test", true),
     ("repo add", true),
@@ -1577,6 +1578,49 @@ fn every_learned_permissions_verb_parses_and_add_and_edit_are_gone() {
     ] {
         assert!(try_parse(gone).is_err(), "{gone:?}");
     }
+}
+
+/// `scope` parses either word a row can be widened or narrowed to, and
+/// refuses any other value locally, before anything is sent.
+#[test]
+fn permissions_learned_scope_parses_and_refuses_a_bad_value_locally() {
+    assert!(matches!(
+        parse(&["ariadne", "permissions", "learned", "scope", "row", "all"]).command,
+        Command::Permissions {
+            command: PermissionsCommand::Learned(LearnedPermissionsCommand::Scope {
+                scope: ariadne_api::permissions::LearnedPermissionScope::All,
+                ..
+            })
+        }
+    ));
+    assert!(matches!(
+        parse(&[
+            "ariadne",
+            "permissions",
+            "learned",
+            "scope",
+            "row",
+            "repository"
+        ])
+        .command,
+        Command::Permissions {
+            command: PermissionsCommand::Learned(LearnedPermissionsCommand::Scope {
+                scope: ariadne_api::permissions::LearnedPermissionScope::Repository,
+                ..
+            })
+        }
+    ));
+    let Err(err) = try_parse(&[
+        "ariadne",
+        "permissions",
+        "learned",
+        "scope",
+        "row",
+        "global",
+    ]) else {
+        panic!("global is not a scope");
+    };
+    assert!(err.to_string().contains("repository or all"), "{err}");
 }
 
 #[test]

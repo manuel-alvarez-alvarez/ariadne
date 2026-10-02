@@ -214,9 +214,14 @@ gone (009).
    learned allow and an `auto` allow write nothing. A write on an existing
    key keeps its id and `created_at`, and replaces the rest, the scope
    included. In
-   `learn` and `ai` only, the `command` row of the request's key answers it
-   when its selected option has kind `allow_once` or `allow_always` and
-   every derived risk tag of the request is among the row's. A denied row
+   `learn` and `ai` only, the `command` row that answers the request's key is
+   the repository's own where one exists, else a row of scope `all` from any
+   repository with the same tool name, level and key; it answers when its
+   selected option has kind `allow_once` or `allow_always` and
+   every derived risk tag of the request is among the row's. A row is
+   written with scope `repository`, and a person widens it to `all`, or
+   narrows it back, with `PUT /v1/permissions/learned/{id}` (012, rule 26),
+   which keeps its key, its level and everything else about it. A denied row
    never auto-allows and never auto-denies. A request with no `rawInput`
    never auto-allows, and a session outside every repository records and
    answers nothing. The AI permission model reads the raw input, not the key.
@@ -334,6 +339,14 @@ gone (009).
   (`store.rs::learned_permissions_keep_one_row_per_repository_tool_level_and_key`).
 - A fresh database holds the table with its fifteen columns
   (`store.rs::a_fresh_database_holds_the_fifteen_learned_permission_columns`).
+- A repository's own row wins over another repository's `all`-scoped row of
+  the same tool name, level and key, and the `all`-scoped row answers for a
+  repository that holds none of its own
+  (`store.rs::a_repository_row_wins_over_an_all_row_of_another_repository`).
+- A console choice in one repository is asked again in a second repository;
+  widening that row to `all` with `PUT` then answers the second repository's
+  matching request as `learned`, without attention
+  (`acp_console.rs::widening_a_row_to_all_answers_a_second_repository`).
 - A repository set to `ai` asks the AI permission model first. A confident
   allow proceeds; every other outcome uses a learned approval or asks the
   console
