@@ -20,6 +20,7 @@ use crate::theme::{
     CODE, CODE_COMMENT, CODE_CONTINUATION, CODE_KEYWORD, CODE_NUMBER, CODE_PLAIN, CODE_STRING,
     CODE_TYPE, HEADING, LIST_BULLETS, MARK, QUOTE_BAR, RULE, TABLE_HEADER, TASK_DONE, TASK_TODO,
 };
+use crate::wrap::{cut, wrap_exact, wrap_words};
 
 /// Render `text` as markdown, wrapped to `width` columns.
 pub fn render(text: &str, width: usize) -> Vec<Line<'static>> {
@@ -654,72 +655,6 @@ fn styled(
         spans.push(Span::styled(String::new(), style));
     }
     spans
-}
-
-fn cut(text: &str, width: usize) -> (String, Option<&str>) {
-    let mut used = 0;
-    let mut end = 0;
-    for (at, grapheme) in text.grapheme_indices(true) {
-        if used + grapheme.width() > width && end > 0 {
-            return (text[..end].to_string(), Some(&text[end..]));
-        }
-        if used + grapheme.width() > width {
-            let end = at + grapheme.len();
-            return (text[..end].to_string(), Some(&text[end..]));
-        }
-        used += grapheme.width();
-        end = at + grapheme.len();
-    }
-    (text.to_string(), None)
-}
-
-fn wrap_exact(text: &str, width: usize) -> Vec<String> {
-    if text.is_empty() {
-        return vec![String::new()];
-    }
-    let mut out = Vec::new();
-    let mut rest = text;
-    loop {
-        let (part, next) = cut(rest, width.max(1));
-        out.push(part);
-        let Some(next) = next else {
-            break;
-        };
-        rest = next;
-    }
-    out
-}
-
-/// Text wrapped at its spaces, each line at most `width` wide. A word wider
-/// than a line is cut, as [`wrap_exact`] would, rather than let out.
-fn wrap_words(text: &str, width: usize) -> Vec<String> {
-    let width = width.max(1);
-    let mut out = Vec::new();
-    let mut line = String::new();
-    for word in text.split_whitespace() {
-        let wanted = if line.is_empty() {
-            word.width()
-        } else {
-            line.width() + 1 + word.width()
-        };
-        if wanted <= width {
-            if !line.is_empty() {
-                line.push(' ');
-            }
-            line.push_str(word);
-            continue;
-        }
-        if !line.is_empty() {
-            out.push(std::mem::take(&mut line));
-        }
-        let mut parts = wrap_exact(word, width);
-        line = parts.pop().unwrap_or_default();
-        out.extend(parts);
-    }
-    if !line.is_empty() || out.is_empty() {
-        out.push(line);
-    }
-    out
 }
 
 /// Column widths for a table wider than `room`: a column that fits its fair

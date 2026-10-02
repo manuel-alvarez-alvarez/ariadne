@@ -3,7 +3,6 @@
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::markdown;
@@ -11,6 +10,7 @@ use crate::theme::{
     self, ADDED, AGENT, DAEMON, DIM, FAIL, FILE, HUNK, PLAN, PROMPT, REMOVED, TOOL, USER,
 };
 use crate::transcript::{PlanEntry, Tool, TranscriptItem};
+use crate::wrap::{self, clip, wrap, wrap_whole};
 
 use super::picker::permission;
 
@@ -443,27 +443,6 @@ fn field(input: &serde_json::Value, keys: &[&str]) -> Option<String> {
         .find_map(|key| input.get(key)?.as_str().map(str::to_string))
 }
 
-/// Cut a line to `room` columns, saying so. The cut falls between grapheme
-/// clusters, each as wide as it draws, so an emoji of several characters is
-/// kept or dropped whole.
-fn clip(text: &str, room: usize) -> String {
-    if text.width() <= room {
-        return text.to_string();
-    }
-    let mut cut = String::new();
-    let mut used = 0;
-    for grapheme in text.graphemes(true) {
-        let width = grapheme.width();
-        if used + width > room.saturating_sub(1) {
-            break;
-        }
-        used += width;
-        cut.push_str(grapheme);
-    }
-    cut.push('…');
-    cut
-}
-
 /// How long a call took, in the unit that fits it.
 fn elapsed(started_at: &str, ended_at: &str) -> Option<String> {
     let started = chrono::DateTime::parse_from_rfc3339(started_at).ok()?;
@@ -703,37 +682,23 @@ fn diff_row(text: String, style: Style) -> Line<'static> {
 }
 
 /// `parts` behind the diff's four-column indent, cut to `room` columns kept
-/// across all of them together — as `clip` cuts one string — so a styled run
-/// never overruns the room a plain line would have.
+/// across all of them together — as [`clip`] cuts one string — so a styled
+/// run never overruns the room a plain line would have.
 fn clipped_spans(parts: Vec<(String, Style)>, room: usize) -> Line<'static> {
     let mut spans = vec![Span::raw("    ")];
-    let total: usize = parts.iter().map(|(text, _)| text.width()).sum();
-    if total <= room {
-        spans.extend(
-            parts
-                .into_iter()
-                .map(|(text, style)| Span::styled(text, style)),
-        );
-        return Line::from(spans);
+    let (text, ellipsis_style) = wrap::clip_spans(&parts, room);
+    let mut offset = 0;
+    for (part, style) in &parts {
+        let end = offset + part.len();
+        if let Some(slice) = text.get(offset.min(text.len())..end.min(text.len()))
+            && !slice.is_empty()
+        {
+            spans.push(Span::styled(slice.to_string(), *style));
+        }
+        offset = end;
     }
-    let mut used = 0;
-    'parts: for (text, style) in parts {
-        let mut cut = String::new();
-        for grapheme in text.graphemes(true) {
-            let width = grapheme.width();
-            if used + width > room.saturating_sub(1) {
-                if !cut.is_empty() {
-                    spans.push(Span::styled(cut, style));
-                }
-                spans.push(Span::styled("…", style));
-                break 'parts;
-            }
-            used += width;
-            cut.push_str(grapheme);
-        }
-        if !cut.is_empty() {
-            spans.push(Span::styled(cut, style));
-        }
+    if let Some(style) = ellipsis_style {
+        spans.push(Span::styled("…", style));
     }
     Line::from(spans)
 }
@@ -751,102 +716,6 @@ fn file_name(header: &str) -> Option<String> {
             .unwrap_or(path)
             .to_string(),
     )
-}
-
-/// Hard-wrap text to `width` columns, keeping the line breaks it already has.
-/// A word wider than a row is cut between grapheme clusters across rows, so
-/// no character of it is lost past the edge. The space after a word takes no
-/// room at the end of a row, where it is not drawn.
-pub(super) fn wrap(text: &str, width: usize) -> Vec<String> {
-    let width = width.max(1);
-    let mut out = Vec::new();
-    for source in text.split('\n') {
-        let source = detab(source);
-        let mut line = String::new();
-        let mut used = 0usize;
-        for word in source.split_inclusive(char::is_whitespace) {
-            let body = word.trim_end();
-            if body.width() <= width && used > 0 && used + body.width() > width {
-                out.push(std::mem::take(&mut line).trim_end().to_string());
-                used = 0;
-            }
-            if body.width() > width {
-                for grapheme in body.graphemes(true) {
-                    let columns = grapheme.width();
-                    if used > 0 && used + columns > width {
-                        out.push(std::mem::take(&mut line).trim_end().to_string());
-                        used = 0;
-                    }
-                    used += columns;
-                    line.push_str(grapheme);
-                }
-                let space = &word[body.len()..];
-                if used + space.width() <= width {
-                    used += space.width();
-                    line.push_str(space);
-                }
-                continue;
-            }
-            used += word.width();
-            line.push_str(word);
-        }
-        out.push(line.trim_end().to_string());
-    }
-    out
-}
-
-/// Wrap text to `width` columns and keep every character of it, spaces
-/// included: a word goes to the next row with the space after it where the
-/// two do not fit, and a word wider than a row starts where the row is and
-/// is cut between grapheme clusters. The rows of one line, joined, are that
-/// line.
-fn wrap_whole(text: &str, width: usize) -> Vec<String> {
-    let width = width.max(1);
-    let mut out = Vec::new();
-    for source in text.split('\n') {
-        let source = detab(source);
-        let mut line = String::new();
-        let mut used = 0usize;
-        for word in source.split_inclusive(char::is_whitespace) {
-            if word.width() <= width && used > 0 && used + word.width() > width {
-                out.push(std::mem::take(&mut line));
-                used = 0;
-            }
-            for grapheme in word.graphemes(true) {
-                let columns = grapheme.width();
-                if used > 0 && used + columns > width {
-                    out.push(std::mem::take(&mut line));
-                    used = 0;
-                }
-                used += columns;
-                line.push_str(grapheme);
-            }
-        }
-        out.push(line);
-    }
-    out
-}
-
-/// A line with its tabs as the columns they take, to the next stop of eight.
-/// A cell holds one character, so a tab drawn as itself is nothing at all,
-/// and the text on either side of it runs together.
-fn detab(line: &str) -> String {
-    if !line.contains('\t') {
-        return line.to_string();
-    }
-    let mut out = String::new();
-    let mut column = 0;
-    for grapheme in line.graphemes(true) {
-        if grapheme == "\t" {
-            let stop = 8 - column % 8;
-            out.extend(std::iter::repeat_n(' ', stop));
-            column += stop;
-        } else {
-            out.push_str(grapheme);
-            column += grapheme.width();
-        }
-    }
-    out
 }
 
 #[cfg(test)]

@@ -36,14 +36,13 @@ use ratatui::Terminal;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Paragraph, Widget};
 use tokio::time::{Instant, interval};
-use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
 
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::usage::TokenUsageDto;
 
 use crate::transcript::{self, PermissionOption, TranscriptItem};
+use crate::wrap;
 
 mod banner;
 mod blocks;
@@ -975,27 +974,31 @@ fn rewrap(lines: &[Line<'static>], width: u16) -> Vec<Line<'static>> {
             rows.push(line.clone());
             continue;
         }
-        let mut row: Vec<Span<'static>> = Vec::new();
-        let mut used = 0;
+        let full: String = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        let mut bounds = Vec::with_capacity(line.spans.len());
+        let mut at = 0;
         for span in &line.spans {
-            let mut text = String::new();
-            for grapheme in span.content.graphemes(true) {
-                let columns = grapheme.width();
-                if used > 0 && used + columns > width {
-                    if !text.is_empty() {
-                        row.push(Span::styled(std::mem::take(&mut text), span.style));
-                    }
-                    rows.push(Line::from(std::mem::take(&mut row)).style(line.style));
-                    used = 0;
-                }
-                used += columns;
-                text.push_str(grapheme);
-            }
-            if !text.is_empty() {
-                row.push(Span::styled(text, span.style));
-            }
+            let start = at;
+            at += span.content.len();
+            bounds.push((start, at, span.style));
         }
-        rows.push(Line::from(row).style(line.style));
+        let mut offset = 0;
+        for text in wrap::wrap_exact(&full, width) {
+            let end = offset + text.len();
+            let spans: Vec<_> = bounds
+                .iter()
+                .filter_map(|&(start, stop, style)| {
+                    let (from, to) = (start.max(offset), stop.min(end));
+                    (from < to).then(|| Span::styled(full[from..to].to_string(), style))
+                })
+                .collect();
+            rows.push(Line::from(spans).style(line.style));
+            offset = end;
+        }
     }
     rows
 }

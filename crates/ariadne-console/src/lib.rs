@@ -19,6 +19,7 @@ pub mod markdown;
 pub mod theme;
 pub mod transcript;
 pub mod tui;
+mod wrap;
 
 pub use ansi::{AnsiBackend, Window};
 pub use tui::{Action, Anchored, Console, Frame, Header, Screen, Sink, drive, open, session_ended};

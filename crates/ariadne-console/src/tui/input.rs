@@ -11,6 +11,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::theme::{DIM, INPUT_CONTINUATION, INPUT_PLACEHOLDER, INPUT_PROMPT, INPUT_RULE, USER};
+use crate::wrap;
 
 /// How many rows of typed text the input box grows to before it scrolls.
 const INPUT_ROWS: usize = 4;
@@ -66,17 +67,12 @@ impl Input {
             let mut start = 0;
             let mut end = 0;
             let mut used = 0;
-            for grapheme in text.graphemes(true) {
-                let grapheme_width = grapheme.width();
-                if used > 0 && used + grapheme_width > width {
-                    rows.push(VisualRow { line, start, end });
-                    start = end;
-                    used = 0;
-                }
-                end += grapheme.chars().count();
-                used += grapheme_width;
+            for row in wrap::wrap_exact(&text, width) {
+                end = start + row.chars().count();
+                used = wrap::width(&row);
+                rows.push(VisualRow { line, start, end });
+                start = end;
             }
-            rows.push(VisualRow { line, start, end });
             if line == self.row && self.column == end && used == width {
                 rows.push(VisualRow {
                     line,

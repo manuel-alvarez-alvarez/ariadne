@@ -2,13 +2,13 @@
 
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::theme::{self, ASK, DIM, FRAME, PICKED, QUESTION, TOOL};
 use crate::transcript::{PermissionOption, Tool, TranscriptItem};
+use crate::wrap;
 
-use super::blocks::{block, command, folded_diff, folded_top, head, wrap};
+use super::blocks::{block, command, folded_diff, folded_top, head};
 
 /// The pending permission question as the picker being answered, in a pane
 /// `height` rows tall: the question, its call's command or diff folded to
@@ -158,7 +158,7 @@ fn body(tool: &Tool, width: usize, fold: usize) -> Vec<Line<'static>> {
         && command.lines().count() > 1
     {
         lines.extend(folded_top(
-            wrap(
+            wrap::wrap(
                 command
                     .split_once('\n')
                     .map_or(command.as_str(), |(_, rest)| rest)
@@ -227,24 +227,9 @@ fn answered(answer: &str, width: usize) -> Vec<Line<'static>> {
 /// so no character is cut.
 fn fit(text: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
-    wrap(text, width)
+    wrap::wrap(text, width)
         .into_iter()
-        .flat_map(|line| {
-            let mut rows = vec![String::new()];
-            let mut used = 0;
-            for grapheme in line.graphemes(true) {
-                let cells = grapheme.width();
-                if used > 0 && used + cells > width {
-                    rows.push(String::new());
-                    used = 0;
-                }
-                rows.last_mut()
-                    .expect("one row at least")
-                    .push_str(grapheme);
-                used += cells;
-            }
-            rows
-        })
+        .flat_map(|line| wrap::wrap_exact(&line, width))
         .collect()
 }
 
