@@ -15,7 +15,7 @@ pub use models::{AuthorModelStatDto, ModelStatDto, ModelStatsDto, ReviewerModelS
 pub use spend::SpendStatsDto;
 pub use time::TimeStatsDto;
 pub use tools::ToolStatsDto;
-pub use work::WorkStatsDto;
+pub use work::{WorkBucketDto, WorkStatsDto, WorkTotalsDto};
 
 use serde::{Deserialize, Serialize};
 use utoipa::IntoParams;

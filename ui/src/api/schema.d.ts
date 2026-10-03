@@ -1411,6 +1411,13 @@ export interface components {
             /** @description Whether the checkpoints of the last good install are on disk. */
             weights_present: boolean;
         };
+        AttentionFlagDto: {
+            /** Format: double */
+            mean_wait_secs: number;
+            /** Format: int64 */
+            raised: number;
+            reason: string;
+        };
         /**
          * @description Why a live agent session needs the user's attention.
          *
@@ -1422,29 +1429,31 @@ export interface components {
         AttentionReason: "waiting_permission" | "waiting_input" | "waiting_user" | "agent_error" | "disconnected" | "stalled" | "exhausted";
         /** @description Response of `GET /v1/stats/attention`: how much did it need me? */
         AttentionStatsDto: {
-            permissions: components["schemas"]["PermissionStatsDto"];
-            flags: components["schemas"]["AttentionFlagDto"][];
-            sessions_failed: number;
-            sessions_stalled: number;
+            /**
+             * Format: int64
+             * @default 0
+             */
             exhaustions: number;
-        };
-        AttentionFlagDto: {
-            reason: string;
-            raised: number;
-            mean_wait_secs: number;
-        };
-        PermissionDeciderDto: {
-            decided_by: string;
-            total: number;
-            allowed: number;
-            denied: number;
-            cancelled: number;
-            mean_wait_ms: number;
-        };
-        PermissionStatsDto: {
-            total: number;
-            person_share: number;
-            by_decider: components["schemas"]["PermissionDeciderDto"][];
+            /** @default [] */
+            flags: components["schemas"]["AttentionFlagDto"][];
+            /**
+             * @default {
+             *       "total": 0,
+             *       "person_share": 0,
+             *       "by_decider": []
+             *     }
+             */
+            permissions: components["schemas"]["PermissionStatsDto"];
+            /**
+             * Format: int64
+             * @default 0
+             */
+            sessions_failed: number;
+            /**
+             * Format: int64
+             * @default 0
+             */
+            sessions_stalled: number;
         };
         /** @description Outcomes attributed to an author model. */
         AuthorModelStatDto: {
@@ -1468,6 +1477,7 @@ export interface components {
             tokens_per_finished_task: number;
             /** Format: double */
             win_rate: number;
+        };
         /** @description A binary as the daemon can — or cannot — find it. */
         BinaryDto: {
             /**
@@ -2105,6 +2115,19 @@ export interface components {
              */
             writable: boolean;
         };
+        PermissionDeciderDto: {
+            /** Format: int64 */
+            allowed: number;
+            /** Format: int64 */
+            cancelled: number;
+            decided_by: string;
+            /** Format: int64 */
+            denied: number;
+            /** Format: double */
+            mean_wait_ms: number;
+            /** Format: int64 */
+            total: number;
+        };
         /**
          * @description How the ACP runtime answers a tool permission request.
          * @enum {string}
@@ -2134,6 +2157,13 @@ export interface components {
             probabilities?: unknown;
             risk_tags?: string[] | null;
             session_id: unknown;
+        };
+        PermissionStatsDto: {
+            by_decider: components["schemas"]["PermissionDeciderDto"][];
+            /** Format: double */
+            person_share: number;
+            /** Format: int64 */
+            total: number;
         };
         /**
          * @description One reviewer picking the winning author of a task staffed with several:
@@ -2792,11 +2822,111 @@ export interface components {
             /** @example 0.1.0 */
             version: string;
         };
-        /**
-         * @description Response of `GET /v1/stats/work`: what got done? Empty until its task
-         *     fills it in.
-         */
-        WorkStatsDto: Record<string, never>;
+        /** @description One bucket of the time axis: the counts of the facts that fall in it. */
+        WorkBucketDto: {
+            /**
+             * Format: int64
+             * @default 0
+             */
+            goals_completed: number;
+            /**
+             * Format: int64
+             * @default 0
+             */
+            landed: number;
+            /**
+             * @description The RFC 3339 start of the bucket.
+             * @default
+             */
+            start: string;
+            /**
+             * Format: int64
+             * @default 0
+             */
+            tasks_cancelled: number;
+            /**
+             * Format: int64
+             * @default 0
+             */
+            tasks_failed: number;
+            /**
+             * Format: int64
+             * @default 0
+             */
+            tasks_finished: number;
+        };
+        /** @description Response of `GET /v1/stats/work`: what got done? */
+        WorkStatsDto: {
+            /**
+             * @description `"day"` or `"week"`: the bucket every [`WorkBucketDto::start`] falls
+             *     on.
+             * @default
+             */
+            bucket: string;
+            /**
+             * @description One row per bucket from the first fact to the last, zeros included.
+             * @default []
+             */
+            buckets: components["schemas"]["WorkBucketDto"][];
+            /**
+             * @default {
+             *       "goals_completed": 0,
+             *       "goals_cancelled": 0,
+             *       "median_goal_lead_time_secs": 0,
+             *       "tasks_finished": 0,
+             *       "tasks_failed": 0,
+             *       "tasks_cancelled": 0,
+             *       "finish_rate": 0,
+             *       "landed": 0
+             *     }
+             */
+            totals: components["schemas"]["WorkTotalsDto"];
+        };
+        /** @description The counts `WorkStatsDto` answers over the whole span a filter keeps. */
+        WorkTotalsDto: {
+            /**
+             * Format: double
+             * @description `tasks_finished` over the three endings; 0 where there are none.
+             * @default 0
+             */
+            finish_rate: number;
+            /**
+             * Format: int64
+             * @default 0
+             */
+            goals_cancelled: number;
+            /**
+             * Format: int64
+             * @default 0
+             */
+            goals_completed: number;
+            /**
+             * Format: int64
+             * @description Finished tasks whose `landing` was `merge` or `pull_request`.
+             * @default 0
+             */
+            landed: number;
+            /**
+             * Format: double
+             * @default 0
+             */
+            median_goal_lead_time_secs: number;
+            /**
+             * Format: int64
+             * @default 0
+             */
+            tasks_cancelled: number;
+            /**
+             * Format: int64
+             * @default 0
+             */
+            tasks_failed: number;
+            /**
+             * Format: int64
+             * @default 0
+             */
+            tasks_finished: number;
+        };
     };
     responses: never;
     parameters: never;

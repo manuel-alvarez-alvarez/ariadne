@@ -19,3 +19,12 @@ export const attentionPermissionConfig = {
 export const attentionFlagConfig = {
   raised: { label: "Raised", color: STATUS_COLORS.active },
 } satisfies ChartConfig
+
+/** The Work section's time chart: tasks per bucket, stacked by how they ended. */
+export const WORK_CONFIG = {
+  tasks_finished: { label: "Finished", color: STATUS_COLORS.done },
+  tasks_failed: { label: "Failed", color: STATUS_COLORS.danger },
+  tasks_cancelled: { label: "Cancelled", color: STATUS_COLORS.pending },
+  goals_completed: { label: "Goals completed" },
+  landed: { label: "Landed" },
+} satisfies ChartConfig

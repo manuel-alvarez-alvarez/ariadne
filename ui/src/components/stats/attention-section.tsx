@@ -30,11 +30,11 @@ export function AttentionSection({ filter }: { filter: StatsFilter }) {
       description="How much did it need me?"
       query={stats}
       isEmpty={(data) =>
-        data.permissions.total === 0 &&
-        data.flags.every((flag) => flag.raised === 0) &&
-        data.sessions_failed === 0 &&
-        data.sessions_stalled === 0 &&
-        data.exhaustions === 0
+        (data.permissions?.total ?? 0) === 0 &&
+        (data.flags ?? []).every((flag) => flag.raised === 0) &&
+        (data.sessions_failed ?? 0) === 0 &&
+        (data.sessions_stalled ?? 0) === 0 &&
+        (data.exhaustions ?? 0) === 0
       }
       empty="Nothing needed you in this span."
     >

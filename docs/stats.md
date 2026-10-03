@@ -62,7 +62,27 @@ as sessions end and as tasks move.
 
 ## Work
 
-Its task writes this section.
+What got done: goals completed and cancelled, tasks finished, failed and
+cancelled, and changes landed — over time.
+
+The totals:
+
+| Figure | What it counts |
+| --- | --- |
+| Goals completed | Goals that moved to `completed` |
+| Goals cancelled | Goals that moved to `cancelled` |
+| Median goal lead time | From a completed goal's creation to its completion |
+| Tasks finished / failed / cancelled | Tasks that ended each way |
+| Finish rate | Tasks finished, over the three endings |
+| Changes landed | Finished tasks whose change was merged or published as a pull request |
+
+The chart below them is tasks per bucket, stacked by how each one ended; its
+tooltip also shows goals completed and changes landed for that bucket.
+
+```sh
+ariadne stats work                  # the totals, then a table of the buckets
+ariadne stats work --format json
+```
 
 ## Time
 

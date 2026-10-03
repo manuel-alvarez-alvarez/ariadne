@@ -2,12 +2,16 @@
 
 use ariadne_core::id::new_id;
 use ariadne_core::{GoalStatus, Landing};
+use chrono::DateTime;
 use sqlx::{FromRow, Row};
 
 use crate::{
     AgentPin, Change, Goal, GoalRepository, Repository, Result, Store, StoreError, Task, not_found,
     now,
 };
+
+/// The fact a goal writes once it moves to `completed` or `cancelled`.
+const GOAL_ENDED: &str = "goal_ended";
 
 #[derive(Debug, Clone)]
 pub struct NewGoal {
@@ -123,19 +127,83 @@ impl Store {
     }
 
     pub async fn set_goal_status(&self, id: &str, status: GoalStatus) -> Result<Goal> {
-        let n = sqlx::query("UPDATE goals SET status = ?, updated_at = ? WHERE id = ?")
+        let mut tx = self.w().begin().await?;
+        let goal: Goal = Self::fetch_by_in_tx(&mut tx, "goal", "goals", id).await?;
+        let from = goal.status();
+        sqlx::query("UPDATE goals SET status = ?, updated_at = ? WHERE id = ?")
             .bind(status.as_str())
             .bind(now())
             .bind(id)
-            .execute(self.w())
-            .await?
-            .rows_affected();
-        if n == 0 {
-            return Err(not_found("goal", id));
+            .execute(&mut *tx)
+            .await?;
+        if from != status && matches!(status, GoalStatus::Completed | GoalStatus::Cancelled) {
+            Self::record_goal_ended_in_tx(&mut tx, &goal, status).await?;
         }
+        tx.commit().await?;
         let goal = self.get_goal(id).await?;
         self.publish(Change::GoalUpdated(goal.clone()));
         Ok(goal)
+    }
+
+    /// Write the `goal_ended` fact (023): one row for a goal that moves to
+    /// `completed` or `cancelled`, inside the same transaction as the status
+    /// write. `data` holds its status, its lead time, its task counts and
+    /// its own landing; the model and the effort are its orchestrator pin.
+    async fn record_goal_ended_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        goal: &Goal,
+        status: GoalStatus,
+    ) -> Result<()> {
+        let repo_ids: Vec<String> =
+            sqlx::query_scalar("SELECT repository_id FROM goal_repositories WHERE goal_id = ?")
+                .bind(&goal.id)
+                .fetch_all(&mut **tx)
+                .await?;
+        let repo_id = match repo_ids.as_slice() {
+            [one] => Some(one.clone()),
+            _ => None,
+        };
+        let tasks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tasks WHERE goal_id = ?")
+            .bind(&goal.id)
+            .fetch_one(&mut **tx)
+            .await?;
+        let tasks_finished: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM tasks WHERE goal_id = ? AND status = 'finished'",
+        )
+        .bind(&goal.id)
+        .fetch_one(&mut **tx)
+        .await?;
+        let ended_at = now();
+        let lead_time_secs = match (
+            DateTime::parse_from_rfc3339(&goal.created_at),
+            DateTime::parse_from_rfc3339(&ended_at),
+        ) {
+            (Ok(created), Ok(ended)) => (ended - created).num_seconds().max(0),
+            _ => 0,
+        };
+        let data = serde_json::json!({
+            "status": status.as_str(),
+            "lead_time_secs": lead_time_secs,
+            "tasks": tasks,
+            "tasks_finished": tasks_finished,
+            "landing": goal.landing().as_str(),
+        });
+        sqlx::query(
+            "INSERT INTO stat_facts (id, kind, created_at, repo_id, goal_id, task_id, session_id,
+                                      launch_id, seat, model, effort, skills, data)
+             VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, '[]', ?)",
+        )
+        .bind(new_id())
+        .bind(GOAL_ENDED)
+        .bind(&ended_at)
+        .bind(&repo_id)
+        .bind(&goal.id)
+        .bind(&goal.model)
+        .bind(&goal.effort)
+        .bind(data.to_string())
+        .execute(&mut **tx)
+        .await?;
+        Ok(())
     }
 
     /// Move a goal's orchestrator onto another model and effort: the pin its

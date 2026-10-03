@@ -274,13 +274,45 @@ decided, not a change to how they decide it.
     `status-active` — and each chart's series config lives in
     `chart-configs.ts`.
 37. Each section reads its family under `qk.stats.<family>(filter)`, in
-    the query-key group `stats`. Every `task_updated` and `session_updated`
-    event invalidates the whole group (`qk.stats.all()`), since either may be
-    a fact.
+    the query-key group `stats`. Every `task_updated`, `session_updated` and
+    `goal_updated` event invalidates the whole group (`qk.stats.all()`),
+    since any of the three may be a fact.
 
 ### Work
 
-Built by its task.
+What got done: goals completed, tasks finished, failed and cancelled, and
+changes landed, over time.
+
+38. A goal writes one `goal_ended` fact each time it moves to `completed` or
+    `cancelled`. It is written inside `Store::set_goal_status`, in the same
+    transaction as the status write, the way `task_ended` is written inside
+    `transition_in_tx` (rule 23) — the one place every goal status change
+    passes. A move to the same status writes no fact.
+39. Its `data` holds `status` (`completed` or `cancelled`), `lead_time_secs`
+    (from the goal's `created_at` to the move), `tasks` (the count of its
+    tasks), `tasks_finished` (those `finished`) and `landing` (the goal's
+    own). `goal_id` is the goal's; `repo_id` is the goal's one repository, or
+    null where it works in several; `model` and `effort` are the goal's
+    orchestrator pin.
+40. `work_stats(filter) -> WorkStats { totals, bucket, buckets }` answers what
+    got done. `totals` holds `goals_completed`, `goals_cancelled`,
+    `median_goal_lead_time_secs` (over completed goals), `tasks_finished`,
+    `tasks_failed`, `tasks_cancelled`, `finish_rate` (`tasks_finished` over
+    the three, 0 where there are none) and `landed` (`task_ended` facts
+    `finished` whose `landing` is `merge` or `pull_request`). `bucket` is
+    `Bucket::for_span(since)` (rule 33); `buckets` is one row per bucket from
+    the first fact to the last, zeros included, each with `start`,
+    `tasks_finished`, `tasks_failed`, `tasks_cancelled`, `goals_completed`
+    and `landed`. `since` and `repo_id` narrow every count, as rule 12 says.
+41. `GET /v1/stats/work` answers `WorkStatsDto`, `work_stats`'s own shape.
+    `ariadne stats work` prints the totals as `label: value` lines, then a
+    table of the buckets, `FROM`, `FINISHED`, `FAILED`, `CANCELLED`, `GOALS`
+    and `LANDED`; `--format json` prints the DTO whole. `WorkSection` draws
+    `StatTiles` of tasks finished, goals completed, changes landed, finish
+    rate and median goal lead time, and one `StatTimeChart` of tasks per
+    bucket, stacked `finished`, `failed` and `cancelled` on `STATUS_COLORS`,
+    with goals completed and landed carried in its tooltip and its `sr-only`
+    table alongside the stacked counts.
 
 ### Time
 
@@ -464,7 +496,31 @@ Built by its task.
 
 #### Work
 
-Built by its task.
+- A goal completed writes one `goal_ended` fact with its status, lead time,
+  task counts and landing; a goal cancelled writes one too, and a second
+  move to the same status writes no second one
+  (`stats_work.rs::a_completed_goal_writes_one_goal_ended_fact`,
+  `::a_cancelled_goal_writes_one_goal_ended_fact`).
+- `work_stats` counts tasks finished, failed and cancelled, goals completed
+  and changes landed, buckets them by day under a short `since` and by week
+  with none, zeros included, and honours `since` and `repo_id`
+  (`stats/work.rs::tests::work_stats_counts_tasks_finished_failed_cancelled_and_goals_and_landed`,
+  `::work_stats_buckets_by_day_under_a_short_since_and_by_week_with_none`,
+  `::work_stats_honours_since_and_repo_id`).
+- `GET /v1/stats/work` answers the totals and the buckets
+  (`stats_work.rs::the_work_stat_answers_the_totals_and_the_buckets`).
+- `ariadne stats work --format json` prints the DTO, and the table prints the
+  totals and a row per bucket
+  (`commands/stats/work.rs::tests::the_totals_print_as_label_value_lines_in_field_order`,
+  `::a_bucket_row_carries_every_count_in_column_order`).
+- `WorkSection` draws the tiles and the chart from a mocked response under
+  `qk.stats.work`, and says its empty sentence where there is nothing to show
+  (`work-section.test.tsx` "asks for its family with the filter, and says its
+  empty sentence", "draws the tiles and the chart from what the daemon
+  answers").
+- A `goal_updated` event invalidates the stats too (`dispatch.test.ts`
+  "refetches every stat when a task, a session or a goal moves, since any
+  may be a fact").
 
 #### Time
 

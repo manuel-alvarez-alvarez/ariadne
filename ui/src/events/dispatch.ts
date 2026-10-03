@@ -36,6 +36,9 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
     case "goal_updated": {
       queryClient.setQueryData(qk.goals.detail(event.data.id), event.data)
       void queryClient.invalidateQueries({ queryKey: qk.goals.lists() })
+      // A goal that moves to completed or cancelled wrote a fact the stats
+      // read.
+      void queryClient.invalidateQueries({ queryKey: qk.stats.all() })
       break
     }
     case "goal_deleted": {

@@ -48,6 +48,12 @@ IGNORED = {
     "crates/ariadne-store/src/defaults.rs: BuiltinSkill": (
         "the element type of the public `BUILTIN_SKILLS`; its callers read the fields"
     ),
+    "crates/ariadne-store/src/stats/work.rs: WorkTotals": (
+        "the type of the public field `WorkStats::totals`; its callers read the fields"
+    ),
+    "crates/ariadne-store/src/stats/work.rs: WorkBucket": (
+        "the element type of the public field `WorkStats::buckets`; its callers read the fields"
+    ),
     "crates/ariadne-console/src/transcript.rs: Location": (
         "the element type of the public field `Tool::locations`"
     ),

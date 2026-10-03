@@ -38,6 +38,7 @@ export function StatTimeChart<T extends { bucket: string }>({
   config,
   keys,
   caption,
+  extra = [],
 }: {
   /** One row per bucket, oldest first, `bucket` its RFC 3339 start. */
   data: T[]
@@ -46,6 +47,10 @@ export function StatTimeChart<T extends { bucket: string }>({
   keys: (keyof T & string)[]
   /** The `sr-only` table's caption: what the chart is a chart of. */
   caption: string
+  /** Keys shown in the tooltip and the `sr-only` table beyond the stacked
+   * bars, labelled the same way — a count the bar does not draw but the
+   * reader still wants beside it. */
+  extra?: (keyof T & string)[]
 }) {
   return (
     <div className="flex flex-col gap-2">
@@ -71,7 +76,7 @@ export function StatTimeChart<T extends { bucket: string }>({
               return active && row ? (
                 <div className="flex flex-col gap-1 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
                   <p className="font-medium">{bucketLabel(row.bucket)}</p>
-                  {keys.map((key) => (
+                  {[...keys, ...extra].map((key) => (
                     <p key={key}>
                       {config[key]?.label ?? key}: {String(row[key])}
                     </p>
@@ -97,7 +102,7 @@ export function StatTimeChart<T extends { bucket: string }>({
         <thead>
           <tr>
             <th>Bucket</th>
-            {keys.map((key) => (
+            {[...keys, ...extra].map((key) => (
               <th key={key}>{config[key]?.label ?? key}</th>
             ))}
           </tr>
@@ -106,7 +111,7 @@ export function StatTimeChart<T extends { bucket: string }>({
           {data.map((row) => (
             <tr key={row.bucket}>
               <td>{bucketLabel(row.bucket)}</td>
-              {keys.map((key) => (
+              {[...keys, ...extra].map((key) => (
                 <td key={key}>{String(row[key])}</td>
               ))}
             </tr>

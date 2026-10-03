@@ -3471,6 +3471,28 @@
           }
         }
       },
+      "AttentionFlagDto": {
+        "type": "object",
+        "required": [
+          "reason",
+          "raised",
+          "mean_wait_secs"
+        ],
+        "properties": {
+          "mean_wait_secs": {
+            "type": "number",
+            "format": "double"
+          },
+          "raised": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
       "AttentionReason": {
         "type": "string",
         "description": "Why a live agent session needs the user's attention.\n\nOrthogonal to [`SessionStatus`]: a session waiting on a permission prompt\nis still `running` as far as its lifecycle goes, it just cannot make\nprogress until someone looks at it.",
@@ -3486,7 +3508,46 @@
       },
       "AttentionStatsDto": {
         "type": "object",
-        "description": "Response of `GET /v1/stats/attention`: how much did it need me? Empty until its task\nfills it in."
+        "description": "Response of `GET /v1/stats/attention`: how much did it need me?",
+        "properties": {
+          "exhaustions": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0,
+            "minimum": 0
+          },
+          "flags": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttentionFlagDto"
+            },
+            "default": []
+          },
+          "permissions": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PermissionStatsDto"
+              }
+            ],
+            "default": {
+              "total": 0,
+              "person_share": 0,
+              "by_decider": []
+            }
+          },
+          "sessions_failed": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0,
+            "minimum": 0
+          },
+          "sessions_stalled": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0,
+            "minimum": 0
+          }
+        }
       },
       "AuthorModelStatDto": {
         "type": "object",
@@ -4982,6 +5043,46 @@
           }
         }
       },
+      "PermissionDeciderDto": {
+        "type": "object",
+        "required": [
+          "decided_by",
+          "total",
+          "allowed",
+          "denied",
+          "cancelled",
+          "mean_wait_ms"
+        ],
+        "properties": {
+          "allowed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "cancelled": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "decided_by": {
+            "type": "string"
+          },
+          "denied": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "mean_wait_ms": {
+            "type": "number",
+            "format": "double"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "PermissionMode": {
         "type": "string",
         "description": "How the ACP runtime answers a tool permission request.",
@@ -5095,6 +5196,31 @@
             }
           },
           "session_id": {}
+        }
+      },
+      "PermissionStatsDto": {
+        "type": "object",
+        "required": [
+          "total",
+          "person_share",
+          "by_decider"
+        ],
+        "properties": {
+          "by_decider": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PermissionDeciderDto"
+            }
+          },
+          "person_share": {
+            "type": "number",
+            "format": "double"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
         }
       },
       "PickWinnerRequest": {
@@ -6502,9 +6628,125 @@
           }
         }
       },
+      "WorkBucketDto": {
+        "type": "object",
+        "description": "One bucket of the time axis: the counts of the facts that fall in it.",
+        "properties": {
+          "goals_completed": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0
+          },
+          "landed": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0
+          },
+          "start": {
+            "type": "string",
+            "description": "The RFC 3339 start of the bucket.",
+            "default": ""
+          },
+          "tasks_cancelled": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0
+          },
+          "tasks_failed": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0
+          },
+          "tasks_finished": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0
+          }
+        }
+      },
       "WorkStatsDto": {
         "type": "object",
-        "description": "Response of `GET /v1/stats/work`: what got done? Empty until its task\nfills it in."
+        "description": "Response of `GET /v1/stats/work`: what got done?",
+        "properties": {
+          "bucket": {
+            "type": "string",
+            "description": "`\"day\"` or `\"week\"`: the bucket every [`WorkBucketDto::start`] falls\non.",
+            "default": ""
+          },
+          "buckets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkBucketDto"
+            },
+            "description": "One row per bucket from the first fact to the last, zeros included.",
+            "default": []
+          },
+          "totals": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WorkTotalsDto"
+              }
+            ],
+            "default": {
+              "goals_completed": 0,
+              "goals_cancelled": 0,
+              "median_goal_lead_time_secs": 0,
+              "tasks_finished": 0,
+              "tasks_failed": 0,
+              "tasks_cancelled": 0,
+              "finish_rate": 0,
+              "landed": 0
+            }
+          }
+        }
+      },
+      "WorkTotalsDto": {
+        "type": "object",
+        "description": "The counts `WorkStatsDto` answers over the whole span a filter keeps.",
+        "properties": {
+          "finish_rate": {
+            "type": "number",
+            "format": "double",
+            "description": "`tasks_finished` over the three endings; 0 where there are none.",
+            "default": 0
+          },
+          "goals_cancelled": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0
+          },
+          "goals_completed": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0
+          },
+          "landed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Finished tasks whose `landing` was `merge` or `pull_request`.",
+            "default": 0
+          },
+          "median_goal_lead_time_secs": {
+            "type": "number",
+            "format": "double",
+            "default": 0
+          },
+          "tasks_cancelled": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0
+          },
+          "tasks_failed": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0
+          },
+          "tasks_finished": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0
+          }
+        }
       }
     }
   },

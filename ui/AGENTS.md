@@ -154,7 +154,8 @@ the query cache and it stays live.
 
 | event | effect |
 |---|---|
-| `goal_created`, `goal_updated` | patch `goals.detail`, invalidate `goals.lists` |
+| `goal_created` | patch `goals.detail`, invalidate `goals.lists` |
+| `goal_updated` | patch `goals.detail`, invalidate `goals.lists` and `stats.all` |
 | `goal_deleted` | remove `goals.detail`, invalidate `goals.lists` and every task and session key |
 | `task_created` | patch `tasks.detail`, invalidate `tasks.lists` |
 | `task_updated` | patch `tasks.detail`, invalidate `tasks.lists` and `stats.all`, and `tasks.transitions` when the event carries a transition |

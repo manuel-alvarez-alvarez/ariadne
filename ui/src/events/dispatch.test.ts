@@ -337,10 +337,11 @@ describe("agent events", () => {
 })
 
 describe("stats", () => {
-  it("refetches every stat when a task or a session moves, since either may be a fact", () => {
+  it("refetches every stat when a task, a session or a goal moves, since any may be a fact", () => {
     for (const event of [
       { event: "task_updated", data: { task: TASK } },
       { event: "session_updated", data: aSession() },
+      { event: "goal_updated", data: GOAL },
     ] as DomainEvent[]) {
       const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
       const models = qk.stats.models({ since: "7d" })
