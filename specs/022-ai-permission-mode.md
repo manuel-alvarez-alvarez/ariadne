@@ -1,7 +1,7 @@
 ---
 id: ai-permission-mode
 status: current
-updated: 2026-10-01
+updated: 2026-10-03
 areas: [core, api, store, daemon, ui]
 commits: []
 tests:
@@ -301,8 +301,13 @@ hardware facts in the card, with no Details popover`).
     The event summary uses the same reason.
 32. `POST /v1/permissions/ai/test` scores one request without selecting an
     option, writing a row, or publishing an event. It accepts `tool`, nullable
-    `kind`, JSON `input`, nullable option names, and a nullable `workspace`.
-    It uses the same state as rule 26 and treats the first option as allowing.
+    `kind`, JSON `input`, nullable option names, nullable `locations` and a
+    nullable `workspace`. `tool` is the tool call title the model sees, such
+    as the command, `Edit <path>` or `Fetch <url>`, not the tool name. Each
+    path in `locations` goes into the tool call as `{"path": ...}`, so a test
+    request derives the same risk tags as a live request with the same tool
+    call. It uses the same state as rule 26 and treats the first option as
+    allowing.
     Its response carries the label, danger, thresholds, operation, risk tags,
     cap and probabilities where available. An unanswered request returns
     `unavailable`, `failed`, `timed out`, or `malformed`. An empty tool gets
@@ -724,6 +729,14 @@ hardware facts in the card, with no Details popover`).
   (`ai_permissions_decisions.rs::a_test_request_scores_the_same_model_state_without_publishing_or_learning`,
   `::a_test_request_reports_unavailable_or_a_model_error_without_failing_the_endpoint`,
   `::a_test_request_returns_each_model_call_error_in_its_response`).
+- A test request with `locations` sends the same normalized state and derives
+  the same risk tags, `outside_workspace` among them, as a live request with
+  the same tool call; without the location the tag is absent
+  (`ai_permissions_decisions.rs::a_test_request_with_locations_derives_what_the_live_request_does`).
+- `ariadne permissions ai test` accepts `--location` more than once and sends
+  every path in `locations`
+  (`ariadne-cli/cli/tests.rs::every_permissions_verb_parses`,
+  `ariadne-cli/commands/permissions.rs::tests::test_sends_the_workspace_and_every_location_with_the_request`).
 - A version is read out of what an interpreter prints, and only 3.12 and 3.13 pass
   (`ai_permissions/python.rs::tests::the_version_is_read_from_the_line_and_checked_against_kevs_versions`);
   an interpreter that is not there is reported as missing
@@ -782,7 +795,7 @@ hardware facts in the card, with no Details popover`).
   (`ai_permissions/server.rs::tests::the_server_dies_when_the_daemon_end_of_its_pipe_closes`,
   `::the_guard_exits_with_the_server_status`).
 - The four paths, both threshold fields in both schemas, the flavour and
-  device shapes, test workspace, four test response fields, the doctor's
+  device shapes, test workspace and locations, four test response fields, the doctor's
   `python` and the event kind are in the OpenAPI document
   (`ai_permissions.rs::the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document`),
   and the doctor reports the interpreter apart from the tools

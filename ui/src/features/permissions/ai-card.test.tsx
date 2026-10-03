@@ -74,7 +74,7 @@ it("draws the marker and the label from a test result", async () => {
   const user = userEvent.setup()
   renderCard(status)
 
-  expect(screen.queryByLabelText("Tool")).toBeNull()
+  expect(screen.queryByLabelText("Title")).toBeNull()
   await user.click(screen.getByRole("button", { name: "Test a request" }))
   expect(await screen.findByRole("dialog")).toBeDefined()
   await user.click(screen.getByRole("button", { name: "Test" }))

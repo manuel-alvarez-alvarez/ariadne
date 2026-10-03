@@ -41,12 +41,16 @@ Use this command to see how the enabled AI permission model scores one tool
 request without granting or recording anything:
 
 ```sh
-ariadne permissions ai test --tool Bash --kind execute \
-  --input '{"command":"git status"}' --option Allow --option Reject
+ariadne permissions ai test --tool "git status" --kind execute \
+  --input '{"command":"git status","description":"Show the status"}' \
+  --option Yes --option "Yes, and don't ask again for git status * commands" --option No \
+  --workspace "$PWD"
 ```
 
-It prints a line such as `ask · allow 62%, deny 5% · danger 21% (allow up to 5%, deny from 65%)`. Repeat
-`--option` for each offered option; the first represents an allowing option.
+It prints a line such as `ask · allow 62%, deny 5% · danger 21% (allow up to 5%, deny from 65%)`. `--tool` is
+the tool call title the model sees: the command for `Bash`, `Edit <path>` for
+an edit. Repeat `--option` for each offered option; the first represents an
+allowing option. Repeat `--location` for each path the call touches.
 `--input` must be valid JSON. `--format json` prints the full response.
 
 ## List every session

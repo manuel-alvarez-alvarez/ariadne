@@ -272,6 +272,7 @@ pub(super) async fn test(
         req.tool,
         req.kind,
         req.input,
+        req.locations.as_deref().unwrap_or_default(),
         req.options.as_deref().unwrap_or_default(),
     );
     let prepared =

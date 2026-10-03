@@ -224,10 +224,17 @@ ariadne permissions ai disable
 Test one request before an agent makes it with the same model and thresholds:
 
 ```sh
-ariadne permissions ai test --tool Bash --kind execute \
-  --input '{"command":"git status"}' --option Allow --option Reject \
-  --workspace "$PWD"
+ariadne permissions ai test --tool "Read $HOME/notes/plan.md" --kind read \
+  --input "{\"file_path\":\"$HOME/notes/plan.md\"}" \
+  --option Yes --option "Yes, allow reading from notes/ during this session" --option No \
+  --location "$HOME/notes/plan.md" --workspace "$PWD"
 ```
+
+Give the request the shape a real one has. `--tool` is the tool call title the
+model sees, not the tool name: the command for `Bash`, `Edit <path>`,
+`Read <path>` or `Fetch <url>`. Repeat `--option` for each option name, the
+allowing one first. Repeat `--location` for each path the call touches; the
+daemon checks it against `--workspace`, as it does for a live request.
 
 The command prints the label, both probabilities, danger and thresholds as
 whole percentages, then the operation. For example:

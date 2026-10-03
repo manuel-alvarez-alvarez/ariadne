@@ -342,7 +342,8 @@ pub struct UpdateAiPermissionsRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TestAiPermissionRequest {
-    /// The tool call title the model sees.
+    /// The tool call title the model sees, such as `git status` or
+    /// `Read /etc/hosts`, not the tool name.
     pub tool: String,
     /// The tool call kind the model sees.
     pub kind: Option<String>,
@@ -350,6 +351,8 @@ pub struct TestAiPermissionRequest {
     pub input: serde_json::Value,
     /// The option names the model sees.
     pub options: Option<Vec<String>>,
+    /// The paths the tool call touches, as an agent sends them in `locations`.
+    pub locations: Option<Vec<String>>,
     /// The workspace used to derive whether a path is outside it.
     pub workspace: Option<String>,
 }

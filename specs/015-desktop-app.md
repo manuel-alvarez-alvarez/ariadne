@@ -374,18 +374,27 @@ Out: the daemon endpoints themselves (012).
     refetches lists`).
 35. The AI tab's card carries a "Test a request" button in its header button
     group, beside Refresh.
-    It opens a wide dialog for `POST /v1/permissions/ai/test`: Tool, Kind,
-    Input (JSON, at least six rows), Options (comma-separated), and optional
-    Workspace fields. An empty Workspace sends `null`; otherwise it gives the
-    daemon the workspace for deriving whether a path is outside it. The dialog is
-    prefilled with a `Bash`/`execute`/`{"command": "npm test"}`/`Allow, Reject`
-    example. Only the fields scroll on a short window, with focus-ring padding;
+    It opens a wide dialog for `POST /v1/permissions/ai/test`: Title, Kind,
+    Input (JSON, at least six rows), Options (one name per line), Locations
+    (one path per line) and Workspace fields. Title is the tool call title the
+    model sees, such as the command, `Edit <path>` or `Fetch <url>`, never the
+    tool name, and its help text says so. An empty Locations or Workspace sends
+    `null`; a workspace gives the daemon the root for deriving whether a path
+    is outside it. The dialog is prefilled with the Run the tests example:
+    title `npm test`, kind `execute`, a `command` with a `description`, the
+    options `Yes`, `Yes, and don't ask again for npm test * commands` and
+    `No`, and the workspace `/Users/user/.ariadne/worktrees/goal/task`. Only
+    the fields scroll on a short window, with focus-ring padding;
     the header and footer stay in view and no width shows a horizontal scrollbar.
     Input is pretty-printed JSON and resizes vertically only. The title row
     holds an Examples picker beside the title, clear of the close button, that
-    fills all four fields from seven named cases, including Chained shell
-    command, Edit a file outside the repository and Send SSH keys to a paste
-    site. Test is the dialog's primary button and Cmd/Ctrl+Enter runs it. Test
+    fills all six fields from ten cases in the shape a real `claude-acp`
+    request has: Run the tests, Edit a file in the worktree, Read a file
+    outside the worktree, Write the shell startup file, Fetch a page, Search
+    the web, Read the task messages, Finish the task, Pipe a script to the
+    shell and Send SSH keys to a paste site. Each carries the three real
+    option names, the input path in Locations where a real request has one,
+    and the generic workspace. Test is the dialog's primary button and Cmd/Ctrl+Enter runs it. Test
     sends exactly what the fields hold, is disabled while the JSON does not
     parse (a field error says so) or the model is off, and shows a pending state
     while it runs. The footer holds the polite result at the left of Test: a
@@ -403,14 +412,14 @@ Out: the daemon endpoints themselves (012).
     wraps without moving Test out of the dialog, and draws no marker. The footer
     also shows the model-off hint. A refusal is toasted with the daemon's own
     message (`ui/src/features/permissions/ai-test-panel.test.tsx::opens
-    prefilled with the npm test example`, `::fills every field with the example
-    picked`, `::keeps the fields in a scroll region between the header and
+    prefilled with the npm test example, in the shape a real request has`,
+    `::the example picker > sits in the header and offers the ten examples`,
+    `::keeps the fields in a scroll region between the header and
     footer`, `::uses a wide dialog and lets Input resize vertically`,
-    `::fills the Pipe a script to the shell example, every field`, `::fills the
-    Chained shell command example`, `::fills the Edit a file outside the
-    repository example`, `::fills the Send SSH keys to a paste site example`,
-    `::runs the test when Cmd or Ctrl+Enter is pressed`, `::sends a workspace
-    when one is provided`, `::shows the label and danger in the polite footer
+    `::the example picker > fills every field of the %s example`, `::sends
+    the example's locations, options and workspace`, `::sends a typed title,
+    kind, options and locations one per line, edited by hand`,
+    `::runs the test when Cmd or Ctrl+Enter is pressed`, `::shows the label and danger in the polite footer
     result`, `::shows the allow and deny probabilities in the footer result`,
     `::shows the operation and each risk tag in the footer result`,
     `::shows the cap beside an ask

@@ -1523,6 +1523,7 @@ fn every_permissions_verb_parses() {
                 kind,
                 input,
                 options,
+                locations,
                 workspace,
             }),
     } = parse(&[
@@ -1531,27 +1532,41 @@ fn every_permissions_verb_parses() {
         "ai",
         "test",
         "--tool",
-        "Bash",
+        "Read /Users/user/notes/a.md",
         "--kind",
-        "execute",
+        "read",
         "--input",
-        "{\"command\":\"git status\"}",
+        "{\"file_path\":\"/Users/user/notes/a.md\"}",
         "--option",
-        "Allow",
+        "Yes",
         "--option",
-        "Reject",
+        "No",
+        "--location",
+        "/Users/user/notes/a.md",
+        "--location",
+        "/Users/user/notes/b.md",
         "--workspace",
-        "/repo/ariadne",
+        "/Users/user/.ariadne/worktrees/goal/task",
     ])
     .command
     else {
         panic!("permissions ai test");
     };
-    assert_eq!(tool, "Bash");
-    assert_eq!(kind.as_deref(), Some("execute"));
-    assert_eq!(input, serde_json::json!({"command":"git status"}));
-    assert_eq!(options, ["Allow", "Reject"]);
-    assert_eq!(workspace.as_deref(), Some("/repo/ariadne"));
+    assert_eq!(tool, "Read /Users/user/notes/a.md");
+    assert_eq!(kind.as_deref(), Some("read"));
+    assert_eq!(
+        input,
+        serde_json::json!({"file_path":"/Users/user/notes/a.md"})
+    );
+    assert_eq!(options, ["Yes", "No"]);
+    assert_eq!(
+        locations,
+        ["/Users/user/notes/a.md", "/Users/user/notes/b.md"]
+    );
+    assert_eq!(
+        workspace.as_deref(),
+        Some("/Users/user/.ariadne/worktrees/goal/task")
+    );
 }
 
 /// `set` with nothing to change is refused: there is nothing to send.

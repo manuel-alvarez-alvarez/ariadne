@@ -175,6 +175,7 @@ pub(crate) fn test_call(
     tool: String,
     kind: Option<String>,
     input: Value,
+    locations: &[String],
     names: &[String],
 ) -> (Value, Value) {
     let mut tool_call = Map::new();
@@ -182,6 +183,10 @@ pub(crate) fn test_call(
     tool_call.insert("rawInput".into(), input);
     if let Some(kind) = kind {
         tool_call.insert("kind".into(), Value::String(kind));
+    }
+    if !locations.is_empty() {
+        let locations = locations.iter().map(|path| json!({"path": path})).collect();
+        tool_call.insert("locations".into(), Value::Array(locations));
     }
     let options = names
         .iter()

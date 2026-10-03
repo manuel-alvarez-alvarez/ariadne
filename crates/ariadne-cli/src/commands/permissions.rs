@@ -84,7 +84,8 @@ pub(crate) enum AiPermissionsCommand {
     },
     /// Score one request with the AI permission model
     Test {
-        /// The tool call title
+        /// The tool call title the model sees, such as `git status` or
+        /// `Read /etc/hosts`, not the tool name
         #[arg(long)]
         tool: String,
         /// The tool call kind
@@ -96,6 +97,9 @@ pub(crate) enum AiPermissionsCommand {
         /// An option name, repeated for each option
         #[arg(long = "option")]
         options: Vec<String>,
+        /// A path the tool call touches, repeated for each location
+        #[arg(long = "location")]
+        locations: Vec<String>,
         /// The workspace used to derive whether a path is outside it
         #[arg(long)]
         workspace: Option<String>,
@@ -276,6 +280,7 @@ async fn run_ai(client: &Client, cmd: AiPermissionsCommand, format: Format) -> R
             kind,
             input,
             options,
+            locations,
             workspace,
         } => {
             let response = client
@@ -284,6 +289,7 @@ async fn run_ai(client: &Client, cmd: AiPermissionsCommand, format: Format) -> R
                     kind,
                     input,
                     options: (!options.is_empty()).then_some(options),
+                    locations: (!locations.is_empty()).then_some(locations),
                     workspace,
                 })
                 .await?;
@@ -945,7 +951,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sends_the_workspace_with_the_request() {
+    async fn test_sends_the_workspace_and_every_location_with_the_request() {
         let seen = Arc::new(Mutex::new(None));
         async fn handler(
             State(seen): State<Arc<Mutex<Option<serde_json::Value>>>>,
@@ -976,6 +982,7 @@ mod tests {
                 kind: Some("execute".into()),
                 input: json!({"command": "git status"}),
                 options: vec!["Allow".into()],
+                locations: vec!["/repo/ariadne".into(), "/etc/hosts".into()],
                 workspace: Some("/repo/ariadne".into()),
             }),
             Format::Json,
@@ -984,10 +991,9 @@ mod tests {
         .unwrap();
         server.abort();
 
-        assert_eq!(
-            seen.lock().unwrap().as_ref().unwrap()["workspace"],
-            "/repo/ariadne"
-        );
+        let seen = seen.lock().unwrap().take().unwrap();
+        assert_eq!(seen["workspace"], "/repo/ariadne");
+        assert_eq!(seen["locations"], json!(["/repo/ariadne", "/etc/hosts"]));
     }
 
     /// `enable` sends `{"enabled": true}` and nothing else.

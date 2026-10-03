@@ -78,7 +78,7 @@ Examples:
   ariadne permissions ai show                  # settings, install state, python
   ariadne permissions ai set --allow-threshold 0.2 --deny-threshold 0.8
   ariadne permissions ai set --flavour 9b --device cuda
-  ariadne permissions ai test --tool Bash --input '{\"command\":\"git status\"}' --workspace .
+  ariadne permissions ai test --tool 'Read /etc/hosts' --kind read --input '{\"file_path\":\"/etc/hosts\"}' --location /etc/hosts --workspace .
   ariadne permissions ai refresh
   ariadne permissions ai disable
 ";

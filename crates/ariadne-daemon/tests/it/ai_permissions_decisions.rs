@@ -153,6 +153,35 @@ fn outside_workspace_read_script() -> Value {
     scripted
 }
 
+/// A Bash call in the shape `claude-acp` sends: the command as the title, a
+/// description, the three real option names, and a location outside the
+/// worktree that only `locations` names.
+const LOCATED_TITLE: &str = "ls";
+const LOCATED_PATH: &str = "/Users/user/notes";
+const LOCATED_OPTIONS: [&str; 3] = ["Yes", "Yes, and don't ask again for ls * commands", "No"];
+
+fn located_input() -> Value {
+    json!({"command": "ls", "description": "List the notes"})
+}
+
+fn located_script() -> Value {
+    let mut scripted = script();
+    scripted["prompts"] = json!([{
+        "permission": {
+            "toolCall": {"toolCallId": "call-1", "title": LOCATED_TITLE, "kind": "execute",
+                         "rawInput": located_input(), "locations": [{"path": LOCATED_PATH}]},
+            "options": [
+                {"optionId": "yes", "name": LOCATED_OPTIONS[0], "kind": "allow_once"},
+                {"optionId": "always", "name": LOCATED_OPTIONS[1], "kind": "allow_always"},
+                {"optionId": "no", "name": LOCATED_OPTIONS[2], "kind": "reject_once"}
+            ]
+        },
+        "updates": [],
+        "stop_reason": "end_turn"
+    }]);
+    scripted
+}
+
 fn python() -> String {
     shared_script("#!/bin/sh\necho 'Python 3.12.1'\n")
         .display()
@@ -581,6 +610,49 @@ async fn the_recorded_outside_workspace_read_is_allowed() {
             .contains("reading, listing and searching files outside the workspace, with no credential and no transfer")
     );
     assert_eq!(requests[0]["state"]["derived"]["outside_workspace"], true);
+}
+
+#[tokio::test]
+async fn a_test_request_with_locations_derives_what_the_live_request_does() {
+    let server = ModelServer::answer(0.5).await;
+    let (h, cast, _agent_dir) =
+        ai_permissions_harness_with(&server, 0.05, Timeouts::default(), located_script()).await;
+
+    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    wait_for_question(&h, &session).await;
+    let live = permission_request(&h, &session.id).await;
+    let live_state = server.requests.lock().unwrap()[0]["state"].clone();
+    let workspace = live_state["task"]["workspace"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let request = |locations: Value| {
+        post_json(
+            "/v1/permissions/ai/test",
+            json!({"tool": LOCATED_TITLE, "kind": "execute", "input": located_input(),
+                   "options": LOCATED_OPTIONS, "locations": locations,
+                   "workspace": workspace}),
+        )
+    };
+
+    let tested: TestAiPermissionResponse =
+        h.json(request(json!([LOCATED_PATH])), StatusCode::OK).await;
+    let unlocated: TestAiPermissionResponse = h.json(request(Value::Null), StatusCode::OK).await;
+
+    assert_eq!(live["risk_tags"], json!(["outside_workspace"]));
+    assert_eq!(json!(tested.risk_tags), live["risk_tags"]);
+    assert_eq!(json!(tested.operation), live["operation"]);
+    let requests = server.requests.lock().unwrap();
+    assert_eq!(
+        requests[1]["state"], live_state,
+        "the same normalized state"
+    );
+    assert_eq!(live_state["derived"]["outside_workspace"], true);
+    assert_eq!(
+        unlocated.risk_tags,
+        Some(vec![]),
+        "the tag came from the location"
+    );
 }
 
 /// A `kev.serve` that records its pid, loads for as long as its second

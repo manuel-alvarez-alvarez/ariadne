@@ -6323,6 +6323,16 @@
             ],
             "description": "The tool call kind the model sees."
           },
+          "locations": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The paths the tool call touches, as an agent sends them in `locations`."
+          },
           "options": {
             "type": [
               "array",
@@ -6335,7 +6345,7 @@
           },
           "tool": {
             "type": "string",
-            "description": "The tool call title the model sees."
+            "description": "The tool call title the model sees, such as `git status` or\n`Read /etc/hosts`, not the tool name."
           },
           "workspace": {
             "type": [

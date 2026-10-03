@@ -201,9 +201,11 @@ same binary also serves (013).
     --permission-mode ai` alike — carries the hint `run ariadne permissions ai
     enable`; a `python_unavailable` one carries `install Python 3.12 or 3.13,
     or set python_bin in config.toml`.
-33. `ariadne permissions ai test --tool <T> [--kind <K>] --input <json>
-    [--option <name>]...` sends one request to the AI permission model without
-    selecting or recording an approval. It refuses invalid input JSON locally,
+33. `ariadne permissions ai test --tool <title> [--kind <K>] --input <json>
+    [--option <name>]... [--location <path>]... [--workspace <dir>]` sends one
+    request to the AI permission model without selecting or recording an
+    approval. `--tool` is the tool call title the model sees, not the tool
+    name. It refuses invalid input JSON locally,
     prints one score line for people and the response unchanged with
     `--format json`.
 34. `ariadne doctor` reports the Python interpreter the AI permission model's install would run

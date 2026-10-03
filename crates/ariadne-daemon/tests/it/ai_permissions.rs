@@ -699,10 +699,12 @@ async fn the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document() {
             "{field} is absent from the update schema"
         );
     }
-    assert!(
-        schemas["TestAiPermissionRequest"]["properties"]["workspace"].is_object(),
-        "workspace is absent from the test request"
-    );
+    for field in ["workspace", "locations"] {
+        assert!(
+            schemas["TestAiPermissionRequest"]["properties"][field].is_object(),
+            "{field} is absent from the test request"
+        );
+    }
     for field in ["operation", "risk_tags", "cap", "probabilities"] {
         assert!(
             schemas["TestAiPermissionResponse"]["properties"][field].is_object(),

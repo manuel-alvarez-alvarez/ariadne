@@ -2711,9 +2711,14 @@ export interface components {
             input: unknown;
             /** @description The tool call kind the model sees. */
             kind?: string | null;
+            /** @description The paths the tool call touches, as an agent sends them in `locations`. */
+            locations?: string[] | null;
             /** @description The option names the model sees. */
             options?: string[] | null;
-            /** @description The tool call title the model sees. */
+            /**
+             * @description The tool call title the model sees, such as `git status` or
+             *     `Read /etc/hosts`, not the tool name.
+             */
             tool: string;
             /** @description The workspace used to derive whether a path is outside it. */
             workspace?: string | null;
