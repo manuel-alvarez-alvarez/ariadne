@@ -7,6 +7,7 @@ commits: []
 tests:
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-daemon/tests/it/stats.rs
+  - crates/ariadne-daemon/tests/it/switch_stats.rs
   - crates/ariadne-daemon/src/http/stats.rs
   - crates/ariadne-daemon/src/acp.rs
   - crates/ariadne-cli/src/commands/stats.rs
@@ -26,8 +27,8 @@ of that ledger. The stats are read with `GET /v1/stats/<family>`,
 ## Scope
 
 In: the ledger, the rules a fact obeys, the `session_ended` fact, the
-`models` stat family, the filters every family takes, and the route, the
-command and the screen that show it.
+`switch` fact, the `models` and `switches` stat families, the filters every
+family takes, and the route, the command and the screen that show it.
 
 Out: token accounting itself (012, rules 13 to 16), what a session is and how
 it ends (008), and what a skill is (017). Each other stat family adds its
@@ -117,9 +118,49 @@ fact and its rules here when it is built.
     and `skills`: each skill those runs loaded, with how many runs loaded it,
     the most loaded first and then by name.
 
-### The command
+### The `switch` fact
 
-17. The `reviews` family records a `message` fact for every stored task
+17. A session writes one `switch` fact as `Launcher::switch_session` moves it
+    off a model, next to the `session.switched` event it already writes
+    there, whichever of its two paths — same-row or new-row — carries the
+    switch. The fact is of the session that leaves, so its `model` is the
+    model left. A same-agent switch writes the fact before the row's pin
+    moves, so `model` still names what the session left rather than what
+    `set_session_pin` just gave the row.
+18. Its `data` holds `to_model` and `to_effort` (the model and effort
+    entered), `reason` (the event's own reason: `requested` for a switch
+    asked by hand, `exhausted` for one the daemon made of its own accord, or
+    whatever else a caller of `switch_session` writes), `automatic` (`true`
+    where `reason` is `exhausted`, the one reason the daemon switches a
+    session itself), and `same_agent` (whether the conversation carried
+    over).
+19. The exhaustion sweep's own bookkeeping event, `session.auto_switch` —
+    written only for the in-place case, so a later sweep can tell a model
+    already tried in the session's chain (009) — writes no fact of its own:
+    the switch it marks already has one, from the `switch_session` call that
+    wrote it.
+20. A fact that cannot be written is logged and goes no further: by the time
+    `switch_session` writes it, the pin has moved or the successor and its
+    event already exist, and a ledger failure does not undo or refuse a
+    switch already under way (rule 10).
+
+### The `switches` family
+
+21. `GET /v1/stats/switches` answers `{items: [SwitchStatDto], switches,
+    exhaustions}`: one row per model a `switch` fact names, as the model it
+    left, the model it arrived on, or both, ordered by model.
+22. A row carries `switches` (facts that left this model), `by_reason` (each
+    reason a switch left it, with how many gave it, the most common first
+    and then by name), `exhaustions` (of `switches`, those reasoned
+    `exhausted`), `automatic_share` (the automatic share of `switches`, 0 to
+    1, and 0 where it had none), and `arrivals` (facts whose `to_model` is
+    this one).
+23. `switches` and `exhaustions` on the response are those same two counts,
+    summed over every row.
+
+### The `reviews` family
+
+24. The `reviews` family records a `message` fact for every stored task
     message, with `kind`, `from_actor` and `to_actor`; the sender session
     supplies its model and seat. An accepted verdict also records a `verdict`
     fact from the reviewer session: verdict, author model and session, its
@@ -129,45 +170,52 @@ fact and its rules here when it is built.
     latency; and messages by kind and sender with total and mean per task.
     `since` and `repo` filter its facts.
 
-18. `ariadne stats <family> [--since <duration|date>] [--repo <id>]` prints a
 ### The `tools` family
 
-17. A `tool_call` fact is written when an ACP tool call ends. Its `data` is
+25. A `tool_call` fact is written when an ACP tool call ends. Its `data` is
     `tool_name`, `duration_ms`, and `ok`; a failed ACP status writes `ok = false`.
     The runtime keeps the opening instant with each open call and spawns the
     `session_fact` and ledger write, so neither a tool update nor a turn waits
     for SQLite.
-18. A `permission` fact is written after each ACP permission reply. Its
+26. A `permission` fact is written after each ACP permission reply. Its
     `data` is `tool_name`, `decided_by`, `answer` (`allow`, `deny`, or
     `cancelled`), `console_option_id`, and `wait_ms`.
-19. `GET /v1/stats/tools` answers `ToolStatsDto`: tool rows carry calls,
+27. `GET /v1/stats/tools` answers `ToolStatsDto`: tool rows carry calls,
     errors, median and p90 duration; model rows carry calls and mean duration;
     permission rows group total and mean wait by `decided_by` and `answer`.
     The median averages the two middle durations and p90 uses nearest rank.
 
-17. `ariadne stats <family> [--since <duration|date>] [--repo <id>]` prints a
+### The command
+
+28. `ariadne stats <family> [--since <duration|date>] [--repo <id>]` prints a
     family. `ariadne stats` alone prints `models`. `--repo` takes an id or a
     unique prefix of one (014). `--since` is sent to the daemon as it was
     written.
-19. `ariadne stats models` prints a table of `MODEL`, `SEAT`, `SESSIONS`,
+29. `ariadne stats models` prints a table of `MODEL`, `SEAT`, `SESSIONS`,
     `FAILED`, `STALLED`, `TOKENS`, `LIFETIME` and `SKILLS`. `TOKENS` is the
     usage cell every other table prints (`↑1.2M 89.1% ↓45k`), `LIFETIME` is
     the mean lifetime, and `SKILLS` is `name count` per skill.
     `--format json` prints the rows the daemon answered. It takes the table
     flags of a listing (014).
+30. `ariadne stats switches` prints a table of `MODEL`, `SWITCHES`,
+    `EXHAUSTED`, `AUTOMATIC` and `ARRIVALS`. `AUTOMATIC` is `automatic_share`
+    as a percentage to one decimal place. `--format json` prints the rows
+    the daemon answered. It takes the table flags of a listing (014).
 
 ### The screen
 
-20. The desktop app has a Stats screen at `#/stats`, titled `Stats`, last in
+31. The desktop app has a Stats screen at `#/stats`, titled `Stats`, last in
     the sidebar. Its header holds a `since` selector (all time, 24 hours, 7
     days, 30 days) and a repository selector. Both live in the URL
     (`?since=7d&repo=<id>`), and the screen hands them to every panel as one
     `{ since, repo }`.
-21. Each family is a panel of its own. The models panel shows one row per
-    model and seat, its tokens as the app's token figure.
-22. The stats queries sit under the query-key group `stats`
-    (`qk.stats.models(filter)`). Every `task_updated` and `session_updated`
-    event invalidates the whole group, since either may be a fact.
+32. Each family is a panel of its own. The models panel shows one row per
+    model and seat, its tokens as the app's token figure. The switches panel
+    shows one row per model, its automatic share as a percentage.
+33. The stats queries sit under the query-key group `stats`
+    (`qk.stats.models(filter)`, `qk.stats.switches(filter)`). Every
+    `task_updated` and `session_updated` event invalidates the whole group,
+    since either may be a fact.
 
 ## Acceptance criteria
 
@@ -196,6 +244,8 @@ fact and its rules here when it is built.
   (`commands/stats.rs::tools_json_prints_the_dto_and_the_table_groups_its_rows`).
 - The tools panel renders the daemon response under `qk.stats.tools`
   (`stats.test.tsx` "renders the tools panel from the daemon's rows").
+- `switch_stats` honours `since`
+  (`store.rs::switch_stats_keeps_the_facts_since_the_filter`).
 - Deleting the goal keeps the fact
   (`store.rs::a_fact_outlives_the_goal_it_is_about`).
 - A fact is written once per launch
@@ -219,6 +269,19 @@ fact and its rules here when it is built.
   (`store.rs::a_fact_announces_its_session_once_it_is_readable`).
 - `GET /v1/stats/models` returns the ended session's row
   (`stats.rs::the_models_stat_returns_the_row_of_an_ended_session`).
+- A manual switch writes one `switch` fact naming the model left and the
+  model entered, `reason=requested` and `automatic=false`
+  (`switch_stats.rs::a_manual_switch_writes_one_switch_fact_with_the_model_left_and_entered`),
+  and a same-agent switch writes its fact before the pin moves, so the model
+  named is the one left
+  (`switch_stats.rs::a_same_agent_switch_writes_the_fact_before_the_pin_moves`).
+- An exhausted session that auto-switches writes one `switch` fact,
+  `reason=exhausted` and `automatic=true`
+  (`switch_stats.rs::an_exhausted_session_that_auto_switches_writes_one_switch_fact`).
+- `GET /v1/stats/switches` returns a manual switch and an exhausted
+  auto-switch each in the row of the model it left, and the model the
+  automatic switch arrived on counts the arrival
+  (`switch_stats.rs::the_switches_stat_returns_both_in_the_row_of_the_model_left`).
 - `since=1h` keeps a fresh fact, and a moment after now keeps none
   (`stats.rs::since_keeps_the_facts_written_since_then`); a bad `since` is a
   400 naming it (`stats.rs::a_bad_since_is_refused`).
@@ -233,7 +296,12 @@ fact and its rules here when it is built.
   (`commands/stats.rs::tests::stats_models_reads_the_rows_with_the_filters_given`);
   the table prints its headers and a token cell
   (`commands/stats.rs::tests::the_table_prints_headers_and_a_token_cell`).
-- `stats models` takes the table flags of a listing
+- `ariadne stats switches --format json` prints the rows the daemon answered,
+  with the filters given
+  (`commands/stats.rs::tests::stats_switches_reads_the_rows_with_the_filters_given`);
+  the table prints a row per model
+  (`commands/stats.rs::tests::the_switches_table_prints_a_row_per_model`).
+- `stats models` and `stats switches` take the table flags of a listing
   (`cli/tests.rs::the_listing_flags_are_advertised_exactly_where_they_are_honored`),
   and `stats` alone parses as `models` with the filters on either side of the
   family (`cli/tests.rs::stats_alone_runs_models_and_takes_the_filters_either_side`).
@@ -241,6 +309,8 @@ fact and its rules here when it is built.
   (`stats.test.tsx` "renders the models panel from the daemon's rows"), and
   asks with the filters in its URL under the key `qk` names
   (`stats.test.tsx` "asks with the filters in its URL, under the key qk names").
+- The Stats screen renders the switches panel from the daemon's rows
+  (`stats.test.tsx` "renders the switches panel from the daemon's rows").
 - A task or a session update invalidates the stats
   (`dispatch.test.ts` "refetches every stat when a task or a session moves").
 - Stats is the last entry of the sidebar
@@ -259,8 +329,10 @@ fact and its rules here when it is built.
 `crates/ariadne-daemon/src/launcher.rs`,
 `crates/ariadne-daemon/src/scheduler/goals.rs`,
 `crates/ariadne-daemon/src/scheduler/sweeps.rs`,
+`crates/ariadne-daemon/src/scheduler/auto_switch.rs`,
 `crates/ariadne-cli/src/commands/stats.rs`,
 `ui/src/routes/stats.tsx`,
 `ui/src/components/stats/models-panel.tsx`,
+`ui/src/components/stats/switches-panel.tsx`,
 `ui/src/api/query-keys.ts`,
 `ui/src/events/dispatch.ts`.

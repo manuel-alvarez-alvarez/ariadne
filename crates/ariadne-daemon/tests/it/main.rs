@@ -49,6 +49,7 @@ mod stats;
 mod stored_conversations;
 mod stored_conversations_opencode;
 mod switch;
+mod switch_stats;
 mod task_branches;
 mod task_failure;
 mod transcript_usage;

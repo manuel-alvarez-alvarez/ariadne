@@ -17,6 +17,9 @@ use crate::{Result, Store, StoreError, now};
 /// The fact a session writes when one run of it ends.
 const SESSION_ENDED: &str = "session_ended";
 
+/// The fact a session writes as it leaves one model for another.
+const SWITCH: &str = "switch";
+
 /// One fact on its way into the ledger. The store gives it its id and its
 /// `created_at`.
 #[derive(Debug, Clone, PartialEq)]
@@ -101,6 +104,8 @@ pub struct MessageStatRow {
     pub from_actor: String,
     pub total: u64,
     pub mean_per_task: f64,
+}
+
 /// All aggregates over tool calls and permission answers in the selected
 /// facts.
 #[derive(Debug, Clone, PartialEq)]
@@ -153,6 +158,33 @@ type ModelSums = (
 /// Where a row's skill counts are gathered: its `(model, seat)`, and each
 /// skill with how many runs loaded it.
 type SkillCounts = HashMap<(String, Option<String>), Vec<(String, u64)>>;
+
+/// How one model did over the `switch` facts the filter keeps: the switches
+/// that left it, and the switches that arrived on it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SwitchStatRow {
+    pub model: String,
+    /// Sessions that left this model.
+    pub switches: u64,
+    /// Each reason a switch left this model, with how many gave it. The
+    /// most common first, and by name where two tie.
+    pub by_reason: Vec<(String, u64)>,
+    /// Of `switches`, those left for `exhausted`.
+    pub exhaustions: u64,
+    /// The automatic share of `switches`, 0 to 1; 0 where it had none.
+    pub automatic_share: f64,
+    /// Sessions that arrived on this model from another.
+    pub arrivals: u64,
+}
+
+/// The switch family: one row per model a `switch` fact names, left or
+/// arrived on, and the totals over every one of them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SwitchStats {
+    pub items: Vec<SwitchStatRow>,
+    pub switches: u64,
+    pub exhaustions: u64,
+}
 
 impl Store {
     /// Append one fact to the ledger.
@@ -482,6 +514,108 @@ impl Store {
             tools,
             models,
             permissions,
+        })
+    }
+
+    /// How each model did as sessions left it or arrived on it: one row per
+    /// model a `switch` fact names, ordered by model.
+    pub async fn switch_stats(&self, filter: &StatsFilter) -> Result<SwitchStats> {
+        let (narrow, binds) = narrowed(filter);
+        let mut q = sqlx::query_as::<_, (String, i64, i64, i64)>(sqlx::AssertSqlSafe(format!(
+            "SELECT model, COUNT(*),
+                    COALESCE(SUM(json_extract(data, '$.reason') = 'exhausted'), 0),
+                    COALESCE(SUM(json_extract(data, '$.automatic') = 1), 0)
+               FROM stat_facts
+              WHERE kind = ? AND model IS NOT NULL{narrow}
+           GROUP BY model"
+        )))
+        .bind(SWITCH);
+        for bind in &binds {
+            q = q.bind(bind);
+        }
+        let left_rows = q.fetch_all(self.r()).await?;
+
+        let mut q = sqlx::query_as::<_, (String, String, i64)>(sqlx::AssertSqlSafe(format!(
+            "SELECT model, json_extract(data, '$.reason'), COUNT(*)
+               FROM stat_facts
+              WHERE kind = ? AND model IS NOT NULL{narrow}
+           GROUP BY model, json_extract(data, '$.reason')
+           ORDER BY COUNT(*) DESC, json_extract(data, '$.reason')"
+        )))
+        .bind(SWITCH);
+        for bind in &binds {
+            q = q.bind(bind);
+        }
+        let mut reasons: HashMap<String, Vec<(String, u64)>> = HashMap::new();
+        for (model, reason, count) in q.fetch_all(self.r()).await? {
+            reasons
+                .entry(model)
+                .or_default()
+                .push((reason, count.max(0) as u64));
+        }
+
+        let mut q = sqlx::query_as::<_, (String, i64)>(sqlx::AssertSqlSafe(format!(
+            "SELECT json_extract(data, '$.to_model'), COUNT(*)
+               FROM stat_facts
+              WHERE kind = ?{narrow}
+           GROUP BY json_extract(data, '$.to_model')"
+        )))
+        .bind(SWITCH);
+        for bind in &binds {
+            q = q.bind(bind);
+        }
+        let mut arrivals: HashMap<String, u64> = HashMap::new();
+        for (model, count) in q.fetch_all(self.r()).await? {
+            arrivals.insert(model, count.max(0) as u64);
+        }
+
+        let mut left: HashMap<String, (u64, u64, u64)> = HashMap::new();
+        let mut models: Vec<String> = Vec::new();
+        for (model, switches, exhaustions, automatic) in left_rows {
+            models.push(model.clone());
+            left.insert(
+                model,
+                (
+                    switches.max(0) as u64,
+                    exhaustions.max(0) as u64,
+                    automatic.max(0) as u64,
+                ),
+            );
+        }
+        for model in arrivals.keys() {
+            if !left.contains_key(model) {
+                models.push(model.clone());
+            }
+        }
+        models.sort();
+
+        let mut total_switches = 0;
+        let mut total_exhaustions = 0;
+        let items = models
+            .into_iter()
+            .map(|model| {
+                let (switches, exhaustions, automatic) =
+                    left.get(&model).copied().unwrap_or((0, 0, 0));
+                total_switches += switches;
+                total_exhaustions += exhaustions;
+                SwitchStatRow {
+                    by_reason: reasons.remove(&model).unwrap_or_default(),
+                    automatic_share: match switches {
+                        0 => 0.0,
+                        n => automatic as f64 / n as f64,
+                    },
+                    arrivals: arrivals.get(&model).copied().unwrap_or(0),
+                    model,
+                    switches,
+                    exhaustions,
+                }
+            })
+            .collect();
+
+        Ok(SwitchStats {
+            items,
+            switches: total_switches,
+            exhaustions: total_exhaustions,
         })
     }
 }

@@ -1239,6 +1239,20 @@ impl Launcher {
                     )
                     .await?;
             }
+            // Off the row before the pin moves: the fact is of the session
+            // that leaves, so its `model` is the model left.
+            crate::stats::record_switch(
+                &self.store,
+                &old,
+                serde_json::json!({
+                    "to_model": pin.model,
+                    "to_effort": pin.effort,
+                    "reason": reason,
+                    "automatic": reason == "exhausted",
+                    "same_agent": true,
+                }),
+            )
+            .await;
             let session = self.store.set_session_pin(&old.id, &pin).await?;
             match (old.seat(), &old.task_agent_id, &old.goal_id) {
                 (Some(Seat::Orchestrator), _, Some(goal_id)) => {
@@ -1328,6 +1342,18 @@ impl Launcher {
                 }),
             })
             .await?;
+        crate::stats::record_switch(
+            &self.store,
+            &old,
+            serde_json::json!({
+                "to_model": pin.model,
+                "to_effort": pin.effort,
+                "reason": reason,
+                "automatic": reason == "exhausted",
+                "same_agent": false,
+            }),
+        )
+        .await;
         self.store
             .set_session_status(&old.id, SessionStatus::Exited)
             .await?;

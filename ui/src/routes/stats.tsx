@@ -17,6 +17,7 @@ import type { StatsFilter } from "@/api"
 import { PageHeader } from "@/components/page-header"
 import { ModelsPanel } from "@/components/stats/models-panel"
 import { ReviewsPanel } from "@/components/stats/reviews-panel"
+import { SwitchesPanel } from "@/components/stats/switches-panel"
 import { ToolsPanel } from "@/components/stats/tools-panel"
 import {
   Select,
@@ -106,6 +107,7 @@ export function StatsPage() {
       />
       <ModelsPanel filter={filter} />
       <ReviewsPanel filter={filter} />
+      <SwitchesPanel filter={filter} />
       <ToolsPanel filter={filter} />
     </div>
   )

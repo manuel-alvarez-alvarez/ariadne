@@ -5,14 +5,11 @@ use axum::extract::{Query, State};
 use chrono::{DateTime, Duration, Utc};
 
 use ariadne_api::stats::{
-    AuthorReviewStatDto, MessageStatDto, ModelStatDto, ModelStatsResponse, ReviewStatsDto,
-    ReviewerStatDto, SkillCountDto, StatsQuery,
+    AuthorReviewStatDto, MessageStatDto, ModelStatDto, ModelStatsResponse, PermissionStatDto,
+    ReviewStatsDto, ReviewerStatDto, SkillCountDto, StatsQuery, SwitchReasonCountDto,
+    SwitchStatDto, SwitchStatsResponse, ToolModelStatDto, ToolStatDto, ToolStatsDto,
 };
-use ariadne_store::{ModelStatRow, ReviewStats, StatsFilter};
-    ModelStatDto, ModelStatsResponse, PermissionStatDto, SkillCountDto, StatsQuery,
-    ToolModelStatDto, ToolStatDto, ToolStatsDto,
-};
-use ariadne_store::{ModelStatRow, StatsFilter};
+use ariadne_store::{ModelStatRow, ReviewStats, StatsFilter, SwitchStatRow};
 
 use super::AppState;
 use super::error::{ApiError, ApiResult, Json};
@@ -82,6 +79,8 @@ fn review_stats_dto(stats: ReviewStats) -> ReviewStatsDto {
             })
             .collect(),
     }
+}
+
 #[utoipa::path(get, path = "/v1/stats/tools", tag = "stats",
     params(StatsQuery),
     responses((status = 200, body = ToolStatsDto),
@@ -125,6 +124,23 @@ pub(super) async fn tools(
                 mean_wait_ms: row.mean_wait_ms,
             })
             .collect(),
+    }))
+}
+
+#[utoipa::path(get, path = "/v1/stats/switches", tag = "stats",
+    params(StatsQuery),
+    responses((status = 200, body = SwitchStatsResponse),
+              (status = 400, description = "`since` is neither a moment nor a span")))]
+pub(super) async fn switches(
+    State(state): State<AppState>,
+    Query(query): Query<StatsQuery>,
+) -> ApiResult<Json<SwitchStatsResponse>> {
+    let filter = stats_filter(&query, Utc::now())?;
+    let stats = state.store.switch_stats(&filter).await?;
+    Ok(Json(SwitchStatsResponse {
+        items: stats.items.into_iter().map(switch_stat_dto).collect(),
+        switches: stats.switches,
+        exhaustions: stats.exhaustions,
     }))
 }
 
@@ -181,6 +197,21 @@ fn model_stat_dto(row: ModelStatRow) -> ModelStatDto {
             .into_iter()
             .map(|(name, sessions)| SkillCountDto { name, sessions })
             .collect(),
+    }
+}
+
+fn switch_stat_dto(row: SwitchStatRow) -> SwitchStatDto {
+    SwitchStatDto {
+        model: row.model,
+        switches: row.switches,
+        by_reason: row
+            .by_reason
+            .into_iter()
+            .map(|(reason, switches)| SwitchReasonCountDto { reason, switches })
+            .collect(),
+        exhaustions: row.exhaustions,
+        automatic_share: row.automatic_share,
+        arrivals: row.arrivals,
     }
 }
 

@@ -2286,6 +2286,104 @@
         }
       }
     },
+    "/v1/stats/switches": {
+      "get": {
+        "tags": [
+          "stats"
+        ],
+        "operationId": "switches",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Only facts written since then: an RFC 3339 moment, or a span back\nfrom now, `<n>m`, `<n>h`, `<n>d` or `<n>w` (`24h`, `7d`, `30d`).\nAbsent is every fact there is.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "repo",
+            "in": "query",
+            "description": "Only facts about this repository id.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SwitchStatsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`since` is neither a moment nor a span"
+          }
+        }
+      }
+    },
+    "/v1/stats/tools": {
+      "get": {
+        "tags": [
+          "stats"
+        ],
+        "operationId": "tools",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Only facts written since then: an RFC 3339 moment, or a span back\nfrom now, `<n>m`, `<n>h`, `<n>d` or `<n>w` (`24h`, `7d`, `30d`).\nAbsent is every fact there is.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "repo",
+            "in": "query",
+            "description": "Only facts about this repository id.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolStatsDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`since` is neither a moment nor a span"
+          }
+        }
+      }
+    },
     "/v1/tasks": {
       "get": {
         "tags": [
@@ -4846,6 +4944,32 @@
           "session_id": {}
         }
       },
+      "PermissionStatDto": {
+        "type": "object",
+        "required": [
+          "decided_by",
+          "answer",
+          "permissions",
+          "mean_wait_ms"
+        ],
+        "properties": {
+          "answer": {
+            "type": "string"
+          },
+          "decided_by": {
+            "type": "string"
+          },
+          "mean_wait_ms": {
+            "type": "number",
+            "format": "double"
+          },
+          "permissions": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "PickWinnerRequest": {
         "type": "object",
         "description": "One reviewer picking the winning author of a task staffed with several:\nthe author whose branch lands.",
@@ -5537,6 +5661,24 @@
           "task"
         ]
       },
+      "SwitchReasonCountDto": {
+        "type": "object",
+        "description": "One reason sessions left a model, and how many switches gave it.",
+        "required": [
+          "reason",
+          "switches"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string"
+          },
+          "switches": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "SwitchSessionRequest": {
         "type": "object",
         "description": "Switch a session to another model or agent: the old session ends, and a\nnew one starts on the same seat, on this pin, in a new conversation.",
@@ -5558,6 +5700,84 @@
           }
         },
         "additionalProperties": false
+      },
+      "SwitchStatDto": {
+        "type": "object",
+        "description": "How one model did as sessions left it or arrived on it.",
+        "required": [
+          "model",
+          "switches",
+          "by_reason",
+          "exhaustions",
+          "automatic_share",
+          "arrivals"
+        ],
+        "properties": {
+          "arrivals": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sessions that arrived on this model from another.",
+            "minimum": 0
+          },
+          "automatic_share": {
+            "type": "number",
+            "format": "double",
+            "description": "The automatic share of `switches`, from 0 to 1; 0 where it had none."
+          },
+          "by_reason": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SwitchReasonCountDto"
+            },
+            "description": "Each reason a switch left this model, the most common first."
+          },
+          "exhaustions": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Of `switches`, those left for `exhausted`.",
+            "minimum": 0
+          },
+          "model": {
+            "type": "string",
+            "description": "`<agent>:<model>`."
+          },
+          "switches": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sessions that left this model.",
+            "minimum": 0
+          }
+        }
+      },
+      "SwitchStatsResponse": {
+        "type": "object",
+        "description": "Response of `GET /v1/stats/switches`.",
+        "required": [
+          "items",
+          "switches",
+          "exhaustions"
+        ],
+        "properties": {
+          "exhaustions": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Exhaustions over every row.",
+            "minimum": 0
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SwitchStatDto"
+            },
+            "description": "One row per model, ordered by model."
+          },
+          "switches": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Switches over every row.",
+            "minimum": 0
+          }
+        }
       },
       "TaskAgentDto": {
         "type": "object",
@@ -6020,6 +6240,90 @@
             "format": "int64",
             "description": "Completion tokens, thinking and reasoning included.",
             "minimum": 0
+          }
+        }
+      },
+      "ToolModelStatDto": {
+        "type": "object",
+        "required": [
+          "model",
+          "calls",
+          "mean_duration_ms"
+        ],
+        "properties": {
+          "calls": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "mean_duration_ms": {
+            "type": "number",
+            "format": "double"
+          },
+          "model": {
+            "type": "string"
+          }
+        }
+      },
+      "ToolStatDto": {
+        "type": "object",
+        "required": [
+          "tool_name",
+          "calls",
+          "errors",
+          "median_duration_ms",
+          "p90_duration_ms"
+        ],
+        "properties": {
+          "calls": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "errors": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "median_duration_ms": {
+            "type": "number",
+            "format": "double"
+          },
+          "p90_duration_ms": {
+            "type": "number",
+            "format": "double"
+          },
+          "tool_name": {
+            "type": "string"
+          }
+        }
+      },
+      "ToolStatsDto": {
+        "type": "object",
+        "description": "Response of `GET /v1/stats/tools`.",
+        "required": [
+          "tools",
+          "models",
+          "permissions"
+        ],
+        "properties": {
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ToolModelStatDto"
+            }
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PermissionStatDto"
+            }
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ToolStatDto"
+            }
           }
         }
       },

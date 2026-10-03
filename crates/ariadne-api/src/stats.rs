@@ -82,6 +82,9 @@ pub struct ReviewStatsDto {
     pub authors: Vec<AuthorReviewStatDto>,
     pub reviewers: Vec<ReviewerStatDto>,
     pub messages: Vec<MessageStatDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ToolStatDto {
     pub tool_name: String,
     pub calls: u64,
@@ -111,4 +114,39 @@ pub struct ToolStatsDto {
     pub tools: Vec<ToolStatDto>,
     pub models: Vec<ToolModelStatDto>,
     pub permissions: Vec<PermissionStatDto>,
+}
+
+/// One reason sessions left a model, and how many switches gave it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct SwitchReasonCountDto {
+    pub reason: String,
+    pub switches: u64,
+}
+
+/// How one model did as sessions left it or arrived on it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct SwitchStatDto {
+    /// `<agent>:<model>`.
+    pub model: String,
+    /// Sessions that left this model.
+    pub switches: u64,
+    /// Each reason a switch left this model, the most common first.
+    pub by_reason: Vec<SwitchReasonCountDto>,
+    /// Of `switches`, those left for `exhausted`.
+    pub exhaustions: u64,
+    /// The automatic share of `switches`, from 0 to 1; 0 where it had none.
+    pub automatic_share: f64,
+    /// Sessions that arrived on this model from another.
+    pub arrivals: u64,
+}
+
+/// Response of `GET /v1/stats/switches`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct SwitchStatsResponse {
+    /// One row per model, ordered by model.
+    pub items: Vec<SwitchStatDto>,
+    /// Switches over every row.
+    pub switches: u64,
+    /// Exhaustions over every row.
+    pub exhaustions: u64,
 }

@@ -3,16 +3,17 @@
 /**
  * The Stats screen against a stubbed daemon.
  *
- * What is pinned: the screen asks `GET /v1/stats/models` with the filters in
- * its URL, renders the models panel off the answer — the row's model, seat,
- * counts, token figure and skills — and keeps the answer under the key `qk`
- * names, which is the one the dispatcher invalidates.
+ * What is pinned: the screen asks `GET /v1/stats/models`,
+ * `GET /v1/stats/reviews`, `GET /v1/stats/switches` and `GET /v1/stats/tools`
+ * with the filters in its URL, renders each panel off its own answer, and
+ * keeps the answer under the key `qk` names, which is the one the dispatcher
+ * invalidates.
  */
 
 import { screen, within } from "@testing-library/react"
 import { beforeEach, describe, expect, it } from "vitest"
 
-import { type ModelStatDto, qk, type ToolStatDto } from "@/api"
+import { type ModelStatDto, qk, type SwitchStatDto, type ToolStatDto } from "@/api"
 import { aRepository } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { StatsPage } from "./stats"
@@ -37,6 +38,15 @@ const TOOL: ToolStatDto = {
   errors: 1,
   median_duration_ms: 25,
   p90_duration_ms: 100,
+}
+
+const SWITCH_ROW: SwitchStatDto = {
+  model: "stub:a",
+  switches: 3,
+  by_reason: [{ reason: "exhausted", switches: 2 }],
+  exhaustions: 2,
+  automatic_share: 2 / 3,
+  arrivals: 1,
 }
 
 /** The URLs of every stats request the screen made. */
@@ -70,6 +80,9 @@ beforeEach(() => {
         permissions: [{ decided_by: "console", answer: "allow", permissions: 1, mean_wait_ms: 20 }],
       })
     }
+    if (url.pathname === "/v1/stats/switches") {
+      return jsonResponse({ items: [SWITCH_ROW], switches: 3, exhaustions: 2 })
+    }
     return jsonResponse({ items: [ROW] })
   })
 })
@@ -90,8 +103,25 @@ describe("StatsPage", () => {
     expect(cells.getByText("coding 4, migration 1")).toBeDefined()
     const reviews = await screen.findByRole("region", { name: "Reviews" })
     expect(within(reviews).getAllByText("2").length).toBeGreaterThan(0)
-    expect(asked.map((url) => url.pathname)).toEqual(["/v1/stats/models", "/v1/stats/reviews"])
-    expect(asked.map((url) => url.pathname)).toEqual(["/v1/stats/models", "/v1/stats/tools"])
+    expect(asked.map((url) => url.pathname).sort()).toEqual([
+      "/v1/stats/models",
+      "/v1/stats/reviews",
+      "/v1/stats/switches",
+      "/v1/stats/tools",
+    ])
+  })
+
+  it("renders the switches panel from the daemon's rows", async () => {
+    renderScreen(<StatsPage />, { route: "/stats" })
+
+    const panel = await screen.findByRole("region", { name: "Switches" })
+    const row = (await within(panel).findByText("stub:a")).closest("tr")
+    if (!row) throw new Error("no row for the model")
+    const cells = within(row)
+    expect(cells.getByText("3")).toBeDefined()
+    expect(cells.getByText("2")).toBeDefined()
+    expect(cells.getByText("66.7%")).toBeDefined()
+    expect(cells.getByText("1")).toBeDefined()
   })
 
   it("asks with the filters in its URL, under the key qk names", async () => {
@@ -100,10 +130,20 @@ describe("StatsPage", () => {
     })
 
     await screen.findByText("stub:test-model")
-    expect(asked[0]?.searchParams.get("since")).toBe("7d")
-    expect(asked[0]?.searchParams.get("repo")).toBe("01JREPO")
+    await screen.findByText("stub:a")
+    const models = asked.find((url) => url.pathname === "/v1/stats/models")
+    const switches = asked.find((url) => url.pathname === "/v1/stats/switches")
+    expect(models?.searchParams.get("since")).toBe("7d")
+    expect(models?.searchParams.get("repo")).toBe("01JREPO")
+    expect(switches?.searchParams.get("since")).toBe("7d")
+    expect(switches?.searchParams.get("repo")).toBe("01JREPO")
     expect(queryClient.getQueryData(qk.stats.models({ since: "7d", repo: "01JREPO" }))).toEqual({
       items: [ROW],
+    })
+    expect(queryClient.getQueryData(qk.stats.switches({ since: "7d", repo: "01JREPO" }))).toEqual({
+      items: [SWITCH_ROW],
+      switches: 3,
+      exhaustions: 2,
     })
   })
 

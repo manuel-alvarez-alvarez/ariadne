@@ -4,19 +4,16 @@
 use anyhow::Result;
 use clap::Subcommand;
 
-use ariadne_api::stats::{ModelStatDto, ModelStatsResponse, ReviewStatsDto, StatsQuery};
 use ariadne_api::stats::{
-    ModelStatDto, ModelStatsResponse, PermissionStatDto, StatsQuery, ToolModelStatDto, ToolStatDto,
-    ToolStatsDto,
+    ModelStatDto, ModelStatsResponse, PermissionStatDto, ReviewStatsDto, StatsQuery, SwitchStatDto,
+    SwitchStatsResponse, ToolModelStatDto, ToolStatDto, ToolStatsDto,
 };
 use ariadne_client::Client;
 
 use super::query_path;
 use super::resolve::{self, Kind};
 use crate::output::{
-    Column, Format, UNCAPPED, col, dash, duration, empty_state, print, print_list, print_table,
-    usage_cell,
-    Column, Format, UNCAPPED, col, dash, duration, empty_state, print_json, print_list,
+    Column, Format, UNCAPPED, col, dash, duration, empty_state, print, print_json, print_list,
     print_table, usage_cell,
 };
 
@@ -71,6 +68,16 @@ const PERMISSIONS: &[Column] = &[
     col("mean wait", UNCAPPED),
 ];
 
+/// Columns of `stats switches`. The model never drops; the rest rank by how
+/// much they explain where the switches went.
+const SWITCHES: &[Column] = &[
+    col("model", UNCAPPED).title(),
+    col("switches", UNCAPPED),
+    col("exhausted", UNCAPPED),
+    col("automatic", UNCAPPED),
+    col("arrivals", UNCAPPED),
+];
+
 #[derive(Subcommand)]
 pub(crate) enum StatsCommand {
     /// How each model did in each seat: sessions, failures, stalls, tokens
@@ -79,6 +86,8 @@ pub(crate) enum StatsCommand {
     Reviews,
     /// How often each tool ran, how long it took, and how permissions answered.
     Tools,
+    /// How often a session left each model, and why
+    Switches,
 }
 
 /// The filters every family takes, as the command line gave them.
@@ -104,6 +113,8 @@ pub(crate) async fn run(
     match cmd.unwrap_or(StatsCommand::Models) {
         StatsCommand::Models => models(client, &query, format).await,
         StatsCommand::Reviews => reviews(client, &query, format).await,
+        StatsCommand::Tools => tools(client, &query, format).await,
+        StatsCommand::Switches => switches(client, &query, format).await,
     }
 }
 
@@ -156,8 +167,6 @@ async fn reviews(client: &Client, query: &StatsQuery, format: Format) -> Result<
         println!("Messages");
         print_table(REVIEW_MESSAGES, &messages).expect("print messages");
     })
-        StatsCommand::Tools => tools(client, &query, format).await,
-    }
 }
 
 async fn tools(client: &Client, query: &StatsQuery, format: Format) -> Result<()> {
@@ -261,6 +270,33 @@ fn permission_row(row: &PermissionStatDto) -> Vec<String> {
     ]
 }
 
+async fn switches(client: &Client, query: &StatsQuery, format: Format) -> Result<()> {
+    let response: SwitchStatsResponse = client
+        .get_json(&query_path("/v1/stats/switches", query)?)
+        .await?;
+    print_list(
+        format,
+        &response.items,
+        SWITCHES,
+        switch_row,
+        empty_state(
+            "No session has switched in that span.",
+            Some("ariadne session ls"),
+        ),
+    )
+}
+
+/// A row of `stats switches`, in the order [`SWITCHES`] declares its columns.
+fn switch_row(row: &SwitchStatDto) -> Vec<String> {
+    vec![
+        row.model.clone(),
+        row.switches.to_string(),
+        row.exhaustions.to_string(),
+        format!("{:.1}%", row.automatic_share * 100.0),
+        row.arrivals.to_string(),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,7 +307,7 @@ mod tests {
     use axum::routing::get;
     use axum::{Json, Router};
 
-    use ariadne_api::stats::SkillCountDto;
+    use ariadne_api::stats::{SkillCountDto, SwitchReasonCountDto};
     use ariadne_api::usage::TokenUsageDto;
 
     use crate::output::{View, render_table};
@@ -434,6 +470,8 @@ mod tests {
         ] {
             assert!(printed.contains(value), "{printed}");
         }
+    }
+
     /// `stats tools` reads its DTO as JSON, and its three tables name the
     /// tool, model, and permission groups.
     #[tokio::test]
@@ -474,5 +512,76 @@ mod tests {
         assert!(tool.contains("TOOL") && tool.contains("Bash"));
         assert!(model.contains("MODEL") && model.contains("stub:test-model"));
         assert!(permission.contains("DECIDED BY") && permission.contains("console"));
+    }
+
+    fn switch_stat() -> SwitchStatDto {
+        SwitchStatDto {
+            model: "stub:a".into(),
+            switches: 3,
+            by_reason: vec![SwitchReasonCountDto {
+                reason: "exhausted".into(),
+                switches: 2,
+            }],
+            exhaustions: 2,
+            automatic_share: 2.0 / 3.0,
+            arrivals: 1,
+        }
+    }
+
+    /// A daemon that answers `GET /v1/stats/switches` with [`switch_stat`],
+    /// and keeps the query string each call sent.
+    async fn serve_switches() -> (Client, Arc<Mutex<Vec<Option<String>>>>) {
+        async fn handler(
+            State(seen): State<Arc<Mutex<Vec<Option<String>>>>>,
+            RawQuery(query): RawQuery,
+        ) -> Json<SwitchStatsResponse> {
+            seen.lock().unwrap().push(query);
+            Json(SwitchStatsResponse {
+                items: vec![switch_stat()],
+                switches: 3,
+                exhaustions: 2,
+            })
+        }
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let app = Router::new()
+            .route("/v1/stats/switches", get(handler))
+            .with_state(seen.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (Client::tcp(format!("http://{address}")), seen)
+    }
+
+    /// `stats switches --format json` prints the rows the daemon answered,
+    /// with the filters it was given.
+    #[tokio::test]
+    async fn stats_switches_reads_the_rows_with_the_filters_given() {
+        let (client, seen) = serve_switches().await;
+        let filters = Filters {
+            since: Some("7d".into()),
+            repo: None,
+        };
+        run(&client, Some(StatsCommand::Switches), filters, Format::Json)
+            .await
+            .unwrap();
+        assert_eq!(*seen.lock().unwrap(), [Some("since=7d".to_string())]);
+    }
+
+    /// The table carries a header and a row per model: switches out,
+    /// exhausted, automatic and arrivals.
+    #[test]
+    fn the_switches_table_prints_a_row_per_model() {
+        let table = render_table(SWITCHES, &[switch_row(&switch_stat())], &View::plain()).unwrap();
+        let mut lines = table.lines();
+        let headers: Vec<&str> = lines.next().unwrap().split_whitespace().collect();
+        assert_eq!(
+            headers,
+            ["MODEL", "SWITCHES", "EXHAUSTED", "AUTOMATIC", "ARRIVALS"]
+        );
+        let row = lines.next().unwrap();
+        assert!(row.contains("stub:a"), "{row}");
+        assert!(row.contains('3'), "{row}");
+        assert!(row.contains("66.7%"), "{row}");
+        assert!(row.contains('1'), "{row}");
     }
 }

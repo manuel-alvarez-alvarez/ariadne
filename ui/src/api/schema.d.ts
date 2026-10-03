@@ -927,6 +927,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/stats/switches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["stats_switches"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/stats/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["stats_tools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tasks": {
         parameters: {
             query?: never;
@@ -2051,6 +2083,14 @@ export interface components {
             risk_tags?: string[] | null;
             session_id: unknown;
         };
+        PermissionStatDto: {
+            answer: string;
+            decided_by: string;
+            /** Format: double */
+            mean_wait_ms: number;
+            /** Format: int64 */
+            permissions: number;
+        };
         /**
          * @description One reviewer picking the winning author of a task staffed with several:
          *     the author whose branch lands.
@@ -2353,6 +2393,12 @@ export interface components {
          * @enum {string}
          */
         SkillSeat: "orchestrator" | "task";
+        /** @description One reason sessions left a model, and how many switches gave it. */
+        SwitchReasonCountDto: {
+            reason: string;
+            /** Format: int64 */
+            switches: number;
+        };
         /**
          * @description Switch a session to another model or agent: the old session ends, and a
          *     new one starts on the same seat, on this pin, in a new conversation.
@@ -2366,6 +2412,48 @@ export interface components {
              * @example claude-acp:sonnet
              */
             model: string;
+        };
+        /** @description How one model did as sessions left it or arrived on it. */
+        SwitchStatDto: {
+            /**
+             * Format: int64
+             * @description Sessions that arrived on this model from another.
+             */
+            arrivals: number;
+            /**
+             * Format: double
+             * @description The automatic share of `switches`, from 0 to 1; 0 where it had none.
+             */
+            automatic_share: number;
+            /** @description Each reason a switch left this model, the most common first. */
+            by_reason: components["schemas"]["SwitchReasonCountDto"][];
+            /**
+             * Format: int64
+             * @description Of `switches`, those left for `exhausted`.
+             */
+            exhaustions: number;
+            /** @description `<agent>:<model>`. */
+            model: string;
+            /**
+             * Format: int64
+             * @description Sessions that left this model.
+             */
+            switches: number;
+        };
+        /** @description Response of `GET /v1/stats/switches`. */
+        SwitchStatsResponse: {
+            /**
+             * Format: int64
+             * @description Exhaustions over every row.
+             */
+            exhaustions: number;
+            /** @description One row per model, ordered by model. */
+            items: components["schemas"]["SwitchStatDto"][];
+            /**
+             * Format: int64
+             * @description Switches over every row.
+             */
+            switches: number;
         };
         TaskAgentDto: {
             /**
@@ -2604,6 +2692,30 @@ export interface components {
              * @description Completion tokens, thinking and reasoning included.
              */
             output_tokens: number;
+        };
+        ToolModelStatDto: {
+            /** Format: int64 */
+            calls: number;
+            /** Format: double */
+            mean_duration_ms: number;
+            model: string;
+        };
+        ToolStatDto: {
+            /** Format: int64 */
+            calls: number;
+            /** Format: int64 */
+            errors: number;
+            /** Format: double */
+            median_duration_ms: number;
+            /** Format: double */
+            p90_duration_ms: number;
+            tool_name: string;
+        };
+        /** @description Response of `GET /v1/stats/tools`. */
+        ToolStatsDto: {
+            models: components["schemas"]["ToolModelStatDto"][];
+            permissions: components["schemas"]["PermissionStatDto"][];
+            tools: components["schemas"]["ToolStatDto"][];
         };
         TransitionRequest: {
             /** @description Required when `to` is `finished`, unless the task lands nothing. */
@@ -4450,6 +4562,76 @@ export interface operations {
                     "application/json": components["schemas"]["ReviewStatsDto"];
                 };
             };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    stats_switches: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Only facts written since then: an RFC 3339 moment, or a span back
+                 *     from now, `<n>m`, `<n>h`, `<n>d` or `<n>w` (`24h`, `7d`, `30d`).
+                 *     Absent is every fact there is.
+                 */
+                since?: string | null;
+                /** @description Only facts about this repository id. */
+                repo?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SwitchStatsResponse"];
+                };
+            };
+            /** @description `since` is neither a moment nor a span */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    stats_tools: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Only facts written since then: an RFC 3339 moment, or a span back
+                 *     from now, `<n>m`, `<n>h`, `<n>d` or `<n>w` (`24h`, `7d`, `30d`).
+                 *     Absent is every fact there is.
+                 */
+                since?: string | null;
+                /** @description Only facts about this repository id. */
+                repo?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolStatsDto"];
+                };
+            };
+            /** @description `since` is neither a moment nor a span */
             400: {
                 headers: {
                     [name: string]: unknown;

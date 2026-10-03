@@ -4290,6 +4290,61 @@ async fn tool_stats_keep_the_facts_since_the_filter_and_measure_percentiles() {
     );
 }
 
+/// A `switch` fact of a session that left `model` for `to_model`, for
+/// `reason`, `automatic` or not.
+fn switched(model: &str, to_model: &str, reason: &str, automatic: bool) -> NewStatFact {
+    NewStatFact {
+        kind: "switch".into(),
+        repo_id: Some("01REPO".into()),
+        goal_id: Some("01GOAL".into()),
+        task_id: Some("01TASK".into()),
+        session_id: Some("01SESSION".into()),
+        launch_id: Some("launch-1".into()),
+        seat: Some("author".into()),
+        model: Some(model.into()),
+        effort: None,
+        skills: vec![],
+        data: serde_json::json!({
+            "to_model": to_model, "to_effort": null, "reason": reason,
+            "automatic": automatic, "same_agent": false,
+        }),
+    }
+}
+
+/// `switch_stats` honours `since`: a fact written before the filter is left
+/// out of the model it named.
+#[tokio::test]
+async fn switch_stats_keeps_the_facts_since_the_filter() {
+    let (store, _dir) = test_store().await;
+    store
+        .record_fact(switched("stub:a", "stub:b", "requested", false))
+        .await
+        .unwrap();
+    let hour_ago = StatsFilter {
+        since: Some(chrono::Utc::now() - chrono::Duration::hours(1)),
+        repo_id: None,
+    };
+    let stats = store.switch_stats(&hour_ago).await.unwrap();
+    assert_eq!(stats.switches, 1);
+    assert_eq!(
+        stats
+            .items
+            .iter()
+            .find(|row| row.model == "stub:a")
+            .unwrap()
+            .switches,
+        1
+    );
+
+    let later = StatsFilter {
+        since: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+        repo_id: None,
+    };
+    let stats = store.switch_stats(&later).await.unwrap();
+    assert_eq!(stats.switches, 0);
+    assert!(stats.items.is_empty());
+}
+
 /// A fact names its goal by id and holds no key to it, so deleting the goal
 /// leaves the fact where it was.
 #[tokio::test]

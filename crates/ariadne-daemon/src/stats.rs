@@ -10,6 +10,9 @@ use ariadne_store::{AgentSession, NewStatFact, Result, Store};
 /// The fact one run of a session writes as it ends.
 const SESSION_ENDED: &str = "session_ended";
 
+/// The fact a session writes as it leaves one model for another.
+const SWITCH: &str = "switch";
+
 /// A fact of `kind` about one session, carrying `data`: the repository, goal,
 /// task, launch, seat, model and effort are the session's own, and the skills
 /// are the ones its staffed agent loads.
@@ -119,5 +122,26 @@ async fn run_end(store: &Store, session: &AgentSession) -> Result<()> {
     });
     let fact = fact_of(store, session.clone(), SESSION_ENDED, data).await?;
     store.record_fact_once_per_launch(fact).await?;
+    Ok(())
+}
+
+/// Write the `switch` fact of a session that is leaving one model for
+/// another, off the row as it stood before the switch moved it: `session`
+/// is the model left.
+///
+/// Called next to the `session.switched` event `Launcher::switch_session`
+/// writes, before anything of the switch it is about is undone. A failure is
+/// logged and goes no further: a switch already in flight — a pin moved, an
+/// agent killed, a successor created — is not something a ledger write can
+/// still refuse.
+pub(crate) async fn record_switch(store: &Store, session: &AgentSession, data: serde_json::Value) {
+    if let Err(e) = switch_fact(store, session, data).await {
+        warn!(session = %session.id, error = %e, "could not record a switch");
+    }
+}
+
+async fn switch_fact(store: &Store, session: &AgentSession, data: serde_json::Value) -> Result<()> {
+    let fact = fact_of(store, session.clone(), SWITCH, data).await?;
+    store.record_fact(fact).await?;
     Ok(())
 }
