@@ -111,16 +111,20 @@ function anOutsidePage(
 
 function stubDaemon({
   sessions = [ENGINEER, PLANNER],
+  sessionsResponse,
   outside = [OUTSIDE],
   outsidePage,
+  outsideResponse,
   goals = [GOAL],
   tasks = [TASK],
   acpAgents = [],
   resumed = RESUMED,
 }: {
   sessions?: SessionDto[]
+  sessionsResponse?: () => Promise<Response>
   outside?: OutsideSessionDto[]
   outsidePage?: (query: URLSearchParams) => SessionPageDto
+  outsideResponse?: () => Promise<Response>
   goals?: GoalDto[]
   tasks?: TaskDto[]
   acpAgents?: AcpAgentDto[]
@@ -131,6 +135,7 @@ function stubDaemon({
     const url = new URL(request.url)
     const kind = url.searchParams.get("kind")
     if (url.pathname === "/v1/sessions" && request.method === "GET" && kind === "ariadne") {
+      if (sessionsResponse) return sessionsResponse()
       const status = url.searchParams.get("status")
       const goal = url.searchParams.get("goal")
       const task = url.searchParams.get("task")
@@ -143,6 +148,7 @@ function stubDaemon({
       return Promise.resolve(jsonResponse(aSessionPage(filtered)))
     }
     if (url.pathname === "/v1/sessions" && request.method === "GET" && kind === "outside") {
+      if (outsideResponse) return outsideResponse()
       return Promise.resolve(
         jsonResponse(outsidePage ? outsidePage(url.searchParams) : anOutsidePage(outside)),
       )
@@ -216,6 +222,79 @@ it("lists Ariadne sessions and outside sessions together, newest activity first"
   const outsideIndex = titles.findIndex((text) => text.includes(OUTSIDE.first_prompt))
   expect(engineerIndex).toBeGreaterThanOrEqual(0)
   expect(outsideIndex).toBeGreaterThan(engineerIndex)
+})
+
+it("lists the Ariadne rows while the outside half is still loading", async () => {
+  let answerOutside: (response: Response) => void = () => {}
+  stubDaemon({
+    outsideResponse: () =>
+      new Promise((resolve) => {
+        answerOutside = resolve
+      }),
+  })
+  renderPage()
+
+  expect(await screen.findByTitle(TASK.title)).toBeTruthy()
+  expect(screen.getByText("Looking for outside conversations…")).toBeTruthy()
+  expect(screen.getByText("2 sessions · looking for outside conversations")).toBeTruthy()
+
+  answerOutside(jsonResponse(anOutsidePage([OUTSIDE])))
+  await waitFor(() => expect(screen.queryByText("Looking for outside conversations…")).toBeNull())
+})
+
+it("merges outside rows newest first when the outside half answers", async () => {
+  let answerOutside: (response: Response) => void = () => {}
+  const newestOutside = { ...OUTSIDE, last_activity_at: "2026-01-04T00:00:00Z" }
+  stubDaemon({
+    outsideResponse: () =>
+      new Promise((resolve) => {
+        answerOutside = resolve
+      }),
+  })
+  renderPage()
+
+  await screen.findByText("Looking for outside conversations…")
+  answerOutside(jsonResponse(anOutsidePage([newestOutside])))
+
+  await waitFor(() => expect(screen.queryByText("Looking for outside conversations…")).toBeNull())
+  const titles = screen
+    .getAllByRole("row")
+    .slice(1)
+    .map((tr) => tr.textContent ?? "")
+  expect(titles.findIndex((text) => text.includes(newestOutside.first_prompt))).toBe(0)
+})
+
+it("keeps Ariadne rows when the outside half fails and retries only that half", async () => {
+  let outsideAttempts = 0
+  stubDaemon({
+    outsideResponse: () => {
+      outsideAttempts += 1
+      return Promise.resolve(
+        outsideAttempts === 1
+          ? new Response("outside failed", { status: 500 })
+          : jsonResponse(anOutsidePage([OUTSIDE])),
+      )
+    },
+  })
+  renderPage()
+
+  expect(await screen.findByTitle(TASK.title)).toBeTruthy()
+  expect(await screen.findByText("Could not load outside conversations")).toBeTruthy()
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }))
+
+  await waitFor(() => expect(screen.queryByText("Could not load outside conversations")).toBeNull())
+  expect(queriesTo("ariadne")).toHaveLength(1)
+  expect(queriesTo("outside")).toHaveLength(2)
+})
+
+it("keeps outside rows when the Ariadne half fails", async () => {
+  stubDaemon({
+    sessionsResponse: () => Promise.resolve(new Response("Ariadne failed", { status: 500 })),
+  })
+  renderPage()
+
+  expect(await screen.findByText("Could not load sessions")).toBeTruthy()
+  expect(await screen.findByTitle(OUTSIDE.first_prompt)).toBeTruthy()
 })
 
 it("shows an outside row's empty status, goal and task, and names its agent and directory", async () => {

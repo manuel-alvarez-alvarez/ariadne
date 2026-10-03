@@ -152,7 +152,10 @@ Out: the daemon endpoints themselves (012).
     takes it out of the merged rows, since neither is something an outside
     session could match either. `status` and `seat` are remembered between
     visits, the way this screen's filters always were; the rest are not,
-    since they are for finding one conversation. The Ariadne half arrives
+    since they are for finding one conversation. The Ariadne half renders as
+    soon as it answers; while the outside half is still loading, its rows
+    stay visible with one trailing loading row, and the count reads `<n>
+    sessions · looking for outside conversations`. The Ariadne half arrives
     whole, so only the outside half pages: Load more asks for the
     `next_cursor` the last page carried and appends what comes back, and one
     count line — shown only while the outside half is part of the merged
