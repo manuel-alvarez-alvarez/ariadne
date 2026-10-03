@@ -135,6 +135,8 @@ same binary also serves (013).
     listing, it reads no `--columns` and so refuses none.
 24. Human mutation output is one styled line. Quiet mutation output is only
     the affected id. Inspect keys use lowercase space-separated words.
+    `ariadne goal inspect` shows its landing and each repository's goal branch
+    when one exists.
     Missing session goals, tasks and seats print a dash.
     A row's subject column is `title`, except that the agent listing keeps `agent`.
     Boolean columns use the shared `yes_no` wording. Every empty listing states

@@ -203,6 +203,7 @@ pub(crate) async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Re
                     ("id", Kv::id(g.id.clone())),
                     ("title", Kv::title(g.title.clone())),
                     ("status", Kv::status(g.status.as_str())),
+                    ("landing", landing_row(&g)),
                     (
                         "orchestrator",
                         pin_label(&g.model, g.effort.as_deref()).into(),
@@ -211,7 +212,7 @@ pub(crate) async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Re
                         "repos",
                         g.repos
                             .iter()
-                            .map(|r| format!("{} [{}] ({})", r.path, r.base_branch, r.id))
+                            .map(goal_repo_label)
                             .collect::<Vec<_>>()
                             .join(INDENT)
                             .into(),
@@ -519,6 +520,20 @@ fn pin_label(model: &str, effort: Option<&str>) -> String {
     }
 }
 
+fn goal_repo_label(repo: &ariadne_api::goals::GoalRepositoryDto) -> String {
+    match repo.goal_branch.as_deref() {
+        Some(branch) => format!(
+            "{} [{} → {}] ({})",
+            repo.path, repo.base_branch, branch, repo.id
+        ),
+        None => format!("{} [{}] ({})", repo.path, repo.base_branch, repo.id),
+    }
+}
+
+fn landing_row(goal: &GoalDto) -> Kv {
+    goal.landing.as_str().into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -585,6 +600,43 @@ mod tests {
                 "             reviewers     ↑0 ↓0",
             ]
             .join("\n")
+        );
+    }
+
+    #[test]
+    fn goal_inspect_shows_goal_branches_only_when_set() {
+        use ariadne_api::goals::GoalRepositoryDto;
+
+        let base = repository("01REPO", "/home/me/api", "main");
+        let feature = GoalRepositoryDto {
+            repository: base.clone(),
+            goal_branch: Some("goal/ship-board".into()),
+        };
+        let regular = GoalRepositoryDto {
+            repository: base,
+            goal_branch: None,
+        };
+
+        assert_eq!(
+            goal_repo_label(&feature),
+            "/home/me/api [main → goal/ship-board] (01REPO)"
+        );
+        assert_eq!(goal_repo_label(&regular), "/home/me/api [main] (01REPO)");
+    }
+
+    #[test]
+    fn goal_inspect_prints_its_landing() {
+        let g = GoalDto {
+            landing: Landing::FeatureBranch,
+            ..goal("01GOAL", "Ship the board")
+        };
+
+        assert_eq!(
+            crate::output::kv_block(
+                &[("landing", landing_row(&g))],
+                &crate::output::View::plain()
+            ),
+            "landing  feature_branch"
         );
     }
 
