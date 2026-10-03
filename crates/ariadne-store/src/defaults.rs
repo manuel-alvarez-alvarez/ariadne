@@ -435,6 +435,33 @@ Approved. Publish {branch} against {base_branch}. `<remote>` is what `git -C {re
 4. Answer every comment. Commit a change on {branch}. Put it through `request_review`. Push it once approved. A published branch only grows: no `commit --amend`, no rebase, no forced push. If it stops merging cleanly, `git merge --no-edit <remote>/{base_branch}` and push plainly.
 5. Finished: `gh pr merge --squash` or `glab mr merge --squash`. In {repo_path}, fetch and `git merge --ff-only <remote>/{base_branch}`. Then `finish_task` with `git rev-parse {base_branch}`. Closed unmerged: `fail_task` with that."#;
 
+/// What the author of the final task of a `feature_branch` goal is briefed
+/// with: the one request that takes the goal branch onto the base branch.
+///
+/// The final task works on the goal branch itself, so `{branch}` is the goal
+/// branch and `{base_branch}` the repository base. Every other task of the
+/// repository already landed on it, and their reviewers judged each one: the
+/// request is where the forge's checks and its readers see the goal whole.
+///
+/// The author's worktree holds the goal branch, and git deletes no branch a
+/// worktree has checked out. So the worktree lets go of it before the delete.
+pub fn final_landing_prompt() -> &'static str {
+    LANDING_GOAL_BRANCH
+}
+
+const LANDING_GOAL_BRANCH: &str = r#"# Land goal branch: {task_title}
+
+Approved. Publish the goal branch {branch} against {base_branch}. Work on {branch} itself. `<remote>` is what `git -C {repo_path} remote -v` names. github.com takes `gh`, GitLab `glab`. Neither, or `auth status` shows no account: `fail_task` with the failed check.
+
+1. `git push -u <remote> {branch}`.
+2. `gh pr create --base {base_branch} --head {branch}` or `glab mr create --target-branch {base_branch} --source-branch {branch}`. Title it by the repository's commit conventions. Fill its template. Call `record_pull_request` with the URL.
+3. Poll its checks and comments (`gh pr view`, `glab mr view`). `sleep 300` between polls, never longer in one call. Never end your turn while it is open. Fix a failed check on {branch} and push it.
+4. Answer every comment. Commit a change on {branch} and push it. No amend, no rebase, no forced push. If it stops merging cleanly, `git merge --no-edit <remote>/{base_branch}` and push plainly.
+5. All checks green: `gh pr merge --squash` or `glab mr merge --squash`.
+6. `git -C {repo_path} fetch <remote> {base_branch}`. Then `merge --ff-only <remote>/{base_branch}` if on {base_branch}. Else `fetch <remote> {base_branch}:{base_branch}`.
+7. `git checkout --detach`. Then `git -C {repo_path} branch -D {branch}` and `git push <remote> --delete {branch}`.
+8. `finish_task` with `git -C {repo_path} rev-parse {base_branch}`. Closed unmerged: `fail_task` with that."#;
+
 /// What the author of an approved task that lands nothing is briefed with.
 ///
 /// Not every task ends in a commit on a base branch. A release ends in a
@@ -579,6 +606,10 @@ mod tests {
                 shipped_landings()
                     .map(|landing| (landing_name(landing), default_landing_prompt(landing))),
             )
+            .chain(std::iter::once((
+                FINAL_LANDING.to_string(),
+                final_landing_prompt(),
+            )))
             .collect()
     }
 
@@ -596,6 +627,21 @@ mod tests {
         Landing::ALL
             .into_iter()
             .filter(|landing| *landing != Landing::FeatureBranch)
+    }
+
+    /// How the final task's landing briefing is named in a failure.
+    const FINAL_LANDING: &str = "final landing briefing";
+
+    /// Every landing briefing an author can be handed, named for a failure:
+    /// one per ending, and the final task's.
+    fn every_landing() -> impl Iterator<Item = (String, &'static str)> {
+        Landing::ALL
+            .into_iter()
+            .map(|landing| (landing_name(landing), default_landing_prompt(landing)))
+            .chain(std::iter::once((
+                FINAL_LANDING.to_string(),
+                final_landing_prompt(),
+            )))
     }
 
     /// How a strategy's landing briefing is named in a failure.
@@ -727,6 +773,12 @@ mod tests {
     /// was cut to hold them, so its cap rises from 1000 to 1150 alone. The
     /// landings' total rises from 2700 to 2850, and the grand total from 7380
     /// to 7530, with it.
+    ///
+    /// Then a `feature_branch` goal gained its final task, which takes the
+    /// goal branch onto the base branch by one request. That is a landing no
+    /// text could brief before, so it has a cap of its own at 1450. The
+    /// landings' total rises from 3000 to 4450, and the grand total from 7680
+    /// to 9130, with it.
     #[test]
     fn size_caps_hold() {
         // Raised from 1500 for the reviewer's pick briefing: a kind that did
@@ -737,8 +789,8 @@ mod tests {
         // never that one. Nothing rewrites any of them now, so they are one
         // set, and the total is the two plus the third at its own cap.
         // The direct landing now handles a target outside the current checkout.
-        const LANDING_TOTAL: usize = 3000;
-        const GRAND_TOTAL: usize = 7680;
+        const LANDING_TOTAL: usize = 4450;
+        const GRAND_TOTAL: usize = 9130;
 
         // A cap per seat, not one for the three. The orchestrator's carried
         // its playbook up to 1750; the playbook is the `orchestration` skill
@@ -809,6 +861,13 @@ mod tests {
                 landing_cap(landing)
             );
         }
+        let last = final_landing_prompt();
+        landings += last.len();
+        assert!(
+            last.len() <= 1450,
+            "the {FINAL_LANDING} is {} characters, over its 1450",
+            last.len()
+        );
         assert!(
             landings <= LANDING_TOTAL,
             "the landing briefings total {landings} characters, over {LANDING_TOTAL}"
@@ -1098,11 +1157,10 @@ mod tests {
     /// alone with nothing left to notice.
     #[test]
     fn nothing_the_author_still_has_to_run_comes_after_the_call_that_ends_the_task() {
-        for landing in Landing::ALL {
-            let text = default_landing_prompt(landing);
+        for (name, text) in every_landing() {
             let ends = text
                 .find("`finish_task`")
-                .unwrap_or_else(|| panic!("the {} never ends the task", landing_name(landing)));
+                .unwrap_or_else(|| panic!("the {name} never ends the task"));
             for command in [
                 "git -C {repo_path} push",
                 "git push",
@@ -1112,11 +1170,7 @@ mod tests {
                 "record_pull_request",
             ] {
                 if let Some(at) = text.find(command) {
-                    assert!(
-                        at < ends,
-                        "the {} runs {command} after finish_task",
-                        landing_name(landing)
-                    );
+                    assert!(at < ends, "the {name} runs {command} after finish_task");
                 }
             }
         }
@@ -1500,6 +1554,45 @@ mod tests {
         }
     }
 
+    /// The final task of a `feature_branch` goal publishes the goal branch
+    /// against the base branch, and runs the eight steps in their order: the
+    /// push, the request, the checks, the comments, the squash, the
+    /// fast-forward, the delete and the call that ends the task.
+    #[test]
+    fn the_final_landing_takes_the_goal_branch_onto_the_base_in_order() {
+        let text = final_landing_prompt();
+        let mut at = 0;
+        for step in [
+            "`git push -u <remote> {branch}`",
+            "`gh pr create --base {base_branch} --head {branch}`",
+            "`glab mr create --target-branch {base_branch} --source-branch {branch}`",
+            "`record_pull_request`",
+            "Fix a failed check on {branch}",
+            "Answer every comment",
+            "`gh pr merge --squash`",
+            "`glab mr merge --squash`",
+            "`git -C {repo_path} fetch <remote> {base_branch}`",
+            "`merge --ff-only <remote>/{base_branch}`",
+            "`git -C {repo_path} branch -D {branch}`",
+            "`git push <remote> --delete {branch}`",
+            "`finish_task` with `git -C {repo_path} rev-parse {base_branch}`",
+        ] {
+            let found = text[at..]
+                .find(step)
+                .unwrap_or_else(|| panic!("the {FINAL_LANDING} has no {step} after its last step"));
+            at += found + step.len();
+        }
+
+        // The goal branch is the one branch it works on: it cuts no other,
+        // and a task branch's squash is not its procedure.
+        for other in ["reset --soft", "git rebase", "merge --ff-only {branch}"] {
+            assert!(
+                !text.contains(other),
+                "the {FINAL_LANDING} names {other}, which is a task branch's"
+            );
+        }
+    }
+
     /// Every rule an agent is briefed with is written down once.
     ///
     /// The briefings are one prompt system — a nudge, a resume and a wake
@@ -1563,12 +1656,11 @@ mod tests {
                 kind.as_str()
             );
         }
-        for landing in Landing::ALL {
+        for (name, text) in every_landing() {
             assert_eq!(
-                Landing::validate_landing_template(default_landing_prompt(landing)),
+                Landing::validate_landing_template(text),
                 Ok(()),
-                "the default {}",
-                landing_name(landing)
+                "the default {name}"
             );
         }
     }

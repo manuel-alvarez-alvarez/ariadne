@@ -231,8 +231,18 @@ pub(super) async fn finalize(
         return Err(ApiError::conflict("cannot finalize a plan with no tasks"));
     }
     if goal.landing() == ariadne_core::Landing::FeatureBranch {
+        let repos = state.store.list_goal_repositories(&id).await?;
+        for repo in &repos {
+            if state.store.final_task(&id, &repo.id).await?.is_none() {
+                return Err(ApiError::conflict(format!(
+                    "cannot finalize a feature_branch plan: repository {} has no final task, \
+                     one task that depends on every other task there",
+                    repo.path
+                )));
+            }
+        }
         let branch = goal.branch_name();
-        for repo in state.store.list_goal_repositories(&id).await? {
+        for repo in repos {
             let link = state.store.get_goal_repository(&id, &repo.id).await?;
             if link.goal_branch.is_some() {
                 continue;

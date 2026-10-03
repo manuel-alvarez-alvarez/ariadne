@@ -543,7 +543,12 @@ impl Launcher {
         agent_id: &str,
         then: &str,
     ) -> Result<AgentSession> {
-        let task = self.store.get_task(task_id).await?;
+        // The final task of a feature branch goal works on the goal branch.
+        let task = self
+            .store
+            .start_on_goal_branch(task_id)
+            .await?
+            .ok_or_else(|| anyhow!("the final task {task_id} waits for another task"))?;
         let goal = self.store.get_goal(&task.goal_id).await?;
         let repo = self.store.get_repository(&task.repo_id).await?;
         let seat = self.author_seat(&task, agent_id).await?;
@@ -1190,9 +1195,15 @@ impl Launcher {
             let repo = self.store.get_repository(&task.repo_id).await?;
             // The procedure is the goal's: the user chose how every task of
             // the goal ends when the goal was created, and it is the whole of
-            // what decides which procedure the author runs.
+            // what decides which procedure the author runs. The final task of
+            // a feature branch goal takes the goal branch onto the base.
+            let template = if self.store.works_on_goal_branch(task).await? {
+                ariadne_store::defaults::final_landing_prompt()
+            } else {
+                task.landing_prompt_text()
+            };
             return Ok(prompts::landing_briefing(
-                task.landing_prompt_text(),
+                template,
                 &seen,
                 &repo,
                 &self.store.task_landing_branch(&seen, &repo).await?,
@@ -1718,9 +1729,16 @@ impl Launcher {
                 branches.push(author_branch(&task.branch, author.ordinal));
             }
             branches.dedup();
+            // Neither the branch a task lands on nor the goal branch is the
+            // task's own: a failed final task leaves the goal branch whole.
             let base_branch = self.store.task_landing_branch(&task, &repo).await?;
+            let goal_branch = self
+                .store
+                .get_goal_repository(&task.goal_id, &task.repo_id)
+                .await?
+                .goal_branch;
             for branch in branches {
-                if branch == base_branch {
+                if branch == base_branch || goal_branch.as_ref() == Some(&branch) {
                     continue;
                 }
                 if self

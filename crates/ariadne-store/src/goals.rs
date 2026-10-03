@@ -257,12 +257,29 @@ impl Store {
         self.publish_goal_update(goal_id).await
     }
 
-    /// The branch this task lands on: its goal's branch, or the repository base.
+    /// The branch this task lands on: its goal's branch, or the repository
+    /// base. The final task works on the goal branch itself
+    /// ([`Store::start_on_goal_branch`]), so it lands on the base.
     pub async fn task_landing_branch(&self, task: &Task, repo: &Repository) -> Result<String> {
+        Ok(
+            match self
+                .get_goal_repository(&task.goal_id, &task.repo_id)
+                .await?
+                .goal_branch
+            {
+                Some(goal_branch) if goal_branch != task.branch => goal_branch,
+                _ => repo.base_branch.clone(),
+            },
+        )
+    }
+
+    /// Whether this task works on its goal branch: the final task of a
+    /// `feature_branch` goal, once it has started.
+    pub async fn works_on_goal_branch(&self, task: &Task) -> Result<bool> {
         Ok(self
             .get_goal_repository(&task.goal_id, &task.repo_id)
             .await?
             .goal_branch
-            .unwrap_or_else(|| repo.base_branch.clone()))
+            .is_some_and(|goal_branch| goal_branch == task.branch))
     }
 }

@@ -6,6 +6,7 @@ areas: [daemon, store, prompts]
 commits: [ad268ee0, 305ee064, 45c5e131, 8174c256, 90ac6e67, 524856c7, fdd0c5b6, a69b953f, 29e6d84e, f79c8e15, a4d7da95]
 tests:
   - crates/ariadne-daemon/tests/it/landing_lifecycle.rs
+  - crates/ariadne-daemon/tests/it/final_tasks.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-daemon/tests/it/repositories.rs
   - crates/ariadne-store/tests/store.rs
@@ -35,9 +36,12 @@ and `finished` (001).
      merged;
    - `none` — nothing is landed, and what the task produced is the whole of
      it: a published tag, a filed report, a document that lives elsewhere;
-   - `feature_branch` — the tasks land on a branch of the goal. Until that
-     branch exists, a task lands exactly as `merge` does: the same briefing
-     and the same verification.
+   - `feature_branch` — the tasks land on a branch of the goal, one per
+     repository, and the final task of each repository takes that branch
+     onto the base branch by one request. A task lands on the goal branch as
+     `merge` lands on the base branch: the same briefing and the same
+     verification, against the goal branch. Until that branch exists, the
+     base branch takes its place.
    All of them reach `finished` (001). Landing is one way of getting there
    rather than the meaning of being there.
 2. A goal created with no landing gets the default landing of its first
@@ -95,16 +99,41 @@ and `finished` (001).
    base branch is fast-forwarded in the primary checkout, and the sha is
    reported with `finish_task`. A request closed unmerged ends the task with
    `fail_task`.
-10. `none`: the author is briefed to check that what the task asked for is
+10. `feature_branch` ends in a final task per repository: the one task that
+    depends directly on every other task of that repository. Two such tasks
+    would depend on each other, so at most one matches. It needs no reviewer.
+    `finalize_plan` refuses a `feature_branch` plan unless every repository
+    of the goal has a final task, and the error names the repository. A task
+    created while the goal is active joins the `depends_on` of the final task
+    of its repository; once that final task has started, the create is
+    refused. So the final task stays `pending` until every other task of its
+    repository is finished. Then its author works on the goal branch itself:
+    its worktree checks out the goal branch, it cuts no task branch, and the
+    task's `branch` reads the goal branch from then on. That claim and a task
+    create are serialized: a create that comes first sends a `ready` final
+    task back to `pending` and its author does not start, and a create that
+    comes after is refused before the task exists. That return to `pending`
+    is a wait rather than a failed spawn, so no number of them fails the
+    final task. It lands on the
+    repository base branch. Its landing briefing is a text of its own: push
+    the goal branch, open the request from it to the base branch with `gh` or
+    `glab` and record it, make every check green with fixes on the goal
+    branch, answer every comment, merge with `--squash`, fast-forward the
+    base branch in the primary checkout, delete the goal branch local and
+    remote, then `finish_task` with the base branch sha. A cleanup never
+    deletes the goal branch.
+11. `none`: the author is briefed to check that what the task asked for is
     where the task said to put it, and that nothing is left only in the
     worktree, which is thrown away with the task. Then `finish_task`, with no
     merge commit.
-11. The daemon accepts a merge sha only after verifying it with
+12. The daemon accepts a merge sha only after verifying it with
     `git merge-base --is-ancestor`, against the ending of the task's goal: a
-    merge that never happened is refused. A
+    merge that never happened is refused. The final task of a
+    `feature_branch` goal is verified as a published request is: its sha has
+    to be on the repository base branch. A
     task that lands nothing has nothing git can be asked about, so nothing is
     verified and no sha is demanded.
-12. The forge is read off the `origin` remote at landing time rather than
+13. The forge is read off the `origin` remote at landing time rather than
     configured anywhere, so the answer cannot go stale.
 
 ## Acceptance criteria
@@ -131,6 +160,28 @@ and `finished` (001).
 - A `feature_branch` goal lands its tasks like `merge`: the same briefing, and
   a merge that never happened is refused
   (`landing_lifecycle.rs::a_feature_branch_goal_lands_its_tasks_like_merge`).
+- A `feature_branch` plan with no final task in a repository is refused, and
+  the error names the repository
+  (`final_tasks.rs::a_feature_branch_plan_with_no_final_task_is_refused`).
+- A task created after the plan is finalized joins the final task's
+  `depends_on`
+  (`final_tasks.rs::a_task_created_after_finalize_joins_the_final_task`).
+- A task created just before the final task starts delays the start, and one
+  created after it is refused
+  (`final_tasks.rs::a_task_created_before_the_final_task_starts_delays_the_start`,
+  `::a_task_created_after_the_final_task_starts_is_refused`). Sent back
+  to wait four times in a row, the final task still starts once every task
+  it waits for is finished
+  (`::a_final_task_sent_back_to_wait_again_and_again_still_starts`).
+- The final task stays `pending` until every other task of its repository is
+  finished, then starts on the goal branch and cuts no branch. Its landing
+  briefing names the goal branch as the head and the base branch as the
+  target, and the daemon accepts the squashed sha on the base branch and
+  refuses the goal branch tip
+  (`final_tasks.rs::the_final_task_waits_then_lands_the_goal_branch_on_the_base`).
+  The briefing runs its eight steps in order and nothing after `finish_task`
+  (`defaults.rs::the_final_landing_takes_the_goal_branch_onto_the_base_in_order`,
+  `::nothing_the_author_still_has_to_run_comes_after_the_call_that_ends_the_task`).
 - A merge that never happened is refused
   (`landing_lifecycle.rs::a_merge_that_never_happened_is_refused`), and a
   squashed request lands on the sha the author fast-forwarded to
@@ -157,9 +208,11 @@ and `finished` (001).
 
 ## Sources
 
-`crates/ariadne-store/src/defaults.rs` (`LANDING_*`),
-`crates/ariadne-store/src/entities.rs` (`Goal::landing`,
-`Task::landing_prompt_text`), `crates/ariadne-store/src/goals.rs`
-(`goal_landing`), `crates/ariadne-store/src/tasks.rs` (`TASK_ROWS`),
+`crates/ariadne-store/src/defaults.rs` (`LANDING_*`,
+`final_landing_prompt`), `crates/ariadne-store/src/entities.rs`
+(`Goal::landing`, `Task::landing_prompt_text`),
+`crates/ariadne-store/src/goals.rs` (`goal_landing`,
+`Store::task_landing_branch`), `crates/ariadne-store/src/tasks.rs`
+(`TASK_ROWS`, `Store::final_task`, `Store::start_on_goal_branch`),
 `crates/ariadne-daemon/src/http/landing.rs`,
 `crates/ariadne-core/src/lib.rs` (`Landing`).

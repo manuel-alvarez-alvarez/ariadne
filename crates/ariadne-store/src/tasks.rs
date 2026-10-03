@@ -4,7 +4,9 @@
 use std::collections::{HashMap, HashSet};
 
 use ariadne_core::id::new_id;
-use ariadne_core::{Actor, AttentionReason, Landing, Seat, TaskStatus, check_transition};
+use ariadne_core::{
+    Actor, AttentionReason, GoalStatus, Landing, Seat, TaskStatus, check_transition,
+};
 use chrono::DateTime;
 
 use crate::query::Filtered;
@@ -155,6 +157,10 @@ impl Store {
     /// what the orchestrator settles with the user before it writes any of
     /// them (003), and a number the store enforced afterwards could only
     /// refuse a plan they had already agreed.
+    ///
+    /// In an active `feature_branch` goal the new task joins the
+    /// dependencies of the final task of its repository, so the final task
+    /// still waits for every other task there.
     pub async fn create_task(&self, new: NewTask) -> Result<Task> {
         check_staffing(&new.agents)?;
         let goal = self.get_goal(&new.goal_id).await?;
@@ -176,6 +182,35 @@ impl Store {
         let branch = branch_name(&new.title, &id);
 
         let mut tx = self.w().begin().await?;
+
+        // Found before the new task exists: once it does, the final task no
+        // longer depends on every other task of the repository.
+        let last = if goal.status() == GoalStatus::Active
+            && goal.landing() == Landing::FeatureBranch
+        {
+            match Self::final_task_id(&mut *tx, &goal.id, &repo.id).await? {
+                Some(last) => {
+                    let last: Task =
+                        Self::fetch_by_in_tx(&mut tx, "task", TASK_ROWS, &last).await?;
+                    // A final task on the goal branch has started, even
+                    // while it still reads `ready`.
+                    let started = Self::goal_branch_in_tx(&mut tx, &goal.id, &repo.id)
+                        .await?
+                        .is_some_and(|branch| branch == last.branch);
+                    if started || !matches!(last.status(), TaskStatus::Pending | TaskStatus::Ready)
+                    {
+                        return Err(StoreError::Conflict(format!(
+                            "the final task of {} is {}, so no task can join it",
+                            repo.path, last.status
+                        )));
+                    }
+                    Some(last)
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
 
         sqlx::query(
             "INSERT INTO tasks (id, goal_id, repo_id, title, description, status, branch,
@@ -199,10 +234,153 @@ impl Store {
             Self::insert_dependencies(&mut tx, &goal.id, &id, &new.depends_on).await?;
         }
 
+        let mut transition = None;
+        if let Some(last) = &last {
+            Self::insert_dependencies(&mut tx, &goal.id, &last.id, std::slice::from_ref(&id))
+                .await?;
+            if last.status() == TaskStatus::Ready {
+                transition = Some(
+                    Self::transition_in_tx(
+                        &mut tx,
+                        last,
+                        TaskStatus::Pending,
+                        Actor::Daemon,
+                        Some("a task joined the final task"),
+                        None,
+                    )
+                    .await?,
+                );
+            }
+        }
+
         tx.commit().await?;
         let task = self.get_task(&id).await?;
         self.publish(Change::TaskCreated(task.clone()));
+        if let Some(last) = last {
+            let task = self.get_task(&last.id).await?;
+            self.publish(Change::TaskUpdated { task, transition });
+        }
         Ok(task)
+    }
+
+    /// The final task of a repository in a `feature_branch` goal: the one
+    /// task that depends directly on every other task of that repository.
+    /// Two such tasks would depend on each other, so at most one matches.
+    pub async fn final_task(&self, goal_id: &str, repo_id: &str) -> Result<Option<Task>> {
+        match Self::final_task_id(self.r(), goal_id, repo_id).await? {
+            Some(id) => Ok(Some(self.get_task(&id).await?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn final_task_id<'e>(
+        executor: impl sqlx::SqliteExecutor<'e>,
+        goal_id: &str,
+        repo_id: &str,
+    ) -> Result<Option<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT t.id FROM tasks t
+              WHERE t.goal_id = ? AND t.repo_id = ?
+                AND (SELECT COUNT(*) FROM task_dependencies td
+                       JOIN tasks d ON d.id = td.depends_on_task_id
+                      WHERE td.task_id = t.id AND d.repo_id = t.repo_id)
+                  = (SELECT COUNT(*) FROM tasks o
+                      WHERE o.goal_id = t.goal_id AND o.repo_id = t.repo_id AND o.id <> t.id)
+              ORDER BY t.id
+              LIMIT 1",
+        )
+        .bind(goal_id)
+        .bind(repo_id)
+        .fetch_optional(executor)
+        .await?)
+    }
+
+    /// Put the final task of a `feature_branch` goal on the goal branch, so
+    /// its author works there and cuts no task branch. Every other task is
+    /// returned as it is, and so is a goal with no goal branch yet.
+    ///
+    /// The claim is one write transaction, so a task created at the same
+    /// moment either joins the final task before the claim or is refused after
+    /// it (`create_task`). A final task that is not `ready`, or that waits on
+    /// an unfinished task, is not claimed: it goes back to `pending`, and the
+    /// call returns `None`, so its author never starts. That is a wait, not a
+    /// failure, so nothing counts it against the task.
+    pub async fn start_on_goal_branch(&self, task_id: &str) -> Result<Option<Task>> {
+        let mut tx = self.w().begin().await?;
+        let task: Task = Self::fetch_by_in_tx(&mut tx, "task", TASK_ROWS, task_id).await?;
+        if task.landing() != Landing::FeatureBranch {
+            return Ok(Some(task));
+        }
+        let Some(goal_branch) =
+            Self::goal_branch_in_tx(&mut tx, &task.goal_id, &task.repo_id).await?
+        else {
+            return Ok(Some(task));
+        };
+        if task.branch == goal_branch
+            || Self::final_task_id(&mut *tx, &task.goal_id, &task.repo_id)
+                .await?
+                .is_none_or(|last| last != task.id)
+        {
+            return Ok(Some(task));
+        }
+        let unfinished: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM task_dependencies td
+             JOIN tasks dep ON dep.id = td.depends_on_task_id
+             WHERE td.task_id = ? AND dep.status <> 'finished'",
+        )
+        .bind(task_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if task.status() != TaskStatus::Ready || unfinished > 0 {
+            let transition = match task.status() {
+                TaskStatus::Ready => Some(
+                    Self::transition_in_tx(
+                        &mut tx,
+                        &task,
+                        TaskStatus::Pending,
+                        Actor::Daemon,
+                        Some("a task joined the final task"),
+                        None,
+                    )
+                    .await?,
+                ),
+                _ => None,
+            };
+            tx.commit().await?;
+            if transition.is_some() {
+                let task = self.get_task(task_id).await?;
+                self.publish(Change::TaskUpdated { task, transition });
+            }
+            return Ok(None);
+        }
+        sqlx::query("UPDATE tasks SET branch = ?, updated_at = ? WHERE id = ?")
+            .bind(&goal_branch)
+            .bind(now())
+            .bind(task_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        let task = self.get_task(task_id).await?;
+        self.publish(Change::TaskUpdated {
+            task: task.clone(),
+            transition: None,
+        });
+        Ok(Some(task))
+    }
+
+    async fn goal_branch_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        goal_id: &str,
+        repo_id: &str,
+    ) -> Result<Option<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT goal_branch FROM goal_repositories WHERE goal_id = ? AND repository_id = ?",
+        )
+        .bind(goal_id)
+        .bind(repo_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .flatten())
     }
 
     /// Replace the dependency set of a task (orchestrator, pre-start only).

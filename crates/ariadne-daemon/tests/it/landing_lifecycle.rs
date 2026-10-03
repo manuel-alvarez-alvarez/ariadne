@@ -781,6 +781,23 @@ async fn feature_tasks_land_on_the_goal_branch_and_keep_the_base_unchanged() {
         })
         .await
         .unwrap();
+    // Each repository needs a final task before the plan can start.
+    for (final_repo, depends_on) in [
+        (&repo, vec![first.id.clone(), second.id.clone()]),
+        (&spare, vec![]),
+    ] {
+        h.store
+            .create_task(ariadne_store::NewTask {
+                goal_id: goal.id.clone(),
+                repo_id: final_repo.id.clone(),
+                title: "Open the request".into(),
+                description: String::new(),
+                agents: vec![NewTaskAgent::new(Seat::Author, ["coding"], test_pin())],
+                depends_on,
+            })
+            .await
+            .unwrap();
+    }
     let orchestrator = h.orchestrator_session(&goal).await;
     let before: serde_json::Value = h.get(&format!("/v1/goals/{}", goal.id)).await;
     assert!(

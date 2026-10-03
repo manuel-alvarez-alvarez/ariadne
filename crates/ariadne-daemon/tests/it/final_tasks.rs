@@ -1,0 +1,439 @@
+//! The end of a `feature_branch` goal: the final task of each repository.
+//!
+//! The final task is the one task that depends directly on every other task
+//! of its repository. It waits for all of them, then works on the goal branch
+//! itself and takes it onto the base branch by one request. The agents are the
+//! harness's stub, and the test runs the git commands of the briefing.
+
+use crate::common;
+
+use std::path::PathBuf;
+
+use axum::http::StatusCode;
+
+use ariadne_api::tasks::TaskDto;
+use ariadne_core::{Actor, GoalStatus, Landing, MessageKind, Seat, TaskStatus};
+use ariadne_store::{Goal, NewTask, NewTaskAgent, Repository, Task};
+
+use common::{Harness, TIMEOUT, as_session, harness, post_json, sh, test_pin};
+
+/// A `feature_branch` goal in planning on `repo`.
+async fn feature_goal(h: &Harness, repo: &Repository) -> Goal {
+    h.store
+        .create_goal(ariadne_store::NewGoal {
+            title: "Ship feature".into(),
+            description: String::new(),
+            repository_ids: vec![repo.id.clone()],
+            pin: test_pin(),
+            landing: Some(Landing::FeatureBranch),
+        })
+        .await
+        .unwrap()
+}
+
+/// A task on `repo` with one author, `reviewers` reviewers and `depends_on`.
+async fn task(
+    h: &Harness,
+    goal: &Goal,
+    repo: &Repository,
+    title: &str,
+    reviewers: usize,
+    depends_on: Vec<String>,
+) -> Task {
+    let mut agents = vec![NewTaskAgent::new(Seat::Author, ["coding"], test_pin())];
+    agents.extend(
+        (0..reviewers).map(|_| NewTaskAgent::new(Seat::Reviewer, ["code-review"], test_pin())),
+    );
+    h.store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id.clone(),
+            title: title.into(),
+            description: String::new(),
+            agents,
+            depends_on,
+        })
+        .await
+        .unwrap()
+}
+
+async fn finalize(h: &Harness, goal: &Goal, expected: StatusCode) -> serde_json::Value {
+    let orchestrator = h.orchestrator_session(goal).await;
+    let request = as_session(
+        &format!("/v1/goals/{}/finalize", goal.id),
+        &orchestrator.id,
+        serde_json::json!({}),
+    );
+    match expected {
+        StatusCode::OK => h.json(request, expected).await,
+        _ => serde_json::to_value(h.error(request, expected).await.error.message).unwrap(),
+    }
+}
+
+fn goal_branch(goal: &Goal) -> String {
+    format!("ship-feature-{}", &goal.id[goal.id.len() - 6..])
+}
+
+#[tokio::test]
+async fn a_feature_branch_plan_with_no_final_task_is_refused() {
+    let h = harness().await;
+    let path = h.git_repo("repo");
+    let repo = h.repository(&path).await;
+    let goal = feature_goal(&h, &repo).await;
+    task(&h, &goal, &repo, "First change", 1, vec![]).await;
+    task(&h, &goal, &repo, "Second change", 1, vec![]).await;
+
+    let message = finalize(&h, &goal, StatusCode::CONFLICT).await;
+
+    let message = message.as_str().unwrap();
+    assert!(
+        message.contains(&format!("repository {} has no final task", repo.path)),
+        "{message}"
+    );
+    assert_eq!(
+        h.store.get_goal(&goal.id).await.unwrap().status(),
+        GoalStatus::Planning
+    );
+    assert!(
+        !sh(&path, "git branch --list").contains(&goal_branch(&goal)),
+        "a refused plan cut a goal branch"
+    );
+}
+
+#[tokio::test]
+async fn a_task_created_after_finalize_joins_the_final_task() {
+    let h = harness().await;
+    let path = h.git_repo("repo");
+    let repo = h.repository(&path).await;
+    let goal = feature_goal(&h, &repo).await;
+    let first = task(&h, &goal, &repo, "First change", 1, vec![]).await;
+    let last = task(
+        &h,
+        &goal,
+        &repo,
+        "Open the request",
+        0,
+        vec![first.id.clone()],
+    )
+    .await;
+    finalize(&h, &goal, StatusCode::OK).await;
+
+    let late: TaskDto = h
+        .json(
+            post_json(
+                &format!("/v1/goals/{}/tasks", goal.id),
+                serde_json::json!({"title": "Late change", "agents": [
+                    {"seat": "author", "skills": ["coding"], "model": test_pin().model}]}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+
+    assert_eq!(h.store.list_task_dependencies(&last.id).await.unwrap(), {
+        let mut ids = vec![first.id.clone(), late.id.clone()];
+        ids.sort();
+        ids
+    });
+    assert_eq!(
+        h.store
+            .final_task(&goal.id, &repo.id)
+            .await
+            .unwrap()
+            .map(|t| t.id),
+        Some(last.id)
+    );
+}
+
+#[tokio::test]
+async fn the_final_task_waits_then_lands_the_goal_branch_on_the_base() {
+    let h = harness().scheduler().discover_agents().await;
+    let path = h.git_repo("repo");
+    let repo = h.repository(&path).await;
+    let goal = feature_goal(&h, &repo).await;
+    let first = task(&h, &goal, &repo, "First change", 1, vec![]).await;
+    let last = task(
+        &h,
+        &goal,
+        &repo,
+        "Open the request",
+        0,
+        vec![first.id.clone()],
+    )
+    .await;
+    finalize(&h, &goal, StatusCode::OK).await;
+    let branch = goal_branch(&goal);
+
+    // The first task runs, and the final task waits for it.
+    h.reconcile_task_until(&first.id, TIMEOUT, "the first author", async || {
+        h.running_session(&first.id, Seat::Author).await.is_some()
+    })
+    .await;
+    assert_eq!(h.status(&last.id).await, TaskStatus::Pending);
+    let author = h.running_session(&first.id, Seat::Author).await.unwrap();
+    let worktree = PathBuf::from(author.worktree_path.as_ref().unwrap());
+    sh(
+        &worktree,
+        "echo change > change.txt && git add . && git -c user.email=t@t -c user.name=t commit -qm 'feat: add change'",
+    );
+    let reviewer = h
+        .store
+        .list_task_reviewers(&first.id)
+        .await
+        .unwrap()
+        .remove(0);
+    h.store
+        .transition_task(
+            &first.id,
+            TaskStatus::UnderReview,
+            Actor::Author,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    h.verdict(&first, &reviewer.id, MessageKind::Approve, "looks right")
+        .await;
+    h.reconcile_task_until(&first.id, TIMEOUT, "the first approval", async || {
+        h.status(&first.id).await == TaskStatus::Approved
+    })
+    .await;
+    assert_eq!(h.status(&last.id).await, TaskStatus::Pending);
+    sh(&path, &format!("git fetch -q . {}:{branch}", first.branch));
+    let landed = sh(&path, &format!("git rev-parse {branch}"));
+    let _: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/transitions", first.id),
+                &author.id,
+                serde_json::json!({"to": "finished", "merge_commit": landed}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+
+    // Then the final task starts on the goal branch, and cuts no branch.
+    h.reconcile_task_until(&last.id, TIMEOUT, "the final author", async || {
+        h.status(&last.id).await == TaskStatus::InProgress
+            && h.running_session(&last.id, Seat::Author).await.is_some()
+    })
+    .await;
+    let author = h.running_session(&last.id, Seat::Author).await.unwrap();
+    let worktree = PathBuf::from(author.worktree_path.as_ref().unwrap());
+    assert_eq!(sh(&worktree, "git branch --show-current"), branch);
+    assert_eq!(sh(&worktree, "git rev-parse HEAD"), landed);
+    assert!(!sh(&path, "git branch --list").contains(&last.branch));
+    let dto: TaskDto = h.get(&format!("/v1/tasks/{}", last.id)).await;
+    assert_eq!(dto.branch, branch);
+
+    // With no reviewer it is approved at once, and briefed to publish the
+    // goal branch against the base branch.
+    h.store
+        .transition_task(&last.id, TaskStatus::UnderReview, Actor::Author, None, None)
+        .await
+        .unwrap();
+    h.reconcile_task_until(&last.id, TIMEOUT, "the final landing", async || {
+        h.status(&last.id).await == TaskStatus::Approved
+            && h.told(&author.id).contains("# Land goal branch:")
+    })
+    .await;
+    let told = h.told(&author.id);
+    assert!(
+        told.contains(&format!("gh pr create --base main --head {branch}")),
+        "{told}"
+    );
+
+    // The request squashes the goal branch onto the base branch.
+    sh(
+        &path,
+        &format!(
+            "git merge -q --squash {branch} && git -c user.email=t@t -c user.name=t commit -qm 'feat: ship feature'"
+        ),
+    );
+    let squashed = sh(&path, "git rev-parse main");
+    let finish = |sha: &str| {
+        as_session(
+            &format!("/v1/tasks/{}/transitions", last.id),
+            &author.id,
+            serde_json::json!({"to": "finished", "merge_commit": sha}),
+        )
+    };
+    h.error(finish(&landed), StatusCode::CONFLICT).await;
+    let finished: TaskDto = h.json(finish(&squashed), StatusCode::OK).await;
+    assert_eq!(finished.status, TaskStatus::Finished);
+    assert_eq!(finished.merge_commit.as_deref(), Some(squashed.as_str()));
+    h.launcher.cleanup_task(&last.id, true, true).await.unwrap();
+    assert_eq!(sh(&path, "git rev-parse main"), squashed);
+}
+
+/// A feature goal finalized with a first task and its final task, the first
+/// already finished: the final task is free to start.
+async fn final_task_free_to_start(h: &Harness) -> (Goal, Repository, Task) {
+    let repo = h.repository(&h.git_repo("repo")).await;
+    let goal = feature_goal(h, &repo).await;
+    let first = task(h, &goal, &repo, "First change", 0, vec![]).await;
+    let last = task(
+        h,
+        &goal,
+        &repo,
+        "Open the request",
+        0,
+        vec![first.id.clone()],
+    )
+    .await;
+    finalize(h, &goal, StatusCode::OK).await;
+    h.advance(&first, TaskStatus::UnderReview).await;
+    for (to, actor) in [
+        (TaskStatus::Approved, Actor::Daemon),
+        (TaskStatus::Finished, Actor::Author),
+    ] {
+        h.store
+            .transition_task(&first.id, to, actor, None, Some("abc"))
+            .await
+            .unwrap();
+    }
+    (goal, repo, last)
+}
+
+async fn create_late(h: &Harness, goal: &Goal) -> axum::http::Response<axum::body::Body> {
+    h.response(post_json(
+        &format!("/v1/goals/{}/tasks", goal.id),
+        serde_json::json!({"title": "Late change", "agents": [
+            {"seat": "author", "skills": ["coding"], "model": test_pin().model}]}),
+    ))
+    .await
+}
+
+/// A task created while the final task is about to start joins it first: the
+/// stale `ready` goes back to `pending`, and the author does not start.
+#[tokio::test]
+async fn a_task_created_before_the_final_task_starts_delays_the_start() {
+    let h = harness().await;
+    let (goal, _repo, last) = final_task_free_to_start(&h).await;
+    // The scheduler read the finished dependency, and then the create came.
+    let late = create_late(&h, &goal).await;
+    assert_eq!(late.status(), StatusCode::CREATED);
+    h.store
+        .transition_task(&last.id, TaskStatus::Ready, Actor::Daemon, None, None)
+        .await
+        .unwrap();
+
+    let started = h.launcher.spawn_author(&last.id).await;
+
+    assert!(
+        started.is_err(),
+        "the final author started before the late task finished"
+    );
+    assert_eq!(h.status(&last.id).await, TaskStatus::Pending);
+    assert!(h.running_session(&last.id, Seat::Author).await.is_none());
+    assert_eq!(
+        h.store.get_task(&last.id).await.unwrap().branch,
+        last.branch
+    );
+}
+
+/// A task created once the final task has claimed the goal branch is refused
+/// before it exists, even while the final task still reads `ready`.
+#[tokio::test]
+async fn a_task_created_after_the_final_task_starts_is_refused() {
+    let h = harness().await;
+    let (goal, _repo, last) = final_task_free_to_start(&h).await;
+    h.store
+        .transition_task(&last.id, TaskStatus::Ready, Actor::Daemon, None, None)
+        .await
+        .unwrap();
+    h.store
+        .start_on_goal_branch(&last.id)
+        .await
+        .unwrap()
+        .expect("the final task is free to start");
+    let before = h.store.list_tasks(Default::default()).await.unwrap().len();
+
+    let late = create_late(&h, &goal).await;
+
+    assert_eq!(late.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        h.store.list_tasks(Default::default()).await.unwrap().len(),
+        before
+    );
+    assert_eq!(h.status(&last.id).await, TaskStatus::Ready);
+}
+
+/// A task that joins the final task as it is about to start sends it back to
+/// wait. The wait is no failed spawn: four in a row do not fail the final task,
+/// and it starts once every task it waits for is finished.
+#[tokio::test]
+async fn a_final_task_sent_back_to_wait_again_and_again_still_starts() {
+    let h = harness().scheduler().discover_agents().await;
+    let repo = h.repository(&h.git_repo("repo")).await;
+    let goal = feature_goal(&h, &repo).await;
+    let first = task(&h, &goal, &repo, "First change", 0, vec![]).await;
+    let last = task(
+        &h,
+        &goal,
+        &repo,
+        "Open the request",
+        0,
+        vec![first.id.clone()],
+    )
+    .await;
+    finalize(&h, &goal, StatusCode::OK).await;
+
+    let mut joined = vec![first];
+    for round in 0..4 {
+        joined.push(task(&h, &goal, &repo, &format!("Late change {round}"), 0, vec![]).await);
+        // The scheduler read the dependencies before the task joined.
+        h.store
+            .transition_task(&last.id, TaskStatus::Ready, Actor::Daemon, None, None)
+            .await
+            .unwrap();
+        h.notify(&last.id);
+        h.flush_scheduler().await;
+        assert_eq!(
+            h.status(&last.id).await,
+            TaskStatus::Pending,
+            "round {round}"
+        );
+        assert!(h.running_session(&last.id, Seat::Author).await.is_none());
+    }
+
+    for joined in &joined {
+        h.reconcile_task_until(&joined.id, TIMEOUT, "the author to start", async || {
+            h.status(&joined.id).await == TaskStatus::InProgress
+        })
+        .await;
+        h.store
+            .transition_task(
+                &joined.id,
+                TaskStatus::UnderReview,
+                Actor::Author,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        h.reconcile_task_until(&joined.id, TIMEOUT, "the approval", async || {
+            h.status(&joined.id).await == TaskStatus::Approved
+        })
+        .await;
+        h.store
+            .transition_task(
+                &joined.id,
+                TaskStatus::Finished,
+                Actor::Author,
+                None,
+                Some("abc"),
+            )
+            .await
+            .unwrap();
+    }
+
+    h.reconcile_task_until(&last.id, TIMEOUT, "the final author", async || {
+        h.status(&last.id).await == TaskStatus::InProgress
+            && h.running_session(&last.id, Seat::Author).await.is_some()
+    })
+    .await;
+    assert_eq!(
+        h.store.get_task(&last.id).await.unwrap().branch,
+        goal_branch(&goal)
+    );
+}

@@ -60,7 +60,15 @@ pub(super) async fn verify_merged(
             .await
             .map_err(unresolved)
     };
-    match task.landing() {
+    // The final task of a feature branch goal is squashed onto the base by
+    // its request, as a published task is.
+    let landing = match task.landing() {
+        Landing::FeatureBranch if state.store.works_on_goal_branch(task).await? => {
+            Landing::PullRequest
+        }
+        landing => landing,
+    };
+    match landing {
         // Nothing was landed, so there is nothing git can be asked about.
         // What the task produced is the task's own to have put where it
         // belongs, and no check here can see it.

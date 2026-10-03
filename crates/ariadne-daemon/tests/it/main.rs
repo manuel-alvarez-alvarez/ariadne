@@ -25,6 +25,7 @@ mod ai_permissions_server;
 mod auto_switch;
 mod doctor;
 mod events;
+mod final_tasks;
 mod goal_completion;
 mod goal_delete;
 mod goal_repositories;

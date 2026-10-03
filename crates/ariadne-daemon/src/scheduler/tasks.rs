@@ -118,6 +118,15 @@ impl super::Scheduler {
             }
         }
 
+        // A task joined the final task as it was about to start. The final
+        // task waits again, and the wait is no failed spawn.
+        if task.status() == TaskStatus::Ready
+            && self.store.start_on_goal_branch(&task.id).await?.is_none()
+        {
+            info!(task = %task.id, "final task waits for a task that joined it");
+            return Ok(());
+        }
+
         match task.status() {
             TaskStatus::Pending => {
                 // A dependency that ended without merging is never going to,
