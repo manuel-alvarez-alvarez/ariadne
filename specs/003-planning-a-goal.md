@@ -1,7 +1,7 @@
 ---
 id: planning-a-goal
 status: current
-updated: 2026-09-24
+updated: 2026-10-03
 areas: [prompts, daemon, mcp]
 commits: [d421e30b, fdd0c5b6, 09955c22, 305ad2fb, 7bcb30a0, 31bb7611, 29e6d84e, 1b09ac10, a4d7da95]
 tests:
@@ -30,9 +30,12 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
 ## Behavior
 
 1. A goal opens with one orchestrator session, started in the primary
-   checkout of the goal's first repository and briefed with the goal and its
-   repositories. No numbers: how many tasks the goal takes is what the
-   conversation settles. Resuming an outside session starts no planning (020).
+   checkout of the goal's first repository and briefed with the goal, its
+   landing and its repositories. The landing is chosen when the goal is
+   created, or taken from the default of its first repository (005); the
+   orchestrator reads it off the briefing and does not ask for it. No
+   numbers: how many tasks the goal takes is what the conversation settles.
+   Resuming an outside session starts no planning (020).
 2. The orchestrator never writes code. Its whole output is the plan.
 3. It asks the user about every unclear point, until nothing about the goal is
    open: one question in plain turn text, then it waits. The user answers in
@@ -46,6 +49,12 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
    files run together. Where one task hands another a route, a response
    shape, a function or a file, it names that interface in both tickets
    instead of a `depends_on` edge.
+   Under a `feature_branch` landing, each repository also gets one final
+   task: the one that depends on every other task of that repository. It
+   has one author and no reviewer, and it opens the pull request from the
+   repository's goal branch to the base branch, makes it green, merges it,
+   and deletes the goal branch (005). `finalize_plan` refuses such a plan
+   with no final task in a repository it touches.
 6. It staffs one author per task, on the skills that work needs (017), and
    gives every agent one model from the catalog (011) — a model is required,
    so no agent is staffed without one. Across a plan it spreads the agents
@@ -58,16 +67,17 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
    another agent, and a model the user left unranked is sized from its
    description. What it balances is power against cost and time, so a step up
    a rank or an effort carries a reason it states.
-7. Four things are settled with the user rather than decided alone, because
+7. Three things are settled with the user rather than decided alone, because
    each is a judgement about the work and not about the code:
    - what the goal actually asks for (3);
    - which tasks to leave unreviewed, and what each review is for — every
      task has one reviewer by default, and a task is left unreviewed only
      when nothing can be tested whole, such as a release or a report (017);
-   - how each task ends: `merge`, `pull_request` or `none` (005);
    - what each agent runs on. The orchestrator sizes every one of them from
      the catalog (011) and shows the user what it chose; the model the user
      names instead is the one that is staffed.
+   How a task ends is not asked about: it follows from the goal's landing,
+   settled when the goal was created (005).
 8. It writes the tasks into Ariadne before it asks for the yes, not after.
    So what the user is shown is the tasks themselves — to read, and to edit —
    and the yes is given to a plan that already exists. It revises them until

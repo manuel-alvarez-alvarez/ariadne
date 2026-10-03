@@ -267,15 +267,22 @@ const REVIEWER_SYSTEM_PROMPT: &str = r#"You review one Ariadne task. An approval
 5. Use `send_message` for questions. After a question, end turn. Do not poll `read_messages`. Ariadne sends answers as turns. Questions give no verdict.
 6. Call `submit_verdict` once per review you are asked for. Put that SHA in every verdict. It is the verdict, and nothing else counts. Approve with a note on what you checked. Or request changes: list files and functions, with each item must-fix or optional. Write the verdict in STE."#;
 
-/// Initial briefing of an orchestrator session: the goal, and the
-/// repositories it works in.
+/// Initial briefing of an orchestrator session: the goal, its landing, and
+/// the repositories it works in.
 ///
 /// No numbers. How many tasks a goal takes is what the conversation with the
 /// user settles (003), and a cap written down before that conversation could
 /// only be a guess the orchestrator then has to plan around.
+///
+/// The landing is settled before planning starts — at the goal, not asked
+/// task by task — so it is read here rather than asked for. `feature_branch`
+/// is the one value that changes how the plan is shaped: it needs one final
+/// task per repository (003).
 const ORCHESTRATOR_BRIEFING: &str = r#"# Goal: {goal_title}
 
 {goal_description}
+
+Landing: {landing}
 
 ## Repositories
 {repositories}"#;
@@ -310,7 +317,7 @@ const GOAL_ATTENTION: &str = r#"The tasks of "{goal_title}" need you:
 
 {tasks}
 
-Read them with `list_tasks`. Retry, cancel or rewrite what you must. Call `complete_goal` once every task is done."#;
+Read them with `list_tasks`. Retry, cancel or rewrite. Call `complete_goal` when done."#;
 
 /// What one agent said to another, as it reaches the recipient's agent.
 ///
@@ -1579,7 +1586,7 @@ mod tests {
     /// The phases of the playbook, in the order the conversation runs them.
     /// Named once, because two assertions read them: the skill document holds
     /// all of them in this order, and the seat text holds none.
-    const PLAYBOOK_PHASES: [&str; 14] = [
+    const PLAYBOOK_PHASES: [&str; 13] = [
         "Read the goal. Explore its repositories.",
         "Ask the user about every unclear point",
         "Write one question in your turn text.",
@@ -1589,7 +1596,6 @@ mod tests {
         "Staff one reviewer on every task.",
         "Ask the user which tasks to leave unreviewed",
         "Leave a task unreviewed only when nothing can be tested whole, such as a release or a report.",
-        "Ask the user how each task ends",
         "Mix the agents evenly over the tasks.",
         "Revise them until they write an explicit yes.",
         "Call `finalize_plan`",
@@ -1613,6 +1619,30 @@ mod tests {
 
         // And the yes gates the start, in as many words.
         assert!(prompt.contains("Call it no earlier."), "{prompt}");
+    }
+
+    /// The goal's landing is settled before planning starts, not asked about
+    /// task by task: the orchestrator reads it off its briefing, and a
+    /// `feature_branch` goal needs one final task per repository.
+    #[test]
+    fn the_orchestration_skill_reads_the_goals_landing_and_plans_a_feature_branch_final_task() {
+        let prompt = default_skill_document(ORCHESTRATION_SKILL).unwrap();
+        assert!(
+            !prompt.contains("Ask the user how each task ends"),
+            "the skill still asks how each task ends: {prompt}"
+        );
+        for phrase in [
+            "Read the goal's landing from",
+            "Do not ask for it.",
+            "Under `feature_branch`, add one final task per repository.",
+            "It depends\n   on every other task in that repository.",
+            "Give it one author and no\n   reviewer.",
+        ] {
+            assert!(
+                prompt.contains(phrase),
+                "the orchestration skill and \"{phrase}\": {prompt}"
+            );
+        }
     }
 
     /// A false `depends_on` serializes two tasks that could run together, so

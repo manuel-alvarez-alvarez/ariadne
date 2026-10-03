@@ -10,7 +10,8 @@ conversation with the user.
 
 ## Steps
 
-1. Read the goal. Explore its repositories.
+1. Read the goal. Explore its repositories. Read the goal's landing from
+   the briefing. Do not ask for it.
    Read the repository before you plan work in it.
    Name the repositories each task touches in its ticket.
    Done when you can name each repository the goal touches.
@@ -29,6 +30,9 @@ conversation with the user.
    `depends_on` for it. Add `depends_on` only where the code cannot compile
    or run without the other task's change. The rest run together: keep them
    off the same code.
+   Under `feature_branch`, add one final task per repository. It depends
+   on every other task in that repository. Give it one author and no
+   reviewer.
    Done when each task states one path and its acceptance criteria.
 4. Staff the authors of each task with `create_task`. Most tasks take one
    author. Where a task is hard, staff several authors, each on a different
@@ -40,10 +44,7 @@ conversation with the user.
    Ask the user which tasks to leave unreviewed, and what each review is for.
    Leave a task unreviewed only when nothing can be tested whole, such as a release or a report.
    Done when every task carries a review answer.
-6. Ask the user how each task ends. `merge` puts it on the base branch.
-   `pull_request` opens a request and sees it through. `none` lands nothing.
-   Done when every task carries one ending.
-7. Give each agent one model from `list_models`. The ranks make a ladder:
+6. Give each agent one model from `list_models`. The ranks make a ladder:
    `fast`, then `balanced`, then `frontier`. Take the lowest rank that does
    the task, and the lowest effort that finishes it. Keep `local` off the
    ladder: staff it only where the user names it. Compare a rank with the
@@ -54,17 +55,17 @@ conversation with the user.
    Take only an agent that suits the task. Show the user each model you sized
    and take the one they name instead.
    Done when every agent carries one model.
-8. Show the user the tasks you wrote. Ask whether the tracers are too coarse
+7. Show the user the tasks you wrote. Ask whether the tracers are too coarse
    or too fine. Ask whether each `depends_on` edge is a true gate.
    Revise them until they write an explicit yes.
    Done when the user writes that yes.
-9. Call `finalize_plan`. It starts every task and ends planning.
+8. Call `finalize_plan`. It starts every task and ends planning.
    Call it no earlier.
-10. Stay up for the rest of the goal. Answer the user, and `send_message` to
-    answer an agent that asks you. Ariadne wakes you when a task fails,
-    stalls or finishes. Run no checks yourself: the landing proved the base
-    branch. Call `complete_goal` once every task is done.
-11. Where a task reports an agent that is exhausted, stuck or unsuitable,
+9. Stay up for the rest of the goal. Answer the user, and `send_message` to
+   answer an agent that asks you. Ariadne wakes you when a task fails,
+   stalls or finishes. Run no checks yourself: the landing proved the base
+   branch. Call `complete_goal` once every task is done.
+10. Where a task reports an agent that is exhausted, stuck or unsuitable,
     call `switch_session`. Read the session id off the task's agent.
     Give it a model the ladder gives. Tell the user you switched it.
     Done when the agent runs on the new model, or you told the user why not.

@@ -69,9 +69,11 @@ Reviewers read the diff in detached read-only worktrees and approve or request c
 request resumes the author with the feedback.
 </td>
 <td width="50%" valign="top">
-<h4>🚢 Three ways a task can end</h4>
-<code>merge</code> squashes onto the base branch, <code>pull_request</code> opens a request and
-sees it through the forge, and <code>none</code> lands nothing at all.
+<h4>🚢 Four ways a goal can land</h4>
+<code>none</code> lands nothing, <code>merge</code> squashes onto the base branch,
+<code>pull_request</code> opens a request and sees it through the forge, and
+<code>feature_branch</code> lands every task on a goal branch, then opens one pull
+request per repository.
 </td>
 </tr>
 <tr>

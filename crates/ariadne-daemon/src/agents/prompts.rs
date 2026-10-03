@@ -110,6 +110,10 @@ const SKILLS_HEADER: &str =
 /// the checkout the orchestrator is started in, and the one its commands name.
 /// A goal with no repository is not one an orchestrator is ever started for, so
 /// what that case renders only has to stay readable, never to work.
+///
+/// The goal's own landing goes in too, read with `Goal::landing`: it is
+/// what tells the orchestrator whether to plan a `feature_branch` goal's
+/// final task, so it has to be in the one text that starts the plan.
 pub(crate) fn orchestrator_briefing(template: &str, goal: &Goal, repos: &[Repository]) -> String {
     let repo_lines = repos
         .iter()
@@ -127,6 +131,7 @@ pub(crate) fn orchestrator_briefing(template: &str, goal: &Goal, repos: &[Reposi
         &[
             ("goal_title", &goal.title),
             ("goal_description", &goal.description),
+            ("landing", goal.landing().as_str()),
             ("repositories", &repo_lines),
         ],
     )
@@ -528,6 +533,7 @@ mod tests {
                 vec![
                     ("goal_title", &goal.title),
                     ("goal_description", &goal.description),
+                    ("landing", goal.landing().as_str()),
                     ("repositories", &repo_line),
                 ],
             ),
@@ -743,6 +749,21 @@ mod tests {
         assert!(!landed.contains("reset --soft"), "{landed}");
     }
 
+    /// The orchestrator is briefed with the goal's own landing, whatever it
+    /// is: a `feature_branch` goal has to reach it, since that is the one
+    /// value that tells the orchestrator to plan a final task per
+    /// repository.
+    #[test]
+    fn the_orchestrator_is_briefed_with_the_goals_landing() {
+        let goal = Goal {
+            landing: "feature_branch".into(),
+            ..goal()
+        };
+        let briefing =
+            orchestrator_briefing(default(PromptKind::OrchestratorBriefing), &goal, &[repo()]);
+        assert!(briefing.contains("feature_branch"), "{briefing}");
+    }
+
     /// A repository is registered with a description; the orchestrator is
     /// told it, since it is the one line saying what the checkout is for. A
     /// repository without one reads exactly as it did before descriptions
@@ -789,9 +810,8 @@ mod tests {
     }
 
     /// The orchestrator is briefed with every repository the goal works in,
-    /// each with the base branch and the way it takes a change: what a task
-    /// ends with is the orchestrator's to agree with the user, so it has to
-    /// know what each repository does by default.
+    /// each with the base branch a task's landing merges onto, so it can
+    /// plan against the right branch before any task exists.
     #[test]
     fn the_orchestrator_is_briefed_with_every_repository_and_its_base_branch() {
         let other = Repository {

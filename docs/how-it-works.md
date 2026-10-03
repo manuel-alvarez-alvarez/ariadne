@@ -6,9 +6,10 @@ each task author works in its own git worktree.
 
 ## From goal to change
 
-1. Register a repository and create a goal with a discovered model. A model is
-   written `<agent-id>:<model-id>`; `ariadne models ls` provides the valid
-   names.
+1. Register a repository and create a goal with a discovered model, and
+   optionally a landing. A model is written `<agent-id>:<model-id>`; `ariadne
+   models ls` provides the valid names. A goal with no landing of its own
+   takes the default landing of its first repository.
 2. Connect to the orchestrator with `ariadne goal attach <goal-id>`. It asks
    about anything the goal leaves open. Your answers are console input, not
    commands for an underlying agent CLI.
@@ -19,9 +20,15 @@ each task author works in its own git worktree.
    task has a reviewer unless nothing can be tested whole, such as a release
    or a report. A reviewer approves or requests changes. For multiple authors,
    reviewers choose the result to land.
-5. The configured landing mode either fast-forwards a squash merge, opens and
-   completes a pull request, or records work that does not land code. The
-   daemon removes completed worktrees according to its configuration.
+5. The goal's landing decides how its tasks reach the base branch. `none`
+   lands nothing. `merge` fast-forwards a squash of each task onto the base
+   branch. `pull_request` opens a request per task and sees it through the
+   forge. `feature_branch` branches every task from a goal branch, one per
+   repository, and merges it there; the one task that depends on every other
+   task of that repository then opens the pull request from the goal branch
+   to the base branch, makes it green, merges it, and deletes the goal
+   branch. The daemon removes completed worktrees according to its
+   configuration.
 
 ## Sessions and attention
 
