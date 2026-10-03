@@ -28,7 +28,7 @@ import { ArrowLeftIcon } from "lucide-react"
 import { ErrorState } from "@/components/error-state"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { PaneBody, PaneHeader, PaneTitle } from "@/components/ui/docked-pane"
 import { Skeleton } from "@/components/ui/skeleton"
 import { sessionQueryOptions } from "@/features/sessions/queries"
 import { SessionDetailView } from "@/features/sessions/session-detail-view"
@@ -75,7 +75,7 @@ export function GoalSessionView({
 
   return (
     <>
-      <SheetHeader>
+      <PaneHeader>
         {/* `max-w-full` and the truncating label are what keep a long goal
             title out from under the sheet's close button: a button is
             `whitespace-nowrap` and `w-fit`, so without them it grows straight
@@ -89,41 +89,43 @@ export function GoalSessionView({
           <ArrowLeftIcon />
           <span className="truncate">Back to {goalTitle ?? `goal ${shortId(goalId)}`}</span>
         </Button>
-        {/* The panel is a dialog and needs a name of its own; the view below
+        {/* The pane needs a name of its own; the view below
             carries the visible heading. */}
-        <SheetTitle className="sr-only">Session {shortId(sessionId)}</SheetTitle>
-      </SheetHeader>
+        <PaneTitle className="sr-only">Session {shortId(sessionId)}</PaneTitle>
+      </PaneHeader>
 
-      {session.isPending ? (
-        <div className="space-y-4">
-          <Skeleton className="h-8 w-64" />
-          <Skeleton className="h-32 w-full" />
-          <Skeleton className="h-64 w-full" />
-        </div>
-      ) : session.isError ? (
-        // A link can point at a session that is gone altogether; the panel says
-        // so and keeps the way back.
-        <ErrorState
-          title={`Could not load session ${shortId(sessionId)}`}
-          error={session.error}
-          onRetry={() => void session.refetch()}
-        />
-      ) : foreign ? (
-        <Alert variant="destructive">
-          <AlertTitle>Not a session of this goal</AlertTitle>
-          <AlertDescription>
-            Session {shortId(sessionId)} belongs to another goal, so it is not shown here.
-          </AlertDescription>
-        </Alert>
-      ) : (
-        <SessionDetailView
-          session={session.data}
-          context="goal"
-          // A resume hands back the session to attach to; the panel follows it.
-          onResumed={(revived) => onSelect(revived.id)}
-          onSwitched={(successor) => onSelect(successor.id)}
-        />
-      )}
+      <PaneBody>
+        {session.isPending ? (
+          <div className="space-y-4">
+            <Skeleton className="h-8 w-64" />
+            <Skeleton className="h-32 w-full" />
+            <Skeleton className="h-64 w-full" />
+          </div>
+        ) : session.isError ? (
+          // A link can point at a session that is gone altogether; the panel says
+          // so and keeps the way back.
+          <ErrorState
+            title={`Could not load session ${shortId(sessionId)}`}
+            error={session.error}
+            onRetry={() => void session.refetch()}
+          />
+        ) : foreign ? (
+          <Alert variant="destructive">
+            <AlertTitle>Not a session of this goal</AlertTitle>
+            <AlertDescription>
+              Session {shortId(sessionId)} belongs to another goal, so it is not shown here.
+            </AlertDescription>
+          </Alert>
+        ) : (
+          <SessionDetailView
+            session={session.data}
+            context="goal"
+            // A resume hands back the session to attach to; the panel follows it.
+            onResumed={(revived) => onSelect(revived.id)}
+            onSwitched={(successor) => onSelect(successor.id)}
+          />
+        )}
+      </PaneBody>
     </>
   )
 }

@@ -32,8 +32,18 @@ Out: the daemon endpoints themselves (012).
    that lands in one is not finished until it is in the other.
 2. The shell is a sidebar, ending in the daemon connection status, and a main
    area under one header bar — the screen's name as its only `h1`, and a
-   screen's own actions at the header's end; a panel opens beside a list
-   rather than replacing it, and the URL carries which panel is open.
+   screen's own actions at the header's end. Goal, task and session details
+   occupy one docked pane beside `<main>`. The URL selects its contents.
+   The screen stays accessible, clickable and scrollable, with no scrim or
+   focus trap. The left handle resizes the pane between 24rem and 60% of
+   the window; its default width is 36rem and settings preserve the choice.
+   Below `md`, the pane covers the screen at full width. A task opened from
+   a goal occupies the same pane, with the breadcrumb back to the goal.
+   Session drill-downs use that pane too. Escape inside it closes the current
+   task, then the goal; Escape on the board leaves it open. Closing preserves
+   the existing history and focus return. The header does not shrink, and
+   the body scrolls within the remaining height, with one full-height child
+   for the session view.
 3. Screens: the goals board (swimlanes plus an attention strip) has Active,
    All and Finished status segments. A status-menu icon holds a custom
    selection. Each lane header shows a progress bar, done/total and tokens.
@@ -466,6 +476,17 @@ Out: the daemon endpoints themselves (012).
     `session_updated` event invalidates the `stats` group — parity with
     `ariadne stats models` (014).
 
+- Goal details leave the board accessible, and another lane title changes the
+  open pane (`ui/src/components/detail-panels.test.tsx::keeps the board accessible and follows another lane title with a goal open`,
+  `ui/src/features/goals/goal-panel.test.tsx::renders a goal without a modal dialog`).
+- Escape unwinds a task and its goal in one pane
+  (`ui/src/features/tasks/task-panel.test.tsx::unwinds the task and goal in one pane with Escape`).
+- Dragging clamps and persists the pane width across a remount
+  (`ui/src/components/panel-sheet.test.tsx::clamps a dragged pane width and restores it from settings on remount`).
+- The session frame supplies the remaining height through its scrolling body
+  (`ui/src/features/sessions/session-panel.test.tsx::gives the console view the remaining pane height`).
+- A console modal handles Escape without closing the surrounding pane
+  (`ui/src/features/sessions/session-panel.test.tsx::keeps modal Escape separate from the pane close`).
 - The Stats screen renders the models panel from a stubbed answer, and asks
   with the filters in its URL under the key `qk` names
   (`ui/src/routes/stats.test.tsx::renders the models panel from the daemon's

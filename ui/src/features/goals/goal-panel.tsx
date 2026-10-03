@@ -11,8 +11,8 @@
  * (`?session=`) is a drill-down: it takes the panel over, goal header and tabs
  * included, with a link back to the goal.
  *
- * A task opened from here stacks *inside* this panel's dialog (`stackedPanel`)
- * rather than beside it — see {@link GoalSheet}.
+ * A task opened from here takes over this pane (`stackedPanel`)
+ * until it closes — see {@link GoalSheet}.
  */
 
 import { useQuery } from "@tanstack/react-query"
@@ -31,7 +31,7 @@ import { StatusBadge } from "@/components/status-badge"
 import { TabCount } from "@/components/tab-count"
 import { goalUsageRows, TokenFigure } from "@/components/token-figure"
 import { Button } from "@/components/ui/button"
-import { SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { PaneBody, PaneHeader, PaneTitle } from "@/components/ui/docked-pane"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { When } from "@/components/when"
@@ -65,8 +65,8 @@ export function GoalPanel({
   goalId: string
   onClose: () => void
   /**
-   * The task panel, when one is open over this goal. It is rendered inside
-   * this panel's dialog so it stacks on it instead of replacing it.
+   * The task panel, when one is open over this goal. The goal stays mounted
+   * but hidden until the task closes.
    */
   stackedPanel?: ReactNode
 }) {
@@ -78,9 +78,9 @@ export function GoalPanel({
   // stacked over this one they are its, and this goal shows its own default.
   const sessionId = stackedPanel ? null : search.get("session")
   // Going back from a session hands focus to the row that opened it, which the
-  // dialog cannot do for us — nothing closed. Only while this panel is the one
+  // frame cannot do for us — nothing closed. Only while this panel is the one
   // on top, though: `sessionId` above also goes null when a task stacks over
-  // it, and that is a sheet opening rather than a session being left. See
+  // it, and that is a task opening rather than a session being left. See
   // `useFocusReturn`.
   const panel = useRef<HTMLDivElement>(null)
   useFocusReturn(sessionId, panel, !stackedPanel)
@@ -106,7 +106,7 @@ export function GoalPanel({
     <GoalSheet onClose={onClose} stackedPanel={stackedPanel} panelRef={panel}>
       {error ? (
         <>
-          <SheetTitle className="sr-only">Goal {goalId}</SheetTitle>
+          <PaneTitle className="sr-only">Goal {goalId}</PaneTitle>
           <ErrorState
             showIcon
             title={error.status === 404 ? "No such goal" : "Could not load goal"}
@@ -119,7 +119,7 @@ export function GoalPanel({
 
       {goal.isPending ? (
         <>
-          <SheetTitle className="sr-only">Loading goal</SheetTitle>
+          <PaneTitle className="sr-only">Loading goal</PaneTitle>
           <Skeleton className="h-7 w-2/3" />
           <Skeleton className="h-40 w-full" />
         </>
@@ -132,16 +132,7 @@ export function GoalPanel({
   )
 }
 
-/**
- * The panel itself, the same one whichever of the two views is inside it —
- * and the dialog the task panel opens *inside*.
- *
- * Nesting it there rather than mounting it alongside is what makes the stack
- * behave like one: Base UI then gives the nested sheet no backdrop of its own
- * (so the screen is darkened once), lets only the topmost sheet answer Escape
- * and an outside press, and tells this popup it has a dialog over it through
- * `data-nested-dialog-open`.
- */
+/** The covered goal stays mounted so its task opener can receive focus again. */
 function GoalSheet({
   onClose,
   stackedPanel,
@@ -150,25 +141,16 @@ function GoalSheet({
 }: {
   onClose: () => void
   stackedPanel?: ReactNode
-  /** The popup itself, for the focus this panel has to hand back by hand. */
   panelRef?: RefObject<HTMLDivElement | null>
   children: ReactNode
 }) {
   return (
-    <PanelSheet onClose={onClose}>
-      {/* As wide as the task panel: the sessions tab holds a table. The panel
-          on top is narrower, so this one keeps a strip showing at its left —
-          the stack is a thing the user can see, and click back onto. */}
-      <SheetContent
-        ref={panelRef}
-        className="sm:max-w-3xl"
-        overlay={{ dim: !stackedPanel }}
-        aria-describedby={undefined}
-      >
+    <>
+      <PanelSheet onClose={onClose} hidden={Boolean(stackedPanel)} panelRef={panelRef}>
         {children}
-      </SheetContent>
+      </PanelSheet>
       {stackedPanel}
-    </PanelSheet>
+    </>
   )
 }
 
@@ -206,11 +188,11 @@ function GoalView({
 
   return (
     <>
-      <SheetHeader>
+      <PaneHeader>
         {/* What can be done to the goal sits at the end of the title row, the
             same slot the task and session panels put their actions in. */}
         <div className="flex flex-wrap items-center gap-3">
-          <SheetTitle>{goal.title}</SheetTitle>
+          <PaneTitle>{goal.title}</PaneTitle>
           <StatusBadge
             box="badge"
             label={GOAL_STATUS_META[goal.status].label}
@@ -240,42 +222,44 @@ function GoalView({
           <span>updated</span>
           <When at={goal.updated_at} label="updated" />
         </div>
-      </SheetHeader>
+      </PaneHeader>
 
-      <GoalMetadata goal={goal} />
+      <PaneBody>
+        <GoalMetadata goal={goal} />
 
-      <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
-        <TabsList>
-          <TabsTrigger value="description">Description</TabsTrigger>
-          <TabsTrigger value="tasks">
-            Tasks
-            <TabCount count={tasks.data?.length} noun="task" />
-          </TabsTrigger>
-          {/* The goal's own sessions: its orchestrator, once per resume or
+        <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
+          <TabsList>
+            <TabsTrigger value="description">Description</TabsTrigger>
+            <TabsTrigger value="tasks">
+              Tasks
+              <TabCount count={tasks.data?.length} noun="task" />
+            </TabsTrigger>
+            {/* The goal's own sessions: its orchestrator, once per resume or
               restart. The sessions its tasks have run are each task panel's,
               which is why the count here is a small number. */}
-          <TabsTrigger value="sessions">
-            Sessions
-            <TabCount count={sessions.data?.length} noun="session" />
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="description" className="pt-3">
-          {goal.description.trim() ? (
-            <Markdown>{goal.description}</Markdown>
-          ) : (
-            <EmptyState emphasis="quiet" title="This goal has no description" />
-          )}
-        </TabsContent>
-        <TabsContent value="tasks" className="pt-3">
-          <GoalTasks
-            goalId={goal.id}
-            onNewTask={canCreateTask ? () => setNewTaskOpen(true) : undefined}
-          />
-        </TabsContent>
-        <TabsContent value="sessions" className="pt-3">
-          <GoalSessions goalId={goal.id} onSelect={onSelectSession} />
-        </TabsContent>
-      </Tabs>
+            <TabsTrigger value="sessions">
+              Sessions
+              <TabCount count={sessions.data?.length} noun="session" />
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="description" className="pt-3">
+            {goal.description.trim() ? (
+              <Markdown>{goal.description}</Markdown>
+            ) : (
+              <EmptyState emphasis="quiet" title="This goal has no description" />
+            )}
+          </TabsContent>
+          <TabsContent value="tasks" className="pt-3">
+            <GoalTasks
+              goalId={goal.id}
+              onNewTask={canCreateTask ? () => setNewTaskOpen(true) : undefined}
+            />
+          </TabsContent>
+          <TabsContent value="sessions" className="pt-3">
+            <GoalSessions goalId={goal.id} onSelect={onSelectSession} />
+          </TabsContent>
+        </Tabs>
+      </PaneBody>
 
       <CreateTaskDialog
         goal={goal}

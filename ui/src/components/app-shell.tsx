@@ -250,9 +250,12 @@ export function AppShell() {
               </div>
             </header>
             <ConnectionBanner onOpenSettings={openSettings} />
-            <main className="min-h-0 flex-1 overflow-auto p-4">
-              <Outlet />
-            </main>
+            <div className="flex min-h-0 flex-1">
+              <main className="min-h-0 min-w-0 flex-1 overflow-auto p-4">
+                <Outlet />
+              </main>
+              <DetailPanels />
+            </div>
           </div>
         </div>
 
@@ -261,7 +264,6 @@ export function AppShell() {
             is mounted here for the same reason the dialogs are — it has to be
             true of every screen, not of the board alone. */}
         <AttentionAlerts />
-        <DetailPanels />
         <CommandPalette
           open={paletteOpen}
           onOpenChange={setPaletteOpen}

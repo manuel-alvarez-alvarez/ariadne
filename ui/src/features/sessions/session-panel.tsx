@@ -18,7 +18,7 @@ import { useLocation, useSearchParams } from "react-router-dom"
 
 import { ErrorState } from "@/components/error-state"
 import { PanelSheet } from "@/components/panel-sheet"
-import { SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { PaneBody, PaneHeader, PaneTitle } from "@/components/ui/docked-pane"
 import { Skeleton } from "@/components/ui/skeleton"
 import { shortId } from "@/lib/format"
 import { sessionPanelFrom } from "@/routes/paths"
@@ -35,14 +35,13 @@ export function SessionPanel({ sessionId, onClose }: { sessionId: string; onClos
 
   return (
     <PanelSheet onClose={onClose}>
-      {/* As wide as the other panels: the console is the point of this one. */}
-      <SheetContent className="sm:max-w-3xl" aria-describedby={undefined}>
-        <SheetHeader>
-          {/* The panel is a dialog and needs a name of its own; the view below
+      <PaneHeader>
+        {/* The pane needs a name of its own; the view below
               carries the visible heading. */}
-          <SheetTitle className="sr-only">Session {shortId(sessionId)}</SheetTitle>
-        </SheetHeader>
+        <PaneTitle className="sr-only">Session {shortId(sessionId)}</PaneTitle>
+      </PaneHeader>
 
+      <PaneBody>
         {session.isPending ? (
           <div className="space-y-3">
             <Skeleton className="h-8 w-64" />
@@ -70,7 +69,7 @@ export function SessionPanel({ sessionId, onClose }: { sessionId: string; onClos
             }
           />
         )}
-      </SheetContent>
+      </PaneBody>
     </PanelSheet>
   )
 }

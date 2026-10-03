@@ -1,36 +1,65 @@
 /**
- * A side panel that does not close out from under what the user is doing in
- * it.
- *
- * Every sheet in the app dismisses on Escape and on a press outside it, and
- * these panels do too. What they add is the one place a close is decided:
- * the goal, task and session panels all close through `onClose`, which puts
- * the URL back, rather than each one wiring the sheet's own open state.
- *
- * The close button is not one of the accidental ways out: it is aimed at, it
- * is the panel's own, and there is nowhere else it could mean. It closes.
+ * The one place a panel close is decided. The frame is a docked pane, while
+ * the URL still owns its contents and the history entry a close unwinds.
+ * Escape belongs to this pane only when focus is inside it; a dialog opened
+ * from it owns its own Escape, even though its portal bubbles through here.
  */
 
-import type { ReactNode } from "react"
+import { type ReactNode, type RefObject, useEffect, useRef } from "react"
 
-import { Sheet } from "@/components/ui/sheet"
+import { DockedPane } from "@/components/ui/docked-pane"
 
 export function PanelSheet({
   onClose,
   children,
+  hidden = false,
+  panelRef,
 }: {
   onClose: () => void
-  /** The sheet's content, and anything that stacks on it. */
   children: ReactNode
+  hidden?: boolean
+  panelRef?: RefObject<HTMLDivElement | null>
 }) {
+  const ownRef = useRef<HTMLDivElement>(null)
+  const panel = panelRef ?? ownRef
+  const opener = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    if (hidden) return
+    opener.current ??= document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const first = panel.current?.querySelector<HTMLElement>(
+      'button:not(:disabled), a[href], [role="tab"]',
+    )
+    ;(first ?? panel.current)?.focus()
+  }, [hidden, panel])
+
+  useEffect(
+    () => () => {
+      // A task's opener is in the goal view, which becomes visible on this same
+      // commit. Wait until React has removed the hidden frame before focusing it.
+      const target = opener.current
+      queueMicrotask(() => {
+        if (target?.isConnected) target.focus()
+      })
+    },
+    [],
+  )
+
   return (
-    <Sheet
-      open
-      onOpenChange={(open) => {
-        if (!open) onClose()
+    <DockedPane
+      ref={panel}
+      hidden={hidden}
+      onClose={onClose}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || !event.currentTarget.contains(event.target as Node)) return
+        // The inline console sends Escape as input and also lets the panel
+        // close. Its Expand modal stops propagation itself (spec rule 20).
+        if (event.defaultPrevented && !(event.target as Element).closest(".xterm")) return
+        event.stopPropagation()
+        onClose()
       }}
     >
       {children}
-    </Sheet>
+    </DockedPane>
   )
 }

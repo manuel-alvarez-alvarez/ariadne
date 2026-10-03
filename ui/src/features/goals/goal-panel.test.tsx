@@ -281,3 +281,9 @@ describe("what the tabs are called, and how much is behind them", () => {
     expect(screen.getByText("No orchestrator session yet")).toBeDefined()
   })
 })
+
+it("renders a goal without a modal dialog", () => {
+  mount()
+  expect(screen.queryByRole("dialog")).toBeNull()
+  expect(screen.getByRole("region", { name: GOAL.title })).toBeDefined()
+})

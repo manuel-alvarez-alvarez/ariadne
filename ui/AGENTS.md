@@ -252,12 +252,25 @@ Screens with URLs of their own — `#/goals`, `#/sessions`, `#/skills`,
 `#/agents`, `#/permissions`, `#/repositories` and `#/stats` — and `#/`
 redirects onto the board. The Stats screen is `src/routes/stats.tsx`, and
 each stat family is a panel of it under `src/components/stats/`.
-Goals, tasks and sessions have no pages: their details open as **side panels** driven by
+Goals, tasks and sessions have no pages: their details occupy one **docked pane** driven by
 search params (`?goal=` on the board, `?task=` over any screen, `?session=` for
 a session's own panel, `?tab=sessions&session=` for a session inside a goal's or
 a task's panel), which `src/components/detail-panels.tsx` reads. The old
 `#/goals/:goalId` and `#/tasks/:taskId` deep links survive as redirects onto the
 board with the panel open.
+
+The pane sits beside `<main>` in the shell's flex row. The board stays clickable
+and scrollable, with no scrim or focus trap. Below `md` the pane covers the
+screen at full width. Its left handle resizes it from 24rem to 60% of the
+window; the default is 36rem and the settings store remembers the width.
+`PanelSheet` owns close decisions and focus return, over `ui/docked-pane.tsx`.
+A task hides the goal view while it occupies the same pane, with its breadcrumb
+back. Session drill-downs replace the body. Escape within the pane closes the
+current task, goal or standalone session through the existing history helpers;
+Escape on the board does nothing to it. Modal portals own their own Escape.
+Headers do not shrink. `PaneBody` takes the remaining height and scrolls, with
+one `h-full` child to give a session view its height. Keep `ui/sheet.tsx` for
+modal drawers and the learned-permission detail.
 
 **The sessions screen is the one exception**, and the only place a param means
 two things: there `?goal=` and `?task=` are what the *list* is narrowed to — the
@@ -293,8 +306,9 @@ going into a text field, an editor, or a session's terminal (xterm.js types
 through a hidden textarea). The typed
 chords are skipped inside a dialog or a menu too, where a bare letter belongs
 to whatever is on top. `Escape` is deliberately *not* bound:
-it belongs to whatever is on top, and Base UI's dialogs already close the
-topmost one, so a global handler would take two layers down at once.
+it belongs to whatever is on top. `PanelSheet` handles it inside the docked
+pane, and Base UI handles it inside dialogs. A global handler would close
+two layers at once.
 
 `?` is the one typed chord `isBareKey` cannot guard, since Shift is how the
 character is typed on most layouts: `matchesHelpKey` matches the character the
