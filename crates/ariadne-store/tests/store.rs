@@ -308,7 +308,7 @@ async fn a_fresh_database_seeds_the_ai_permission_defaults() {
     .fetch_one(&mut connection)
     .await
     .unwrap();
-    assert_eq!((allow, deny), (0.0531, 0.6522));
+    assert_eq!((allow, deny), (0.0201, 0.6321));
     assert_eq!(flavour, "4b");
     assert_eq!(device, None, "the daemon fills it at startup");
 
@@ -3932,8 +3932,8 @@ async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
 
     let defaults = store.ai_permission_settings().await.unwrap();
     assert!(!defaults.enabled);
-    assert_eq!(defaults.allow_threshold, 0.0531);
-    assert_eq!(defaults.deny_threshold, 0.6522);
+    assert_eq!(defaults.allow_threshold, 0.0201);
+    assert_eq!(defaults.deny_threshold, 0.6321);
     assert_eq!(defaults.flavour, "4b");
     assert_eq!(defaults.device, None);
     assert_eq!(defaults.state, "disabled");
@@ -3954,7 +3954,7 @@ async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
         .await
         .unwrap();
     assert_eq!(partly_chosen.allow_threshold, 0.2);
-    assert_eq!(partly_chosen.deny_threshold, 0.6522);
+    assert_eq!(partly_chosen.deny_threshold, 0.6321);
     let chosen = store
         .update_ai_permission_settings(AiPermissionSettingsUpdate {
             deny_threshold: Some(0.8),

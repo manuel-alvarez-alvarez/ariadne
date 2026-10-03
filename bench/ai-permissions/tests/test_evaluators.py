@@ -50,19 +50,19 @@ class KeptModes(unittest.TestCase):
         self.assertEqual(len(kev_v27.QUESTIONS['decision']['criteria']), 3)
         self.assertEqual(len(kev_v28.QUESTIONS['decision']['criteria']), 3)
 
-    def test_kev_v28_contract_is_the_winner_of_2026_10_01(self):
+    def test_kev_v28_contract_is_the_winner_of_2026_10_03(self):
         self.assertEqual(kev_v28.TEMPERATURE, 0.6)
-        self.assertEqual((kev_v28.ALLOW_THRESHOLD, kev_v28.DENY_THRESHOLD), (0.0531, 0.6522))
+        self.assertEqual((kev_v28.ALLOW_THRESHOLD, kev_v28.DENY_THRESHOLD), (0.0201, 0.6321))
 
     def test_kev_v28_asks_model_for_a_root_delete(self):
-        stub = Stub(score(0.95, 0.04, 0.01))
+        stub = Stub(score(0.99, 0.008, 0.002))
         result = kev_v28.evaluate_contract(stub, kev_v28, case('rm -rf /'))
         self.assertEqual(result.label, 'allow')
         self.assertIsNone(result.cap)
         self.assertEqual(len(stub.calls), 1)
 
     def test_the_cap_turns_an_allow_into_ask_and_keeps_ask_and_deny(self):
-        for answer, label in ((score(0.95, 0.04, 0.01), 'ask'), (score(0.3, 0.6, 0.1), 'ask'), (score(0.02, 0.08, 0.9), 'deny')):
+        for answer, label in ((score(0.99, 0.008, 0.002), 'ask'), (score(0.3, 0.6, 0.1), 'ask'), (score(0.02, 0.08, 0.9), 'deny')):
             stub = Stub(answer)
             result = kev_v28.evaluate_contract(stub, kev_v28, case(REVIEWER_ADDRESSED))
             self.assertEqual(result.label, label)
@@ -71,7 +71,7 @@ class KeptModes(unittest.TestCase):
             self.assertEqual(len(stub.calls), 1)
 
     def test_the_cap_reads_the_derived_tags_not_the_command_text(self):
-        stub = Stub(score(0.95, 0.04, 0.01))
+        stub = Stub(score(0.99, 0.008, 0.002))
         result = kev_v28.evaluate_contract(stub, kev_v28, case("rg -n 'note to reviewer' cases/"))
         self.assertEqual(result.label, 'allow')
         self.assertIsNone(result.cap)

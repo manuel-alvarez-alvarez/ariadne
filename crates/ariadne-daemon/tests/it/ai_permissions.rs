@@ -132,8 +132,8 @@ async fn the_settings_start_at_the_defaults_with_the_interpreter_probed() {
 
     let status = status(&h).await;
     assert!(!status.enabled);
-    assert_eq!(status.allow_threshold, 0.0531);
-    assert_eq!(status.deny_threshold, 0.6522);
+    assert_eq!(status.allow_threshold, 0.0201);
+    assert_eq!(status.deny_threshold, 0.6321);
     assert_eq!(status.state, AiPermissionsState::Disabled);
     assert_eq!(status.installed_release, None);
     assert_eq!(status.latest_release, None);

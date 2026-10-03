@@ -597,7 +597,7 @@ mod tests {
             "answered",
             json!({"option_id": "option-0", "decided_by": "ai",
                    "label": "deny", "danger": 0.93,
-                   "allow_threshold": 0.0531, "deny_threshold": 0.6522,
+                   "allow_threshold": 0.0201, "deny_threshold": 0.6321,
                    "probabilities": {"0": 0.01, "1": 0.11, "2": 0.88}}),
         ));
         console.apply(&event("agent_message", "done", json!({"text": "done"})));
@@ -608,7 +608,7 @@ mod tests {
 
         assert!(
             bare(&shown).contains(&bare(
-                "AI denied · allow 1%, deny 88% · danger 93% (allow up to 5%, deny from 65%)"
+                "AI denied · allow 1%, deny 88% · danger 93% (allow up to 2%, deny from 63%)"
             )),
             "{shown}"
         );
@@ -625,9 +625,9 @@ mod tests {
             "permission.replied",
             "answered",
             json!({"option_id": "option-0", "decided_by": "ai",
-                   "label": "allow", "danger": 0.04,
-                   "allow_threshold": 0.0531, "deny_threshold": 0.6522,
-                   "probabilities": {"0": 0.91, "1": 0.08, "2": 0.01}}),
+                   "label": "allow", "danger": 0.01,
+                   "allow_threshold": 0.0201, "deny_threshold": 0.6321,
+                   "probabilities": {"0": 0.99, "1": 0.008, "2": 0.002}}),
         ));
         console.apply(&event("agent_message", "done", json!({"text": "done"})));
         console.commit(&mut terminal).unwrap();
@@ -635,7 +635,7 @@ mod tests {
         let bare = |text: &str| text.split_whitespace().collect::<String>();
         assert!(
             bare(&shown).contains(&bare(
-                "AI allowed · allow 91%, deny 1% · danger 4% (allow up to 5%, deny from 65%)"
+                "AI allowed · allow 99%, deny 0% · danger 1% (allow up to 2%, deny from 63%)"
             )),
             "{shown}"
         );

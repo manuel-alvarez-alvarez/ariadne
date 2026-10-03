@@ -199,10 +199,10 @@ logs` prints the same reason under the question. The answer and event summary
 use these words:
 
 ```text
-AI allowed · allow 99%, deny 0% · danger 1% (allow up to 5%, deny from 65%)
-AI denied · allow 1%, deny 88% · danger 93% (allow up to 5%, deny from 65%)
-allow-once in the console — AI said ask · allow 62%, deny 5% · danger 21% (allow up to 5%, deny from 65%)
-allow-once in the console — AI said ask · allow 96%, deny 1% · danger 2% (allow up to 5%, deny from 65%) · tags: reviewer_directive · capped by reviewer_directive
+AI allowed · allow 99%, deny 0% · danger 1% (allow up to 2%, deny from 63%)
+AI denied · allow 1%, deny 88% · danger 93% (allow up to 2%, deny from 63%)
+allow-once in the console — AI said ask · allow 62%, deny 5% · danger 21% (allow up to 2%, deny from 63%)
+allow-once in the console — AI said ask · allow 96%, deny 1% · danger 2% (allow up to 2%, deny from 63%) · tags: reviewer_directive · capped by reviewer_directive
 allow-once in the console — AI unavailable
 ```
 
@@ -238,7 +238,7 @@ daemon checks it against `--workspace`, as it does for a live request.
 
 The command prints the label, both probabilities, danger and thresholds as
 whole percentages, then the operation. For example:
-`ask · allow 62%, deny 5% · danger 21% (allow up to 5%, deny from 65%); operation read_workspace`.
+`ask · allow 62%, deny 5% · danger 21% (allow up to 2%, deny from 63%); operation read_workspace`.
 For a capped allow, the percentages are followed by `· tags: reviewer_directive · capped by reviewer_directive`.
 Use `--format json` for the response fields and all model probabilities.
 It does not select an option, save an approval, or add an event. The model
@@ -316,9 +316,9 @@ Two more settings:
 ariadne permissions ai set --allow-threshold 0.2 --deny-threshold 0.8
 ```
 
-The allow threshold defaults to `0.0531`, and the deny threshold defaults to
-`0.6522`. Both take values from 0 to 1, and the allow threshold must stay below
-the deny threshold. Upgrading to the 2026-10-01 winner resets both stored thresholds to this pair.
+The allow threshold defaults to `0.0201`, and the deny threshold defaults to
+`0.6321`. Both take values from 0 to 1, and the allow threshold must stay below
+the deny threshold. A fresh database uses this pair.
 Lower the allow threshold to ask about more requests.
 Lower the deny threshold to reject more dangerous requests without asking.
 Set either or both with `ariadne permissions ai set --allow-threshold <value>
@@ -328,8 +328,8 @@ and nothing runs it on a schedule.
 
 The [AI permission benchmark](../bench/ai-permissions/README.md) selected
 Kev-4B with the three-level score question, temperature 0.6, derived risk
-tags, one `reviewer_directive` cap, and thresholds 0.0531 and 0.6522.
-On its audited sets, the pair allowed 381 of 645 safe cases and 141 of 299
+tags, one `reviewer_directive` cap, and thresholds 0.0201 and 0.6321.
+On the 2026-10-03 sets, the pair allowed 266 of 645 safe cases and 62 of 300
 real requests. It allowed no elevated or adversarial case. It denied no safe
 or real request.
 

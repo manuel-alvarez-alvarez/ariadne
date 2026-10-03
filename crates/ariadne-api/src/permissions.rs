@@ -290,10 +290,10 @@ pub struct AiPermissionsStatusDto {
     /// Whether the model answers permission requests at all.
     pub enabled: bool,
     /// Danger at or below this value is allowed, 0 to 1.
-    #[schema(example = 0.0531)]
+    #[schema(example = 0.0201)]
     pub allow_threshold: f64,
     /// Danger at or above this value is denied, 0 to 1.
-    #[schema(example = 0.6522)]
+    #[schema(example = 0.6321)]
     pub deny_threshold: f64,
     /// The Kev flavour chosen, `4b` by default where the machine can run it.
     pub flavour: Flavour,
@@ -383,7 +383,7 @@ pub struct TestAiPermissionResponse {
 
 /// Why the AI permission model did not decide a `permission.replied`, in the
 /// words `ariadne events`, the desktop app and the console all use:
-/// `AI said ask · allow 62%, deny 5% · danger 21% (allow up to 5%, deny from 65%)`,
+/// `AI said ask · allow 62%, deny 5% · danger 21% (allow up to 2%, deny from 63%)`,
 /// or `AI timed out`. A reply the model itself decided reads `AI allowed` or
 /// `AI denied` in place of `AI said <label>`. Return `None` when the model had
 /// no part in the reply.
@@ -453,9 +453,9 @@ mod tests {
             assert_eq!(
                 ai_permission_note(&json!({"label": label, "danger": 0.21,
                     "probabilities": {"0": 0.62, "1": 0.33, "2": 0.05},
-                    "allow_threshold": 0.0531, "deny_threshold": 0.6522})),
+                    "allow_threshold": 0.0201, "deny_threshold": 0.6321})),
                 Some(format!(
-                    "AI said {label} · allow 62%, deny 5% · danger 21% (allow up to 5%, deny from 65%)"
+                    "AI said {label} · allow 62%, deny 5% · danger 21% (allow up to 2%, deny from 63%)"
                 ))
             );
         }
@@ -463,28 +463,28 @@ mod tests {
             ai_permission_note(
                 &json!({"decided_by": "ai", "label": "allow", "danger": 0.01,
                 "probabilities": {"0": 0.99, "1": 0.01, "2": 0.0},
-                "allow_threshold": 0.0531, "deny_threshold": 0.6522})
+                "allow_threshold": 0.0201, "deny_threshold": 0.6321})
             ),
             Some(
-                "AI allowed · allow 99%, deny 0% · danger 1% (allow up to 5%, deny from 65%)"
+                "AI allowed · allow 99%, deny 0% · danger 1% (allow up to 2%, deny from 63%)"
                     .into()
             )
         );
         assert_eq!(
             ai_permission_note(&json!({"decided_by": "ai", "label": "deny", "danger": 0.93,
                 "probabilities": {"0": 0.01, "1": 0.11, "2": 0.88},
-                "allow_threshold": 0.0531, "deny_threshold": 0.6522})),
+                "allow_threshold": 0.0201, "deny_threshold": 0.6321})),
             Some(
-                "AI denied · allow 1%, deny 88% · danger 93% (allow up to 5%, deny from 65%)"
+                "AI denied · allow 1%, deny 88% · danger 93% (allow up to 2%, deny from 63%)"
                     .into()
             )
         );
         assert_eq!(
             ai_permission_note(&json!({"label": "ask", "danger": 0.02,
                 "probabilities": {"0": 0.96, "1": 0.03, "2": 0.01},
-                "allow_threshold": 0.0531, "deny_threshold": 0.6522,
+                "allow_threshold": 0.0201, "deny_threshold": 0.6321,
                 "cap": "reviewer_directive", "risk_tags": ["reviewer_directive"]})),
-            Some("AI said ask · allow 96%, deny 1% · danger 2% (allow up to 5%, deny from 65%) · tags: reviewer_directive · capped by reviewer_directive".into())
+            Some("AI said ask · allow 96%, deny 1% · danger 2% (allow up to 2%, deny from 63%) · tags: reviewer_directive · capped by reviewer_directive".into())
         );
         assert_eq!(
             ai_permission_note(&json!({"ai_error": "timed out"})),

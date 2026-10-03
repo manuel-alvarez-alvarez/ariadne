@@ -222,8 +222,8 @@ hardware facts in the card, with no Details popover`).
     `AI_PERMISSIONS_HOME`, `AI_PERMISSIONS_RUN` (the run of the chosen
     flavour), `AI_PERMISSIONS_KEV_COMMIT`, `AI_PERMISSIONS_FLAVOUR` and
     `AI_PERMISSIONS_DEVICE`.
-24. The default allow threshold is 0.0531. The default deny threshold is
-    0.6522.
+24. The default allow threshold is 0.0201. The default deny threshold is
+    0.6321.
 
 ## Decisions
 
@@ -284,14 +284,14 @@ hardware facts in the card, with no Details popover`).
     Derived facts appear on AI requests. Other modes have null AI fields.
     The daemon logs each AI permission reply with the same fields.
     The console and `ariadne session logs` show a waiting reason such as
-    `AI said ask · allow 62%, deny 5% · danger 21% (allow up to 5%, deny from 65%)`,
+    `AI said ask · allow 62%, deny 5% · danger 21% (allow up to 2%, deny from 63%)`,
     the decision, both probabilities and the danger each a whole percent,
     then the two thresholds in parentheses. Risk tags follow as `· tags: a,
     b`, and a cap as `· capped by reviewer_directive`; either is left out
     where the reply carries none.
     Errors retain their existing words, such as `AI timed out`.
-    An AI answer shows `AI allowed · allow 99%, deny 0% · danger 1% (allow up to 5%, deny from 65%)`
-    or `AI denied · allow 1%, deny 88% · danger 93% (allow up to 5%, deny from 65%)`.
+    An AI answer shows `AI allowed · allow 99%, deny 0% · danger 1% (allow up to 2%, deny from 63%)`
+    or `AI denied · allow 1%, deny 88% · danger 93% (allow up to 2%, deny from 63%)`.
     A learned reply reads `allow-once, learned · command` or `allow-once,
     learned · family git rebase`, with the level and family in the console
     answer and session logs too
@@ -404,13 +404,16 @@ hardware facts in the card, with no Details popover`).
     into `ask`. The tag does not deny it. The two thresholds of a mode are the pair `run.py
     select --margin 0.05` finds over every set together. The sets are
     development, held-out and real. Each bound is the four-decimal value
-    more than 0.05 from the nearest case. So the held-out and real margins
-    are 0.05 by construction. The README's section "Winner (2026-10-01)"
+    more than 0.05 from the nearest case on the wrong side. Every set keeps
+    more than 0.05 clearance. The README's section "Winner (2026-10-01)"
     names the winner: `kev_v28` with the one cap. It was selected on
     2026-10-01 against the two-criteria mode `kev_v26` and the probability
     policy `kev_v27`. It also beat 14 noul modes, `kev_v29` to `kev_v42`. It
     is the question of 2026-09-30 word for word, at temperature 0.6, with
-    the pair 0.0531 / 0.6522. The section gives its contract: the state, the
+    the pair selected again on 2026-10-03: 0.0201 / 0.6321.
+    The section "Winner (2026-10-03)" records the new pair on requests with real option names,
+    titles and input fields. Its evidence is under `out/winner-1003/`.
+    The section of 2026-10-01 gives its contract: the state, the
     question word for word, the cap and the thresholds. It gives the table
     of the three kept modes at their pairs over every set. It gives the
     development pair of each mode and its outcome on the held-out and real
@@ -719,7 +722,7 @@ hardware facts in the card, with no Details popover`).
 
 ## Acceptance criteria
 
-- A fresh daemon is off, at allow threshold 0.0531 and deny threshold 0.6522,
+- A fresh daemon is off, at allow threshold 0.0201 and deny threshold 0.6321,
   and reports
   the interpreter it probed
   (`ai_permissions.rs::the_settings_start_at_the_defaults_with_the_interpreter_probed`).
@@ -1033,7 +1036,7 @@ hardware facts in the card, with no Details popover`).
 - The winner `kev_v28` sends one three-level `score` question whose levels
   are `allow`, `ask` and `deny`. It sends it over the normalized state with
   the risk tags and no operation hint. Its temperature is 0.6 and its pair
-  is 0.0531 / 0.6522. It exposes one cap, `reviewer_directive`, and no rule. The
+  is 0.0201 / 0.6321. It exposes one cap, `reviewer_directive`, and no rule. The
   cap refuses an `allow` and keeps an `ask` and a `deny`. The cap reads the
   derived tags, not the command text
   (`bench/ai-permissions/tests/test_evaluators.py::KeptModes`).

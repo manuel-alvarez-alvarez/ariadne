@@ -182,9 +182,9 @@ CREATE TABLE ai_permission_settings (
     id                INTEGER PRIMARY KEY CHECK (id = 1),
     enabled           INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
     -- Danger at or below this value is allowed, 0 to 1.
-    allow_threshold   REAL NOT NULL DEFAULT 0.0531,
+    allow_threshold   REAL NOT NULL DEFAULT 0.0201,
     -- Danger at or above this value is denied, 0 to 1.
-    deny_threshold    REAL NOT NULL DEFAULT 0.6522,
+    deny_threshold    REAL NOT NULL DEFAULT 0.6321,
     state             TEXT NOT NULL DEFAULT 'disabled'
                       CHECK (state IN ('disabled', 'installing', 'ready', 'failed')),
     installed_release TEXT,                     -- the release tag on disk
