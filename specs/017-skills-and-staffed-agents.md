@@ -117,7 +117,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
 12. The orchestrator staffs each task: it names the skills of each agent and
     the model each runs on (011), may size the effort beside it, and may add
     a brief that the task itself does not carry. How the task ends is agreed
-    the same way (005).
+    the same way (005). Once the task is running, its playbook's last step
+    switches an exhausted, stuck or unsuitable agent to another pin over
+    `switch_session` (013), rather than leave the task to fail.
 13. Every user-facing skill action exists in both the CLI (`ariadne skill`)
     and the desktop app, per the parity rule of spec 015.
 
@@ -161,6 +163,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
   (`defaults.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`).
 - A task staffed with no reviewer is approved as soon as its author asks
   (`unreviewed_tasks.rs::a_task_with_no_reviewer_is_approved_as_soon_as_its_author_asks`).
+- The playbook switches a struggling agent's session to a model the ladder
+  gives, and tells the user
+  (`defaults.rs::the_orchestration_skill_switches_a_struggling_agents_session`).
 - Every shipped skill is named once and describes itself
   (`defaults.rs::every_shipped_skill_is_named_once_and_describes_itself`), and
   every document is within its cap (`defaults.rs::skill_size_caps_hold`).

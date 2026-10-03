@@ -94,7 +94,9 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
     (018). It acts on what it is told — the plan is its to change — rather
     than writing back.
 15. It answers with `list_tasks`, and then with `retry_task`, `cancel_task`,
-    `update_task` or nothing at all.
+    `update_task`, `switch_session` (013) or nothing at all. It switches a
+    task's session where the agent reported exhausted, stuck or unsuitable,
+    to a model the ladder gives, and says so to the user.
 16. `complete_goal` ends the goal. Whether the goal is *met* is a judgement
     about the work, so the daemon does not make it — but it refuses the call
     while any task is still going, which is the part it can see. The user may
@@ -114,6 +116,9 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
 - The orchestrator is briefed to end planning with `finalize_plan` and with no
   other plan call
   (`defaults.rs::the_orchestrator_is_briefed_with_finalize_plan_and_no_other_plan_call`).
+- The playbook switches a struggling agent's session to a model the ladder
+  gives, and tells the user
+  (`defaults.rs::the_orchestration_skill_switches_a_struggling_agents_session`).
 - The nudge fits the conversation and the goal under way
   (`defaults.rs::the_orchestrator_nudge_fits_the_conversation_and_the_goal_under_way`).
 - The orchestrator's own texts name no forge and no landing procedure

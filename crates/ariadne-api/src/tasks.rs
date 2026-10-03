@@ -117,6 +117,9 @@ pub struct TaskAgentDto {
     /// What the orchestrator told this agent beyond the task itself. None =
     /// the task is the whole of it.
     pub brief: Option<String>,
+    /// This agent's live session, the id `POST /v1/sessions/{id}/switch`
+    /// takes. None while it carries no live session.
+    pub session_id: Option<String>,
 }
 
 /// One agent to staff on a task: where it sits, the skills it loads, and what

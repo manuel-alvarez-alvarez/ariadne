@@ -15,6 +15,7 @@ use rmcp::{ErrorData as McpError, schemars, tool, tool_router};
 
 use ariadne_api::goals::{CompleteGoalRequest, FinalizePlanRequest};
 use ariadne_api::messages::SendMessageRequest;
+use ariadne_api::sessions::SwitchSessionRequest;
 use ariadne_api::skills::{SkillDto, SkillSeat};
 use ariadne_api::tasks::{
     AgentAssignment, CreateTaskRequest, PickWinnerRequest, RecordPullRequestRequest,
@@ -114,6 +115,19 @@ pub(super) struct UpdateTaskReq {
 pub(super) struct TaskId {
     /// Task id, as `list_tasks` gives it.
     pub task_id: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(super) struct SwitchSessionReq {
+    /// The session to switch, the `session_id` beside an agent on `get_task`.
+    pub session_id: String,
+    /// What to run it on, `<agent>:<model>`, from `list_models`. A model is
+    /// required, so `default` is refused.
+    pub model: String,
+    /// An `efforts[].id` `list_models` lists for that model. Omit it for the
+    /// default effort.
+    pub effort: Option<String>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -559,6 +573,33 @@ impl AriadneMcp {
     ) -> Result<CallToolResult, McpError> {
         let path = format!("/v1/tasks/{}/cancel", req.task_id);
         json_result(self.post(&path, &serde_json::json!({})).await?)
+    }
+
+    #[tool(
+        description = "Switch a session to the model or agent you give. The new session is briefed with a handoff of the old conversation. A model is required, so `default` is refused."
+    )]
+    async fn switch_session(
+        &self,
+        Parameters(req): Parameters<SwitchSessionReq>,
+    ) -> Result<CallToolResult, McpError> {
+        if req.model == "default" {
+            return Err(McpError::invalid_params(
+                "`default` is no model — a model is required, so name one from \
+                 `list_models`",
+                None,
+            ));
+        }
+        let path = format!("/v1/sessions/{}/switch", req.session_id);
+        json_result(
+            self.post(
+                &path,
+                &SwitchSessionRequest {
+                    model: req.model,
+                    effort: req.effort,
+                },
+            )
+            .await?,
+        )
     }
 
     #[tool(
@@ -1355,6 +1396,75 @@ mod tests {
                 reviewers: None,
                 depends_on: None,
                 landing: None,
+            }))
+            .await
+            .expect_err("default is no model");
+        assert!(
+            err.message.contains("a model is required"),
+            "{}",
+            err.message
+        );
+        assert!(
+            seen.lock().expect("lock").is_empty(),
+            "nothing was sent for the daemon to refuse"
+        );
+    }
+
+    /// `switch_session` moves a stuck or exhausted agent off its session, so
+    /// it is the orchestrator's alone: an author or a reviewer works its own
+    /// task, with no session of another agent's to read off `get_task`.
+    #[test]
+    fn switch_session_is_offered_to_the_orchestrator_alone() {
+        for (seat, offered) in [
+            (McpSeat::Orchestrator, true),
+            (McpSeat::Author, false),
+            (McpSeat::Reviewer, false),
+        ] {
+            let mcp = server_at(
+                seat.clone(),
+                Client::resolve(Some("http://127.0.0.1:1"), None),
+            );
+            assert_eq!(mcp.allows("switch_session"), offered, "{seat:?}");
+        }
+    }
+
+    /// The pin named reaches the switch endpoint whole, keyed on the session
+    /// id rather than on the task: a session is what runs an agent, and the
+    /// one `get_task` names beside it is the one this call moves.
+    #[tokio::test]
+    async fn switch_session_posts_the_pin_to_the_switch_endpoint() {
+        let (endpoint, seen) = recording_daemon().await;
+        orchestrator_at(&endpoint)
+            .switch_session(Parameters(SwitchSessionReq {
+                session_id: "01SESSION2".into(),
+                model: "codex-acp:gpt-5.6-sol".into(),
+                effort: Some("high".into()),
+            }))
+            .await
+            .expect("switch the session");
+
+        let seen = seen.lock().expect("lock").clone();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert_eq!(seen[0].method, "POST");
+        assert_eq!(seen[0].path, "/v1/sessions/01SESSION2/switch");
+        let sent: serde_json::Value = serde_json::from_str(&seen[0].body).expect("json");
+        assert_eq!(
+            sent,
+            serde_json::json!({"model": "codex-acp:gpt-5.6-sol", "effort": "high"})
+        );
+    }
+
+    /// A model is required to run a session on, so `default` — the word that
+    /// clears an *effort* — is refused here, the way `update_task` refuses it
+    /// as a model.
+    #[tokio::test]
+    async fn switch_session_refuses_default_as_a_model() {
+        let (endpoint, seen) = recording_daemon().await;
+        let err = orchestrator_at(&endpoint)
+            .switch_session(Parameters(SwitchSessionReq {
+                session_id: "01SESSION2".into(),
+                model: "default".into(),
+                effort: None,
             }))
             .await
             .expect_err("default is no model");

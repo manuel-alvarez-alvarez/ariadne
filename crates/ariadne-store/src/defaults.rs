@@ -1765,6 +1765,26 @@ mod tests {
         }
     }
 
+    /// Step 11 of the playbook is the orchestrator's answer to an agent that
+    /// is running a task into the ground: switch its session to a model the
+    /// ladder gives, and tell the user. Without it, a struggling agent was an
+    /// orchestrator's to notice and nobody's to act on.
+    #[test]
+    fn the_orchestration_skill_switches_a_struggling_agents_session() {
+        let prompt = default_skill_document(ORCHESTRATION_SKILL).unwrap();
+        for phrase in [
+            "an agent that is exhausted, stuck or unsuitable",
+            "call `switch_session`",
+            "Give it a model the ladder gives.",
+            "Tell the user you switched it.",
+        ] {
+            assert!(
+                prompt.contains(phrase),
+                "the orchestration skill and \"{phrase}\": {prompt}"
+            );
+        }
+    }
+
     /// The orchestrator lands its spec, and still none of its own texts names a
     /// forge or a strategy: which way a repository takes a change is the
     /// repository's `merge_strategy` to say, and the procedure reaches the
@@ -1988,7 +2008,11 @@ mod tests {
             // step up costs. The rule it replaces let an orchestrator staff a
             // frontier model on a one-line fix, so the 100 characters here
             // buy a goal's token bill back many times over.
-            ORCHESTRATION_SKILL => 4200,
+            // Step 11 is new: switch a task's exhausted, stuck or unsuitable
+            // agent to a model the ladder gives, and say so to the user. A
+            // task that ran its agent into the ground used to wait on a
+            // human to notice and retry it by hand.
+            ORCHESTRATION_SKILL => 4500,
             "debugging" => 3400,
             "code-review" => 4000,
             "coding" => 5400,

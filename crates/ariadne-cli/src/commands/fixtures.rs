@@ -103,6 +103,7 @@ pub(crate) fn agent(id: &str, seat: Seat, skills: &[&str]) -> TaskAgentDto {
         model: "stub:test-model".into(),
         effort: None,
         brief: None,
+        session_id: None,
     }
 }
 

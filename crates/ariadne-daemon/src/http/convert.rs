@@ -20,7 +20,7 @@ use ariadne_api::tasks::{
 use ariadne_api::usage::TokenUsageDto;
 use ariadne_core::models::agent_of;
 use ariadne_core::{Actor, MessageKind, Seat, TokenUsage};
-use ariadne_store::{self as store, AgentUsage, Store, StoreError};
+use ariadne_store::{self as store, AgentUsage, SessionFilter, Store, StoreError};
 
 /// One conversion per entity: the fields that are not a straight move, then
 /// `..` and the ones that are.
@@ -80,15 +80,18 @@ pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
 
     /// `skills` is the agent's skill names in load order, which the caller
     /// loads beside the row; `branch` is the author's own, worked out from
-    /// the task the caller holds, and None for a reviewer.
+    /// the task the caller holds, and None for a reviewer; `session_id` is
+    /// this agent's live session, which the caller finds among the task's.
     fn task_agent_dto(
         a: store::TaskAgent,
         skills: Vec<String>,
         branch: Option<String>,
+        session_id: Option<String>,
     ) -> TaskAgentDto {
         seat: a.seat(),
         skills: skills,
         branch: branch,
+        session_id: session_id,
         .. id, model, effort, brief
     }
 
@@ -98,10 +101,12 @@ pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
 
     /// The agents come from the caller, which loads them with their skills,
     /// authors first and the reviewers in review order. So do the picks, and
-    /// `reason`, which only an ended task has.
+    /// `reason`, which only an ended task has. `sessions` is the task's own,
+    /// which each agent's live one is found among.
     fn task_dto(
         t: store::Task,
         agents: Vec<(store::TaskAgent, Vec<String>)>,
+        sessions: Vec<store::AgentSession>,
         depends_on: Vec<String>,
         usage: TaskUsageDto,
         reason: Option<String>,
@@ -115,7 +120,8 @@ pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
             .map(|(a, skills)| {
                 let branch = (a.seat() == Seat::Author)
                     .then(|| store::author_branch(&t.branch, a.ordinal));
-                task_agent_dto(a, skills, branch)
+                let session_id = live_session_id(&a.id, &sessions);
+                task_agent_dto(a, skills, branch, session_id)
             })
             .collect(),
         depends_on: depends_on,
@@ -218,6 +224,15 @@ async fn agent_skills(store: &Store, agent_id: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// This agent's live session, so the orchestrator finds a session
+/// `switch_session` can act on. An agent between runs carries none.
+fn live_session_id(agent_id: &str, sessions: &[store::AgentSession]) -> Option<String> {
+    sessions
+        .iter()
+        .find(|s| s.task_agent_id.as_deref() == Some(agent_id) && s.status().is_live())
+        .map(|s| s.id.clone())
+}
+
 /// [`task_dto`] with everything it needs loaded from the store: the agents
 /// staffed on the task with the skills each one loads, the dependencies, and
 /// what has been spent.
@@ -230,6 +245,12 @@ pub(crate) async fn task_dto_of(store: &Store, task: store::Task) -> Result<Task
         let skills = agent_skills(store, &agent.id).await;
         agents.push((agent, skills));
     }
+    let sessions = store
+        .list_sessions(SessionFilter {
+            task_id: Some(task.id.clone()),
+            ..Default::default()
+        })
+        .await?;
     let depends_on = store.list_task_dependencies(&task.id).await?;
     let usage = task_usage(store, &task.id, &agents).await?;
     let reason = store.ended_reason(&task).await?;
@@ -239,7 +260,9 @@ pub(crate) async fn task_dto_of(store: &Store, task: store::Task) -> Result<Task
         .into_iter()
         .map(task_pick_dto)
         .collect();
-    Ok(task_dto(task, agents, depends_on, usage, reason, picks))
+    Ok(task_dto(
+        task, agents, sessions, depends_on, usage, reason, picks,
+    ))
 }
 
 /// [`session_dto`] with what the session has spent loaded from the store.

@@ -64,6 +64,10 @@ conversation with the user.
     answer an agent that asks you. Ariadne wakes you when a task fails,
     stalls or finishes. Run no checks yourself: the landing proved the base
     branch. Call `complete_goal` once every task is done.
+11. Where a task reports an agent that is exhausted, stuck or unsuitable,
+    call `switch_session`. Read the session id off the task's agent.
+    Give it a model the ladder gives. Tell the user you switched it.
+    Done when the agent runs on the new model, or you told the user why not.
 
 ## Do not tell yourself
 

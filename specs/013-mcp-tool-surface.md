@@ -54,8 +54,12 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      user-set `rank` the staffing ladder reads — `null` where the user set
      none — and narrows to one `agent_id` on request: 011),
      `list_skills`, `finalize_plan`, `list_tasks`, `retry_task`,
-     `cancel_task`, `complete_goal` — the last four are what it supervises the
-     goal with once the plan is under way (003)
+     `cancel_task`, `switch_session` (which moves a session, named by the
+     `session_id` `get_task` carries beside its agent, to the model or agent
+     it is given, refusing `default` as a model the way `update_task` does —
+     the new session is briefed with a handoff of the old conversation),
+     `complete_goal` — the last five are what it supervises the goal with
+     once the plan is under way (003)
    - **author**: `get_task`, `request_review`, `fail_task`, `finish_task`,
      `record_pull_request`
    - **reviewer**: `get_task`, `get_diff` (which takes an `author` on a task
@@ -113,6 +117,11 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`mcp.rs::every_seat_has_the_tools_its_playbook_names_and_no_others`), and
   every allowed tool is one the router actually serves
   (`::every_allowed_tool_is_one_the_router_serves`).
+- `switch_session` is offered to the orchestrator alone
+  (`tools.rs::switch_session_is_offered_to_the_orchestrator_alone`), posts
+  the pin to the session's switch endpoint
+  (`::switch_session_posts_the_pin_to_the_switch_endpoint`), and refuses
+  `default` as a model (`::switch_session_refuses_default_as_a_model`).
 - Every session is told how Ariadne is reached
   (`mcp.rs::every_session_is_told_how_ariadne_is_reached`), only the
   orchestrator is told to ask, and an author or reviewer is told to work

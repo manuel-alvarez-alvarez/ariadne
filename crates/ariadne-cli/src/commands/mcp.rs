@@ -47,6 +47,7 @@ impl McpSeat {
                 "list_tasks",
                 "retry_task",
                 "cancel_task",
+                "switch_session",
                 "complete_goal",
                 "send_message",
                 "read_messages",
@@ -353,6 +354,7 @@ pub(crate) mod tests {
                     "list_tasks",
                     "retry_task",
                     "cancel_task",
+                    "switch_session",
                     "complete_goal",
                     "send_message",
                     "read_messages",
@@ -406,6 +408,7 @@ pub(crate) mod tests {
             "retry_task",
             "send_message",
             "submit_verdict",
+            "switch_session",
             "update_task",
         ];
         assert_eq!(distinct_tools(), EVERY_TOOL);
