@@ -232,7 +232,15 @@ Out: the daemon endpoints themselves (012).
 30. A session panel shows a reported context window as `<used> / <size>`,
     using the compact spelling of token figures. It shows no context fact
     before the agent reports one, and it never shows a cost.
-31. Beside each model's switch, a picker shows its `rank` from `GET
+31. Every session outside a cancelled goal offers Switch beside its session
+    actions. Its dialog starts on the session's pin, checks the pin's
+    `<agent>:<model>` shape, and posts its model and optional effort to
+    `POST /v1/sessions/{id}/switch`. A refusal shows the daemon's message; a
+    successor id replaces the open session while a same id leaves it selected.
+    A switched session links to the session it continues
+    (`ui/src/features/sessions/session-actions.test.tsx`,
+    `ui/src/features/sessions/session-detail-view.test.tsx`).
+32. Beside each model's switch, a picker shows its `rank` from `GET
     /v1/models`: `frontier`, `balanced`, `fast`, `local`, or unranked where it
     is `null`. Picking one of the four, or Unranked to clear it, sends `PUT
     /v1/models/rank` with the model's id and the lowercase rank word (or
@@ -244,7 +252,7 @@ Out: the daemon endpoints themselves (012).
     row from the daemon's answer through the same `models` query key a switch
     write uses, and a refusal is toasted rather than swallowed, springing the
     picker back to what the daemon still says.
-32. The Permissions screen's AI tab holds one card, "AI", with an alert at the
+33. The Permissions screen's AI tab holds one card, "AI", with an alert at the
     top of the card for the last error, then a header that is one row: the
     title, a state badge — `disabled`, `installing`, `ready` or `failed` —
     the enabled switch, and a joined button group holding "Test a request"
@@ -307,7 +315,7 @@ Out: the daemon endpoints themselves (012).
     (`ui/src/features/repositories/repository-form-dialog.test.tsx::puts an
     ai_disabled refusal on the permission mode field, pointing at the
     Permissions screen`).
-33. The Permissions screen's Learned tab lists every learned approval
+34. The Permissions screen's Learned tab lists every learned approval
     (`GET /v1/permissions/learned`, filtered by `?repository=` when the URL
     carries one), its actions column pinned to the trailing edge the way
     `models/model-table.tsx`'s Available column is: the repository by its
@@ -364,7 +372,7 @@ Out: the daemon endpoints themselves (012).
     and the tags where the model was called`,
     `ui/src/events/dispatch.test.ts::patches created and updated details and
     refetches lists`).
-34. The AI tab's card carries a "Test a request" button in its header button
+35. The AI tab's card carries a "Test a request" button in its header button
     group, beside Refresh.
     It opens a wide dialog for `POST /v1/permissions/ai/test`: Tool, Kind,
     Input (JSON, at least six rows), Options (comma-separated), and optional

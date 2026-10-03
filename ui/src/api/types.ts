@@ -36,6 +36,7 @@ export type AttentionReason = Schemas["AttentionReason"]
 export type SessionEntryDto = Schemas["SessionEntryDto"]
 export type ResumeOutsideSessionRequest = Schemas["ResumeOutsideSessionRequest"]
 export type NewSessionRequest = Schemas["NewSessionRequest"]
+export type SwitchSessionRequest = Schemas["SwitchSessionRequest"]
 
 /**
  * What one agent spent — the same three counters wherever they are read: a

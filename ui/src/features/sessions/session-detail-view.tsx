@@ -49,7 +49,7 @@ import { pinLabel } from "@/features/models/model-ref"
 import { taskQueryOptions } from "@/features/tasks/queries"
 import { sessionCopyEntries } from "@/lib/clipboard"
 import { formatTokens } from "@/lib/format"
-import { paths, useTaskPanelTo, useTerminalFocusRequest } from "@/routes/paths"
+import { paths, usePanelSessionTo, useTaskPanelTo, useTerminalFocusRequest } from "@/routes/paths"
 
 import { SessionActions } from "./session-actions"
 import { SessionActivity } from "./session-activity"
@@ -69,6 +69,7 @@ export function SessionDetailView({
   session,
   context,
   onResumed,
+  onSwitched,
 }: {
   session: SessionDto
   /**
@@ -78,6 +79,8 @@ export function SessionDetailView({
   context?: "goal" | "task"
   /** Where to go once a resume hands the session back; see {@link SessionActions}. */
   onResumed?: (session: SessionDto) => void
+  /** Where to go once a switch creates a successor session. */
+  onSwitched?: (session: SessionDto) => void
 }) {
   const goal = useQuery({
     ...goalQueryOptions(session.goal_id ?? ""),
@@ -88,6 +91,7 @@ export function SessionDetailView({
     enabled: Boolean(session.task_id),
   })
   const taskTo = useTaskPanelTo(session.task_id ?? "")
+  const switchedFromTo = usePanelSessionTo(session.switched_from ?? "")
   const [search, setSearch] = useSearchParams()
   const tab = TABS.find((value) => value === search.get("tab")) ?? "terminal"
   // Set when the panel was opened by a row that said this agent is blocked on
@@ -123,7 +127,12 @@ export function SessionDetailView({
           className="text-xs text-muted-foreground"
         />
         <div className="ml-auto">
-          <SessionActions session={session} onResumed={onResumed} />
+          <SessionActions
+            session={session}
+            onResumed={onResumed}
+            onSwitched={onSwitched}
+            goalCancelled={goal.data?.status === "cancelled"}
+          />
         </div>
       </header>
 
@@ -164,6 +173,13 @@ export function SessionDetailView({
             <span className="text-muted-foreground">{pinLabel(session.model, session.effort)}</span>
           )}
         </Fact>
+        {session.switched_from ? (
+          <Fact label="Continues">
+            <Link to={switchedFromTo} replace className="block truncate hover:underline">
+              <Mono>{session.switched_from}</Mono>
+            </Link>
+          </Fact>
+        ) : null}
         <Fact label="Directory">
           {session.worktree_path ? (
             <CopyableId

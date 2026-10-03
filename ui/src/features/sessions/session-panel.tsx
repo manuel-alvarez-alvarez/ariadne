@@ -65,6 +65,9 @@ export function SessionPanel({ sessionId, onClose }: { sessionId: string; onClos
             onResumed={(revived) =>
               setSearch(sessionPanelFrom(pathname, search, revived.id).search, { replace: true })
             }
+            onSwitched={(successor) =>
+              setSearch(sessionPanelFrom(pathname, search, successor.id).search, { replace: true })
+            }
           />
         )}
       </SheetContent>

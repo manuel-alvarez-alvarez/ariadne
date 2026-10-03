@@ -200,3 +200,11 @@ it("hides context when the agent has not reported a window", () => {
 
   expect(screen.queryByText("Context")).toBeNull()
 })
+
+it("links to the session it continues", () => {
+  renderView({ ...SESSION, switched_from: "01JSESS000000000000000OLD" })
+
+  expect(screen.getByRole("link", { name: "01JSESS000000000000000OLD" }).getAttribute("href")).toBe(
+    "/goals?goal=g1&tab=sessions&session=01JSESS000000000000000OLD",
+  )
+})

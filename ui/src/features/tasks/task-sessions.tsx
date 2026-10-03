@@ -127,6 +127,7 @@ export function TaskSessionView({
           context="task"
           // A resume hands back the session to attach to; the panel follows it.
           onResumed={(revived) => onSelect(revived.id)}
+          onSwitched={(successor) => onSelect(successor.id)}
         />
       )}
     </>

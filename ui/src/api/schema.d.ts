@@ -815,6 +815,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sessions/{id}/switch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Switch a session to another model or agent: the session ends, and a new
+         *     one starts on the same seat, on the pin named, in a new conversation. The
+         *     answer is the new session, which names the old one in `switched_from`.
+         * @description The pin is checked as `POST /v1/sessions` checks it, a model turned off
+         *     included. A session of a cancelled goal is refused.
+         */
+        post: operations["sessions_switch_session"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/skills": {
         parameters: {
             query?: never;
@@ -2037,6 +2060,11 @@ export interface components {
             model: string;
             seat?: null | components["schemas"]["Seat"];
             status: components["schemas"]["SessionStatus"];
+            /**
+             * @description The session this one replaced on its seat, when a switch started it
+             *     (`POST /v1/sessions/{id}/switch`); null otherwise.
+             */
+            switched_from?: string | null;
             /** @description The staffed agent this session runs; None for an orchestrator or loose session. */
             task_agent_id?: string | null;
             /** @description None for an orchestrator or a loose session. */
@@ -2188,6 +2216,20 @@ export interface components {
          * @enum {string}
          */
         SkillSeat: "orchestrator" | "task";
+        /**
+         * @description Switch a session to another model or agent: the old session ends, and a
+         *     new one starts on the same seat, on this pin, in a new conversation.
+         */
+        SwitchSessionRequest: {
+            /** @description The effort to run that model at; omitted = the agent's own. */
+            effort?: string | null;
+            /**
+             * @description The model to run, `<agent>:<model>`: a registry agent (`GET
+             *     /v1/acp-agents`) and a model of it (`GET /v1/models`).
+             * @example claude-acp:sonnet
+             */
+            model: string;
+        };
         TaskAgentDto: {
             /**
              * @description The branch this agent works on: the task branch for the first author,
@@ -3971,6 +4013,50 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SessionDto"];
                 };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sessions_switch_session: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description session id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SwitchSessionRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             404: {
                 headers: {
