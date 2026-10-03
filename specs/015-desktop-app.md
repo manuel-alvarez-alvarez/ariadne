@@ -172,11 +172,14 @@ Out: the daemon endpoints themselves (012).
     cached page at once and the outside half is fetched again; a
     `session_created` event does the same, for a resume made from the CLI or
     another window.
-19. On a task staffed with several authors (004) the task panel shows every
-    one of them — its skills, its model, its own branch, and its status in the
-    pick: the votes it has so far, or "Picked" once it is the one that won —
-    and the reviewer pick itself: which author each reviewer chose. A task
-    with one author shows the singular Author fact and no pick, unchanged.
+19. The goal, task and session panels open on a dense fact list above their
+    tabs — `text-xs`, three columns at `sm` and four at `lg`, no card frame —
+    rather than the framed grid further down an entity's own screen. On a
+    task staffed with several authors (004) the task panel shows every one of
+    them — its skills, its model, its own branch, and its status in the pick:
+    the votes it has so far, or "Picked" once it is the one that won — and the
+    reviewer pick itself: which author each reviewer chose. A task with one
+    author shows the singular Author fact and no pick, unchanged.
 20. Every session is shown in its console, as the CLI draws it: a terminal
     emulator (xterm.js) on the daemon's terminal socket
     (`GET /v1/sessions/{id}/console/terminal`, 008), in which the daemon
@@ -248,8 +251,9 @@ Out: the daemon endpoints themselves (012).
     failed call is toasted, leaving the screen as it was. Its tooltip also
     says how many models are turned off; each tab keeps its own model count.
 30. A session panel shows a reported context window as `<used> / <size>`,
-    using the compact spelling of token figures. It shows no context fact
-    before the agent reports one, and it never shows a cost.
+    using the compact spelling of token figures, beside a 4rem meter of how
+    much of it is used. It shows no context fact before the agent reports
+    one, and it never shows a cost.
 31. Every session outside a cancelled goal offers Switch beside its session
     actions. Its dialog starts on the session's pin, checks the pin's
     `<agent>:<model>` shape, and posts its model and optional effort to
@@ -572,10 +576,12 @@ Out: the daemon endpoints themselves (012).
   `::refuses a leading colon, which names no agent`,
   `::refuses a trailing colon, which names no model`,
   `::splits at the first colon`).
-- A model pin wraps whole in a panel fact, and a one-line table pin cuts its
-  middle without cutting its effort; focus opens its whole value
+- A model pin cuts its middle without cutting its effort in a panel fact and
+  in a table row alike, and focus opens its whole value in a tooltip; a pin
+  still wraps whole where a call site asks for that instead
   (`ui/src/features/models/model-pin.test.tsx::wraps every character of a pin without a tooltip`,
   `::keeps an effort visible beside a middle-cut model and opens the whole pin on focus`,
+  `::holds a fact's pin to one line, cut in the middle, with the whole pin in its tooltip`,
   `::leaves out an empty effort and its at sign`).
 - The sessions list uses the one-line pin and keeps its effort beside the
   middle-cut model
@@ -587,9 +593,10 @@ Out: the daemon endpoints themselves (012).
 - The agent activity feed shows the daemon's summary and opens and closes the
   raw payload under its row
   (`ui/src/features/sessions/session-activity.test.tsx`).
-- A session panel shows its reported context window with compact token figures
-  and hides an unreported one
+- A session panel shows its reported context window with compact token
+  figures beside a meter of how much is used, and hides an unreported one
   (`ui/src/features/sessions/session-detail-view.test.tsx::shows the reported context window with compact token figures`,
+  `::shows the context window behind a 4rem meter sized to how much of it is used`,
   `::hides context when the agent has not reported a window`).
 - One table lists Ariadne sessions and outside sessions together, newest
   activity first, and an outside row's empty status, goal and task, naming
@@ -843,13 +850,16 @@ Out: the daemon endpoints themselves (012).
   `::sends a landing picked by hand instead of the repository's default`,
   `::keeps a hand-picked landing once a different repository becomes the
   first`).
-- The goal panel's facts show the goal's landing, and a feature-branch
-  goal's repositories each show their own goal branch next to their base
-  branch once the plan has cut one
+- The goal panel's facts show the goal's landing, and name each repository by
+  its folder with its base branch bracketed after it and a feature-branch
+  goal's own branch after that once the plan has cut one — the full path
+  stays in a tooltip and stays copyable
   (`ui/src/features/goals/goal-panel.test.tsx::shows the goal's landing
   among its facts`,
-  `::shows each repository's goal branch next to its base branch`,
-  `::shows no goal branch for a repository that has not been cut one yet`).
+  `::names each repository by its folder, with its base branch bracketed and
+  its goal branch after`,
+  `::holds the full path of each repository in its tooltip, and keeps it
+  copyable`).
 - A screen's name appears once, as the header's only `h1`, with that screen's
   own actions at the header's end, and the shell renders no footer of its
   own — the sidebar's last child is the daemon connection status, whose click

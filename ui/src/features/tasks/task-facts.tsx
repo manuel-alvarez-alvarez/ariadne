@@ -33,10 +33,11 @@ export function TaskFacts({ task }: { task: TaskDto }) {
   const reviewers = taskReviewers(task)
 
   return (
-    // Two columns rather than the three a goal's facts take: a branch and a
-    // worktree path are the long values in the app, and a third column only
-    // cuts them shorter.
-    <FactList columns={2}>
+    // Dense, like the goal and session panels' own top facts: a branch and a
+    // worktree path are the long values in the app, but they are cut rather
+    // than wrapped here too, and their tooltip and copy button still hold the
+    // whole thing.
+    <FactList dense>
       <Fact label="Branch">
         <span className="flex items-center gap-1.5">
           <GitBranchIcon className="size-3.5 shrink-0 text-muted-foreground" />

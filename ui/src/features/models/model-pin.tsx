@@ -4,7 +4,14 @@ import { cn } from "@/lib/format"
 
 import { pinLabel } from "./model-ref"
 
-/** A model pin sized for either a fact cell that wraps or a table row that does not. */
+/**
+ * A model pin sized for wherever it sits: `wrap` breaks whole across as many
+ * lines as a fact cell needs, and `row` and `line` instead hold it to the one
+ * line a table row or a compact fact has room for — the model id cut in the
+ * middle, its effort kept readable after it, and the whole pin in the
+ * tooltip. The two differ only in name, for a call site to say which kind of
+ * one-line place it is.
+ */
 export function ModelPin({
   model,
   effort,
@@ -13,7 +20,7 @@ export function ModelPin({
 }: {
   model: string
   effort?: string | null
-  mode: "wrap" | "row"
+  mode: "wrap" | "row" | "line"
   className?: string
 }) {
   const label = pinLabel(model, effort)

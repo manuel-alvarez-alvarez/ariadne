@@ -41,7 +41,7 @@ import { taskListQueryOptions } from "@/features/tasks"
 import { CreateTaskDialog } from "@/features/tasks/task-form-dialog"
 import { useFocusReturn } from "@/hooks/use-focus-return"
 import { goalCopyEntries } from "@/lib/clipboard"
-import { LANDING_LABELS } from "@/lib/format"
+import { folderName, LANDING_LABELS } from "@/lib/format"
 import { paths, taskPanelTo, usePanelSessionNavigation } from "@/routes/paths"
 import { GoalActions } from "./goal-actions"
 import { GoalSessions, GoalSessionView } from "./goal-sessions"
@@ -228,12 +228,18 @@ function GoalView({
             <GoalActions goal={goal} onDeleted={onDeleted} />
           </div>
         </div>
-        <CopyableIdMenu
-          value={goal.id}
-          label="goal id"
-          entries={goalCopyEntries(goal.id)}
-          className="text-xs text-muted-foreground"
-        />
+        {/* The id and the two stamps that matter about a goal, on the one line
+            under its title — a fact each would only repeat what this already
+            says in passing. */}
+        <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+          <CopyableIdMenu value={goal.id} label="goal id" entries={goalCopyEntries(goal.id)} />
+          <span aria-hidden="true">·</span>
+          <span>created</span>
+          <When at={goal.created_at} label="created" />
+          <span aria-hidden="true">·</span>
+          <span>updated</span>
+          <When at={goal.updated_at} label="updated" />
+        </div>
       </SheetHeader>
 
       <GoalMetadata goal={goal} />
@@ -285,75 +291,50 @@ function GoalView({
 }
 
 /**
- * What the goal is allowed to do and what it has cost, always on show.
- *
- * Three columns where there is room, like the session panel's facts: five
- * short facts to fill them, with the repositories taking a row of their own
- * at the end.
+ * What the goal is allowed to do and what it has cost, in the dense strip
+ * every panel opens on — the stamps that say when are on the meta line above
+ * this, beside the id, rather than a fact apiece down here.
  */
 function GoalMetadata({ goal }: { goal: GoalDto }) {
   return (
-    <FactList>
+    <FactList dense>
       <Fact label="Orchestrator">
         {/* The goal's pin: what its orchestrator runs on, frozen when the goal
             was created. */}
         {goal.orchestrated ? (
-          <ModelPin model={goal.model} effort={goal.effort} mode="wrap" className="text-xs" />
+          <ModelPin model={goal.model} effort={goal.effort} mode="line" />
         ) : (
-          <span className="text-xs">No orchestrator</span>
+          <span>No orchestrator</span>
         )}
-      </Fact>
-      <Fact label="Created">
-        <When at={goal.created_at} label="created" />
-      </Fact>
-      <Fact label="Updated">
-        <When at={goal.updated_at} label="updated" />
       </Fact>
       <Fact label="Tokens">
         {/* Every session of the goal, its orchestrator's included, with the hint
             breaking the same total down by the seat that spent it. */}
-        <TokenFigure
-          usage={goal.usage.total}
-          rows={goalUsageRows(goal.usage)}
-          className="text-xs"
-        />
+        <TokenFigure usage={goal.usage.total} rows={goalUsageRows(goal.usage)} />
       </Fact>
       <Fact label="Landing">
         {/* Chosen once, at creation, and followed by every task of the goal. */}
-        <span className="text-xs">{LANDING_LABELS[goal.landing]}</span>
+        <span>{LANDING_LABELS[goal.landing]}</span>
       </Fact>
-      <Fact label="Repositories" className="sm:col-span-2 lg:col-span-3">
-        {/* One line per repository, whatever each one carries: the base branch
-            used to drop to a line of its own under the path and the
-            description to a third, so a goal on two repositories read as an
-            uneven list of three, four or five lines with no shape to it. The
-            path is cut short before the branch beside it is, since it is the
-            branch that says what the task worktrees are cut from. A
-            feature-branch goal's own branch in that repo rides beside the base
-            branch too, once the plan has cut one. */}
+      <Fact label="Repositories" className="sm:col-span-3 lg:col-span-4">
+        {/* Named by its folder rather than its full path — the path is only
+            worth the room a tooltip gives it — with the base branch beside it
+            in brackets, and a feature-branch goal's own branch after that once
+            the plan has cut one. No separator shows where there is nothing on
+            the other side of it. */}
         <ul className="flex flex-col gap-1">
           {goal.repos.map((repo) => (
-            <li key={repo.id} className="flex min-w-0 items-baseline gap-1.5">
-              {/* The path is the repository's name, so it is also the way to
-                  its registration — where the base branch beside it and its
-                  description are edited (the rows there do not expand, so the
-                  screen itself is as far as a link can point). */}
+            <li key={repo.id} className="min-w-0">
               <CopyableId
                 value={repo.path}
+                display={() =>
+                  `${folderName(repo.path)} [${repo.base_branch}]${
+                    repo.goal_branch ? ` · ${repo.goal_branch}` : ""
+                  }`
+                }
                 label="repository path"
-                truncate="middle"
                 to={paths.repositories()}
-                className="text-xs"
               />
-              <span className="shrink-0 text-xs text-muted-foreground">
-                · base <span className="font-mono">{repo.base_branch}</span>
-                {repo.goal_branch ? (
-                  <>
-                    {" "}
-                    · goal <span className="font-mono">{repo.goal_branch}</span>
-                  </>
-                ) : null}
-              </span>
             </li>
           ))}
         </ul>

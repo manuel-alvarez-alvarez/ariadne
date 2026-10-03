@@ -134,17 +134,27 @@ it("keeps the sessions tab to the sessions, with no breakdown above them", async
   expect(screen.queryByRole("heading", { name: "Tokens" })).toBeNull()
 })
 
-it("shows what the orchestrator runs on: the goal's pin, and that it is a pin", () => {
+it("drops the Updated fact, moving the two stamps onto a meta line under the title", () => {
+  mount()
+
+  expect(screen.queryByText("Updated")).toBeNull()
+  // Beside the goal id, on the line the id itself sits on.
+  const line = screen.getByText(GOAL.id).closest("div")
+  if (!line) throw new Error("no meta line around the goal id")
+  expect(line.textContent).toContain("created")
+  expect(line.textContent).toContain("updated")
+  expect(line.querySelector(`time[datetime="${GOAL.created_at}"]`)).not.toBeNull()
+  expect(line.querySelector(`time[datetime="${GOAL.updated_at}"]`)).not.toBeNull()
+})
+
+it("shows what the orchestrator runs on, as a pin held to one line", () => {
   mount(aGoal({ model: "codex-acp:gpt-5.3-codex" }))
 
   const orchestrator = detail("Orchestrator")
-  const text = orchestrator.textContent ?? ""
-  expect(text).toContain("codex-acp:gpt-5.3-codex")
-  expect(orchestrator.querySelector(".break-all")).not.toBeNull()
-  // One word for "this is not what the profile says", where "(overrides)" left
-  // the reader to work out which of the two won.
-  // Nothing behind the pin to disagree with it any more.
-  expect(text).not.toContain("grok-4")
+  expect(orchestrator.textContent).toContain("codex-acp:gpt-5.3-codex")
+  // Cut in the middle rather than wrapped, the way every fact's pin now
+  // holds to its one line.
+  expect(orchestrator.querySelector("[data-slot='tooltip-trigger']")).not.toBeNull()
 })
 
 it("shows the effort that model is run at, beside it", () => {
@@ -166,11 +176,16 @@ it("shows the goal's landing among its facts", () => {
 })
 
 describe("a feature-branch goal's repositories", () => {
-  it("shows each repository's goal branch next to its base branch", () => {
+  it("names each repository by its folder, with its base branch bracketed and its goal branch after", () => {
     const goal = aGoal({
       landing: "feature_branch",
       repos: [
-        { ...aRepository(), base_branch: "main", goal_branch: "ship-the-board-000001" },
+        {
+          ...aRepository(),
+          path: "/home/me/dev/ariadne",
+          base_branch: "main",
+          goal_branch: "ship-the-board-000001",
+        },
         {
           ...aRepository({ id: "01JREPO0000000000000000002", path: "/home/me/dev/sandbox" }),
           base_branch: "trunk",
@@ -181,21 +196,20 @@ describe("a feature-branch goal's repositories", () => {
     mount(goal)
 
     const list = detail("Repositories")
-    expect(list.textContent).toContain("base main")
-    expect(list.textContent).toContain("goal ship-the-board-000001")
-    // The second repository has no branch of its own yet: nothing to show.
-    expect(list.textContent).toContain("base trunk")
-    expect(list.textContent).not.toContain("goal null")
+    expect(list.textContent).toContain("ariadne [main] · ship-the-board-000001")
+    // The second repository has no branch of its own yet: no stray separator
+    // where there is nothing to follow it.
+    expect(list.textContent).toContain("sandbox [trunk]")
+    expect(list.textContent).not.toContain("sandbox [trunk] ·")
   })
 
-  it("shows no goal branch for a repository that has not been cut one yet", () => {
-    const goal = aGoal({
-      landing: "feature_branch",
-      repos: [{ ...aRepository(), goal_branch: null }],
-    })
+  it("holds the full path of each repository in its tooltip, and keeps it copyable", async () => {
+    const goal = aGoal({ repos: [aRepository({ path: "/home/me/dev/ariadne" })] })
     mount(goal)
 
-    expect(detail("Repositories").textContent).not.toContain("goal")
+    const repo = within(detail("Repositories"))
+    expect(repo.getByTitle("/home/me/dev/ariadne")).toBeDefined()
+    expect(repo.getByRole("button", { name: "Copy repository path" })).toBeDefined()
   })
 })
 
