@@ -8,7 +8,9 @@ mod time;
 mod tools;
 mod work;
 
-pub use attention::AttentionStatsDto;
+pub use attention::{
+    AttentionFlagDto, AttentionStatsDto, PermissionDeciderDto, PermissionStatsDto,
+};
 pub use models::{AuthorModelStatDto, ModelStatDto, ModelStatsDto, ReviewerModelStatDto};
 pub use spend::SpendStatsDto;
 pub use time::TimeStatsDto;

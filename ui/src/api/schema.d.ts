@@ -1420,11 +1420,32 @@ export interface components {
          * @enum {string}
          */
         AttentionReason: "waiting_permission" | "waiting_input" | "waiting_user" | "agent_error" | "disconnected" | "stalled" | "exhausted";
-        /**
-         * @description Response of `GET /v1/stats/attention`: how much did it need me? Empty until its task
-         *     fills it in.
-         */
-        AttentionStatsDto: Record<string, never>;
+        /** @description Response of `GET /v1/stats/attention`: how much did it need me? */
+        AttentionStatsDto: {
+            permissions: components["schemas"]["PermissionStatsDto"];
+            flags: components["schemas"]["AttentionFlagDto"][];
+            sessions_failed: number;
+            sessions_stalled: number;
+            exhaustions: number;
+        };
+        AttentionFlagDto: {
+            reason: string;
+            raised: number;
+            mean_wait_secs: number;
+        };
+        PermissionDeciderDto: {
+            decided_by: string;
+            total: number;
+            allowed: number;
+            denied: number;
+            cancelled: number;
+            mean_wait_ms: number;
+        };
+        PermissionStatsDto: {
+            total: number;
+            person_share: number;
+            by_decider: components["schemas"]["PermissionDeciderDto"][];
+        };
         /** @description Outcomes attributed to an author model. */
         AuthorModelStatDto: {
             /** Format: int64 */
@@ -1447,7 +1468,6 @@ export interface components {
             tokens_per_finished_task: number;
             /** Format: double */
             win_rate: number;
-        };
         /** @description A binary as the daemon can — or cannot — find it. */
         BinaryDto: {
             /**

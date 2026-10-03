@@ -4,6 +4,7 @@ use ariadne_core::id::new_id;
 use ariadne_core::{AttentionReason, Seat, SessionStatus};
 
 use crate::query::Filtered;
+use crate::stats::record_attention_clear;
 use crate::{AgentPin, AgentSession, Change, Result, Store, StoreError, not_found, now};
 
 /// [`SessionStatus::is_live`] in SQL, in the one place SQL has to know it.
@@ -187,7 +188,8 @@ impl Store {
                 AttentionReason::WaitingPermission.as_str(),
                 AttentionReason::WaitingInput.as_str(),
             ];
-            self.clear_attention(id, PROMPTS_ONLY, &prompts).await?;
+            let cleared = self.clear_attention(id, PROMPTS_ONLY, &prompts).await?;
+            self.announce_clear(id, cleared).await?;
         }
         self.publish_session_update(id).await
     }
@@ -216,6 +218,8 @@ impl Store {
             _ => None,
         };
         let mut tx = self.w().begin().await?;
+        let before: AgentSession =
+            Self::fetch_by_in_tx(&mut tx, "session", "agent_sessions", id).await?;
         let n = sqlx::query(
             "UPDATE agent_sessions SET status = ?, ended_at = COALESCE(?, ended_at) WHERE id = ?",
         )
@@ -246,6 +250,18 @@ impl Store {
             Self::fetch_by_in_tx(&mut tx, "session", "agent_sessions", id).await?;
         tx.commit().await?;
         self.publish(Change::SessionUpdated(session.clone()));
+        if !status.is_live()
+            && matches!(
+                before.attention_reason.as_deref(),
+                Some("waiting_permission" | "waiting_input")
+            )
+            && let (Some(reason), Some(since)) = (
+                before.attention_reason.clone(),
+                before.attention_since.clone(),
+            )
+        {
+            record_attention_clear(self, before, reason, since).await?;
+        }
         Ok(session)
     }
 
@@ -315,7 +331,7 @@ impl Store {
                 &[AttentionReason::WaitingUser.as_str()],
             )
             .await?;
-        self.announce_attention(id, cleared).await
+        self.announce_clear(id, cleared).await
     }
 
     /// The clear a session reporting itself idle makes: the two reasons its
@@ -340,19 +356,29 @@ impl Store {
         let cleared = self
             .clear_attention(id, SILENCE_AND_ERROR, &reasons)
             .await?;
-        self.announce_attention(id, cleared).await
+        self.announce_clear(id, cleared).await
     }
 
     /// Drop any attention flag from a session (the agent moved on).
     pub async fn clear_session_attention(&self, id: &str) -> Result<()> {
         let cleared = self.clear_attention(id, "", &[]).await?;
-        self.announce_attention(id, cleared).await
+        self.announce_clear(id, cleared).await
     }
 
     /// Take the attention flag down, narrowed by `and`: the caller's clause
-    /// says which reasons its clear is allowed to take with it. Answers how
-    /// many rows it changed, which is none for a session with nothing up.
-    async fn clear_attention(&self, id: &str, and: &str, reasons: &[&str]) -> Result<u64> {
+    /// says which reasons its clear is allowed to take with it. Answers the
+    /// row it took the flag from, or none for a session with nothing up.
+    async fn clear_attention(
+        &self,
+        id: &str,
+        and: &str,
+        reasons: &[&str],
+    ) -> Result<Option<AgentSession>> {
+        let mut tx = self.w().begin().await?;
+        let before = sqlx::query_as("SELECT * FROM agent_sessions WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
         let mut q = sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE agent_sessions
                 SET attention_reason = NULL, attention_since = NULL
@@ -362,7 +388,26 @@ impl Store {
         for reason in reasons {
             q = q.bind(*reason);
         }
-        Ok(q.execute(self.w()).await?.rows_affected())
+        let changed = q.execute(&mut *tx).await?.rows_affected();
+        tx.commit().await?;
+        Ok((changed == 1).then_some(before).flatten())
+    }
+
+    /// Record and announce a clear that changed a row. A no-op still asks the
+    /// old announcer to distinguish an unknown session from an unflagged one.
+    async fn announce_clear(&self, id: &str, cleared: Option<AgentSession>) -> Result<()> {
+        let Some(cleared) = cleared else {
+            return self.announce_attention(id, 0).await;
+        };
+        let (Some(reason), Some(since)) = (
+            cleared.attention_reason.clone(),
+            cleared.attention_since.clone(),
+        ) else {
+            return Ok(());
+        };
+        self.sync_task_stall(id).await?;
+        self.publish_session_update(id).await?;
+        record_attention_clear(self, cleared, reason, since).await
     }
 
     /// Put a finished session back into its pre-spawn state so it can be
@@ -389,21 +434,29 @@ impl Store {
         id: &str,
         worktree_path: Option<&str>,
     ) -> Result<AgentSession> {
-        self.write_session(
-            id,
-            sqlx::query(
-                "UPDATE agent_sessions
+        let mut tx = self.w().begin().await?;
+        let before: AgentSession =
+            Self::fetch_by_in_tx(&mut tx, "session", "agent_sessions", id).await?;
+        sqlx::query(
+            "UPDATE agent_sessions
                 SET status = 'starting', ended_at = NULL, last_activity_at = ?,
                     attention_reason = NULL, attention_since = NULL,
                     worktree_path = COALESCE(?, worktree_path), launch_id = ?
               WHERE id = ?",
-            )
-            .bind(now())
-            .bind(worktree_path)
-            .bind(new_id())
-            .bind(id),
         )
+        .bind(now())
+        .bind(worktree_path)
+        .bind(new_id())
+        .bind(id)
+        .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
+        if let (Some(reason), Some(since)) = (
+            before.attention_reason.clone(),
+            before.attention_since.clone(),
+        ) {
+            record_attention_clear(self, before, reason, since).await?;
+        }
         self.sync_task_stall(id).await?;
         let session = self.get_session(id).await?;
         self.publish(Change::SessionUpdated(session.clone()));

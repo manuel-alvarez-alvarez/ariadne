@@ -51,6 +51,15 @@ IGNORED = {
     "crates/ariadne-console/src/transcript.rs: Location": (
         "the element type of the public field `Tool::locations`"
     ),
+    "crates/ariadne-store/src/stats/attention.rs: PermissionStats": (
+        "the public AttentionStats permissions field carries it to the daemon"
+    ),
+    "crates/ariadne-store/src/stats/attention.rs: PermissionDecider": (
+        "the public PermissionStats by_decider field carries it to the daemon"
+    ),
+    "crates/ariadne-store/src/stats/attention.rs: AttentionFlag": (
+        "the public AttentionStats flags field carries it to the daemon"
+    ),
 }
 
 DECLARATION = re.compile(

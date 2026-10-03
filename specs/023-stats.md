@@ -43,7 +43,7 @@ of the desktop app.
 
 ## Scope
 
-In: the ledger, the rules a fact obeys, every fact kind (`session_ended`,
+In: the ledger, the rules a fact obeys, every fact kind (`attention`, `session_ended`,
 `switch`, `message`, `verdict`, `tool_call`, `permission`, `task_ended` and
 `pick`), the filters every family takes, the frame the six families share —
 their routes, the command, the screen and its shared pieces, the query keys
@@ -343,7 +343,17 @@ Rates print as percentages with one decimal, durations use the existing duration
 
 ### Attention
 
-Built by its task.
+An `attention` fact is written by the store whenever a clear takes a session
+flag down. Its data holds the reason taken down and the whole seconds since
+`attention_since`. A clear that changes no row writes no fact. A flag still up
+when a session ends writes no attention fact; the `session_ended` fact carries
+its reason.
+
+The family groups permission facts by `decided_by` and answer, reports the
+share answered by `console`, and reports each supported flag reason from
+clears plus ending sessions that carried it. It also counts failed sessions,
+stalled ending sessions and exhausted switches. Every count and mean obeys the
+shared `since` and `repo` filter.
 
 ### Tools
 
@@ -493,7 +503,13 @@ Built by its task.
 
 #### Attention
 
-Built by its task.
+- Agent-event, idle-report and explicit clears write one attention fact only
+  when they remove a flag (`store.rs::attention_clears_write_facts_only_when_a_flag_falls`).
+- The aggregate groups permission answers, flag reasons, failures, stalls and
+  exhausted switches under both filters (`stats/attention.rs`).
+- The route, command and screen expose the family, including its decider and
+  flag charts (`stats_attention.rs`, `commands/stats/attention.rs`,
+  `attention-section.test.tsx`).
 
 #### Tools
 

@@ -4315,3 +4315,136 @@ async fn a_retried_contest_writes_a_pick_fact_for_each_settled_cycle() {
     let facts = ledger(w._dir.path(), "pick").await;
     assert_eq!(facts.len(), 2, "{facts:?}");
 }
+
+/// A clear is a completed spell of attention: the agent's event and an idle
+/// report each record the reason and wait, while a no-op adds nothing.
+#[tokio::test]
+async fn attention_clears_write_facts_only_when_a_flag_falls() {
+    let w = World::new().await;
+    let session = w.author_session().await;
+    w.store
+        .set_session_attention(&session.id, AttentionReason::WaitingPermission)
+        .await
+        .unwrap();
+    w.store.clear_agent_attention(&session.id).await.unwrap();
+    w.store
+        .set_session_attention(&session.id, AttentionReason::Stalled)
+        .await
+        .unwrap();
+    w.store
+        .clear_attention_after_idle(&session.id)
+        .await
+        .unwrap();
+    w.store.clear_session_attention(&session.id).await.unwrap();
+
+    let facts = ledger(w._dir.path(), "attention").await;
+    assert_eq!(facts.len(), 2, "a clear with no flag is not a fact");
+    assert_eq!(facts[0].1["reason"], "waiting_permission");
+    assert_eq!(facts[1].1["reason"], "stalled");
+    assert!(facts.iter().all(|(_, data)| data["wait_secs"].is_number()));
+}
+
+/// The aggregate counts every attention source and applies both fact filters.
+#[tokio::test]
+async fn attention_stats_groups_facts_and_honours_the_filter() {
+    let (store, _dir) = test_store().await;
+    let fact = |kind: &str, repo_id: &str, data| NewStatFact {
+        kind: kind.into(),
+        repo_id: Some(repo_id.into()),
+        goal_id: None,
+        task_id: None,
+        session_id: None,
+        launch_id: None,
+        seat: None,
+        model: None,
+        effort: None,
+        skills: vec![],
+        data,
+    };
+    for data in [
+        serde_json::json!({"decided_by":"console","answer":"allow","wait_ms":10}),
+        serde_json::json!({"decided_by":"console","answer":"deny","wait_ms":30}),
+        serde_json::json!({"decided_by":"auto","answer":"cancelled","wait_ms":5}),
+    ] {
+        store
+            .record_fact(fact("permission", "kept", data))
+            .await
+            .unwrap();
+    }
+    store
+        .record_fact(fact(
+            "attention",
+            "kept",
+            serde_json::json!({"reason":"waiting_input","wait_secs":4}),
+        ))
+        .await
+        .unwrap();
+    store
+        .record_fact(fact(
+            "attention",
+            "kept",
+            serde_json::json!({"reason":"waiting_input","wait_secs":8}),
+        ))
+        .await
+        .unwrap();
+    store
+        .record_fact(fact(
+            "session_ended",
+            "kept",
+            serde_json::json!({"status":"failed","attention_reason":"stalled"}),
+        ))
+        .await
+        .unwrap();
+    store
+        .record_fact(fact(
+            "switch",
+            "kept",
+            serde_json::json!({"reason":"exhausted"}),
+        ))
+        .await
+        .unwrap();
+    store
+        .record_fact(fact(
+            "permission",
+            "other",
+            serde_json::json!({"decided_by":"console","answer":"allow","wait_ms":1}),
+        ))
+        .await
+        .unwrap();
+
+    let stats = store
+        .attention_stats(&StatsFilter {
+            repo_id: Some("kept".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(stats.permissions.total, 3);
+    assert_eq!(stats.permissions.person_share, 2.0 / 3.0);
+    assert_eq!(stats.permissions.by_decider[0].decided_by, "console");
+    assert_eq!(stats.permissions.by_decider[0].allowed, 1);
+    assert_eq!(stats.permissions.by_decider[0].denied, 1);
+    assert_eq!(stats.permissions.by_decider[0].mean_wait_ms, 20.0);
+    let asked = stats
+        .flags
+        .iter()
+        .find(|row| row.reason == "waiting_input")
+        .unwrap();
+    assert_eq!((asked.raised, asked.mean_wait_secs), (2, 6.0));
+    assert_eq!(
+        (
+            stats.sessions_failed,
+            stats.sessions_stalled,
+            stats.exhaustions
+        ),
+        (1, 1, 1)
+    );
+    let none = store
+        .attention_stats(&StatsFilter {
+            since: Some(chrono::Utc::now() + chrono::Duration::seconds(1)),
+            repo_id: Some("kept".into()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(none.permissions.total, 0);
+}

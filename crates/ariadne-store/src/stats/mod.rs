@@ -29,6 +29,8 @@ use chrono::{DateTime, Datelike, Duration, SecondsFormat, Utc};
 
 use crate::{Result, Store, StoreError, now};
 
+use crate::AgentSession;
+
 /// One fact on its way into the ledger. The store gives it its id and its
 /// `created_at`.
 #[derive(Debug, Clone, PartialEq)]
@@ -143,6 +145,74 @@ impl Store {
             other => other,
         }
     }
+}
+
+/// Write the fact that a session's attention flag was taken down. The caller
+/// supplies the row as it stood at the clear, so a relaunch cannot change the
+/// run the fact names before the ledger sees it.
+pub(crate) async fn record_attention_clear(
+    store: &Store,
+    session: AgentSession,
+    reason: String,
+    attention_since: String,
+) -> Result<()> {
+    let wait_secs = DateTime::parse_from_rfc3339(&attention_since)
+        .map(|since| {
+            (Utc::now() - since.with_timezone(&Utc))
+                .num_seconds()
+                .max(0)
+        })
+        .unwrap_or(0);
+    let fact = attention_fact(
+        store,
+        session,
+        serde_json::json!({
+            "reason": reason,
+            "wait_secs": wait_secs,
+        }),
+    )
+    .await?;
+    store.record_fact(fact).await
+}
+
+/// The session columns a store-owned attention fact carries. This is the
+/// store counterpart of the daemon's session fact helper: clears originate in
+/// the store, before a daemon caller can omit one of their paths.
+async fn attention_fact(
+    store: &Store,
+    session: AgentSession,
+    data: serde_json::Value,
+) -> Result<NewStatFact> {
+    let repo_id = match (&session.task_id, &session.goal_id) {
+        (Some(task_id), _) => Some(store.get_task(task_id).await?.repo_id),
+        (None, Some(goal_id)) => match store.list_goal_repositories(goal_id).await?.as_slice() {
+            [only] => Some(only.id.clone()),
+            _ => None,
+        },
+        (None, None) => None,
+    };
+    let skills = match &session.task_agent_id {
+        Some(agent_id) => store
+            .agent_skills(agent_id)
+            .await?
+            .into_iter()
+            .map(|skill| skill.name)
+            .collect(),
+        None => Vec::new(),
+    };
+    Ok(NewStatFact {
+        kind: "attention".into(),
+        repo_id,
+        goal_id: session.goal_id,
+        task_id: session.task_id,
+        session_id: Some(session.id),
+        launch_id: session.launch_id,
+        seat: session.seat,
+        model: Some(session.model),
+        effort: session.effort,
+        skills,
+        data,
+    })
 }
 
 /// The clauses a filter adds to a `WHERE`, and the values they bind, in order.

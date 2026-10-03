@@ -114,7 +114,17 @@ Seatless sessions appear under NONE in the CLI and in JSON.
 
 ## Attention
 
-Its task writes this section.
+**Attention** answers how much the work needed you. It shows permission
+prompts by who answered them and whether they were allowed, denied or
+cancelled, along with the average wait. It also shows questions the agents
+asked, attention flags by reason, failed and stalled sessions, and switches
+made because a model ran out of room.
+
+In the desktop app, the four headline figures are the prompts you answered,
+your mean wait, questions asked and stalled sessions. The charts break down
+permission answers by decider and attention flags by reason. In the CLI,
+`ariadne stats attention` prints those session figures followed by the two
+tables; `--format json` returns the full response.
 
 ## Tools
 

@@ -7,4 +7,15 @@
  * draw, built off `STATUS_COLORS`.
  */
 
-export {}
+import type { ChartConfig } from "@/components/ui/chart"
+import { STATUS_COLORS } from "./status-colors"
+
+export const attentionPermissionConfig = {
+  allowed: { label: "Allow", color: STATUS_COLORS.done },
+  denied: { label: "Deny", color: STATUS_COLORS.danger },
+  cancelled: { label: "Cancelled", color: STATUS_COLORS.pending },
+} satisfies ChartConfig
+
+export const attentionFlagConfig = {
+  raised: { label: "Raised", color: STATUS_COLORS.active },
+} satisfies ChartConfig
