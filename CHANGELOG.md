@@ -1,5 +1,55 @@
 # Changelog
 
+## [0.11.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.10.0...v0.11.0) (2026-10-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* rebuild the stats as six families that each answer one question
+* **api:** choose how work lands on the goal, not on each task
+* **daemon:** the init migration changed, so delete the Ariadne database before you start the new daemon.
+* **daemon:** the init migration changed, so delete the Ariadne database before you start the new daemon.
+* **daemon:** the init migration changed, so delete the Ariadne database before you start the new daemon.
+
+### Features
+
+* **api:** choose how work lands on the goal, not on each task ([39c7382](https://github.com/manuel-alvarez-alvarez/ariadne/commit/39c73827cb1ce991354c4e72504a1e65fd58a1e1))
+* **cli:** show goal landing and branches ([4778ea7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4778ea771a1e7cd8cb05257ea7f517e45f3cd4d8))
+* **cli:** switch a session to another model or agent ([83843ed](https://github.com/manuel-alvarez-alvarez/ariadne/commit/83843ed530c98ea17fe15a7baeaf75a9989b3c24))
+* **daemon:** add outcome stats ([9a99dac](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9a99dacb9ad7e01044c65e8b3db237715f613c8c))
+* **daemon:** add review stats ([fb876d7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/fb876d7067b7ee941b5a1831626dc0f85cc03f08))
+* **daemon:** add switch stats ([57a542d](https://github.com/manuel-alvarez-alvarez/ariadne/commit/57a542d78b3534497d2f1cdeed222c09a7a6c5f4))
+* **daemon:** add tool stats ([a64586b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a64586b3f79a62ab3c5863d621d279bea692bdfc))
+* **daemon:** answer learned permissions by a normalized key ([354c0aa](https://github.com/manuel-alvarez-alvarez/ariadne/commit/354c0aaaa5184fa5a8883dfec9f24048718ad566))
+* **daemon:** keep the conversation on a same-agent switch ([efb3e62](https://github.com/manuel-alvarez-alvarez/ariadne/commit/efb3e62a205b3f2209ff4fb2746373696bfc698c))
+* **daemon:** land feature tasks on goal branches ([1d1ff1e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1d1ff1e58c3b1ff63ab42f19df3a8e2b573a6f28))
+* **daemon:** offer four learned permission choices ([04dd0fe](https://github.com/manuel-alvarez-alvarez/ariadne/commit/04dd0fed22d7e3608bd285bf398298a21b2bf876))
+* **daemon:** open the final pull request of a feature branch goal ([1df23c4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1df23c472e81a060b49f53613e56c7fa7445b0ab))
+* **daemon:** record stat facts and show model stats ([e520ed4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e520ed4e815353985f7def9605f9308c79fa897f))
+* **daemon:** render a handoff text from a session's events ([eb38027](https://github.com/manuel-alvarez-alvarez/ariadne/commit/eb38027f3f0d86976359d2662e03a6fd860ed038))
+* **daemon:** select permission thresholds for real request shapes ([16ad38e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/16ad38e18e006583e57b72855044a16602e29bea))
+* **daemon:** switch a session by itself when its model is exhausted ([7b19d49](https://github.com/manuel-alvarez-alvarez/ariadne/commit/7b19d49a5f0f9349de388566f7f428892e679f44))
+* **daemon:** switch a session to another model or agent ([aa3ad78](https://github.com/manuel-alvarez-alvarez/ariadne/commit/aa3ad7886ca94fdbd705542fe509ffb5b54bb9ce))
+* **daemon:** test an AI permission request in the shape a real one has ([8cfa95c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8cfa95c4ee07ad648a42b32e3ade5a084723613c))
+* **daemon:** widen a learned permission row to every repository ([0ca594a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0ca594abb970a955a973606225035e7112708edb))
+* **mcp:** let the orchestrator switch a session ([a66b948](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a66b948f00e0c8f9a48470e9c05e8a7a1a2c4f7f))
+* **prompts:** teach the orchestrator that the goal sets the landing ([01c9439](https://github.com/manuel-alvarez-alvarez/ariadne/commit/01c9439e617274c197285692c463ba70b9bcf17e))
+* rebuild the stats as six families that each answer one question ([996a461](https://github.com/manuel-alvarez-alvarez/ariadne/commit/996a461c1e9087f7a8fb2521b1b3b197c3d23fda))
+* **store:** add repository landing defaults ([f55318e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/f55318e2b1385a63f3f114596a02e61da52e2da6))
+* **ui:** choose and show the landing in Ariadne Desktop ([9267f1e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9267f1e1e54369714aac63577f915df09ac814f5))
+* **ui:** redesign the desktop app's shell, board and screens ([#41](https://github.com/manuel-alvarez-alvarez/ariadne/issues/41)) ([86e8975](https://github.com/manuel-alvarez-alvarez/ariadne/commit/86e89759ebb0c257642c99d0c8f73c4ab4bce43b))
+* **ui:** show learned permission scope details ([549c9b5](https://github.com/manuel-alvarez-alvarez/ariadne/commit/549c9b58742b8afd3df7804581faa2f6c2447433))
+* **ui:** show one side panel at a time ([a3de8d9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a3de8d94b83116ca52194cdb450c98a598d6adc7))
+* **ui:** switch a session to another model or agent ([3d13ef6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/3d13ef6fa1919aaff242eb0a17c20c8c506f11e3))
+
+
+### Bug Fixes
+
+* **daemon:** delete OpenCode discovery sessions ([9e5342c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9e5342cf4bd63f1b674fb6f90223c90234d64b33))
+* **daemon:** hide empty OpenCode sessions ([996b094](https://github.com/manuel-alvarez-alvarez/ariadne/commit/996b094cc7c9030f82b4463fc168e33cf0674352))
+* **daemon:** show ACP error details in session transcripts ([0a148c6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0a148c65f2cba2f8ff9143dc70b15b809c1ac993))
+* **prompts:** never merge a pull request; wait for a human ([7adaadb](https://github.com/manuel-alvarez-alvarez/ariadne/commit/7adaadb16f72895d41faf1c3dbe0aa1245e915b9))
+
 ## [0.10.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.9.0...v0.10.0) (2026-10-02)
 
 
