@@ -90,10 +90,8 @@ CREATE TABLE model_ranks (
 -- A checkout, registered once globally and named by id from there on, so that
 -- editing it moves every goal that works in it.
 --
--- How a change reaches `base_branch` is not here. That is the task's own
--- `landing`, agreed with the user task by task, and the procedure it names is
--- Ariadne's (`ariadne_store::defaults::default_landing_prompt`). A repository
--- is a checkout and a base branch, and nothing else about how work ends.
+-- A new goal may use this repository's default landing. Its creator can
+-- choose another landing, which stays fixed on the goal.
 CREATE TABLE repositories (
     id          TEXT PRIMARY KEY,
     path        TEXT NOT NULL,                  -- absolute repo path
@@ -105,6 +103,8 @@ CREATE TABLE repositories (
     -- answered; `learn` keeps its approvals in `learned_permissions`.
     permission_mode TEXT NOT NULL DEFAULT 'auto'
                     CHECK (permission_mode IN ('auto', 'ask', 'learn', 'ai')),
+    default_landing TEXT NOT NULL DEFAULT 'merge'
+                    CHECK (default_landing IN ('none', 'merge', 'pull_request', 'feature_branch')),
     -- The same checkout can be registered once per base branch.
     UNIQUE (path, base_branch)
 );

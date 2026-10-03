@@ -256,6 +256,7 @@ pub struct Repository {
     /// [`PermissionMode`] spells it. Read through
     /// [`Repository::permission_mode`].
     pub permission_mode: String,
+    pub default_landing: String,
 }
 
 impl Repository {
@@ -264,6 +265,13 @@ impl Repository {
     /// `ask`, the one mode that approves nothing on its own.
     pub fn permission_mode(&self) -> PermissionMode {
         self.permission_mode.parse().unwrap_or(PermissionMode::Ask)
+    }
+
+    /// The landing a new goal uses where its request leaves landing out. A
+    /// row written by a future build with another value reads as `merge`, the
+    /// repository default that preserves the established goal behavior.
+    pub fn default_landing(&self) -> Landing {
+        self.default_landing.parse().unwrap_or(Landing::Merge)
     }
 }
 
@@ -360,10 +368,8 @@ impl Task {
     /// The procedure the author of this task is briefed to end it with: the
     /// built-in of the ending its goal carries.
     ///
-    /// One text per ending, Ariadne's own. A repository has no say in it —
-    /// how a change reaches a base branch is a fact about the goal, chosen by
-    /// the user when the goal was created, and a second answer stored on the
-    /// checkout could only disagree with it.
+    /// One text per ending, Ariadne's own. The repository only supplied the
+    /// goal's default when it was created, and cannot change this answer.
     pub fn landing_prompt_text(&self) -> &'static str {
         default_landing_prompt(self.landing())
     }

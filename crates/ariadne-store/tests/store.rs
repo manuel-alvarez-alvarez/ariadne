@@ -50,6 +50,7 @@ async fn learned_permissions_keep_one_row_per_repository_tool_level_and_key() {
             base_branch: "main".into(),
             description: None,
             permission_mode: Some(PermissionMode::Learn),
+            default_landing: None,
         })
         .await
         .unwrap();
@@ -198,6 +199,7 @@ async fn a_repository_row_wins_over_an_all_row_of_another_repository() {
             base_branch: "main".into(),
             description: None,
             permission_mode: Some(PermissionMode::Learn),
+            default_landing: None,
         })
         .await
         .unwrap();
@@ -207,6 +209,7 @@ async fn a_repository_row_wins_over_an_all_row_of_another_repository() {
             base_branch: "main".into(),
             description: None,
             permission_mode: Some(PermissionMode::Learn),
+            default_landing: None,
         })
         .await
         .unwrap();
@@ -216,6 +219,7 @@ async fn a_repository_row_wins_over_an_all_row_of_another_repository() {
             base_branch: "main".into(),
             description: None,
             permission_mode: Some(PermissionMode::Learn),
+            default_landing: None,
         })
         .await
         .unwrap();
@@ -485,6 +489,7 @@ async fn seed_repository(store: &Store) -> Repository {
             base_branch: "main".into(),
             description: None,
             permission_mode: None,
+            default_landing: None,
         })
         .await
         .unwrap()
@@ -708,6 +713,7 @@ async fn repository_crud_and_unique_path_branch() {
             base_branch: "main".into(),
             description: Some("the one repo".into()),
             permission_mode: None,
+            default_landing: None,
         })
         .await
         .unwrap();
@@ -715,6 +721,7 @@ async fn repository_crud_and_unique_path_branch() {
     assert_eq!(repo.description.as_deref(), Some("the one repo"));
     // A repository registered without a mode approves on its own.
     assert_eq!(repo.permission_mode(), PermissionMode::Auto);
+    assert_eq!(repo.default_landing(), Landing::Merge);
 
     // The same checkout on another branch is a different repository.
     let other = store
@@ -723,11 +730,13 @@ async fn repository_crud_and_unique_path_branch() {
             base_branch: "next".into(),
             description: None,
             permission_mode: Some(PermissionMode::Learn),
+            default_landing: Some(Landing::PullRequest),
         })
         .await
         .unwrap();
     assert!(other.description.is_none());
     assert_eq!(other.permission_mode(), PermissionMode::Learn);
+    assert_eq!(other.default_landing(), Landing::PullRequest);
     assert_eq!(store.list_repositories().await.unwrap().len(), 2);
 
     // (path, base_branch) is unique.
@@ -737,6 +746,7 @@ async fn repository_crud_and_unique_path_branch() {
             base_branch: "main".into(),
             description: None,
             permission_mode: None,
+            default_landing: None,
         })
         .await;
     assert!(matches!(dup, Err(StoreError::Conflict(_))));
@@ -750,6 +760,7 @@ async fn repository_crud_and_unique_path_branch() {
                 base_branch: Some("trunk".into()),
                 description: Some(None),
                 permission_mode: Some(PermissionMode::Ask),
+                default_landing: Some(Landing::FeatureBranch),
                 ..Default::default()
             },
         )
@@ -759,6 +770,7 @@ async fn repository_crud_and_unique_path_branch() {
     assert_eq!(edited.base_branch, "trunk");
     assert!(edited.description.is_none());
     assert_eq!(edited.permission_mode(), PermissionMode::Ask);
+    assert_eq!(edited.default_landing(), Landing::FeatureBranch);
 
     // An update that does not name the mode keeps it.
     let renamed = store
@@ -772,6 +784,7 @@ async fn repository_crud_and_unique_path_branch() {
         .await
         .unwrap();
     assert_eq!(renamed.permission_mode(), PermissionMode::Ask);
+    assert_eq!(renamed.default_landing(), Landing::FeatureBranch);
 
     // An update onto a taken (path, base_branch) conflicts like a create.
     assert!(matches!(
@@ -801,10 +814,8 @@ async fn repository_crud_and_unique_path_branch() {
 
 /// A goal holds references, not copies: what it lists is whatever the
 /// repositories say right now, and so is what its tasks resolve.
-/// How a task ends is its goal's, chosen once for the whole goal, and the
-/// built-in procedure of that ending is the whole of what its author is
-/// briefed with. A repository has no say in it: it is a checkout and a base
-/// branch, and a second answer stored on it could only disagree.
+/// How a task ends is its goal's, chosen once for the whole goal. Its first
+/// repository supplies the default only when the goal leaves it out.
 #[tokio::test]
 async fn a_task_lands_by_the_ending_its_goal_carries() {
     let (store, _dir) = test_store().await;
@@ -3906,6 +3917,7 @@ async fn a_checkpoint_folds_the_write_ahead_log_back_in() {
                 base_branch: "main".into(),
                 description: None,
                 permission_mode: None,
+                default_landing: None,
             })
             .await
             .unwrap();
@@ -4066,6 +4078,7 @@ async fn a_repository_takes_the_ai_permission_mode() {
             base_branch: "main".into(),
             description: None,
             permission_mode: Some(PermissionMode::Ai),
+            default_landing: None,
         })
         .await
         .unwrap();

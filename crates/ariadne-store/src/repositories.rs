@@ -1,7 +1,7 @@
 //! Repository repository: the git checkouts Ariadne knows about.
 
-use ariadne_core::PermissionMode;
 use ariadne_core::id::new_id;
+use ariadne_core::{Landing, PermissionMode};
 
 use crate::skills::plural_list;
 use crate::{Change, Repository, Result, Store, StoreError, now};
@@ -14,6 +14,8 @@ pub struct NewRepository {
     pub description: Option<String>,
     /// None = `auto`.
     pub permission_mode: Option<PermissionMode>,
+    /// None = `merge`.
+    pub default_landing: Option<Landing>,
 }
 
 /// Partial update; `None` leaves a field alone.
@@ -24,6 +26,7 @@ pub struct RepositoryUpdate {
     /// Some(None) clears the description.
     pub description: Option<Option<String>>,
     pub permission_mode: Option<PermissionMode>,
+    pub default_landing: Option<Landing>,
 }
 
 impl Store {
@@ -31,15 +34,16 @@ impl Store {
         let id = new_id();
         let ts = now();
         sqlx::query(
-            "INSERT INTO repositories (id, path, base_branch, description, permission_mode,
+            "INSERT INTO repositories (id, path, base_branch, description, permission_mode, default_landing,
                                        created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.path)
         .bind(&new.base_branch)
         .bind(&new.description)
         .bind(new.permission_mode.unwrap_or(PermissionMode::Auto).as_str())
+        .bind(new.default_landing.unwrap_or(Landing::Merge).as_str())
         .bind(&ts)
         .bind(&ts)
         .execute(self.w())
@@ -73,18 +77,22 @@ impl Store {
         let permission_mode = update
             .permission_mode
             .unwrap_or_else(|| current.permission_mode());
+        let default_landing = update
+            .default_landing
+            .unwrap_or_else(|| current.default_landing());
         let path = update.path.unwrap_or(current.path);
         let base_branch = update.base_branch.unwrap_or(current.base_branch);
         let description = update.description.unwrap_or(current.description);
         sqlx::query(
             "UPDATE repositories SET path = ?, base_branch = ?, description = ?,
-                                     permission_mode = ?, updated_at = ?
+                                     permission_mode = ?, default_landing = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(&path)
         .bind(&base_branch)
         .bind(&description)
         .bind(permission_mode.as_str())
+        .bind(default_landing.as_str())
         .bind(now())
         .bind(id)
         .execute(self.w())

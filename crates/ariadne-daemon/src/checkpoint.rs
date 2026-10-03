@@ -58,6 +58,7 @@ mod tests {
                     base_branch: "main".to_string(),
                     description: None,
                     permission_mode: None,
+                    default_landing: None,
                 })
                 .await
                 .unwrap();

@@ -425,6 +425,7 @@ mod tests {
                 base_branch: "main".into(),
                 description: None,
                 permission_mode: None,
+                default_landing: None,
             })
             .await
             .unwrap();

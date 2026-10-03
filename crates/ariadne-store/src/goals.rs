@@ -19,16 +19,21 @@ pub struct NewGoal {
     /// What this goal's orchestrator runs on: its model,
     /// `<agent>:<model>`, and the effort where one was chosen.
     pub pin: AgentPin,
-    /// How every task of the goal ends. None = [`goal_landing`]'s answer.
+    /// How every task of the goal ends. None = its first repository's default.
     /// Fixed once the goal is created.
     pub landing: Option<Landing>,
 }
 
-/// The landing a new goal gets: the one its creator chose, or `merge` where
-/// it chose none. Landing on the base branch is what most work does; the
-/// other endings are the ones somebody chooses.
-fn goal_landing(requested: Option<Landing>) -> Landing {
-    requested.unwrap_or(Landing::Merge)
+/// The landing a new goal gets: its creator's choice or the default of the
+/// first repository in the order goals show.
+fn goal_landing(requested: Option<Landing>, repositories: &[Repository]) -> Landing {
+    requested.unwrap_or_else(|| {
+        repositories
+            .iter()
+            .min_by_key(|repository| (&repository.path, &repository.base_branch))
+            .map(Repository::default_landing)
+            .unwrap_or(Landing::Merge)
+    })
 }
 
 impl Store {
@@ -48,10 +53,12 @@ impl Store {
         // Validated before the goal row is written, so an unknown id leaves
         // nothing behind. The same repository named twice is one reference.
         let mut repository_ids: Vec<String> = Vec::with_capacity(new.repository_ids.len());
+        let mut repositories = Vec::with_capacity(new.repository_ids.len());
         for id in &new.repository_ids {
-            self.get_repository(id).await?;
+            let repository = self.get_repository(id).await?;
             if !repository_ids.contains(id) {
                 repository_ids.push(id.clone());
+                repositories.push(repository);
             }
         }
         let id = new_id();
@@ -70,7 +77,7 @@ impl Store {
         .bind(orchestrated)
         .bind(&model)
         .bind(&effort)
-        .bind(goal_landing(new.landing).as_str())
+        .bind(goal_landing(new.landing, &repositories).as_str())
         .bind(&ts)
         .bind(&ts)
         .execute(&mut *tx)

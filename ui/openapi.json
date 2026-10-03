@@ -3581,6 +3581,17 @@
             ],
             "description": "Omit for the repo's currently checked-out branch."
           },
+          "default_landing": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Landing",
+                "description": "Omit for `merge`."
+              }
+            ]
+          },
           "description": {
             "type": [
               "string",
@@ -5262,6 +5273,7 @@
           "path",
           "base_branch",
           "permission_mode",
+          "default_landing",
           "created_at",
           "updated_at"
         ],
@@ -5271,6 +5283,10 @@
           },
           "created_at": {
             "type": "string"
+          },
+          "default_landing": {
+            "$ref": "#/components/schemas/Landing",
+            "description": "The landing a new goal uses where its request leaves landing out."
           },
           "description": {
             "type": [
@@ -6679,6 +6695,17 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "default_landing": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Landing",
+                "description": "Absent = unchanged."
+              }
             ]
           },
           "description": {

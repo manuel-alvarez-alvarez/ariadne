@@ -21,8 +21,8 @@ task is given, and the worktree each agent stands in.
 
 ## Scope
 
-In: registering a repository, its base branch, description and permission
-mode, the merge strategy field, task branch naming, the worktree per seat, worktree cleanup,
+In: registering a repository, its base branch, description, permission mode
+and default landing, task branch naming, the worktree per seat, worktree cleanup,
 and the watch on a task branch's head.
 
 Out: how a task ends in it (005), and what an
@@ -31,9 +31,10 @@ agent is briefed with in its worktree (006).
 ## Behavior
 
 1. A repository is registered once and referenced by every goal that works in
-   it. It carries a path, a base branch, an optional description and a
-   permission mode, and nothing else. How work *ends* in it is not a
-   repository field: that is the task's own ending (005).
+   it. It carries a path, a base branch, an optional description, a permission
+   mode and a default landing. The default is `merge`; a goal that leaves its
+   landing out takes the default of its first repository (005). Changing it
+   changes no existing goal.
 2. The base branch defaults to the branch the checkout is on at registration.
 3. A path and branch pair is unique: the same one cannot be registered twice.
    A path or branch the daemon cannot use is refused at creation. A checkout
@@ -119,6 +120,10 @@ agent is briefed with in its worktree (006).
   is on
   (`ai_permissions.rs::a_repository_takes_the_ai_mode_only_once_the_model_is_on`,
   `store.rs::a_repository_takes_the_ai_permission_mode`).
+- A repository defaults new goals to `merge`, takes another default at
+  registration or on an edit, and changes no existing goal
+  (`repositories.rs::a_repository_defaults_new_goals_without_changing_existing_ones`,
+  `store.rs::repository_crud_and_unique_path_branch`).
 - A task branches from the repository its goal references
   (`goal_repositories.rs::a_task_branches_from_the_repository_its_goal_references`),
   and editing the base branch moves only what new tasks branch from

@@ -1,10 +1,9 @@
 //! Repository DTOs.
 //!
-//! A repository is a checkout and a base branch. How a change *reaches* that
-//! base branch is not here: that is the task's own `landing`, agreed with the
-//! user task by task, and the procedure it names is Ariadne's own.
+//! A repository is a checkout and a base branch. It also supplies the landing
+//! that a new goal uses where its request does not name one.
 
-use ariadne_core::PermissionMode;
+use ariadne_core::{Landing, PermissionMode};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -18,6 +17,8 @@ pub struct RepositoryDto {
     /// How the ACP permission requests of every session in this checkout are
     /// answered.
     pub permission_mode: PermissionMode,
+    /// The landing a new goal uses where its request leaves landing out.
+    pub default_landing: Landing,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -34,6 +35,9 @@ pub struct CreateRepositoryRequest {
     /// Omit for `auto`.
     #[serde(default)]
     pub permission_mode: Option<PermissionMode>,
+    /// Omit for `merge`.
+    #[serde(default)]
+    pub default_landing: Option<Landing>,
 }
 
 /// Partial update; absent fields stay unchanged.
@@ -47,4 +51,7 @@ pub struct UpdateRepositoryRequest {
     /// Absent = unchanged.
     #[serde(default)]
     pub permission_mode: Option<PermissionMode>,
+    /// Absent = unchanged.
+    #[serde(default)]
+    pub default_landing: Option<Landing>,
 }

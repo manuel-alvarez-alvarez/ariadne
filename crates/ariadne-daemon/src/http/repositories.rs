@@ -41,6 +41,7 @@ pub(super) async fn create(
             base_branch,
             description: req.description,
             permission_mode: req.permission_mode,
+            default_landing: req.default_landing,
         })
         .await?;
     Ok((StatusCode::CREATED, Json(repository_dto(repository))))
@@ -110,6 +111,7 @@ pub(super) async fn update(
                     false => Some(d),
                 }),
                 permission_mode: req.permission_mode,
+                default_landing: req.default_landing,
             },
         )
         .await?;

@@ -1064,11 +1064,9 @@ fn a_reviewer_that_names_no_real_agent_is_a_usage_error() {
     assert!(refused("code-review=@high").contains("SKILLS=MODEL@EFFORT"));
 }
 
-/// A repository is a checkout and a base branch, and that is all it takes:
-/// how a change reaches that base branch is the task's own `landing`, agreed
-/// with the user task by task, so nothing about landing is registered here.
+/// A repository supplies the landing for a new goal that leaves it out.
 #[test]
-fn a_repository_is_a_checkout_and_a_base_branch_and_says_nothing_about_landing() {
+fn a_repository_sets_the_default_landing_for_new_goals() {
     let Command::Repo {
         command:
             RepoCommand::Add {
@@ -1076,6 +1074,7 @@ fn a_repository_is_a_checkout_and_a_base_branch_and_says_nothing_about_landing()
                 branch,
                 description,
                 permission_mode,
+                default_landing,
             },
     } = parse(&[
         "ariadne",
@@ -1086,6 +1085,8 @@ fn a_repository_is_a_checkout_and_a_base_branch_and_says_nothing_about_landing()
         "next",
         "--description",
         "the API",
+        "--default-landing",
+        "pull-request",
     ])
     .command
     else {
@@ -1095,6 +1096,7 @@ fn a_repository_is_a_checkout_and_a_base_branch_and_says_nothing_about_landing()
     assert_eq!(branch.as_deref(), Some("next"));
     assert_eq!(description.as_deref(), Some("the API"));
     assert_eq!(permission_mode, None, "the daemon's `auto` stands in");
+    assert_eq!(default_landing, Some(Landing::PullRequest));
 
     // The flags that used to say how landing works are gone, not ignored.
     for gone in [

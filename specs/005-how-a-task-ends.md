@@ -40,14 +40,15 @@ and `finished` (001).
      and the same verification.
    All of them reach `finished` (001). Landing is one way of getting there
    rather than the meaning of being there.
-2. A goal created with no landing gets `merge`. The landing cannot change
-   after the goal is created. A task has no landing of its own: the task
+2. A goal created with no landing gets the default landing of its first
+   repository. A repository defaults to `merge`, and editing its default
+   changes no existing goal. The landing cannot change after the goal is
+   created. A task has no landing of its own: the task
    requests and the task tools take none, and `TaskDto.landing` is a
    read-only copy of the goal's.
 3. The procedure is Ariadne's, one text per ending, and nothing overrides it.
-   A repository has no say: it is a checkout and a base branch (002), and a
-   second answer stored there could only disagree with the goal's. Each text
-   is rendered with `{task_title}`, `{branch}`, `{base_branch}` and
+   A repository supplies a default only while a goal is created (002). Each
+   text is rendered with `{task_title}`, `{branch}`, `{base_branch}` and
    `{repo_path}`, and may name nothing else.
 4. An approved task is landed by its own author, in the session and worktree
    it already holds. There is no separate integrator seat. On a task staffed
@@ -120,9 +121,11 @@ and `finished` (001).
 - A goal created with `pull_request` briefs every one of its tasks to land by
   pull request, and each task reads that landing back
   (`landing_lifecycle.rs::a_pull_request_goal_briefs_every_task_to_land_by_pull_request`).
-- A goal created with no landing is `merge`, `TaskDto.landing` is the goal's,
-  and a task create or edit that names a landing is refused
-  (`landing_lifecycle.rs::a_goal_with_no_landing_merges_and_a_task_takes_none_of_its_own`);
+- A goal created with no landing takes its first repository's default,
+  `TaskDto.landing` is the goal's, and a task create or edit that names a
+  landing is refused
+  (`repositories.rs::a_repository_defaults_new_goals_without_changing_existing_ones`,
+  `landing_lifecycle.rs::a_goal_with_no_landing_merges_and_a_task_takes_none_of_its_own`);
   `create_task` and `update_task` take no landing
   (`tools.rs::the_task_tools_take_no_landing`).
 - A `feature_branch` goal lands its tasks like `merge`: the same briefing, and
@@ -132,9 +135,9 @@ and `finished` (001).
   (`landing_lifecycle.rs::a_merge_that_never_happened_is_refused`), and a
   squashed request lands on the sha the author fast-forwarded to
   (`::a_squashed_request_lands_on_the_sha_the_author_fast_forwarded_to`).
-- A repository takes nothing about how work ends in it, and the endpoint that
-  listed the strategies is gone
-  (`repositories.rs::a_repository_refuses_anything_about_how_work_ends`).
+- A repository supplies the landing for a new goal without one, and editing
+  the default changes no existing goal
+  (`repositories.rs::a_repository_defaults_new_goals_without_changing_existing_ones`).
 - Each ending's briefing is one procedure and nothing of the other
   (`defaults.rs::each_landing_briefing_is_one_strategy_and_nothing_of_the_other`),
   and nothing the author still has to run comes after `finish_task`

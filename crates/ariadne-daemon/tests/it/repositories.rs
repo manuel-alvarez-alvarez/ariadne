@@ -5,16 +5,16 @@
 //! checkout knows, born or not — that the same checkout is registered once per
 //! base branch, and that every write reaches the domain-event stream.
 //!
-//! A repository says nothing about how work ends in it. That is the task's own
-//! `landing` (018), so there is nothing here about strategies or briefings.
+//! A repository supplies the landing default for a goal created without one.
 
 use crate::common;
 
 use axum::http::StatusCode;
 
+use ariadne_api::goals::GoalDto;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::stream::DomainEvent;
-use ariadne_core::PermissionMode;
+use ariadne_core::{Landing, PermissionMode};
 
 use common::{delete, get, harness, next_event, post_json, put_json, sh};
 
@@ -242,43 +242,85 @@ async fn the_same_path_and_branch_cannot_be_registered_twice() {
     .await;
 }
 
-/// A repository takes nothing about landing: the flags that used to say how
-/// work ends in it are gone, and a body that still carries one is refused
-/// rather than quietly ignored.
+/// A repository supplies the landing for a goal that does not name one. A
+/// goal that does name one keeps it, and an edit does not change either goal.
 #[tokio::test]
-async fn a_repository_refuses_anything_about_how_work_ends() {
+async fn a_repository_defaults_new_goals_without_changing_existing_ones() {
     let h = harness().await;
-    let repo = h.git_repo("repo");
-
-    for gone in [
-        serde_json::json!({"path": repo.display().to_string(), "merge_strategy": "pull_request"}),
-        serde_json::json!({"path": repo.display().to_string(), "landing_prompt": "Land it."}),
-    ] {
-        let (status, _) = h.send(post_json("/v1/repositories", gone.clone())).await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{gone}");
-    }
-
+    let first_path = h.git_repo("a");
+    let second_path = h.git_repo("z");
     let created: RepositoryDto = h
         .json(
             post_json(
                 "/v1/repositories",
-                serde_json::json!({"path": repo.display().to_string()}),
+                serde_json::json!({
+                    "path": first_path.display().to_string(),
+                    "default_landing": "pull_request",
+                }),
             ),
             StatusCode::CREATED,
         )
         .await;
-    let (status, _) = h
-        .send(put_json(
-            &format!("/v1/repositories/{}", created.id),
-            serde_json::json!({"merge_strategy": "direct"}),
-        ))
+    assert_eq!(created.default_landing, Landing::PullRequest);
+    let second: RepositoryDto = h
+        .json(
+            post_json(
+                "/v1/repositories",
+                serde_json::json!({
+                    "path": second_path.display().to_string(),
+                    "default_landing": "none",
+                }),
+            ),
+            StatusCode::CREATED,
+        )
         .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 
-    // And the endpoint that listed the strategies is gone with them.
-    let doc: serde_json::Value = h.get("/api-docs/openapi.json").await;
-    assert!(doc["paths"]["/v1/merge-strategies"].is_null());
-    assert!(doc["components"]["schemas"]["MergeStrategyDto"].is_null());
+    let goal: GoalDto = h
+        .json(
+            post_json(
+                "/v1/goals",
+                serde_json::json!({
+                    "title": "Take the default",
+                    "repository_ids": [second.id, created.id],
+                    "model": common::test_pin().model,
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(goal.landing, Landing::PullRequest);
+
+    let explicit: GoalDto = h
+        .json(
+            post_json(
+                "/v1/goals",
+                serde_json::json!({
+                    "title": "Keep the choice",
+                    "repository_ids": [created.id],
+                    "model": common::test_pin().model,
+                    "landing": "merge",
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(explicit.landing, Landing::Merge);
+
+    let edited: RepositoryDto = h
+        .json(
+            put_json(
+                &format!("/v1/repositories/{}", created.id),
+                serde_json::json!({"default_landing": "none"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(edited.default_landing, Landing::None);
+
+    let unchanged: GoalDto = h.get(&format!("/v1/goals/{}", goal.id)).await;
+    assert_eq!(unchanged.landing, Landing::PullRequest);
+    let unchanged: GoalDto = h.get(&format!("/v1/goals/{}", explicit.id)).await;
+    assert_eq!(unchanged.landing, Landing::Merge);
 }
 
 /// A repository answers its sessions' permission requests with `auto` until

@@ -61,6 +61,7 @@ dto! {
 
 pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
         permission_mode: r.permission_mode(),
+        default_landing: r.default_landing(),
         .. id, path, base_branch, description, created_at, updated_at
     }
 

@@ -1488,6 +1488,7 @@ export interface components {
         CreateRepositoryRequest: {
             /** @description Omit for the repo's currently checked-out branch. */
             base_branch?: string | null;
+            default_landing?: null | components["schemas"]["Landing"];
             description?: string | null;
             /**
              * @description Absolute path of an existing git work tree.
@@ -2215,6 +2216,8 @@ export interface components {
         RepositoryDto: {
             base_branch: string;
             created_at: string;
+            /** @description The landing a new goal uses where its request leaves landing out. */
+            default_landing: components["schemas"]["Landing"];
             description?: string | null;
             id: string;
             /** @description Absolute path of the checkout. */
@@ -2845,6 +2848,7 @@ export interface components {
         /** @description Partial update; absent fields stay unchanged. */
         UpdateRepositoryRequest: {
             base_branch?: string | null;
+            default_landing?: null | components["schemas"]["Landing"];
             /** @description New description, or empty to clear it. Absent = unchanged. */
             description?: string | null;
             path?: string | null;
