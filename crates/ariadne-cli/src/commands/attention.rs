@@ -47,6 +47,7 @@ enum Reason {
     WaitingUser,
     AgentError,
     Disconnected,
+    Exhausted,
 }
 
 impl Reason {
@@ -60,6 +61,7 @@ impl Reason {
             Reason::WaitingUser => "waiting for you",
             Reason::AgentError => "agent error",
             Reason::Disconnected => "disconnected",
+            Reason::Exhausted => "exhausted",
         }
     }
 }
@@ -91,6 +93,7 @@ impl From<AttentionReason> for Reason {
             AttentionReason::AgentError => Reason::AgentError,
             AttentionReason::Disconnected => Reason::Disconnected,
             AttentionReason::Stalled => Reason::Stalled,
+            AttentionReason::Exhausted => Reason::Exhausted,
         }
     }
 }
@@ -333,6 +336,7 @@ pub(crate) mod tests {
             (AttentionReason::AgentError, Reason::AgentError),
             (AttentionReason::Disconnected, Reason::Disconnected),
             (AttentionReason::Stalled, Reason::Stalled),
+            (AttentionReason::Exhausted, Reason::Exhausted),
         ] {
             assert_eq!(
                 session_reason(&flagged("01S", "01GA", flag)),

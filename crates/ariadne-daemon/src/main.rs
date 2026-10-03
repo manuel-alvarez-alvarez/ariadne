@@ -43,6 +43,8 @@ unknown key stops the daemon rather than being ignored):
   delete_merged_branches   delete a task branch once it has landed (default: true)
   delete_merged_worktrees  delete a task worktree once it has landed (default: true)
   prevent_sleep            hold off system sleep while a session is live (default: true)
+  auto_switch              switch exhausted sessions to another ranked model (default: true)
+  exhausted_patterns       message fragments that identify exhausted models
   acp_registry_url         index URL fetched on refresh (default:
                            https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json)
   python_bin               the Python 3.12 or 3.13 the AI permission model
@@ -132,6 +134,7 @@ async fn main() -> Result<()> {
         store: store.clone(),
         git: ariadne_daemon::gitwt::GitManager,
         acp: ariadne_daemon::acp::AcpRuntime::new(store.clone())
+            .with_exhausted_patterns(config.exhausted_patterns.clone())
             .with_ai_permissions(ai_permissions.clone()),
         registry: agent_registry.clone(),
         branches: ariadne_daemon::branch::BranchWatchers::new(events.clone()),

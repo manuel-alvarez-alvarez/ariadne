@@ -348,6 +348,7 @@ impl HarnessBuilder {
             self.timeouts,
         );
         ai_permissions.ensure_device().await;
+        let exhausted_patterns = config.exhausted_patterns.clone();
         let launcher = Arc::new(Launcher {
             cfg: Arc::new(config),
             store: store.clone(),
@@ -357,6 +358,7 @@ impl HarnessBuilder {
                 self.timeouts,
                 transcript_homes(dir.path()),
             )
+            .with_exhausted_patterns(exhausted_patterns)
             .with_ai_permissions(ai_permissions.clone()),
             registry: agent_registry.clone(),
             branches: BranchWatchers::new(bus.clone()),

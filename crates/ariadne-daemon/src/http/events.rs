@@ -153,7 +153,7 @@ pub async fn ingest_event(store: &Store, req: &IngestEventRequest) -> Result<(),
     // itself: the status read above is a moment old by the time the raise
     // runs, so the store makes it part of the write — a prompt only ever
     // lands on a session that is still live at that instant.
-    if let Some(reason) = attention_for_event(&req.kind) {
+    if let Some(reason) = attention_for_event(&req.kind, &req.payload) {
         if crate::attention::work_is_active(store, &session).await {
             store.set_session_attention(&session.id, reason).await?;
         }

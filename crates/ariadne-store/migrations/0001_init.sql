@@ -312,7 +312,7 @@ CREATE TABLE agent_sessions (
     attention_reason    TEXT
                         CHECK (attention_reason IN ('waiting_permission', 'waiting_input',
                                                     'waiting_user', 'agent_error',
-                                                    'disconnected', 'stalled')),
+                                                    'disconnected', 'stalled', 'exhausted')),
     attention_since     TEXT,
     model               TEXT NOT NULL,
     -- Copied off the pin the session's seat carries, beside its model.

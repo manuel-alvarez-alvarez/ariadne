@@ -521,6 +521,8 @@ pub enum AttentionReason {
     Disconnected,
     /// No activity for too long.
     Stalled,
+    /// The model cannot accept more work.
+    Exhausted,
 }
 
 wire_enum! { AttentionReason, "attention reason", [
@@ -530,6 +532,7 @@ wire_enum! { AttentionReason, "attention reason", [
     AgentError = "agent_error",
     Disconnected = "disconnected",
     Stalled = "stalled",
+    Exhausted = "exhausted",
 ]}
 
 impl AttentionReason {

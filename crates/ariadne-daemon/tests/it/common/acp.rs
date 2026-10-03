@@ -422,8 +422,8 @@ permissions = 0
 
 
 class Failure(Exception):
-    def __init__(self, code, message):
-        self.code, self.message = code, message
+    def __init__(self, code, message, data=None):
+        self.code, self.message, self.data = code, message, data
 
 
 def log(message):
@@ -535,6 +535,9 @@ def respond(request):
         return {"configOptions": options}
     if method == "session/prompt":
         turn = prompts.pop(0) if prompts else {}
+        if "error" in turn:
+            error = turn["error"]
+            raise Failure(error["code"], error["message"], error.get("data"))
         if "permission" in turn:
             permissions += 1
             request_permission = dict(turn["permission"])
@@ -573,6 +576,8 @@ def respond(request):
             stdin.close()
         # A cancelled turn reports what it spent too, as ACP has it.
         response = {"stopReason": stop_reason}
+        if "meta" in turn:
+            response["_meta"] = turn["meta"]
         if "usage" in turn:
             response["usage"] = turn["usage"]
         if "quota" in turn:
@@ -594,6 +599,8 @@ while True:
         if message["method"] == "session/prompt":
             send_between_turn_updates()
     except Failure as failure:
-        send({"jsonrpc": "2.0", "id": message["id"],
-              "error": {"code": failure.code, "message": failure.message}})
+        error = {"code": failure.code, "message": failure.message}
+        if failure.data is not None:
+            error["data"] = failure.data
+        send({"jsonrpc": "2.0", "id": message["id"], "error": error})
 "#;

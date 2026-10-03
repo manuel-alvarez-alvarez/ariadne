@@ -335,11 +335,17 @@ impl super::Scheduler {
                         // spends an attempt of the task's, like its author
                         // does: a review whose reviewer exits the moment it
                         // starts is not one to start a reviewer for every tick.
-                        if let Some(last) = self
+                        let last = self
                             .last_session(&task.id, |s| {
                                 s.task_agent_id.as_deref() == Some(agent_id.as_str())
                             })
-                            .await
+                            .await;
+                        if last.as_ref().is_some_and(|session| {
+                            session.attention_reason() == Some(AttentionReason::Exhausted)
+                        }) {
+                            continue;
+                        }
+                        if let Some(last) = last
                             && self.spent_on_a_dead_launch(&last.id, &task.id, &last)
                         {
                             warn!(task = %task.id, session = %last.id, "the reviewer came up and was never heard from");
@@ -592,11 +598,17 @@ impl super::Scheduler {
                     }
                 }
             } else {
-                if let Some(last) = self
+                let last = self
                     .last_session(&task.id, |s| {
                         s.task_agent_id.as_deref() == Some(reviewer.id.as_str())
                     })
-                    .await
+                    .await;
+                if last.as_ref().is_some_and(|session| {
+                    session.attention_reason() == Some(AttentionReason::Exhausted)
+                }) {
+                    continue;
+                }
+                if let Some(last) = last
                     && self.spent_on_a_dead_launch(&reviewer.id, &task.id, &last)
                 {
                     warn!(task = %task.id, session = %last.id, "the reviewer came up and was never heard from");
@@ -690,6 +702,11 @@ impl super::Scheduler {
                         && s.task_agent_id.as_deref() == Some(author.id.as_str())
                 })
                 .await;
+            if last.as_ref().is_some_and(|session| {
+                session.attention_reason() == Some(AttentionReason::Exhausted)
+            }) {
+                return Ok(());
+            }
             if let Some(last) = &last
                 && self.spent_on_a_dead_launch(&author.id, &task.id, last)
             {
@@ -816,11 +833,17 @@ impl super::Scheduler {
             self.check_session_quiet(&session, situation, &resume)
                 .await?;
         } else {
-            if let Some(last) = self
+            let last = self
                 .last_session(&task.id, |s| {
                     s.task_agent_id.as_deref() == Some(reviewer.id.as_str())
                 })
-                .await
+                .await;
+            if last.as_ref().is_some_and(|session| {
+                session.attention_reason() == Some(AttentionReason::Exhausted)
+            }) {
+                return Ok(());
+            }
+            if let Some(last) = last
                 && self.spent_on_a_dead_launch(&last.id, &task.id, &last)
             {
                 warn!(task = %task.id, session = %last.id, "the reviewer came up and was never heard from");
@@ -1080,6 +1103,11 @@ impl super::Scheduler {
             let last = self
                 .last_session(&task.id, |s| s.seat() == Some(Seat::Author))
                 .await;
+            if last.as_ref().is_some_and(|session| {
+                session.attention_reason() == Some(AttentionReason::Exhausted)
+            }) {
+                return Ok(());
+            }
             if let Some(last) = &last
                 && self.spent_on_a_dead_launch(&task.id, &task.id, last)
             {

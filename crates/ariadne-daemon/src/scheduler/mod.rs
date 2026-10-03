@@ -12,6 +12,7 @@
 //! reporting. What the scheduler says to an agent goes out through
 //! [`Scheduler::hand_prompt`].
 
+mod auto_switch;
 mod coalesce;
 mod goals;
 mod messages;
@@ -33,6 +34,7 @@ use crate::launcher::Launcher;
 use crate::sleep::SleepInhibitor;
 use crate::timeouts::Timeouts;
 
+use auto_switch::ExhaustedNotice;
 use coalesce::Coalesced;
 use quiet::Quiet;
 
@@ -186,6 +188,8 @@ pub(crate) struct Scheduler {
     /// stamped under the author it is for, and the row that lands next takes
     /// the stamp over: see `adopt_briefing_sent_before_the_request`.
     review_briefed: HashSet<(String, String)>,
+    /// Exhausted switches the task's orchestrator has not received yet.
+    exhausted_notices: HashMap<String, ExhaustedNotice>,
     /// Held while any session is live, so the machine does not idle-sleep
     /// out from under a working agent.
     sleep: SleepInhibitor,
@@ -216,6 +220,7 @@ pub fn start(
         landing_briefed: HashSet::new(),
         pick_briefed: HashSet::new(),
         review_briefed: HashSet::new(),
+        exhausted_notices: HashMap::new(),
         sleep: SleepInhibitor::new(),
         prevent_sleep,
     };
@@ -402,6 +407,8 @@ impl Scheduler {
         if let Some(live) = self.liveness_sweep().await {
             self.sleep.set_active(self.prevent_sleep && live > 0);
         }
+        self.exhausted_sweep().await;
+        self.tell_exhausted_notices().await;
         self.reconcile_entities().await;
         self.stale_attention_sweep().await;
     }
@@ -464,6 +471,7 @@ impl Scheduler {
     /// are the busiest thing the daemon hears, and a pass per event is what
     /// read the store out of connections.
     async fn reconcile_session(&mut self, session_id: &str) {
+        self.tell_exhausted_notices().await;
         debug!(session = %session_id, "reconciling what a session's wake is about");
         let Ok(session) = self.store.get_session(session_id).await else {
             return;
@@ -471,6 +479,7 @@ impl Scheduler {
         if self.launcher.acp.is_user_resumed(&session.id) {
             return;
         }
+        self.auto_switch_exhausted(&session).await;
         match &session.task_id {
             Some(task) => self.reconcile(Target::Task(task)).await,
             None => {

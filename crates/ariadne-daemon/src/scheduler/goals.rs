@@ -258,6 +258,12 @@ impl super::Scheduler {
             .orchestrator_sessions(&goal.id)
             .await
             .and_then(|orchestrators| orchestrators.last().cloned());
+        if last
+            .as_ref()
+            .is_some_and(|session| session.attention_reason() == Some(AttentionReason::Exhausted))
+        {
+            return Ok(());
+        }
         if let Some(last) = &last
             && self.spent_on_a_dead_launch(&goal.id, &goal.id, last)
         {

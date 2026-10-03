@@ -11,6 +11,7 @@ tests:
   - crates/ariadne-daemon/tests/it/events.rs
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
   - crates/ariadne-daemon/tests/it/landing_lifecycle.rs
+  - crates/ariadne-daemon/tests/it/auto_switch.rs
   - crates/ariadne-daemon/src/scheduler/mod.rs
 ---
 
@@ -184,6 +185,19 @@ the ACP runtime that takes a prompt (021).
     that met the shortage carries the 30-second wait and the limit as its
     reason, whichever layer reported it. A read that failed spends no attempt
     all the same, by rule 26, since no agent was asked for.
+36. A pass switches an ended exhausted session when its work remains active
+    and `auto_switch` is enabled.
+37. Candidates are enabled catalog models. The exhausted model and every model
+    already left in the switch chain are excluded.
+38. Candidate order is another agent at the same rank, the same agent at that
+    rank, then those steps one rank above, then one rank below. Catalog order
+    breaks ties. The ladder is `fast`, `balanced`, `frontier`; `local` is never
+    selected.
+39. An unranked model, no candidate, disabled automatic switching, or a spent
+    spawn-retry budget leaves the session flagged `exhausted`.
+40. An automatic switch uses the target agent's default effort and records
+    `exhausted` as its reason. It tells the task's orchestrator once and names
+    both models.
 
 ## Acceptance criteria
 
@@ -317,10 +331,25 @@ the ACP runtime that takes a prompt (021).
   and the same holds of the scheduler itself over the pass that starts a
   task's author
   (`scheduler_attention.rs::a_burst_that_queues_behind_a_slow_reconcile_still_costs_two_reconciles`).
+- Exhausted sessions prefer another agent at the same rank and keep no pinned
+  effort
+  (`auto_switch.rs::a_codex_exhaustion_switches_to_another_agent_at_the_same_rank`).
+  They prefer the same rank before moving up and then down
+  (`auto_switch.rs::the_ladder_uses_same_agent_then_the_rank_above_then_below`).
+  A chain avoids earlier models, notifies the orchestrator once per switch,
+  clears attention after each successful switch, and stops at the budget
+  (`auto_switch.rs::a_chain_never_revisits_a_model_and_stops_at_the_budget`,
+  `::an_in_place_switch_does_not_return_to_the_exhausted_model`).
+  Unranked models and disabled switching stay flagged
+  (`auto_switch.rs::an_unranked_model_and_disabled_auto_switch_stay_exhausted`).
 
 ## Known gap
 
 - No test pins that a prompt the runtime refuses gives its nudge back.
+- OpenCode retries limits internally and sends no failed prompt the daemon can
+  classify, so it cannot trigger an automatic switch.
+- An automatic-switch notice waits in memory when no orchestrator is live. A
+  daemon restart before delivery loses that notice.
 
 ## Sources
 

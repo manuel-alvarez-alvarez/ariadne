@@ -144,6 +144,12 @@ export const SESSION_ATTENTION_META: Record<SessionAttention, SessionAttentionMe
     badge: "bg-status-warn-soft text-status-warn-fg",
     border: "border-status-warn/40",
   },
+  exhausted: {
+    label: "Exhausted",
+    hint: "The model cannot accept more work.",
+    badge: "bg-status-danger-soft text-status-danger-fg",
+    border: "border-status-danger/40",
+  },
 }
 
 /**

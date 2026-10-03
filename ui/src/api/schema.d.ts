@@ -825,9 +825,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Switch a session to another model or agent: the session ends, and a new
-         *     one starts on the same seat, on the pin named, in a new conversation. The
-         *     answer is the new session, which names the old one in `switched_from`.
+         * Switch a session to another model or agent. A same-agent switch keeps the
+         *     session and conversation; another agent starts a new session on the seat.
          * @description The pin is checked as `POST /v1/sessions` checks it, a model turned off
          *     included. A session of a cancelled goal is refused.
          */
@@ -1324,7 +1323,7 @@ export interface components {
          *     progress until someone looks at it.
          * @enum {string}
          */
-        AttentionReason: "waiting_permission" | "waiting_input" | "waiting_user" | "agent_error" | "disconnected" | "stalled";
+        AttentionReason: "waiting_permission" | "waiting_input" | "waiting_user" | "agent_error" | "disconnected" | "stalled" | "exhausted";
         /** @description A binary as the daemon can — or cannot — find it. */
         BinaryDto: {
             /**
@@ -1934,6 +1933,31 @@ export interface components {
          * @enum {string}
          */
         PermissionMode: "auto" | "ask" | "learn" | "ai";
+        /** @description The fields in a `permission.replied` event payload. */
+        PermissionReplyDto: {
+            ai_error?: string | null;
+            /** Format: double */
+            allow_threshold?: number | null;
+            cap?: string | null;
+            console_option_id?: string | null;
+            /** Format: double */
+            danger?: number | null;
+            decided_by: string;
+            /** Format: double */
+            deny_threshold?: number | null;
+            label?: string | null;
+            /** @description The row that answered without a console choice. */
+            learned_id: string | null;
+            /** @description The normalized command key or family of the answering row. */
+            learned_key: string | null;
+            /** @description `command` or `family` when a row answered. */
+            learned_level: string | null;
+            operation?: string | null;
+            option_id?: string | null;
+            probabilities?: unknown;
+            risk_tags?: string[] | null;
+            session_id: unknown;
+        };
         /**
          * @description One reviewer picking the winning author of a task staffed with several:
          *     the author whose branch lands.
@@ -2256,6 +2280,11 @@ export interface components {
             model: string;
             /** @description `author` or `reviewer`. */
             seat: components["schemas"]["Seat"];
+            /**
+             * @description This agent's live session, the id `POST /v1/sessions/{id}/switch`
+             *     takes. None while it carries no live session.
+             */
+            session_id?: string | null;
             /**
              * @description The skills this agent loads, in the order they reach it.
              * @example [

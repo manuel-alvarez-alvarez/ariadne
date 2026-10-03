@@ -16,7 +16,7 @@
           "acp-agents"
         ],
         "summary": "Every discovered and configured ACP agent with its cached probe result.",
-        "operationId": "acp-agents_list",
+        "operationId": "list",
         "responses": {
           "200": {
             "description": "",
@@ -40,7 +40,7 @@
           "acp-agents"
         ],
         "summary": "Probe every registry entry and replace the cached discovery snapshot.",
-        "operationId": "acp-agents_refresh",
+        "operationId": "refresh",
         "responses": {
           "200": {
             "description": "",
@@ -64,7 +64,7 @@
           "agents"
         ],
         "summary": "Every registry agent's flags, in registry order. An agent nobody set\nflags for is listed with none.",
-        "operationId": "agents_list",
+        "operationId": "list",
         "responses": {
           "200": {
             "description": "",
@@ -89,7 +89,7 @@
         ],
         "summary": "Replace a registry agent's flags.",
         "description": "The list is replaced whole, and an empty one is a legitimate answer.\nRestoring the defaults is this same call with the `default_flags` the\nGET hands out — nothing else to learn, and nothing that can drift from\nthem.",
-        "operationId": "agents_update",
+        "operationId": "update",
         "parameters": [
           {
             "name": "id",
@@ -134,7 +134,7 @@
           "system"
         ],
         "summary": "What the daemon sees: its PATH, the binaries on it, and the state of the\ndirectories it works in.",
-        "operationId": "system_report",
+        "operationId": "report",
         "responses": {
           "200": {
             "description": "The daemon's own environment",
@@ -155,7 +155,7 @@
           "events"
         ],
         "summary": "List agent events (poll with `after` for tailing, or read the newest with\n`order=desc` and walk back with `before`).",
-        "operationId": "events_list",
+        "operationId": "list",
         "parameters": [
           {
             "name": "session",
@@ -271,7 +271,7 @@
         ],
         "summary": "Subscribe to the live domain-event stream.",
         "description": "Every state change in the daemon — from HTTP calls, from the scheduler and\nfrom agent activity alike — is published here. Each message carries a fresh\nULID `id`, the event kind as its `event` name, and the full updated DTO as\n`data`, so clients patch their state without refetching.\n\nNot every event is a database write. `task_branch_updated` is published by\nthe daemon's watch on each live task's branch ref, so a commit an agent\nmakes in its worktree — which changes nothing in the store — still says\nthat the task's diff (`GET /v1/tasks/{id}/diff`) is no longer the one you\nhold. It carries the branch and the full sha of its new head.\n\nThere is **no replay or backfill**: the `id` is informational and\n`Last-Event-ID` is ignored. On (re)connect, refetch the REST state you care\nabout and then follow the stream.\n\nBesides the domain events there is a `heartbeat` event (a `HeartbeatDto`:\nthe daemon's `version` and its `started_at`), sent as the connection opens\nand every 15 s an idle connection goes without one. It is a named event\nrather than the SSE comment other streams keep alive with, because a\nbrowser's `EventSource` never surfaces a comment: a client watches it to\ntell a live daemon from a dead one, and a changed `started_at` to tell a\nrestarted daemon from the one it was talking to.\n\nA client that falls too far behind loses events. It is never left silently\nstale: the daemon sends a final `resync` event (`{\"missed\": n}`) and closes\nthe connection, so an `EventSource` reconnects and takes the refetch path\nabove.",
-        "operationId": "events_stream",
+        "operationId": "stream",
         "parameters": [
           {
             "name": "goal",
@@ -318,7 +318,7 @@
           "goals"
         ],
         "summary": "List goals.",
-        "operationId": "goals_list",
+        "operationId": "list",
         "parameters": [
           {
             "name": "status",
@@ -356,7 +356,7 @@
         ],
         "summary": "Create a goal on registered repositories; the orchestrator session is\nspawned by the scheduler once agent execution lands.",
         "description": "The repos are referenced, not copied: whatever `POST /v1/repositories`\nvalidated about a checkout holds for every goal that names it, and an edit\nthere moves this goal too.",
-        "operationId": "goals_create",
+        "operationId": "create",
         "requestBody": {
           "content": {
             "application/json": {
@@ -393,7 +393,7 @@
           "tasks"
         ],
         "summary": "Create a task in a goal (orchestrator via MCP, or the user).",
-        "operationId": "tasks_create",
+        "operationId": "create",
         "parameters": [
           {
             "name": "goal_id",
@@ -441,7 +441,7 @@
           "goals"
         ],
         "summary": "Inspect a goal.",
-        "operationId": "goals_get",
+        "operationId": "get",
         "parameters": [
           {
             "name": "id",
@@ -474,7 +474,7 @@
           "goals"
         ],
         "summary": "Delete a finished goal and everything under it.",
-        "operationId": "goals_delete",
+        "operationId": "delete",
         "parameters": [
           {
             "name": "id",
@@ -505,7 +505,7 @@
           "goals"
         ],
         "summary": "Cancel a goal.",
-        "operationId": "goals_cancel",
+        "operationId": "cancel",
         "parameters": [
           {
             "name": "id",
@@ -544,7 +544,7 @@
         ],
         "summary": "Complete the goal: it moves active -> completed and every session of it\nis torn down.",
         "description": "The orchestrator's call, because it is the only agent that knows whether\nthe plan did what the goal asked for — the daemon can see that every task\nended, and not whether the goal is met. The user's too: it is their goal,\nand a goal whose orchestrator will not start is otherwise one nothing can\nclose.\n\nWhat the daemon checks is the part it can see. A goal with a task still\ngoing is not one anybody may declare finished, however sure they are.",
-        "operationId": "goals_complete",
+        "operationId": "complete",
         "parameters": [
           {
             "name": "id",
@@ -592,7 +592,7 @@
           "goals"
         ],
         "summary": "Finalize the plan: goal moves planning -> active and its tasks start. The\norchestrator's call alone, and there is nothing left for the user to\napprove.",
-        "operationId": "goals_finalize",
+        "operationId": "finalize",
         "parameters": [
           {
             "name": "id",
@@ -641,7 +641,7 @@
         ],
         "summary": "The messages of a goal: what its agents said that was not about one task.",
         "description": "A goal's channel is the orchestrator's inbox. Everything an agent says to\nit about a task is on that task instead, and this is where the rest goes.",
-        "operationId": "goals_list_goal_messages",
+        "operationId": "list_goal_messages",
         "parameters": [
           {
             "name": "id",
@@ -704,7 +704,7 @@
           "goals"
         ],
         "summary": "Send a message about the goal itself.",
-        "operationId": "goals_post_goal_message",
+        "operationId": "post_goal_message",
         "parameters": [
           {
             "name": "id",
@@ -752,7 +752,7 @@
           "system"
         ],
         "summary": "Daemon liveness probe.",
-        "operationId": "system_health",
+        "operationId": "health",
         "responses": {
           "200": {
             "description": "Daemon is healthy",
@@ -773,7 +773,7 @@
           "logs"
         ],
         "summary": "Recent daemon log lines from the in-memory ring buffer, oldest first.",
-        "operationId": "logs_snapshot",
+        "operationId": "snapshot",
         "parameters": [
           {
             "name": "tail",
@@ -810,7 +810,7 @@
         ],
         "summary": "Follow the daemon log.",
         "description": "The stream opens with a `snapshot` event carrying the current ring buffer\n(a `LogSnapshotResponse`, what `GET /v1/logs` would have returned), then\nsends a `delta` event per new line (a `LogLineDto`). Payloads are compact\nJSON, so log content cannot break SSE framing. There is no replay on\nreconnect: every connection starts over from a fresh snapshot, which is\nalso the resync path for a follower that fell behind and was dropped.",
-        "operationId": "logs_stream",
+        "operationId": "stream",
         "responses": {
           "200": {
             "description": "SSE stream of daemon log lines (text/event-stream). A `snapshot` event with the current buffer (LogSnapshotResponse), then a `delta` event per new line (LogLineDto). A follower that falls too far behind is disconnected; reconnecting starts over from a fresh snapshot.",
@@ -832,7 +832,7 @@
         ],
         "summary": "Everything an agent can be pinned to, `<agent>:<model>` apiece: the\nmodels discovery found each registry agent offering, grouped by agent.\nNo bare-agent entry: a model is required wherever an agent is pinned,\nso there is nothing an agent on its own could be staffed as.",
         "description": "Each entry carries the efforts it can be run at, as the agent offered\nthem, and which of them it runs by default. Every entry says whether\nan agent can be staffed on it. A model the user turned off stays in\nthe list, off: a catalog that hid it would leave nothing to turn back\non, and nothing to say why a pin naming it is refused.",
-        "operationId": "models_list",
+        "operationId": "list",
         "responses": {
           "200": {
             "description": "",
@@ -857,7 +857,7 @@
         ],
         "summary": "Turn one entry of the catalog on or off.",
         "description": "The catalog is discovery, so this writes only the exception:\nan id nothing in the catalog carries is a 404, and the last entry left\non cannot be turned off — a plan needs something to be staffed on, and\na daemon that can staff nothing is not a state to leave a user in.",
-        "operationId": "models_set_enabled",
+        "operationId": "set_enabled",
         "requestBody": {
           "content": {
             "application/json": {
@@ -894,7 +894,7 @@
           "models"
         ],
         "summary": "Set or clear a catalog entry's rank without changing its enabled flag.",
-        "operationId": "models_set_rank",
+        "operationId": "set_rank",
         "requestBody": {
           "content": {
             "application/json": {
@@ -931,7 +931,7 @@
           "sessions"
         ],
         "summary": "Resume an outside conversation without creating a goal or task.",
-        "operationId": "sessions_resume_outside",
+        "operationId": "resume_outside",
         "requestBody": {
           "content": {
             "application/json": {
@@ -971,7 +971,7 @@
           "permissions"
         ],
         "summary": "The AI permission settings, the interpreter probed afresh, and where the install\nhas got to.",
-        "operationId": "permissions_get",
+        "operationId": "get",
         "responses": {
           "200": {
             "description": "",
@@ -991,7 +991,7 @@
         ],
         "summary": "Change the AI permission settings. An absent field stays as it was.",
         "description": "Turning the model on is refused while the daemon has no Python 3.12 or 3.13 to\ninstall into: the download is minutes and gigabytes, and it would fail at\nthe end of them. Turning it off keeps every file on disk, so turning it\nback on repairs its pinned package and weights.",
-        "operationId": "permissions_update",
+        "operationId": "update",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1028,7 +1028,7 @@
           "permissions"
         ],
         "summary": "Run the install again: the pinned package, adapter and base.",
-        "operationId": "permissions_refresh",
+        "operationId": "refresh",
         "responses": {
           "202": {
             "description": "",
@@ -1052,7 +1052,7 @@
           "permissions"
         ],
         "summary": "Score one request with the AI permission model without selecting an option\nor changing any permission state.",
-        "operationId": "permissions_test",
+        "operationId": "test",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1088,7 +1088,7 @@
         "tags": [
           "permissions"
         ],
-        "operationId": "permissions_list_learned",
+        "operationId": "list_learned",
         "parameters": [
           {
             "name": "repository",
@@ -1121,7 +1121,7 @@
         "tags": [
           "permissions"
         ],
-        "operationId": "permissions_get_learned",
+        "operationId": "get_learned",
         "parameters": [
           {
             "name": "id",
@@ -1197,7 +1197,7 @@
         "tags": [
           "permissions"
         ],
-        "operationId": "permissions_delete_learned",
+        "operationId": "delete_learned",
         "parameters": [
           {
             "name": "id",
@@ -1224,7 +1224,7 @@
           "repositories"
         ],
         "summary": "List repositories.",
-        "operationId": "repositories_list",
+        "operationId": "list",
         "responses": {
           "200": {
             "description": "",
@@ -1246,7 +1246,7 @@
           "repositories"
         ],
         "summary": "Create a repository.",
-        "operationId": "repositories_create",
+        "operationId": "create",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1283,7 +1283,7 @@
           "repositories"
         ],
         "summary": "Get a repository.",
-        "operationId": "repositories_get",
+        "operationId": "get",
         "parameters": [
           {
             "name": "id",
@@ -1316,7 +1316,7 @@
           "repositories"
         ],
         "summary": "Update a repository.",
-        "operationId": "repositories_update",
+        "operationId": "update",
         "parameters": [
           {
             "name": "id",
@@ -1365,7 +1365,7 @@
           "repositories"
         ],
         "summary": "Delete a repository.",
-        "operationId": "repositories_delete",
+        "operationId": "delete",
         "parameters": [
           {
             "name": "id",
@@ -1393,7 +1393,7 @@
           "sessions"
         ],
         "summary": "List sessions: one page of the sessions Ariadne runs and the\nconversations the ACP agents stored themselves, newest activity first.",
-        "operationId": "sessions_list",
+        "operationId": "list",
         "parameters": [
           {
             "name": "kind",
@@ -1611,7 +1611,7 @@
         ],
         "summary": "Start a loose session: a new conversation with an agent, in a directory,\nwith no goal, task or seat behind it.",
         "description": "The model is checked as a goal's pin is — a registry agent and a model of\nit, not one the user turned off — and the effort against that model. The\ndirectory must be an absolute path to one that exists. The session comes\nback live, waiting for the first prompt typed into its console, which\nbecomes its title.",
-        "operationId": "sessions_create_session",
+        "operationId": "create_session",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1651,7 +1651,7 @@
           "sessions"
         ],
         "summary": "Inspect a session.",
-        "operationId": "sessions_get",
+        "operationId": "get",
         "parameters": [
           {
             "name": "id",
@@ -1686,7 +1686,7 @@
           "sessions"
         ],
         "summary": "The session's newest events, in order: the transcript a console opens on.\nIt is a page of at most two hundred, the recent past rather than every\nturn a session ever ran; `GET /v1/events` walks back from it. While a\nturn runs, one `agent_thought_chunk` or `agent_message_chunk` holding the\ntext so far follows the stored events.",
-        "operationId": "sessions_snapshot",
+        "operationId": "snapshot",
         "parameters": [
           {
             "name": "id",
@@ -1728,7 +1728,7 @@
         ],
         "summary": "Cancel the turn a session is running.",
         "description": "Sends ACP `session/cancel` to the agent while its `session/prompt` is\nstill in flight. The turn then ends as any other does — the text so far\nstored, then a `stop` whose `stop_reason` is `cancelled`. A session that\nis not live, one whose agent process is gone, and one between turns all\nhave nothing to cancel, and say so with `409`.",
-        "operationId": "sessions_console_cancel",
+        "operationId": "console_cancel",
         "parameters": [
           {
             "name": "id",
@@ -1760,7 +1760,7 @@
         ],
         "summary": "Type into a session.",
         "description": "While a permission request is pending, the text selects that request's\noption; otherwise it becomes a fresh `session/prompt` — sent at once if\nthe agent is between turns, or queued, in order, behind whichever one is\nrunning and sent the moment it ends.\n\nBoth halves of \"live\" matter: the row's status, because a finished\nsession takes no more input, and the runtime itself, which has no agent to\nhand a prompt to for a session whose process is gone.\n\nAnd it is the user acting on the session, so whatever it was flagged for\ncomes down with the input: a permission answered, a question typed back,\na message read. An agent still blocked raises its own again with its next\nevent. The scheduler hears about it as it does about an ingested event, so\nthe quiet clock and the stream follow.",
-        "operationId": "sessions_console_input",
+        "operationId": "console_input",
         "parameters": [
           {
             "name": "id",
@@ -1802,7 +1802,7 @@
         ],
         "summary": "Follow a session's console.",
         "description": "Opens with a `snapshot` event carrying what `GET /console` would return —\nthe newest page of stored events, oldest first, then the running turn's\ntext so far — then an `event` per later one, each an `AgentEventDto`.\nSubscribing happens before the snapshot is read and every later stored\nevent is compared against the snapshot's last id, so nothing committed in\nbetween is ever missed or delivered twice; the live events are read under\nthe runtime's own turn lock for the same guarantee.\n\nThere is no replay and no `Last-Event-ID`: reconnecting starts again from a\nfresh snapshot. A client that falls too far behind gets a final `resync`\nevent and the connection closes, exactly as `/v1/events/stream` does.",
-        "operationId": "sessions_stream",
+        "operationId": "stream",
         "parameters": [
           {
             "name": "id",
@@ -1838,7 +1838,7 @@
         ],
         "summary": "A session's console as a terminal.",
         "description": "Upgrades to a WebSocket. The client sends JSON text frames — a `resize`\nwith the terminal's columns and rows first and on every change, a `key`\nper key press and a `paste` per pasted text (`TerminalClientMessage`) —\nand reads binary frames of terminal bytes that draw the console, plus a\ntext frame carrying the session's status as the socket opens and as it\nends (`TerminalServerMessage`). Closing the socket ends the console and\nleaves the session running; the session ending, Ctrl-C twice or Ctrl-D\nclose the socket.",
-        "operationId": "sessions_console_terminal",
+        "operationId": "console_terminal",
         "parameters": [
           {
             "name": "id",
@@ -1866,7 +1866,7 @@
           "sessions"
         ],
         "summary": "Kill a session's agent process.",
-        "operationId": "sessions_kill",
+        "operationId": "kill",
         "parameters": [
           {
             "name": "id",
@@ -1902,7 +1902,7 @@
         ],
         "summary": "Revive an ended session: a new agent process, same agent conversation\n(resumed via the stored internal session id). Returns the session to\nattach to, which is this one either way — relaunched under its own id, or\nuntouched when its agent turned out to be alive already.",
         "description": "A missing worktree falls back to the repository checkout. A completed\ngoal stays completed while its session runs again.",
-        "operationId": "sessions_resume",
+        "operationId": "resume",
         "parameters": [
           {
             "name": "id",
@@ -1939,9 +1939,9 @@
         "tags": [
           "sessions"
         ],
-        "summary": "Switch a session to another model or agent: the session ends, and a new\none starts on the same seat, on the pin named, in a new conversation. The\nanswer is the new session, which names the old one in `switched_from`.",
+        "summary": "Switch a session to another model or agent. A same-agent switch keeps the\nsession and conversation; another agent starts a new session on the seat.",
         "description": "The pin is checked as `POST /v1/sessions` checks it, a model turned off\nincluded. A session of a cancelled goal is refused.",
-        "operationId": "sessions_switch_session",
+        "operationId": "switch_session",
         "parameters": [
           {
             "name": "id",
@@ -1992,7 +1992,7 @@
           "skills"
         ],
         "summary": "List every skill, shipped and written, by name.",
-        "operationId": "skills_list",
+        "operationId": "list",
         "responses": {
           "200": {
             "description": "",
@@ -2015,7 +2015,7 @@
         ],
         "summary": "Create a skill of the user's own.",
         "description": "It carries its own document: nothing Ariadne ships answers to its name, so\nthere is nothing behind it to fall back to.",
-        "operationId": "skills_create",
+        "operationId": "create",
         "requestBody": {
           "content": {
             "application/json": {
@@ -2049,7 +2049,7 @@
           "skills"
         ],
         "summary": "Get one skill by name.",
-        "operationId": "skills_get",
+        "operationId": "get",
         "parameters": [
           {
             "name": "name",
@@ -2082,7 +2082,7 @@
           "skills"
         ],
         "summary": "Write a new document over a skill's.",
-        "operationId": "skills_update",
+        "operationId": "update",
         "parameters": [
           {
             "name": "name",
@@ -2125,7 +2125,7 @@
           "skills"
         ],
         "summary": "Delete a skill of the user's own (409 for a built-in, or while loaded).",
-        "operationId": "skills_delete",
+        "operationId": "delete",
         "parameters": [
           {
             "name": "name",
@@ -2156,7 +2156,7 @@
           "skills"
         ],
         "summary": "Put a built-in skill back on the document Ariadne ships.",
-        "operationId": "skills_reset_document",
+        "operationId": "reset_document",
         "parameters": [
           {
             "name": "name",
@@ -2194,7 +2194,7 @@
           "tasks"
         ],
         "summary": "List tasks.",
-        "operationId": "tasks_list",
+        "operationId": "list",
         "parameters": [
           {
             "name": "goal",
@@ -2248,7 +2248,7 @@
           "tasks"
         ],
         "summary": "Inspect a task.",
-        "operationId": "tasks_get",
+        "operationId": "get",
         "parameters": [
           {
             "name": "id",
@@ -2281,7 +2281,7 @@
           "tasks"
         ],
         "summary": "Edit a pending/ready task (orchestrator or user).",
-        "operationId": "tasks_update",
+        "operationId": "update",
         "parameters": [
           {
             "name": "id",
@@ -2330,7 +2330,7 @@
         ],
         "summary": "Cancel a task: the user's, or the orchestrator's, which holds the plan\nthe task belongs to.",
         "description": "Who called it is read from the session header rather than assumed, so the\ntransition log says which of the two it was — and so the state machine\nrefuses an author or a reviewer reaching for it.",
-        "operationId": "tasks_cancel",
+        "operationId": "cancel",
         "parameters": [
           {
             "name": "id",
@@ -2369,7 +2369,7 @@
         ],
         "summary": "Diff of the task branch against its base (`git diff base...branch`), or,\nonce the task is merged, the diff its merge commit brought into the base —\nafter the merge the branch is contained in the base, so the three-dot diff\nwould be forever empty.",
         "description": "On a task staffed with several authors, `agent` names the author whose\nbranch to read; left out, the task's own branch is read — the first\nauthor's until the pick settles, and the winner's after it.",
-        "operationId": "tasks_diff",
+        "operationId": "diff",
         "parameters": [
           {
             "name": "id",
@@ -2419,7 +2419,7 @@
           "tasks"
         ],
         "summary": "The messages of a task: what its agents have said to each other.",
-        "operationId": "tasks_list_task_messages",
+        "operationId": "list_task_messages",
         "parameters": [
           {
             "name": "id",
@@ -2483,7 +2483,7 @@
         ],
         "summary": "Send a message about a task.",
         "description": "Who it is from is the session header's, never the body's: an agent cannot\nwrite as somebody else, and a call with no session behind it is the user\nspeaking.",
-        "operationId": "tasks_post_task_message",
+        "operationId": "post_task_message",
         "parameters": [
           {
             "name": "id",
@@ -2532,7 +2532,7 @@
         ],
         "summary": "One reviewer's pick of the winning author, on a task staffed with several.",
         "description": "The gate is here: the pick starts only once every author is approved, and\na pick before that is refused. One pick per reviewer per task — a second\nis refused by the reviewer's name — and the daemon settles the winner once\nevery staffed reviewer has picked.",
-        "operationId": "tasks_pick_winner",
+        "operationId": "pick_winner",
         "parameters": [
           {
             "name": "id",
@@ -2584,7 +2584,7 @@
         ],
         "summary": "Record the pull or merge request the author opened for a task.",
         "description": "The URL travels as a tool call, so a published task is either one the UI\nand the CLI can point at or one that was never reported.\n\nAnd this is the moment the task becomes the user's: a request nobody can\nmerge but a human is exactly what `waiting_user` says, so it goes up here,\non the session that opened it — the console they answer in, and the one place\nthe request can be traced back to. It used to be raised by the message the\nlanding briefing told the author to write, and a published task with\nnothing on the strip is one nobody knows to go and merge.\n\nIt stays up until the user acts: an agent's own events never take\n`waiting_user` down (`clear_agent_attention`), and the author polling its\nrequest is exactly such an agent. `Scheduler::keep_waiting_user` puts it\nback on whatever comes up when that author is restarted, which is what\nmakes the two halves one flag rather than two.",
-        "operationId": "tasks_record_pull_request",
+        "operationId": "record_pull_request",
         "parameters": [
           {
             "name": "id",
@@ -2635,7 +2635,7 @@
           "tasks"
         ],
         "summary": "Retry a failed task: failed -> ready. The user's call, and the\norchestrator's — the daemon wakes it when a task fails, and retrying is\none of the three answers it has.",
-        "operationId": "tasks_retry",
+        "operationId": "retry",
         "parameters": [
           {
             "name": "id",
@@ -2673,7 +2673,7 @@
           "tasks"
         ],
         "summary": "Transition audit log of a task.",
-        "operationId": "tasks_list_transitions",
+        "operationId": "list_transitions",
         "parameters": [
           {
             "name": "id",
@@ -2706,7 +2706,7 @@
           "tasks"
         ],
         "summary": "Request a status transition. The actor is derived from the call context.",
-        "operationId": "tasks_transition",
+        "operationId": "transition",
         "parameters": [
           {
             "name": "id",
@@ -2754,7 +2754,7 @@
           "system"
         ],
         "summary": "Daemon name and version.",
-        "operationId": "system_version",
+        "operationId": "version",
         "responses": {
           "200": {
             "description": "Daemon version",
@@ -3186,7 +3186,8 @@
           "waiting_user",
           "agent_error",
           "disconnected",
-          "stalled"
+          "stalled",
+          "exhausted"
         ]
       },
       "BinaryDto": {
@@ -4502,6 +4503,111 @@
           "ai"
         ]
       },
+      "PermissionReplyDto": {
+        "type": "object",
+        "description": "The fields in a `permission.replied` event payload.",
+        "required": [
+          "session_id",
+          "decided_by",
+          "learned_id",
+          "learned_level",
+          "learned_key"
+        ],
+        "properties": {
+          "ai_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "allow_threshold": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "cap": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "console_option_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "danger": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "decided_by": {
+            "type": "string"
+          },
+          "deny_threshold": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "learned_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The row that answered without a console choice."
+          },
+          "learned_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The normalized command key or family of the answering row."
+          },
+          "learned_level": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`command` or `family` when a row answered."
+          },
+          "operation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "option_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "probabilities": {},
+          "risk_tags": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "session_id": {}
+        }
+      },
       "PickWinnerRequest": {
         "type": "object",
         "description": "One reviewer picking the winning author of a task staffed with several:\nthe author whose branch lands.",
@@ -5184,6 +5290,13 @@
           "seat": {
             "$ref": "#/components/schemas/Seat",
             "description": "`author` or `reviewer`."
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "This agent's live session, the id `POST /v1/sessions/{id}/switch`\ntakes. None while it carries no live session."
           },
           "skills": {
             "type": "array",

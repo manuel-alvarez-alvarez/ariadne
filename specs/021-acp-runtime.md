@@ -10,6 +10,7 @@ tests:
   - crates/ariadne-daemon/tests/it/acp_discovery.rs
   - crates/ariadne-daemon/src/acp.rs
   - crates/ariadne-daemon/tests/it/transcript_usage.rs
+  - crates/ariadne-daemon/tests/it/auto_switch.rs
 ---
 
 # ACP runtime
@@ -278,6 +279,12 @@ gone (009).
 13. Liveness is the runtime's own registry of running agents, and it always
     answers. After a daemon restart no child of the old daemon is running,
     and a revive reaches the stored conversation through a new process.
+14. A failed prompt is exhausted when `data.codexErrorInfo` is
+    `usageLimitExceeded`, when `_meta.jetbrains.air.sessionFailure.category`
+    in its error or response is `limit`, or when its message contains one
+    configured exhausted pattern without regard to case. `session.error`
+    preserves the JSON-RPC code, message, and data, and adds `exhausted: true`
+    plus the structured value or matching pattern as `exhausted_reason`.
 
 ## Acceptance criteria
 
@@ -300,6 +307,10 @@ gone (009).
   (`acp_runtime.rs::an_acp_author_runs_on_daemon_stdio`).
 - An orchestrator seat runs the same way, with the ariadne MCP server in
   `session/new` (`acp_runtime.rs::an_orchestrator_runs_on_the_registry_agent`).
+- Codex, Claude, and configured message signals classify exhausted prompts,
+  while another error remains plain. The stub preserves configured error data
+  (`auto_switch.rs::a_codex_exhaustion_switches_to_another_agent_at_the_same_rank`,
+  `auto_switch.rs::claude_and_message_signals_classify_while_a_plain_error_does_not`).
 - A reviewer seat runs the same way, in its detached worktree
   (`acp_runtime.rs::a_reviewer_runs_on_the_registry_agent`).
 - Killing the session kills the agent process and retires the row

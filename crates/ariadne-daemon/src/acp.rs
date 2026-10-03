@@ -161,6 +161,7 @@ struct Inner {
     /// kept for as long as an agent runs for it or somebody listens.
     consoles: Mutex<HashMap<String, broadcast::Sender<AgentEventDto>>>,
     ai_permissions: Option<AiPermissions>,
+    exhausted_patterns: Vec<String>,
 }
 
 /// The branch one session works on, shared between the runtime and the
@@ -422,8 +423,16 @@ impl AcpRuntime {
                 scheduler: OnceLock::new(),
                 consoles: Mutex::new(HashMap::new()),
                 ai_permissions: None,
+                exhausted_patterns: crate::config::default_exhausted_patterns(),
             }),
         }
+    }
+
+    pub fn with_exhausted_patterns(mut self, patterns: Vec<String>) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("the runtime is not shared while it is configured")
+            .exhausted_patterns = patterns;
+        self
     }
 
     /// Set the branch a session works on: an author's own, or the one a
@@ -1101,11 +1110,33 @@ impl AcpRuntime {
         let _ = child.wait().await;
         if let Some(Err(error)) = &outcome {
             tracing::warn!(session = %launch.session_id, error = %format!("{error:#}"), "ACP agent failed");
+            let protocol = error
+                .chain()
+                .find_map(|cause| cause.downcast_ref::<agent_client_protocol::Error>());
+            let mut reported = match protocol {
+                Some(error) => json!({
+                    "code": i32::from(error.code),
+                    "message": error.message,
+                    "data": error.data,
+                }),
+                None => json!({"data": {"message": format!("{error:#}")}}),
+            };
+            let message = protocol
+                .map(|error| error.message.clone())
+                .unwrap_or_else(|| format!("{error:#}"));
+            if let Some(reason) = exhausted_reason(
+                &message,
+                protocol.and_then(|error| error.data.as_ref()),
+                &self.inner.exhausted_patterns,
+            ) {
+                reported["exhausted"] = json!(true);
+                reported["exhausted_reason"] = json!(reason);
+            }
             sink.emit(
                 "session.error",
                 json!({
                     "session_id": sink.agent_session_id(&launch.config),
-                    "error": {"data": {"message": format!("{error:#}")}},
+                    "error": reported,
                 }),
             )
             .await;
@@ -1118,6 +1149,28 @@ impl AcpRuntime {
         .await;
         self.deregister(&launch.session_id, &launch.launch_id);
     }
+}
+
+fn exhausted_reason(message: &str, data: Option<&Value>, patterns: &[String]) -> Option<String> {
+    if let Some(reason) = data
+        .and_then(|data| data.get("codexErrorInfo"))
+        .and_then(Value::as_str)
+        .filter(|reason| *reason == "usageLimitExceeded")
+    {
+        return Some(reason.to_string());
+    }
+    if data
+        .and_then(|data| data.pointer("/_meta/jetbrains/air/sessionFailure/category"))
+        .and_then(Value::as_str)
+        == Some("limit")
+    {
+        return Some("limit".to_string());
+    }
+    let message = message.to_lowercase();
+    patterns
+        .iter()
+        .find(|pattern| message.contains(&pattern.to_lowercase()))
+        .cloned()
 }
 
 /// What a killed driver needs to let its running turn end the ACP way.
@@ -2350,6 +2403,20 @@ async fn prompt_once(
         turn.running = false;
     }
     let response = response?;
+    if response
+        .pointer("/_meta/jetbrains/air/sessionFailure/category")
+        .and_then(Value::as_str)
+        == Some("limit")
+    {
+        return Err(anyhow::Error::new(
+            agent_client_protocol::Error::new(
+                -32603,
+                "the prompt failed because the model limit was reached",
+            )
+            .data(response),
+        ))
+        .context("ACP session/prompt failed");
+    }
     let mut stop = json!({
         "session_id": session_id,
         "stop_reason": response.get("stopReason"),

@@ -280,6 +280,7 @@ mod tests {
             (AttentionReason::AgentError, "agent error"),
             (AttentionReason::Disconnected, "disconnected"),
             (AttentionReason::Stalled, "stalled"),
+            (AttentionReason::Exhausted, "exhausted"),
         ];
         let sessions = flags
             .iter()

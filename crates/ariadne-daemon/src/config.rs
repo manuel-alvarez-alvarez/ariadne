@@ -29,6 +29,8 @@ pub struct Config {
     pub delete_merged_branches: bool,
     pub delete_merged_worktrees: bool,
     pub prevent_sleep: bool,
+    pub auto_switch: bool,
+    pub exhausted_patterns: Vec<String>,
     /// User-defined ACP agent commands appended to the built-in registry.
     pub acp_agents: Vec<AcpAgentConfig>,
     /// ACP registry index URL, fetched only on an explicit refresh.
@@ -98,6 +100,10 @@ impl Config {
             delete_merged_branches: file.delete_merged_branches.unwrap_or(true),
             delete_merged_worktrees: file.delete_merged_worktrees.unwrap_or(true),
             prevent_sleep: file.prevent_sleep.unwrap_or(true),
+            auto_switch: file.auto_switch.unwrap_or(true),
+            exhausted_patterns: file
+                .exhausted_patterns
+                .unwrap_or_else(default_exhausted_patterns),
             acp_agents: file.acp_agents,
             acp_registry_url: file.acp_registry_url.unwrap_or_else(|| {
                 "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json".into()
@@ -138,6 +144,20 @@ impl Config {
     }
 }
 
+pub fn default_exhausted_patterns() -> Vec<String> {
+    [
+        "hit your usage limit",
+        "usage limit reached",
+        "usage limit",
+        "rate limit",
+        "quota",
+        "try again at",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,12 +181,22 @@ mod tests {
         assert!(config.delete_merged_worktrees);
         assert!(config.delete_merged_branches);
         assert!(config.prevent_sleep);
+        assert!(config.auto_switch);
+        assert_eq!(config.exhausted_patterns, default_exhausted_patterns());
         assert_eq!(
             config.acp_registry_url,
             "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json"
         );
         assert_eq!(config.python_bin, None);
         assert_eq!(config.nvidia_smi_bin, None);
+    }
+
+    #[test]
+    fn exhausted_settings_are_read_and_the_pattern_list_replaces_the_default() {
+        let dir = home_with("auto_switch = false\nexhausted_patterns = [\"credits gone\"]\n");
+        let config = Config::load(Some(dir.path().join("home"))).unwrap();
+        assert!(!config.auto_switch);
+        assert_eq!(config.exhausted_patterns, ["credits gone"]);
     }
 
     /// The AI permission model's Python and `nvidia-smi` keys are read; the

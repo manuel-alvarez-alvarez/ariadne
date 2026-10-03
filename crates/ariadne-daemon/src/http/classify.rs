@@ -38,11 +38,19 @@ pub(super) fn status_for_event(kind: &str) -> Option<ariadne_core::SessionStatus
 }
 
 /// Attention an event raises on its session (None = leave it alone).
-pub(super) fn attention_for_event(kind: &str) -> Option<ariadne_core::AttentionReason> {
+pub(super) fn attention_for_event(
+    kind: &str,
+    payload: &serde_json::Value,
+) -> Option<ariadne_core::AttentionReason> {
     use ariadne_core::AttentionReason as A;
     match kind {
         // A failed turn, or a protocol failure the runtime reports before the
         // session ends: only the flag goes up.
+        "session.error"
+            if payload.pointer("/error/exhausted") == Some(&serde_json::Value::Bool(true)) =>
+        {
+            Some(A::Exhausted)
+        }
         "session.error" => Some(A::AgentError),
         // The agent asked for a permission. The runtime reports the ask as it
         // arrives, before the answer is known, so it marks the wait and not
@@ -314,13 +322,14 @@ mod tests {
             "session.error",
             "session_end",
         ] {
-            let acted_on = status_for_event(kind).is_some() || attention_for_event(kind).is_some();
+            let acted_on =
+                status_for_event(kind).is_some() || attention_for_event(kind, &json!({})).is_some();
             assert!(acted_on, "{kind} is reported but ingested as a no-op");
         }
         // Not among them: a compaction the agent ran by itself, which the
         // daemon neither asks for nor advertises (007, rule 17).
         assert!(status_for_event("compaction_update").is_none());
-        assert!(attention_for_event("compaction_update").is_none());
+        assert!(attention_for_event("compaction_update", &json!({})).is_none());
     }
 
     /// The lifecycle events, and nothing about them raises attention.
@@ -336,7 +345,7 @@ mod tests {
             ("session_end", Exited),
         ] {
             assert_eq!(status_for_event(event), Some(expected), "{event}");
-            assert_eq!(attention_for_event(event), None, "{event}");
+            assert_eq!(attention_for_event(event, &json!({})), None, "{event}");
         }
     }
 
@@ -349,7 +358,11 @@ mod tests {
             ("permission_request", AttentionReason::WaitingPermission),
             ("session.error", AttentionReason::AgentError),
         ] {
-            assert_eq!(attention_for_event(kind), Some(expected), "{kind}");
+            assert_eq!(
+                attention_for_event(kind, &json!({})),
+                Some(expected),
+                "{kind}"
+            );
             assert_eq!(status_for_event(kind), None, "{kind}");
         }
     }
@@ -364,7 +377,7 @@ mod tests {
                 Some(SessionStatus::Running),
                 "{kind}"
             );
-            assert_eq!(attention_for_event(kind), None, "{kind}");
+            assert_eq!(attention_for_event(kind, &json!({})), None, "{kind}");
         }
     }
 

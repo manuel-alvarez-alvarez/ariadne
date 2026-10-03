@@ -265,6 +265,12 @@ and the ACP runtime that reports the agent events (021).
     (`learned_permissions.rs::learned_permission_routes_read_and_delete_and_publish_fat_events`),
     and an ACP family answer publishes their values
     (`acp_console.rs::family_choice_answers_later_rebase_calls_but_not_other_families`).
+27. `config.toml` accepts `auto_switch`, which defaults to `true`, and
+    `exhausted_patterns`. The shipped list is `hit your usage limit`, `usage
+    limit reached`, `usage limit`, `rate limit`, `quota`, and `try again at`.
+    A configured list replaces it whole.
+28. Session attention also has `exhausted`, for active work whose current
+    model accepts no more work.
 
 ## Acceptance criteria
 
@@ -433,6 +439,9 @@ and the ACP runtime that reports the agent events (021).
   `models.rs::endpoint_is_in_the_openapi_document_with_nothing_to_filter_by`).
 - A `config.toml` that names an unknown key stops the daemon
   (`config.rs::an_unknown_key_stops_the_daemon`).
+- Automatic switching defaults on, and a configured exhausted-pattern list
+  replaces the shipped list (`config.rs::a_config_file_that_says_nothing_keeps_every_default`,
+  `config.rs::exhausted_settings_are_read_and_the_pattern_list_replaces_the_default`).
 - ACP registry endpoints expose the cached result and refresh it on demand
   (`acp_discovery.rs::the_api_lists_an_installed_index_agent_and_one_user_agent`,
   `::discovery_refreshes_on_demand`). Refresh downloads the configured index

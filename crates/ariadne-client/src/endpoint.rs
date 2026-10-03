@@ -63,6 +63,10 @@ pub struct FileConfig {
     pub delete_merged_worktrees: Option<bool>,
     /// Keep the machine awake while agent sessions are live (default true).
     pub prevent_sleep: Option<bool>,
+    /// Switch a seat to another ranked model after an exhausted prompt.
+    pub auto_switch: Option<bool>,
+    /// Case-insensitive message fragments that identify exhausted prompts.
+    pub exhausted_patterns: Option<Vec<String>>,
     /// ACP registry index URL, fetched only on an explicit refresh.
     pub acp_registry_url: Option<String>,
     /// The Python 3.12 or 3.13 interpreter the model's install runs on
