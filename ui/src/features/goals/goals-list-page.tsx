@@ -10,7 +10,7 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { ChevronDownIcon, PlusIcon, TargetIcon } from "lucide-react"
+import { FilterIcon, PlusIcon, TargetIcon } from "lucide-react"
 import { useState } from "react"
 import { useSearchParams } from "react-router-dom"
 
@@ -18,6 +18,7 @@ import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
+import { ButtonGroup } from "@/components/ui/button-group"
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -28,23 +29,23 @@ import {
 import { AttentionStrip } from "./attention-strip"
 import { CreateGoalDialog } from "./create-goal-dialog"
 import {
+  DEFAULT_GOAL_STATUS_FILTER,
   NO_STATUS_FILTER,
+  readStatusFilter,
   type StatusFilter,
-  showsFinished,
+  serializeStatusFilter,
   toggleStatusFilter,
-  withFinished,
 } from "./filters"
 import { BoardSkeleton, GoalSwimlanes } from "./goal-swimlanes"
 import { goalsQueryOptions } from "./queries"
-import { GOAL_STATUS_META, GOAL_STATUSES } from "./status"
+import { GOAL_STATUS_META, GOAL_STATUSES, isTerminalGoalStatus } from "./status"
 import { useStatusFilter } from "./use-status-filter"
 
-/** What the trigger says: the one status by name, several by count. */
-function summarize(filter: StatusFilter): string {
-  const [only] = filter
-  if (!only) return "All statuses"
-  if (filter.length === 1) return GOAL_STATUS_META[only].label
-  return `${filter.length} statuses`
+const ACTIVE_FILTER = readStatusFilter(new URLSearchParams({ status: DEFAULT_GOAL_STATUS_FILTER }))
+const FINISHED_FILTER = GOAL_STATUSES.filter(isTerminalGoalStatus)
+
+function sameFilter(a: StatusFilter, b: StatusFilter): boolean {
+  return serializeStatusFilter(a) === serializeStatusFilter(b)
 }
 
 /** The board came back empty: whether that is a filter or an empty Ariadne. */
@@ -73,7 +74,10 @@ export function GoalsListPage() {
 
   const goals = useQuery(goalsQueryOptions({ statuses }))
   const empty = emptyBoardCopy(statuses)
-  const finished = showsFinished(statuses)
+  const active = sameFilter(statuses, ACTIVE_FILTER)
+  const all = statuses.length === 0
+  const finished = sameFilter(statuses, FINISHED_FILTER)
+  const custom = !active && !all && !finished
 
   /** The goal just created opens its own panel — no hunting for it on the board. */
   function openGoal(goalId: string) {
@@ -96,53 +100,66 @@ export function GoalsListPage() {
         description="What Ariadne is working on, and what it has finished."
         actions={
           <>
-            {/* The one narrowing anybody makes by hand, as one click rather
-                than two checkboxes: the board opens on the work that is still
-                moving (see `DEFAULT_GOAL_STATUS_FILTER`), and this is how the
-                rest of it comes back. The menu beside it still spells any
-                selection. */}
-            <Button
-              variant={finished ? "secondary" : "outline"}
-              aria-pressed={finished}
-              className="font-normal"
-              onClick={() => filterBy(withFinished(statuses, !finished))}
-            >
-              Show finished
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    variant="outline"
-                    aria-label="Filter by status"
-                    className="w-40 justify-between font-normal"
-                  />
-                }
+            <ButtonGroup aria-label="Goal status">
+              <Button
+                variant={active ? "secondary" : "outline"}
+                aria-pressed={active}
+                className="font-normal"
+                onClick={() => filterBy(ACTIVE_FILTER)}
               >
-                {summarize(statuses)}
-                <ChevronDownIcon className="text-muted-foreground" />
-              </DropdownMenuTrigger>
-              {/* Checkbox items stay open on a click, which is what a filter
-                built out of several of them needs. */}
-              <DropdownMenuContent align="end" className="w-40">
-                <DropdownMenuCheckboxItem
-                  checked={statuses.length === 0}
-                  onCheckedChange={() => filterBy(NO_STATUS_FILTER)}
+                Active
+              </Button>
+              <Button
+                variant={all ? "secondary" : "outline"}
+                aria-pressed={all}
+                className="font-normal"
+                onClick={() => filterBy(NO_STATUS_FILTER)}
+              >
+                All
+              </Button>
+              <Button
+                variant={finished ? "secondary" : "outline"}
+                aria-pressed={finished}
+                className="font-normal"
+                onClick={() => filterBy(FINISHED_FILTER)}
+              >
+                Finished
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      variant={custom ? "secondary" : "outline"}
+                      size="icon"
+                      aria-label="Filter by status"
+                      aria-pressed={custom}
+                    />
+                  }
                 >
-                  All statuses
-                </DropdownMenuCheckboxItem>
-                <DropdownMenuSeparator />
-                {GOAL_STATUSES.map((status) => (
+                  <FilterIcon />
+                </DropdownMenuTrigger>
+                {/* Checkbox items stay open on a click, which is what a filter
+                built out of several of them needs. */}
+                <DropdownMenuContent align="end" className="w-40">
                   <DropdownMenuCheckboxItem
-                    key={status}
-                    checked={statuses.includes(status)}
-                    onCheckedChange={() => filterBy(toggleStatusFilter(statuses, status))}
+                    checked={statuses.length === 0}
+                    onCheckedChange={() => filterBy(NO_STATUS_FILTER)}
                   >
-                    {GOAL_STATUS_META[status].label}
+                    All statuses
                   </DropdownMenuCheckboxItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+                  <DropdownMenuSeparator />
+                  {GOAL_STATUSES.map((status) => (
+                    <DropdownMenuCheckboxItem
+                      key={status}
+                      checked={statuses.includes(status)}
+                      onCheckedChange={() => filterBy(toggleStatusFilter(statuses, status))}
+                    >
+                      {GOAL_STATUS_META[status].label}
+                    </DropdownMenuCheckboxItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </ButtonGroup>
             <Button onClick={() => setCreateOpen(true)}>
               <PlusIcon />
               New goal

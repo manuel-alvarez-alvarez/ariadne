@@ -62,6 +62,8 @@ interface LaneCounts {
   finished: number
   /** Retry candidates: they stay in the Pending column, outlined in danger. */
   failed: number
+  /** A session stopped moving before it could report a task failure. */
+  stalled: number
   /** Not started — waiting on a dependency, or on an author session. */
   waiting: number
   cancelled: number
@@ -69,8 +71,15 @@ interface LaneCounts {
 
 const WAITING_STATUSES: readonly TaskStatus[] = ["pending", "ready"]
 
-function countLane(tasks: readonly TaskDto[]): LaneCounts {
-  const counts: LaneCounts = { pipeline: 0, finished: 0, failed: 0, waiting: 0, cancelled: 0 }
+export function laneCounts(tasks: readonly TaskDto[]): LaneCounts {
+  const counts: LaneCounts = {
+    pipeline: 0,
+    finished: 0,
+    failed: 0,
+    stalled: 0,
+    waiting: 0,
+    cancelled: 0,
+  }
   for (const task of tasks) {
     if (task.status === "cancelled") {
       counts.cancelled += 1
@@ -79,6 +88,7 @@ function countLane(tasks: readonly TaskDto[]): LaneCounts {
     counts.pipeline += 1
     if (task.status === "finished") counts.finished += 1
     else if (task.status === "failed") counts.failed += 1
+    else if (task.stalled) counts.stalled += 1
     else if (WAITING_STATUSES.includes(task.status)) counts.waiting += 1
   }
   return counts
@@ -94,7 +104,7 @@ function countLane(tasks: readonly TaskDto[]): LaneCounts {
  * has to read as a sentence about the goal and not as a row of counters.
  */
 export function laneSummary(tasks: readonly TaskDto[]): string {
-  const counts = countLane(tasks)
+  const counts = laneCounts(tasks)
   if (counts.pipeline === 0 && counts.cancelled === 0) return "No tasks"
 
   const parts: string[] = []
@@ -106,6 +116,7 @@ export function laneSummary(tasks: readonly TaskDto[]): string {
     )
   }
   if (counts.failed > 0) parts.push(`${counts.failed} failed`)
+  if (counts.stalled > 0) parts.push(`${counts.stalled} stalled`)
   if (counts.waiting > 0) parts.push(`${counts.waiting} waiting`)
   if (counts.cancelled > 0) parts.push(`${counts.cancelled} cancelled`)
   return parts.join(" · ")

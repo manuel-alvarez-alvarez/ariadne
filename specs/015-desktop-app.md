@@ -34,7 +34,11 @@ Out: the daemon endpoints themselves (012).
    area under one header bar — the screen's name as its only `h1`, and a
    screen's own actions at the header's end; a panel opens beside a list
    rather than replacing it, and the URL carries which panel is open.
-3. Screens: the goals board (swimlanes plus an attention strip), the task
+3. Screens: the goals board (swimlanes plus an attention strip) has Active,
+   All and Finished status segments. A status-menu icon holds a custom
+   selection. Each lane header shows a progress bar, done/total and tokens.
+   Its title hint carries the created stamp. The bar and a collapsed lane
+   retain the lane summary. The task
    panel (facts, diff, messages, history), sessions — Ariadne's own and every
    outside conversation an ACP agent stored on its own, merged into one
    listing, each shown in its console — skills, repositories, the agents of
