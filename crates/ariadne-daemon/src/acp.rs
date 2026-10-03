@@ -1185,6 +1185,26 @@ impl AcpRuntime {
                 }),
                 None => json!({"data": {"message": format!("{error:#}")}}),
             };
+            if let Some(protocol) = protocol
+                && let Some(data) = protocol.data.as_ref()
+                && reported
+                    .pointer("/data/message")
+                    .and_then(Value::as_str)
+                    .is_none_or(|message| message.trim().is_empty())
+            {
+                let detail = acp_error_detail(data);
+                let detail = detail.split_whitespace().collect::<Vec<_>>().join(" ");
+                let line = if detail.is_empty() || detail == protocol.message.trim() {
+                    protocol.message.clone()
+                } else {
+                    format!("{}: {detail}", protocol.message)
+                };
+                if let Some(fields) = reported["data"].as_object_mut() {
+                    fields.insert("message".into(), json!(line));
+                } else {
+                    reported["data"] = json!({"message": line, "details": data});
+                }
+            }
             let message = protocol
                 .map(|error| error.message.clone())
                 .unwrap_or_else(|| format!("{error:#}"));
@@ -1213,6 +1233,48 @@ impl AcpRuntime {
         .await;
         self.deregister(&launch.session_id, &launch.launch_id);
     }
+}
+
+fn acp_error_detail(data: &Value) -> String {
+    const KEYS: [&str; 6] = [
+        "details",
+        "detail",
+        "error",
+        "reason",
+        "description",
+        "stderr",
+    ];
+    if let Some(detail) = data.as_str() {
+        return detail.to_string();
+    }
+    if let Some(fields) = data.as_object() {
+        for key in KEYS {
+            let Some(value) = fields.get(key) else {
+                continue;
+            };
+            if let Some(detail) = value.as_str().filter(|detail| !detail.trim().is_empty()) {
+                return detail.to_string();
+            }
+            if let Some(nested) = value.as_object() {
+                for nested_key in ["message"].into_iter().chain(KEYS) {
+                    if let Some(detail) = nested
+                        .get(nested_key)
+                        .and_then(Value::as_str)
+                        .filter(|detail| !detail.trim().is_empty())
+                    {
+                        return detail.to_string();
+                    }
+                }
+            }
+        }
+    }
+    let json = data.to_string();
+    let mut chars = json.chars();
+    let mut detail: String = chars.by_ref().take(200).collect();
+    if chars.next().is_some() {
+        detail.push('…');
+    }
+    detail
 }
 
 fn exhausted_reason(message: &str, data: Option<&Value>, patterns: &[String]) -> Option<String> {

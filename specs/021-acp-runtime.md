@@ -289,8 +289,17 @@ not reject the agent or discard its catalog.
     `usageLimitExceeded`, when `_meta.jetbrains.air.sessionFailure.category`
     in its error or response is `limit`, or when its message contains one
     configured exhausted pattern without regard to case. `session.error`
-    preserves the JSON-RPC code, message, and data, and adds `exhausted: true`
+    preserves the JSON-RPC code and message, and adds `exhausted: true`
     plus the structured value or matching pattern as `exhausted_reason`.
+    For every ACP agent, an error with data and no non-empty string
+    `data.message` adds one line there. It takes a data string first, then
+    the first non-empty string at `details`, `detail`, `error`, `reason`,
+    `description`, or `stderr`, including a string one object level below
+    those keys. Otherwise it takes compact JSON, cut to 200 characters.
+    It puts the ACP message before the detail unless they are equal. It
+    keeps every other data key. For data that is not an object, it also
+    keeps the original value in `data.details`. An error without data and
+    one with a non-empty string `data.message` stay unchanged.
 
 ## Acceptance criteria
 
@@ -300,6 +309,23 @@ not reject the agent or discard its catalog.
   (`acp_discovery.rs::a_failed_opencode_delete_keeps_the_agent_ready_with_its_catalog`).
 - A non-OpenCode probe does not run session delete
   (`acp_discovery.rs::a_non_opencode_probe_runs_no_session_delete`).
+- An ACP error with `data.details` records the ACP message and detail in
+  `session.error` while keeping the other fields
+  (`acp_runtime.rs::an_acp_error_reports_its_details_in_the_event_message`).
+- The event summary and the transcript used by `ariadne session logs` show
+  the combined line
+  (`acp_runtime.rs::an_acp_error_detail_reaches_the_event_summary_and_session_logs`).
+- A string `data.message` stays unchanged, while string and other JSON data
+  supply readable error messages
+  (`acp_runtime.rs::an_acp_error_keeps_an_existing_message_and_reads_other_data_shapes`).
+- Common detail keys, nested errors, strings, and compact JSON all supply
+  readable messages for any ACP agent. Long JSON is cut
+  (`acp_runtime.rs::acp_errors_read_common_detail_fields_for_every_agent`).
+- An error without data stays unchanged, and an empty `data.message` takes
+  the reason from another field
+  (`acp_runtime.rs::an_acp_error_without_data_stays_unchanged_and_an_empty_message_is_filled`).
+- A detail equal to the ACP message appears only once
+  (`acp_runtime.rs::an_acp_error_does_not_repeat_its_message_as_the_detail`).
 - `learn` publishes four choices and preserves the agent choices, records a
   family answer, reuses it for another call in that family, and asks about a
   different family

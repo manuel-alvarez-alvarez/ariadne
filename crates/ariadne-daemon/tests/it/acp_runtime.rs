@@ -11,6 +11,8 @@ use crate::common;
 
 use serde_json::{Value, json};
 
+use ariadne_api::events::AgentEventDto;
+use ariadne_console::transcript::{TranscriptItem, fold};
 use ariadne_core::SessionStatus;
 use ariadne_store::{AgentPin, EventFilter};
 
@@ -92,6 +94,162 @@ async fn event_kinds(h: &Harness, session_id: &str) -> Vec<String> {
         .into_iter()
         .map(|event| event.kind)
         .collect()
+}
+
+/// Report one failed ACP prompt through the daemon's stored event and HTTP DTO.
+async fn failed_prompt_event(data: Value) -> AgentEventDto {
+    failed_prompt_event_with_data(Some(data)).await
+}
+
+async fn failed_prompt_event_with_data(data: Option<Value>) -> AgentEventDto {
+    let agent_dir = tempfile::tempdir().unwrap();
+    let mut scripted = script();
+    let mut error = json!({
+        "code": -32603,
+        "message": "Internal error",
+    });
+    if let Some(data) = data {
+        error["data"] = data;
+    }
+    scripted["prompts"] = json!([{"error": error}]);
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness().home(registry_home(&stub)).await;
+    let cast = acp_cast(&h).await;
+    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    eventually(TIMEOUT, "the failed session to retire", || async {
+        h.session_status(&session).await == SessionStatus::Exited
+    })
+    .await;
+    let events: Vec<AgentEventDto> = h.get(&format!("/v1/events?session={}", session.id)).await;
+    events
+        .into_iter()
+        .find(|event| event.kind == "session.error")
+        .expect("the ACP error was recorded")
+}
+
+#[tokio::test]
+async fn an_acp_error_reports_its_details_in_the_event_message() {
+    let event = failed_prompt_event(json!({"details": "X", "agent_key": 7})).await;
+
+    assert_eq!(event.payload["error"]["code"], -32603);
+    assert_eq!(event.payload["error"]["message"], "Internal error");
+    assert_eq!(
+        event.payload["error"]["data"],
+        json!({
+            "details": "X",
+            "agent_key": 7,
+            "message": "Internal error: X",
+        })
+    );
+}
+
+#[tokio::test]
+async fn an_acp_error_detail_reaches_the_event_summary_and_session_logs() {
+    let event = failed_prompt_event(json!({"details": "thread held by another writer"})).await;
+
+    assert_eq!(
+        event.summary,
+        "Internal error: thread held by another writer"
+    );
+    let items = fold(&[event]);
+    assert!(matches!(
+        items.as_slice(),
+        [TranscriptItem::Error { text, .. }] if text == "Internal error: thread held by another writer"
+    ));
+}
+
+#[tokio::test]
+async fn an_acp_error_keeps_an_existing_message_and_reads_other_data_shapes() {
+    let existing = failed_prompt_event(json!({
+        "message": "Agent explanation",
+        "details": "extra detail",
+    }))
+    .await;
+    assert_eq!(
+        existing.payload["error"],
+        json!({
+            "code": -32603,
+            "message": "Internal error",
+            "data": {"message": "Agent explanation", "details": "extra detail"},
+        })
+    );
+
+    let string = failed_prompt_event(json!("writer busy")).await;
+    assert_eq!(
+        string.payload.pointer("/error/data/message"),
+        Some(&json!("Internal error: writer busy"))
+    );
+    assert_eq!(
+        string.payload.pointer("/error/data/details"),
+        Some(&json!("writer busy"))
+    );
+
+    let array = failed_prompt_event(json!(["writer", "busy"])).await;
+    assert_eq!(
+        array.payload.pointer("/error/data/message"),
+        Some(&json!("Internal error: [\"writer\",\"busy\"]"))
+    );
+    assert_eq!(
+        array.payload.pointer("/error/data/details"),
+        Some(&json!(["writer", "busy"]))
+    );
+}
+
+#[tokio::test]
+async fn acp_errors_read_common_detail_fields_for_every_agent() {
+    for (data, expected) in [
+        (json!({"details": "X"}), "Internal error: X"),
+        (json!({"detail": "X"}), "Internal error: X"),
+        (json!({"error": {"message": "X"}}), "Internal error: X"),
+        (json!({"details": "", "reason": "X"}), "Internal error: X"),
+        (json!("X"), "Internal error: X"),
+        (json!({"unknown": 7}), "Internal error: {\"unknown\":7}"),
+    ] {
+        let event = failed_prompt_event(data.clone()).await;
+        assert_eq!(
+            event.payload.pointer("/error/data/message"),
+            Some(&json!(expected)),
+            "{data}"
+        );
+    }
+
+    let long = failed_prompt_event(json!({"unknown": "x".repeat(500)})).await;
+    let message = long
+        .payload
+        .pointer("/error/data/message")
+        .and_then(Value::as_str)
+        .unwrap();
+    assert!(message.starts_with("Internal error: {\"unknown\":\""));
+    assert!(message.ends_with('…'));
+    assert!(message.chars().count() <= 220);
+}
+
+#[tokio::test]
+async fn an_acp_error_without_data_stays_unchanged_and_an_empty_message_is_filled() {
+    let absent = failed_prompt_event_with_data(None).await;
+    assert_eq!(
+        absent.payload["error"],
+        json!({
+            "code": -32603,
+            "message": "Internal error",
+            "data": null,
+        })
+    );
+
+    let empty = failed_prompt_event(json!({"message": "  ", "reason": "writer busy"})).await;
+    assert_eq!(
+        empty.payload.pointer("/error/data/message"),
+        Some(&json!("Internal error: writer busy"))
+    );
+}
+
+#[tokio::test]
+async fn an_acp_error_does_not_repeat_its_message_as_the_detail() {
+    let event = failed_prompt_event(json!({"details": "Internal error"})).await;
+    assert_eq!(
+        event.payload.pointer("/error/data/message"),
+        Some(&json!("Internal error"))
+    );
 }
 
 /// Spawn the task's author against the stub and wait for the turn to end.
