@@ -3488,6 +3488,69 @@
         "type": "object",
         "description": "Response of `GET /v1/stats/attention`: how much did it need me? Empty until its task\nfills it in."
       },
+      "AuthorModelStatDto": {
+        "type": "object",
+        "description": "Outcomes attributed to an author model.",
+        "required": [
+          "tasks_finished",
+          "tasks_failed",
+          "tasks_cancelled",
+          "finish_rate",
+          "first_pass_rate",
+          "mean_review_rounds",
+          "contests_entered",
+          "contests_won",
+          "win_rate",
+          "tokens_per_finished_task"
+        ],
+        "properties": {
+          "contests_entered": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "contests_won": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "finish_rate": {
+            "type": "number",
+            "format": "double"
+          },
+          "first_pass_rate": {
+            "type": "number",
+            "format": "double"
+          },
+          "mean_review_rounds": {
+            "type": "number",
+            "format": "double"
+          },
+          "tasks_cancelled": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "tasks_failed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "tasks_finished": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "tokens_per_finished_task": {
+            "type": "number",
+            "format": "double"
+          },
+          "win_rate": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
       "BinaryDto": {
         "type": "object",
         "description": "A binary as the daemon can — or cannot — find it.",
@@ -4780,9 +4843,96 @@
           "local"
         ]
       },
+      "ModelStatDto": {
+        "type": "object",
+        "description": "Session measures and the measures specific to this seat.",
+        "required": [
+          "model",
+          "sessions",
+          "failed_sessions",
+          "stalled_sessions",
+          "exhaustions",
+          "usage",
+          "cached_share",
+          "mean_lifetime_secs"
+        ],
+        "properties": {
+          "author": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AuthorModelStatDto"
+              }
+            ]
+          },
+          "cached_share": {
+            "type": "number",
+            "format": "double"
+          },
+          "exhaustions": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "failed_sessions": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "mean_lifetime_secs": {
+            "type": "number",
+            "format": "double"
+          },
+          "model": {
+            "type": "string"
+          },
+          "reviewer": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReviewerModelStatDto"
+              }
+            ]
+          },
+          "seat": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sessions": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "stalled_sessions": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "usage": {
+            "$ref": "#/components/schemas/TokenUsageDto"
+          }
+        }
+      },
       "ModelStatsDto": {
         "type": "object",
-        "description": "Response of `GET /v1/stats/models`: which model does the job? Empty until its task\nfills it in."
+        "description": "Models compared within each seat.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelStatDto"
+            }
+          }
+        }
       },
       "NewSessionRequest": {
         "type": "object",
@@ -5076,6 +5226,30 @@
             "type": "integer",
             "format": "int64",
             "description": "Events this connection lost. Informational: they cannot be recovered.",
+            "minimum": 0
+          }
+        }
+      },
+      "ReviewerModelStatDto": {
+        "type": "object",
+        "description": "Verdicts attributed to a reviewer model.",
+        "required": [
+          "verdicts",
+          "approve_share",
+          "mean_latency_secs"
+        ],
+        "properties": {
+          "approve_share": {
+            "type": "number",
+            "format": "double"
+          },
+          "mean_latency_secs": {
+            "type": "number",
+            "format": "double"
+          },
+          "verdicts": {
+            "type": "integer",
+            "format": "int64",
             "minimum": 0
           }
         }

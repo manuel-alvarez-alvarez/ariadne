@@ -1425,6 +1425,29 @@ export interface components {
          *     fills it in.
          */
         AttentionStatsDto: Record<string, never>;
+        /** @description Outcomes attributed to an author model. */
+        AuthorModelStatDto: {
+            /** Format: int64 */
+            contests_entered: number;
+            /** Format: int64 */
+            contests_won: number;
+            /** Format: double */
+            finish_rate: number;
+            /** Format: double */
+            first_pass_rate: number;
+            /** Format: double */
+            mean_review_rounds: number;
+            /** Format: int64 */
+            tasks_cancelled: number;
+            /** Format: int64 */
+            tasks_failed: number;
+            /** Format: int64 */
+            tasks_finished: number;
+            /** Format: double */
+            tokens_per_finished_task: number;
+            /** Format: double */
+            win_rate: number;
+        };
         /** @description A binary as the daemon can — or cannot — find it. */
         BinaryDto: {
             /**
@@ -2009,11 +2032,30 @@ export interface components {
          * @enum {string}
          */
         ModelRank: "frontier" | "balanced" | "fast" | "local";
-        /**
-         * @description Response of `GET /v1/stats/models`: which model does the job? Empty until its task
-         *     fills it in.
-         */
-        ModelStatsDto: Record<string, never>;
+        /** @description Session measures and the measures specific to this seat. */
+        ModelStatDto: {
+            author?: null | components["schemas"]["AuthorModelStatDto"];
+            /** Format: double */
+            cached_share: number;
+            /** Format: int64 */
+            exhaustions: number;
+            /** Format: int64 */
+            failed_sessions: number;
+            /** Format: double */
+            mean_lifetime_secs: number;
+            model: string;
+            reviewer?: null | components["schemas"]["ReviewerModelStatDto"];
+            seat?: string | null;
+            /** Format: int64 */
+            sessions: number;
+            /** Format: int64 */
+            stalled_sessions: number;
+            usage: components["schemas"]["TokenUsageDto"];
+        };
+        /** @description Models compared within each seat. */
+        ModelStatsDto: {
+            items: components["schemas"]["ModelStatDto"][];
+        };
         /**
          * @description Start a loose session: a new conversation with an agent, in a directory,
          *     with no goal, task or seat behind it.
@@ -2140,6 +2182,15 @@ export interface components {
              * @description Events this connection lost. Informational: they cannot be recovered.
              */
             missed: number;
+        };
+        /** @description Verdicts attributed to a reviewer model. */
+        ReviewerModelStatDto: {
+            /** Format: double */
+            approve_share: number;
+            /** Format: double */
+            mean_latency_secs: number;
+            /** Format: int64 */
+            verdicts: number;
         };
         /**
          * @description Where an agent sits: the orchestrator of a goal, or the author or a

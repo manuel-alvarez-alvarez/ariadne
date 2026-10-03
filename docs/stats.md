@@ -74,7 +74,43 @@ Its task writes this section.
 
 ## Models
 
-Its task writes this section.
+Compare models within the same seat to choose who should do the next job.
+
+```sh
+ariadne stats models
+ariadne stats models --seat author --since 7d
+ariadne stats models --format json
+```
+
+The command shows all seats by default.
+Use `--seat author`, `--seat reviewer`, or `--seat orchestrator` to show one table.
+JSON always returns every seat, even with `--seat`.
+The desktop shows Authors, Reviewers, and Orchestrators, with the largest task, verdict, or session count first.
+Seats without rows have no table.
+When no author, reviewer, or orchestrator rows exist, the desktop shows its empty state.
+This includes responses with only seatless rows.
+
+Authors show task endings, finish rate, first-pass rate, average review rounds, contest win rate, and tokens per finished task.
+TASKS includes finished, failed, and cancelled endings; retries can contribute more than one ending.
+Finish rate is finished endings divided by finished, failed, and cancelled endings combined.
+First-pass rate is reviewed tasks with a round-one approval divided by all reviewed tasks for that author model.
+Any reviewer's round-one approval qualifies, and each task counts once.
+ROUNDS averages review requests across task endings.
+Win rate is contests won divided by contests entered, counting a model only once per contest.
+TOKENS/TASK averages author-session input plus output across distinct finished tasks attributed to that model.
+It includes zero tokens for finished tasks without matching sessions.
+
+Reviewers show verdict count, approval share, and average time from the review request to the verdict.
+Approve share is approval verdicts divided by all verdicts.
+Orchestrators show session count, input plus output tokens, and average session lifetime.
+Every table shows failed sessions and switches caused by exhaustion under FAILED and EXHAUSTED.
+
+The API and JSON also include all three token counts, stalled sessions, cached share, and session lifetime for every seat.
+Cached share is cached input tokens divided by input tokens; cached tokens are already included in input.
+Rates and averages without observations are zero.
+Both filters apply to every contributing record, including records matched by task.
+A short span can exclude an earlier session or ending and change the averages.
+Seatless sessions appear under NONE in the CLI and in JSON.
 
 ## Attention
 

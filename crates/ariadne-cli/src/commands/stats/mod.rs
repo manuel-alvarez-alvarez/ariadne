@@ -29,7 +29,7 @@ pub(crate) enum StatsCommand {
     /// What it spent
     Spend,
     /// Which model does the job
-    Models,
+    Models(models::Args),
     /// How much it needed you
     Attention,
     /// What the agents do
@@ -60,7 +60,7 @@ pub(crate) async fn run(
         StatsCommand::Work => work::run(client, &query, format).await,
         StatsCommand::Time => time::run(client, &query, format).await,
         StatsCommand::Spend => spend::run(client, &query, format).await,
-        StatsCommand::Models => models::run(client, &query, format).await,
+        StatsCommand::Models(args) => models::run(client, &query, format, args).await,
         StatsCommand::Attention => attention::run(client, &query, format).await,
         StatsCommand::Tools => tools::run(client, &query, format).await,
     }
@@ -88,12 +88,12 @@ mod tests {
     /// Every path and query a call sent, in order.
     type Seen = Arc<Mutex<Vec<String>>>;
 
-    /// A daemon that answers every stats route with an empty object, and
+    /// A daemon that answers every stats route with an empty listing, and
     /// keeps the path and the query of each call.
     async fn serve() -> (Client, Seen) {
         async fn handler(State(seen): State<Seen>, uri: Uri) -> axum::Json<serde_json::Value> {
             seen.lock().unwrap().push(uri.to_string());
-            axum::Json(serde_json::json!({}))
+            axum::Json(serde_json::json!({"items": []}))
         }
         let seen = Seen::default();
         let app = Router::new()
@@ -114,7 +114,7 @@ mod tests {
             StatsCommand::Work,
             StatsCommand::Time,
             StatsCommand::Spend,
-            StatsCommand::Models,
+            StatsCommand::Models(models::Args::default()),
             StatsCommand::Attention,
             StatsCommand::Tools,
         ] {

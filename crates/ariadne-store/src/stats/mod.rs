@@ -18,7 +18,7 @@ mod tools;
 mod work;
 
 pub use attention::AttentionStats;
-pub use models::ModelStats;
+pub use models::{AuthorModelStat, ModelStat, ModelStats, ReviewerModelStat};
 pub use spend::SpendStats;
 pub use time::TimeStats;
 pub use tools::ToolStats;

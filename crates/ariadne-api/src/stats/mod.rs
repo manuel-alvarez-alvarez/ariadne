@@ -9,7 +9,7 @@ mod tools;
 mod work;
 
 pub use attention::AttentionStatsDto;
-pub use models::ModelStatsDto;
+pub use models::{AuthorModelStatDto, ModelStatDto, ModelStatsDto, ReviewerModelStatDto};
 pub use spend::SpendStatsDto;
 pub use time::TimeStatsDto;
 pub use tools::ToolStatsDto;

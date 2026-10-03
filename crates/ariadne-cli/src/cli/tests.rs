@@ -1857,7 +1857,7 @@ fn stats_alone_runs_work_and_takes_the_filters_either_side() {
     };
     assert!(matches!(
         command,
-        Some(crate::commands::stats::StatsCommand::Models)
+        Some(crate::commands::stats::StatsCommand::Models(_))
     ));
     assert_eq!(since.as_deref(), Some("24h"));
     assert_eq!(repo.as_deref(), Some("01JREPO"));

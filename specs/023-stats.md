@@ -292,7 +292,54 @@ Built by its task.
 
 ### Models
 
-Built by its task.
+`Store::model_stats` reads only filtered `stat_facts` and returns `ModelStats { items }`.
+`GET /v1/stats/models` returns the same fields through `ModelStatsDto` and the shared `StatsQuery`.
+Each named model gets one row per seat, including models named only inside verdicts or picks.
+Rows sort by orchestrator, author, reviewer, then no seat, and by model within each seat.
+A fact without a model contributes no session row.
+Both filters apply before any aggregation or task matching.
+
+Each row counts ended sessions, failed sessions, sessions whose attention reason is `stalled`, and switches with reason `exhausted`.
+Switches count against the model and seat left.
+Usage sums input, cached input, and output tokens from ended sessions.
+Cached share is cached input tokens divided by input tokens.
+Mean lifetime is summed session lifetime divided by ended sessions.
+
+Author rows carry an `author` object; other rows carry null.
+Finished, failed, and cancelled task counts count `task_ended` facts, including repeated endings.
+Finish rate is finished endings divided by all three ending counts.
+First-pass rate divides tasks with a round-one approval by tasks with any verdict, grouped by author model.
+An approval from any reviewer qualifies; repeated verdicts count the task once.
+Mean review rounds is the mean `review_requests` across this model's task endings.
+Each pick counts one contest entered per distinct model named among its winner and losers.
+Each pick counts one win for its winner model, even when that model also appears among losers.
+Win rate is contests won divided by contests entered.
+Tokens per finished task averages matching author-session input plus output over distinct finished tasks attributed to this model.
+Matching requires the same model and task, and finished tasks without sessions contribute zero tokens.
+Cached tokens are already part of input and are never added again.
+
+Reviewer rows carry a `reviewer` object; other rows carry null.
+Verdicts count each verdict fact from that reviewer model.
+Approve share is approval verdicts divided by all verdicts.
+Mean latency is summed verdict latency divided by verdicts.
+Every share and mean with a zero denominator is zero.
+
+The CLI prints one comparison table per seat, headed by the seat.
+`--seat orchestrator|author|reviewer` belongs only to `stats models` and limits table output.
+JSON output always contains the complete DTO, regardless of `--seat`.
+A seatless row uses session columns under `NONE` in the CLI and remains available in JSON.
+The desktop section draws Authors, Reviewers, and Orchestrators through `StatTable`, omitting empty seats.
+Responses without rows for the three displayed seats use the shared empty state, including responses with only seatless rows.
+Each desktop table sorts by its first count descending, then by model.
+
+| Seat | Columns |
+| --- | --- |
+| Author | MODEL, TASKS, FINISH_RATE, FIRST_PASS, ROUNDS, WIN_RATE, TOKENS/TASK, FAILED, EXHAUSTED |
+| Reviewer | MODEL, VERDICTS, APPROVE, LATENCY, FAILED, EXHAUSTED |
+| Orchestrator | MODEL, SESSIONS, TOKENS, LIFETIME, FAILED, EXHAUSTED |
+
+TASKS is the sum of finished, failed, and cancelled endings; FAILED always means failed sessions.
+Rates print as percentages with one decimal, durations use the existing duration formatter, and tokens use compact notation.
 
 ### Attention
 
@@ -419,7 +466,30 @@ Built by its task.
 
 #### Models
 
-Built by its task.
+- Author sessions, endings, verdicts, and picks produce every author figure, with duplicate contest models counted once
+  (`stats/models.rs::tests::author_figures_combine_sessions_outcomes_reviews_and_contests`).
+- Each verdict contributes to reviewer count, approval share, and mean latency
+  (`stats/models.rs::tests::reviewer_figures_count_each_verdict_and_its_latency`).
+- Every fact and the session-to-task match obey both filters, including the exact time boundary
+  (`stats/models.rs::tests::every_fact_is_filtered_by_time_and_repository`).
+- Payload-only models get rows; seat ordering, absent seats, and empty denominators hold
+  (`stats/models.rs::tests::rows_include_models_named_only_in_payloads_and_sort_by_seat_then_model`).
+- Repeated verdicts and finished endings preserve task-based denominators
+  (`stats/models.rs::tests::first_pass_counts_reviewed_tasks_once`,
+  `::finished_task_tokens_count_each_task_once_and_exclude_other_seats`).
+- The route returns author and reviewer figures for a finished task with an approval
+  (`stats_models.rs::a_finished_task_and_approval_answer_author_and_reviewer_rows`).
+- CLI tables group each seat, and only the models command accepts `--seat`
+  (`commands/stats/models.rs::tests::tables_group_models_by_seat_and_format_the_figures`,
+  `::the_seat_option_belongs_only_to_models_and_prints_one_table`).
+- JSON preserves the complete DTO with a seat selected
+  (`commands/stats/models.rs::tests::json_reads_the_complete_dto_even_with_a_seat_selected`).
+- The desktop reads under `qk.stats.models`, draws three sorted and formatted tables, and omits empty seats
+  (`models-section.test.tsx`: "draws three seat tables with formatted figures and count ordering",
+  "omits a table when its seat has no rows", and the section's empty-state test).
+
+- A response containing only seatless rows shows the shared empty state and no table
+  (`models-section.test.tsx`: "shows the empty state when the response contains only seatless rows").
 
 #### Attention
 
