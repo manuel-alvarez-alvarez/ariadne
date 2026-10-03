@@ -35,13 +35,13 @@ settings dialog (the gear in the header, or `⌘,`). It is persisted to
 `localStorage` under `ariadne.settings`; the theme lives under `ariadne.theme`.
 Changing the URL clears the query cache and reconnects the event stream.
 
-The sticky footer at the bottom of the window carries the connection state, and
-it has exactly one source: the event stream. Green while it is open and the
-daemon is beating, amber while the first connection is being made, red once it
-is gone — which is the same thing as the screens no longer being live. Hover it
-for the URL, the daemon version and its uptime, both of which come from the
-`heartbeat` the stream carries; clicking it opens the daemon-logs drawer.
-Nothing polls: an idle window makes no requests at all.
+The sidebar's last child carries the connection state, and it has exactly one
+source: the event stream. Green while it is open and the daemon is beating,
+amber while the first connection is being made, red once it is gone — which is
+the same thing as the screens no longer being live. Hover it for the URL, the
+daemon version and its uptime, both of which come from the `heartbeat` the
+stream carries; clicking it opens the daemon-logs drawer. Nothing polls: an
+idle window makes no requests at all.
 
 ### Scripts
 
