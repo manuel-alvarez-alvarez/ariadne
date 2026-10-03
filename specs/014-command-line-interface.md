@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-09-30
+updated: 2026-10-03
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 7fe184e9]
 tests:
@@ -25,6 +25,7 @@ tests:
   - crates/ariadne-cli/src/commands/agent.rs
   - crates/ariadne-cli/src/commands/skill.rs
   - crates/ariadne-cli/src/commands/console.rs
+  - crates/ariadne-cli/src/commands/stats.rs
 ---
 
 # Command-line interface
@@ -46,7 +47,7 @@ same binary also serves (013).
 1. Every user-facing action exists both here and in the desktop app.
 2. The tree is one verb per action, grouped by entity — `daemon`, `agent`,
    `models`, `skill`, `repo`, `permissions`, `goal`, `task`, `session`,
-   `events`, `attention`, `attach`, `doctor`, `completions`,
+   `events`, `attention`, `attach`, `stats`, `doctor`, `completions`,
    plus the one hidden command the agents use (`mcp serve`). Nothing in the tree launches
    an agent or reports on one's behalf: the daemon's ACP runtime does both
    (021).
@@ -223,8 +224,18 @@ same binary also serves (013).
     anything is sent, and the daemon's own refusal of an unknown id or a bad
     scope prints whole. There is no `add` or `edit`. A repository can be an
     id or path, and every verb supports JSON.
+35. `ariadne stats <family> [--since <duration|date>] [--repo <id>]` prints
+    one stat family off `GET /v1/stats/<family>` (023). `ariadne stats`
+    alone prints `models`. `stats models` is a listing: it takes the table
+    flags, and its `TOKENS` column is the usage cell every other table prints.
 
 ## Acceptance criteria
+
+- `ariadne stats models --format json` reads the rows with the filters
+  given, `ariadne stats` alone runs `models`, and the table prints its
+  headers and a token cell
+  (`commands/stats.rs::tests::stats_models_reads_the_rows_with_the_filters_given`,
+  `::the_table_prints_headers_and_a_token_cell`).
 
 - `permissions learned` provides list, show and remove commands, and `add`
   and `edit` do not parse

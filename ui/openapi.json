@@ -2188,6 +2188,55 @@
         }
       }
     },
+    "/v1/stats/models": {
+      "get": {
+        "tags": [
+          "stats"
+        ],
+        "operationId": "models",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Only facts written since then: an RFC 3339 moment, or a span back\nfrom now, `<n>m`, `<n>h`, `<n>d` or `<n>w` (`24h`, `7d`, `30d`).\nAbsent is every fact there is.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "repo",
+            "in": "query",
+            "description": "Only facts about this repository id.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelStatsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`since` is neither a moment nor a span"
+          }
+        }
+      }
+    },
     "/v1/tasks": {
       "get": {
         "tags": [
@@ -4445,6 +4494,88 @@
           "local"
         ]
       },
+      "ModelStatDto": {
+        "type": "object",
+        "description": "How one model did in one seat, over the session runs that ended.",
+        "required": [
+          "model",
+          "sessions",
+          "failed",
+          "stalled",
+          "usage",
+          "cached_share",
+          "mean_lifetime_secs",
+          "skills"
+        ],
+        "properties": {
+          "cached_share": {
+            "type": "number",
+            "format": "double",
+            "description": "`cached_input_tokens` over `input_tokens`, from 0 to 1; 0 where\nnothing went in."
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Of them, the runs that ended `failed`.",
+            "minimum": 0
+          },
+          "mean_lifetime_secs": {
+            "type": "number",
+            "format": "double",
+            "description": "The mean time from a session's creation to its end, in seconds."
+          },
+          "model": {
+            "type": "string",
+            "description": "`<agent>:<model>`, as the sessions ran it."
+          },
+          "seat": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`orchestrator`, `author` or `reviewer`; null for a loose session."
+          },
+          "sessions": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Session runs that ended.",
+            "minimum": 0
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillCountDto"
+            },
+            "description": "Each skill those runs loaded, the most loaded first."
+          },
+          "stalled": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Of them, the runs that ended flagged `stalled`.",
+            "minimum": 0
+          },
+          "usage": {
+            "$ref": "#/components/schemas/TokenUsageDto",
+            "description": "What those runs spent, summed."
+          }
+        }
+      },
+      "ModelStatsResponse": {
+        "type": "object",
+        "description": "Response of `GET /v1/stats/models`.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelStatDto"
+            },
+            "description": "One row per model and seat, ordered by model and then by seat."
+          }
+        }
+      },
       "NewSessionRequest": {
         "type": "object",
         "description": "Start a loose session: a new conversation with an agent, in a directory,\nwith no goal, task or seat behind it.",
@@ -5169,6 +5300,24 @@
                 "description": "The new rank. `null` clears it."
               }
             ]
+          }
+        }
+      },
+      "SkillCountDto": {
+        "type": "object",
+        "description": "One skill the sessions of a row loaded, and how many of them loaded it.",
+        "required": [
+          "name",
+          "sessions"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "sessions": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },
@@ -6012,6 +6161,10 @@
     {
       "name": "logs",
       "description": "The daemon's own process log"
+    },
+    {
+      "name": "stats",
+      "description": "How the tool and the models perform, read off the stats ledger"
     }
   ]
 }

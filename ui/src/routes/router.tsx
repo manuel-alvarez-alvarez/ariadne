@@ -31,6 +31,7 @@ import { SkillsPage } from "@/features/skills/skills-page"
 import { RouteErrorPage } from "@/routes/error-page"
 import { NotFoundPage } from "@/routes/not-found-page"
 import { paths } from "@/routes/paths"
+import { StatsPage } from "@/routes/stats"
 
 function GoalPanelRedirect() {
   const { goalId = "" } = useParams<{ goalId: string }>()
@@ -59,6 +60,7 @@ const routes: RouteObject[] = [
     handle: { title: "Permissions" } satisfies PageHandle,
   },
   { path: "repositories", element: <RepositoriesPage />, handle: { title: "Repositories" } },
+  { path: "stats", element: <StatsPage />, handle: { title: "Stats" } satisfies PageHandle },
   { path: "*", element: <NotFoundPage /> },
 ]
 

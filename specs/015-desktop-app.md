@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-09-28
+updated: 2026-10-03
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, ced9f4f8, c11241f3]
 tests:
@@ -38,7 +38,7 @@ Out: the daemon endpoints themselves (012).
    listing, each shown in its console — skills, repositories, the agents of
    the daemon's ACP registry with their launch flags and the models each may
    be staffed on, Permissions — the AI permission model's settings behind the
-   `ai` permission mode (022) — and a daemon-logs drawer.
+   `ai` permission mode (022) — Stats (rule 36), and a daemon-logs drawer.
 4. Types are generated from the daemon's OpenAPI document, so a DTO change
    that is not reflected here fails the typecheck rather than the app.
 5. One SSE connection serves the whole app, with a dispatcher and reconnect
@@ -422,7 +422,25 @@ Out: the daemon endpoints themselves (012).
     `ui/src/features/permissions/ai-card.test.tsx::draws the marker and the
     label from a test result`, `::relabels the same danger once a threshold
     moves, with no second call`, `::draws no marker for an ai_error answer`).
+36. The Stats screen is at `#/stats`, titled `Stats`, last in the sidebar
+    (023). Its header holds a `since` selector — all time, 24 hours, 7 days,
+    30 days — and a repository selector, both kept in the URL as `?since=`
+    and `?repo=`. The screen passes `{ since, repo }` to each panel under
+    `src/components/stats/`. The models panel lists `GET /v1/stats/models`,
+    one row per model and seat, its tokens as the token figure. Its query key
+    is `qk.stats.models(filter)`, and every `task_updated` and
+    `session_updated` event invalidates the `stats` group — parity with
+    `ariadne stats models` (014).
 
+- The Stats screen renders the models panel from a stubbed answer, and asks
+  with the filters in its URL under the key `qk` names
+  (`ui/src/routes/stats.test.tsx::renders the models panel from the daemon's
+  rows`, `::asks with the filters in its URL, under the key qk names`); a
+  task or a session update invalidates the stats
+  (`ui/src/events/dispatch.test.ts::refetches every stat when a task or a
+  session moves, since either may be a fact`); Stats is the last entry of the
+  sidebar (`ui/src/components/app-shell.test.tsx::ends the navigation with
+  stats, right after repositories and permissions`).
 - 70 test files cover the features, the API layer and the event stream; each
   screen's behaviour is asserted in its own `*.test.tsx` beside it.
 - A task staffed with several authors shows each one's branch and its own
@@ -434,9 +452,10 @@ Out: the daemon endpoints themselves (012).
   `::lists what each reviewer picked, oldest first`,
   `::keeps the singular Author fact and shows no pick on a one-author task`)
   — parity with `ariadne task inspect`'s own author and picks lines (004).
-- The sidebar lists Repositories last, right after Agents, and `#/repositories`
-  mounts the repositories screen, while a screen the app dropped leads nowhere
-  (`ui/src/components/app-shell.test.tsx::ends the navigation with repositories, right after agents`,
+- The sidebar lists Repositories after Permissions and before Stats, and
+  `#/repositories` mounts the repositories screen, while a screen the app
+  dropped leads nowhere
+  (`ui/src/components/app-shell.test.tsx::ends the navigation with stats, right after repositories and permissions`,
   `ui/src/routes/router.test.tsx::mounts the repositories screen at #/repositories`,
   `ui/src/routes/router.test.tsx::leads nowhere from a screen the app no longer has`).
 - The palette opens `#/repositories` on a picked repository

@@ -14,6 +14,7 @@ use crate::commands::permissions::PermissionsCommand;
 use crate::commands::repo::RepoCommand;
 use crate::commands::session::SessionCommand;
 use crate::commands::skill::SkillCommand;
+use crate::commands::stats::StatsCommand;
 use crate::commands::task::TaskCommand;
 use crate::output::{ColorChoice, Format};
 
@@ -313,6 +314,22 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: ModelsCommand,
     },
+    /// Show how the tool and the models perform
+    ///
+    /// Read off the facts the daemon records as work happens. `stats` alone
+    /// runs `stats models`.
+    Stats {
+        #[command(subcommand)]
+        command: Option<StatsCommand>,
+        /// Only what happened since then: a span back from now (30m, 24h,
+        /// 7d, 2w) or an RFC 3339 moment
+        #[arg(long, global = true, value_name = "DURATION|DATE")]
+        since: Option<String>,
+        /// Only what happened in one repository
+        #[arg(long, global = true,
+              add = clap_complete::engine::ArgValueCandidates::new(crate::complete::repo_ids))]
+        repo: Option<String>,
+    },
     /// Manage agent skills
     ///
     /// A skill is one document telling a generic agent how to do one kind of
@@ -506,6 +523,7 @@ const LISTINGS: &[&str] = &[
     "skill ls",
     "repo ls",
     "session ls",
+    "stats models",
     "task history",
     "task ls",
     "task messages",

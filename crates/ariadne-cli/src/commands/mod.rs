@@ -19,6 +19,7 @@ pub(crate) mod repo;
 pub(crate) mod resolve;
 pub(crate) mod session;
 pub(crate) mod skill;
+pub(crate) mod stats;
 pub(crate) mod task;
 pub(crate) mod transcript;
 

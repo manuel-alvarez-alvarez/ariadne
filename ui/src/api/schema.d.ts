@@ -895,6 +895,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/stats/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["stats_models"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tasks": {
         parameters: {
             query?: never;
@@ -1899,6 +1915,48 @@ export interface components {
          * @enum {string}
          */
         ModelRank: "frontier" | "balanced" | "fast" | "local";
+        /** @description How one model did in one seat, over the session runs that ended. */
+        ModelStatDto: {
+            /**
+             * Format: double
+             * @description `cached_input_tokens` over `input_tokens`, from 0 to 1; 0 where
+             *     nothing went in.
+             */
+            cached_share: number;
+            /**
+             * Format: int64
+             * @description Of them, the runs that ended `failed`.
+             */
+            failed: number;
+            /**
+             * Format: double
+             * @description The mean time from a session's creation to its end, in seconds.
+             */
+            mean_lifetime_secs: number;
+            /** @description `<agent>:<model>`, as the sessions ran it. */
+            model: string;
+            /** @description `orchestrator`, `author` or `reviewer`; null for a loose session. */
+            seat?: string | null;
+            /**
+             * Format: int64
+             * @description Session runs that ended.
+             */
+            sessions: number;
+            /** @description Each skill those runs loaded, the most loaded first. */
+            skills: components["schemas"]["SkillCountDto"][];
+            /**
+             * Format: int64
+             * @description Of them, the runs that ended flagged `stalled`.
+             */
+            stalled: number;
+            /** @description What those runs spent, summed. */
+            usage: components["schemas"]["TokenUsageDto"];
+        };
+        /** @description Response of `GET /v1/stats/models`. */
+        ModelStatsResponse: {
+            /** @description One row per model and seat, ordered by model and then by seat. */
+            items: components["schemas"]["ModelStatDto"][];
+        };
         /**
          * @description Start a loose session: a new conversation with an agent, in a directory,
          *     with no goal, task or seat behind it.
@@ -2201,6 +2259,12 @@ export interface components {
             /** @description The entry, as `GET /v1/models` spells its `id`. */
             id: string;
             rank?: null | components["schemas"]["ModelRank"];
+        };
+        /** @description One skill the sessions of a row loaded, and how many of them loaded it. */
+        SkillCountDto: {
+            name: string;
+            /** Format: int64 */
+            sessions: number;
         };
         SkillDto: {
             /**
@@ -4269,6 +4333,41 @@ export interface operations {
                 content?: never;
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    stats_models: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Only facts written since then: an RFC 3339 moment, or a span back
+                 *     from now, `<n>m`, `<n>h`, `<n>d` or `<n>w` (`24h`, `7d`, `30d`).
+                 *     Absent is every fact there is.
+                 */
+                since?: string | null;
+                /** @description Only facts about this repository id. */
+                repo?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelStatsResponse"];
+                };
+            };
+            /** @description `since` is neither a moment nor a span */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };

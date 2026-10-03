@@ -27,6 +27,7 @@
 
 import {
   BotIcon,
+  ChartColumnIcon,
   CpuIcon,
   FolderGit2Icon,
   type LucideIcon,
@@ -53,6 +54,7 @@ const NAV_ITEMS: { to: string; label: string; icon: LucideIcon; counts?: boolean
   { to: paths.agents(), label: "Agents", icon: BotIcon },
   { to: paths.permissions(), label: "Permissions", icon: ShieldIcon },
   { to: paths.repositories(), label: "Repositories", icon: FolderGit2Icon },
+  { to: paths.stats(), label: "Stats", icon: ChartColumnIcon },
 ]
 
 export function AppSidebar({ collapsed = false }: { collapsed?: boolean }) {

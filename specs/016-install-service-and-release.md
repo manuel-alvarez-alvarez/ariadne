@@ -1,7 +1,7 @@
 ---
 id: install-service-and-release
 status: current
-updated: 2026-09-23
+updated: 2026-10-03
 areas: [daemon, install, scripts, store]
 commits: [affda30b, 7ac6b2e3, 60905e41, b0ab8333, 1bbd6251, 03f9c8b7]
 tests:
@@ -76,7 +76,10 @@ Out: what the daemon does once running (009, 012).
 9. The schema is one squashed init migration. A database whose
    `_sqlx_migrations` records a version or a checksum this release does not
    ship is refused at open, with a sentence naming the file to delete: Ariadne
-   is pre-1.0, so a database is recreated rather than migrated.
+   is pre-1.0, so a database is recreated rather than migrated. The init
+   migration holds the stats ledger, `stat_facts` (023). It was added to
+   `0001` in place, so a database written before it is refused and must be
+   removed; that loss is accepted.
 10. `ariadne doctor` is the only thing still running when that happens, so it
     is what explains it (014).
 11. At startup, the daemon raises its soft open-file limit towards the hard

@@ -194,6 +194,9 @@ pub async fn ingest_event(store: &Store, req: &IngestEventRequest) -> Result<(),
         store
             .set_session_status_if_live(&session.id, status, req.launch.as_deref())
             .await?;
+        if !status.is_live() {
+            crate::stats::record_session_end(store, &session.id).await;
+        }
     }
     Ok(())
 }

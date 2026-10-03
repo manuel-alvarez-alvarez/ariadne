@@ -103,6 +103,27 @@ pub(crate) struct Harness {
     db: sqlx::SqlitePool,
 }
 
+/// One row of the stats ledger, as [`Harness::facts`] reads it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Fact {
+    pub session_id: Option<String>,
+    pub launch_id: Option<String>,
+    pub seat: Option<String>,
+    pub model: Option<String>,
+    pub skills: Vec<String>,
+    pub data: serde_json::Value,
+}
+
+/// A ledger row as SQLite holds it, in the order [`Harness::facts`] selects it.
+type FactRow = (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    String,
+    String,
+);
+
 pub(crate) struct HarnessBuilder {
     home: Option<PathBuf>,
     scheduler: bool,
@@ -1036,6 +1057,31 @@ impl Harness {
             .execute(&self.db)
             .await
             .unwrap();
+    }
+
+    /// Every fact of `kind` in the stats ledger, oldest first, as
+    /// `(session_id, launch_id, seat, model, skills, data)`. Straight SQL: the
+    /// daemon reads the ledger only as aggregates, and a test of the fact
+    /// itself needs the row.
+    pub(crate) async fn facts(&self, kind: &str) -> Vec<Fact> {
+        let rows: Vec<FactRow> = sqlx::query_as(
+            "SELECT session_id, launch_id, seat, model, skills, data
+                   FROM stat_facts WHERE kind = ? ORDER BY id",
+        )
+        .bind(kind)
+        .fetch_all(&self.db)
+        .await
+        .unwrap();
+        rows.into_iter()
+            .map(|(session_id, launch_id, seat, model, skills, data)| Fact {
+                session_id,
+                launch_id,
+                seat,
+                model,
+                skills: serde_json::from_str(&skills).unwrap(),
+                data: serde_json::from_str(&data).unwrap(),
+            })
+            .collect()
     }
 
     /// A task whose author session has already run once: a worktree on disk,

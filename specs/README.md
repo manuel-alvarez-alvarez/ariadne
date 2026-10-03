@@ -32,6 +32,7 @@ test that proves it.
 | 020 | [Outside session resume](020-session-adoption.md) | discover outside conversations and resume them without a task |
 | 021 | [ACP runtime](021-acp-runtime.md) | the daemon-owned ACP agent: child process, protocol, events, kill |
 | 022 | [The `ai` permission mode](022-ai-permission-mode.md) | the fourth mode, the AI permission model's settings and prompts, the Python check and the install |
+| 023 | [Stats](023-stats.md) | the stats ledger, its facts, the stat families, and the route, command and screen over them |
 
 ## Writing one
 

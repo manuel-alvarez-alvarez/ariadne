@@ -172,6 +172,32 @@ type SessionBranch = Arc<Mutex<Option<String>>>;
 /// every launch of the session waits on the same reap.
 type Reaped = Shared<oneshot::Receiver<()>>;
 
+/// What holds a session's next launch back, from [`AcpRuntime::kill_gated`]
+/// until it is dropped. It sits among the agents still ending, so a launch
+/// waits on it as it waits on them.
+pub(crate) struct LaunchGate {
+    inner: Arc<Inner>,
+    session_id: String,
+    key: String,
+    open: Option<oneshot::Sender<()>>,
+}
+
+impl Drop for LaunchGate {
+    fn drop(&mut self) {
+        let mut ending = self.inner.ending.lock().expect("acp ending lock");
+        if let Some(launches) = ending.get_mut(&self.session_id) {
+            launches.retain(|(key, _)| *key != self.key);
+            if launches.is_empty() {
+                ending.remove(&self.session_id);
+            }
+        }
+        drop(ending);
+        if let Some(open) = self.open.take() {
+            let _ = open.send(());
+        }
+    }
+}
+
 /// Where a prompt came from, as `user_prompt_submit` reports it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PromptSource {
@@ -897,6 +923,44 @@ impl AcpRuntime {
         for reaped in self.ending_for(session_id) {
             let _ = reaped.await;
         }
+    }
+
+    /// [`Self::kill`], and a future that resolves once the driver has
+    /// cancelled the turn, reported what it spent and its end, and reaped the
+    /// child: for a caller that must not wait in line, but has work to do
+    /// once the agent's last words are in.
+    ///
+    /// The [`LaunchGate`] holds the session's next launch back until it is
+    /// dropped, the way an agent still ending holds it back: the caller's
+    /// work after the reap reads the session as this agent left it, and no
+    /// agent launched after it can add to that.
+    pub(crate) fn kill_gated(
+        &self,
+        session_id: &str,
+    ) -> (impl Future<Output = ()> + use<>, LaunchGate) {
+        self.take_down(session_id);
+        let reaped = self.ending_for(session_id);
+        let (open, opened) = oneshot::channel();
+        let key = format!("gate:{}", ariadne_core::id::new_id());
+        self.inner
+            .ending
+            .lock()
+            .expect("acp ending lock")
+            .entry(session_id.to_string())
+            .or_default()
+            .push((key.clone(), opened.shared()));
+        let gate = LaunchGate {
+            inner: self.inner.clone(),
+            session_id: session_id.to_string(),
+            key,
+            open: Some(open),
+        };
+        let reaped = async move {
+            for reaped in reaped {
+                let _ = reaped.await;
+            }
+        };
+        (reaped, gate)
     }
 
     /// [`Self::kill`]: the agent moves from the running to the ending.
@@ -2800,6 +2864,58 @@ mod tests {
             "the waiting live event took its id after the lock was released: {} > {meanwhile}",
             event.id
         );
+    }
+
+    /// A kill's gate holds the session's next launch back: the launch waits
+    /// for it as it waits for an agent still ending, and goes on once the
+    /// gate is dropped. Here the launch then fails, on a program that is not
+    /// there, which is the proof that it got past the wait.
+    #[tokio::test]
+    async fn a_launch_waits_for_the_gate_of_a_kill() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ariadne_store::Store::open(dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let runtime = super::AcpRuntime::new(store);
+        let (reaped, gate) = runtime.kill_gated("session");
+        reaped.await;
+        let launching = runtime.clone();
+        let launch = tokio::spawn(async move {
+            launching
+                .launch(super::AcpLaunch {
+                    session_id: "session".into(),
+                    launch_id: "launch".into(),
+                    program: dir.path().join("no-such-agent").display().to_string(),
+                    agent_id: "stub".into(),
+                    args: vec![],
+                    env: vec![],
+                    cwd: dir.path().to_path_buf(),
+                    config: ariadne_core::acp::LaunchConfig {
+                        version: 1,
+                        system_prompt: String::new(),
+                        initial_prompt: None,
+                        model: "stub:test-model".into(),
+                        effort: None,
+                        resume_session_id: None,
+                        mcp_servers: vec![],
+                    },
+                    repository_id: "repo".into(),
+                    repository_path: String::new(),
+                    permission_mode: ariadne_core::PermissionMode::Auto,
+                })
+                .await
+        });
+        for _ in 0..50 {
+            tokio::task::yield_now().await;
+        }
+        assert!(!launch.is_finished(), "the launch went past the gate");
+
+        drop(gate);
+        let launched = tokio::time::timeout(std::time::Duration::from_secs(10), launch)
+            .await
+            .expect("the launch goes on once the gate is dropped")
+            .unwrap();
+        assert!(launched.is_err(), "the program is not there");
     }
 
     /// The SDK builds `initialize`, so what goes on the pipe is the SDK's

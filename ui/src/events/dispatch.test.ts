@@ -335,3 +335,20 @@ describe("agent events", () => {
     expect(stale(queryClient, activity)).toBe(true)
   })
 })
+
+describe("stats", () => {
+  it("refetches every stat when a task or a session moves, since either may be a fact", () => {
+    for (const event of [
+      { event: "task_updated", data: { task: TASK } },
+      { event: "session_updated", data: aSession() },
+    ] as DomainEvent[]) {
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      const models = qk.stats.models({ since: "7d" })
+      queryClient.setQueryData(models, { items: [] })
+
+      dispatch(queryClient, event)
+
+      expect(stale(queryClient, models)).toBe(true)
+    }
+  })
+})

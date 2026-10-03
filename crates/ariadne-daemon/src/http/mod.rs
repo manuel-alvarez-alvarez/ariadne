@@ -19,6 +19,7 @@ mod repositories;
 mod sessions;
 mod skills;
 mod sse;
+mod stats;
 mod stream;
 mod tasks;
 mod terminal;
@@ -142,6 +143,7 @@ impl AppState {
         models::set_enabled,
         models::set_rank,
         logs::snapshot, logs::stream,
+        stats::models,
     ),
     components(schemas(
         ariadne_api::stream::DomainEvent, ariadne_api::stream::ResyncDto,
@@ -163,6 +165,7 @@ impl AppState {
         (name = "events", description = "Agent events the ACP runtime reports, and the live domain-event stream"),
         (name = "models", description = "The model catalog discovery found each registry agent offering"),
         (name = "logs", description = "The daemon's own process log"),
+        (name = "stats", description = "How the tool and the models perform, read off the stats ledger"),
     )
 )]
 struct ApiDoc;
@@ -268,6 +271,8 @@ pub fn router(state: AppState) -> Router {
         // daemon logs
         .route("/v1/logs", get(logs::snapshot))
         .route("/v1/logs/stream", get(logs::stream))
+        // stats
+        .route("/v1/stats/models", get(stats::models))
         // events
         .route("/v1/events", get(events::list))
         .route("/v1/events/stream", get(stream::stream))

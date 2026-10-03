@@ -4088,3 +4088,207 @@ async fn a_repository_takes_the_ai_permission_mode() {
         .unwrap();
     assert_eq!(edited.permission_mode(), PermissionMode::Learn);
 }
+
+/// A `session_ended` fact about one run of an agent, on `repo_id`.
+fn ended(repo_id: &str, launch_id: &str, data: serde_json::Value) -> NewStatFact {
+    NewStatFact {
+        kind: "session_ended".into(),
+        repo_id: Some(repo_id.into()),
+        goal_id: Some("01GOAL".into()),
+        task_id: Some("01TASK".into()),
+        session_id: Some("01SESSION".into()),
+        launch_id: Some(launch_id.into()),
+        seat: Some("author".into()),
+        model: Some("stub:test-model".into()),
+        effort: Some("high".into()),
+        skills: vec!["coding".into(), "migration".into()],
+        data,
+    }
+}
+
+/// The data of a run that ended `status`, flagged `reason`, after
+/// `lifetime_secs`, having spent 1000 in, 800 of it cached, and 100 out.
+fn run(status: &str, reason: Option<&str>, lifetime_secs: i64) -> serde_json::Value {
+    serde_json::json!({
+        "status": status, "attention_reason": reason, "lifetime_secs": lifetime_secs,
+        "turns": 3, "input_tokens": 1000, "cached_input_tokens": 800, "output_tokens": 100,
+    })
+}
+
+/// Facts recorded are what `model_stats` sums: one row for the model in
+/// its seat, counting the runs, the failed and the stalled ones, their tokens,
+/// the cached share, the mean lifetime and each skill.
+#[tokio::test]
+async fn a_recorded_fact_is_read_back_by_model_stats() {
+    let (store, _dir) = test_store().await;
+    store
+        .record_fact(ended("01REPO", "launch-1", run("exited", None, 10)))
+        .await
+        .unwrap();
+    store
+        .record_fact(ended(
+            "01REPO",
+            "launch-2",
+            run("failed", Some("stalled"), 30),
+        ))
+        .await
+        .unwrap();
+    let rows = store.model_stats(&StatsFilter::default()).await.unwrap();
+    assert_eq!(
+        rows,
+        vec![ModelStatRow {
+            model: "stub:test-model".into(),
+            seat: Some("author".into()),
+            sessions: 2,
+            failed: 1,
+            stalled: 1,
+            usage: TokenUsage {
+                input_tokens: 2000,
+                cached_input_tokens: 1600,
+                output_tokens: 200,
+            },
+            cached_share: 0.8,
+            mean_lifetime_secs: 20.0,
+            skills: vec![("coding".into(), 2), ("migration".into(), 2)],
+        }]
+    );
+}
+
+/// `since` keeps the facts written at or after it, and `repo_id` the facts
+/// about that repository.
+#[tokio::test]
+async fn model_stats_keep_the_facts_since_the_filter_and_of_its_repository() {
+    let (store, _dir) = test_store().await;
+    store
+        .record_fact(ended("01REPO-A", "launch-1", run("exited", None, 10)))
+        .await
+        .unwrap();
+    store
+        .record_fact(ended("01REPO-B", "launch-2", run("exited", None, 10)))
+        .await
+        .unwrap();
+    let sessions = |rows: Vec<ModelStatRow>| rows.iter().map(|r| r.sessions).sum::<u64>();
+    let hour_ago = StatsFilter {
+        since: Some(chrono::Utc::now() - chrono::Duration::hours(1)),
+        repo_id: None,
+    };
+    assert_eq!(sessions(store.model_stats(&hour_ago).await.unwrap()), 2);
+    let later = StatsFilter {
+        since: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+        repo_id: None,
+    };
+    assert!(store.model_stats(&later).await.unwrap().is_empty());
+    let of_a = StatsFilter {
+        since: None,
+        repo_id: Some("01REPO-A".into()),
+    };
+    assert_eq!(sessions(store.model_stats(&of_a).await.unwrap()), 1);
+}
+
+/// A fact names its goal by id and holds no key to it, so deleting the goal
+/// leaves the fact where it was.
+#[tokio::test]
+async fn a_fact_outlives_the_goal_it_is_about() {
+    let w = World::new().await;
+    let mut fact = ended(&w.repo.id, "launch-1", run("exited", None, 10));
+    fact.goal_id = Some(w.goal.id.clone());
+    fact.task_id = Some(w.task.id.clone());
+    w.store.record_fact(fact).await.unwrap();
+    w.store.delete_goal(&w.goal.id).await.unwrap();
+    let rows = w.store.model_stats(&StatsFilter::default()).await.unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].sessions, 1);
+}
+
+/// One run of a session ends once in the ledger: a second fact of the same
+/// kind for the same launch is refused, and a fact for the next launch is
+/// kept.
+#[tokio::test]
+async fn a_fact_is_recorded_once_per_launch() {
+    let (store, _dir) = test_store().await;
+    let first = ended("01REPO", "launch-1", run("exited", None, 10));
+    assert!(
+        store
+            .record_fact_once_per_launch(first.clone())
+            .await
+            .unwrap()
+    );
+    assert!(!store.record_fact_once_per_launch(first).await.unwrap());
+    let next = ended("01REPO", "launch-2", run("exited", None, 10));
+    assert!(store.record_fact_once_per_launch(next).await.unwrap());
+    let rows = store.model_stats(&StatsFilter::default()).await.unwrap();
+    assert_eq!(rows[0].sessions, 2);
+}
+
+/// The status write that ends a session is announced before its fact exists,
+/// so the fact announces the session again once it is readable: a client
+/// that refetches its stats on that event reads the fact. The same run
+/// refused a second fact announces nothing.
+#[tokio::test]
+async fn a_fact_announces_its_session_once_it_is_readable() {
+    let w = World::new().await;
+    let session = w.author_session().await;
+    let mut changes = w.store.watch_changes().expect("the only watcher");
+    w.store
+        .set_session_status(&session.id, SessionStatus::Exited)
+        .await
+        .unwrap();
+    while changes.try_recv().is_ok() {}
+
+    let mut fact = ended(&w.repo.id, "launch-1", run("exited", None, 10));
+    fact.session_id = Some(session.id.clone());
+    assert!(
+        w.store
+            .record_fact_once_per_launch(fact.clone())
+            .await
+            .unwrap()
+    );
+
+    match changes.try_recv() {
+        Ok(Change::SessionUpdated(updated)) => assert_eq!(updated.id, session.id),
+        other => panic!("expected the session announced after its fact: {other:?}"),
+    }
+    let rows = w.store.model_stats(&StatsFilter::default()).await.unwrap();
+    assert_eq!(rows[0].sessions, 1, "the fact is readable on that event");
+
+    assert!(!w.store.record_fact_once_per_launch(fact).await.unwrap());
+    assert!(
+        changes.try_recv().is_err(),
+        "a refused fact announces nothing"
+    );
+}
+
+/// A session's end answers the row as that write left it: ended, its prompt
+/// flag gone, and the reason it ended carrying kept. The row is read in the
+/// same transaction as the write, so a resume that writes the row next
+/// cannot change what the caller is told.
+#[tokio::test]
+async fn ending_a_session_answers_the_row_its_write_left() {
+    let w = World::new().await;
+    let prompted = w.author_session().await;
+    w.store
+        .set_session_attention(&prompted.id, AttentionReason::WaitingPermission)
+        .await
+        .unwrap();
+    let ended = w
+        .store
+        .set_session_status(&prompted.id, SessionStatus::Exited)
+        .await
+        .unwrap();
+    assert_eq!(ended.status(), SessionStatus::Exited);
+    assert!(ended.ended_at.is_some());
+    assert_eq!(ended.attention_reason(), None);
+
+    let stalled = w.session(Seat::Reviewer, None, Some(&w.task.id)).await;
+    w.store
+        .set_session_attention(&stalled.id, AttentionReason::Stalled)
+        .await
+        .unwrap();
+    let ended = w
+        .store
+        .set_session_status(&stalled.id, SessionStatus::Failed)
+        .await
+        .unwrap();
+    assert_eq!(ended.status(), SessionStatus::Failed);
+    assert_eq!(ended.attention_reason(), Some(AttentionReason::Stalled));
+}

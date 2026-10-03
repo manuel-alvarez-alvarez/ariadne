@@ -636,6 +636,7 @@ impl Launcher {
             self.store
                 .set_session_status(&session.id, SessionStatus::Failed)
                 .await?;
+            crate::stats::record_session_end(&self.store, &session.id).await;
         }
         result
     }
@@ -665,6 +666,7 @@ impl Launcher {
             self.store
                 .set_session_status(&session.id, SessionStatus::Failed)
                 .await?;
+            crate::stats::record_session_end(&self.store, &session.id).await;
         }
         result
     }
@@ -1329,6 +1331,7 @@ impl Launcher {
         self.store
             .set_session_status(&old.id, SessionStatus::Exited)
             .await?;
+        crate::stats::record_session_end(&self.store, &old.id).await;
         match (old.seat(), &old.task_agent_id, &old.goal_id) {
             (Some(Seat::Orchestrator), _, Some(goal_id)) => {
                 self.store.set_goal_pin(goal_id, &pin).await?;
@@ -1350,6 +1353,7 @@ impl Launcher {
                 self.store
                     .set_session_status(&session.id, SessionStatus::Failed)
                     .await?;
+                crate::stats::record_session_end(&self.store, &session.id).await;
             }
             result?;
             // A loose session has no seat to find its siblings by: the
@@ -1500,13 +1504,27 @@ impl Launcher {
 
     /// Kill a session's agent process — the daemon-owned child — and mark
     /// the session exited.
+    ///
+    /// The run's `session_ended` fact waits for the reap, off the caller's
+    /// path: the driver is still cancelling the turn, and the cancelled turn
+    /// reports its stop and what it spent only then (023). The fact is taken
+    /// off the row exactly as the kill wrote it, and the session's next
+    /// launch waits until the fact is written, so a resume neither takes the
+    /// killed run's fact away nor adds its own turns and tokens to it.
     pub async fn kill_session(&self, session_id: &str) -> Result<()> {
         let session = self.store.get_session(session_id).await?;
-        self.acp.kill(&session.id);
+        let (reaped, gate) = self.acp.kill_gated(&session.id);
         if session.status().is_live() {
-            self.store
+            let ended = self
+                .store
                 .set_session_status(session_id, SessionStatus::Exited)
                 .await?;
+            let store = self.store.clone();
+            tokio::spawn(async move {
+                reaped.await;
+                crate::stats::record_run_end(&store, &ended).await;
+                drop(gate);
+            });
         }
         Ok(())
     }

@@ -64,6 +64,8 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
         // status moved is no longer what it would return now.
         void queryClient.invalidateQueries({ queryKey: qk.tasks.diff(task.id) })
       }
+      // A task that moves is a fact the stats count, or will.
+      void queryClient.invalidateQueries({ queryKey: qk.stats.all() })
       break
     }
     case "task_branch_updated": {
@@ -91,6 +93,8 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
     case "session_updated": {
       queryClient.setQueryData(qk.sessions.detail(event.data.id), event.data)
       void queryClient.invalidateQueries({ queryKey: qk.sessions.lists() })
+      // A session that ended wrote a fact the stats read.
+      void queryClient.invalidateQueries({ queryKey: qk.stats.all() })
       break
     }
     case "agent_event": {

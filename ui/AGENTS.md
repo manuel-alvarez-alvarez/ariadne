@@ -101,7 +101,12 @@ write a key literal. Every key is `[entity, "list" | "detail", ...]`:
 ["agent-events", "list", filters]
 ["permissions",  "detail", "ai"]
 ["learned-permissions", "list", filters] ["learned-permissions", "detail", id]
+["stats",        "list", "models", filter]
 ```
+
+`stats` is one group over every stat family, `[stats, "list", family,
+{ since, repo }]`: a task or a session that moves can be a fact of any
+family, so the dispatcher invalidates `qk.stats.all()` whole.
 
 `permissions.ai()` is the one key with no list beside it: there is one AI
 permission model settings row, `GET /v1/permissions/ai`, not a collection.
@@ -140,10 +145,10 @@ the query cache and it stays live.
 | `goal_created`, `goal_updated` | patch `goals.detail`, invalidate `goals.lists` |
 | `goal_deleted` | remove `goals.detail`, invalidate `goals.lists` and every task and session key |
 | `task_created` | patch `tasks.detail`, invalidate `tasks.lists` |
-| `task_updated` | patch `tasks.detail`, invalidate `tasks.lists`, and `tasks.transitions` when the event carries a transition |
+| `task_updated` | patch `tasks.detail`, invalidate `tasks.lists` and `stats.all`, and `tasks.transitions` when the event carries a transition |
 | `message_sent` | invalidate `tasks.messages` for the task it is about; a message about the goal itself belongs to no task's channel |
 | `session_created` | patch `sessions.detail`, invalidate `sessions.lists` and `outsideSessions.lists` — a resume adopts an outside row |
-| `session_updated` | patch `sessions.detail`, invalidate `sessions.lists` |
+| `session_updated` | patch `sessions.detail`, invalidate `sessions.lists` and `stats.all` |
 | `agent_event` | invalidate `agentEvents.lists` |
 | `skill_created`, `skill_updated` | patch `skills.detail`, invalidate `skills.lists` |
 | `skill_deleted` | remove `skills.detail`, invalidate `skills.lists` |
@@ -232,8 +237,10 @@ There is no per-feature route file: there are a handful of routes, half of them
 one line, and a file that mounted one said less about its feature than the line
 it held. What the header calls a screen rides on the route's own `handle`.
 
-Five screens have URLs of their own — `#/goals`, `#/sessions`, `#/skills`,
-`#/agents` and `#/repositories` — and `#/` redirects onto the board.
+Screens with URLs of their own — `#/goals`, `#/sessions`, `#/skills`,
+`#/agents`, `#/permissions`, `#/repositories` and `#/stats` — and `#/`
+redirects onto the board. The Stats screen is `src/routes/stats.tsx`, and
+each stat family is a panel of it under `src/components/stats/`.
 Goals, tasks and sessions have no pages: their details open as **side panels** driven by
 search params (`?goal=` on the board, `?task=` over any screen, `?session=` for
 a session's own panel, `?tab=sessions&session=` for a session inside a goal's or

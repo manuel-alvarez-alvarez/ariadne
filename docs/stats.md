@@ -1,0 +1,59 @@
+# Stats
+
+See how Ariadne and the models perform. Stats count what happened as the work
+ran: each session that ended, which model and seat it ran on, what it spent and
+how long it lived. The daemon writes one record of each such event to a ledger
+in its database, and every stat adds up those records.
+
+The records outlive the work. A stat still counts a session after you delete
+the goal it belonged to.
+
+## Filter the stats
+
+Every stat takes the same two filters:
+
+- `since`: only what happened since then. Give a span back from now — a whole
+  number and `m` (minutes), `h` (hours), `d` (days) or `w` (weeks), such as
+  `24h`, `7d` or `30d` — or an RFC 3339 moment, such as
+  `2026-09-01T00:00:00Z`. Without it, the stats count everything.
+- `repo`: only what happened in one repository.
+
+## Models
+
+The `models` stat has one row for each model in each seat (orchestrator,
+author, reviewer). A row shows:
+
+- `sessions`: the session runs that ended. A session that you resume and that
+  ends again counts once for each run.
+- `failed`: the runs that ended `failed`.
+- `stalled`: the runs that ended flagged as stalled.
+- tokens: what those runs spent — input, the share of the input the prompt
+  cache served, and output. Stats show tokens, not cost.
+- lifetime: the mean time from a session's start to its end.
+- skills: each skill those runs loaded, and how many runs loaded it.
+
+## From the CLI
+
+```sh
+ariadne stats                       # the same as `ariadne stats models`
+ariadne stats models --since 7d
+ariadne stats models --repo <repo-id> --format json
+```
+
+`--repo` takes a repository id or a unique prefix of one. The table prints
+tokens in the same form as every other table, such as `↑1.2M 89.1% ↓45k`, and
+takes the table flags (`--no-trunc`, `-o`, `--columns`). `--format json`
+prints the rows that the daemon sent.
+
+## In the desktop app
+
+Open **Stats** in the sidebar. Choose a span (all time, 24 hours, 7 days or 30
+days) and a repository at the top of the screen; both stay in the address, so
+a reload keeps them. The **Models** panel shows the same rows as
+`ariadne stats models`, and it updates by itself when a session ends.
+
+## From the API
+
+`GET /v1/stats/models?since=7d&repo=<repo-id>` returns `{"items": [...]}`, one
+item per model and seat. A `since` that is neither a span nor a moment returns
+`400` with the code `invalid_request`.

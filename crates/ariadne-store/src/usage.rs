@@ -170,7 +170,7 @@ fn stored(tokens: u64) -> i64 {
 /// One summed row read back. A negative total is a column somebody wrote by
 /// hand — the ingestion never stores one — and reads as zero rather than
 /// wrapping.
-fn usage_of((input, cached, output): Sums) -> TokenUsage {
+pub(crate) fn usage_of((input, cached, output): Sums) -> TokenUsage {
     TokenUsage {
         input_tokens: input.max(0) as u64,
         cached_input_tokens: cached.max(0) as u64,

@@ -443,3 +443,28 @@ CREATE TABLE task_transitions (
     created_at  TEXT NOT NULL
 );
 CREATE INDEX idx_transitions_task ON task_transitions (task_id, id);
+
+-- The stats ledger: one row per thing that happened which tells how the tool
+-- and the models perform. Append-only, and the only table a stats read
+-- touches, so a stat never scans `agent_events`. `kind` names the fact
+-- (`session_ended`, ...), `data` is its JSON object, and `skills` the JSON
+-- array of the skills the agent behind it loaded.
+--
+-- No foreign keys: a fact outlives the goal, the task and the session it is
+-- about, and the ids are kept as they were when it was written.
+CREATE TABLE stat_facts (
+    id         TEXT PRIMARY KEY,
+    kind       TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    repo_id    TEXT,
+    goal_id    TEXT,
+    task_id    TEXT,
+    session_id TEXT,
+    launch_id  TEXT,
+    seat       TEXT,
+    model      TEXT,
+    effort     TEXT,
+    skills     TEXT,
+    data       TEXT NOT NULL
+);
+CREATE INDEX idx_stat_facts_kind ON stat_facts (kind, created_at);

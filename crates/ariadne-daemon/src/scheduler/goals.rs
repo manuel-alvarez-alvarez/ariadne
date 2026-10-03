@@ -201,6 +201,7 @@ impl super::Scheduler {
                     .store
                     .set_session_status(&session.id, SessionStatus::Exited)
                     .await;
+                crate::stats::record_session_end(&self.store, &session.id).await;
             }
             if session.id != alarm
                 && session.attention_reason() == Some(AttentionReason::Disconnected)

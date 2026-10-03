@@ -60,6 +60,7 @@ impl super::Scheduler {
             .store
             .set_session_status(&session.id, SessionStatus::Exited)
             .await;
+        crate::stats::record_session_end(&self.store, &session.id).await;
         if attention::work_is_active(&self.store, session).await {
             warn!(session = %session.id, seat = ?session.seat, "agent disconnected with work still active");
             let _ = self

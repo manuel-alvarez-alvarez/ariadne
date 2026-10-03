@@ -46,6 +46,15 @@ interface LearnedPermissionFilters {
   repository?: string
 }
 
+/**
+ * What every `GET /v1/stats/<family>` is narrowed by: `since` is a span back
+ * from now (`24h`, `7d`, `30d`), and `repo` a repository id.
+ */
+export interface StatsFilter {
+  since?: string
+  repo?: string
+}
+
 /** What `GET /v1/outside-sessions` narrows its snapshot by, page aside. */
 interface OutsideSessionFilters {
   agent?: string
@@ -145,6 +154,15 @@ export const qk = {
    */
   permissions: {
     ai: () => ["permissions", "detail", "ai"] as const,
+  },
+  /**
+   * The aggregates of the stats ledger (`GET /v1/stats/<family>`), one list
+   * per family under one group: every family moves when a task or a session
+   * does, so the dispatcher invalidates `all()`.
+   */
+  stats: {
+    all: () => ["stats"] as const,
+    models: (filter: StatsFilter) => ["stats", "list", "models", filter] as const,
   },
   learnedPermissions: {
     all: () => ["learned-permissions"] as const,

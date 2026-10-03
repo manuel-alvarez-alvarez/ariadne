@@ -15,6 +15,7 @@ pub mod permissions;
 pub mod repositories;
 pub mod sessions;
 pub mod skills;
+pub mod stats;
 pub mod stream;
 pub mod tasks;
 pub mod usage;

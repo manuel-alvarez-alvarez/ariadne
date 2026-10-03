@@ -148,6 +148,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("skill reset", true),
     ("skill rm", true),
     ("skill set", true),
+    ("stats models", true),
     ("task attach", false),
     ("task cancel", true),
     ("task create", true),
@@ -1802,4 +1803,39 @@ fn advertises(cmd: &clap::Command, path: &[&str], id: &str) -> bool {
     }
     sub.get_arguments()
         .any(|a| a.get_id() == id && !a.is_hide_set())
+}
+
+/// `ariadne stats` alone is the models family, and the filters parse on
+/// either side of the family.
+#[test]
+fn stats_alone_runs_models_and_takes_the_filters_either_side() {
+    let Command::Stats {
+        command,
+        since,
+        repo,
+    } = parse(&["ariadne", "stats", "--since", "7d"]).command
+    else {
+        panic!("stats");
+    };
+    assert!(command.is_none());
+    assert_eq!(since.as_deref(), Some("7d"));
+    assert_eq!(repo, None);
+
+    let Command::Stats {
+        command,
+        since,
+        repo,
+    } = parse(&[
+        "ariadne", "stats", "--repo", "01JREPO", "models", "--since", "24h",
+    ])
+    .command
+    else {
+        panic!("stats models");
+    };
+    assert!(matches!(
+        command,
+        Some(crate::commands::stats::StatsCommand::Models)
+    ));
+    assert_eq!(since.as_deref(), Some("24h"));
+    assert_eq!(repo.as_deref(), Some("01JREPO"));
 }

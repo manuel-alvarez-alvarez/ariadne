@@ -44,6 +44,7 @@ mod scheduler_dependencies;
 mod session_list;
 mod session_start;
 mod skill_documents;
+mod stats;
 mod stored_conversations;
 mod stored_conversations_opencode;
 mod switch;

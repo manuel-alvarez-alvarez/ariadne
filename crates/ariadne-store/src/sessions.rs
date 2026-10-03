@@ -202,31 +202,51 @@ impl Store {
     /// behind that way asks the user to go and reply to nobody. The reasons a
     /// session ends *carrying* — an error, a disconnect, a stall — are meant
     /// to outlive it and are left alone.
-    pub async fn set_session_status(&self, id: &str, status: SessionStatus) -> Result<()> {
+    ///
+    /// Answers the row as this write left it, read in the same transaction:
+    /// a write that lands right after it — a resume that starts the session
+    /// again — cannot change what the caller is told it ended (023).
+    pub async fn set_session_status(
+        &self,
+        id: &str,
+        status: SessionStatus,
+    ) -> Result<AgentSession> {
         let ended_at = match status {
             SessionStatus::Exited | SessionStatus::Failed => Some(now()),
             _ => None,
         };
-        self.write_session(
-            id,
-            sqlx::query(
-                "UPDATE agent_sessions SET status = ?, ended_at = COALESCE(?, ended_at) WHERE id = ?",
-            )
-            .bind(status.as_str())
-            .bind(ended_at)
-            .bind(id),
+        let mut tx = self.w().begin().await?;
+        let n = sqlx::query(
+            "UPDATE agent_sessions SET status = ?, ended_at = COALESCE(?, ended_at) WHERE id = ?",
         )
-        .await?;
+        .bind(status.as_str())
+        .bind(ended_at)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if n == 0 {
+            return Err(not_found("session", id));
+        }
         if !status.is_live() {
             // Its own statement before the announcement, so what watchers are
             // handed is the session with the flag already gone.
-            let prompts = [
-                AttentionReason::WaitingPermission.as_str(),
-                AttentionReason::WaitingInput.as_str(),
-            ];
-            self.clear_attention(id, PROMPTS_ONLY, &prompts).await?;
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE agent_sessions
+                    SET attention_reason = NULL, attention_since = NULL
+                  WHERE id = ? AND attention_reason IS NOT NULL{PROMPTS_ONLY}"
+            )))
+            .bind(id)
+            .bind(AttentionReason::WaitingPermission.as_str())
+            .bind(AttentionReason::WaitingInput.as_str())
+            .execute(&mut *tx)
+            .await?;
         }
-        self.publish_session_update(id).await
+        let session: AgentSession =
+            Self::fetch_by_in_tx(&mut tx, "session", "agent_sessions", id).await?;
+        tx.commit().await?;
+        self.publish(Change::SessionUpdated(session.clone()));
+        Ok(session)
     }
 
     /// Flag a session as needing the user's attention.

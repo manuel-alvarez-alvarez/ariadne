@@ -333,11 +333,13 @@ describe("writing and deleting", () => {
     const dialog = await screen.findByRole("dialog", { name: "Delete api-design?" })
     await user.click(within(dialog).getByRole("button", { name: "Delete" }))
 
+    // The list drops the row and the editor clears the selection in two
+    // steps, so a slow run can see the first without the second yet.
     await waitFor(() => {
       expect(screen.queryByRole("link", { name: /^api-design/ })).toBeNull()
+      expect(selectedInUrl()).toBeNull()
     })
     expect(requests.some((one) => one.method === "DELETE")).toBe(true)
-    expect(selectedInUrl()).toBeNull()
     expect(screen.getByText("Select a skill, or write one.")).toBeDefined()
   })
 })
