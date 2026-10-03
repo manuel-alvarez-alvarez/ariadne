@@ -85,9 +85,6 @@ describe("RepositoriesPage", () => {
     expect(screen.getByText("Auto")).toBeDefined()
     expect(screen.getByText("Learn")).toBeDefined()
     expect(screen.queryByText("2 repositories")).toBeNull()
-    expect(registerButton().parentElement?.parentElement?.querySelector("h1")?.textContent).toBe(
-      "Repositories",
-    )
   })
 
   it("says nothing about how work ends, which is the task's own", async () => {

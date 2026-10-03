@@ -58,6 +58,17 @@ src/
 src-tauri/         the Tauri shell (deliberately empty: no commands)
 ```
 
+Every screen renders under one header bar (`components/app-shell.tsx`), not a
+header of its own: the bar's `h1` is the route's `handle.title`, and a
+screen's `PageHeader` (`components/page-header.tsx`) carries no heading at
+all. A screen's `actions` reach that bar through `PageHeaderContext`, which
+`AppShell` provides and `PageHeader` portals its `actions` into — the slot at
+the header's own end, before search, theme and settings. `description` reaches
+the same bar as the tooltip of its title. Outside the shell — every feature
+test mounts its screen on its own — there is no context to portal into, so
+`PageHeader` renders `actions` inline instead, exactly where a test's existing
+query for them already looks.
+
 `ui/src-tauri` is **excluded from the root cargo workspace** (see `exclude` in
 the repository's `Cargo.toml`), so `cargo build --workspace` never builds the
 desktop shell and the UI's dependency tree stays out of `Cargo.lock`.

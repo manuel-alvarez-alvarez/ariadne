@@ -30,8 +30,10 @@ Out: the daemon endpoints themselves (012).
 
 1. Every user-facing action exists here and in the CLI alike (014). A feature
    that lands in one is not finished until it is in the other.
-2. The shell is a sidebar and a main area; a panel opens beside a list rather
-   than replacing it, and the URL carries which panel is open.
+2. The shell is a sidebar, ending in the daemon connection status, and a main
+   area under one header bar — the screen's name as its only `h1`, and a
+   screen's own actions at the header's end; a panel opens beside a list
+   rather than replacing it, and the URL carries which panel is open.
 3. Screens: the goals board (swimlanes plus an attention strip), the task
    panel (facts, diff, messages, history), sessions — Ariadne's own and every
    outside conversation an ACP agent stored on its own, merged into one
@@ -841,6 +843,28 @@ Out: the daemon endpoints themselves (012).
   among its facts`,
   `::shows each repository's goal branch next to its base branch`,
   `::shows no goal branch for a repository that has not been cut one yet`).
+- A screen's name appears once, as the header's only `h1`, with that screen's
+  own actions at the header's end, and the shell renders no footer of its
+  own — the sidebar's last child is the daemon connection status, whose click
+  still opens the logs drawer
+  (`ui/src/components/app-shell.test.tsx::shows the screen's name once, as
+  the header's only h1, with its actions at the header's end`,
+  `::renders no footer, and ends the sidebar with the connection status,
+  whose click opens the logs drawer`).
+- A `PageHeader` carries no heading of its own: its `actions` portal into the
+  header through `PageHeaderContext`, and its `description` becomes the
+  tooltip of the header's title; mounted on its own, with no shell around it,
+  it renders `actions` in place instead
+  (`ui/src/components/page-header.test.tsx::shows its description as the
+  tooltip of the shell's header title`,
+  `::renders its actions in place, with no heading, when there is no shell to
+  hand them to`).
+- The rail drops the wordmark for the mark alone, and the connection status
+  for the dot alone, each named by its own tooltip
+  (`ui/src/components/app-shell.test.tsx::replaces the wordmark with the
+  mark alone in the rail, next to the status dot`,
+  `ui/src/components/connection-status.test.tsx::shows the dot alone in the
+  rail, named by a tooltip instead of a label`).
 
 ## Sources
 
