@@ -470,11 +470,21 @@ Out: the daemon endpoints themselves (012).
     (023). Its header holds a `since` selector — all time, 24 hours, 7 days,
     30 days — and a repository selector, both kept in the URL as `?since=`
     and `?repo=`. The screen passes `{ since, repo }` to each panel under
-    `src/components/stats/`. The models panel lists `GET /v1/stats/models`,
-    one row per model and seat, its tokens as the token figure. Its query key
-    is `qk.stats.models(filter)`, and every `task_updated` and
-    `session_updated` event invalidates the `stats` group — parity with
-    `ariadne stats models` (014).
+    `src/components/stats/`. Every panel draws its own heading with the one
+    shared `StatSectionHeading`, `text-sm font-medium`, so the five read as
+    one section style rather than Reviews standing out at its own size. The
+    models panel lists `GET /v1/stats/models`, as a horizontal bar chart of
+    sessions per model and seat, split into ended, failed and stalled, and a
+    second chart of tokens per model and seat. Its query key is
+    `qk.stats.models(filter)`, and every `task_updated` and `session_updated`
+    event invalidates the `stats` group — parity with `ariadne stats models`
+    (014). Every chart on the screen is `StatBarChart` (023): one row per
+    model, seat or tool, sorted by its first series descending, colour-coded
+    by meaning off the status ramp through the `STATUS_COLORS` module so
+    "failed" is the same red in every panel, and backed by an `sr-only` table
+    of the same numbers for a screen reader. A family with no rows renders
+    its heading and the one muted sentence its empty state always said, and
+    no chart frame.
 
 - Goal details leave the board accessible, and another lane title changes the
   open pane (`ui/src/components/detail-panels.test.tsx::keeps the board accessible and follows another lane title with a goal open`,
