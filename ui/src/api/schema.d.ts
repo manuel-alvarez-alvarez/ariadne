@@ -895,6 +895,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/stats/attention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["stats_attention"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/stats/models": {
         parameters: {
             query?: never;
@@ -911,14 +927,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/stats/outcomes": {
+    "/v1/stats/spend": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get: operations["stats_outcomes"];
+        get: operations["stats_spend"];
         put?: never;
         post?: never;
         delete?: never;
@@ -927,30 +943,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/stats/reviews": {
+    "/v1/stats/time": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get: operations["stats_reviews"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/stats/switches": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["stats_switches"];
+        get: operations["stats_time"];
         put?: never;
         post?: never;
         delete?: never;
@@ -967,6 +967,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["stats_tools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/stats/work": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["stats_work"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1355,13 +1371,13 @@ export interface components {
             /**
              * Format: double
              * @description Danger at or below this value is allowed, 0 to 1.
-             * @example 0.0531
+             * @example 0.0201
              */
             allow_threshold: number;
             /**
              * Format: double
              * @description Danger at or above this value is denied, 0 to 1.
-             * @example 0.6522
+             * @example 0.6321
              */
             deny_threshold: number;
             /**
@@ -1404,17 +1420,11 @@ export interface components {
          * @enum {string}
          */
         AttentionReason: "waiting_permission" | "waiting_input" | "waiting_user" | "agent_error" | "disconnected" | "stalled" | "exhausted";
-        AuthorReviewStatDto: {
-            /** Format: int64 */
-            approvals: number;
-            /** Format: double */
-            first_pass_rate: number;
-            /** Format: double */
-            mean_rounds: number;
-            /** Format: double */
-            median_rounds: number;
-            model: string;
-        };
+        /**
+         * @description Response of `GET /v1/stats/attention`: how much did it need me? Empty until its task
+         *     fills it in.
+         */
+        AttentionStatsDto: Record<string, never>;
         /** @description A binary as the daemon can — or cannot — find it. */
         BinaryDto: {
             /**
@@ -1963,14 +1973,6 @@ export interface components {
          * @enum {string}
          */
         MessageKind: "review_request" | "approve" | "request_changes" | "message";
-        MessageStatDto: {
-            from_actor: string;
-            kind: string;
-            /** Format: double */
-            mean_per_task: number;
-            /** Format: int64 */
-            total: number;
-        };
         /**
          * @description One thing an agent can be pinned to, as served by `GET /v1/models`: a
          *     registry agent on a model discovery found it offering
@@ -2007,48 +2009,11 @@ export interface components {
          * @enum {string}
          */
         ModelRank: "frontier" | "balanced" | "fast" | "local";
-        /** @description How one model did in one seat, over the session runs that ended. */
-        ModelStatDto: {
-            /**
-             * Format: double
-             * @description `cached_input_tokens` over `input_tokens`, from 0 to 1; 0 where
-             *     nothing went in.
-             */
-            cached_share: number;
-            /**
-             * Format: int64
-             * @description Of them, the runs that ended `failed`.
-             */
-            failed: number;
-            /**
-             * Format: double
-             * @description The mean time from a session's creation to its end, in seconds.
-             */
-            mean_lifetime_secs: number;
-            /** @description `<agent>:<model>`, as the sessions ran it. */
-            model: string;
-            /** @description `orchestrator`, `author` or `reviewer`; null for a loose session. */
-            seat?: string | null;
-            /**
-             * Format: int64
-             * @description Session runs that ended.
-             */
-            sessions: number;
-            /** @description Each skill those runs loaded, the most loaded first. */
-            skills: components["schemas"]["SkillCountDto"][];
-            /**
-             * Format: int64
-             * @description Of them, the runs that ended flagged `stalled`.
-             */
-            stalled: number;
-            /** @description What those runs spent, summed. */
-            usage: components["schemas"]["TokenUsageDto"];
-        };
-        /** @description Response of `GET /v1/stats/models`. */
-        ModelStatsResponse: {
-            /** @description One row per model and seat, ordered by model and then by seat. */
-            items: components["schemas"]["ModelStatDto"][];
-        };
+        /**
+         * @description Response of `GET /v1/stats/models`: which model does the job? Empty until its task
+         *     fills it in.
+         */
+        ModelStatsDto: Record<string, never>;
         /**
          * @description Start a loose session: a new conversation with an agent, in a directory,
          *     with no goal, task or seat behind it.
@@ -2064,71 +2029,6 @@ export interface components {
             model: string;
             /** @description The absolute path of an existing directory the agent works in. */
             working_directory: string;
-        };
-        /**
-         * @description How one author model ended its tasks, and did in the contests it entered,
-         *     over the `task_ended` and `pick` facts the filter keeps.
-         */
-        OutcomeStatDto: {
-            /** Format: int64 */
-            cancelled: number;
-            /**
-             * Format: int64
-             * @description Contests this model's author was staffed in, as the winner or a loser.
-             */
-            contests_entered: number;
-            /** Format: int64 */
-            contests_won: number;
-            /** Format: int64 */
-            failed: number;
-            /**
-             * Format: double
-             * @description `finished` over every ending counted, 0 to 1.
-             */
-            finish_rate: number;
-            /** Format: int64 */
-            finished: number;
-            /** Format: double */
-            mean_lead_time_secs: number;
-            /** Format: double */
-            mean_review_requests: number;
-            /** Format: double */
-            median_lead_time_secs: number;
-            model: string;
-            /**
-             * Format: double
-             * @description `contests_won` over `contests_entered`, 0 to 1.
-             */
-            win_rate: number;
-        };
-        /** @description Response of `GET /v1/stats/outcomes`. */
-        OutcomeStatsDto: {
-            /** @description One row per author model, ordered by model. */
-            items: components["schemas"]["OutcomeStatDto"][];
-            totals: components["schemas"]["OutcomeTotalsDto"];
-        };
-        /** @description The same figures, summed across every model. */
-        OutcomeTotalsDto: {
-            /** Format: int64 */
-            cancelled: number;
-            /** Format: int64 */
-            contests_entered: number;
-            /** Format: int64 */
-            contests_won: number;
-            /** Format: int64 */
-            failed: number;
-            /** Format: double */
-            finish_rate: number;
-            /** Format: int64 */
-            finished: number;
-            /** Format: double */
-            mean_lead_time_secs: number;
-            /** Format: double */
-            mean_review_requests: number;
-            /** Format: double */
-            median_lead_time_secs: number;
-            /** Format: double */
-            win_rate: number;
         };
         /** @description A file or directory the daemon depends on. */
         PathStateDto: {
@@ -2172,14 +2072,6 @@ export interface components {
             probabilities?: unknown;
             risk_tags?: string[] | null;
             session_id: unknown;
-        };
-        PermissionStatDto: {
-            answer: string;
-            decided_by: string;
-            /** Format: double */
-            mean_wait_ms: number;
-            /** Format: int64 */
-            permissions: number;
         };
         /**
          * @description One reviewer picking the winning author of a task staffed with several:
@@ -2248,20 +2140,6 @@ export interface components {
              * @description Events this connection lost. Informational: they cannot be recovered.
              */
             missed: number;
-        };
-        ReviewStatsDto: {
-            authors: components["schemas"]["AuthorReviewStatDto"][];
-            messages: components["schemas"]["MessageStatDto"][];
-            reviewers: components["schemas"]["ReviewerStatDto"][];
-        };
-        ReviewerStatDto: {
-            /** Format: double */
-            approve_share: number;
-            /** Format: double */
-            mean_latency_secs: number;
-            model: string;
-            /** Format: int64 */
-            verdicts: number;
         };
         /**
          * @description Where an agent sits: the orchestrator of a goal, or the author or a
@@ -2441,12 +2319,6 @@ export interface components {
             id: string;
             rank?: null | components["schemas"]["ModelRank"];
         };
-        /** @description One skill the sessions of a row loaded, and how many of them loaded it. */
-        SkillCountDto: {
-            name: string;
-            /** Format: int64 */
-            sessions: number;
-        };
         SkillDto: {
             /**
              * @description Whether Ariadne ships this skill. A built-in is reset rather than
@@ -2485,12 +2357,11 @@ export interface components {
          * @enum {string}
          */
         SkillSeat: "orchestrator" | "task";
-        /** @description One reason sessions left a model, and how many switches gave it. */
-        SwitchReasonCountDto: {
-            reason: string;
-            /** Format: int64 */
-            switches: number;
-        };
+        /**
+         * @description Response of `GET /v1/stats/spend`: what did it spend? Empty until its task
+         *     fills it in.
+         */
+        SpendStatsDto: Record<string, never>;
         /**
          * @description Switch a session to another model or agent: the old session ends, and a
          *     new one starts on the same seat, on this pin, in a new conversation.
@@ -2504,48 +2375,6 @@ export interface components {
              * @example claude-acp:sonnet
              */
             model: string;
-        };
-        /** @description How one model did as sessions left it or arrived on it. */
-        SwitchStatDto: {
-            /**
-             * Format: int64
-             * @description Sessions that arrived on this model from another.
-             */
-            arrivals: number;
-            /**
-             * Format: double
-             * @description The automatic share of `switches`, from 0 to 1; 0 where it had none.
-             */
-            automatic_share: number;
-            /** @description Each reason a switch left this model, the most common first. */
-            by_reason: components["schemas"]["SwitchReasonCountDto"][];
-            /**
-             * Format: int64
-             * @description Of `switches`, those left for `exhausted`.
-             */
-            exhaustions: number;
-            /** @description `<agent>:<model>`. */
-            model: string;
-            /**
-             * Format: int64
-             * @description Sessions that left this model.
-             */
-            switches: number;
-        };
-        /** @description Response of `GET /v1/stats/switches`. */
-        SwitchStatsResponse: {
-            /**
-             * Format: int64
-             * @description Exhaustions over every row.
-             */
-            exhaustions: number;
-            /** @description One row per model, ordered by model. */
-            items: components["schemas"]["SwitchStatDto"][];
-            /**
-             * Format: int64
-             * @description Switches over every row.
-             */
-            switches: number;
         };
         TaskAgentDto: {
             /**
@@ -2768,6 +2597,11 @@ export interface components {
             risk_tags?: string[] | null;
         };
         /**
+         * @description Response of `GET /v1/stats/time`: how long does it take? Empty until its task
+         *     fills it in.
+         */
+        TimeStatsDto: Record<string, never>;
+        /**
          * @description Tokens spent, as the agents' own transcripts report them.
          *
          *     Always present and always a number: nothing reported is zero, not null.
@@ -2790,30 +2624,11 @@ export interface components {
              */
             output_tokens: number;
         };
-        ToolModelStatDto: {
-            /** Format: int64 */
-            calls: number;
-            /** Format: double */
-            mean_duration_ms: number;
-            model: string;
-        };
-        ToolStatDto: {
-            /** Format: int64 */
-            calls: number;
-            /** Format: int64 */
-            errors: number;
-            /** Format: double */
-            median_duration_ms: number;
-            /** Format: double */
-            p90_duration_ms: number;
-            tool_name: string;
-        };
-        /** @description Response of `GET /v1/stats/tools`. */
-        ToolStatsDto: {
-            models: components["schemas"]["ToolModelStatDto"][];
-            permissions: components["schemas"]["PermissionStatDto"][];
-            tools: components["schemas"]["ToolStatDto"][];
-        };
+        /**
+         * @description Response of `GET /v1/stats/tools`: what do the agents do? Empty until its task
+         *     fills it in.
+         */
+        ToolStatsDto: Record<string, never>;
         TransitionRequest: {
             /** @description Required when `to` is `finished`, unless the task lands nothing. */
             merge_commit?: string | null;
@@ -2906,6 +2721,11 @@ export interface components {
             /** @example 0.1.0 */
             version: string;
         };
+        /**
+         * @description Response of `GET /v1/stats/work`: what got done? Empty until its task
+         *     fills it in.
+         */
+        WorkStatsDto: Record<string, never>;
     };
     responses: never;
     parameters: never;
@@ -4598,6 +4418,41 @@ export interface operations {
             };
         };
     };
+    stats_attention: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Only facts written since then: an RFC 3339 moment, or a span back
+                 *     from now, `<n>m`, `<n>h`, `<n>d` or `<n>w` (`24h`, `7d`, `30d`).
+                 *     Absent is every fact there is.
+                 */
+                since?: string | null;
+                /** @description Only facts about this repository id. */
+                repo?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttentionStatsDto"];
+                };
+            };
+            /** @description `since` is neither a moment nor a span */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     stats_models: {
         parameters: {
             query?: {
@@ -4621,7 +4476,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ModelStatsResponse"];
+                    "application/json": components["schemas"]["ModelStatsDto"];
                 };
             };
             /** @description `since` is neither a moment nor a span */
@@ -4633,7 +4488,7 @@ export interface operations {
             };
         };
     };
-    stats_outcomes: {
+    stats_spend: {
         parameters: {
             query?: {
                 /**
@@ -4656,7 +4511,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OutcomeStatsDto"];
+                    "application/json": components["schemas"]["SpendStatsDto"];
                 };
             };
             /** @description `since` is neither a moment nor a span */
@@ -4668,7 +4523,7 @@ export interface operations {
             };
         };
     };
-    stats_reviews: {
+    stats_time: {
         parameters: {
             query?: {
                 /**
@@ -4691,41 +4546,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReviewStatsDto"];
-                };
-            };
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    stats_switches: {
-        parameters: {
-            query?: {
-                /**
-                 * @description Only facts written since then: an RFC 3339 moment, or a span back
-                 *     from now, `<n>m`, `<n>h`, `<n>d` or `<n>w` (`24h`, `7d`, `30d`).
-                 *     Absent is every fact there is.
-                 */
-                since?: string | null;
-                /** @description Only facts about this repository id. */
-                repo?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SwitchStatsResponse"];
+                    "application/json": components["schemas"]["TimeStatsDto"];
                 };
             };
             /** @description `since` is neither a moment nor a span */
@@ -4761,6 +4582,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ToolStatsDto"];
+                };
+            };
+            /** @description `since` is neither a moment nor a span */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    stats_work: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Only facts written since then: an RFC 3339 moment, or a span back
+                 *     from now, `<n>m`, `<n>h`, `<n>d` or `<n>w` (`24h`, `7d`, `30d`).
+                 *     Absent is every fact there is.
+                 */
+                since?: string | null;
+                /** @description Only facts about this repository id. */
+                repo?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkStatsDto"];
                 };
             };
             /** @description `since` is neither a moment nor a span */

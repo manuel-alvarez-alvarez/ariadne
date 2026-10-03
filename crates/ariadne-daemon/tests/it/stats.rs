@@ -1,13 +1,12 @@
 //! Integration tests for the stats ledger (023): the `session_ended` fact a
-//! session writes as a run of it ends, and `GET /v1/stats/models` over it.
+//! session writes as a run of it ends, the `tool_call` and `permission`
+//! facts, and what every stats route shares.
 
 use crate::common;
 
 use axum::http::StatusCode;
 use serde_json::json;
 
-use ariadne_api::stats::{ModelStatsResponse, SkillCountDto, ToolStatsDto};
-use ariadne_api::usage::TokenUsageDto;
 use ariadne_core::{PermissionMode, Seat, SessionStatus, TokenUsage};
 use ariadne_store::AgentSession;
 
@@ -106,43 +105,9 @@ async fn a_restarted_session_writes_a_fact_for_each_run() {
     assert_eq!(launches, [LAUNCH, "01launchtwoxxxxxxxxxxxxxxx"]);
 }
 
-/// `GET /v1/stats/models` answers the ended session's row: its model in its
-/// seat, one session, its tokens and their cached share, and its skill.
+/// A completed tool call and a console permission answer each write a fact.
 #[tokio::test]
-async fn the_models_stat_returns_the_row_of_an_ended_session() {
-    let h = harness().await;
-    let (_cast, session) = worked_session(&h).await;
-    h.ingest_from(&session, LAUNCH, "session_end", json!({}))
-        .await;
-
-    let stats: ModelStatsResponse = h.get("/v1/stats/models").await;
-    assert_eq!(stats.items.len(), 1, "{stats:?}");
-    let row = &stats.items[0];
-    assert_eq!(row.model, "stub:test-model");
-    assert_eq!(row.seat.as_deref(), Some("author"));
-    assert_eq!((row.sessions, row.failed, row.stalled), (1, 0, 0));
-    assert_eq!(
-        row.usage,
-        TokenUsageDto {
-            input_tokens: 1000,
-            cached_input_tokens: 800,
-            output_tokens: 100,
-        }
-    );
-    assert_eq!(row.cached_share, 0.8);
-    assert_eq!(
-        row.skills,
-        [SkillCountDto {
-            name: "coding".into(),
-            sessions: 1,
-        }]
-    );
-}
-
-/// A completed tool call and a console permission answer become facts, and
-/// the tools stat reads both back.
-#[tokio::test]
-async fn a_tool_call_and_console_permission_are_reported_as_tool_stats() {
+async fn a_tool_call_and_console_permission_write_their_facts() {
     let mut scripted = script();
     scripted["prompts"] = json!([{
         "updates": [
@@ -188,27 +153,6 @@ async fn a_tool_call_and_console_permission_are_reported_as_tool_stats() {
     let permission = &h.facts("permission").await[0];
     assert_eq!(permission.data["decided_by"], "console");
     assert_eq!(permission.data["answer"], "allow");
-    let stats: ToolStatsDto = h.get("/v1/stats/tools").await;
-    assert_eq!(stats.tools[0].tool_name, "Bash");
-    assert_eq!(stats.permissions[0].decided_by, "console");
-    assert_eq!(stats.permissions[0].answer, "allow");
-}
-
-/// `since=1h` keeps a fact written a moment ago, and a moment after now
-/// keeps none.
-#[tokio::test]
-async fn since_keeps_the_facts_written_since_then() {
-    let h = harness().await;
-    let (_cast, session) = worked_session(&h).await;
-    h.ingest_from(&session, LAUNCH, "session_end", json!({}))
-        .await;
-
-    let hour: ModelStatsResponse = h.get("/v1/stats/models?since=1h").await;
-    assert_eq!(hour.items.len(), 1, "{hour:?}");
-    let later = (chrono::Utc::now() + chrono::Duration::hours(1))
-        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    let none: ModelStatsResponse = h.get(&format!("/v1/stats/models?since={later}")).await;
-    assert!(none.items.is_empty(), "{none:?}");
 }
 
 /// A `since` that is neither a moment nor a span is refused with a 400
@@ -218,7 +162,7 @@ async fn a_bad_since_is_refused() {
     let h = harness().await;
     let error = h
         .error(
-            get("/v1/stats/models?since=yesterday"),
+            get("/v1/stats/work?since=yesterday"),
             StatusCode::BAD_REQUEST,
         )
         .await;
@@ -226,12 +170,14 @@ async fn a_bad_since_is_refused() {
     assert!(error.error.message.contains("yesterday"), "{error:?}");
 }
 
-/// The route is in the API document, under the `stats` tag.
+/// The families the stats had before the six answer no more.
 #[tokio::test]
-async fn the_models_stat_is_in_the_api_document() {
+async fn the_old_families_are_gone() {
     let h = harness().await;
-    let doc: serde_json::Value = h.get("/api-docs/openapi.json").await;
-    assert_eq!(doc["paths"]["/v1/stats/models"]["get"]["tags"][0], "stats");
+    for family in ["reviews", "switches", "outcomes"] {
+        let (status, _) = h.send(get(&format!("/v1/stats/{family}"))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{family}");
+    }
 }
 
 /// A kill lands while a turn is running. The runtime then cancels the turn,

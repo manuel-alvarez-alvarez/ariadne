@@ -314,10 +314,10 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: ModelsCommand,
     },
-    /// Show how the tool and the models perform
+    /// Show what the work did, one question per family
     ///
     /// Read off the facts the daemon records as work happens. `stats` alone
-    /// runs `stats models`.
+    /// runs `stats work`.
     Stats {
         #[command(subcommand)]
         command: Option<StatsCommand>,
@@ -523,10 +523,12 @@ const LISTINGS: &[&str] = &[
     "skill ls",
     "repo ls",
     "session ls",
+    "stats attention",
     "stats models",
-    "stats outcomes",
-    "stats switches",
+    "stats spend",
+    "stats time",
     "stats tools",
+    "stats work",
     "task history",
     "task ls",
     "task messages",
@@ -555,7 +557,6 @@ const QUIET_OUTPUT: &[&str] = &[
     "session new",
     "session resume",
     "session send",
-    "stats tools",
     "skill create",
     "skill ls",
     "skill reset",

@@ -1,10 +1,9 @@
-//! Integration tests for the outcome stats family (023): the `task_ended`
+//! Integration tests for the stats ledger (023): the `task_ended`
 //! fact a task writes once it reaches `finished`, `cancelled` or `failed`,
 //! and the `pick` fact a contested task's settled pick writes.
 
 use crate::common;
 
-use ariadne_api::stats::OutcomeStatsDto;
 use ariadne_core::{Actor, MessageKind, Seat, TaskStatus};
 use ariadne_store::{AgentPin, AgentSession, NewMessage, NewTask, NewTaskAgent, SessionFilter};
 
@@ -142,11 +141,9 @@ async fn live_authors(h: &Harness, task_id: &str) -> Vec<AgentSession> {
 }
 
 /// A two-author task writes one `pick` fact once the reviewer settles it: the
-/// winner's model, the loser's model, and the one reviewer that picked. The
-/// outcomes stat then shows a contest entered for both models, and won for
-/// the winner alone.
+/// winner's model, the loser's model, and the one reviewer that picked.
 #[tokio::test]
-async fn a_contested_pick_writes_one_fact_the_outcomes_stat_counts() {
+async fn a_contested_pick_writes_one_pick_fact() {
     let h = harness().scheduler().await;
     h.git_repo("repo");
     let repo = h.repository(&h.at("repo")).await;
@@ -260,21 +257,4 @@ async fn a_contested_pick_writes_one_fact_the_outcomes_stat_counts() {
         serde_json::json!([loser_pin.model])
     );
     assert_eq!(facts[0].data["reviewers"], 1);
-
-    let outcomes: OutcomeStatsDto = h.get("/v1/stats/outcomes").await;
-    let winner_row = outcomes
-        .items
-        .iter()
-        .find(|row| row.model == winner_pin.model)
-        .expect("the winner's row");
-    assert_eq!(
-        (winner_row.contests_entered, winner_row.contests_won),
-        (1, 1)
-    );
-    let loser_row = outcomes
-        .items
-        .iter()
-        .find(|row| row.model == loser_pin.model)
-        .expect("the loser's row");
-    assert_eq!((loser_row.contests_entered, loser_row.contests_won), (1, 0));
 }

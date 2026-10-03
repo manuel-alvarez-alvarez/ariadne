@@ -469,22 +469,17 @@ Out: the daemon endpoints themselves (012).
 36. The Stats screen is at `#/stats`, titled `Stats`, last in the sidebar
     (023). Its header holds a `since` selector — all time, 24 hours, 7 days,
     30 days — and a repository selector, both kept in the URL as `?since=`
-    and `?repo=`. The screen passes `{ since, repo }` to each panel under
-    `src/components/stats/`. Every panel draws its own heading with the one
-    shared `StatSectionHeading`, `text-sm font-medium`, so the five read as
-    one section style rather than Reviews standing out at its own size. The
-    models panel lists `GET /v1/stats/models`, as a horizontal bar chart of
-    sessions per model and seat, split into ended, failed and stalled, and a
-    second chart of tokens per model and seat. Its query key is
-    `qk.stats.models(filter)`, and every `task_updated` and `session_updated`
-    event invalidates the `stats` group — parity with `ariadne stats models`
-    (014). Every chart on the screen is `StatBarChart` (023): one row per
-    model, seat or tool, sorted by its first series descending, colour-coded
-    by meaning off the status ramp through the `STATUS_COLORS` module so
-    "failed" is the same red in every panel, and backed by an `sr-only` table
-    of the same numbers for a screen reader. A family with no rows renders
-    its heading and the one muted sentence its empty state always said, and
-    no chart frame.
+    and `?repo=`. The screen passes `{ since, repo }` to six sections, in
+    order: Work, Time, Spend, Models, Attention and Tools, each
+    `src/components/stats/<family>-section.tsx`. Every section draws through
+    the shared `StatSection`: its heading, `text-sm font-medium`, the one
+    sentence of the question it answers, the read's error or skeleton, and
+    the one muted sentence of an empty family. Each reads
+    `GET /v1/stats/<family>` under `qk.stats.<family>(filter)`, and every
+    `task_updated` and `session_updated` event invalidates the `stats` group
+    — parity with `ariadne stats <family>` (014). A chart is colour-coded by
+    meaning off the status ramp through the `STATUS_COLORS` module, and backed
+    by an `sr-only` table of the same numbers for a screen reader.
 
 - Goal details leave the board accessible, and another lane title changes the
   open pane (`ui/src/components/detail-panels.test.tsx::keeps the board accessible and follows another lane title with a goal open`,
@@ -497,10 +492,11 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/sessions/session-panel.test.tsx::gives the console view the remaining pane height`).
 - A console modal handles Escape without closing the surrounding pane
   (`ui/src/features/sessions/session-panel.test.tsx::keeps modal Escape separate from the pane close`).
-- The Stats screen renders the models panel from a stubbed answer, and asks
+- The Stats screen renders its six sections in order, and asks every family
   with the filters in its URL under the key `qk` names
-  (`ui/src/routes/stats.test.tsx::renders the models panel from the daemon's
-  rows`, `::asks with the filters in its URL, under the key qk names`); a
+  (`ui/src/routes/stats.test.tsx::renders the six sections in order, under
+  one heading style`, `::asks every family with the filters in its URL,
+  under the key qk names`); a
   task or a session update invalidates the stats
   (`ui/src/events/dispatch.test.ts::refetches every stat when a task or a
   session moves, since either may be a fact`); Stats is the last entry of the

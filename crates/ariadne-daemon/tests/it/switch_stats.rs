@@ -1,6 +1,5 @@
-//! Integration tests for the switch family of stats (023): the `switch` fact
-//! `Launcher::switch_session` writes next to its `session.switched` event,
-//! and `GET /v1/stats/switches` over it.
+//! Integration tests for the `switch` fact of the stats ledger (023), which
+//! `Launcher::switch_session` writes next to its `session.switched` event.
 
 use crate::common;
 
@@ -8,7 +7,6 @@ use axum::http::StatusCode;
 use serde_json::{Value, json};
 
 use ariadne_api::sessions::SessionDto;
-use ariadne_api::stats::SwitchStatsResponse;
 use ariadne_core::models::ModelRank;
 use ariadne_core::{SessionStatus, TaskStatus};
 use ariadne_daemon::scheduler::{self, SchedEvent};
@@ -205,46 +203,4 @@ async fn an_exhausted_session_that_auto_switches_writes_one_switch_fact() {
     assert_eq!(fact.data["to_model"], "other:old-model");
     assert_eq!(fact.data["reason"], "exhausted");
     assert_eq!(fact.data["automatic"], true);
-}
-
-/// `GET /v1/stats/switches` returns both a manual switch and an exhausted
-/// auto-switch, each in the row of the model it left; the model the
-/// automatic switch arrived on counts the arrival.
-#[tokio::test]
-async fn the_switches_stat_returns_both_in_the_row_of_the_model_left() {
-    let (h, orchestrator, author, _root) = exhausted_world().await;
-    switch(&h, &orchestrator.id, "other:other-model").await;
-
-    let scheduler = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
-    scheduler
-        .send(SchedEvent::SessionEvent(author.id.clone()))
-        .unwrap();
-    eventually(TIMEOUT, "the exhausted session to switch", || async {
-        h.store
-            .switched_successor(&author.id)
-            .await
-            .unwrap()
-            .is_some()
-    })
-    .await;
-
-    let stats: SwitchStatsResponse = h.get("/v1/stats/switches").await;
-    let manual = stats
-        .items
-        .iter()
-        .find(|row| row.model == "other:old-model")
-        .expect("a row for the model the manual switch left");
-    assert_eq!(manual.switches, 1);
-    assert_eq!(manual.exhaustions, 0);
-    assert_eq!(manual.automatic_share, 0.0);
-    assert_eq!(manual.arrivals, 1, "the exhausted switch arrived here too");
-
-    let exhausted = stats
-        .items
-        .iter()
-        .find(|row| row.model == "codex:old")
-        .expect("a row for the model the exhausted switch left");
-    assert_eq!(exhausted.switches, 1);
-    assert_eq!(exhausted.exhaustions, 1);
-    assert_eq!(exhausted.automatic_share, 1.0);
 }

@@ -1,12 +1,12 @@
 /**
- * The Stats screen: how the tool and the models perform, read off the daemon's
- * stats ledger.
+ * The Stats screen: what the work did, read off the daemon's stats ledger,
+ * one section per question a user asks of it.
  *
  * The header holds the two filters every stat family takes — how far back,
- * and which repository — and the screen hands them to each panel as one
+ * and which repository — and the screen hands them to each section as one
  * `{ since, repo }`. Both live in the URL (`?since=7d&repo=…`), so a reload or
- * a link keeps what the reader narrowed the screen to. Each family is a panel
- * of its own under `components/stats/`.
+ * a link keeps what the reader narrowed the screen to. Each family is a
+ * section of its own under `components/stats/`.
  */
 
 import { useQuery } from "@tanstack/react-query"
@@ -15,11 +15,12 @@ import { useSearchParams } from "react-router-dom"
 
 import type { StatsFilter } from "@/api"
 import { PageHeader } from "@/components/page-header"
-import { ModelsPanel } from "@/components/stats/models-panel"
-import { OutcomesPanel } from "@/components/stats/outcomes-panel"
-import { ReviewsPanel } from "@/components/stats/reviews-panel"
-import { SwitchesPanel } from "@/components/stats/switches-panel"
-import { ToolsPanel } from "@/components/stats/tools-panel"
+import { AttentionSection } from "@/components/stats/attention-section"
+import { ModelsSection } from "@/components/stats/models-section"
+import { SpendSection } from "@/components/stats/spend-section"
+import { TimeSection } from "@/components/stats/time-section"
+import { ToolsSection } from "@/components/stats/tools-section"
+import { WorkSection } from "@/components/stats/work-section"
 import {
   Select,
   SelectContent,
@@ -72,7 +73,7 @@ export function StatsPage() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Stats"
-        description="How the tool and the models perform, from what the daemon recorded as the work happened."
+        description="What the work did, from what the daemon recorded as it happened."
         actions={
           <>
             <Select value={since ?? ALL} onValueChange={(v) => setParam("since", v)} items={SPANS}>
@@ -106,12 +107,13 @@ export function StatsPage() {
           </>
         }
       />
-      <div className="flex flex-col gap-3">
-        <ModelsPanel filter={filter} />
-        <ReviewsPanel filter={filter} />
-        <SwitchesPanel filter={filter} />
-        <ToolsPanel filter={filter} />
-        <OutcomesPanel filter={filter} />
+      <div className="flex flex-col gap-6">
+        <WorkSection filter={filter} />
+        <TimeSection filter={filter} />
+        <SpendSection filter={filter} />
+        <ModelsSection filter={filter} />
+        <AttentionSection filter={filter} />
+        <ToolsSection filter={filter} />
       </div>
     </div>
   )

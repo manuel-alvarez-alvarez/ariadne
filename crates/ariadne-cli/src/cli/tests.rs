@@ -148,11 +148,12 @@ const LEAVES: &[(&str, bool)] = &[
     ("skill reset", true),
     ("skill rm", true),
     ("skill set", true),
+    ("stats attention", true),
     ("stats models", true),
-    ("stats outcomes", true),
-    ("stats reviews", true),
-    ("stats switches", true),
+    ("stats spend", true),
+    ("stats time", true),
     ("stats tools", true),
+    ("stats work", true),
     ("task attach", false),
     ("task cancel", true),
     ("task create", true),
@@ -1827,10 +1828,10 @@ fn advertises(cmd: &clap::Command, path: &[&str], id: &str) -> bool {
         .any(|a| a.get_id() == id && !a.is_hide_set())
 }
 
-/// `ariadne stats` alone is the models family, and the filters parse on
-/// either side of the family.
+/// `ariadne stats` alone names no family, which runs `work`, and the filters
+/// parse on either side of the family.
 #[test]
-fn stats_alone_runs_models_and_takes_the_filters_either_side() {
+fn stats_alone_runs_work_and_takes_the_filters_either_side() {
     let Command::Stats {
         command,
         since,

@@ -449,14 +449,6 @@ pub(crate) fn cached_share(usage: &TokenUsageDto) -> String {
     format!("{}.{}%", tenths / 10, tenths % 10)
 }
 
-/// A fraction from 0 to 1 as a percentage, one decimal place: `89.1%`. The
-/// same rounding as [`cached_share`], for a rate that is not a token share —
-/// a finish rate, a win rate.
-pub(crate) fn pct(fraction: f64) -> String {
-    let tenths = (fraction * 1000.0).round().clamp(0.0, 1000.0) as u64;
-    format!("{}.{}%", tenths / 10, tenths % 10)
-}
-
 /// A spend as a table cell: what went in under an up arrow, how much of it
 /// the cache served, and what came out under a down one.
 ///

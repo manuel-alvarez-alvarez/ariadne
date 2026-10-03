@@ -278,19 +278,19 @@ and the ACP runtime that reports the agent events (021).
     A configured list replaces it whole.
 28. Session attention also has `exhausted`, for active work whose current
     model accepts no more work.
-29. The stats are served under `/v1/stats/<family>`, one route per family,
-    each taking the `since` and `repo` filters (023). `GET /v1/stats/models`
-    answers `{items: [ModelStatDto]}`, and a bad `since` is
-    `400 invalid_request`. A stat reads the stats ledger only, and counts no
-    cost: the tokens are the ones rule 15 keeps.
+29. The stats are served under `/v1/stats/<family>`, one route per family —
+    `work`, `time`, `spend`, `models`, `attention` and `tools` — each taking
+    the `since` and `repo` filters and answering its own
+    `<Family>StatsDto` (023). A bad `since` is `400 invalid_request`. A stat
+    reads the stats ledger only, and counts no cost: the tokens are the ones
+    rule 15 keeps.
 
 ## Acceptance criteria
 
-- `GET /v1/stats/models` is in the OpenAPI document under the `stats` tag
-  (`stats.rs::the_models_stat_is_in_the_api_document`), answers the row of an
-  ended session
-  (`stats.rs::the_models_stat_returns_the_row_of_an_ended_session`), and
-  refuses a bad `since` (`stats.rs::a_bad_since_is_refused`).
+- Each `GET /v1/stats/<family>` answers its DTO and is in the OpenAPI
+  document under the `stats` tag
+  (`stats_<family>.rs::the_<family>_stat_answers_and_is_in_the_api_document`),
+  and a bad `since` is refused (`stats.rs::a_bad_since_is_refused`).
 - `POST /v1/sessions/{id}/switch` is in the OpenAPI document with
   `SwitchSessionRequest`, and answers a `SessionDto` that carries
   `switched_from`

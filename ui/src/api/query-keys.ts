@@ -162,11 +162,12 @@ export const qk = {
    */
   stats: {
     all: () => ["stats"] as const,
+    work: (filter: StatsFilter) => ["stats", "list", "work", filter] as const,
+    time: (filter: StatsFilter) => ["stats", "list", "time", filter] as const,
+    spend: (filter: StatsFilter) => ["stats", "list", "spend", filter] as const,
     models: (filter: StatsFilter) => ["stats", "list", "models", filter] as const,
-    reviews: (filter: StatsFilter) => ["stats", "list", "reviews", filter] as const,
+    attention: (filter: StatsFilter) => ["stats", "list", "attention", filter] as const,
     tools: (filter: StatsFilter) => ["stats", "list", "tools", filter] as const,
-    switches: (filter: StatsFilter) => ["stats", "list", "switches", filter] as const,
-    outcomes: (filter: StatsFilter) => ["stats", "list", "outcomes", filter] as const,
   },
   learnedPermissions: {
     all: () => ["learned-permissions"] as const,

@@ -25,7 +25,7 @@ tests:
   - crates/ariadne-cli/src/commands/agent.rs
   - crates/ariadne-cli/src/commands/skill.rs
   - crates/ariadne-cli/src/commands/console.rs
-  - crates/ariadne-cli/src/commands/stats.rs
+  - crates/ariadne-cli/src/commands/stats/mod.rs
 ---
 
 # Command-line interface
@@ -229,18 +229,18 @@ same binary also serves (013).
     anything is sent, and the daemon's own refusal of an unknown id or a bad
     scope prints whole. There is no `add` or `edit`. A repository can be an
     id or path, and every verb supports JSON.
-35. `ariadne stats <family> [--since <duration|date>] [--repo <id>]` prints
-    one stat family off `GET /v1/stats/<family>` (023). `ariadne stats`
-    alone prints `models`. `stats models` is a listing: it takes the table
-    flags, and its `TOKENS` column is the usage cell every other table prints.
+35. `ariadne stats [work|time|spend|models|attention|tools] [--since
+    <duration|date>] [--repo <id>]` prints one stat family off
+    `GET /v1/stats/<family>` (023). `ariadne stats` alone prints `work`.
+    Each of the six is a listing: it takes the table flags, and
+    `--format json` prints the family's DTO whole.
 
 ## Acceptance criteria
 
-- `ariadne stats models --format json` reads the rows with the filters
-  given, `ariadne stats` alone runs `models`, and the table prints its
-  headers and a token cell
-  (`commands/stats.rs::tests::stats_models_reads_the_rows_with_the_filters_given`,
-  `::the_table_prints_headers_and_a_token_cell`).
+- Each `ariadne stats <family> --format json` reads its route with the
+  filters given, and `ariadne stats` alone runs `work`
+  (`commands/stats/mod.rs::tests::each_family_reads_its_route_with_the_filters_given`,
+  `::stats_alone_runs_work`).
 
 - `permissions learned` provides list, show and remove commands, and `add`
   and `edit` do not parse

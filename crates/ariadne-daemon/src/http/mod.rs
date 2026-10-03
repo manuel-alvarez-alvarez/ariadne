@@ -143,9 +143,6 @@ impl AppState {
         models::set_enabled,
         models::set_rank,
         logs::snapshot, logs::stream,
-        stats::models, stats::reviews,
-        stats::tools, stats::switches,
-        stats::outcomes,
     ),
     components(schemas(
         ariadne_api::stream::DomainEvent, ariadne_api::stream::ResyncDto,
@@ -171,6 +168,12 @@ impl AppState {
     )
 )]
 struct ApiDoc;
+
+/// The whole API document: the routes declared above, and the stats
+/// families, each of which declares its own.
+fn api_doc() -> utoipa::openapi::OpenApi {
+    ApiDoc::openapi().merge_from(stats::openapi())
+}
 
 /// Build the daemon router.
 pub fn router(state: AppState) -> Router {
@@ -273,19 +276,14 @@ pub fn router(state: AppState) -> Router {
         // daemon logs
         .route("/v1/logs", get(logs::snapshot))
         .route("/v1/logs/stream", get(logs::stream))
-        // stats
-        .route("/v1/stats/models", get(stats::models))
-        .route("/v1/stats/reviews", get(stats::reviews))
-        .route("/v1/stats/tools", get(stats::tools))
-        .route("/v1/stats/switches", get(stats::switches))
-        .route("/v1/stats/outcomes", get(stats::outcomes))
+        .merge(stats::routes())
         // events
         .route("/v1/events", get(events::list))
         .route("/v1/events/stream", get(stream::stream))
         // debug spawn (manual agent launch until the scheduler lands)
         .route("/internal/spawn", post(sessions::debug_spawn))
         // docs (SwaggerUi also serves the spec at /api-docs/openapi.json)
-        .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
+        .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", api_doc()))
         // Wide open on purpose: the trust boundary is the unix socket / the
         // loopback bind (see auth.rs), not the browser origin. Without this a
         // webview (`tauri://localhost`, `http://localhost:*`) cannot call the

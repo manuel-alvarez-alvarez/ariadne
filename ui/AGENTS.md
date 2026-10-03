@@ -112,12 +112,13 @@ write a key literal. Every key is `[entity, "list" | "detail", ...]`:
 ["agent-events", "list", filters]
 ["permissions",  "detail", "ai"]
 ["learned-permissions", "list", filters] ["learned-permissions", "detail", id]
-["stats",        "list", "models", filter]
+["stats",        "list", family, filter]
 ```
 
-`stats` is one group over every stat family, `[stats, "list", family,
-{ since, repo }]`: a task or a session that moves can be a fact of any
-family, so the dispatcher invalidates `qk.stats.all()` whole.
+`stats` is one group over the six stat families (`work`, `time`, `spend`,
+`models`, `attention`, `tools`), `[stats, "list", family, { since, repo }]`,
+read through `qk.stats.<family>(filter)`: a task or a session that moves can
+be a fact of any family, so the dispatcher invalidates `qk.stats.all()` whole.
 
 `permissions.ai()` is the one key with no list beside it: there is one AI
 permission model settings row, `GET /v1/permissions/ai`, not a collection.
@@ -251,7 +252,9 @@ it held. What the header calls a screen rides on the route's own `handle`.
 Screens with URLs of their own — `#/goals`, `#/sessions`, `#/skills`,
 `#/agents`, `#/permissions`, `#/repositories` and `#/stats` — and `#/`
 redirects onto the board. The Stats screen is `src/routes/stats.tsx`, and
-each stat family is a panel of it under `src/components/stats/`.
+each stat family is a section of it, `src/components/stats/<family>-section.tsx`,
+drawn through the shared `StatSection`, `StatTiles`, `StatTable`,
+`StatTimeChart` and `StatBarChart` beside it.
 Goals, tasks and sessions have no pages: their details occupy one **docked pane** driven by
 search params (`?goal=` on the board, `?task=` over any screen, `?session=` for
 a session's own panel, `?tab=sessions&session=` for a session inside a goal's or

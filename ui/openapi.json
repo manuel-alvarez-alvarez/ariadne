@@ -2188,6 +2188,55 @@
         }
       }
     },
+    "/v1/stats/attention": {
+      "get": {
+        "tags": [
+          "stats"
+        ],
+        "operationId": "attention",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Only facts written since then: an RFC 3339 moment, or a span back\nfrom now, `<n>m`, `<n>h`, `<n>d` or `<n>w` (`24h`, `7d`, `30d`).\nAbsent is every fact there is.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "repo",
+            "in": "query",
+            "description": "Only facts about this repository id.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttentionStatsDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`since` is neither a moment nor a span"
+          }
+        }
+      }
+    },
     "/v1/stats/models": {
       "get": {
         "tags": [
@@ -2226,7 +2275,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ModelStatsResponse"
+                  "$ref": "#/components/schemas/ModelStatsDto"
                 }
               }
             }
@@ -2237,12 +2286,12 @@
         }
       }
     },
-    "/v1/stats/outcomes": {
+    "/v1/stats/spend": {
       "get": {
         "tags": [
           "stats"
         ],
-        "operationId": "outcomes",
+        "operationId": "spend",
         "parameters": [
           {
             "name": "since",
@@ -2275,7 +2324,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OutcomeStatsDto"
+                  "$ref": "#/components/schemas/SpendStatsDto"
                 }
               }
             }
@@ -2286,12 +2335,12 @@
         }
       }
     },
-    "/v1/stats/reviews": {
+    "/v1/stats/time": {
       "get": {
         "tags": [
           "stats"
         ],
-        "operationId": "reviews",
+        "operationId": "time",
         "parameters": [
           {
             "name": "since",
@@ -2324,56 +2373,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ReviewStatsDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/v1/stats/switches": {
-      "get": {
-        "tags": [
-          "stats"
-        ],
-        "operationId": "switches",
-        "parameters": [
-          {
-            "name": "since",
-            "in": "query",
-            "description": "Only facts written since then: an RFC 3339 moment, or a span back\nfrom now, `<n>m`, `<n>h`, `<n>d` or `<n>w` (`24h`, `7d`, `30d`).\nAbsent is every fact there is.",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
-            }
-          },
-          {
-            "name": "repo",
-            "in": "query",
-            "description": "Only facts about this repository id.",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SwitchStatsResponse"
+                  "$ref": "#/components/schemas/TimeStatsDto"
                 }
               }
             }
@@ -2423,6 +2423,55 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ToolStatsDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`since` is neither a moment nor a span"
+          }
+        }
+      }
+    },
+    "/v1/stats/work": {
+      "get": {
+        "tags": [
+          "stats"
+        ],
+        "operationId": "work",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Only facts written since then: an RFC 3339 moment, or a span back\nfrom now, `<n>m`, `<n>h`, `<n>d` or `<n>w` (`24h`, `7d`, `30d`).\nAbsent is every fact there is.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "repo",
+            "in": "query",
+            "description": "Only facts about this repository id.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkStatsDto"
                 }
               }
             }
@@ -3343,13 +3392,13 @@
             "type": "number",
             "format": "double",
             "description": "Danger at or below this value is allowed, 0 to 1.",
-            "example": 0.0531
+            "example": 0.0201
           },
           "deny_threshold": {
             "type": "number",
             "format": "double",
             "description": "Danger at or above this value is denied, 0 to 1.",
-            "example": 0.6522
+            "example": 0.6321
           },
           "device": {
             "$ref": "#/components/schemas/Device",
@@ -3435,37 +3484,9 @@
           "exhausted"
         ]
       },
-      "AuthorReviewStatDto": {
+      "AttentionStatsDto": {
         "type": "object",
-        "required": [
-          "model",
-          "approvals",
-          "mean_rounds",
-          "median_rounds",
-          "first_pass_rate"
-        ],
-        "properties": {
-          "approvals": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "first_pass_rate": {
-            "type": "number",
-            "format": "double"
-          },
-          "mean_rounds": {
-            "type": "number",
-            "format": "double"
-          },
-          "median_rounds": {
-            "type": "number",
-            "format": "double"
-          },
-          "model": {
-            "type": "string"
-          }
-        }
+        "description": "Response of `GET /v1/stats/attention`: how much did it need me? Empty until its task\nfills it in."
       },
       "BinaryDto": {
         "type": "object",
@@ -4700,32 +4721,6 @@
           "message"
         ]
       },
-      "MessageStatDto": {
-        "type": "object",
-        "required": [
-          "kind",
-          "from_actor",
-          "total",
-          "mean_per_task"
-        ],
-        "properties": {
-          "from_actor": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "mean_per_task": {
-            "type": "number",
-            "format": "double"
-          },
-          "total": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          }
-        }
-      },
       "ModelDto": {
         "type": "object",
         "description": "One thing an agent can be pinned to, as served by `GET /v1/models`: a\nregistry agent on a model discovery found it offering\n(`claude-acp:claude-opus-5`). Every entry names both halves — there\nis no bare-agent entry, because a model is required wherever an agent is\npinned.\n\nThe id is what a request writes as its `model`, whole. `agent_id` is its\nregistry prefix. Discovery supplies the description and efforts.\nThe user sets the enabled flag and optional rank independently.",
@@ -4785,87 +4780,9 @@
           "local"
         ]
       },
-      "ModelStatDto": {
+      "ModelStatsDto": {
         "type": "object",
-        "description": "How one model did in one seat, over the session runs that ended.",
-        "required": [
-          "model",
-          "sessions",
-          "failed",
-          "stalled",
-          "usage",
-          "cached_share",
-          "mean_lifetime_secs",
-          "skills"
-        ],
-        "properties": {
-          "cached_share": {
-            "type": "number",
-            "format": "double",
-            "description": "`cached_input_tokens` over `input_tokens`, from 0 to 1; 0 where\nnothing went in."
-          },
-          "failed": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Of them, the runs that ended `failed`.",
-            "minimum": 0
-          },
-          "mean_lifetime_secs": {
-            "type": "number",
-            "format": "double",
-            "description": "The mean time from a session's creation to its end, in seconds."
-          },
-          "model": {
-            "type": "string",
-            "description": "`<agent>:<model>`, as the sessions ran it."
-          },
-          "seat": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "`orchestrator`, `author` or `reviewer`; null for a loose session."
-          },
-          "sessions": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Session runs that ended.",
-            "minimum": 0
-          },
-          "skills": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/SkillCountDto"
-            },
-            "description": "Each skill those runs loaded, the most loaded first."
-          },
-          "stalled": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Of them, the runs that ended flagged `stalled`.",
-            "minimum": 0
-          },
-          "usage": {
-            "$ref": "#/components/schemas/TokenUsageDto",
-            "description": "What those runs spent, summed."
-          }
-        }
-      },
-      "ModelStatsResponse": {
-        "type": "object",
-        "description": "Response of `GET /v1/stats/models`.",
-        "required": [
-          "items"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ModelStatDto"
-            },
-            "description": "One row per model and seat, ordered by model and then by seat."
-          }
-        }
+        "description": "Response of `GET /v1/stats/models`: which model does the job? Empty until its task\nfills it in."
       },
       "NewSessionRequest": {
         "type": "object",
@@ -4893,159 +4810,6 @@
           }
         },
         "additionalProperties": false
-      },
-      "OutcomeStatDto": {
-        "type": "object",
-        "description": "How one author model ended its tasks, and did in the contests it entered,\nover the `task_ended` and `pick` facts the filter keeps.",
-        "required": [
-          "model",
-          "finished",
-          "failed",
-          "cancelled",
-          "finish_rate",
-          "median_lead_time_secs",
-          "mean_lead_time_secs",
-          "mean_review_requests",
-          "contests_entered",
-          "contests_won",
-          "win_rate"
-        ],
-        "properties": {
-          "cancelled": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "contests_entered": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Contests this model's author was staffed in, as the winner or a loser.",
-            "minimum": 0
-          },
-          "contests_won": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "failed": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "finish_rate": {
-            "type": "number",
-            "format": "double",
-            "description": "`finished` over every ending counted, 0 to 1."
-          },
-          "finished": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "mean_lead_time_secs": {
-            "type": "number",
-            "format": "double"
-          },
-          "mean_review_requests": {
-            "type": "number",
-            "format": "double"
-          },
-          "median_lead_time_secs": {
-            "type": "number",
-            "format": "double"
-          },
-          "model": {
-            "type": "string"
-          },
-          "win_rate": {
-            "type": "number",
-            "format": "double",
-            "description": "`contests_won` over `contests_entered`, 0 to 1."
-          }
-        }
-      },
-      "OutcomeStatsDto": {
-        "type": "object",
-        "description": "Response of `GET /v1/stats/outcomes`.",
-        "required": [
-          "items",
-          "totals"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/OutcomeStatDto"
-            },
-            "description": "One row per author model, ordered by model."
-          },
-          "totals": {
-            "$ref": "#/components/schemas/OutcomeTotalsDto"
-          }
-        }
-      },
-      "OutcomeTotalsDto": {
-        "type": "object",
-        "description": "The same figures, summed across every model.",
-        "required": [
-          "finished",
-          "failed",
-          "cancelled",
-          "finish_rate",
-          "median_lead_time_secs",
-          "mean_lead_time_secs",
-          "mean_review_requests",
-          "contests_entered",
-          "contests_won",
-          "win_rate"
-        ],
-        "properties": {
-          "cancelled": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "contests_entered": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "contests_won": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "failed": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "finish_rate": {
-            "type": "number",
-            "format": "double"
-          },
-          "finished": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "mean_lead_time_secs": {
-            "type": "number",
-            "format": "double"
-          },
-          "mean_review_requests": {
-            "type": "number",
-            "format": "double"
-          },
-          "median_lead_time_secs": {
-            "type": "number",
-            "format": "double"
-          },
-          "win_rate": {
-            "type": "number",
-            "format": "double"
-          }
-        }
       },
       "PathStateDto": {
         "type": "object",
@@ -5183,32 +4947,6 @@
           "session_id": {}
         }
       },
-      "PermissionStatDto": {
-        "type": "object",
-        "required": [
-          "decided_by",
-          "answer",
-          "permissions",
-          "mean_wait_ms"
-        ],
-        "properties": {
-          "answer": {
-            "type": "string"
-          },
-          "decided_by": {
-            "type": "string"
-          },
-          "mean_wait_ms": {
-            "type": "number",
-            "format": "double"
-          },
-          "permissions": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          }
-        }
-      },
       "PickWinnerRequest": {
         "type": "object",
         "description": "One reviewer picking the winning author of a task staffed with several:\nthe author whose branch lands.",
@@ -5338,61 +5076,6 @@
             "type": "integer",
             "format": "int64",
             "description": "Events this connection lost. Informational: they cannot be recovered.",
-            "minimum": 0
-          }
-        }
-      },
-      "ReviewStatsDto": {
-        "type": "object",
-        "required": [
-          "authors",
-          "reviewers",
-          "messages"
-        ],
-        "properties": {
-          "authors": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/AuthorReviewStatDto"
-            }
-          },
-          "messages": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/MessageStatDto"
-            }
-          },
-          "reviewers": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ReviewerStatDto"
-            }
-          }
-        }
-      },
-      "ReviewerStatDto": {
-        "type": "object",
-        "required": [
-          "model",
-          "verdicts",
-          "approve_share",
-          "mean_latency_secs"
-        ],
-        "properties": {
-          "approve_share": {
-            "type": "number",
-            "format": "double"
-          },
-          "mean_latency_secs": {
-            "type": "number",
-            "format": "double"
-          },
-          "model": {
-            "type": "string"
-          },
-          "verdicts": {
-            "type": "integer",
-            "format": "int64",
             "minimum": 0
           }
         }
@@ -5833,24 +5516,6 @@
           }
         }
       },
-      "SkillCountDto": {
-        "type": "object",
-        "description": "One skill the sessions of a row loaded, and how many of them loaded it.",
-        "required": [
-          "name",
-          "sessions"
-        ],
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "sessions": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          }
-        }
-      },
       "SkillDto": {
         "type": "object",
         "required": [
@@ -5905,23 +5570,9 @@
           "task"
         ]
       },
-      "SwitchReasonCountDto": {
+      "SpendStatsDto": {
         "type": "object",
-        "description": "One reason sessions left a model, and how many switches gave it.",
-        "required": [
-          "reason",
-          "switches"
-        ],
-        "properties": {
-          "reason": {
-            "type": "string"
-          },
-          "switches": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          }
-        }
+        "description": "Response of `GET /v1/stats/spend`: what did it spend? Empty until its task\nfills it in."
       },
       "SwitchSessionRequest": {
         "type": "object",
@@ -5944,84 +5595,6 @@
           }
         },
         "additionalProperties": false
-      },
-      "SwitchStatDto": {
-        "type": "object",
-        "description": "How one model did as sessions left it or arrived on it.",
-        "required": [
-          "model",
-          "switches",
-          "by_reason",
-          "exhaustions",
-          "automatic_share",
-          "arrivals"
-        ],
-        "properties": {
-          "arrivals": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Sessions that arrived on this model from another.",
-            "minimum": 0
-          },
-          "automatic_share": {
-            "type": "number",
-            "format": "double",
-            "description": "The automatic share of `switches`, from 0 to 1; 0 where it had none."
-          },
-          "by_reason": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/SwitchReasonCountDto"
-            },
-            "description": "Each reason a switch left this model, the most common first."
-          },
-          "exhaustions": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Of `switches`, those left for `exhausted`.",
-            "minimum": 0
-          },
-          "model": {
-            "type": "string",
-            "description": "`<agent>:<model>`."
-          },
-          "switches": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Sessions that left this model.",
-            "minimum": 0
-          }
-        }
-      },
-      "SwitchStatsResponse": {
-        "type": "object",
-        "description": "Response of `GET /v1/stats/switches`.",
-        "required": [
-          "items",
-          "switches",
-          "exhaustions"
-        ],
-        "properties": {
-          "exhaustions": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Exhaustions over every row.",
-            "minimum": 0
-          },
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/SwitchStatDto"
-            },
-            "description": "One row per model, ordered by model."
-          },
-          "switches": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Switches over every row.",
-            "minimum": 0
-          }
-        }
       },
       "TaskAgentDto": {
         "type": "object",
@@ -6468,6 +6041,10 @@
           }
         }
       },
+      "TimeStatsDto": {
+        "type": "object",
+        "description": "Response of `GET /v1/stats/time`: how long does it take? Empty until its task\nfills it in."
+      },
       "TokenUsageDto": {
         "type": "object",
         "description": "Tokens spent, as the agents' own transcripts report them.\n\nAlways present and always a number: nothing reported is zero, not null.",
@@ -6497,89 +6074,9 @@
           }
         }
       },
-      "ToolModelStatDto": {
-        "type": "object",
-        "required": [
-          "model",
-          "calls",
-          "mean_duration_ms"
-        ],
-        "properties": {
-          "calls": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "mean_duration_ms": {
-            "type": "number",
-            "format": "double"
-          },
-          "model": {
-            "type": "string"
-          }
-        }
-      },
-      "ToolStatDto": {
-        "type": "object",
-        "required": [
-          "tool_name",
-          "calls",
-          "errors",
-          "median_duration_ms",
-          "p90_duration_ms"
-        ],
-        "properties": {
-          "calls": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "errors": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "median_duration_ms": {
-            "type": "number",
-            "format": "double"
-          },
-          "p90_duration_ms": {
-            "type": "number",
-            "format": "double"
-          },
-          "tool_name": {
-            "type": "string"
-          }
-        }
-      },
       "ToolStatsDto": {
         "type": "object",
-        "description": "Response of `GET /v1/stats/tools`.",
-        "required": [
-          "tools",
-          "models",
-          "permissions"
-        ],
-        "properties": {
-          "models": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ToolModelStatDto"
-            }
-          },
-          "permissions": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/PermissionStatDto"
-            }
-          },
-          "tools": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ToolStatDto"
-            }
-          }
-        }
+        "description": "Response of `GET /v1/stats/tools`: what do the agents do? Empty until its task\nfills it in."
       },
       "TransitionRequest": {
         "type": "object",
@@ -6830,6 +6327,10 @@
             "example": "0.1.0"
           }
         }
+      },
+      "WorkStatsDto": {
+        "type": "object",
+        "description": "Response of `GET /v1/stats/work`: what got done? Empty until its task\nfills it in."
       }
     }
   },

@@ -4123,234 +4123,23 @@ fn run(status: &str, reason: Option<&str>, lifetime_secs: i64) -> serde_json::Va
     })
 }
 
-#[tokio::test]
-async fn review_stats_drop_facts_older_than_since() {
-    let (store, _dir) = test_store().await;
-    let mut fact = ended(
-        "01REPO",
-        "reviewer",
-        serde_json::json!({"verdict":"approve", "author_model":"stub:author", "round": 1, "latency_secs": 4}),
-    );
-    fact.kind = "verdict".into();
-    fact.model = Some("stub:reviewer".into());
-    store.record_fact(fact).await.unwrap();
-    assert_eq!(
-        store
-            .review_stats(&StatsFilter::default())
+/// Every fact of `kind` in the ledger of the database under `dir`, oldest
+/// first, as its model and its data. Straight SQL: the store reads the
+/// ledger only as aggregates, and a test of the fact itself needs the row.
+async fn ledger(dir: &std::path::Path, kind: &str) -> Vec<(Option<String>, serde_json::Value)> {
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", dir.join("test.db").display()))
+        .await
+        .unwrap();
+    let rows: Vec<(Option<String>, String)> =
+        sqlx::query_as("SELECT model, data FROM stat_facts WHERE kind = ? ORDER BY id")
+            .bind(kind)
+            .fetch_all(&pool)
             .await
-            .unwrap()
-            .authors[0]
-            .approvals,
-        1
-    );
-    assert!(
-        store
-            .review_stats(&StatsFilter {
-                since: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
-                repo_id: None
-            })
-            .await
-            .unwrap()
-            .authors
-            .is_empty()
-    );
-}
-
-/// Facts recorded are what `model_stats` sums: one row for the model in
-/// its seat, counting the runs, the failed and the stalled ones, their tokens,
-/// the cached share, the mean lifetime and each skill.
-#[tokio::test]
-async fn a_recorded_fact_is_read_back_by_model_stats() {
-    let (store, _dir) = test_store().await;
-    store
-        .record_fact(ended("01REPO", "launch-1", run("exited", None, 10)))
-        .await
-        .unwrap();
-    store
-        .record_fact(ended(
-            "01REPO",
-            "launch-2",
-            run("failed", Some("stalled"), 30),
-        ))
-        .await
-        .unwrap();
-    let rows = store.model_stats(&StatsFilter::default()).await.unwrap();
-    assert_eq!(
-        rows,
-        vec![ModelStatRow {
-            model: "stub:test-model".into(),
-            seat: Some("author".into()),
-            sessions: 2,
-            failed: 1,
-            stalled: 1,
-            usage: TokenUsage {
-                input_tokens: 2000,
-                cached_input_tokens: 1600,
-                output_tokens: 200,
-            },
-            cached_share: 0.8,
-            mean_lifetime_secs: 20.0,
-            skills: vec![("coding".into(), 2), ("migration".into(), 2)],
-        }]
-    );
-}
-
-/// `since` keeps the facts written at or after it, and `repo_id` the facts
-/// about that repository.
-#[tokio::test]
-async fn model_stats_keep_the_facts_since_the_filter_and_of_its_repository() {
-    let (store, _dir) = test_store().await;
-    store
-        .record_fact(ended("01REPO-A", "launch-1", run("exited", None, 10)))
-        .await
-        .unwrap();
-    store
-        .record_fact(ended("01REPO-B", "launch-2", run("exited", None, 10)))
-        .await
-        .unwrap();
-    let sessions = |rows: Vec<ModelStatRow>| rows.iter().map(|r| r.sessions).sum::<u64>();
-    let hour_ago = StatsFilter {
-        since: Some(chrono::Utc::now() - chrono::Duration::hours(1)),
-        repo_id: None,
-    };
-    assert_eq!(sessions(store.model_stats(&hour_ago).await.unwrap()), 2);
-    let later = StatsFilter {
-        since: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
-        repo_id: None,
-    };
-    assert!(store.model_stats(&later).await.unwrap().is_empty());
-    let of_a = StatsFilter {
-        since: None,
-        repo_id: Some("01REPO-A".into()),
-    };
-    assert_eq!(sessions(store.model_stats(&of_a).await.unwrap()), 1);
-}
-
-/// Tool facts are grouped by tool and model, with the median and nearest-rank
-/// p90 over their durations; `since` excludes facts outside its span.
-#[tokio::test]
-async fn tool_stats_keep_the_facts_since_the_filter_and_measure_percentiles() {
-    let (store, _dir) = test_store().await;
-    for (duration_ms, ok) in [(10, true), (20, true), (30, false), (100, true)] {
-        let mut fact = ended(
-            "01REPO",
-            &format!("launch-{duration_ms}"),
-            serde_json::json!({
-                "tool_name": "Bash", "duration_ms": duration_ms, "ok": ok,
-            }),
-        );
-        fact.kind = "tool_call".into();
-        store.record_fact(fact).await.unwrap();
-    }
-    let permission = NewStatFact {
-        kind: "permission".into(),
-        repo_id: Some("01REPO".into()),
-        goal_id: None,
-        task_id: None,
-        session_id: None,
-        launch_id: None,
-        seat: None,
-        model: None,
-        effort: None,
-        skills: vec![],
-        data: serde_json::json!({"decided_by": "console", "answer": "allow", "wait_ms": 40}),
-    };
-    store.record_fact(permission).await.unwrap();
-    let stats = store.tool_stats(&StatsFilter::default()).await.unwrap();
-    assert_eq!(
-        stats.tools,
-        vec![ariadne_store::ToolStatRow {
-            tool_name: "Bash".into(),
-            calls: 4,
-            errors: 1,
-            median_duration_ms: 25.0,
-            p90_duration_ms: 100.0,
-        }]
-    );
-    assert_eq!(
-        stats.models,
-        vec![ariadne_store::ToolModelStatRow {
-            model: "stub:test-model".into(),
-            calls: 4,
-            mean_duration_ms: 40.0,
-        }]
-    );
-    assert_eq!(
-        stats.permissions,
-        vec![ariadne_store::PermissionStatRow {
-            decided_by: "console".into(),
-            answer: "allow".into(),
-            permissions: 1,
-            mean_wait_ms: 40.0,
-        }]
-    );
-    let later = StatsFilter {
-        since: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
-        repo_id: None,
-    };
-    assert_eq!(
-        store.tool_stats(&later).await.unwrap(),
-        ariadne_store::ToolStats {
-            tools: vec![],
-            models: vec![],
-            permissions: vec![]
-        }
-    );
-}
-
-/// A `switch` fact of a session that left `model` for `to_model`, for
-/// `reason`, `automatic` or not.
-fn switched(model: &str, to_model: &str, reason: &str, automatic: bool) -> NewStatFact {
-    NewStatFact {
-        kind: "switch".into(),
-        repo_id: Some("01REPO".into()),
-        goal_id: Some("01GOAL".into()),
-        task_id: Some("01TASK".into()),
-        session_id: Some("01SESSION".into()),
-        launch_id: Some("launch-1".into()),
-        seat: Some("author".into()),
-        model: Some(model.into()),
-        effort: None,
-        skills: vec![],
-        data: serde_json::json!({
-            "to_model": to_model, "to_effort": null, "reason": reason,
-            "automatic": automatic, "same_agent": false,
-        }),
-    }
-}
-
-/// `switch_stats` honours `since`: a fact written before the filter is left
-/// out of the model it named.
-#[tokio::test]
-async fn switch_stats_keeps_the_facts_since_the_filter() {
-    let (store, _dir) = test_store().await;
-    store
-        .record_fact(switched("stub:a", "stub:b", "requested", false))
-        .await
-        .unwrap();
-    let hour_ago = StatsFilter {
-        since: Some(chrono::Utc::now() - chrono::Duration::hours(1)),
-        repo_id: None,
-    };
-    let stats = store.switch_stats(&hour_ago).await.unwrap();
-    assert_eq!(stats.switches, 1);
-    assert_eq!(
-        stats
-            .items
-            .iter()
-            .find(|row| row.model == "stub:a")
-            .unwrap()
-            .switches,
-        1
-    );
-
-    let later = StatsFilter {
-        since: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
-        repo_id: None,
-    };
-    let stats = store.switch_stats(&later).await.unwrap();
-    assert_eq!(stats.switches, 0);
-    assert!(stats.items.is_empty());
+            .unwrap();
+    pool.close().await;
+    rows.into_iter()
+        .map(|(model, data)| (model, serde_json::from_str(&data).unwrap()))
+        .collect()
 }
 
 /// A fact names its goal by id and holds no key to it, so deleting the goal
@@ -4363,9 +4152,7 @@ async fn a_fact_outlives_the_goal_it_is_about() {
     fact.task_id = Some(w.task.id.clone());
     w.store.record_fact(fact).await.unwrap();
     w.store.delete_goal(&w.goal.id).await.unwrap();
-    let rows = w.store.model_stats(&StatsFilter::default()).await.unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].sessions, 1);
+    assert_eq!(ledger(w._dir.path(), "session_ended").await.len(), 1);
 }
 
 /// One run of a session ends once in the ledger: a second fact of the same
@@ -4373,7 +4160,7 @@ async fn a_fact_outlives_the_goal_it_is_about() {
 /// kept.
 #[tokio::test]
 async fn a_fact_is_recorded_once_per_launch() {
-    let (store, _dir) = test_store().await;
+    let (store, dir) = test_store().await;
     let first = ended("01REPO", "launch-1", run("exited", None, 10));
     assert!(
         store
@@ -4384,8 +4171,7 @@ async fn a_fact_is_recorded_once_per_launch() {
     assert!(!store.record_fact_once_per_launch(first).await.unwrap());
     let next = ended("01REPO", "launch-2", run("exited", None, 10));
     assert!(store.record_fact_once_per_launch(next).await.unwrap());
-    let rows = store.model_stats(&StatsFilter::default()).await.unwrap();
-    assert_eq!(rows[0].sessions, 2);
+    assert_eq!(ledger(dir.path(), "session_ended").await.len(), 2);
 }
 
 /// The status write that ends a session is announced before its fact exists,
@@ -4416,8 +4202,11 @@ async fn a_fact_announces_its_session_once_it_is_readable() {
         Ok(Change::SessionUpdated(updated)) => assert_eq!(updated.id, session.id),
         other => panic!("expected the session announced after its fact: {other:?}"),
     }
-    let rows = w.store.model_stats(&StatsFilter::default()).await.unwrap();
-    assert_eq!(rows[0].sessions, 1, "the fact is readable on that event");
+    assert_eq!(
+        ledger(w._dir.path(), "session_ended").await.len(),
+        1,
+        "the fact is readable on that event"
+    );
 
     assert!(!w.store.record_fact_once_per_launch(fact).await.unwrap());
     assert!(
@@ -4461,36 +4250,6 @@ async fn ending_a_session_answers_the_row_its_write_left() {
     assert_eq!(ended.attention_reason(), Some(AttentionReason::Stalled));
 }
 
-/// `since` keeps the `task_ended` facts written at or after it, and
-/// `repo_id` the facts of that repository.
-#[tokio::test]
-async fn outcome_stats_keeps_the_facts_since_the_filter_and_of_its_repository() {
-    let (store, _dir) = test_store().await;
-    let (goal_a, repo_a) = seed_goal(&store).await;
-    let task_a = seed_task(&store, &goal_a, &repo_a, vec![]).await;
-    walk_to(&store, &task_a.id, TaskStatus::Finished).await;
-    let (goal_b, repo_b) = seed_goal(&store).await;
-    let task_b = seed_task(&store, &goal_b, &repo_b, vec![]).await;
-    walk_to(&store, &task_b.id, TaskStatus::Finished).await;
-
-    let finished = |stats: OutcomeStats| stats.totals.finished;
-    let hour_ago = StatsFilter {
-        since: Some(chrono::Utc::now() - chrono::Duration::hours(1)),
-        repo_id: None,
-    };
-    assert_eq!(finished(store.outcome_stats(&hour_ago).await.unwrap()), 2);
-    let later = StatsFilter {
-        since: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
-        repo_id: None,
-    };
-    assert_eq!(finished(store.outcome_stats(&later).await.unwrap()), 0);
-    let of_a = StatsFilter {
-        since: None,
-        repo_id: Some(repo_a.id.clone()),
-    };
-    assert_eq!(finished(store.outcome_stats(&of_a).await.unwrap()), 1);
-}
-
 /// A `task_ended` fact names its goal by id and holds no key to it, so
 /// deleting the goal leaves the fact where it was.
 #[tokio::test]
@@ -4498,115 +4257,10 @@ async fn an_outcome_fact_outlives_the_goal_it_is_about() {
     let w = World::new().await;
     walk_to(&w.store, &w.task.id, TaskStatus::Finished).await;
     w.store.delete_goal(&w.goal.id).await.unwrap();
-    let stats = w
-        .store
-        .outcome_stats(&StatsFilter::default())
-        .await
-        .unwrap();
-    assert_eq!(stats.totals.finished, 1);
-    assert_eq!(stats.rows.len(), 1);
-    assert_eq!(stats.rows[0].model, "stub:test-model");
-    assert_eq!(stats.rows[0].finish_rate, 1.0);
-}
-
-/// A `task_ended` fact naming no model: a multi-author task cancelled or
-/// failed before its pick ever settled, so no single author answers for it.
-fn ended_with_no_model(repo_id: &str, status: &str) -> NewStatFact {
-    NewStatFact {
-        kind: "task_ended".into(),
-        repo_id: Some(repo_id.into()),
-        goal_id: Some("01GOAL".into()),
-        task_id: Some("01TASK-A".into()),
-        session_id: None,
-        launch_id: None,
-        seat: None,
-        model: None,
-        effort: None,
-        skills: vec![],
-        data: serde_json::json!({
-            "status": status, "reason": null, "landing": "merge",
-            "lead_time_secs": 10, "review_requests": 0, "authors": 2,
-            "picked": false,
-        }),
-    }
-}
-
-/// A `pick` fact naming its winner and losers.
-fn pick(repo_id: &str, winner: &str, losers: &[&str]) -> NewStatFact {
-    NewStatFact {
-        kind: "pick".into(),
-        repo_id: Some(repo_id.into()),
-        goal_id: Some("01GOAL".into()),
-        task_id: Some("01TASK-B".into()),
-        session_id: Some("01SESSION".into()),
-        launch_id: None,
-        seat: Some("author".into()),
-        model: Some(winner.into()),
-        effort: None,
-        skills: vec![],
-        data: serde_json::json!({
-            "winner_model": winner, "loser_models": losers, "reviewers": 1,
-        }),
-    }
-}
-
-/// The totals are the sum of the rows, never a count of their own: a
-/// `task_ended` fact with no resolvable model answers for no row, and must
-/// not inflate the totals past what the rows themselves add up to.
-#[tokio::test]
-async fn outcome_totals_equal_the_sum_of_the_rows() {
-    let (store, _dir) = test_store().await;
-    store
-        .record_fact(ended_with_no_model("01REPO", "finished"))
-        .await
-        .unwrap();
-    let mut named = ended_with_no_model("01REPO", "finished");
-    named.model = Some("stub:test-model".into());
-    named.seat = Some("author".into());
-    store.record_fact(named).await.unwrap();
-
-    let stats = store.outcome_stats(&StatsFilter::default()).await.unwrap();
-    assert_eq!(stats.rows.len(), 1, "{:?}", stats.rows);
-    let summed: u64 = stats.rows.iter().map(|row| row.finished).sum();
-    assert_eq!(
-        stats.totals.finished, summed,
-        "totals must equal the sum of the rows"
-    );
-    assert_eq!(
-        stats.totals.finished, 1,
-        "the fact with no model names no row"
-    );
-}
-
-/// Two authors on the same model, one of them the winner: that model entered
-/// the contest once and won it once, not twice over.
-#[tokio::test]
-async fn a_contest_names_a_shared_model_once() {
-    let (store, _dir) = test_store().await;
-    store
-        .record_fact(pick(
-            "01REPO",
-            "stub:shared-model",
-            &["stub:shared-model", "stub:other-model"],
-        ))
-        .await
-        .unwrap();
-
-    let stats = store.outcome_stats(&StatsFilter::default()).await.unwrap();
-    let shared = stats
-        .rows
-        .iter()
-        .find(|row| row.model == "stub:shared-model")
-        .expect("the shared model's row");
-    assert_eq!((shared.contests_entered, shared.contests_won), (1, 1));
-    let other = stats
-        .rows
-        .iter()
-        .find(|row| row.model == "stub:other-model")
-        .expect("the other model's row");
-    assert_eq!((other.contests_entered, other.contests_won), (1, 0));
-    assert_eq!(stats.totals.contests_entered, 2);
-    assert_eq!(stats.totals.contests_won, 1);
+    let facts = ledger(w._dir.path(), "task_ended").await;
+    assert_eq!(facts.len(), 1, "{facts:?}");
+    assert_eq!(facts[0].0.as_deref(), Some("stub:test-model"));
+    assert_eq!(facts[0].1["status"], "finished");
 }
 
 /// `set_task_picked` writes its own `pick` fact every time a contest
@@ -4657,15 +4311,7 @@ async fn a_retried_contest_writes_a_pick_fact_for_each_settled_cycle() {
         .await
         .unwrap();
 
-    // Both authors share one model (`default_pin`), so the two settlements
-    // are two entries and two wins for that one row — one per cycle, never
-    // suppressed by the cycle before it.
-    let stats = w
-        .store
-        .outcome_stats(&StatsFilter::default())
-        .await
-        .unwrap();
-    assert_eq!(stats.rows.len(), 1, "{:?}", stats.rows);
-    assert_eq!(stats.rows[0].contests_entered, 2);
-    assert_eq!(stats.rows[0].contests_won, 2);
+    // One fact per cycle, never suppressed by the cycle before it.
+    let facts = ledger(w._dir.path(), "pick").await;
+    assert_eq!(facts.len(), 2, "{facts:?}");
 }
