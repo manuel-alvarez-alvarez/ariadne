@@ -29,6 +29,7 @@ pub(crate) fn goal(id: &str, title: &str) -> GoalDto {
         orchestrated: true,
         model: "stub:test-model".into(),
         effort: None,
+        landing: Landing::Merge,
         repos: Vec::new(),
         usage: Default::default(),
         created_at: NOW.into(),

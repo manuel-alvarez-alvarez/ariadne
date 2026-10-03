@@ -16,7 +16,7 @@ test that proves it.
 | 002 | [Repositories, branches and worktrees](002-repositories-branches-and-worktrees.md) | checkouts, base branches, branch naming, the worktree per seat |
 | 003 | [Planning a goal](003-planning-a-goal.md) | the conversation, the plan, and the orchestrator's whole life |
 | 004 | [Authoring and review](004-authoring-and-review.md) | the author, the reviewers, and the verdicts on a review |
-| 005 | [How a task ends](005-how-a-task-ends.md) | `merge`, `pull_request` and `none`, and merge verification |
+| 005 | [How a task ends](005-how-a-task-ends.md) | `merge`, `pull_request`, `none` and `feature_branch`, chosen per goal, and merge verification |
 | 006 | [Prompts and Simplified Technical English](006-prompts-and-simplified-technical-english.md) | the layers of text, who owns each, the English all of it is in |
 | 007 | [Agent launch](007-agent-cli-adapters.md) | how a registry agent is launched over ACP: the launch record, flags, skills, resume |
 | 008 | [Sessions and the console](008-sessions-terminals-and-logs.md) | session rows, the console, kill and resume |

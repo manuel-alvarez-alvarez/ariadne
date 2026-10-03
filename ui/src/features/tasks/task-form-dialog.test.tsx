@@ -279,19 +279,18 @@ describe("the rest of the task form", () => {
     )
   })
 
-  it("sends the selected landing choice", async () => {
+  it("asks nothing about how the task ends, which is the goal's", async () => {
     const user = userEvent.setup()
     renderDialog()
 
-    await user.type(screen.getByLabelText("Title"), "Do not land this")
+    expect(screen.queryByRole("combobox", { name: "Ends with" })).toBeNull()
+    await user.type(screen.getByLabelText("Title"), "Land it as the goal says")
     await pickModel(user, "Author", "codex-acp:gpt-5.6")
     await pickModel(user, "Reviewer 1", "claude-agent-acp:claude-sonnet-5")
-    await user.click(screen.getByRole("combobox", { name: "Ends with" }))
-    await user.click(await screen.findByRole("option", { name: "Land nothing" }))
     await user.click(screen.getByRole("button", { name: "Create task" }))
 
     await waitFor(() => expect(writePaths).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
-    expect(writes[0]).toMatchObject({ landing: "none" })
+    expect(writes[0]).not.toHaveProperty("landing")
   })
 
   it("drops effort when its model moves to one that takes none", async () => {

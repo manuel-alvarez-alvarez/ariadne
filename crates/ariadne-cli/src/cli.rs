@@ -347,7 +347,7 @@ pub(crate) enum Command {
     /// The checkouts goals may work in. A repository is registered once —
     /// with the base branch its tasks branch off — and named by every goal
     /// after that; the same checkout can be registered once per base branch.
-    /// How a task ends in it is the task's own (`task create --landing`).
+    /// How a task ends in it is its goal's (`goal create --landing`).
     #[command(after_help = REPO_EXAMPLES)]
     Repo {
         #[command(subcommand)]

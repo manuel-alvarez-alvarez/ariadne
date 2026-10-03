@@ -22,38 +22,25 @@ use std::time::Duration;
 
 use axum::http::StatusCode;
 
+use ariadne_api::goals::GoalDto;
 use ariadne_api::messages::MessageDto;
 use ariadne_api::tasks::TaskDto;
 use ariadne_core::{Actor, AttentionReason, Landing, MessageKind, Seat, TaskStatus};
 use ariadne_store::{AgentSession, NewTaskAgent, Repository, Task};
 
-use common::{Cast, Harness, as_session, get, harness, sh, test_pin};
+use common::{Cast, Harness, as_session, get, harness, patch_json, post_json, sh, test_pin};
 
 /// How long a test waits for the scheduler to reach a state.
 const TIMEOUT: Duration = Duration::from_secs(20);
 
-/// A goal on a real repository, active, with one task on it ending in
-/// `landing`. The agents run on the stub, which discovery has accepted, so
-/// the resume paths here are the ones a real session takes.
+/// A goal on a real repository, active, ending in `landing`, with one task
+/// on it. The agents run on the stub, which discovery has accepted, so the
+/// resume paths here are the ones a real session takes.
 async fn seeded(landing: Landing) -> (Harness, Cast) {
     let h = harness().scheduler().discover_agents().await;
     h.git_repo("repo");
-    let mut cast = h.active_cast().await;
-    if landing != Landing::Merge {
-        // How a task ends is the task's own, agreed with the user when it is
-        // written, so this sets it the way an orchestrator would.
-        cast.task = h
-            .store
-            .update_task(
-                &cast.task.id,
-                ariadne_store::TaskUpdate {
-                    landing: Some(landing),
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap();
-    }
+    // How a task ends is its goal's, chosen when the goal is created.
+    let cast = h.active_cast_ending_in(landing).await;
     (h, cast)
 }
 
@@ -158,7 +145,6 @@ async fn an_approved_task_is_landed_by_its_own_author() {
                 NewTaskAgent::new(Seat::Reviewer, ["code-review"], test_pin()),
             ],
             depends_on: vec![task.id.clone()],
-            landing: None,
         })
         .await
         .unwrap();
@@ -274,6 +260,177 @@ async fn a_merge_that_never_happened_is_refused() {
 #[tokio::test]
 async fn a_squash_merge_that_never_happened_is_refused() {
     refuse_merge_that_never_happened(Landing::PullRequest).await;
+}
+
+/// The user chooses how work lands once, on the goal, and every task of the
+/// goal follows it: a goal created with `pull_request` briefs each of its
+/// tasks to land by pull request, and each task reads that landing back.
+#[tokio::test]
+async fn a_pull_request_goal_briefs_every_task_to_land_by_pull_request() {
+    let h = harness().scheduler().discover_agents().await;
+    let repo = h.repository(&h.git_repo("repo")).await;
+    let goal: GoalDto = h
+        .json(
+            post_json(
+                "/v1/goals",
+                serde_json::json!({
+                    "title": "Ship it",
+                    "repository_ids": [repo.id],
+                    "model": test_pin().model,
+                    "landing": "pull_request",
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(goal.landing, Landing::PullRequest);
+
+    let staffed = serde_json::json!([
+        { "seat": "author", "skills": ["coding"], "model": test_pin().model },
+        { "seat": "reviewer", "skills": ["code-review"], "model": test_pin().model },
+    ]);
+    let mut tasks = Vec::new();
+    for title in ["The first change", "The second change"] {
+        let task: TaskDto = h
+            .json(
+                post_json(
+                    &format!("/v1/goals/{}/tasks", goal.id),
+                    serde_json::json!({ "title": title, "agents": staffed }),
+                ),
+                StatusCode::CREATED,
+            )
+            .await;
+        assert_eq!(task.landing, Landing::PullRequest, "{title}");
+        tasks.push(task);
+    }
+    h.activate(&h.store.get_goal(&goal.id).await.unwrap()).await;
+
+    for task in tasks {
+        let reviewer = h.store.list_task_reviewers(&task.id).await.unwrap()[0].clone();
+        let task = h.store.get_task(&task.id).await.unwrap();
+        let (_worktree, author) = walk_to_approved(&h, &task, &reviewer.id).await;
+        let told = h.told(&author.id);
+        assert!(
+            told.contains("gh pr create --base main"),
+            "{} is not briefed to open a request: {told}",
+            task.title
+        );
+        assert!(
+            !told.contains("reset --soft"),
+            "{} is briefed to squash onto the base: {told}",
+            task.title
+        );
+    }
+}
+
+/// A goal created with no landing lands by merge, and a task takes no
+/// landing of its own: a create or an edit that names one is refused, the
+/// way any field the daemon does not declare is.
+#[tokio::test]
+async fn a_goal_with_no_landing_merges_and_a_task_takes_none_of_its_own() {
+    let h = harness().await;
+    let repo = h.repository(&h.git_repo("repo")).await;
+    let goal: GoalDto = h
+        .json(
+            post_json(
+                "/v1/goals",
+                serde_json::json!({
+                    "title": "Ship it",
+                    "repository_ids": [repo.id],
+                    "model": test_pin().model,
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(goal.landing, Landing::Merge);
+
+    let tasks = format!("/v1/goals/{}/tasks", goal.id);
+    let staffed = serde_json::json!([
+        { "seat": "author", "skills": ["coding"], "model": test_pin().model },
+    ]);
+    let refused = h
+        .error(
+            post_json(
+                &tasks,
+                serde_json::json!({
+                    "title": "Do it", "agents": staffed, "landing": "pull_request",
+                }),
+            ),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    assert!(
+        refused.error.message.contains("unknown field `landing`"),
+        "{}",
+        refused.error.message
+    );
+
+    let task: TaskDto = h
+        .json(
+            post_json(
+                &tasks,
+                serde_json::json!({ "title": "Do it", "agents": staffed }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(task.landing, Landing::Merge);
+    let refused = h
+        .error(
+            patch_json(
+                &format!("/v1/tasks/{}", task.id),
+                serde_json::json!({ "landing": "none" }),
+            ),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    assert!(
+        refused.error.message.contains("unknown field `landing`"),
+        "{}",
+        refused.error.message
+    );
+}
+
+/// A `feature_branch` goal lands its tasks exactly as `merge` does, until the
+/// goal has a branch of its own: the author is briefed to squash onto the
+/// base, and the daemon accepts the sha only once the branch is on it.
+#[tokio::test]
+async fn a_feature_branch_goal_lands_its_tasks_like_merge() {
+    let (h, cast) = seeded(Landing::FeatureBranch).await;
+    let task = cast.task.clone();
+    let dto: TaskDto = h.get(&format!("/v1/tasks/{}", task.id)).await;
+    assert_eq!(dto.landing, Landing::FeatureBranch);
+    let (worktree, author) = walk_to_approved(&h, &task, &cast.reviewer.id).await;
+    let told = h.told(&author.id);
+    assert!(
+        told.contains("git reset --soft \"$(git merge-base main HEAD)\""),
+        "the briefing does not carry the squash: {told}"
+    );
+    assert!(!told.contains("gh pr"), "{told}");
+
+    let finish = |sha: String| {
+        as_session(
+            &format!("/v1/tasks/{}/transitions", task.id),
+            &author.id,
+            serde_json::json!({"to": "finished", "merge_commit": sha}),
+        )
+    };
+    let tip = sh(&worktree, "git rev-parse HEAD");
+    let (status, _) = h.send(finish(tip)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "a merge that never happened");
+
+    sh(&worktree, "git rebase -q main");
+    sh(
+        &worktree,
+        "git reset --soft \"$(git merge-base main HEAD)\" && \
+         git -c user.email=t@t -c user.name=t commit -qm 'feat(board): render it'",
+    );
+    let repo = repo_path(&cast.repo);
+    sh(&repo, &format!("git merge -q --ff-only {}", task.branch));
+    let sha = sh(&repo, "git rev-parse main");
+    let landed: TaskDto = h.json(finish(sha), StatusCode::OK).await;
+    assert_eq!(landed.status, TaskStatus::Finished);
 }
 
 /// The other way out of `approved`: the people reading a published request

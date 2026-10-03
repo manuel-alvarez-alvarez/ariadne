@@ -21,7 +21,7 @@ use ariadne_api::tasks::{
     AgentAssignment, CreateTaskRequest, PickWinnerRequest, RecordPullRequestRequest,
     TransitionRequest, UpdateTaskRequest,
 };
-use ariadne_core::{Actor, Landing, MessageKind, Seat, TaskStatus};
+use ariadne_core::{Actor, MessageKind, Seat, TaskStatus};
 
 use super::{AriadneMcp, json_result, to_mcp_err};
 
@@ -76,11 +76,6 @@ pub(super) struct CreateTaskReq {
     pub depends_on: Option<Vec<String>>,
     /// Repository id. Pass it only where the goal works in several.
     pub repo_id: Option<String>,
-    /// How the task ends, as the user agreed it: `merge` puts the change on
-    /// the base branch, `pull_request` opens a request and sees it through,
-    /// `none` lands nothing. Omit it for the way the repository takes a
-    /// change.
-    pub landing: Option<LandingReq>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -105,8 +100,6 @@ pub(super) struct UpdateTaskReq {
     /// The ids of the tasks that must merge first. This list replaces the
     /// whole list.
     pub depends_on: Option<Vec<String>>,
-    /// How the task ends: `merge`, `pull_request` or `none`.
-    pub landing: Option<LandingReq>,
 }
 
 /// The one task a supervising tool acts on, by id.
@@ -166,32 +159,6 @@ pub(super) struct RecordPullRequestReq {
     /// The URL of the pull request, as `gh pr create` or `glab mr create`
     /// printed it.
     pub url: String,
-}
-
-/// The three ways a task can end, as the two task tools take them. A local
-/// spelling of [`Landing`], because the schema an agent reads is derived from
-/// the parameter types here.
-#[derive(Clone, Copy, Debug, serde::Deserialize, schemars::JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-#[serde(rename_all = "snake_case")]
-pub enum LandingReq {
-    /// The author puts the change on the base branch itself.
-    Merge,
-    /// The author opens a request and sees it through to its merge.
-    PullRequest,
-    /// Nothing is landed: a published tag, a filed report, a document that
-    /// lives elsewhere.
-    None,
-}
-
-impl From<LandingReq> for Landing {
-    fn from(req: LandingReq) -> Landing {
-        match req {
-            LandingReq::Merge => Landing::Merge,
-            LandingReq::PullRequest => Landing::PullRequest,
-            LandingReq::None => Landing::None,
-        }
-    }
 }
 
 /// The two verdicts a review round ends in, as the one verdict tool takes
@@ -421,7 +388,7 @@ impl AriadneMcp {
     // ---- orchestrator ----
 
     #[tool(
-        description = "Create one task in the goal. Staff its authors — one for most tasks, several to compare attempts — and the reviewers the user agreed it needs. Give each agent the skills its work needs (`list_skills`) and one model from `list_models`. Say how it ends with `landing`."
+        description = "Create one task in the goal. Staff its authors — one for most tasks, several to compare attempts — and the reviewers the user agreed it needs. Give each agent the skills its work needs (`list_skills`) and one model from `list_models`."
     )]
     async fn create_task(
         &self,
@@ -449,13 +416,12 @@ impl AriadneMcp {
                 )
                 .collect(),
             depends_on: req.depends_on.unwrap_or_default(),
-            landing: req.landing.map(Into::into),
         };
         json_result(self.post(&path, &body).await?)
     }
 
     #[tool(
-        description = "Edit a task that has not started: its title, description, reviewers, dependencies, ending, or the model and effort of its author. `reviewers` replaces the whole list. A model is required, so `default` is no model; an omitted `author_model` keeps the one the task has."
+        description = "Edit a task that has not started: its title, description, reviewers, dependencies, or the model and effort of its author. `reviewers` replaces the whole list. A model is required, so `default` is no model; an omitted `author_model` keeps the one the task has."
     )]
     async fn update_task(
         &self,
@@ -489,7 +455,6 @@ impl AriadneMcp {
                     .collect()
             }),
             depends_on: req.depends_on,
-            landing: req.landing.map(Into::into),
         };
         let path = format!("/v1/tasks/{}", req.task_id);
         let value = self.client.patch_json(&path, &body).await;
@@ -1283,6 +1248,26 @@ mod tests {
         }
     }
 
+    /// How a task ends is its goal's, chosen once when the goal is created,
+    /// so neither task tool takes a landing: a task cannot disagree with its
+    /// goal.
+    #[test]
+    fn the_task_tools_take_no_landing() {
+        for tool in ["create_task", "update_task"] {
+            let schema = tool_schema(tool);
+            assert!(
+                schema["properties"].get("landing").is_none(),
+                "{tool} still takes a landing"
+            );
+            assert!(
+                schema
+                    .get("$defs")
+                    .is_none_or(|defs| defs.get("LandingReq").is_none()),
+                "{tool} still defines a landing"
+            );
+        }
+    }
+
     /// A pin the orchestrator named is the pin the daemon is asked for, slot by
     /// slot: whatever this passes on is what the task is cut at, and a field
     /// quietly left out here is a task running on something nobody chose.
@@ -1307,7 +1292,6 @@ mod tests {
                 }],
                 depends_on: None,
                 repo_id: None,
-                landing: None,
             }))
             .await
             .expect("create the task");
@@ -1361,7 +1345,6 @@ mod tests {
                     brief: None,
                 }]),
                 depends_on: None,
-                landing: None,
             }))
             .await
             .expect("edit the task");
@@ -1395,7 +1378,6 @@ mod tests {
                 authors: None,
                 reviewers: None,
                 depends_on: None,
-                landing: None,
             }))
             .await
             .expect_err("default is no model");

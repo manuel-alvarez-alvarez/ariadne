@@ -52,6 +52,7 @@ export function aGoal(overrides: Partial<GoalDto> = {}): GoalDto {
     description: "",
     model: "claude-agent-acp:claude-sonnet-5",
     orchestrated: true,
+    landing: "merge",
     repos: [],
     status: "active",
     usage: {

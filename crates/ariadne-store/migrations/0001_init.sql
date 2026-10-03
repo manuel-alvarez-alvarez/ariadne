@@ -125,7 +125,12 @@ CREATE TABLE goals (
     created_at          TEXT NOT NULL,
     updated_at          TEXT NOT NULL,
     model               TEXT NOT NULL,
-    effort              TEXT
+    effort              TEXT,
+    -- How every task of the goal ends: a change on the base branch, a request
+    -- somebody else merges, nothing at all, or a branch of the goal that
+    -- lands whole. Chosen once, when the goal is created.
+    landing             TEXT NOT NULL DEFAULT 'merge'
+                        CHECK (landing IN ('merge', 'pull_request', 'none', 'feature_branch'))
 );
 
 -- Which repositories a goal works in, by reference.
@@ -148,11 +153,6 @@ CREATE TABLE tasks (
                                           'changes_requested', 'approved', 'finished',
                                           'cancelled', 'failed')),
     branch              TEXT NOT NULL,
-    -- How this task ends: a change on the base branch, a request somebody
-    -- else merges, or nothing at all. Taken from the repository's merge
-    -- strategy unless whoever wrote the task said otherwise.
-    landing             TEXT NOT NULL DEFAULT 'merge'
-                        CHECK (landing IN ('merge', 'pull_request', 'none')),
     worktree_path       TEXT,
     stalled             INTEGER NOT NULL DEFAULT 0,
     merge_commit        TEXT,

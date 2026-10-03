@@ -1174,9 +1174,9 @@ impl Launcher {
         };
         if task.status() == TaskStatus::Approved {
             let repo = self.store.get_repository(&task.repo_id).await?;
-            // The procedure is the task's: how this task ends was agreed with
-            // the user when it was written, and it is the whole of what
-            // decides which of the three the author runs.
+            // The procedure is the goal's: the user chose how every task of
+            // the goal ends when the goal was created, and it is the whole of
+            // what decides which procedure the author runs.
             return Ok(prompts::landing_briefing(
                 task.landing_prompt_text(),
                 &seen,

@@ -1469,6 +1469,7 @@ export interface components {
              * @example high
              */
             effort?: string | null;
+            landing?: null | components["schemas"]["Landing"];
             /**
              * @description What the orchestrator runs on, `<agent>:<model>` — the id of an agent
              *     in the ACP registry and, after the `:`, the model of it:
@@ -1517,7 +1518,6 @@ export interface components {
             /** @description Task ids this task depends on. */
             depends_on?: string[];
             description?: string;
-            landing?: null | components["schemas"]["Landing"];
             /**
              * @description Id of one of the goal's repositories; may be omitted when the goal
              *     works in exactly one.
@@ -1722,6 +1722,8 @@ export interface components {
              */
             effort?: string | null;
             id: string;
+            /** @description How every task of the goal ends, chosen when the goal was created. */
+            landing: components["schemas"]["Landing"];
             /**
              * @description What the orchestrator or adopted author runs on, `<agent>:<model>`:
              *     the registry agent and, after the `:`, the model of it.
@@ -1808,22 +1810,23 @@ export interface components {
             version: string;
         };
         /**
-         * @description How one task ends.
+         * @description How the tasks of one goal end.
          *
          *     The one thing about the end of a task the author has to be told, since the
-         *     commands it runs differ entirely between the three. The orchestrator agrees
-         *     it with the user task by task: some work lands on the base branch, some
-         *     goes through a request the author then sees to its merge, and some has
-         *     nothing to land at all — a report filed, a document published, a release
-         *     cut. All three reach [`TaskStatus::Finished`]; landing is one way of
-         *     getting there rather than the meaning of being there.
+         *     commands it runs differ entirely between the endings. The user chooses it
+         *     once, for the whole goal, when the goal is created, and every task of the
+         *     goal follows it: some work lands on the base branch, some goes through a
+         *     request the author then sees to its merge, and some has nothing to land at
+         *     all — a report filed, a document published, a release cut. Every ending
+         *     reaches [`TaskStatus::Finished`]; landing is one way of getting there
+         *     rather than the meaning of being there.
          *
          *     Which forge a published request goes to is *not* here: `origin` says
          *     whether it is GitHub or GitLab, and asking the remote at landing time
          *     cannot go stale the way a second copy of the answer would.
          * @enum {string}
          */
-        Landing: "merge" | "pull_request" | "none";
+        Landing: "merge" | "pull_request" | "none" | "feature_branch";
         /**
          * @description One user choice or denial of an ACP permission request, keyed by the
          *     repository, the tool name, the level and the normalized input.
@@ -2606,8 +2609,8 @@ export interface components {
             goal_id: string;
             id: string;
             /**
-             * @description How the task ends: a change on the base branch, a request somebody
-             *     else merges, or nothing at all.
+             * @description How the task ends: a read-only copy of its goal's landing, which every
+             *     task of the goal follows.
              */
             landing: components["schemas"]["Landing"];
             merge_commit?: string | null;
@@ -2872,7 +2875,6 @@ export interface components {
              * @example xhigh
              */
             effort?: string | null;
-            landing?: null | components["schemas"]["Landing"];
             /**
              * @description What the author runs on, `<agent>:<model>`: absent leaves the
              *     author's pins alone, and anything else pins what it spells. A model is

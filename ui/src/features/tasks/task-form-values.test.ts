@@ -41,7 +41,6 @@ const BLANK: TaskFormValues = {
   author_model: "codex-acp:gpt-5.6",
   author_effort: "",
   reviewers: [{ skills: "code-review", model: "codex-acp:gpt-5.6", effort: "" }],
-  landing: "merge",
   repo_id: "",
   depends_on: [],
 }

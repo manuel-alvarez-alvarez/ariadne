@@ -35,7 +35,7 @@ use ariadne_api::stream::DomainEvent;
 use ariadne_core::acp::LaunchConfig;
 use ariadne_core::models::agent_of;
 use ariadne_core::{
-    Actor, AttentionReason, GoalStatus, MessageKind, PermissionMode, Seat, SessionStatus,
+    Actor, AttentionReason, GoalStatus, Landing, MessageKind, PermissionMode, Seat, SessionStatus,
     TaskStatus,
 };
 use ariadne_daemon::acp::AcpLaunch;
@@ -868,8 +868,20 @@ impl Harness {
     }
 
     pub(crate) async fn goal_on(&self, repo: &Repository, pin: AgentPin) -> Goal {
+        self.goal_ending_in(repo, pin, None).await
+    }
+
+    /// The same, with every task of the goal ending in `landing`: None is
+    /// what a goal gets when its creator says nothing.
+    async fn goal_ending_in(
+        &self,
+        repo: &Repository,
+        pin: AgentPin,
+        landing: Option<Landing>,
+    ) -> Goal {
         self.store
             .create_goal(NewGoal {
+                landing,
                 title: "Ship the UI".into(),
                 description: "desc".into(),
                 repository_ids: vec![repo.id.clone()],
@@ -901,7 +913,6 @@ impl Harness {
                 description: "do things".into(),
                 agents,
                 depends_on: vec![],
-                landing: None,
             })
             .await
             .unwrap()
@@ -934,8 +945,12 @@ impl Harness {
             model: model.to_string(),
             effort: None,
         };
+        self.cast_of(pin, reviewers, None).await
+    }
+
+    async fn cast_of(&self, pin: AgentPin, reviewers: usize, landing: Option<Landing>) -> Cast {
         let repo = self.repository(&self.at("repo")).await;
-        let goal = self.goal_on(&repo, pin.clone()).await;
+        let goal = self.goal_ending_in(&repo, pin.clone(), landing).await;
         let task = self.task_on(&goal, &repo, "task", reviewers, pin).await;
         let author = self.store.task_author(&task.id).await.unwrap();
         let reviewer = self
@@ -971,8 +986,17 @@ impl Harness {
     /// are out too — so a stream opened afterwards sees nothing but what the
     /// test itself does.
     pub(crate) async fn active_cast(&self) -> Cast {
+        self.active_cast_of(None).await
+    }
+
+    /// The same, on a goal whose every task ends in `landing`.
+    pub(crate) async fn active_cast_ending_in(&self, landing: Landing) -> Cast {
+        self.active_cast_of(Some(landing)).await
+    }
+
+    async fn active_cast_of(&self, landing: Option<Landing>) -> Cast {
         let mut rx = self.bus.subscribe();
-        let mut cast = self.cast().await;
+        let mut cast = self.cast_of(test_pin(), 1, landing).await;
         cast.goal = self.activate(&cast.goal).await;
         next_event(
             &mut rx,

@@ -232,6 +232,7 @@ export const LANDING_LABELS: Record<Landing, string> = {
   merge: "Merge onto the base branch",
   pull_request: "Open a request and see it through",
   none: "Land nothing",
+  feature_branch: "Land on a feature branch",
 }
 
 // ── Failures ──────────────────────────────────────────────────────────────

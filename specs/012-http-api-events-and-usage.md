@@ -9,6 +9,7 @@ tests:
   - crates/ariadne-daemon/tests/it/session_list.rs
   - crates/ariadne-daemon/tests/it/switch.rs
   - crates/ariadne-daemon/tests/it/unknown_fields.rs
+  - crates/ariadne-daemon/tests/it/landing_lifecycle.rs
   - crates/ariadne-daemon/tests/it/logs.rs
   - crates/ariadne-daemon/tests/it/doctor.rs
   - crates/ariadne-daemon/tests/it/ai_permissions.rs
@@ -53,6 +54,9 @@ and the ACP runtime that reports the agent events (021).
    was refused (001). Every request DTO denies unknown fields, so a body that
    carries a field its DTO does not declare is refused in that same envelope,
    and the refusal names the field. A response DTO denies nothing.
+   `CreateGoalRequest` takes the goal's `landing` and `GoalDto` carries it.
+   The task requests take none, and `TaskDto.landing` is a read-only copy of
+   the goal's (005).
 4. Every write emits a **fat event**: the changed entity, whole, so a client
    can apply it without a re-fetch. A task transition carries the transition
    that caused it, whether it came through HTTP or from the scheduler.
@@ -315,6 +319,12 @@ and the ACP runtime that reports the agent events (021).
 - A body with a field its DTO does not declare is refused, and the refusal
   names the field
   (`unknown_fields.rs::an_unknown_field_is_refused_and_named`).
+- A goal is created with the `landing` its request names, and `TaskDto`
+  answers it back for each task
+  (`landing_lifecycle.rs::a_pull_request_goal_briefs_every_task_to_land_by_pull_request`);
+  a goal request with none answers `merge`, and a task request that names a
+  landing is refused and the refusal names the field
+  (`landing_lifecycle.rs::a_goal_with_no_landing_merges_and_a_task_takes_none_of_its_own`).
 - The three AI permission paths, their schemas and the
   `ai_permissions_updated` kind are in the OpenAPI document, the doctor's
   report carries the interpreter

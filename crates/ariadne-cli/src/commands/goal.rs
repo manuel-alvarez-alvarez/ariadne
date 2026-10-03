@@ -9,7 +9,7 @@ use ariadne_api::goals::{CreateGoalRequest, GoalDto};
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::tasks::{TaskDto, TaskListQuery};
 use ariadne_client::{Client, SseEvent};
-use ariadne_core::GoalStatus;
+use ariadne_core::{GoalStatus, Landing};
 
 use super::follow;
 use super::query_path;
@@ -90,6 +90,12 @@ pub(crate) enum GoalCommand {
         /// it at
         #[arg(long, value_name = "EFFORT", value_parser = parse_effort, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::efforts))]
         effort: Option<String>,
+        /// How every task of the goal ends: merge on the base branch,
+        /// pull-request opened and seen through to its merge, none where
+        /// there is nothing to land, or feature-branch. Fixed once the goal
+        /// is created. Default: merge
+        #[arg(long, value_enum)]
+        landing: Option<Landing>,
     },
     /// List goals: the live ones, newest first (--all includes finished)
     Ls {
@@ -162,6 +168,7 @@ pub(crate) async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Re
             repos,
             model,
             effort,
+            landing,
         } => {
             let goal: GoalDto = client
                 .post_json(
@@ -172,6 +179,7 @@ pub(crate) async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Re
                         repository_ids: resolve_repositories(client, &repos).await?,
                         model,
                         effort,
+                        landing,
                     },
                 )
                 .await?;

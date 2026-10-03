@@ -141,6 +141,7 @@ async fn ariadne_session(h: &Harness, title: &str, agent: &str) -> ariadne_store
     let goal = h
         .store
         .create_goal(ariadne_store::NewGoal {
+            landing: None,
             title: title.into(),
             description: "desc".into(),
             repository_ids: vec![repo.id.clone()],

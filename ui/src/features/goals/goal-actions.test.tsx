@@ -36,6 +36,7 @@ function goal(status: GoalStatus): GoalDto {
     description: "",
     model: "claude-agent-acp:claude-sonnet-5",
     orchestrated: true,
+    landing: "merge",
     repos: [],
     status,
     usage: {

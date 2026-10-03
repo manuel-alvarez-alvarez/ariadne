@@ -99,15 +99,16 @@ wire_enum! { PermissionMode, "permission mode", [
     Auto = "auto", Ask = "ask", Learn = "learn", Ai = "ai",
 ]}
 
-/// How one task ends.
+/// How the tasks of one goal end.
 ///
 /// The one thing about the end of a task the author has to be told, since the
-/// commands it runs differ entirely between the three. The orchestrator agrees
-/// it with the user task by task: some work lands on the base branch, some
-/// goes through a request the author then sees to its merge, and some has
-/// nothing to land at all — a report filed, a document published, a release
-/// cut. All three reach [`TaskStatus::Finished`]; landing is one way of
-/// getting there rather than the meaning of being there.
+/// commands it runs differ entirely between the endings. The user chooses it
+/// once, for the whole goal, when the goal is created, and every task of the
+/// goal follows it: some work lands on the base branch, some goes through a
+/// request the author then sees to its merge, and some has nothing to land at
+/// all — a report filed, a document published, a release cut. Every ending
+/// reaches [`TaskStatus::Finished`]; landing is one way of getting there
+/// rather than the meaning of being there.
 ///
 /// Which forge a published request goes to is *not* here: `origin` says
 /// whether it is GitHub or GitLab, and asking the remote at landing time
@@ -129,10 +130,14 @@ pub enum Landing {
     /// Nothing is landed: what the task produced is the whole of it — a
     /// published tag, a filed report, a document that lives elsewhere.
     None,
+    /// The tasks land on a branch of the goal, which then lands whole. Until
+    /// that branch exists, a task lands exactly as [`Landing::Merge`] does.
+    FeatureBranch,
 }
 
 wire_enum! { Landing, "landing", [
     Merge = "merge", PullRequest = "pull_request", None = "none",
+    FeatureBranch = "feature_branch",
 ]}
 
 impl Landing {

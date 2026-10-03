@@ -178,7 +178,7 @@ pub fn author_briefing(
             ("branch", &task.branch),
             ("base_branch", &repo.base_branch),
             ("repo_path", &repo.path),
-            ("landing", task.landing().as_str()),
+            ("landing", goal.landing().as_str()),
             ("dependencies", &dep_lines),
         ],
     )
@@ -304,6 +304,7 @@ mod tests {
             orchestrated: true,
             model: "stub:test-model".into(),
             effort: None,
+            landing: "merge".into(),
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
         }

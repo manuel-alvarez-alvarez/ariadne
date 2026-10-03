@@ -1,11 +1,12 @@
 ---
 id: how-a-task-ends
 status: current
-updated: 2026-09-21
+updated: 2026-10-03
 areas: [daemon, store, prompts]
 commits: [ad268ee0, 305ee064, 45c5e131, 8174c256, 90ac6e67, 524856c7, fdd0c5b6, a69b953f, 29e6d84e, f79c8e15, a4d7da95]
 tests:
   - crates/ariadne-daemon/tests/it/landing_lifecycle.rs
+  - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-daemon/tests/it/repositories.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-store/src/defaults.rs
@@ -13,33 +14,39 @@ tests:
 
 # How a task ends
 
-Three endings, one of which lands nothing, run by the agent that did the work.
+Four endings, one of which lands nothing, chosen once for the whole goal and
+run by the agent that did the work.
 
 ## Scope
 
-In: the three endings and where each is decided, the procedure of each,
-merge verification, and published-request handling.
+In: the endings and where each is decided, the procedure of each, merge
+verification, and published-request handling.
 
-Out: who approves the change (004), who agrees the ending (003), and the
-state machine around `approved` and `finished` (001).
+Out: who approves the change (004), and the state machine around `approved`
+and `finished` (001).
 
 ## Behavior
 
-1. A task ends one of three ways, named by its own `landing`:
+1. A task ends the way its goal's `landing` names. The user chooses it once,
+   when the goal is created, and every task of the goal follows it:
    - `merge` — the author puts the change on the base branch itself;
    - `pull_request` — the author opens a request and sees it through: it
      answers what is written on it, and the task ends when the request is
      merged;
    - `none` — nothing is landed, and what the task produced is the whole of
-     it: a published tag, a filed report, a document that lives elsewhere.
-   All three reach `finished` (001). Landing is one way of getting there
+     it: a published tag, a filed report, a document that lives elsewhere;
+   - `feature_branch` — the tasks land on a branch of the goal. Until that
+     branch exists, a task lands exactly as `merge` does: the same briefing
+     and the same verification.
+   All of them reach `finished` (001). Landing is one way of getting there
    rather than the meaning of being there.
-2. `merge` is what a task ends with unless whoever wrote it said otherwise.
-   The orchestrator agrees the ending with the user task by task (003), and
-   the user can move it while the task is still pending or ready.
+2. A goal created with no landing gets `merge`. The landing cannot change
+   after the goal is created. A task has no landing of its own: the task
+   requests and the task tools take none, and `TaskDto.landing` is a
+   read-only copy of the goal's.
 3. The procedure is Ariadne's, one text per ending, and nothing overrides it.
    A repository has no say: it is a checkout and a base branch (002), and a
-   second answer stored there could only disagree with the task's. Each text
+   second answer stored there could only disagree with the goal's. Each text
    is rendered with `{task_title}`, `{branch}`, `{base_branch}` and
    `{repo_path}`, and may name nothing else.
 4. An approved task is landed by its own author, in the session and worktree
@@ -92,7 +99,8 @@ state machine around `approved` and `finished` (001).
     worktree, which is thrown away with the task. Then `finish_task`, with no
     merge commit.
 11. The daemon accepts a merge sha only after verifying it with
-    `git merge-base --is-ancestor`: a merge that never happened is refused. A
+    `git merge-base --is-ancestor`, against the ending of the task's goal: a
+    merge that never happened is refused. A
     task that lands nothing has nothing git can be asked about, so nothing is
     verified and no sha is demanded.
 12. The forge is read off the `origin` remote at landing time rather than
@@ -106,9 +114,20 @@ state machine around `approved` and `finished` (001).
   (`landing_lifecycle.rs::an_approval_during_the_authors_start_still_briefs_it_to_land`).
 - An approved task is landed by its own author
   (`landing_lifecycle.rs::an_approved_task_is_landed_by_its_own_author`), with
-  the procedure of the ending it carries
+  the procedure of the ending its goal carries
   (`prompts.rs::the_task_says_what_the_author_lands_with`,
-  `store.rs::a_task_lands_by_the_ending_it_carries_and_the_repository_has_no_say`).
+  `store.rs::a_task_lands_by_the_ending_its_goal_carries`).
+- A goal created with `pull_request` briefs every one of its tasks to land by
+  pull request, and each task reads that landing back
+  (`landing_lifecycle.rs::a_pull_request_goal_briefs_every_task_to_land_by_pull_request`).
+- A goal created with no landing is `merge`, `TaskDto.landing` is the goal's,
+  and a task create or edit that names a landing is refused
+  (`landing_lifecycle.rs::a_goal_with_no_landing_merges_and_a_task_takes_none_of_its_own`);
+  `create_task` and `update_task` take no landing
+  (`tools.rs::the_task_tools_take_no_landing`).
+- A `feature_branch` goal lands its tasks like `merge`: the same briefing, and
+  a merge that never happened is refused
+  (`landing_lifecycle.rs::a_feature_branch_goal_lands_its_tasks_like_merge`).
 - A merge that never happened is refused
   (`landing_lifecycle.rs::a_merge_that_never_happened_is_refused`), and a
   squashed request lands on the sha the author fast-forwarded to
@@ -132,12 +151,12 @@ state machine around `approved` and `finished` (001).
   (`defaults.rs::a_late_squash_keeps_what_another_landing_put_on_the_base_branch`),
   and the brief names the merge-base squash and the guard
   (`::each_landing_briefing_is_one_strategy_and_nothing_of_the_other`).
-- How a task ends travels as the three endings there are
-  (`edit.rs::how_the_task_ends_travels_as_the_three_endings_there_are`).
 
 ## Sources
 
 `crates/ariadne-store/src/defaults.rs` (`LANDING_*`),
-`crates/ariadne-store/src/entities.rs` (`Task::landing_prompt_text`),
+`crates/ariadne-store/src/entities.rs` (`Goal::landing`,
+`Task::landing_prompt_text`), `crates/ariadne-store/src/goals.rs`
+(`goal_landing`), `crates/ariadne-store/src/tasks.rs` (`TASK_ROWS`),
 `crates/ariadne-daemon/src/http/landing.rs`,
 `crates/ariadne-core/src/lib.rs` (`Landing`).

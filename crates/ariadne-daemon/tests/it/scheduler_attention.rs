@@ -209,7 +209,6 @@ impl World {
                     NewTaskAgent::new(Seat::Reviewer, ["code-review"], test_pin()),
                 ],
                 depends_on: vec![],
-                landing: None,
             })
             .await
             .unwrap()

@@ -201,12 +201,14 @@ pub fn default_prompt_text(kind: PromptKind) -> &'static str {
 /// One text per ending rather than one with three halves: a task ends one
 /// way, so the author reads the procedure it runs and nothing of the other
 /// two. Nothing overrides these — how a change reaches a base branch is a
-/// fact about the task, agreed with the user when the task was written
+/// fact about the goal, chosen by the user when the goal was created
 /// (`Landing`), and a second answer stored anywhere else could only disagree
 /// with it.
 pub fn default_landing_prompt(landing: Landing) -> &'static str {
     match landing {
-        Landing::Merge => LANDING_DIRECT,
+        // A feature branch lands its tasks as a merge does, until the goal
+        // has a branch of its own to land them on.
+        Landing::Merge | Landing::FeatureBranch => LANDING_DIRECT,
         Landing::PullRequest => LANDING_PULL_REQUEST,
         Landing::None => LANDING_NONE,
     }
@@ -566,8 +568,7 @@ mod tests {
                     .map(|kind| (kind.as_str().to_string(), default_prompt_text(kind))),
             )
             .chain(
-                Landing::ALL
-                    .into_iter()
+                shipped_landings()
                     .map(|landing| (landing_name(landing), default_landing_prompt(landing))),
             )
             .collect()
@@ -579,6 +580,14 @@ mod tests {
             .iter()
             .map(|s| (format!("{} skill", s.name), s.document))
             .collect()
+    }
+
+    /// The endings with a landing briefing of their own: a feature branch
+    /// is briefed with the merge text, which counts once.
+    fn shipped_landings() -> impl Iterator<Item = Landing> {
+        Landing::ALL
+            .into_iter()
+            .filter(|landing| *landing != Landing::FeatureBranch)
     }
 
     /// How a strategy's landing briefing is named in a failure.
@@ -742,7 +751,7 @@ mod tests {
             _ => 300,
         };
         let landing_cap = |landing: Landing| match landing {
-            Landing::Merge => 1150,
+            Landing::Merge | Landing::FeatureBranch => 1150,
             Landing::PullRequest => 1300,
             Landing::None => 420,
         };
@@ -780,7 +789,7 @@ mod tests {
         );
 
         let mut landings = 0;
-        for landing in Landing::ALL {
+        for landing in shipped_landings() {
             let text = default_landing_prompt(landing);
             landings += text.len();
             assert!(

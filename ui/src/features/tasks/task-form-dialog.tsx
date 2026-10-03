@@ -35,7 +35,7 @@ import { PlusIcon, XIcon } from "lucide-react"
 import { useMemo } from "react"
 import { Controller, useFieldArray, useForm } from "react-hook-form"
 import { toast } from "sonner"
-import { ApiError, type GoalDto, type Landing, type TaskDto } from "@/api"
+import { ApiError, type GoalDto, type TaskDto } from "@/api"
 import {
   FormDialog,
   FormDialogBody,
@@ -53,7 +53,6 @@ import { PinPicker } from "@/features/models/pin-picker"
 import { modelsQueryOptions } from "@/features/models/queries"
 import { skillsQueryOptions } from "@/features/skills/queries"
 import { SkillsInput } from "@/features/skills/skills-input"
-import { LANDING_LABELS } from "@/lib/format"
 import { taskListQueryOptions, useCreateTask, useUpdateTask } from "./queries"
 import {
   makeTaskFormSchema,
@@ -62,14 +61,6 @@ import {
   toCreateTaskRequest,
   toUpdateTaskRequest,
 } from "./task-form-values"
-
-/**
- * How a task can end, in the order a reader meets them: the ordinary one, the
- * one that hands the change to a person, and the one that lands nothing.
- */
-const LANDING_OPTIONS = (["merge", "pull_request", "none"] as const satisfies Landing[]).map(
-  (value) => ({ value, label: LANDING_LABELS[value] }),
-)
 
 export function CreateTaskDialog({
   goal,
@@ -385,22 +376,6 @@ function TaskFormDialog({
               asks.
             </FieldDescription>
             <FieldError>{form.formState.errors.reviewers?.root?.message}</FieldError>
-          </Field>
-
-          <Field>
-            <FieldLabel htmlFor="task-landing">Ends with</FieldLabel>
-            <FormSelect
-              control={form.control}
-              name="landing"
-              id="task-landing"
-              options={LANDING_OPTIONS}
-              empty="merge"
-            />
-            <FieldDescription>
-              What happens to the work when the task is approved. Most tasks put the change on the
-              base branch; some open a request and see it through, and some land nothing at all — a
-              release, a report, a document that lives elsewhere.
-            </FieldDescription>
           </Field>
 
           {multiRepo ? (

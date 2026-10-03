@@ -1149,7 +1149,6 @@ async fn ask_raises_attention_and_a_console_answer_unblocks_the_turn() {
                 NewTaskAgent::new(Seat::Reviewer, ["code-review"], common::test_pin()),
             ],
             depends_on: vec![],
-            landing: None,
         })
         .await
         .unwrap();
@@ -1940,7 +1939,6 @@ async fn a_second_authors_branch_is_the_branch_placeholder() {
                 NewTaskAgent::new(Seat::Reviewer, ["code-review"], common::test_pin()),
             ],
             depends_on: vec![],
-            landing: None,
         })
         .await
         .unwrap();
@@ -2006,7 +2004,6 @@ async fn a_reviewer_of_a_second_author_names_the_reviewed_branch() {
                 NewTaskAgent::new(Seat::Reviewer, ["code-review"], common::test_pin()),
             ],
             depends_on: vec![],
-            landing: None,
         })
         .await
         .unwrap();

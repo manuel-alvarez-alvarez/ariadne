@@ -1,7 +1,7 @@
 ---
 id: mcp-tool-surface
 status: current
-updated: 2026-09-24
+updated: 2026-10-03
 areas: [mcp, cli]
 commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -49,7 +49,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      (004) — and every agent it staffs names its model: 011), `update_task`
      (which replaces the author list whole through `authors`, and refuses
      `default` as a model — a model is required, and `default` stays legal
-     for the effort alone), `list_models` (which holds only the models it
+     for the effort alone) — neither of the two takes a landing, since how a
+     task ends is its goal's (005) — `list_models` (which holds only the models it
      can staff an agent on, each with its `agent_id`, its efforts and the
      user-set `rank` the staffing ladder reads — `null` where the user set
      none — and narrows to one `agent_id` on request: 011),
@@ -117,6 +118,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`mcp.rs::every_seat_has_the_tools_its_playbook_names_and_no_others`), and
   every allowed tool is one the router actually serves
   (`::every_allowed_tool_is_one_the_router_serves`).
+- `create_task` and `update_task` take no landing
+  (`tools.rs::the_task_tools_take_no_landing`).
 - `switch_session` is offered to the orchestrator alone
   (`tools.rs::switch_session_is_offered_to_the_orchestrator_alone`), posts
   the pin to the session's switch endpoint

@@ -116,7 +116,6 @@ pub(super) async fn create(
             description: req.description,
             agents,
             depends_on: req.depends_on,
-            landing: req.landing,
         })
         .await?;
     let dto = task_dto_of(&state.store, task).await?;
@@ -211,7 +210,6 @@ pub(super) async fn update(
                 effort,
                 authors,
                 reviewers,
-                landing: req.landing,
             },
         )
         .await?;

@@ -72,6 +72,7 @@ pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
         usage: GoalUsageDto,
     ) -> GoalDto {
         status: g.status(),
+        landing: g.landing(),
         repos: repos.into_iter().map(repository_dto).collect(),
         usage: usage,
         .. id, title, description, orchestrated, model, effort,

@@ -16,6 +16,12 @@ use crate::{
 /// The fact a task writes once it reaches one of its three endings.
 const TASK_ENDED: &str = "task_ended";
 
+/// The rows a [`Task`] is read from: each task with its goal's landing,
+/// which is how every task of a goal ends. `tasks` keeps no landing of its
+/// own, so a task can never disagree with its goal.
+pub(crate) const TASK_ROWS: &str = "(SELECT tasks.*, goals.landing FROM tasks
+     JOIN goals ON goals.id = tasks.goal_id)";
+
 #[derive(Debug, Clone)]
 pub struct NewTask {
     pub goal_id: String,
@@ -27,8 +33,6 @@ pub struct NewTask {
     /// need at least one reviewer, to pick the winner.
     pub agents: Vec<NewTaskAgent>,
     pub depends_on: Vec<String>,
-    /// How this task ends. None = the way its repository takes a change.
-    pub landing: Option<Landing>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -50,8 +54,6 @@ pub struct TaskUpdate {
     /// The whole reviewer list, replaced: every reviewer is staffed afresh,
     /// with the skills and the pin the caller gave it.
     pub reviewers: Option<Vec<NewTaskAgent>>,
-    /// How the task ends. None leaves it where it is.
-    pub landing: Option<Landing>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -177,8 +179,8 @@ impl Store {
 
         sqlx::query(
             "INSERT INTO tasks (id, goal_id, repo_id, title, description, status, branch,
-                                landing, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)",
+                                created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
         )
         .bind(&id)
         .bind(&goal.id)
@@ -186,10 +188,6 @@ impl Store {
         .bind(&new.title)
         .bind(&new.description)
         .bind(&branch)
-        // Landing on the base branch is what a task ends with unless whoever
-        // wrote it said otherwise: it is what most work does, and the other
-        // two are the ones somebody chooses.
-        .bind(new.landing.unwrap_or(Landing::Merge).as_str())
         .bind(&ts)
         .bind(&ts)
         .execute(&mut *tx)
@@ -212,7 +210,7 @@ impl Store {
         let mut tx = self.w().begin().await?;
         // Status is validated on the row inside the write transaction: a check
         // against the read pool could be stale by the time we hold the lock.
-        let task: Task = Self::fetch_by_in_tx(&mut tx, "task", "tasks", task_id).await?;
+        let task: Task = Self::fetch_by_in_tx(&mut tx, "task", TASK_ROWS, task_id).await?;
         if !matches!(task.status(), TaskStatus::Pending | TaskStatus::Ready) {
             return Err(StoreError::Conflict(format!(
                 "dependencies can only change while pending/ready, task is {}",
@@ -314,11 +312,11 @@ impl Store {
     }
 
     pub async fn get_task(&self, id: &str) -> Result<Task> {
-        self.fetch_by("task", "tasks", "id", id).await
+        self.fetch_by("task", TASK_ROWS, "id", id).await
     }
 
     pub async fn list_tasks(&self, filter: TaskFilter) -> Result<Vec<Task>> {
-        Filtered::new("tasks")
+        Filtered::new(TASK_ROWS)
             .maybe(" AND goal_id = ?", filter.goal_id)
             .maybe(" AND status = ?", filter.status.map(|s| s.as_str()))
             .fetch(self, " ORDER BY id", &[])
@@ -329,23 +327,21 @@ impl Store {
         let mut tx = self.w().begin().await?;
         // Status is validated on the row inside the write transaction: a check
         // against the read pool could be stale by the time we hold the lock.
-        let task: Task = Self::fetch_by_in_tx(&mut tx, "task", "tasks", id).await?;
+        let task: Task = Self::fetch_by_in_tx(&mut tx, "task", TASK_ROWS, id).await?;
         if !matches!(task.status(), TaskStatus::Pending | TaskStatus::Ready) {
             return Err(StoreError::Conflict(format!(
                 "task can only be edited while pending/ready, it is {}",
                 task.status
             )));
         }
-        let landing = update.landing.unwrap_or_else(|| task.landing());
         let title = update.title.unwrap_or(task.title);
         let description = update.description.unwrap_or(task.description);
         sqlx::query(
-            "UPDATE tasks SET title = ?, description = ?, landing = ?, updated_at = ?
+            "UPDATE tasks SET title = ?, description = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(&title)
         .bind(&description)
-        .bind(landing.as_str())
         .bind(now())
         .bind(id)
         .execute(&mut *tx)
@@ -436,7 +432,7 @@ impl Store {
         merge_commit: Option<&str>,
     ) -> Result<Task> {
         let mut tx = self.w().begin().await?;
-        let task: Task = Self::fetch_by_in_tx(&mut tx, "task", "tasks", id).await?;
+        let task: Task = Self::fetch_by_in_tx(&mut tx, "task", TASK_ROWS, id).await?;
         let transition =
             Self::transition_in_tx(&mut tx, &task, to, actor, reason, merge_commit).await?;
         tx.commit().await?;
@@ -685,13 +681,13 @@ impl Store {
     /// leave it waiting for ever. `None` while every dependency can still get
     /// there, merged ones included.
     pub async fn task_dependencies_blocked(&self, task_id: &str) -> Result<Option<Task>> {
-        Ok(sqlx::query_as::<_, Task>(
+        Ok(sqlx::query_as::<_, Task>(sqlx::AssertSqlSafe(format!(
             "SELECT dep.* FROM task_dependencies td
-             JOIN tasks dep ON dep.id = td.depends_on_task_id
+             JOIN {TASK_ROWS} dep ON dep.id = td.depends_on_task_id
              WHERE td.task_id = ? AND dep.status IN ('failed', 'cancelled')
              ORDER BY dep.id
-             LIMIT 1",
-        )
+             LIMIT 1"
+        )))
         .bind(task_id)
         .fetch_optional(self.r())
         .await?)

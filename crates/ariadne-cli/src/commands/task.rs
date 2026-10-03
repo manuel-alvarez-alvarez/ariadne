@@ -13,7 +13,7 @@ use ariadne_api::tasks::{
 };
 use ariadne_api::usage::TokenUsageDto;
 use ariadne_client::{Client, SseEvent};
-use ariadne_core::{Actor, Landing, Seat, TaskStatus};
+use ariadne_core::{Actor, Seat, TaskStatus};
 
 use super::follow;
 use super::resolve::{self, Kind};
@@ -148,11 +148,6 @@ pub(crate) enum TaskCommand {
         /// its registered path (only needed when the goal has several)
         #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_repositories))]
         repo: Option<String>,
-        /// How the task ends: merge on the base branch, pull-request opened
-        /// and seen through to its merge, or none where there is nothing to
-        /// land. Default: the way the repository takes a change
-        #[arg(long, value_enum)]
-        landing: Option<Landing>,
     },
     /// Edit a task that has not started yet
     ///
@@ -199,9 +194,6 @@ pub(crate) enum TaskCommand {
         /// Drop every dependency, leaving the task free to start
         #[arg(long)]
         clear_depends_on: bool,
-        /// How the task ends: merge, pull-request or none
-        #[arg(long, value_enum)]
-        landing: Option<Landing>,
     },
     /// List tasks: the unfinished ones, newest first (--all includes the rest)
     Ls {
@@ -311,7 +303,6 @@ pub(crate) async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Re
             no_reviewer,
             depends_on,
             repo,
-            landing,
         } => {
             let reviewers = if no_reviewer { Vec::new() } else { reviewers };
             let goal = resolve::id(client, Kind::Goal, &goal).await?;
@@ -333,7 +324,6 @@ pub(crate) async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Re
                         repo_id,
                         agents,
                         depends_on,
-                        landing,
                     },
                 )
                 .await?;
@@ -354,7 +344,6 @@ pub(crate) async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Re
             no_reviewer,
             depends_on,
             clear_depends_on,
-            landing,
         } => {
             let id = resolve::id(client, Kind::Task, &id).await?;
             let depends_on = resolve::ids(client, Kind::Task, &depends_on).await?;
@@ -367,7 +356,6 @@ pub(crate) async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Re
                 no_reviewer,
                 depends_on,
                 clear_depends_on,
-                landing,
             })?;
             let t: TaskDto = client.patch_json(&task_path(&id), &body).await?;
             print(format, &t, || {

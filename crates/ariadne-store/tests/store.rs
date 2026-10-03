@@ -494,6 +494,7 @@ async fn seed_goal(store: &Store) -> (Goal, Repository) {
     let repo = seed_repository(store).await;
     let goal = store
         .create_goal(NewGoal {
+            landing: None,
             title: "Test goal".into(),
             description: "desc".into(),
             repository_ids: vec![repo.id.clone()],
@@ -612,7 +613,6 @@ async fn seed_task(store: &Store, goal: &Goal, repo: &Repository, deps: Vec<Stri
                 NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin()),
             ],
             depends_on: deps,
-            landing: None,
         })
         .await
         .unwrap()
@@ -801,62 +801,55 @@ async fn repository_crud_and_unique_path_branch() {
 
 /// A goal holds references, not copies: what it lists is whatever the
 /// repositories say right now, and so is what its tasks resolve.
-/// How a task ends is the task's own, and the built-in procedure of that
-/// ending is the whole of what its author is briefed with. A repository has
-/// no say in it: it is a checkout and a base branch, and a second answer
-/// stored on it could only disagree with the task's.
+/// How a task ends is its goal's, chosen once for the whole goal, and the
+/// built-in procedure of that ending is the whole of what its author is
+/// briefed with. A repository has no say in it: it is a checkout and a base
+/// branch, and a second answer stored on it could only disagree.
 #[tokio::test]
-async fn a_task_lands_by_the_ending_it_carries_and_the_repository_has_no_say() {
+async fn a_task_lands_by_the_ending_its_goal_carries() {
     let (store, _dir) = test_store().await;
     let repo = seed_repository(&store).await;
-    let goal = store
-        .create_goal(NewGoal {
-            title: "Ship it".into(),
-            description: String::new(),
-            repository_ids: vec![repo.id.clone()],
-            pin: default_pin(),
-        })
-        .await
-        .unwrap();
-
-    let staffed = || {
-        vec![
+    let goal_ending_in = |landing: Option<Landing>| NewGoal {
+        landing,
+        title: "Ship it".into(),
+        description: String::new(),
+        repository_ids: vec![repo.id.clone()],
+        pin: default_pin(),
+    };
+    let task_of = |goal_id: &str| NewTask {
+        goal_id: goal_id.to_string(),
+        repo_id: repo.id.clone(),
+        title: "Do it".into(),
+        description: String::new(),
+        agents: vec![
             NewTaskAgent::new(Seat::Author, ["coding"], default_pin()),
             NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin()),
-        ]
+        ],
+        depends_on: vec![],
     };
-    // Nothing said: a task lands on the base branch, which is what most work
-    // does.
-    let default = store
-        .create_task(NewTask {
-            goal_id: goal.id.clone(),
-            repo_id: repo.id.clone(),
-            title: "Nothing said".into(),
-            description: String::new(),
-            agents: staffed(),
-            depends_on: vec![],
-            landing: None,
-        })
-        .await
-        .unwrap();
-    assert_eq!(default.landing(), Landing::Merge);
+
+    // Nothing said: the goal lands on the base branch, which is what most
+    // work does, and so does every task of it.
+    let goal = store.create_goal(goal_ending_in(None)).await.unwrap();
+    assert_eq!(goal.landing(), Landing::Merge);
+    let task = store.create_task(task_of(&goal.id)).await.unwrap();
+    assert_eq!(task.landing(), Landing::Merge);
 
     // And each ending is briefed with its own procedure, whatever repository
     // the task is in.
     for landing in Landing::ALL {
-        let task = store
-            .create_task(NewTask {
-                goal_id: goal.id.clone(),
-                repo_id: repo.id.clone(),
-                title: format!("Ends in {}", landing.as_str()),
-                description: String::new(),
-                agents: staffed(),
-                depends_on: vec![],
-                landing: Some(landing),
-            })
+        let goal = store
+            .create_goal(goal_ending_in(Some(landing)))
             .await
             .unwrap();
-        assert_eq!(task.landing(), landing);
+        assert_eq!(goal.landing(), landing);
+        let task = store.create_task(task_of(&goal.id)).await.unwrap();
+        assert_eq!(task.landing(), landing, "{}", landing.as_str());
+        assert_eq!(
+            store.get_task(&task.id).await.unwrap().landing(),
+            landing,
+            "and a task read again still ends as its goal does"
+        );
         assert_eq!(
             task.landing_prompt_text(),
             default_landing_prompt(landing),
@@ -864,6 +857,13 @@ async fn a_task_lands_by_the_ending_it_carries_and_the_repository_has_no_say() {
             landing.as_str()
         );
     }
+
+    // A feature branch lands its tasks exactly as a merge does, until the
+    // goal has a branch of its own.
+    assert_eq!(
+        default_landing_prompt(Landing::FeatureBranch),
+        default_landing_prompt(Landing::Merge)
+    );
 }
 
 #[tokio::test]
@@ -874,6 +874,7 @@ async fn a_goal_reads_its_repositories_live() {
 
     let goal = store
         .create_goal(NewGoal {
+            landing: None,
             title: "Two repos".into(),
             description: "desc".into(),
             // The same repository named twice is one reference.
@@ -914,6 +915,7 @@ async fn a_goal_needs_repositories_that_exist() {
     let (store, _dir) = test_store().await;
     let repo = seed_repository(&store).await;
     let new_goal = |repository_ids: Vec<String>| NewGoal {
+        landing: None,
         title: "Goal".into(),
         description: "desc".into(),
         repository_ids,
@@ -949,7 +951,6 @@ async fn a_goal_needs_repositories_that_exist() {
                     NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin()),
                 ],
                 depends_on: vec![],
-                landing: None,
             })
             .await,
         Err(StoreError::Invalid(_))
@@ -992,7 +993,6 @@ async fn task_branch_is_named_after_the_title() {
                 NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin()),
             ],
             depends_on: vec![],
-            landing: None,
         })
         .await
         .unwrap();
@@ -2970,7 +2970,6 @@ async fn an_agent_is_written_on_the_pin_it_was_given_whole() {
                 NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin()),
             ],
             depends_on: vec![],
-            landing: None,
         })
         .await
         .unwrap();
@@ -3384,7 +3383,6 @@ async fn a_skill_an_agent_still_loads_cannot_be_deleted() {
                 NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin()),
             ],
             depends_on: vec![],
-            landing: None,
         })
         .await
         .unwrap();
@@ -3414,7 +3412,6 @@ async fn an_agent_cannot_be_staffed_on_a_skill_nothing_answers_to() {
                 NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin()),
             ],
             depends_on: vec![],
-            landing: None,
         })
         .await;
     let message = format!("{:?}", refused.expect_err("no such skill"));
@@ -3441,7 +3438,6 @@ async fn a_task_agent_cannot_be_staffed_on_the_orchestrators_skill() {
                 NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin()),
             ],
             depends_on: vec![],
-            landing: None,
         })
         .await;
     let message = format!("{:?}", refused.expect_err("the orchestrator's skill"));
@@ -3482,7 +3478,6 @@ async fn a_task_takes_several_authors_each_on_a_branch_of_its_own() {
             description: "do things".into(),
             agents,
             depends_on: vec![],
-            landing: None,
         }
     };
 

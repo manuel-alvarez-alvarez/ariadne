@@ -1,6 +1,6 @@
 //! Goal DTOs.
 
-use ariadne_core::GoalStatus;
+use ariadne_core::{GoalStatus, Landing};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -23,6 +23,8 @@ pub struct GoalDto {
     /// whatever the agent runs it at on its own.
     #[schema(example = "high")]
     pub effort: Option<String>,
+    /// How every task of the goal ends, chosen when the goal was created.
+    pub landing: Landing,
     /// The registered repositories the goal works in, as they stand now: a
     /// goal references them, so an edit to one shows up here.
     pub repos: Vec<RepositoryDto>,
@@ -85,4 +87,8 @@ pub struct CreateGoalRequest {
     #[serde(default)]
     #[schema(example = "high")]
     pub effort: Option<String>,
+    /// How every task of the goal ends. Omitted = `merge`. It cannot change
+    /// once the goal is created.
+    #[serde(default)]
+    pub landing: Option<Landing>,
 }

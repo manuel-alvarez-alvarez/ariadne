@@ -559,23 +559,24 @@ fn a_filter_takes_only_the_values_the_daemon_knows() {
 fn a_status_is_spelled_in_kebab_or_in_snake() {
     assert_eq!(task_statuses(&["in-progress"]), [TaskStatus::InProgress]);
     assert_eq!(task_statuses(&["in_progress"]), [TaskStatus::InProgress]);
-    let Command::Task {
-        command: TaskCommand::Create { landing, .. },
+    let Command::Goal {
+        command: GoalCommand::Create { landing, .. },
     } = parse(&[
         "ariadne",
-        "task",
+        "goal",
         "create",
-        "01GOAL",
         "--title",
         "t",
-        "--author",
-        "coding=claude-agent-acp:claude-sonnet-5",
+        "--repo",
+        "/r",
+        "--model",
+        "claude-agent-acp:claude-sonnet-5",
         "--landing",
         "pull-request",
     ])
     .command
     else {
-        panic!("task create");
+        panic!("goal create");
     };
     assert_eq!(
         landing,

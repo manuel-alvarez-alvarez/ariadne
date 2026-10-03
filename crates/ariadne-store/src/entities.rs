@@ -294,8 +294,20 @@ pub struct Goal {
     pub model: String,
     /// Effort that model is run at. None = whatever the agent runs it at.
     pub effort: Option<String>,
+    /// How every task of this goal ends, as [`Landing`] spells it. Read
+    /// through [`Goal::landing`].
+    pub landing: String,
     pub created_at: String,
     pub updated_at: String,
+}
+
+impl Goal {
+    /// How every task of this goal ends. A row written by a future build
+    /// that spells it some other way reads as a goal with nothing to land,
+    /// which is the one answer that asks nothing of git.
+    pub fn landing(&self) -> Landing {
+        self.landing.parse().unwrap_or(Landing::None)
+    }
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -307,7 +319,8 @@ pub struct Task {
     pub description: String,
     pub status: String,
     pub branch: String,
-    /// How this task ends, as [`Landing`] spells it. Read through
+    /// How this task ends, as [`Landing`] spells it: its goal's landing,
+    /// read with the row (`tasks` has no column of its own). Read through
     /// [`Task::landing`].
     pub landing: String,
     pub worktree_path: Option<String>,
@@ -329,20 +342,20 @@ impl Task {
         self.stalled != 0
     }
 
-    /// How this task ends. A row written by a future build that spells it
-    /// some other way reads as a task with nothing to land, which is the one
-    /// answer that asks nothing of git.
+    /// How this task ends: the landing of its goal. A row written by a
+    /// future build that spells it some other way reads as a task with
+    /// nothing to land, which is the one answer that asks nothing of git.
     pub fn landing(&self) -> Landing {
         self.landing.parse().unwrap_or(Landing::None)
     }
 
     /// The procedure the author of this task is briefed to end it with: the
-    /// built-in of the ending the task carries.
+    /// built-in of the ending its goal carries.
     ///
     /// One text per ending, Ariadne's own. A repository has no say in it —
-    /// how a change reaches a base branch is a fact about the task, agreed
-    /// with the user when the task was written, and a second answer stored
-    /// on the checkout could only disagree with it.
+    /// how a change reaches a base branch is a fact about the goal, chosen by
+    /// the user when the goal was created, and a second answer stored on the
+    /// checkout could only disagree with it.
     pub fn landing_prompt_text(&self) -> &'static str {
         default_landing_prompt(self.landing())
     }

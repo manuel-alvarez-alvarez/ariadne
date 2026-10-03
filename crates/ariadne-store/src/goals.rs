@@ -1,7 +1,7 @@
 //! Goal repository.
 
-use ariadne_core::GoalStatus;
 use ariadne_core::id::new_id;
+use ariadne_core::{GoalStatus, Landing};
 
 use crate::{AgentPin, Change, Goal, Repository, Result, Store, StoreError, not_found, now};
 
@@ -15,6 +15,16 @@ pub struct NewGoal {
     /// What this goal's orchestrator runs on: its model,
     /// `<agent>:<model>`, and the effort where one was chosen.
     pub pin: AgentPin,
+    /// How every task of the goal ends. None = [`goal_landing`]'s answer.
+    /// Fixed once the goal is created.
+    pub landing: Option<Landing>,
+}
+
+/// The landing a new goal gets: the one its creator chose, or `merge` where
+/// it chose none. Landing on the base branch is what most work does; the
+/// other endings are the ones somebody chooses.
+fn goal_landing(requested: Option<Landing>) -> Landing {
+    requested.unwrap_or(Landing::Merge)
 }
 
 impl Store {
@@ -46,8 +56,8 @@ impl Store {
         let (model, effort) = AgentPin::columns(&new.pin);
         sqlx::query(
             "INSERT INTO goals (id, title, description, status,
-                                orchestrated, model, effort, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                orchestrated, model, effort, landing, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.title)
@@ -56,6 +66,7 @@ impl Store {
         .bind(orchestrated)
         .bind(&model)
         .bind(&effort)
+        .bind(goal_landing(new.landing).as_str())
         .bind(&ts)
         .bind(&ts)
         .execute(&mut *tx)

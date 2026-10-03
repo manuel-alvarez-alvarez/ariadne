@@ -13,7 +13,7 @@ use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::tasks::{AgentAssignment, UpdateTaskRequest};
 use ariadne_client::Client;
 
-use ariadne_core::{Landing, Seat};
+use ariadne_core::Seat;
 
 use crate::commands::{parse_effort, parse_model, resolve};
 
@@ -119,7 +119,6 @@ pub(crate) struct Edits {
     pub no_reviewer: bool,
     pub depends_on: Vec<String>,
     pub clear_depends_on: bool,
-    pub landing: Option<Landing>,
 }
 
 /// The PATCH body of `task update`, or the reason there is nothing to send.
@@ -139,7 +138,6 @@ pub(crate) fn update_request(edits: Edits) -> Result<UpdateTaskRequest> {
         no_reviewer,
         depends_on,
         clear_depends_on,
-        landing,
     } = edits;
     let req = UpdateTaskRequest {
         title,
@@ -164,7 +162,6 @@ pub(crate) fn update_request(edits: Edits) -> Result<UpdateTaskRequest> {
             (false, true) => None,
             (false, false) => Some(depends_on),
         },
-        landing,
     };
     // An empty PATCH would still reach the daemon and still be refused on a
     // started task, which reads as a failure the caller never asked for.
@@ -174,11 +171,10 @@ pub(crate) fn update_request(edits: Edits) -> Result<UpdateTaskRequest> {
         && req.effort.is_none()
         && req.reviewers.is_none()
         && req.depends_on.is_none()
-        && req.landing.is_none()
     {
         bail!(
             "nothing to update — pass --title, --description, --model, \
-             --effort, --reviewer, --no-reviewer, --landing or --depends-on"
+             --effort, --reviewer, --no-reviewer or --depends-on"
         );
     }
     Ok(req)
@@ -350,7 +346,6 @@ mod tests {
         assert!(req.model.is_none(), "and the pin is left alone");
         assert!(req.reviewers.is_none());
         assert!(req.depends_on.is_none());
-        assert!(req.landing.is_none(), "and so is how the task ends");
 
         let req = update_request(Edits {
             reviewers: vec![
@@ -402,20 +397,6 @@ mod tests {
         assert!(req.depends_on.is_none(), "and nothing else was touched");
     }
 
-    /// How a task ends is an edit like any other, while it has not started.
-    #[test]
-    fn how_the_task_ends_travels_as_the_three_endings_there_are() {
-        for landing in [Landing::Merge, Landing::PullRequest, Landing::None] {
-            let req = update_request(Edits {
-                landing: Some(landing),
-                ..Edits::default()
-            })
-            .expect("body");
-            assert_eq!(req.landing, Some(landing));
-            assert!(req.title.is_none(), "and nothing else was touched");
-        }
-    }
-
     /// What the author runs on is three answers, and the one field carries
     /// each of them: nothing said at all, back to auto, or an agent — with a
     /// model of it after the `:` where one was named.
@@ -463,6 +444,5 @@ mod tests {
         assert!(err.to_string().starts_with("nothing to update"), "{err}");
         assert!(err.to_string().contains("--model"), "{err}");
         assert!(err.to_string().contains("--effort"), "{err}");
-        assert!(err.to_string().contains("--landing"), "{err}");
     }
 }

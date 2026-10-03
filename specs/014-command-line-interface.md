@@ -73,10 +73,11 @@ same binary also serves (013).
    since a repeatable flag cannot be given zero times on purpose:
    `--no-reviewer` for a task with nothing to review, `--clear-depends-on` for
    one with nothing to wait for.
-9. Every judgement the orchestrator makes about a task can be made from here
-   too: how it ends (`task create|update --landing`), whether it is reviewed
-   (`--reviewer`, `--no-reviewer`), and whether the goal is over
-   (`goal complete`).
+9. Every judgement about a goal's work can be made from here too: how its
+   tasks end (`goal create --landing`, fixed once the goal is created, and
+   `merge` where it is not given; a task takes no landing of its own: 005),
+   whether a task is reviewed (`--reviewer`, `--no-reviewer`), and whether
+   the goal is over (`goal complete`).
 10. What the agents said to each other is readable from here: `task messages`
     lists the whole channel of a task, oldest first (018); `--full` prints
     each one whole, through `$PAGER`, since the table cuts a body to its
@@ -265,7 +266,8 @@ same binary also serves (013).
   `::the_listing_flags_are_advertised_exactly_where_they_are_honored`), and
   parse on either side (`::the_display_flags_parse_on_either_side_of_the_subcommand`).
 - A status is spelled in kebab or snake, and so is every other enum a flag
-  takes — `repo add --permission-mode` among them, `ai` included, while
+  takes — `goal create --landing` and `repo add --permission-mode` among
+  them, `ai` included, while
   `task create` takes no permission mode; several statuses ride on one flag,
   and a non-status lists the real ones
   (`::a_status_is_spelled_in_kebab_or_in_snake`, `::several_statuses_ride_on_one_flag`,

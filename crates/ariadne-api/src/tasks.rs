@@ -23,8 +23,8 @@ pub struct TaskDto {
     /// Ids of tasks that must merge before this one starts.
     pub depends_on: Vec<String>,
     pub branch: String,
-    /// How the task ends: a change on the base branch, a request somebody
-    /// else merges, or nothing at all.
+    /// How the task ends: a read-only copy of its goal's landing, which every
+    /// task of the goal follows.
     pub landing: Landing,
     pub worktree_path: Option<String>,
     /// Set when the agent went idle without advancing the task.
@@ -190,9 +190,6 @@ pub struct CreateTaskRequest {
     /// Task ids this task depends on.
     #[serde(default)]
     pub depends_on: Vec<String>,
-    /// How the task ends. Omitted = the way its repository takes a change.
-    #[serde(default)]
-    pub landing: Option<Landing>,
 }
 
 /// Partial update; only allowed while the task is pending/ready.
@@ -225,8 +222,6 @@ pub struct UpdateTaskRequest {
     /// with the skills and the model it names.
     pub reviewers: Option<Vec<AgentAssignment>>,
     pub depends_on: Option<Vec<String>>,
-    /// How the task ends. Absent leaves it where it is.
-    pub landing: Option<Landing>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

@@ -88,6 +88,7 @@ pub(super) async fn create(
             description: req.description,
             repository_ids: req.repository_ids,
             pin,
+            landing: req.landing,
         })
         .await?;
     // The scheduler spawns the orchestrator session for goals in planning.

@@ -371,7 +371,6 @@ async fn a_key_answers_a_pending_permission_question() {
                 NewTaskAgent::new(Seat::Reviewer, ["code-review"], common::test_pin()),
             ],
             depends_on: vec![],
-            landing: None,
         })
         .await
         .unwrap();

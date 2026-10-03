@@ -64,7 +64,9 @@ pub(super) async fn verify_merged(
         // What the task produced is the task's own to have put where it
         // belongs, and no check here can see it.
         Landing::None => {}
-        Landing::Merge => {
+        // A feature branch lands its tasks as a merge does, until the goal
+        // has a branch of its own to land them on.
+        Landing::Merge | Landing::FeatureBranch => {
             // The branch that lands is the picked winner's, on a task
             // staffed with several authors; the task's own everywhere else.
             let branch = state

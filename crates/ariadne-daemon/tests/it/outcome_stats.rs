@@ -172,7 +172,6 @@ async fn a_contested_pick_writes_one_fact_the_outcomes_stat_counts() {
                 NewTaskAgent::new(Seat::Reviewer, ["code-review"], test_pin()),
             ],
             depends_on: vec![],
-            landing: None,
         })
         .await
         .unwrap();

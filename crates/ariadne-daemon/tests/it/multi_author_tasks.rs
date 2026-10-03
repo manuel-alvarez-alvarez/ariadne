@@ -78,7 +78,6 @@ async fn inactive_contest(h: &Harness, reviewers: usize) -> Contest {
                 )
                 .collect(),
             depends_on: vec![],
-            landing: None,
         })
         .await
         .unwrap();
