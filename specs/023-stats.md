@@ -130,6 +130,22 @@ fact and its rules here when it is built.
     `since` and `repo` filter its facts.
 
 18. `ariadne stats <family> [--since <duration|date>] [--repo <id>]` prints a
+### The `tools` family
+
+17. A `tool_call` fact is written when an ACP tool call ends. Its `data` is
+    `tool_name`, `duration_ms`, and `ok`; a failed ACP status writes `ok = false`.
+    The runtime keeps the opening instant with each open call and spawns the
+    `session_fact` and ledger write, so neither a tool update nor a turn waits
+    for SQLite.
+18. A `permission` fact is written after each ACP permission reply. Its
+    `data` is `tool_name`, `decided_by`, `answer` (`allow`, `deny`, or
+    `cancelled`), `console_option_id`, and `wait_ms`.
+19. `GET /v1/stats/tools` answers `ToolStatsDto`: tool rows carry calls,
+    errors, median and p90 duration; model rows carry calls and mean duration;
+    permission rows group total and mean wait by `decided_by` and `answer`.
+    The median averages the two middle durations and p90 uses nearest rank.
+
+17. `ariadne stats <family> [--since <duration|date>] [--repo <id>]` prints a
     family. `ariadne stats` alone prints `models`. `--repo` takes an id or a
     unique prefix of one (014). `--since` is sent to the daemon as it was
     written.
@@ -169,6 +185,17 @@ fact and its rules here when it is built.
   (`commands/stats.rs::tests::reviews_json_has_the_dto_and_the_table_has_three_groups`).
 - The Stats screen asks for the reviews panel alongside model stats
   (`stats.test.tsx` "renders the models panel from the daemon's rows").
+- Tool durations produce the documented median and nearest-rank p90, and
+  `since` excludes later facts
+  (`store.rs::tool_stats_keep_the_facts_since_the_filter_and_measure_percentiles`).
+- A tool completion and a console permission answer write their facts, and
+  `GET /v1/stats/tools` returns both
+  (`stats.rs::a_tool_call_and_console_permission_are_reported_as_tool_stats`).
+- `ariadne stats tools --format json` prints the tools DTO and the table
+  prints its tool and permission groups
+  (`commands/stats.rs::tools_json_prints_the_dto_and_the_table_groups_its_rows`).
+- The tools panel renders the daemon response under `qk.stats.tools`
+  (`stats.test.tsx` "renders the tools panel from the daemon's rows").
 - Deleting the goal keeps the fact
   (`store.rs::a_fact_outlives_the_goal_it_is_about`).
 - A fact is written once per launch

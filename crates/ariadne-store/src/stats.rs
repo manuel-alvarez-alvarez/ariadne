@@ -101,6 +101,40 @@ pub struct MessageStatRow {
     pub from_actor: String,
     pub total: u64,
     pub mean_per_task: f64,
+/// All aggregates over tool calls and permission answers in the selected
+/// facts.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolStats {
+    pub tools: Vec<ToolStatRow>,
+    pub models: Vec<ToolModelStatRow>,
+    pub permissions: Vec<PermissionStatRow>,
+}
+
+/// How often a tool ran and how long its completed calls took.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolStatRow {
+    pub tool_name: String,
+    pub calls: u64,
+    pub errors: u64,
+    pub median_duration_ms: f64,
+    pub p90_duration_ms: f64,
+}
+
+/// How long tools took on one model.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolModelStatRow {
+    pub model: String,
+    pub calls: u64,
+    pub mean_duration_ms: f64,
+}
+
+/// Permission answers, grouped by who answered and what the answer was.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PermissionStatRow {
+    pub decided_by: String,
+    pub answer: String,
+    pub permissions: u64,
+    pub mean_wait_ms: f64,
 }
 
 /// One row of the main aggregate, in the order its `SELECT` names them.
@@ -365,6 +399,104 @@ impl Store {
             messages,
         })
     }
+    /// How tools and permission requests performed over the facts the filter
+    /// keeps. Durations are ordered in Rust because SQLite has no portable
+    /// percentile aggregate: the median averages the two middle values and
+    /// p90 is the nearest-rank value.
+    pub async fn tool_stats(&self, filter: &StatsFilter) -> Result<ToolStats> {
+        let (narrow, binds) = narrowed(filter);
+        let mut calls =
+            sqlx::query_as::<_, (String, Option<String>, i64, i64)>(sqlx::AssertSqlSafe(format!(
+                "SELECT json_extract(data, '$.tool_name'), model,
+                        json_extract(data, '$.duration_ms'), json_extract(data, '$.ok')
+                   FROM stat_facts WHERE kind = 'tool_call'{narrow}"
+            )));
+        for bind in &binds {
+            calls = calls.bind(bind);
+        }
+        let calls = calls.fetch_all(self.r()).await?;
+        let mut by_tool: HashMap<String, (u64, u64, Vec<i64>)> = HashMap::new();
+        let mut by_model: HashMap<String, (u64, i64)> = HashMap::new();
+        for (tool_name, model, duration_ms, ok) in calls {
+            let tool = tool_name;
+            let duration = duration_ms.max(0);
+            let row = by_tool.entry(tool).or_default();
+            row.0 += 1;
+            row.1 += (ok == 0) as u64;
+            row.2.push(duration);
+            if let Some(model) = model {
+                let row = by_model.entry(model).or_default();
+                row.0 += 1;
+                row.1 += duration;
+            }
+        }
+        let mut tools: Vec<_> = by_tool
+            .into_iter()
+            .map(|(tool_name, (calls, errors, mut durations))| {
+                durations.sort_unstable();
+                ToolStatRow {
+                    tool_name,
+                    calls,
+                    errors,
+                    median_duration_ms: median(&durations),
+                    p90_duration_ms: percentile90(&durations),
+                }
+            })
+            .collect();
+        tools.sort_by(|a, b| a.tool_name.cmp(&b.tool_name));
+        let mut models: Vec<_> = by_model
+            .into_iter()
+            .map(|(model, (calls, total))| ToolModelStatRow {
+                model,
+                calls,
+                mean_duration_ms: total as f64 / calls as f64,
+            })
+            .collect();
+        models.sort_by(|a, b| a.model.cmp(&b.model));
+
+        let mut permissions =
+            sqlx::query_as::<_, (String, String, i64, Option<f64>)>(sqlx::AssertSqlSafe(format!(
+                "SELECT json_extract(data, '$.decided_by'), json_extract(data, '$.answer'),
+                        COUNT(*), AVG(json_extract(data, '$.wait_ms'))
+                   FROM stat_facts WHERE kind = 'permission'{narrow}
+               GROUP BY json_extract(data, '$.decided_by'), json_extract(data, '$.answer')
+               ORDER BY json_extract(data, '$.decided_by'), json_extract(data, '$.answer')"
+            )));
+        for bind in &binds {
+            permissions = permissions.bind(bind);
+        }
+        let permissions = permissions
+            .fetch_all(self.r())
+            .await?
+            .into_iter()
+            .map(
+                |(decided_by, answer, permissions, mean_wait_ms)| PermissionStatRow {
+                    decided_by,
+                    answer,
+                    permissions: permissions.max(0) as u64,
+                    mean_wait_ms: mean_wait_ms.unwrap_or(0.0),
+                },
+            )
+            .collect();
+        Ok(ToolStats {
+            tools,
+            models,
+            permissions,
+        })
+    }
+}
+
+fn median(values: &[i64]) -> f64 {
+    let middle = values.len() / 2;
+    if values.len().is_multiple_of(2) {
+        (values[middle - 1] + values[middle]) as f64 / 2.0
+    } else {
+        values[middle] as f64
+    }
+}
+
+fn percentile90(values: &[i64]) -> f64 {
+    values[((values.len() * 90).div_ceil(100)).saturating_sub(1)] as f64
 }
 
 /// The clauses a filter adds to a `WHERE`, and the values they bind, in order.

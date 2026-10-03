@@ -82,4 +82,33 @@ pub struct ReviewStatsDto {
     pub authors: Vec<AuthorReviewStatDto>,
     pub reviewers: Vec<ReviewerStatDto>,
     pub messages: Vec<MessageStatDto>,
+pub struct ToolStatDto {
+    pub tool_name: String,
+    pub calls: u64,
+    pub errors: u64,
+    pub median_duration_ms: f64,
+    pub p90_duration_ms: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ToolModelStatDto {
+    pub model: String,
+    pub calls: u64,
+    pub mean_duration_ms: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct PermissionStatDto {
+    pub decided_by: String,
+    pub answer: String,
+    pub permissions: u64,
+    pub mean_wait_ms: f64,
+}
+
+/// Response of `GET /v1/stats/tools`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ToolStatsDto {
+    pub tools: Vec<ToolStatDto>,
+    pub models: Vec<ToolModelStatDto>,
+    pub permissions: Vec<PermissionStatDto>,
 }

@@ -9,6 +9,10 @@ use ariadne_api::stats::{
     ReviewerStatDto, SkillCountDto, StatsQuery,
 };
 use ariadne_store::{ModelStatRow, ReviewStats, StatsFilter};
+    ModelStatDto, ModelStatsResponse, PermissionStatDto, SkillCountDto, StatsQuery,
+    ToolModelStatDto, ToolStatDto, ToolStatsDto,
+};
+use ariadne_store::{ModelStatRow, StatsFilter};
 
 use super::AppState;
 use super::error::{ApiError, ApiResult, Json};
@@ -78,6 +82,50 @@ fn review_stats_dto(stats: ReviewStats) -> ReviewStatsDto {
             })
             .collect(),
     }
+#[utoipa::path(get, path = "/v1/stats/tools", tag = "stats",
+    params(StatsQuery),
+    responses((status = 200, body = ToolStatsDto),
+              (status = 400, description = "`since` is neither a moment nor a span")))]
+pub(super) async fn tools(
+    State(state): State<AppState>,
+    Query(query): Query<StatsQuery>,
+) -> ApiResult<Json<ToolStatsDto>> {
+    let stats = state
+        .store
+        .tool_stats(&stats_filter(&query, Utc::now())?)
+        .await?;
+    Ok(Json(ToolStatsDto {
+        tools: stats
+            .tools
+            .into_iter()
+            .map(|row| ToolStatDto {
+                tool_name: row.tool_name,
+                calls: row.calls,
+                errors: row.errors,
+                median_duration_ms: row.median_duration_ms,
+                p90_duration_ms: row.p90_duration_ms,
+            })
+            .collect(),
+        models: stats
+            .models
+            .into_iter()
+            .map(|row| ToolModelStatDto {
+                model: row.model,
+                calls: row.calls,
+                mean_duration_ms: row.mean_duration_ms,
+            })
+            .collect(),
+        permissions: stats
+            .permissions
+            .into_iter()
+            .map(|row| PermissionStatDto {
+                decided_by: row.decided_by,
+                answer: row.answer,
+                permissions: row.permissions,
+                mean_wait_ms: row.mean_wait_ms,
+            })
+            .collect(),
+    }))
 }
 
 /// The store's filter for a stats query, `since` read against `now`. Every

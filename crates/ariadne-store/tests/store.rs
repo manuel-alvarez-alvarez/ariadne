@@ -4218,6 +4218,78 @@ async fn model_stats_keep_the_facts_since_the_filter_and_of_its_repository() {
     assert_eq!(sessions(store.model_stats(&of_a).await.unwrap()), 1);
 }
 
+/// Tool facts are grouped by tool and model, with the median and nearest-rank
+/// p90 over their durations; `since` excludes facts outside its span.
+#[tokio::test]
+async fn tool_stats_keep_the_facts_since_the_filter_and_measure_percentiles() {
+    let (store, _dir) = test_store().await;
+    for (duration_ms, ok) in [(10, true), (20, true), (30, false), (100, true)] {
+        let mut fact = ended(
+            "01REPO",
+            &format!("launch-{duration_ms}"),
+            serde_json::json!({
+                "tool_name": "Bash", "duration_ms": duration_ms, "ok": ok,
+            }),
+        );
+        fact.kind = "tool_call".into();
+        store.record_fact(fact).await.unwrap();
+    }
+    let permission = NewStatFact {
+        kind: "permission".into(),
+        repo_id: Some("01REPO".into()),
+        goal_id: None,
+        task_id: None,
+        session_id: None,
+        launch_id: None,
+        seat: None,
+        model: None,
+        effort: None,
+        skills: vec![],
+        data: serde_json::json!({"decided_by": "console", "answer": "allow", "wait_ms": 40}),
+    };
+    store.record_fact(permission).await.unwrap();
+    let stats = store.tool_stats(&StatsFilter::default()).await.unwrap();
+    assert_eq!(
+        stats.tools,
+        vec![ariadne_store::ToolStatRow {
+            tool_name: "Bash".into(),
+            calls: 4,
+            errors: 1,
+            median_duration_ms: 25.0,
+            p90_duration_ms: 100.0,
+        }]
+    );
+    assert_eq!(
+        stats.models,
+        vec![ariadne_store::ToolModelStatRow {
+            model: "stub:test-model".into(),
+            calls: 4,
+            mean_duration_ms: 40.0,
+        }]
+    );
+    assert_eq!(
+        stats.permissions,
+        vec![ariadne_store::PermissionStatRow {
+            decided_by: "console".into(),
+            answer: "allow".into(),
+            permissions: 1,
+            mean_wait_ms: 40.0,
+        }]
+    );
+    let later = StatsFilter {
+        since: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+        repo_id: None,
+    };
+    assert_eq!(
+        store.tool_stats(&later).await.unwrap(),
+        ariadne_store::ToolStats {
+            tools: vec![],
+            models: vec![],
+            permissions: vec![]
+        }
+    );
+}
+
 /// A fact names its goal by id and holds no key to it, so deleting the goal
 /// leaves the fact where it was.
 #[tokio::test]

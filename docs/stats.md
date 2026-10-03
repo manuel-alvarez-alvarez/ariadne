@@ -38,6 +38,7 @@ author, reviewer). A row shows:
 ariadne stats                       # the same as `ariadne stats models`
 ariadne stats models --since 7d
 ariadne stats models --repo <repo-id> --format json
+ariadne stats tools --since 7d
 ```
 
 `--repo` takes a repository id or a unique prefix of one. The table prints
@@ -57,6 +58,12 @@ a reload keeps them. The **Models** panel shows the same rows as
 `ariadne stats reviews` shows author approval rounds, reviewer verdict and
 latency figures, and message flow by kind and sender. The Stats screen shows
 author figures in its **Reviews** panel. It takes the same filters as models.
+## Tools and permissions
+
+The `tools` stat shows calls and errors per tool, their median and p90
+duration, and calls with mean duration per model. It also groups permission
+answers by who decided and by answer, with the total and mean wait. The
+**Tools** panel uses the same filters as Models.
 
 ## From the API
 
@@ -66,3 +73,5 @@ item per model and seat. A `since` that is neither a span nor a moment returns
 
 `GET /v1/stats/reviews?since=7d&repo=<repo-id>` returns author, reviewer and
 message aggregates.
+`GET /v1/stats/tools?since=7d&repo=<repo-id>` returns tool, model and
+permission aggregates.

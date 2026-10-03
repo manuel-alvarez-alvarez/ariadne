@@ -41,6 +41,8 @@ pub use skills::NewSkill;
 pub use stats::{
     AuthorReviewStatRow, MessageStatRow, ModelStatRow, NewStatFact, ReviewStats, ReviewerStatRow,
     StatsFilter,
+    ModelStatRow, NewStatFact, PermissionStatRow, StatsFilter, ToolModelStatRow, ToolStatRow,
+    ToolStats,
 };
 pub use task_agents::NewTaskAgent;
 pub use tasks::{NewTask, TaskFilter, TaskUpdate, author_branch};

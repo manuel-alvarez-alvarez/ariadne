@@ -6,13 +6,13 @@ use crate::common;
 use axum::http::StatusCode;
 use serde_json::json;
 
-use ariadne_api::stats::{ModelStatsResponse, SkillCountDto};
+use ariadne_api::stats::{ModelStatsResponse, SkillCountDto, ToolStatsDto};
 use ariadne_api::usage::TokenUsageDto;
-use ariadne_core::{Seat, SessionStatus, TokenUsage};
+use ariadne_core::{PermissionMode, Seat, SessionStatus, TokenUsage};
 use ariadne_store::AgentSession;
 
 use common::acp::{discovery_settled, registry_home, script, stub_acp_agent};
-use common::{Cast, Harness, TIMEOUT, eventually, get, harness, post};
+use common::{Cast, Harness, TIMEOUT, eventually, get, harness, post, post_json};
 
 const LAUNCH: &str = "01launchonexxxxxxxxxxxxxxx";
 
@@ -137,6 +137,61 @@ async fn the_models_stat_returns_the_row_of_an_ended_session() {
             sessions: 1,
         }]
     );
+}
+
+/// A completed tool call and a console permission answer become facts, and
+/// the tools stat reads both back.
+#[tokio::test]
+async fn a_tool_call_and_console_permission_are_reported_as_tool_stats() {
+    let mut scripted = script();
+    scripted["prompts"] = json!([{
+        "updates": [
+            {"sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "Bash",
+             "kind": "execute", "status": "pending", "rawInput": {"command": "ls"}},
+            {"sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "completed"},
+        ],
+        "permission": {
+            "toolCall": {"toolCallId": "call-2", "name": "Write", "kind": "write"},
+            "options": [
+                {"optionId": "no", "name": "Reject", "kind": "reject_once"},
+                {"optionId": "yes", "name": "Allow", "kind": "allow_once"},
+            ],
+        },
+    }]);
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness().home(registry_home(&stub)).await;
+    h.git_repo("repo");
+    let cast = h.cast().await;
+    h.set_permission_mode(&cast.repo, PermissionMode::Ask).await;
+    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    eventually(TIMEOUT, "the permission request", || async {
+        h.store
+            .count_session_events(&session.id, "permission_request")
+            .await
+            .unwrap()
+            == 1
+    })
+    .await;
+    h.send(post_json(
+        &format!("/v1/sessions/{}/console/input", session.id),
+        json!({"text": "yes"}),
+    ))
+    .await;
+    eventually(TIMEOUT, "the tool facts", || async {
+        h.facts("tool_call").await.len() == 1 && h.facts("permission").await.len() == 1
+    })
+    .await;
+    let tool = &h.facts("tool_call").await[0];
+    assert_eq!(tool.data["tool_name"], "Bash");
+    assert!(tool.data["duration_ms"].as_u64().is_some());
+    let permission = &h.facts("permission").await[0];
+    assert_eq!(permission.data["decided_by"], "console");
+    assert_eq!(permission.data["answer"], "allow");
+    let stats: ToolStatsDto = h.get("/v1/stats/tools").await;
+    assert_eq!(stats.tools[0].tool_name, "Bash");
+    assert_eq!(stats.permissions[0].decided_by, "console");
+    assert_eq!(stats.permissions[0].answer, "allow");
 }
 
 /// `since=1h` keeps a fact written a moment ago, and a moment after now

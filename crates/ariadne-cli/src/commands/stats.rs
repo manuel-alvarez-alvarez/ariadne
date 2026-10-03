@@ -5,6 +5,10 @@ use anyhow::Result;
 use clap::Subcommand;
 
 use ariadne_api::stats::{ModelStatDto, ModelStatsResponse, ReviewStatsDto, StatsQuery};
+use ariadne_api::stats::{
+    ModelStatDto, ModelStatsResponse, PermissionStatDto, StatsQuery, ToolModelStatDto, ToolStatDto,
+    ToolStatsDto,
+};
 use ariadne_client::Client;
 
 use super::query_path;
@@ -12,6 +16,8 @@ use super::resolve::{self, Kind};
 use crate::output::{
     Column, Format, UNCAPPED, col, dash, duration, empty_state, print, print_list, print_table,
     usage_cell,
+    Column, Format, UNCAPPED, col, dash, duration, empty_state, print_json, print_list,
+    print_table, usage_cell,
 };
 
 /// Columns of `stats models`. The model and its seat are what a row is about,
@@ -46,12 +52,33 @@ const REVIEW_MESSAGES: &[Column] = &[
     col("mean per task", UNCAPPED),
 ];
 
+const TOOLS: &[Column] = &[
+    col("tool", UNCAPPED).title(),
+    col("calls", UNCAPPED),
+    col("errors", UNCAPPED),
+    col("median", UNCAPPED),
+    col("p90", UNCAPPED),
+];
+const TOOL_MODELS: &[Column] = &[
+    col("model", UNCAPPED).title(),
+    col("calls", UNCAPPED),
+    col("mean", UNCAPPED),
+];
+const PERMISSIONS: &[Column] = &[
+    col("decided by", UNCAPPED).title(),
+    col("answer", UNCAPPED),
+    col("total", UNCAPPED),
+    col("mean wait", UNCAPPED),
+];
+
 #[derive(Subcommand)]
 pub(crate) enum StatsCommand {
     /// How each model did in each seat: sessions, failures, stalls, tokens
     Models,
     /// How reviews and their messages flowed
     Reviews,
+    /// How often each tool ran, how long it took, and how permissions answered.
+    Tools,
 }
 
 /// The filters every family takes, as the command line gave them.
@@ -129,6 +156,40 @@ async fn reviews(client: &Client, query: &StatsQuery, format: Format) -> Result<
         println!("Messages");
         print_table(REVIEW_MESSAGES, &messages).expect("print messages");
     })
+        StatsCommand::Tools => tools(client, &query, format).await,
+    }
+}
+
+async fn tools(client: &Client, query: &StatsQuery, format: Format) -> Result<()> {
+    let response: ToolStatsDto = client
+        .get_json(&query_path("/v1/stats/tools", query)?)
+        .await?;
+    if format == Format::Json {
+        return print_json(&response);
+    }
+    println!("Tools");
+    print_table(
+        TOOLS,
+        &response.tools.iter().map(tool_row).collect::<Vec<_>>(),
+    )?;
+    println!("\nModels");
+    print_table(
+        TOOL_MODELS,
+        &response
+            .models
+            .iter()
+            .map(tool_model_row)
+            .collect::<Vec<_>>(),
+    )?;
+    println!("\nPermissions");
+    print_table(
+        PERMISSIONS,
+        &response
+            .permissions
+            .iter()
+            .map(permission_row)
+            .collect::<Vec<_>>(),
+    )
 }
 
 async fn models(client: &Client, query: &StatsQuery, format: Format) -> Result<()> {
@@ -166,6 +227,37 @@ fn model_row(row: &ModelStatDto) -> Vec<String> {
                 .collect::<Vec<_>>()
                 .join(", "),
         },
+    ]
+}
+
+fn milliseconds(value: f64) -> String {
+    format!("{}ms", value.round())
+}
+
+fn tool_row(row: &ToolStatDto) -> Vec<String> {
+    vec![
+        row.tool_name.clone(),
+        row.calls.to_string(),
+        row.errors.to_string(),
+        milliseconds(row.median_duration_ms),
+        milliseconds(row.p90_duration_ms),
+    ]
+}
+
+fn tool_model_row(row: &ToolModelStatDto) -> Vec<String> {
+    vec![
+        row.model.clone(),
+        row.calls.to_string(),
+        milliseconds(row.mean_duration_ms),
+    ]
+}
+
+fn permission_row(row: &PermissionStatDto) -> Vec<String> {
+    vec![
+        row.decided_by.clone(),
+        row.answer.clone(),
+        row.permissions.to_string(),
+        milliseconds(row.mean_wait_ms),
     ]
 }
 
@@ -208,6 +300,29 @@ mod tests {
                     sessions: 1,
                 },
             ],
+        }
+    }
+
+    fn tool_stats() -> ToolStatsDto {
+        ToolStatsDto {
+            tools: vec![ToolStatDto {
+                tool_name: "Bash".into(),
+                calls: 4,
+                errors: 1,
+                median_duration_ms: 25.0,
+                p90_duration_ms: 100.0,
+            }],
+            models: vec![ToolModelStatDto {
+                model: "stub:test-model".into(),
+                calls: 4,
+                mean_duration_ms: 40.0,
+            }],
+            permissions: vec![PermissionStatDto {
+                decided_by: "console".into(),
+                answer: "allow".into(),
+                permissions: 1,
+                mean_wait_ms: 20.0,
+            }],
         }
     }
 
@@ -319,5 +434,45 @@ mod tests {
         ] {
             assert!(printed.contains(value), "{printed}");
         }
+    /// `stats tools` reads its DTO as JSON, and its three tables name the
+    /// tool, model, and permission groups.
+    #[tokio::test]
+    async fn tools_json_prints_the_dto_and_the_table_groups_its_rows() {
+        async fn handler() -> Json<ToolStatsDto> {
+            Json(tool_stats())
+        }
+        let app = Router::new().route("/v1/stats/tools", get(handler));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = Client::tcp(format!("http://{address}"));
+        run(
+            &client,
+            Some(StatsCommand::Tools),
+            Filters {
+                since: None,
+                repo: None,
+            },
+            Format::Json,
+        )
+        .await
+        .unwrap();
+        let tool =
+            render_table(TOOLS, &[tool_row(&tool_stats().tools[0])], &View::plain()).unwrap();
+        let model = render_table(
+            TOOL_MODELS,
+            &[tool_model_row(&tool_stats().models[0])],
+            &View::plain(),
+        )
+        .unwrap();
+        let permission = render_table(
+            PERMISSIONS,
+            &[permission_row(&tool_stats().permissions[0])],
+            &View::plain(),
+        )
+        .unwrap();
+        assert!(tool.contains("TOOL") && tool.contains("Bash"));
+        assert!(model.contains("MODEL") && model.contains("stub:test-model"));
+        assert!(permission.contains("DECIDED BY") && permission.contains("console"));
     }
 }

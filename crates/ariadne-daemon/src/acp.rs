@@ -20,7 +20,7 @@ use std::pin::Pin;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use agent_client_protocol::schema::{ProtocolVersion, v1};
 use agent_client_protocol::{Agent, Client, ConnectionTo, JsonRpcNotification, JsonRpcRequest};
@@ -48,6 +48,7 @@ use crate::http::classify::summarize;
 use crate::http::events::ingest_event;
 use crate::learned_key::{Facts, Key, normalize};
 use crate::scheduler::SchedEvent;
+use crate::stats::session_fact;
 use crate::timeouts::Timeouts;
 use crate::transcript::{LaunchTranscript, TranscriptHomes};
 
@@ -271,8 +272,14 @@ struct Turn {
     /// ends it — or a chunk of another kind or another message — and it is
     /// stored where it stands (021).
     text: Option<Run>,
-    tools: HashMap<String, Value>,
+    tools: HashMap<String, OpenToolCall>,
     available_commands: Option<AvailableCommands>,
+}
+
+/// An open tool call and the moment its ACP opening update arrived.
+struct OpenToolCall {
+    call: Value,
+    started_at: Instant,
 }
 
 impl Turn {
@@ -1463,6 +1470,24 @@ impl EventSink {
         }
     }
 
+    /// Append one session fact without making ACP wait on SQLite. Facts are
+    /// observational: a failure is logged after the protocol reply has gone
+    /// out, and does not change the turn.
+    fn record_stat_fact(&self, kind: &'static str, data: Value) {
+        let store = self.runtime.inner.store.clone();
+        let session_id = self.session_id.clone();
+        tokio::spawn(async move {
+            let result = async {
+                let fact = session_fact(&store, &session_id, kind, data).await?;
+                store.record_fact(fact).await
+            }
+            .await;
+            if let Err(error) = result {
+                tracing::warn!(session = %session_id, kind, error = %error, "recording ACP stat fact failed");
+            }
+        });
+    }
+
     /// The ACP session id as a payload value: the one setup learned, else the
     /// one a resume was asked for, else null.
     fn agent_session_id(&self, config: &LaunchConfig) -> Value {
@@ -1617,7 +1642,13 @@ impl RuntimeIncoming {
             Some("tool_call") => {
                 self.end_text().await;
                 let (id, call) = tool_call_of(&update);
-                self.turn.lock().await.tools.insert(id, call.clone());
+                self.turn.lock().await.tools.insert(
+                    id,
+                    OpenToolCall {
+                        call: call.clone(),
+                        started_at: Instant::now(),
+                    },
+                );
                 self.sink
                     .emit("pre_tool_use", tool_payload(session_id, &call))
                     .await;
@@ -1631,26 +1662,45 @@ impl RuntimeIncoming {
                     let call = turn
                         .tools
                         .entry(id.clone())
-                        .or_insert_with(|| json!({"toolCallId": id}));
-                    merge_tool_call(call, &update);
+                        .or_insert_with(|| OpenToolCall {
+                            call: json!({"toolCallId": id}),
+                            started_at: Instant::now(),
+                        });
+                    merge_tool_call(&mut call.call, &update);
                     match terminal {
-                        true => turn.tools.remove(&id).unwrap_or_default(),
-                        false => call.clone(),
+                        true => turn.tools.remove(&id).unwrap_or(OpenToolCall {
+                            call: Value::Null,
+                            started_at: Instant::now(),
+                        }),
+                        false => OpenToolCall {
+                            call: call.call.clone(),
+                            started_at: call.started_at,
+                        },
                     }
                 };
                 if terminal {
-                    let payload = completed_tool_payload(session_id, &merged);
+                    let duration_ms = merged
+                        .started_at
+                        .elapsed()
+                        .as_millis()
+                        .min(u128::from(u64::MAX)) as u64;
+                    let payload = completed_tool_payload(session_id, &merged.call);
                     let name = payload["tool_name"]
                         .as_str()
                         .unwrap_or_default()
                         .to_string();
+                    self.sink.record_stat_fact("tool_call", json!({
+                        "tool_name": name,
+                        "duration_ms": duration_ms,
+                        "ok": merged.call.get("status").and_then(Value::as_str) != Some("failed"),
+                    }));
                     self.sink.emit("post_tool_use", payload).await;
                     report(&self.reports, TurnReport::ToolEnded(name));
                 } else {
                     self.sink
                         .emit_live(
                             "tool_call_update",
-                            json!({"session_id": session_id, "tool_call_id": id, "acp": merged}),
+                            json!({"session_id": session_id, "tool_call_id": id, "acp": merged.call}),
                         )
                         .await;
                 }
@@ -1707,6 +1757,7 @@ impl RuntimeIncoming {
     /// Answer one `session/request_permission`, with the params the agent
     /// sent and the result the daemon replies — the connection wraps it.
     async fn handle_permission(&mut self, params: &Value) -> Result<Value> {
+        let requested_at = Instant::now();
         let session_id = params.get("sessionId").cloned().unwrap_or(Value::Null);
         let mut payload = tool_payload(session_id.clone(), &params["toolCall"]);
         payload["options"] = params.get("options").cloned().unwrap_or_default();
@@ -1977,6 +2028,13 @@ impl RuntimeIncoming {
             learned_level: learned_reply.map(|row| row.level.clone()),
             learned_key: learned_reply.map(|row| row.key.clone()),
         };
+        self.sink.record_stat_fact("permission", json!({
+            "tool_name": signature.tool_name,
+            "decided_by": decided_by,
+            "answer": permission_answer(reply.option_id.as_deref(), reply.label.as_deref(), params),
+            "console_option_id": reply.console_option_id,
+            "wait_ms": requested_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+        }));
         self.sink.emit("permission.replied", json!(reply)).await;
         Ok(json!({"outcome": outcome}))
     }
@@ -2841,6 +2899,27 @@ fn allowing_option(params: &Value, option_id: &str) -> bool {
         .find(|option| option.get("optionId").and_then(Value::as_str) == Some(option_id))
         .and_then(|option| option.get("kind").and_then(Value::as_str))
         .is_some_and(|kind| matches!(kind, "allow_once" | "allow_always"))
+}
+
+/// The normalized outcome of a permission answer. The option is authoritative
+/// where it names an agent choice; a decision label fills the AI case.
+fn permission_answer(option_id: Option<&str>, label: Option<&str>, params: &Value) -> &'static str {
+    let kind = option_id.and_then(|id| {
+        params
+            .get("options")
+            .and_then(Value::as_array)?
+            .iter()
+            .find(|option| option.get("optionId").and_then(Value::as_str) == Some(id))?
+            .get("kind")
+            .and_then(Value::as_str)
+    });
+    if kind.is_some_and(|kind| kind.starts_with("allow")) || label == Some("allow") {
+        "allow"
+    } else if option_id.is_none() {
+        "cancelled"
+    } else {
+        "deny"
+    }
 }
 
 #[cfg(test)]
