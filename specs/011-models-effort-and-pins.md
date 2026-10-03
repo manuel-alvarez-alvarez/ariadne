@@ -63,7 +63,8 @@ orchestrator decides (003).
     the task staffs (017), one per author and per reviewer.
 11. A session freezes its pin at its first launch: a re-pin steers the next
     spawn, never the conversation already running. A switch moves the
-    seat's pin, and starts a new session on it in a new conversation (008).
+    seat's pin. A same-agent switch moves the pin of the running session and
+    keeps its conversation; a cross-agent switch starts a new session (008).
 12. The registry holds the agents of the shipped ACP registry index that the
     daemon's `PATH` holds — `claude-acp` (command `claude-agent-acp`),
     `codex-acp` (`codex-acp`) and `opencode` (`opencode acp`) among them —
@@ -179,6 +180,9 @@ orchestrator decides (003).
   (`switch.rs::a_switched_author_starts_a_new_session_briefed_with_the_handoff`,
   `::a_switched_reviewer_starts_a_new_session_on_the_review_it_owes`,
   `::a_switched_orchestrator_moves_the_goals_pin`).
+- A same-agent switch moves the running row's pin, including its effort
+  (`switch.rs::a_same_agent_switch_keeps_the_row_and_conversation`,
+  `::a_same_agent_switch_sets_effort_and_clears_the_old_pin`).
 - The registry lists its three built-ins and a configured agent
   (`acp_discovery.rs::the_api_lists_the_three_known_agents_and_one_user_agent`),
   and refreshes its cache on demand (`::discovery_refreshes_on_demand`).

@@ -214,9 +214,8 @@ pub(super) async fn kill(
     Ok(Json(session_dto_of(&state.store, session).await?))
 }
 
-/// Switch a session to another model or agent: the session ends, and a new
-/// one starts on the same seat, on the pin named, in a new conversation. The
-/// answer is the new session, which names the old one in `switched_from`.
+/// Switch a session to another model or agent. A same-agent switch keeps the
+/// session and conversation; another agent starts a new session on the seat.
 ///
 /// The pin is checked as `POST /v1/sessions` checks it, a model turned off
 /// included. A session of a cancelled goal is refused.

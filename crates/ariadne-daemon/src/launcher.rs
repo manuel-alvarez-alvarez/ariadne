@@ -1185,8 +1185,8 @@ impl Launcher {
         Ok(prompts::author_resume_briefing(template, &seen))
     }
 
-    /// Switch a session onto another pin: end it, and start a new session
-    /// on the same seat, on `model` and `effort`, in a new conversation.
+    /// Switch a session onto another pin. Keep its conversation when the
+    /// registry agent stays the same.
     ///
     /// The old agent is cancelled, killed and reaped before anything new
     /// starts, so two agents never work on one seat. The old row is marked
@@ -1222,6 +1222,46 @@ impl Launcher {
                 old.id,
                 successor.id
             );
+        }
+        if ariadne_core::models::agent_of(&old.model) == ariadne_core::models::agent_of(model) {
+            let pin = AgentPin {
+                model: model.to_string(),
+                effort: effort.map(str::to_string),
+            };
+            if self.acp.is_running(&old.id) {
+                self.acp
+                    .switch_pin(
+                        &old.id,
+                        model.split_once(':').map_or(model, |(_, value)| value),
+                        effort,
+                    )
+                    .await?;
+            }
+            let session = self.store.set_session_pin(&old.id, &pin).await?;
+            match (old.seat(), &old.task_agent_id, &old.goal_id) {
+                (Some(Seat::Orchestrator), _, Some(goal_id)) => {
+                    self.store.set_goal_pin(goal_id, &pin).await?;
+                }
+                (Some(Seat::Author | Seat::Reviewer), Some(agent_id), _) => {
+                    self.store.set_agent_pin(agent_id, &pin).await?;
+                }
+                _ => {}
+            }
+            self.store
+                .create_event(NewAgentEvent {
+                    session_id: Some(old.id.clone()),
+                    task_id: old.task_id.clone(),
+                    kind: "session.switched".into(),
+                    payload: serde_json::json!({
+                        "session_id": old.id,
+                        "to": old.id,
+                        "model": pin.model,
+                        "effort": pin.effort,
+                        "reason": reason,
+                    }),
+                })
+                .await?;
+            return Ok(session);
         }
         // Read before the kill: the branch a reviewer's caller set is what
         // tells which review it owes on a task with several authors.

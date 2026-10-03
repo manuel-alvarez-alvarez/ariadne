@@ -76,9 +76,15 @@ gone (009).
    category `model`, or, where no option has that category, on the option
    whose id or name is `model`. The effort is set the same way, on category
    `thought_level` with `effort`, `reasoning` and `thought_level` as the
-   id-or-name fallback, and only when the launch carries one. An agent that
-   offers no matching option fails the launch rather than run on a default
+   id-or-name fallback, and only when the launch or a same-agent switch carries one. An agent that
+   offers no matching option fails the launch or switch rather than run on a default
    (see Known gap).
+   A same-agent switch also calls `session/set_config_option` on the live
+   conversation, after its running turn and before queued prompts
+   (`switch.rs::a_same_agent_switch_keeps_the_row_and_conversation`,
+   `::a_same_agent_switch_during_a_turn_precedes_queued_input`). A refused
+   option fails a switch between turns with the agent's reason
+   (`::a_refused_same_agent_option_keeps_the_old_pin`).
    Loose sessions instead retain and record the loaded model (020).
 4. Every prompt the runtime sends is the system prompt, a blank line, and
    the text of the prompt, except a command. Where text from any source starts

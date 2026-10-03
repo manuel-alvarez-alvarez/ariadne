@@ -4,7 +4,7 @@ use ariadne_core::id::new_id;
 use ariadne_core::{AttentionReason, Seat, SessionStatus};
 
 use crate::query::Filtered;
-use crate::{AgentSession, Change, Result, Store, StoreError, not_found, now};
+use crate::{AgentPin, AgentSession, Change, Result, Store, StoreError, not_found, now};
 
 /// [`SessionStatus::is_live`] in SQL, in the one place SQL has to know it.
 const LIVE_STATUSES: &str = " AND status IN ('starting', 'running', 'idle')";
@@ -48,6 +48,20 @@ pub struct SessionFilter {
 }
 
 impl Store {
+    /// Move an existing conversation onto a new pin.
+    pub async fn set_session_pin(&self, id: &str, pin: &AgentPin) -> Result<AgentSession> {
+        self.write_session(
+            id,
+            sqlx::query("UPDATE agent_sessions SET model = ?, effort = ? WHERE id = ?")
+                .bind(&pin.model)
+                .bind(&pin.effort)
+                .bind(id),
+        )
+        .await?;
+        self.publish_session_update(id).await?;
+        self.get_session(id).await
+    }
+
     /// Create a session row before spawning; its id becomes ARIADNE_SESSION_ID.
     pub async fn create_session(&self, new: NewSession) -> Result<AgentSession> {
         self.insert_session(new, None).await

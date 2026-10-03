@@ -110,6 +110,7 @@ pub(crate) struct HarnessBuilder {
     dies: bool,
     logs: Option<LogBuffer>,
     discover_agents: bool,
+    second_agent: bool,
     timeouts: Timeouts,
     path: std::ffi::OsString,
     index: String,
@@ -146,6 +147,7 @@ pub(crate) fn harness() -> HarnessBuilder {
         dies: false,
         logs: None,
         discover_agents: false,
+        second_agent: false,
         timeouts: Timeouts::default(),
         path: std::ffi::OsString::new(),
         index: ariadne_daemon::acp_discovery::SHIPPED_INDEX.to_string(),
@@ -159,6 +161,11 @@ pub(crate) fn harness() -> HarnessBuilder {
 }
 
 impl HarnessBuilder {
+    /// Register the same stub command under a second agent id.
+    pub(crate) fn second_agent(mut self) -> Self {
+        self.second_agent = true;
+        self
+    }
     /// Build the daemon around an already prepared home directory — a
     /// `config.toml` in it is read as `ariadned` would read it, its registry
     /// included.
@@ -291,9 +298,14 @@ impl HarnessBuilder {
                     (true, true) => shared_script("#!/bin/sh\nexit 0\n").display().to_string(),
                     (true, false) => agent.bin.clone(),
                 };
+                let second = if self.second_agent {
+                    format!("[[acp_agents]]\nid = \"other\"\ncommand = [{command:?}]\n")
+                } else {
+                    String::new()
+                };
                 std::fs::write(
                     home.join("config.toml"),
-                    format!("[[acp_agents]]\nid = \"{STUB}\"\ncommand = [{command:?}]\n"),
+                    format!("[[acp_agents]]\nid = \"{STUB}\"\ncommand = [{command:?}]\n{second}"),
                 )
                 .unwrap();
                 home

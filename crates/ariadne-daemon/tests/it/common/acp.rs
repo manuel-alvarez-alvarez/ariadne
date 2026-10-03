@@ -527,6 +527,8 @@ def respond(request):
         return listed
     if method == "session/set_config_option":
         params = request["params"]
+        if params.get("value") == script.get("reject_config_value"):
+            raise Failure(-32000, "the agent refused the option")
         for option in options:
             if option.get("id") == params.get("configId"):
                 option["currentValue"] = params.get("value")

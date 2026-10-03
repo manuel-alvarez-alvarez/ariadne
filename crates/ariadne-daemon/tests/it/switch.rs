@@ -25,7 +25,8 @@ const HANDOFF: &str = "This is the history of the session you continue.";
 
 /// The old pin, and the one every switch below moves to.
 const FROM: &str = "stub:a";
-const TO: &str = "stub:b";
+const TO: &str = "other:b";
+const SAME_TO: &str = "stub:b";
 
 /// Switch `session` to `model` over the endpoint, and answer the new session.
 async fn switch(h: &Harness, session: &AgentSession, model: &str) -> SessionDto {
@@ -46,6 +47,189 @@ async fn first_turn_done(h: &Harness, session: &AgentSession) {
         h.session_status(session).await == SessionStatus::Idle
     })
     .await;
+}
+
+#[tokio::test]
+async fn a_same_agent_switch_keeps_the_row_and_conversation() {
+    let h = harness().second_agent().await;
+    h.git_repo("repo");
+    let cast = h.cast_pinned(FROM, 1).await;
+    let old = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    first_turn_done(&h, &old).await;
+    let internal = h
+        .store
+        .get_session(&old.id)
+        .await
+        .unwrap()
+        .internal_session_id;
+    let launches = h.agent.launches_for(&old.id).len();
+
+    let changed = switch(&h, &old, SAME_TO).await;
+
+    assert_eq!(changed.id, old.id);
+    assert_eq!(changed.switched_from, None);
+    assert_eq!(changed.model, SAME_TO);
+    assert_eq!(
+        h.store
+            .get_session(&old.id)
+            .await
+            .unwrap()
+            .internal_session_id,
+        internal
+    );
+    assert_eq!(h.agent.launches_for(&old.id).len(), launches);
+    assert_eq!(switched_event(&h, &old).await["to"], json!(old.id));
+    assert!(
+        h.agent
+            .calls_of("session/set_config_option")
+            .iter()
+            .any(|call| call["value"] == "b")
+    );
+    assert_eq!(
+        h.store.get_task_agent(&cast.author.id).await.unwrap().model,
+        SAME_TO
+    );
+}
+
+#[tokio::test]
+async fn a_same_agent_switch_sets_effort_and_clears_the_old_pin() {
+    let h = harness().second_agent().await;
+    h.git_repo("repo");
+    let cast = h.cast_pinned(FROM, 1).await;
+    let old = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    first_turn_done(&h, &old).await;
+    let uri = format!("/v1/sessions/{}/switch", old.id);
+    let with_effort: SessionDto = h
+        .json(
+            post_json(&uri, json!({"model": SAME_TO, "effort": "high"})),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(with_effort.effort.as_deref(), Some("high"));
+    assert!(
+        h.agent
+            .calls_of("session/set_config_option")
+            .iter()
+            .any(|call| call["value"] == "high")
+    );
+
+    let cleared: SessionDto = h
+        .json(post_json(&uri, json!({"model": FROM})), StatusCode::OK)
+        .await;
+    assert_eq!(cleared.effort, None);
+    assert_eq!(
+        h.store
+            .get_task_agent(&cast.author.id)
+            .await
+            .unwrap()
+            .effort,
+        None
+    );
+}
+
+#[tokio::test]
+async fn an_ended_same_agent_session_uses_its_new_pin_on_revival() {
+    let h = harness().second_agent().await;
+    h.git_repo("repo");
+    let cast = h.cast_pinned(FROM, 1).await;
+    let old = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    first_turn_done(&h, &old).await;
+    h.launcher.kill_session(&old.id).await.unwrap();
+    let calls = h.agent.calls_of("session/set_config_option").len();
+
+    let changed = switch(&h, &old, SAME_TO).await;
+    assert_eq!(changed.id, old.id);
+    assert_eq!(h.agent.calls_of("session/set_config_option").len(), calls);
+    h.launcher.revive_session(&old.id, None).await.unwrap();
+    eventually(TIMEOUT, "the revived pin", || async {
+        h.agent
+            .calls_of("session/set_config_option")
+            .iter()
+            .skip(calls)
+            .any(|call| call["value"] == "b")
+    })
+    .await;
+    assert_eq!(h.launch_file(&old.id).unwrap().model, "b");
+}
+
+#[tokio::test]
+async fn a_refused_same_agent_option_keeps_the_old_pin() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut scripted = script();
+    scripted["reject_config_value"] = json!("b");
+    let stub = stub_acp_agent(dir.path(), scripted);
+    let h = harness().home(registry_home(&stub)).await;
+    h.git_repo("repo");
+    let cast = h.cast_pinned(FROM, 1).await;
+    let old = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    first_turn_done(&h, &old).await;
+
+    let err = h
+        .error(
+            post_json(
+                &format!("/v1/sessions/{}/switch", old.id),
+                json!({"model": SAME_TO}),
+            ),
+            StatusCode::CONFLICT,
+        )
+        .await;
+
+    assert!(
+        err.error.message.contains("the agent refused the option"),
+        "{}",
+        err.error.message
+    );
+    assert_eq!(h.store.get_session(&old.id).await.unwrap().model, FROM);
+    assert_eq!(
+        h.store.get_task_agent(&cast.author.id).await.unwrap().model,
+        FROM
+    );
+}
+
+#[tokio::test]
+async fn a_same_agent_switch_during_a_turn_precedes_queued_input() {
+    let dir = tempfile::tempdir().unwrap();
+    let release = dir.path().join("release");
+    let mut scripted = script();
+    scripted["prompts"][0]["wait_for"] = json!(release.display().to_string());
+    let stub = stub_acp_agent(dir.path(), scripted);
+    let h = harness().home(registry_home(&stub)).await;
+    h.git_repo("repo");
+    let cast = h.cast_pinned(FROM, 1).await;
+    let old = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    eventually(TIMEOUT, "the held turn", || async {
+        release.with_extension("reached").exists()
+    })
+    .await;
+
+    let changed = switch(&h, &old, SAME_TO).await;
+    assert_eq!(changed.id, old.id);
+    let (status, _) = h
+        .send(post_json(
+            &format!("/v1/sessions/{}/console/input", old.id),
+            json!({"text": "queued"}),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    std::fs::write(&release, "go").unwrap();
+    eventually(TIMEOUT, "the queued prompt", || async {
+        stub.calls_of("session/prompt").len() == 2
+    })
+    .await;
+
+    let messages = stub.messages();
+    let switched = messages
+        .iter()
+        .rposition(|m| {
+            method(m) == Some("session/set_config_option") && m["params"]["value"] == "b"
+        })
+        .unwrap();
+    let queued = messages
+        .iter()
+        .rposition(|m| method(m) == Some("session/prompt"))
+        .unwrap();
+    assert!(switched < queued);
+    assert_eq!(stub.launches_for(&old.id).len(), 1);
 }
 
 /// The first prompt the agent of `session_id` was launched with.
@@ -87,7 +271,7 @@ fn assert_briefing_handoff_resume(prompt: &str, briefing: &str, resume: &str) {
 /// moves to the new model.
 #[tokio::test]
 async fn a_switched_author_starts_a_new_session_briefed_with_the_handoff() {
-    let h = harness().await;
+    let h = harness().second_agent().await;
     h.git_repo("repo");
     let cast = h.cast_pinned(FROM, 1).await;
     let old = h.launcher.spawn_author(&cast.task.id).await.unwrap();
@@ -133,7 +317,7 @@ async fn a_switched_author_starts_a_new_session_briefed_with_the_handoff() {
 /// moved.
 #[tokio::test]
 async fn a_switched_reviewer_starts_a_new_session_on_the_review_it_owes() {
-    let h = harness().await;
+    let h = harness().second_agent().await;
     let repo = h.git_repo("repo");
     let cast = h.cast_pinned(FROM, 1).await;
     sh(&repo, &format!("git branch {}", cast.task.branch));
@@ -171,7 +355,7 @@ async fn a_switched_reviewer_starts_a_new_session_on_the_review_it_owes() {
 /// the orchestrator's next spawn runs on the new model.
 #[tokio::test]
 async fn a_switched_orchestrator_moves_the_goals_pin() {
-    let h = harness().await;
+    let h = harness().second_agent().await;
     let repo = h.repository(&h.at("repo")).await;
     let goal = h
         .goal_on(
@@ -206,7 +390,7 @@ async fn a_switched_orchestrator_moves_the_goals_pin() {
 /// the history alone, in the same directory, and no seat pin moves.
 #[tokio::test]
 async fn a_switched_loose_session_gets_the_handoff_alone() {
-    let h = harness().await;
+    let h = harness().second_agent().await;
     let work = h.at("work");
     std::fs::create_dir(&work).unwrap();
     let old: SessionDto = h
@@ -258,7 +442,7 @@ async fn a_switched_loose_session_gets_the_handoff_alone() {
 /// its agent killed and reaped before the new agent starts.
 #[tokio::test]
 async fn a_session_switched_mid_turn_is_cancelled_and_killed_before_the_new_one_starts() {
-    let h = harness().await;
+    let h = harness().second_agent().await;
     let mut held = script();
     held["stored_sessions"] = json!(["uuid-1234", "stub-session"]);
     held["prompts"][0]["wait_for"] = json!(h.at("never").display().to_string());
@@ -327,7 +511,7 @@ async fn live_authors(h: &Harness, task_id: &str) -> Vec<AgentSession> {
 /// starts no second agent on the seat.
 #[tokio::test]
 async fn a_session_already_switched_is_not_switched_again() {
-    let h = harness().await;
+    let h = harness().second_agent().await;
     h.git_repo("repo");
     let cast = h.cast_pinned(FROM, 1).await;
     let old = h.launcher.spawn_author(&cast.task.id).await.unwrap();
@@ -363,7 +547,7 @@ async fn a_session_already_switched_is_not_switched_again() {
 /// refused.
 #[tokio::test]
 async fn two_switches_of_one_session_at_once_start_one_successor() {
-    let h = harness().await;
+    let h = harness().second_agent().await;
     h.git_repo("repo");
     let cast = h.cast_pinned(FROM, 1).await;
     let old = h.launcher.spawn_author(&cast.task.id).await.unwrap();
@@ -387,7 +571,7 @@ async fn two_switches_of_one_session_at_once_start_one_successor() {
 /// session is a 404.
 #[tokio::test]
 async fn a_session_of_a_cancelled_goal_is_not_switched() {
-    let h = harness().await;
+    let h = harness().second_agent().await;
     let cast = h.cast().await;
     let session = h
         .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
@@ -475,7 +659,7 @@ async fn a_switch_to_a_model_that_is_turned_off_is_refused() {
 
 #[tokio::test]
 async fn the_switch_endpoint_is_in_the_openapi_document() {
-    let h = harness().await;
+    let h = harness().second_agent().await;
     let doc: serde_json::Value = h.get("/api-docs/openapi.json").await;
     let post = &doc["paths"]["/v1/sessions/{id}/switch"]["post"];
     assert_eq!(

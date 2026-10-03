@@ -599,12 +599,12 @@ goal id to a seat (014).
 32. `POST /v1/sessions/{id}/switch` moves a session to another model or
     agent. The body is `SwitchSessionRequest`: a `model`, `<agent>:<model>`,
     and an optional `effort`. The answer is the `SessionDto` of the new
-    session. A switch to the same agent takes the same path.
-33. The switch ends the old session. Its agent is cancelled, killed and
+    session. A switch to the same agent keeps the row and its conversation.
+33. A switch to another agent ends the old session. Its agent is cancelled, killed and
     reaped before the new agent starts. The old row keeps a
     `session.switched` event, `{session_id, to, model, effort, reason}`, and
     is marked `exited`. `reason` is `requested` for the endpoint.
-34. The new session is a new row on the same goal, task, seat, staffed
+34. A switch to another agent creates a new row on the same goal, task, seat, staffed
     agent and worktree, on the new pin. Its `switched_from` names the old
     row. It runs in a new conversation, and it is launched through the spawn
     path: a launch id, a launch file and the MCP server, as every spawn.
@@ -612,6 +612,12 @@ goal id to a seat (014).
     orchestrator, and the staffed agent's pin for an author or a reviewer. A
     later spawn or resume of the seat runs on it. A loose session has no
     seat pin, and nothing is moved.
+    A same-agent switch also changes the running session's model and effort.
+    Between turns it sets the ACP options before answering; during a turn it
+    answers at once and sets them before the next queued prompt. An ended
+    session launches only on its next revival. An option refusal keeps the old
+    pin and answers with the agent's reason. The row records `session.switched`
+    with `to` equal to its own id; `switched_from` stays null.
 36. The new agent's first prompt is the seat's fresh briefing, a blank line,
     the handoff of the old session's stored events (at most 240 000
     characters), a blank line, and the resume text: the author's resume
@@ -1330,6 +1336,12 @@ goal id to a seat (014).
 - A switch mid-turn cancels the turn and reaps the old agent before the new
   one starts
   (`switch.rs::a_session_switched_mid_turn_is_cancelled_and_killed_before_the_new_one_starts`).
+- A same-agent switch keeps the row and conversation, applies model and effort,
+  and clears a missing effort (`switch.rs::a_same_agent_switch_keeps_the_row_and_conversation`,
+  `::a_same_agent_switch_sets_effort_and_clears_the_old_pin`). It applies after
+  a running turn before queued input (`::a_same_agent_switch_during_a_turn_precedes_queued_input`),
+  waits for revival when ended (`::an_ended_same_agent_session_uses_its_new_pin_on_revival`),
+  and leaves the old pin after a refusal (`::a_refused_same_agent_option_keeps_the_old_pin`).
 - A cancelled goal's session and an unknown session are refused
   (`switch.rs::a_session_of_a_cancelled_goal_is_not_switched`), and so is a
   model turned off or an unknown agent

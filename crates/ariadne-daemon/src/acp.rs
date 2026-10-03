@@ -314,6 +314,7 @@ struct RunningAgent {
     /// sent at once if the agent is between turns and queued, in order,
     /// behind whichever one is running.
     prompts: mpsc::UnboundedSender<Prompt>,
+    switches: mpsc::UnboundedSender<ConfigSwitch>,
     /// The agent messages in `prompts` that the driver has not taken off yet.
     /// A scheduler pass hands every unstamped message again, and one already
     /// queued here is not queued twice.
@@ -331,6 +332,12 @@ struct RunningAgent {
     /// Closes once the driver has killed and reaped the child: what a
     /// relaunch waits on, so that two agents never serve one conversation.
     ended: Reaped,
+}
+
+struct ConfigSwitch {
+    model: String,
+    effort: Option<String>,
+    done: oneshot::Sender<Result<()>>,
 }
 
 /// The way into a running agent for the one notification sent from outside
@@ -481,6 +488,36 @@ impl AcpRuntime {
             .lock()
             .expect("acp registry lock")
             .contains_key(session_id)
+    }
+
+    /// Queue an option change ahead of the next prompt. A running turn does
+    /// not hold up the caller; between turns the caller receives the result.
+    pub(crate) async fn switch_pin(
+        &self,
+        session_id: &str,
+        model: &str,
+        effort: Option<&str>,
+    ) -> Result<()> {
+        let (switches, turn) = {
+            let running = self.inner.running.lock().expect("acp registry lock");
+            let agent = running
+                .get(session_id)
+                .ok_or_else(|| anyhow!("no ACP agent is running for session {session_id}"))?;
+            (agent.switches.clone(), agent.turn.clone())
+        };
+        let (done, result) = oneshot::channel();
+        let mid_turn = turn.lock().await.running;
+        switches.send(ConfigSwitch {
+            model: model.to_string(),
+            effort: effort.map(str::to_string),
+            done,
+        })?;
+        if mid_turn {
+            return Ok(());
+        }
+        result
+            .await
+            .map_err(|_| anyhow!("the ACP agent ended before changing its pin"))?
     }
 
     /// Hand the running agent a prompt from the daemon itself — a scheduler
@@ -767,6 +804,7 @@ impl AcpRuntime {
         let (stop, stopped) = oneshot::channel();
         let (reaped, ended) = oneshot::channel();
         let (prompts, queued) = mpsc::unbounded_channel();
+        let (switches, pending_switches) = mpsc::unbounded_channel();
         let reports: Followers = Arc::default();
         let permission = Arc::new(Mutex::new(None));
         let turn = Arc::new(tokio::sync::Mutex::new(Turn::default()));
@@ -784,6 +822,7 @@ impl AcpRuntime {
                     launch_id: launch.launch_id.clone(),
                     stop,
                     prompts,
+                    switches,
                     queued_messages: HashSet::new(),
                     permission: permission.clone(),
                     turn: turn.clone(),
@@ -813,6 +852,7 @@ impl AcpRuntime {
                     },
                     stopped,
                     queued,
+                    pending_switches,
                 )
                 .await;
             drop(reaped);
@@ -928,6 +968,7 @@ impl AcpRuntime {
         io: DriverIo,
         stopped: oneshot::Receiver<()>,
         prompts: mpsc::UnboundedReceiver<Prompt>,
+        switches: mpsc::UnboundedReceiver<ConfigSwitch>,
     ) {
         let sink = EventSink {
             runtime: self.clone(),
@@ -998,8 +1039,15 @@ impl AcpRuntime {
                     );
                     rpc.in_flight = in_flight.clone();
                     protocol_outcome = Some(
-                        run_protocol(&mut rpc, &launch.cwd, &launch.config, prompts, io.ready)
-                            .await,
+                        run_protocol(
+                            &mut rpc,
+                            &launch.cwd,
+                            &launch.config,
+                            prompts,
+                            switches,
+                            io.ready,
+                        )
+                        .await,
                     );
                     Ok(())
                 }),
@@ -1819,6 +1867,7 @@ async fn run_protocol(
     cwd: &Path,
     config: &LaunchConfig,
     prompts: mpsc::UnboundedReceiver<Prompt>,
+    switches: mpsc::UnboundedReceiver<ConfigSwitch>,
     ready: Option<oneshot::Sender<()>>,
 ) -> Result<()> {
     let initialized = rpc.call("initialize", initialize()).await?;
@@ -1868,7 +1917,7 @@ async fn run_protocol(
     // A loaded conversation runs on whatever model it ran on, and the row
     // records that one. Every new conversation — a loose one started from
     // scratch included — is put on the model it was pinned to.
-    let options = if loose && resumed {
+    let mut options = if loose && resumed {
         let model = find_config_option(&setup.config_options, &["model"], &["model"])
             .and_then(current_value)
             .unwrap_or(&config.model);
@@ -1892,7 +1941,7 @@ async fn run_protocol(
         .await?
     };
     if let Some(effort) = &config.effort {
-        set_pinned_option(
+        options = set_pinned_option(
             rpc,
             &session_id,
             options,
@@ -1918,7 +1967,15 @@ async fn run_protocol(
         };
         prompt_once(rpc, &session_id, &config.system_prompt, &prompt).await?;
     }
-    serve_with_input(rpc, &session_id, &config.system_prompt, prompts).await
+    serve_with_input(
+        rpc,
+        &session_id,
+        &config.system_prompt,
+        prompts,
+        switches,
+        options,
+    )
+    .await
 }
 
 /// Serve the agent until it exits: the turn is over, and the agent stays up
@@ -1937,15 +1994,34 @@ async fn serve_with_input(
     session_id: &str,
     system_prompt: &str,
     mut prompts: mpsc::UnboundedReceiver<Prompt>,
+    mut switches: mpsc::UnboundedReceiver<ConfigSwitch>,
+    mut options: Vec<v1::SessionConfigOption>,
 ) -> Result<()> {
     // Once the console side is gone there is nothing left to queue, but the
     // agent may still have plenty to say — the branch is dropped rather than
     // polled into a busy loop of immediate `None`s. An agent being killed
     // starts nothing more either.
     let mut console_open = true;
+    let mut switches_open = true;
     let closing = rpc.closing.clone();
     loop {
         tokio::select! {
+            biased;
+            change = switches.recv(), if switches_open && !closing.load(Ordering::SeqCst) => {
+                match change {
+                    Some(change) => {
+                        let result = async {
+                            options = set_pinned_option(rpc, session_id, options.clone(), &["model"], &["model"], "model", &change.model).await?;
+                            if let Some(effort) = &change.effort {
+                                options = set_pinned_option(rpc, session_id, options.clone(), &["thought_level"], &["effort", "reasoning", "thought_level"], "effort", effort).await?;
+                            }
+                            Ok(())
+                        }.await;
+                        let _ = change.done.send(result);
+                    }
+                    None => switches_open = false,
+                }
+            }
             prompt = prompts.recv(), if console_open && !closing.load(Ordering::SeqCst) => {
                 match prompt {
                     Some(prompt) => {
