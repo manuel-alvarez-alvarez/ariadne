@@ -158,6 +158,21 @@ it("shows the status and hardware facts in the card, with no Details popover", (
   ).toBeDefined()
 })
 
+it("uses sentence-case section labels and four status columns on large screens", () => {
+  renderCard(anAiPermissionsStatus())
+
+  for (const heading of ["Thresholds", "Model", "Status and hardware"]) {
+    const label = screen.getByRole("heading", { level: 3, name: heading })
+    expect(label.className).toContain("border-b")
+    expect(label.className).toContain("text-sm")
+    expect(label.className).toContain("font-medium")
+    expect(label.className).not.toContain("uppercase")
+    expect(label.className).not.toContain("tracking-wide")
+  }
+
+  expect(screen.getByText("Running").closest("dl")?.className).toContain("lg:grid-cols-4")
+})
+
 it("draws no marker for an ai_error answer", async () => {
   testResponse = {
     label: null,

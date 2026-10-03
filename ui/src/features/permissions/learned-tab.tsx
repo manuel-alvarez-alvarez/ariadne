@@ -49,7 +49,7 @@ import { TableCell, TableRow } from "@/components/ui/table"
 import { When } from "@/components/when"
 import { permissionModeLabel } from "@/features/repositories/permission-modes"
 import { repositoriesQueryOptions } from "@/features/repositories/queries"
-import { cn, folderName, plural, shortId } from "@/lib/format"
+import { cn, folderName, shortId } from "@/lib/format"
 
 import { AI_LABEL_TEXT, AI_LABEL_TONE, parseAiOutput } from "./ai-output"
 import { DeleteLearnedPermissionDialog } from "./delete-learned-permission-dialog"
@@ -166,10 +166,6 @@ export function LearnedPermissionsTab() {
           </SelectContent>
         </Select>
       </div>
-
-      {learned.data ? (
-        <p className="text-sm text-muted-foreground">{plural(learned.data.length, "row")}</p>
-      ) : null}
 
       <DataTable
         query={learned}

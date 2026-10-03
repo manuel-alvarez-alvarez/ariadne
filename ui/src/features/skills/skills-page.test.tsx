@@ -153,6 +153,13 @@ describe("the list", () => {
       .getAllByRole("heading", { level: 3 })
       .map((heading) => heading.textContent)
     expect(headings).toEqual(["Shipped with Ariadne", "Yours"])
+    for (const heading of screen.getAllByRole("heading", { level: 3 })) {
+      expect(heading.className).toContain("border-b")
+      expect(heading.className).toContain("text-sm")
+      expect(heading.className).toContain("font-medium")
+      expect(heading.className).not.toContain("uppercase")
+      expect(heading.className).not.toContain("tracking-wide")
+    }
 
     const shipped = screen.getByRole("region", { name: "Shipped with Ariadne" })
     expect(within(shipped).getByRole("link", { name: /^coding/ })).toBeDefined()

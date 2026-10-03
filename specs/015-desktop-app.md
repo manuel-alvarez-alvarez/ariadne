@@ -231,12 +231,13 @@ Out: the daemon endpoints themselves (012).
     in the daemon's order, named by its agent id. Each tab holds that agent's
     extra flags and the models of the catalog whose `agent_id` is that agent.
     A flag edit replaces the list whole through `PUT /v1/agents/{id}`. A
-    Refresh control above the tabs calls `POST /v1/acp-agents/refresh` once,
+    Refresh control beside the tabs calls `POST /v1/acp-agents/refresh` once,
     which reprobes every registry agent and picks up one installed since the
     daemon started; on its answer the agent configs, the ACP agents and the
     models are all reloaded, since a rediscovered agent can move any of the
     three. The control shows a pending state while the call runs, and a
-    failed call is toasted, leaving the screen as it was.
+    failed call is toasted, leaving the screen as it was. Its tooltip also
+    says how many models are turned off; each tab keeps its own model count.
 30. A session panel shows a reported context window as `<used> / <size>`,
     using the compact spelling of token figures. It shows no context fact
     before the agent reports one, and it never shows a cost.
@@ -291,7 +292,9 @@ Out: the daemon endpoints themselves (012).
     lays its facts out in the card as a grid, with no "Details" popover:
     what runs (flavour on device), the memory, the GPU, the machine, the
     Python version, the weights, the last refresh's age, the endpoint, and
-    the installed and latest release. Every control sends its own change the
+    the installed and latest release. The Thresholds, Model, and Status and
+    hardware headings use sentence case, medium small text, and a rule below;
+    the status facts use four columns at `lg`. Every control sends its own change the
     moment it is made, there is no Save button, and a handle sends once, on
     release, never on every drag step — and a refusal is toasted with the
     daemon's own message and puts the control back to the row the daemon
@@ -345,7 +348,8 @@ Out: the daemon endpoints themselves (012).
     the trigger as a `title`; the popup is wide enough for a full path rather
     than the trigger's own width, and a `?repository=` id the registry does
     not carry still shows a readable label instead of an empty trigger. A
-    filtered empty state offers Clear filter, which drops `?repository=`. Add
+    filtered empty state offers Clear filter, which drops `?repository=`. The
+    tab shows no row count above the table. Add
     approval opens a form for the repository, the tool name and the kind
     (`POST /v1/permissions/learned`), whose own repository picker follows the
     same folder-name-with-path convention; each row's Edit changes the tool
