@@ -71,6 +71,7 @@ const SANDBOX: RepositoryDto = aRepository({
   path: "/home/me/dev/sandbox",
   base_branch: "trunk",
   description: null,
+  default_landing: "feature_branch",
 })
 
 interface Recorded {
@@ -81,6 +82,7 @@ interface Recorded {
     title?: string
     model?: string
     effort?: string
+    landing?: string
   } | null
 }
 
@@ -247,6 +249,7 @@ describe("picking the goal's repositories", () => {
       description: "",
       model: "codex-acp:gpt-5.3-codex",
       repository_ids: [ARIADNE.id],
+      landing: "merge",
     })
     expect(screen.queryByLabelText("Max tasks")).toBeNull()
     expect(screen.queryByLabelText("Approvals")).toBeNull()
@@ -298,6 +301,104 @@ describe("picking the goal's repositories", () => {
 
     expect(await screen.findByText("Pick at least one repository.")).toBeDefined()
     expect(requests.filter((one) => one.method !== "GET")).toEqual([])
+  })
+})
+
+/**
+ * How the goal's tasks end, preselected from the first repository picked and
+ * overridable by hand — never both at once for the same submit.
+ */
+describe("choosing the landing", () => {
+  function landingBox(): HTMLElement {
+    return screen.getByRole("combobox", { name: "Landing" })
+  }
+
+  it("starts out at merge, before any repository is picked", () => {
+    renderDialog()
+
+    expect(landingBox().textContent).toContain("Merge onto the base branch")
+  })
+
+  it("preselects the first picked repository's own default landing", async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    const list = await openList(user)
+    await user.click(row(list, SANDBOX))
+
+    await waitFor(() => {
+      expect(landingBox().textContent).toContain("Land on a feature branch")
+    })
+  })
+
+  it("keeps the merge default where the first picked repository uses it", async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    const list = await openList(user)
+    await user.click(row(list, ARIADNE))
+
+    await waitFor(() => {
+      expect(landingBox().textContent).toContain("Merge onto the base branch")
+    })
+  })
+
+  it("sends the preselected landing on submit", async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    await user.type(screen.getByLabelText("Title"), "Landing")
+    const list = await openList(user)
+    await user.click(row(list, SANDBOX))
+    await user.keyboard("{Escape}")
+    await chooseModel(user)
+    await user.click(screen.getByRole("button", { name: "Create goal" }))
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()?.body?.landing).toBe("feature_branch")
+  })
+
+  it("sends a landing picked by hand instead of the repository's default", async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    await user.type(screen.getByLabelText("Title"), "Landing")
+    const list = await openList(user)
+    await user.click(row(list, SANDBOX))
+    await user.keyboard("{Escape}")
+    await chooseModel(user)
+
+    await user.click(landingBox())
+    await user.click(await screen.findByRole("option", { name: "Land nothing" }))
+    await user.click(screen.getByRole("button", { name: "Create goal" }))
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()?.body?.landing).toBe("none")
+  })
+
+  it("keeps a hand-picked landing once a different repository becomes the first", async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    const list = await openList(user)
+    await user.click(row(list, SANDBOX))
+    await waitFor(() => {
+      expect(landingBox().textContent).toContain("Land on a feature branch")
+    })
+
+    await user.click(landingBox())
+    await user.click(await screen.findByRole("option", { name: "Land nothing" }))
+
+    // Taking the preselected repository back off and picking the other one
+    // makes it first; the landing the user already chose must survive that.
+    await user.click(screen.getByRole("button", { name: `Remove ${SANDBOX.path}` }))
+    await user.click(row(await openList(user), ARIADNE))
+
+    expect(landingBox().textContent).toContain("Land nothing")
   })
 })
 

@@ -24,7 +24,7 @@ import userEvent from "@testing-library/user-event"
 import { describe, expect, it } from "vitest"
 
 import { type GoalDto, qk, type SessionDto, type TaskDto } from "@/api"
-import { aGoal, aSession, aTask } from "@/test/fixtures"
+import { aGoal, aRepository, aSession, aTask } from "@/test/fixtures"
 import { renderScreen } from "@/test/harness"
 import { GoalPanel } from "./goal-panel"
 
@@ -157,6 +157,46 @@ it("says an unorchestrated goal has no orchestrator", () => {
   mount(aGoal({ orchestrated: false }))
 
   expect(detail("Orchestrator").textContent).toBe("No orchestrator")
+})
+
+it("shows the goal's landing among its facts", () => {
+  mount(aGoal({ landing: "pull_request" }))
+
+  expect(detail("Landing").textContent).toBe("Open a request and see it through")
+})
+
+describe("a feature-branch goal's repositories", () => {
+  it("shows each repository's goal branch next to its base branch", () => {
+    const goal = aGoal({
+      landing: "feature_branch",
+      repos: [
+        { ...aRepository(), base_branch: "main", goal_branch: "ship-the-board-000001" },
+        {
+          ...aRepository({ id: "01JREPO0000000000000000002", path: "/home/me/dev/sandbox" }),
+          base_branch: "trunk",
+          goal_branch: null,
+        },
+      ],
+    })
+    mount(goal)
+
+    const list = detail("Repositories")
+    expect(list.textContent).toContain("base main")
+    expect(list.textContent).toContain("goal ship-the-board-000001")
+    // The second repository has no branch of its own yet: nothing to show.
+    expect(list.textContent).toContain("base trunk")
+    expect(list.textContent).not.toContain("goal null")
+  })
+
+  it("shows no goal branch for a repository that has not been cut one yet", () => {
+    const goal = aGoal({
+      landing: "feature_branch",
+      repos: [{ ...aRepository(), goal_branch: null }],
+    })
+    mount(goal)
+
+    expect(detail("Repositories").textContent).not.toContain("goal")
+  })
 })
 
 describe("which tab the panel opens on", () => {

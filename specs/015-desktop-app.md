@@ -519,9 +519,12 @@ Out: the daemon endpoints themselves (012).
   skill suggestions, for the author and every reviewer
   (`ui/src/features/tasks/task-form-dialog.test.tsx::suggests no
   orchestrator-only skill for the author or a reviewer`).
-- The repository dialog puts a placeholder refusal on the landing-briefing
-  field rather than on the branch its message also names
-  (`ui/src/features/repositories/repository-form-dialog.test.tsx`).
+- The repository dialog is a path, a base branch, a description, a
+  permission mode and a default landing — not the merge-strategy or
+  landing-briefing fields that used to sit there
+  (`ui/src/features/repositories/repository-form-dialog.test.tsx::takes a
+  path, a base branch, a description, a permission mode and a default
+  landing`).
 - The repository dialog sends the permission mode picked for a new
   repository, starts an edit from the stored one, and the repositories
   screen shows each one's
@@ -803,6 +806,29 @@ Out: the daemon endpoints themselves (012).
   among the permission modes, and sends it as ai`,
   `::puts an ai_disabled refusal on the permission mode field, pointing at
   the Permissions screen`).
+- The repository dialog sends the default landing picked for a new
+  repository, and starts an edit from the stored one
+  (`ui/src/features/repositories/repository-form-dialog.test.tsx::sends the
+  default landing picked for it`,
+  `::starts from the stored default landing, and sends a new one`).
+- The goal dialog's landing starts at the first repository's own default
+  once one is picked, stands once chosen by hand even if a different
+  repository becomes first, and is sent whichever way it was settled
+  (`ui/src/features/goals/create-goal-dialog.test.tsx::starts out at merge,
+  before any repository is picked`,
+  `::preselects the first picked repository's own default landing`,
+  `::keeps the merge default where the first picked repository uses it`,
+  `::sends the preselected landing on submit`,
+  `::sends a landing picked by hand instead of the repository's default`,
+  `::keeps a hand-picked landing once a different repository becomes the
+  first`).
+- The goal panel's facts show the goal's landing, and a feature-branch
+  goal's repositories each show their own goal branch next to their base
+  branch once the plan has cut one
+  (`ui/src/features/goals/goal-panel.test.tsx::shows the goal's landing
+  among its facts`,
+  `::shows each repository's goal branch next to its base branch`,
+  `::shows no goal branch for a repository that has not been cut one yet`).
 
 ## Sources
 

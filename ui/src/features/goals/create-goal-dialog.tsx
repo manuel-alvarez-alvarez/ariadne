@@ -12,6 +12,11 @@
  * and the effort that model is run at. A model is required and the empty effort
  * uses the model's default effort.
  *
+ * How the goal's tasks end is picked here too, and starts out as the first
+ * repository's own default: a preselect the dialog makes, not the user, so it
+ * must not be what makes an otherwise untouched form ask about walking away.
+ * Picking the landing by hand before or after that stands.
+ *
  * Everything else the daemon still validates: the client only catches what it
  * can know on its own (empty title, nothing picked) and shows the daemon's
  * error envelope verbatim.
@@ -19,6 +24,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useQuery } from "@tanstack/react-query"
+import { useEffect, useRef } from "react"
 import { Controller, useForm } from "react-hook-form"
 import { Link } from "react-router-dom"
 import { toast } from "sonner"
@@ -34,6 +40,7 @@ import {
   useClearErrorOnEdit,
   useResetOnOpen,
 } from "@/components/form-dialog"
+import { FormSelect } from "@/components/form-select"
 import { MarkdownField } from "@/components/markdown-field"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
@@ -44,6 +51,7 @@ import { PinPicker } from "@/features/models/pin-picker"
 import { modelsQueryOptions } from "@/features/models/queries"
 import { NoRepositories as SharedNoRepositories } from "@/features/repositories/no-repositories"
 import { repositoriesQueryOptions } from "@/features/repositories/queries"
+import { LANDING_ITEMS } from "@/lib/format"
 import { paths } from "@/routes/paths"
 
 import { useCreateGoal } from "./queries"
@@ -59,6 +67,7 @@ const formSchema = z.object({
   // whatever the agent runs it at.
   effort: z.string(),
   repository_ids: z.array(z.string()).min(1, "Pick at least one repository."),
+  landing: z.enum(["merge", "pull_request", "none", "feature_branch"]),
 })
 
 type CreateGoalForm = z.infer<typeof formSchema>
@@ -69,6 +78,7 @@ const DEFAULT_VALUES: CreateGoalForm = {
   model: "",
   effort: "",
   repository_ids: [],
+  landing: "merge",
 }
 
 export function CreateGoalDialog({
@@ -97,6 +107,22 @@ export function CreateGoalDialog({
   // the model: one control, two fields.
   const chosenEffort = form.watch("effort")
 
+  // The landing starts out as the first picked repository's own default — a
+  // preselect the dialog makes once per open, not a sync kept up with every
+  // repository swap, so a landing the user already picked by hand is never
+  // taken back.
+  const firstRepositoryId = form.watch("repository_ids")[0]
+  const landingPicked = useRef(false)
+  useEffect(() => {
+    if (open) landingPicked.current = false
+  }, [open])
+  useEffect(() => {
+    if (!firstRepositoryId || landingPicked.current) return
+    const repository = repositories.data?.find((one) => one.id === firstRepositoryId)
+    if (!repository) return
+    form.setValue("landing", repository.default_landing, { shouldDirty: false })
+  }, [firstRepositoryId, repositories.data, form])
+
   async function onSubmit(values: CreateGoalForm) {
     const model = values.model.trim()
     const effort = values.effort.trim()
@@ -106,6 +132,7 @@ export function CreateGoalDialog({
       model,
       ...(effort.length > 0 ? { effort } : {}),
       repository_ids: values.repository_ids,
+      landing: values.landing,
     }
     try {
       const goal = await createGoal.mutateAsync(body)
@@ -200,6 +227,26 @@ export function CreateGoalDialog({
               </Field>
             )}
           />
+
+          <Field data-invalid={errors.landing ? "" : undefined}>
+            <FieldLabel htmlFor="goal-landing">Landing</FieldLabel>
+            <FormSelect
+              control={form.control}
+              name="landing"
+              id="goal-landing"
+              options={LANDING_ITEMS}
+              onValueChange={() => {
+                landingPicked.current = true
+              }}
+            />
+            {errors.landing ? (
+              <FieldError>{errors.landing.message}</FieldError>
+            ) : (
+              <FieldDescription>
+                How every task of this goal ends. Starts from the first repository picked above.
+              </FieldDescription>
+            )}
+          </Field>
 
           <Field data-invalid={errors.model ? "" : undefined}>
             <FieldLabel htmlFor="goal-pin">Orchestrator runs on</FieldLabel>

@@ -2,10 +2,11 @@
  * Create and edit dialog for a repository — one form for both, because the two
  * differ only in where they post and in what an omitted base branch means.
  *
- * A repository is a checkout, a base branch, and how its agents' permission
- * requests are answered. How work *ends* in it is not here: that is the task's
- * own ending, agreed with the user task by task, and the procedure it names is
- * Ariadne's. So none of the fields is about landing.
+ * A repository is a checkout, a base branch, how its agents' permission
+ * requests are answered, and the landing a new goal against it uses where the
+ * goal's own request leaves landing out. How work ends for a given task or
+ * goal is still agreed with the user there, not here — this is only the
+ * default that choice starts from.
  *
  * The client only catches what it can know on its own: a missing or relative
  * path. Everything else is the daemon's to say — it opens the checkout and
@@ -22,6 +23,7 @@ import { z } from "zod"
 
 import { ApiError, type RepositoryDto } from "@/api"
 import { FormDialog, FormDialogBody, FormDialogContent } from "@/components/form-dialog"
+import { FormSelect } from "@/components/form-select"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
@@ -32,7 +34,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { describeError } from "@/lib/format"
+import { describeError, LANDING_ITEMS } from "@/lib/format"
 
 import { PERMISSION_MODES } from "./permission-modes"
 import { useCreateRepository, useUpdateRepository } from "./queries"
@@ -48,6 +50,7 @@ const formSchema = z.object({
   base_branch: z.string().trim(),
   description: z.string(),
   permission_mode: z.enum(["auto", "ask", "learn", "ai"]),
+  default_landing: z.enum(["merge", "pull_request", "none", "feature_branch"]),
 })
 
 type RepositoryFormValues = z.infer<typeof formSchema>
@@ -57,6 +60,7 @@ const EMPTY_VALUES: RepositoryFormValues = {
   base_branch: "",
   description: "",
   permission_mode: "auto",
+  default_landing: "merge",
 }
 
 export function RepositoryFormDialog({
@@ -91,6 +95,7 @@ export function RepositoryFormDialog({
         base_branch: repository.base_branch,
         description: repository.description ?? "",
         permission_mode: repository.permission_mode,
+        default_landing: repository.default_landing,
       })
       return
     }
@@ -113,6 +118,7 @@ export function RepositoryFormDialog({
             // Empty is how the daemon spells "clear the description".
             description,
             permission_mode: values.permission_mode,
+            default_landing: values.default_landing,
           },
         })
         toast.success("Repository updated", { description: path })
@@ -123,6 +129,7 @@ export function RepositoryFormDialog({
           base_branch: branch || null,
           description: description || null,
           permission_mode: values.permission_mode,
+          default_landing: values.default_landing,
         })
         toast.success("Repository registered", { description: created.path })
       }
@@ -273,6 +280,24 @@ export function RepositoryFormDialog({
             ) : (
               <FieldDescription>
                 How every agent working in this checkout has its tool permission requests answered.
+              </FieldDescription>
+            )}
+          </Field>
+
+          <Field data-invalid={formState.errors.default_landing ? true : undefined}>
+            <FieldLabel htmlFor="repository-default-landing">Default landing</FieldLabel>
+            <FormSelect
+              control={control}
+              name="default_landing"
+              id="repository-default-landing"
+              options={LANDING_ITEMS}
+            />
+            {formState.errors.default_landing ? (
+              <FieldError errors={[formState.errors.default_landing]} />
+            ) : (
+              <FieldDescription>
+                How a new goal against this repository ends, where the goal's own request leaves
+                landing out.
               </FieldDescription>
             )}
           </Field>

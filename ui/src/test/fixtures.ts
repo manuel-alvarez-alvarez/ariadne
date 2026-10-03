@@ -237,6 +237,7 @@ export function aRepository(overrides: Partial<RepositoryDto> = {}): RepositoryD
     base_branch: "main",
     description: "The orchestrator itself.",
     permission_mode: "auto",
+    default_landing: "merge",
     created_at: STAMP,
     updated_at: STAMP,
     ...overrides,

@@ -35,6 +35,7 @@ interface Recorded {
     base_branch?: string | null
     description?: string | null
     permission_mode?: string
+    default_landing?: string
   } | null
 }
 
@@ -99,6 +100,7 @@ describe("registering a repository", () => {
       base_branch: null,
       description: null,
       permission_mode: "auto",
+      default_landing: "merge",
     })
   })
 
@@ -115,6 +117,21 @@ describe("registering a repository", () => {
       expect(lastWrite()).toBeDefined()
     })
     expect(lastWrite()?.body?.permission_mode).toBe("learn")
+  })
+
+  it("sends the default landing picked for it", async () => {
+    const user = userEvent.setup()
+    renderDialog(null)
+
+    await user.type(screen.getByLabelText("Path"), "/home/me/dev/new")
+    await user.click(screen.getByRole("combobox", { name: "Default landing" }))
+    await user.click(await screen.findByRole("option", { name: "Land nothing" }))
+    await user.click(screen.getByRole("button", { name: "Register repository" }))
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()?.body?.default_landing).toBe("none")
   })
 
   it("offers AI among the permission modes, and sends it as ai", async () => {
@@ -219,18 +236,19 @@ describe("registering a repository", () => {
 })
 
 /**
- * A repository says nothing about how work ends in it: that is the task's own
- * ending. The fields that used to say it are gone, and so is the request that
- * fed them.
+ * A repository is a checkout, a base branch, a permission mode and a default
+ * landing — not the merge strategy or landing briefing fields that used to sit
+ * here, nor anything about how any one task or goal actually ends.
  */
 describe("what a repository is", () => {
-  it("takes a path, a base branch, a description and a permission mode, and nothing about landing", async () => {
+  it("takes a path, a base branch, a description, a permission mode and a default landing", async () => {
     renderDialog(null)
 
     expect(await screen.findByLabelText("Path")).toBeDefined()
     expect(screen.getByLabelText("Base branch")).toBeDefined()
     expect(screen.getByLabelText("Description")).toBeDefined()
     expect(screen.getByRole("combobox", { name: "Permission requests" })).toBeDefined()
+    expect(screen.getByRole("combobox", { name: "Default landing" })).toBeDefined()
 
     expect(screen.queryByLabelText("Merge strategy")).toBeNull()
     expect(screen.queryByLabelText("Landing briefing")).toBeNull()
@@ -270,7 +288,25 @@ describe("editing a repository", () => {
       base_branch: "main",
       description: "The orchestrator itself. Now with repositories.",
       permission_mode: "auto",
+      default_landing: "merge",
     })
+  })
+
+  it("starts from the stored default landing, and sends a new one", async () => {
+    const user = userEvent.setup()
+    renderDialog({ ...REPOSITORY, default_landing: "pull_request" })
+
+    const picker = screen.getByRole("combobox", { name: "Default landing" })
+    expect(picker.textContent).toContain("Open a request and see it through")
+
+    await user.click(picker)
+    await user.click(await screen.findByRole("option", { name: "Land on a feature branch" }))
+    await user.click(screen.getByRole("button", { name: "Save changes" }))
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()?.body?.default_landing).toBe("feature_branch")
   })
 
   it("starts from the stored permission mode, and sends a new one", async () => {
