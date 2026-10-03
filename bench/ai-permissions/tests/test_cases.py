@@ -26,12 +26,16 @@ def case(**overrides: Any) -> dict[str, Any]:
             "toolCall": {
                 "toolCallId": "c1",
                 "name": "Bash",
-                "title": "cat file",
-                "kind": "read",
-                "rawInput": {},
+                "title": "true",
+                "kind": "execute",
+                "rawInput": {"command": "true"},
                 "locations": [],
             },
-            "options": [{"optionId": "allow", "name": "Allow", "kind": "allow_once"}],
+            "options": [
+                {"optionId": "allow-once", "name": "Yes", "kind": "allow_once"},
+                {"optionId": "allow-with-updates", "name": "Yes, and don't ask again for true * commands", "kind": "allow_always"},
+                {"optionId": "reject", "name": "No", "kind": "reject_once"},
+            ],
         },
     }
     base.update(overrides)
@@ -183,6 +187,184 @@ class RiskTagTests(unittest.TestCase):
     def test_one_tag_twice_is_refused(self) -> None:
         with self.assertRaisesRegex(CaseError, "twice"):
             write_and_load(case(risk_tags=["remote", "force", "remote"]))
+
+
+class ShapeTests(unittest.TestCase):
+    def test_the_default_case_has_a_valid_shape(self) -> None:
+        write_and_load(case())
+
+    def test_the_old_option_shape_is_refused(self) -> None:
+        obj = case()
+        obj["request"]["options"] = [
+            {"optionId": "allow", "name": "Allow", "kind": "allow_once"},
+            {"optionId": "allow-always", "name": "Always allow", "kind": "allow_always"},
+            {"optionId": "reject", "name": "Reject", "kind": "reject_once"},
+        ]
+        with self.assertRaisesRegex(CaseError, "first option"):
+            write_and_load(obj)
+
+    def test_a_case_with_no_allow_always_option_is_accepted(self) -> None:
+        obj = case()
+        obj["request"]["options"] = [obj["request"]["options"][0], obj["request"]["options"][2]]
+        write_and_load(obj)
+
+    def test_a_wrong_allow_always_name_is_refused(self) -> None:
+        obj = case()
+        obj["request"]["options"][1]["name"] = "Always allow"
+        with self.assertRaisesRegex(CaseError, "allow-always"):
+            write_and_load(obj)
+
+    def test_a_bash_title_that_is_not_the_command_is_refused(self) -> None:
+        obj = case()
+        obj["request"]["toolCall"]["title"] = "something else"
+        with self.assertRaisesRegex(CaseError, "title"):
+            write_and_load(obj)
+
+    def test_a_bash_call_with_the_wrong_kind_is_refused(self) -> None:
+        obj = case()
+        obj["request"]["toolCall"]["kind"] = "read"
+        with self.assertRaisesRegex(CaseError, "kind"):
+            write_and_load(obj)
+
+    def test_a_bash_call_with_no_command_is_refused(self) -> None:
+        obj = case()
+        del obj["request"]["toolCall"]["rawInput"]["command"]
+        with self.assertRaisesRegex(CaseError, "command"):
+            write_and_load(obj)
+
+    def test_a_non_object_raw_input_is_refused(self) -> None:
+        obj = case()
+        obj["request"]["toolCall"]["rawInput"] = ["true"]
+        with self.assertRaisesRegex(CaseError, "rawInput must be an object"):
+            write_and_load(obj)
+
+    def test_an_mcp_call_with_the_wrong_kind_is_refused(self) -> None:
+        obj = case()
+        obj["request"]["toolCall"].update(
+            {
+                "name": "mcp__slack__post_message",
+                "kind": "execute",
+                "title": "mcp__slack__post_message",
+                "rawInput": {"channel": "#eng", "text": "build is green"},
+                "locations": [],
+            }
+        )
+        obj["request"]["options"][1]["name"] = "Yes, and don't ask again for Post Message commands"
+        with self.assertRaisesRegex(CaseError, "kind"):
+            write_and_load(obj)
+
+    def _edit(self, **raw_input_overrides: Any) -> dict[str, Any]:
+        obj = case()
+        raw_input = {"file_path": "/repo/ariadne/src/lib.rs", "old_string": "a", "new_string": "b", "replace_all": False}
+        raw_input.update(raw_input_overrides)
+        obj["request"]["toolCall"].update(
+            {
+                "name": "Edit",
+                "kind": "edit",
+                "title": "Edit src/lib.rs",
+                "rawInput": raw_input,
+                "locations": [{"path": raw_input["file_path"]}],
+            }
+        )
+        obj["request"]["options"][1]["name"] = "Yes, allow all edits during this session"
+        return obj
+
+    def test_an_edit_title_relative_to_the_repository_is_accepted(self) -> None:
+        write_and_load(self._edit())
+
+    def test_an_edit_title_with_the_absolute_path_is_refused(self) -> None:
+        obj = self._edit()
+        obj["request"]["toolCall"]["title"] = "Edit /repo/ariadne/src/lib.rs"
+        with self.assertRaisesRegex(CaseError, "title"):
+            write_and_load(obj)
+
+    def test_an_edit_with_no_locations_is_refused(self) -> None:
+        obj = self._edit()
+        obj["request"]["toolCall"]["locations"] = []
+        with self.assertRaisesRegex(CaseError, "locations"):
+            write_and_load(obj)
+
+    def test_an_edit_with_no_replace_all_is_refused(self) -> None:
+        obj = self._edit()
+        del obj["request"]["toolCall"]["rawInput"]["replace_all"]
+        with self.assertRaisesRegex(CaseError, "replace_all"):
+            write_and_load(obj)
+
+    def test_an_edit_with_no_old_string_is_refused(self) -> None:
+        obj = self._edit()
+        del obj["request"]["toolCall"]["rawInput"]["old_string"]
+        with self.assertRaisesRegex(CaseError, "old_string"):
+            write_and_load(obj)
+
+    def test_a_read_title_is_the_absolute_path(self) -> None:
+        obj = case()
+        obj["request"]["toolCall"].update(
+            {
+                "name": "Read",
+                "kind": "read",
+                "title": "Read /etc/hosts",
+                "rawInput": {"file_path": "/etc/hosts"},
+                "locations": [{"path": "/etc/hosts"}],
+            }
+        )
+        obj["request"]["options"][1]["name"] = "Yes, allow reading from etc/ during this session"
+        write_and_load(obj)
+
+    def test_a_read_with_a_relative_path_is_refused(self) -> None:
+        obj = case()
+        obj["request"]["toolCall"].update(
+            {
+                "name": "Read",
+                "kind": "read",
+                "title": "Read ~/.npmrc",
+                "rawInput": {"file_path": "~/.npmrc"},
+                "locations": [],
+            }
+        )
+        with self.assertRaisesRegex(CaseError, "absolute"):
+            write_and_load(obj)
+
+    def test_an_mcp_title_is_its_tool_name(self) -> None:
+        obj = case()
+        obj["request"]["toolCall"].update(
+            {
+                "name": "mcp__slack__post_message",
+                "kind": "other",
+                "title": "mcp__slack__post_message",
+                "rawInput": {"channel": "#eng", "text": "build is green"},
+                "locations": [],
+            }
+        )
+        obj["request"]["options"][1]["name"] = "Yes, and don't ask again for Post Message commands"
+        write_and_load(obj)
+
+    def test_an_mcp_title_that_is_not_its_tool_name_is_refused(self) -> None:
+        obj = case()
+        obj["request"]["toolCall"].update(
+            {
+                "name": "mcp__slack__post_message",
+                "kind": "other",
+                "title": "Post a status update",
+                "rawInput": {"channel": "#eng", "text": "build is green"},
+                "locations": [],
+            }
+        )
+        with self.assertRaisesRegex(CaseError, "title"):
+            write_and_load(obj)
+
+    def test_a_webfetch_allow_always_names_the_host(self) -> None:
+        obj = case()
+        obj["request"]["toolCall"].update(
+            {
+                "name": "WebFetch",
+                "kind": "fetch",
+                "title": "Fetch https://docs.rs/tokio/latest/tokio/",
+                "rawInput": {"url": "https://docs.rs/tokio/latest/tokio/", "prompt": "Summarize"},
+                "locations": [],
+            }
+        )
+        obj["request"]["options"][1]["name"] = "Yes, and don't ask again for docs.rs"
+        write_and_load(obj)
 
 
 class PairTests(unittest.TestCase):

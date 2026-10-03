@@ -1080,7 +1080,11 @@ class DeriveCommandTests(unittest.TestCase):
                     "rawInput": {"command": "rm -rf /"},
                     "locations": [],
                 },
-                "options": [{"optionId": "allow", "name": "Allow", "kind": "allow_once"}],
+                "options": [
+                    {"optionId": "allow-once", "name": "Yes", "kind": "allow_once"},
+                    {"optionId": "allow-with-updates", "name": "Yes, and don't ask again for rm * commands", "kind": "allow_always"},
+                    {"optionId": "reject", "name": "No", "kind": "reject_once"},
+                ],
             },
         }
         with tempfile.TemporaryDirectory() as directory:

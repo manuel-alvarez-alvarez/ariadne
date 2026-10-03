@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import urlsplit
 
 REQUIRED_TOP = ("id", "set", "expected", "category", "operation", "risk_tags", "note", "repository", "request")
 VALID_SETS = ("safe", "elevated", "adversarial", "real")
@@ -47,6 +48,92 @@ RISK_TAGS = (
     "root_or_home_delete",
 )
 HELDOUT_SUFFIX = "-heldout.jsonl"
+
+# The three permission options of a real request (README "Case format"). The allow-always
+# option is optional; about one real request in five carries only the other two.
+ALLOW_ONCE = {"optionId": "allow-once", "name": "Yes", "kind": "allow_once"}
+REJECT_ONCE = {"optionId": "reject", "name": "No", "kind": "reject_once"}
+ALLOW_ALWAYS_ID = "allow-with-updates"
+ALLOW_ALWAYS_KIND = "allow_always"
+
+# The kind and the required rawInput keys of a tool the shape table names (README "Case
+# format"). `mcp__*` takes its own branch in `_check_shape`: kind "other", with no key required
+# by name, since the table gives it "the tool's arguments".
+TOOL_SHAPE = {
+    "Bash": ("execute", ("command",)),
+    "Edit": ("edit", ("file_path", "old_string", "new_string")),
+    "Write": ("edit", ("file_path", "content")),
+    "Read": ("read", ("file_path",)),
+    "WebFetch": ("fetch", ("url", "prompt")),
+    "WebSearch": ("fetch", ("query",)),
+}
+
+
+def _bash_prefix(command: str) -> str:
+    """The words a `Bash` allow-always option names: the program, and the next word when it is
+    not a flag."""
+    words = command.split()
+    if not words:
+        return ""
+    prefix = [words[0]]
+    if len(words) > 1 and not words[1].startswith("-"):
+        prefix.append(words[1])
+    return " ".join(prefix)
+
+
+def _last_dir(file_path: str) -> str:
+    """The directory name a `Read` allow-always option names: the last path component before
+    the file."""
+    parent = file_path.rsplit("/", 1)[0] or "/"
+    return parent.rsplit("/", 1)[-1] or "/"
+
+
+def _tool_words(name: str) -> str:
+    """The words an `mcp__*` allow-always option names: the tool's own name, after its server,
+    split on `_` and title-cased."""
+    tail = name.rsplit("__", 1)[-1]
+    return " ".join(word.capitalize() for word in tail.split("_") if word)
+
+
+def expected_title(tool_call: dict[str, Any], repository: str | None) -> str | None:
+    """The title the real request fixes for `tool_call` (README "Case format"). `None` for a
+    tool the table does not name, which carries no title rule."""
+    name = tool_call.get("name", "")
+    raw_input = tool_call.get("rawInput", {}) or {}
+    if name == "Bash":
+        return str(raw_input.get("command", ""))
+    if name in ("Edit", "Write"):
+        file_path = str(raw_input.get("file_path", ""))
+        if repository and (file_path == repository or file_path.startswith(repository + "/")):
+            file_path = file_path[len(repository) + 1 :]
+        return "%s %s" % (name, file_path)
+    if name == "Read":
+        return "Read %s" % raw_input.get("file_path", "")
+    if name == "WebFetch":
+        return "Fetch %s" % raw_input.get("url", "")
+    if name == "WebSearch":
+        return 'Search "%s"' % raw_input.get("query", "")
+    if name.startswith("mcp__"):
+        return name
+    return None
+
+
+def expected_allow_always_name(tool_call: dict[str, Any]) -> str:
+    """The name of the allow-always option for `tool_call` (README "Case format"). A tool the
+    table does not name takes the fallback the table gives `WebSearch`: its own name."""
+    name = tool_call.get("name", "")
+    raw_input = tool_call.get("rawInput", {}) or {}
+    if name == "Bash":
+        return "Yes, and don't ask again for %s * commands" % _bash_prefix(str(raw_input.get("command", "")))
+    if name in ("Edit", "Write"):
+        return "Yes, allow all edits during this session"
+    if name == "Read":
+        return "Yes, allow reading from %s/ during this session" % _last_dir(str(raw_input.get("file_path", "")))
+    if name == "WebFetch":
+        return "Yes, and don't ask again for %s" % (urlsplit(str(raw_input.get("url", ""))).hostname or "")
+    if name.startswith("mcp__"):
+        return "Yes, and don't ask again for %s commands" % _tool_words(name)
+    return "Yes, and don't ask again for %s commands" % name
 
 
 class CaseError(ValueError):
@@ -98,6 +185,62 @@ def _check(case: dict[str, Any], source: str, line_no: int | None) -> None:
         raise CaseError(source, line_no, "toolCall.kind must be one of %s, got %r" % (VALID_KINDS, tool_call["kind"]))
     if not isinstance(request["options"], list) or not request["options"]:
         raise CaseError(source, line_no, "request.options must be a non-empty list")
+    _check_shape(case, source, line_no)
+
+
+def _check_shape(case: dict[str, Any], source: str, line_no: int | None) -> None:
+    """The shape of a real `session/request_permission` request (README "Case format"): the
+    title and the input per tool, and the permission options, each regardless of label."""
+    tool_call = case["request"]["toolCall"]
+    repository = case.get("repository")
+    name = tool_call.get("name", "")
+    raw_input = tool_call.get("rawInput")
+    if not isinstance(raw_input, dict):
+        raise CaseError(source, line_no, "rawInput must be an object, got %r" % (raw_input,))
+
+    if name in TOOL_SHAPE:
+        expected_kind, required_keys = TOOL_SHAPE[name]
+        if tool_call.get("kind") != expected_kind:
+            raise CaseError(source, line_no, "%s must have kind %r, got %r" % (name, expected_kind, tool_call.get("kind")))
+        for key in required_keys:
+            if not isinstance(raw_input.get(key), str):
+                raise CaseError(source, line_no, "%s rawInput.%s must be a string, got %r" % (name, key, raw_input.get(key)))
+    elif name.startswith("mcp__") and tool_call.get("kind") != "other":
+        raise CaseError(source, line_no, "an mcp tool must have kind 'other', got %r" % (tool_call.get("kind"),))
+
+    title = expected_title(tool_call, repository)
+    if title is not None and tool_call.get("title") != title:
+        raise CaseError(source, line_no, "title must be %r for %s, got %r" % (title, name, tool_call.get("title")))
+
+    if name in ("Edit", "Write", "Read"):
+        file_path = raw_input.get("file_path")
+        if not isinstance(file_path, str) or not file_path.startswith("/"):
+            raise CaseError(source, line_no, "%s rawInput.file_path must be an absolute path, got %r" % (name, file_path))
+        if tool_call.get("locations") != [{"path": file_path}]:
+            raise CaseError(
+                source, line_no, "locations must be [{'path': file_path}] for %s, got %r" % (name, tool_call.get("locations"))
+            )
+
+    if name == "Edit" and not isinstance(raw_input.get("replace_all"), bool):
+        raise CaseError(source, line_no, "Edit rawInput.replace_all must be a bool, got %r" % (raw_input.get("replace_all"),))
+
+    options = case["request"]["options"]
+    if len(options) not in (2, 3):
+        raise CaseError(source, line_no, "request.options must hold 2 or 3 options, got %d" % len(options))
+    if options[0] != ALLOW_ONCE:
+        raise CaseError(source, line_no, "the first option must be %r, got %r" % (ALLOW_ONCE, options[0]))
+    if options[-1] != REJECT_ONCE:
+        raise CaseError(source, line_no, "the last option must be %r, got %r" % (REJECT_ONCE, options[-1]))
+    if len(options) == 3:
+        middle = options[1]
+        expected_name = expected_allow_always_name(tool_call)
+        if middle.get("optionId") != ALLOW_ALWAYS_ID or middle.get("kind") != ALLOW_ALWAYS_KIND or middle.get("name") != expected_name:
+            raise CaseError(
+                source,
+                line_no,
+                "the allow-always option must be {'optionId': %r, 'name': %r, 'kind': %r}, got %r"
+                % (ALLOW_ALWAYS_ID, expected_name, ALLOW_ALWAYS_KIND, middle),
+            )
 
 
 def load_file(path: Path) -> list[dict[str, Any]]:

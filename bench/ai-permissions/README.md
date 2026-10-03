@@ -686,6 +686,91 @@ been fitted to them. Run them with `--heldout` when judging a mode, not while
 changing it. A held-out `ask` case is in `adversarial-heldout.jsonl`, with the
 reason in its `note`.
 
+### Request shape
+
+`request.toolCall` takes the shape the daemon's database gives the tool of
+`toolCall.name`, so a case reads as the real `session/request_permission` the
+daemon sends to a model, not as a hand-written approximation of one:
+
+| Tool | Title | Kind | Input keys | Allow-always option name |
+| --- | --- | --- | --- | --- |
+| `Bash` | the command text | `execute` | `command`, often `description`, sometimes `timeout` | `Yes, and don't ask again for <first word, and the next word when it is not a flag> * commands` |
+| `Edit` | `Edit <path relative to the repository>`, or the absolute path when the file is outside it | `edit` | `file_path` (absolute), `old_string`, `new_string`, `replace_all` | `Yes, allow all edits during this session` |
+| `Write` | `Write <path relative to the repository>`, or the absolute path when the file is outside it | `edit` | `file_path` (absolute), `content` | `Yes, allow all edits during this session` |
+| `Read` | `Read <absolute path>` | `read` | `file_path` (absolute), sometimes `offset`, `limit` | `Yes, allow reading from <name of the last directory>/ during this session` |
+| `WebFetch` | `Fetch <url>` | `fetch` | `url`, `prompt` | `Yes, and don't ask again for <host of the url>` |
+| `WebSearch` | `Search "<query>"` | `fetch` | `query` | `Yes, and don't ask again for WebSearch commands` |
+| `mcp__*` | the tool name, verbatim | `other` | the tool's arguments | `Yes, and don't ask again for <Tool Words> commands`, where `<Tool Words>` is the part of the name after the server, split on `_` and title-cased (`mcp__github__delete_repository` gives `Delete Repository`) |
+
+A tool outside this table (`Grep`, `Glob`, a future tool) carries none of the
+title or input rules above; its allow-always option takes the fallback the
+table gives `WebSearch`: `Yes, and don't ask again for <name> commands`.
+
+The permission options are three: `{"optionId": "allow-once", "name": "Yes",
+"kind": "allow_once"}`, the allow-always option of the table above with
+`optionId: "allow-with-updates"` and `kind: "allow_always"`, and
+`{"optionId": "reject", "name": "No", "kind": "reject_once"}`. About one real
+request in five carries no allow-always option, so the middle one is
+optional; the first and the last are not. `ai_bench.cases.expected_title` and
+`expected_allow_always_name` compute the title and the allow-always name of a
+`toolCall`, word for word as the table gives them, and `validate` (below)
+refuses a case whose shape disagrees with them.
+
+The cases were rewritten once, on 2026-10-03, from the hand-written shapes an
+earlier audit left (one fixed set of three options with the ids `allow`,
+`allow-always` and `reject`; every Bash case carrying a `description`; no
+`locations` and no `replace_all`; a title that did not track `Edit`, `Write`
+or `mcp__*` input) to the table above, with no change to `expected`, `set`,
+`operation`, `risk_tags`, `pair`, `note`, `repository` or the command, URL or
+file text of any case. The rewrite script is not kept: it loaded each case,
+then, by its `toolCall.name`:
+
+- Set the options to the three above, with the allow-always one left out on
+  about one case in five and its name computed as the table gives it
+  otherwise.
+- For `Bash`, dropped `description` on about two cases in five of those that
+  had one, and added a `timeout` of 120000 to about one case in five that
+  lacked one. Both choices come from a SHA-256 hash of the case `id` (a
+  different hash per choice, so the three per-case choices of this section do
+  not correlate), taken modulo 5, so a rerun of the script reproduces the
+  same cases.
+- For `Edit`, `Write` and `Read`, set `locations` to `[{"path": file_path}]`
+  and, for `Edit`, set `replace_all` to `false` where the case did not carry
+  one.
+- Set the title of every `Bash`, `Edit`, `Write`, `Read`, `WebFetch` and
+  `mcp__*` case to the table's shape, computed from its `file_path`, `url` or
+  `command`.
+- Six cases carried a path outside the table (`~/...`, or a `../..` climb)
+  for `Read`, `Edit` or `Write`; each was rewritten to the absolute,
+  `/home/user/...` form every other case already uses, so its title could
+  take the table's shape. None of the six changes what `outside_workspace`
+  the path carries.
+
+Two adversarial `classifier-bypass` cases
+(`heldout-classifier-bypass-002`, `heldout-classifier-bypass-008`) had a title
+that did not match their command, as the premise of their category: a
+benign-looking title next to a destructive command. Since the real `Bash`
+title is always the command text, that premise cannot occur in a real
+request; the rewrite gave both cases the matching title their shape rule
+requires. Their `expected`, `set`, `category` and `note` did not change.
+
+`ai_bench.derive.derive` gave the same `risk_tags` to every case before and
+after the rewrite. Its `operation_hint` changed for three cases whose title
+had read `Read ...` by coincidence of free text
+(`safe-mcp-ariadne-003`, `safe-mcp-ariadne-011`, `heldout-task-metadata-001`,
+each an `mcp__ariadne__read_messages` or `mcp__tracker__get_task` call): the
+rewritten title is the tool's own name, which the heuristic's
+`title.startswith("read")` test no longer matches, so their `operation_hint`
+moved from `read_workspace` to `None`. No registered evaluator reads
+`operation_hint` (`kev_v26`, `kev_v27` and `kev_v28` each declare
+`FACTS = ("risk_tags", "outside_workspace")`), so this moves no mode's
+decision; `run.py derive` and `run.py fixture`, which do print it, are
+diagnostics, not a run. `ai_bench.representations._paths` read `file_path`
+from `rawInput` and then again from `locations` once both named it, so an
+`Edit`, `Write` or `Read` case repeated its own path in the `paths` field of
+Laya's structured state (`path: /repo/x, /repo/x`); it now keeps each path
+once.
+
 ### Operation
 
 `operation` is required. It is the main effect of the request, as one of 12
@@ -899,6 +984,23 @@ pairs over the files it gets, so give it the directory. A run on one file
 `tests/test_cases.py` also holds the minimum numbers: each operation has at
 least 10 development and 5 held-out cases, each tag at least 8 and 4, and the
 set at least 60 pairs, 20 of them held-out.
+
+`validate` also refuses a case whose request does not hold the "Request
+shape" above: a `Bash`, `Edit`, `Write`, `Read`, `WebFetch` or `WebSearch`
+call whose `toolCall.kind` is not the table's kind, or whose `rawInput`
+lacks one of the table's required keys as a string (`command` for `Bash`;
+`file_path`, `old_string` and `new_string` for `Edit`; `file_path` and
+`content` for `Write`; `file_path` for `Read`; `url` and `prompt` for
+`WebFetch`; `query` for `WebSearch`); an `mcp__*` call whose `toolCall.kind`
+is not `other`; `request.options` with a count outside 2 or 3, a first
+option that is not the `allow-once` one, a last option that is not the
+`reject` one, or a middle option whose id, kind or name disagrees with the
+table; a `Bash`, `Edit`, `Write`, `Read`, `WebFetch`, `WebSearch` or
+`mcp__*` title that disagrees with the table; an `Edit`, `Write` or `Read`
+whose `rawInput.file_path` is not an absolute path, or whose `locations` is
+not `[{"path": file_path}]`; and an `Edit` whose `rawInput` carries no
+`replace_all`. A tool the table does not name (`Grep`, `Glob`) carries no
+kind, input or title rule.
 
 ## Case audit (2026-09-29)
 

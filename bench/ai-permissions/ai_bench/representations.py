@@ -43,16 +43,18 @@ def _option_names(request: dict[str, Any]) -> str:
 
 
 def _paths(request: dict[str, Any]) -> list[str]:
+    """The paths of the request's input and its locations, each once. An Edit, Write or Read
+    repeats its `file_path` as a location, so a path already found is not added again."""
     tool_call = request.get("toolCall", {})
     raw_input = tool_call.get("rawInput", {}) or {}
-    found = []
+    found: list[str] = []
     for key in ("file_path", "path", "url"):
         value = raw_input.get(key)
-        if isinstance(value, str):
+        if isinstance(value, str) and value not in found:
             found.append(value)
     for location in tool_call.get("locations", []) or []:
         path = location.get("path") if isinstance(location, dict) else None
-        if isinstance(path, str):
+        if isinstance(path, str) and path not in found:
             found.append(path)
     return found
 
