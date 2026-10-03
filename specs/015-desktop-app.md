@@ -85,8 +85,16 @@ Out: the daemon endpoints themselves (012).
     agent; the orchestrator's own playbook is not among them, for the author
     or a reviewer. The skills screen marks that playbook beside its built-in
     mark, staying editable and resettable like any other shipped skill.
-17. The agent activity feed shows each event's one-line summary from the
-    daemon; its raw payload stays available under the row.
+17. The agent activity feed shows each event by its kind in plain words: Tool
+    call, Tool result, Permission asked, Permission answered, Agent said, and
+    so on for every kind the daemon records; an unknown kind shows its raw name.
+    A colored dot from the status ramp — warn for permission events, danger for
+    errors, active for agent messages, pending for tool calls — precedes the
+    plain words. The summary is the daemon's one-line gist, or derived from the
+    payload when empty: the tool name and its first argument, showing `Read
+    /tmp/x.png` or `Bash git status`. Consecutive rows of the same kind and the
+    same tool fold into one, such as `Tool call · Read /file ×7`, which expands
+    to the individual rows. Each row still expands to its raw payload.
 18. The sessions screen lists both kinds of session in one table, newest
     activity first: the title, the status, the work — in one column, the
     seat a session holds as a badge, the goal it is under and the task under
