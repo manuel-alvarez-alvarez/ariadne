@@ -5,12 +5,16 @@ use std::collections::{HashMap, HashSet};
 
 use ariadne_core::id::new_id;
 use ariadne_core::{Actor, AttentionReason, Landing, Seat, TaskStatus, check_transition};
+use chrono::DateTime;
 
 use crate::query::Filtered;
 use crate::{
     AgentPin, Change, NewTaskAgent, Result, Store, StoreError, Task, TaskAgent, TaskTransition,
     not_found, now,
 };
+
+/// The fact a task writes once it reaches one of its three endings.
+const TASK_ENDED: &str = "task_ended";
 
 #[derive(Debug, Clone)]
 pub struct NewTask {
@@ -506,7 +510,93 @@ impl Store {
         .execute(&mut **tx)
         .await?;
 
+        if matches!(
+            to,
+            TaskStatus::Finished | TaskStatus::Cancelled | TaskStatus::Failed
+        ) {
+            Self::record_task_ended_in_tx(tx, task, to, reason, &transition.created_at).await?;
+        }
+
         Ok(transition)
+    }
+
+    /// Write the `task_ended` fact (023): one row per author agent, filled
+    /// from the picked author where the task staffed several, or the one
+    /// author where it staffed a single one. A task cancelled or failed
+    /// before a pick settled names no author at all.
+    async fn record_task_ended_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        task: &Task,
+        to: TaskStatus,
+        reason: Option<&str>,
+        ended_at: &str,
+    ) -> Result<()> {
+        let authors: Vec<(String, String, Option<String>)> = sqlx::query_as(
+            "SELECT id, model, effort FROM task_agents
+              WHERE task_id = ? AND seat = 'author' ORDER BY ordinal",
+        )
+        .bind(&task.id)
+        .fetch_all(&mut **tx)
+        .await?;
+        let author = match (&task.picked_agent_id, authors.as_slice()) {
+            (Some(picked), _) => authors.iter().find(|(id, _, _)| id == picked),
+            (None, [only]) => Some(only),
+            _ => None,
+        };
+        let skills: Vec<String> = match author {
+            Some((agent_id, _, _)) => {
+                sqlx::query_scalar(
+                    "SELECT skill_name FROM task_agent_skills
+                      WHERE agent_id = ? ORDER BY ordinal",
+                )
+                .bind(agent_id)
+                .fetch_all(&mut **tx)
+                .await?
+            }
+            None => Vec::new(),
+        };
+        let review_requests: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM messages WHERE task_id = ? AND kind = 'review_request'",
+        )
+        .bind(&task.id)
+        .fetch_one(&mut **tx)
+        .await?;
+        let lead_time_secs = match (
+            DateTime::parse_from_rfc3339(&task.created_at),
+            DateTime::parse_from_rfc3339(ended_at),
+        ) {
+            (Ok(created), Ok(ended)) => (ended - created).num_seconds().max(0),
+            _ => 0,
+        };
+        let data = serde_json::json!({
+            "status": to.as_str(),
+            "reason": reason,
+            "landing": task.landing().as_str(),
+            "lead_time_secs": lead_time_secs,
+            "review_requests": review_requests.max(0),
+            "authors": authors.len(),
+            "picked": task.picked_agent_id.is_some(),
+        });
+        let skills_json = serde_json::to_string(&skills).expect("a list of names serializes");
+        sqlx::query(
+            "INSERT INTO stat_facts (id, kind, created_at, repo_id, goal_id, task_id, session_id,
+                                      launch_id, seat, model, effort, skills, data)
+             VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)",
+        )
+        .bind(new_id())
+        .bind(TASK_ENDED)
+        .bind(ended_at)
+        .bind(&task.repo_id)
+        .bind(&task.goal_id)
+        .bind(&task.id)
+        .bind(author.map(|_| "author"))
+        .bind(author.map(|(_, model, _)| model.clone()))
+        .bind(author.and_then(|(_, _, effort)| effort.clone()))
+        .bind(skills_json)
+        .bind(data.to_string())
+        .execute(&mut **tx)
+        .await?;
+        Ok(())
     }
 
     pub async fn list_task_transitions(&self, task_id: &str) -> Result<Vec<TaskTransition>> {

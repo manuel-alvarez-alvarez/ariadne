@@ -3659,7 +3659,7 @@ async fn a_reviewer_picks_once_and_the_picks_settle_a_winner() {
     );
 
     w.store
-        .set_task_picked(&task.id, &authors[1].id)
+        .set_task_picked(&task.id, &authors[1].id, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -4451,4 +4451,213 @@ async fn ending_a_session_answers_the_row_its_write_left() {
         .unwrap();
     assert_eq!(ended.status(), SessionStatus::Failed);
     assert_eq!(ended.attention_reason(), Some(AttentionReason::Stalled));
+}
+
+/// `since` keeps the `task_ended` facts written at or after it, and
+/// `repo_id` the facts of that repository.
+#[tokio::test]
+async fn outcome_stats_keeps_the_facts_since_the_filter_and_of_its_repository() {
+    let (store, _dir) = test_store().await;
+    let (goal_a, repo_a) = seed_goal(&store).await;
+    let task_a = seed_task(&store, &goal_a, &repo_a, vec![]).await;
+    walk_to(&store, &task_a.id, TaskStatus::Finished).await;
+    let (goal_b, repo_b) = seed_goal(&store).await;
+    let task_b = seed_task(&store, &goal_b, &repo_b, vec![]).await;
+    walk_to(&store, &task_b.id, TaskStatus::Finished).await;
+
+    let finished = |stats: OutcomeStats| stats.totals.finished;
+    let hour_ago = StatsFilter {
+        since: Some(chrono::Utc::now() - chrono::Duration::hours(1)),
+        repo_id: None,
+    };
+    assert_eq!(finished(store.outcome_stats(&hour_ago).await.unwrap()), 2);
+    let later = StatsFilter {
+        since: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+        repo_id: None,
+    };
+    assert_eq!(finished(store.outcome_stats(&later).await.unwrap()), 0);
+    let of_a = StatsFilter {
+        since: None,
+        repo_id: Some(repo_a.id.clone()),
+    };
+    assert_eq!(finished(store.outcome_stats(&of_a).await.unwrap()), 1);
+}
+
+/// A `task_ended` fact names its goal by id and holds no key to it, so
+/// deleting the goal leaves the fact where it was.
+#[tokio::test]
+async fn an_outcome_fact_outlives_the_goal_it_is_about() {
+    let w = World::new().await;
+    walk_to(&w.store, &w.task.id, TaskStatus::Finished).await;
+    w.store.delete_goal(&w.goal.id).await.unwrap();
+    let stats = w
+        .store
+        .outcome_stats(&StatsFilter::default())
+        .await
+        .unwrap();
+    assert_eq!(stats.totals.finished, 1);
+    assert_eq!(stats.rows.len(), 1);
+    assert_eq!(stats.rows[0].model, "stub:test-model");
+    assert_eq!(stats.rows[0].finish_rate, 1.0);
+}
+
+/// A `task_ended` fact naming no model: a multi-author task cancelled or
+/// failed before its pick ever settled, so no single author answers for it.
+fn ended_with_no_model(repo_id: &str, status: &str) -> NewStatFact {
+    NewStatFact {
+        kind: "task_ended".into(),
+        repo_id: Some(repo_id.into()),
+        goal_id: Some("01GOAL".into()),
+        task_id: Some("01TASK-A".into()),
+        session_id: None,
+        launch_id: None,
+        seat: None,
+        model: None,
+        effort: None,
+        skills: vec![],
+        data: serde_json::json!({
+            "status": status, "reason": null, "landing": "merge",
+            "lead_time_secs": 10, "review_requests": 0, "authors": 2,
+            "picked": false,
+        }),
+    }
+}
+
+/// A `pick` fact naming its winner and losers.
+fn pick(repo_id: &str, winner: &str, losers: &[&str]) -> NewStatFact {
+    NewStatFact {
+        kind: "pick".into(),
+        repo_id: Some(repo_id.into()),
+        goal_id: Some("01GOAL".into()),
+        task_id: Some("01TASK-B".into()),
+        session_id: Some("01SESSION".into()),
+        launch_id: None,
+        seat: Some("author".into()),
+        model: Some(winner.into()),
+        effort: None,
+        skills: vec![],
+        data: serde_json::json!({
+            "winner_model": winner, "loser_models": losers, "reviewers": 1,
+        }),
+    }
+}
+
+/// The totals are the sum of the rows, never a count of their own: a
+/// `task_ended` fact with no resolvable model answers for no row, and must
+/// not inflate the totals past what the rows themselves add up to.
+#[tokio::test]
+async fn outcome_totals_equal_the_sum_of_the_rows() {
+    let (store, _dir) = test_store().await;
+    store
+        .record_fact(ended_with_no_model("01REPO", "finished"))
+        .await
+        .unwrap();
+    let mut named = ended_with_no_model("01REPO", "finished");
+    named.model = Some("stub:test-model".into());
+    named.seat = Some("author".into());
+    store.record_fact(named).await.unwrap();
+
+    let stats = store.outcome_stats(&StatsFilter::default()).await.unwrap();
+    assert_eq!(stats.rows.len(), 1, "{:?}", stats.rows);
+    let summed: u64 = stats.rows.iter().map(|row| row.finished).sum();
+    assert_eq!(
+        stats.totals.finished, summed,
+        "totals must equal the sum of the rows"
+    );
+    assert_eq!(
+        stats.totals.finished, 1,
+        "the fact with no model names no row"
+    );
+}
+
+/// Two authors on the same model, one of them the winner: that model entered
+/// the contest once and won it once, not twice over.
+#[tokio::test]
+async fn a_contest_names_a_shared_model_once() {
+    let (store, _dir) = test_store().await;
+    store
+        .record_fact(pick(
+            "01REPO",
+            "stub:shared-model",
+            &["stub:shared-model", "stub:other-model"],
+        ))
+        .await
+        .unwrap();
+
+    let stats = store.outcome_stats(&StatsFilter::default()).await.unwrap();
+    let shared = stats
+        .rows
+        .iter()
+        .find(|row| row.model == "stub:shared-model")
+        .expect("the shared model's row");
+    assert_eq!((shared.contests_entered, shared.contests_won), (1, 1));
+    let other = stats
+        .rows
+        .iter()
+        .find(|row| row.model == "stub:other-model")
+        .expect("the other model's row");
+    assert_eq!((other.contests_entered, other.contests_won), (1, 0));
+    assert_eq!(stats.totals.contests_entered, 2);
+    assert_eq!(stats.totals.contests_won, 1);
+}
+
+/// `set_task_picked` writes its own `pick` fact every time a contest
+/// settles, a retry included: the second settlement's fact is not skipped
+/// because the first one already named this task.
+#[tokio::test]
+async fn a_retried_contest_writes_a_pick_fact_for_each_settled_cycle() {
+    let w = World::new().await;
+    let task = w
+        .store
+        .update_task(
+            &w.task.id,
+            TaskUpdate {
+                authors: Some(vec![
+                    NewTaskAgent::new(Seat::Author, ["coding"], default_pin()),
+                    NewTaskAgent::new(Seat::Author, ["coding"], default_pin()),
+                ]),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let authors = w.store.list_task_authors(&task.id).await.unwrap();
+    let reviewer = w
+        .store
+        .list_task_reviewers(&task.id)
+        .await
+        .unwrap()
+        .remove(0);
+
+    w.store
+        .record_pick(&task.id, &reviewer.id, &authors[1].id)
+        .await
+        .unwrap();
+    w.store
+        .set_task_picked(&task.id, &authors[1].id, None, None)
+        .await
+        .unwrap();
+
+    // A retry clears the first settlement, and the contest runs again.
+    w.store.clear_task_picks(&task.id).await.unwrap();
+    w.store
+        .record_pick(&task.id, &reviewer.id, &authors[0].id)
+        .await
+        .unwrap();
+    w.store
+        .set_task_picked(&task.id, &authors[0].id, None, None)
+        .await
+        .unwrap();
+
+    // Both authors share one model (`default_pin`), so the two settlements
+    // are two entries and two wins for that one row — one per cycle, never
+    // suppressed by the cycle before it.
+    let stats = w
+        .store
+        .outcome_stats(&StatsFilter::default())
+        .await
+        .unwrap();
+    assert_eq!(stats.rows.len(), 1, "{:?}", stats.rows);
+    assert_eq!(stats.rows[0].contests_entered, 2);
+    assert_eq!(stats.rows[0].contests_won, 2);
 }

@@ -34,6 +34,7 @@ mod logs;
 mod managers;
 mod models;
 mod multi_author_tasks;
+mod outcome_stats;
 mod pins;
 mod plan_finalize;
 mod prompts;

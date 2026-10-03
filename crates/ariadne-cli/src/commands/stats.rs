@@ -5,16 +5,17 @@ use anyhow::Result;
 use clap::Subcommand;
 
 use ariadne_api::stats::{
-    ModelStatDto, ModelStatsResponse, PermissionStatDto, ReviewStatsDto, StatsQuery, SwitchStatDto,
-    SwitchStatsResponse, ToolModelStatDto, ToolStatDto, ToolStatsDto,
+    ModelStatDto, ModelStatsResponse, OutcomeStatDto, OutcomeStatsDto, OutcomeTotalsDto,
+    PermissionStatDto, ReviewStatsDto, StatsQuery, SwitchStatDto, SwitchStatsResponse,
+    ToolModelStatDto, ToolStatDto, ToolStatsDto,
 };
 use ariadne_client::Client;
 
 use super::query_path;
 use super::resolve::{self, Kind};
 use crate::output::{
-    Column, Format, UNCAPPED, col, dash, duration, empty_state, print, print_json, print_list,
-    print_table, usage_cell,
+    Column, Format, UNCAPPED, col, dash, duration, empty_state, note, pct, print, print_json,
+    print_list, print_table, usage_cell,
 };
 
 /// Columns of `stats models`. The model and its seat are what a row is about,
@@ -78,6 +79,21 @@ const SWITCHES: &[Column] = &[
     col("arrivals", UNCAPPED),
 ];
 
+/// Columns of `stats outcomes`. The model and its endings never drop; the
+/// contest figures are the first to go on a narrow terminal, since most tasks
+/// run with one author and never enter one.
+const OUTCOMES: &[Column] = &[
+    col("model", UNCAPPED).title(),
+    col("finished", UNCAPPED),
+    col("failed", UNCAPPED),
+    col("cancelled", UNCAPPED),
+    col("finish_rate", UNCAPPED).rank(3),
+    col("lead_time", UNCAPPED).rank(2),
+    col("reviews", UNCAPPED).rank(2),
+    col("contests", UNCAPPED).rank(1),
+    col("win_rate", UNCAPPED).rank(1),
+];
+
 #[derive(Subcommand)]
 pub(crate) enum StatsCommand {
     /// How each model did in each seat: sessions, failures, stalls, tokens
@@ -88,6 +104,9 @@ pub(crate) enum StatsCommand {
     Tools,
     /// How often a session left each model, and why
     Switches,
+    /// How tasks end per author model: finish rate, lead time, and the
+    /// contests several authors ran against each other
+    Outcomes,
 }
 
 /// The filters every family takes, as the command line gave them.
@@ -115,6 +134,7 @@ pub(crate) async fn run(
         StatsCommand::Reviews => reviews(client, &query, format).await,
         StatsCommand::Tools => tools(client, &query, format).await,
         StatsCommand::Switches => switches(client, &query, format).await,
+        StatsCommand::Outcomes => outcomes(client, &query, format).await,
     }
 }
 
@@ -294,6 +314,62 @@ fn switch_row(row: &SwitchStatDto) -> Vec<String> {
         row.exhaustions.to_string(),
         format!("{:.1}%", row.automatic_share * 100.0),
         row.arrivals.to_string(),
+    ]
+}
+
+async fn outcomes(client: &Client, query: &StatsQuery, format: Format) -> Result<()> {
+    let response: OutcomeStatsDto = client
+        .get_json(&query_path("/v1/stats/outcomes", query)?)
+        .await?;
+    print(format, &response, || {
+        let mut rows: Vec<Vec<String>> = response.items.iter().map(outcome_row).collect();
+        rows.push(totals_row(&response.totals));
+        let _ = crate::output::print_table(OUTCOMES, &rows);
+        if response.items.is_empty() {
+            note(&empty_state(
+                "No task has ended in that span.",
+                Some("ariadne task ls"),
+            ));
+        }
+    })
+}
+
+/// The mean and the median of a lead time, as one cell: `6m (5m)`.
+fn lead_time_cell(mean_secs: f64, median_secs: f64) -> String {
+    format!(
+        "{} ({})",
+        duration(mean_secs.round() as u64),
+        duration(median_secs.round() as u64)
+    )
+}
+
+/// A row of `stats outcomes`, in the order [`OUTCOMES`] declares its columns.
+fn outcome_row(row: &OutcomeStatDto) -> Vec<String> {
+    vec![
+        row.model.clone(),
+        row.finished.to_string(),
+        row.failed.to_string(),
+        row.cancelled.to_string(),
+        pct(row.finish_rate),
+        lead_time_cell(row.mean_lead_time_secs, row.median_lead_time_secs),
+        format!("{:.1}", row.mean_review_requests),
+        format!("{}/{}", row.contests_won, row.contests_entered),
+        pct(row.win_rate),
+    ]
+}
+
+/// The totals row of `stats outcomes`, in the same shape as [`outcome_row`].
+fn totals_row(totals: &OutcomeTotalsDto) -> Vec<String> {
+    vec![
+        "Totals".into(),
+        totals.finished.to_string(),
+        totals.failed.to_string(),
+        totals.cancelled.to_string(),
+        pct(totals.finish_rate),
+        lead_time_cell(totals.mean_lead_time_secs, totals.median_lead_time_secs),
+        format!("{:.1}", totals.mean_review_requests),
+        format!("{}/{}", totals.contests_won, totals.contests_entered),
+        pct(totals.win_rate),
     ]
 }
 
@@ -583,5 +659,110 @@ mod tests {
         assert!(row.contains('3'), "{row}");
         assert!(row.contains("66.7%"), "{row}");
         assert!(row.contains('1'), "{row}");
+    }
+
+    fn outcome_stat() -> OutcomeStatDto {
+        OutcomeStatDto {
+            model: "stub:test-model".into(),
+            finished: 7,
+            failed: 2,
+            cancelled: 1,
+            finish_rate: 0.7,
+            median_lead_time_secs: 310.0,
+            mean_lead_time_secs: 400.0,
+            mean_review_requests: 2.5,
+            contests_entered: 3,
+            contests_won: 2,
+            win_rate: 2.0 / 3.0,
+        }
+    }
+
+    fn outcome_totals() -> OutcomeTotalsDto {
+        OutcomeTotalsDto {
+            finished: 7,
+            failed: 2,
+            cancelled: 1,
+            finish_rate: 0.7,
+            median_lead_time_secs: 310.0,
+            mean_lead_time_secs: 400.0,
+            mean_review_requests: 2.5,
+            contests_entered: 3,
+            contests_won: 2,
+            win_rate: 2.0 / 3.0,
+        }
+    }
+
+    /// A daemon that answers `GET /v1/stats/outcomes` with [`outcome_stat`]
+    /// and [`outcome_totals`], and keeps the query string each call sent.
+    async fn serve_outcomes() -> (Client, Arc<Mutex<Vec<Option<String>>>>) {
+        async fn handler(
+            State(seen): State<Arc<Mutex<Vec<Option<String>>>>>,
+            RawQuery(query): RawQuery,
+        ) -> Json<OutcomeStatsDto> {
+            seen.lock().unwrap().push(query);
+            Json(OutcomeStatsDto {
+                items: vec![outcome_stat()],
+                totals: outcome_totals(),
+            })
+        }
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let app = Router::new()
+            .route("/v1/stats/outcomes", get(handler))
+            .with_state(seen.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (Client::tcp(format!("http://{address}")), seen)
+    }
+
+    /// `stats outcomes --format json` reads the daemon's DTO whole, with the
+    /// filters it was given.
+    #[tokio::test]
+    async fn stats_outcomes_format_json_reads_the_dto_with_the_filters_given() {
+        let (client, seen) = serve_outcomes().await;
+        let filters = Filters {
+            since: Some("30d".into()),
+            repo: None,
+        };
+        run(&client, Some(StatsCommand::Outcomes), filters, Format::Json)
+            .await
+            .unwrap();
+        assert_eq!(*seen.lock().unwrap(), [Some("since=30d".to_string())]);
+    }
+
+    /// The table carries a header per column, a row per model and a totals
+    /// row after it.
+    #[test]
+    fn the_table_prints_headers_a_model_row_and_a_totals_row() {
+        let rows = [outcome_row(&outcome_stat()), totals_row(&outcome_totals())];
+        let table = render_table(OUTCOMES, &rows, &View::plain()).unwrap();
+        let mut lines = table.lines();
+        let headers: Vec<&str> = lines.next().unwrap().split_whitespace().collect();
+        assert_eq!(
+            headers,
+            [
+                "MODEL",
+                "FINISHED",
+                "FAILED",
+                "CANCELLED",
+                "FINISH_RATE",
+                "LEAD_TIME",
+                "REVIEWS",
+                "CONTESTS",
+                "WIN_RATE"
+            ]
+        );
+        let model_row = lines.next().unwrap();
+        assert!(model_row.contains("stub:test-model"), "{model_row}");
+        assert!(model_row.contains("70.0%"), "{model_row}");
+        assert!(model_row.contains("6m 40s (5m 10s)"), "{model_row}");
+        assert!(model_row.contains("2/3"), "{model_row}");
+        let totals = lines.next().unwrap();
+        assert!(totals.contains("Totals"), "{totals}");
+        assert!(totals.contains("66.7%"), "{totals}");
+        assert!(
+            lines.next().is_none(),
+            "exactly one model row and one totals row"
+        );
     }
 }

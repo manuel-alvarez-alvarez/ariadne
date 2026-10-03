@@ -563,7 +563,19 @@ impl super::Scheduler {
                 return Ok(());
             };
             info!(task = %task.id, winner = %winner.id, "every reviewer has picked; landing this author");
-            self.store.set_task_picked(&task.id, &winner.id).await?;
+            let winner_session = self
+                .last_session(&task.id, |s| {
+                    s.task_agent_id.as_deref() == Some(winner.id.as_str())
+                })
+                .await;
+            self.store
+                .set_task_picked(
+                    &task.id,
+                    &winner.id,
+                    winner_session.as_ref().map(|s| s.id.as_str()),
+                    winner_session.as_ref().and_then(|s| s.launch_id.as_deref()),
+                )
+                .await?;
             return self.settle_pick(task, &winner.id.clone()).await;
         }
 

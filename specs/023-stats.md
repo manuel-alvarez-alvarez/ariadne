@@ -8,6 +8,7 @@ tests:
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-daemon/tests/it/stats.rs
   - crates/ariadne-daemon/tests/it/switch_stats.rs
+  - crates/ariadne-daemon/tests/it/outcome_stats.rs
   - crates/ariadne-daemon/src/http/stats.rs
   - crates/ariadne-daemon/src/acp.rs
   - crates/ariadne-cli/src/commands/stats.rs
@@ -27,11 +28,14 @@ of that ledger. The stats are read with `GET /v1/stats/<family>`,
 ## Scope
 
 In: the ledger, the rules a fact obeys, the `session_ended` fact, the
-`switch` fact, the `models` and `switches` stat families, the filters every
-family takes, and the route, the command and the screen that show it.
+`switch` fact, the `task_ended` and `pick` facts, the `models`, `switches`
+and `outcomes` stat families, the filters every family takes, and the
+route, the command and the screen that show it.
 
 Out: token accounting itself (012, rules 13 to 16), what a session is and how
-it ends (008), and what a skill is (017). Each other stat family adds its
+it ends (008), what a skill is (017), and the task state machine and the pick
+itself, `task_picks` included (004) — the fact is a record of what they
+decided, not a change to how they decide it. Each other stat family adds its
 fact and its rules here when it is built.
 
 ## Behavior
@@ -217,6 +221,80 @@ fact and its rules here when it is built.
     `task_updated` and `session_updated` event invalidates the whole group,
     since either may be a fact.
 
+### The `task_ended` fact
+
+34. A task writes one `task_ended` fact each time it reaches `finished`,
+    `cancelled` or `failed`. It is written in the same transaction as the
+    status write, inside `Store::transition_task`'s shared body
+    (`transition_in_tx`) — the one place every status change passes — rather
+    than from the daemon once the call returns: that way no caller of
+    `transition_task` can reach one of the three endings without the fact
+    being written alongside it. A task retried and failed again writes one
+    more fact.
+35. Its `data` holds `status` (`finished`, `cancelled` or `failed`),
+    `reason` (the transition's own reason), `landing` (the task's own, as
+    005 spells it), `lead_time_secs` (from the task's `created_at` to the
+    transition), `review_requests` (the count of `review_request` messages
+    on the task) and `authors` (the count of author agents staffed), and
+    `picked` (true where `picked_agent_id` is set). The repository, the
+    goal and the task are the task's own; there is no session to one.
+36. The model, the effort and the skills are the picked author's where the
+    task staffed several authors, the one author's where it staffed a
+    single one, and none of the three where it staffed several and none
+    was picked yet — a task cancelled or failed before its pick settled.
+
+### The `pick` fact
+
+37. A contested task's settled pick writes one `pick` fact, inside
+    `Store::set_task_picked` itself (004 rule 14) rather than from the
+    daemon once that call returns: the winner's column and this fact are
+    one transaction, so there is no moment where a daemon could die with
+    the winner written and the fact not. Its `data` holds `winner_model`,
+    `loser_models` (the losing authors' models, as an array) and
+    `reviewers` (the count of reviewers staffed on the task).
+38. The repository and the goal are the task's own, and the model, the
+    effort and the skills are the winning `task_agents` row's own
+    (`task_agent_skills`) rather than a session's: a session can end, be
+    resumed under another one, or never have existed, none of which should
+    stand between the winner being on the task and the fact that says who
+    lost to it. Two authors of one contest sharing a model are still one
+    row each, since the fact names the model, not the agent. `session_id`
+    and `launch_id` are the winner's live session where `run_the_pick`
+    found one, carried straight through to the fact; absent where it found
+    none.
+39. Each settled contest calls `set_task_picked` once, so each one writes
+    one fact of its own: a task retried clears the winner
+    (`Store::clear_task_picks`) and runs its review again, and the next
+    settlement's fact is its own rather than a second one of a task
+    already named.
+
+### The `outcomes` family
+
+40. `GET /v1/stats/outcomes` answers `{items: [OutcomeStatDto], totals:
+    OutcomeTotalsDto}`: one row per author model a `task_ended` or a `pick`
+    fact names, ordered by model.
+41. A row carries `finished`, `failed` and `cancelled` (the `task_ended`
+    facts of that status for that model), `finish_rate` (`finished` over
+    the three), `median_lead_time_secs` and `mean_lead_time_secs`,
+    `mean_review_requests`, `contests_entered` (the `pick` facts naming
+    that model as the winner or among the losers), `contests_won` (the
+    ones naming it the winner), and `win_rate` (`contests_won` over
+    `contests_entered`). A rate with nothing to take a share of is 0. Two
+    authors of one contest on the same model are one entry for it, not two.
+42. The totals are the sum of the rows above them, field for field,
+    lead times and review requests pooled into one mean and one median
+    rather than averaged again: a `task_ended` fact with no author to name
+    answers for no row and so for none of the totals either.
+43. `ariadne stats outcomes` prints a table of `MODEL`, `FINISHED`,
+    `FAILED`, `CANCELLED`, `FINISH_RATE`, `LEAD_TIME`, `REVIEWS`,
+    `CONTESTS` and `WIN_RATE`, one row per model and a totals row after
+    them. `--format json` prints the DTO whole, totals included. It takes
+    the table flags of a listing (014).
+44. The desktop app's Outcomes panel shows the same rows as
+    `ariadne stats outcomes`, the totals row included, under the same
+    `since` and `repo` the screen's header sets, and under the same query-
+    key group (`qk.stats.outcomes(filter)`).
+
 ## Acceptance criteria
 
 - A fact recorded is read back by `model_stats`, summed into one row with its
@@ -316,11 +394,45 @@ fact and its rules here when it is built.
 - Stats is the last entry of the sidebar
   (`app-shell.test.tsx` "ends the navigation with stats, right after
   repositories and permissions").
+- A task that finishes writes one `task_ended` fact with its status, its
+  author's model and a lead time
+  (`outcome_stats.rs::a_finished_task_writes_one_task_ended_fact`), and a task
+  retried after it fails, and that fails again, writes a fact for each ending
+  (`outcome_stats.rs::a_retried_task_that_fails_again_writes_two_facts`).
+- A two-author task writes one `pick` fact with the winner's and the loser's
+  models, and `GET /v1/stats/outcomes` then counts a contest entered for both
+  and won for the winner alone
+  (`outcome_stats.rs::a_contested_pick_writes_one_fact_the_outcomes_stat_counts`).
+- `outcome_stats` honours `since` and `repo_id`
+  (`store.rs::outcome_stats_keeps_the_facts_since_the_filter_and_of_its_repository`),
+  and a `task_ended` fact outlives the goal it is about
+  (`store.rs::an_outcome_fact_outlives_the_goal_it_is_about`).
+- The totals equal the sum of the rows, so a fact with no model to name
+  inflates neither
+  (`store.rs::outcome_totals_equal_the_sum_of_the_rows`).
+- Two authors on the same model in one contest are one entry for it
+  (`store.rs::a_contest_names_a_shared_model_once`).
+- A task retried writes a `pick` fact for each settled cycle, not just the
+  first
+  (`store.rs::a_retried_contest_writes_a_pick_fact_for_each_settled_cycle`).
+- `ariadne stats outcomes --format json` prints the DTO whole, and the table
+  prints a row per model and a totals row
+  (`commands/stats.rs::tests::stats_outcomes_format_json_reads_the_dto_with_the_filters_given`,
+  `::the_table_prints_headers_a_model_row_and_a_totals_row`).
+- `stats outcomes` is classified and takes the table flags of a listing
+  (`cli/tests.rs::every_command_in_the_tree_is_classified`,
+  `::the_listing_flags_are_advertised_exactly_where_they_are_honored`).
+- The outcomes panel renders from a mocked response, totals row included,
+  under the key `qk.stats.outcomes` names
+  (`stats.test.tsx` "renders the outcomes panel from the daemon's rows, totals
+  included", "asks with the filters in its URL, under the key qk names").
 
 ## Sources
 
 `crates/ariadne-store/migrations/0001_init.sql`,
 `crates/ariadne-store/src/stats.rs`,
+`crates/ariadne-store/src/tasks.rs`,
+`crates/ariadne-store/src/picks.rs`,
 `crates/ariadne-store/src/events.rs`,
 `crates/ariadne-api/src/stats.rs`,
 `crates/ariadne-daemon/src/stats.rs`,
@@ -330,9 +442,11 @@ fact and its rules here when it is built.
 `crates/ariadne-daemon/src/scheduler/goals.rs`,
 `crates/ariadne-daemon/src/scheduler/sweeps.rs`,
 `crates/ariadne-daemon/src/scheduler/auto_switch.rs`,
+`crates/ariadne-daemon/src/scheduler/tasks.rs`,
 `crates/ariadne-cli/src/commands/stats.rs`,
 `ui/src/routes/stats.tsx`,
 `ui/src/components/stats/models-panel.tsx`,
 `ui/src/components/stats/switches-panel.tsx`,
+`ui/src/components/stats/outcomes-panel.tsx`,
 `ui/src/api/query-keys.ts`,
 `ui/src/events/dispatch.ts`.

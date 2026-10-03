@@ -2237,6 +2237,55 @@
         }
       }
     },
+    "/v1/stats/outcomes": {
+      "get": {
+        "tags": [
+          "stats"
+        ],
+        "operationId": "outcomes",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Only facts written since then: an RFC 3339 moment, or a span back\nfrom now, `<n>m`, `<n>h`, `<n>d` or `<n>w` (`24h`, `7d`, `30d`).\nAbsent is every fact there is.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "repo",
+            "in": "query",
+            "description": "Only facts about this repository id.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutcomeStatsDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`since` is neither a moment nor a span"
+          }
+        }
+      }
+    },
     "/v1/stats/reviews": {
       "get": {
         "tags": [
@@ -4807,6 +4856,159 @@
           }
         },
         "additionalProperties": false
+      },
+      "OutcomeStatDto": {
+        "type": "object",
+        "description": "How one author model ended its tasks, and did in the contests it entered,\nover the `task_ended` and `pick` facts the filter keeps.",
+        "required": [
+          "model",
+          "finished",
+          "failed",
+          "cancelled",
+          "finish_rate",
+          "median_lead_time_secs",
+          "mean_lead_time_secs",
+          "mean_review_requests",
+          "contests_entered",
+          "contests_won",
+          "win_rate"
+        ],
+        "properties": {
+          "cancelled": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "contests_entered": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Contests this model's author was staffed in, as the winner or a loser.",
+            "minimum": 0
+          },
+          "contests_won": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "finish_rate": {
+            "type": "number",
+            "format": "double",
+            "description": "`finished` over every ending counted, 0 to 1."
+          },
+          "finished": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "mean_lead_time_secs": {
+            "type": "number",
+            "format": "double"
+          },
+          "mean_review_requests": {
+            "type": "number",
+            "format": "double"
+          },
+          "median_lead_time_secs": {
+            "type": "number",
+            "format": "double"
+          },
+          "model": {
+            "type": "string"
+          },
+          "win_rate": {
+            "type": "number",
+            "format": "double",
+            "description": "`contests_won` over `contests_entered`, 0 to 1."
+          }
+        }
+      },
+      "OutcomeStatsDto": {
+        "type": "object",
+        "description": "Response of `GET /v1/stats/outcomes`.",
+        "required": [
+          "items",
+          "totals"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OutcomeStatDto"
+            },
+            "description": "One row per author model, ordered by model."
+          },
+          "totals": {
+            "$ref": "#/components/schemas/OutcomeTotalsDto"
+          }
+        }
+      },
+      "OutcomeTotalsDto": {
+        "type": "object",
+        "description": "The same figures, summed across every model.",
+        "required": [
+          "finished",
+          "failed",
+          "cancelled",
+          "finish_rate",
+          "median_lead_time_secs",
+          "mean_lead_time_secs",
+          "mean_review_requests",
+          "contests_entered",
+          "contests_won",
+          "win_rate"
+        ],
+        "properties": {
+          "cancelled": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "contests_entered": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "contests_won": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "finish_rate": {
+            "type": "number",
+            "format": "double"
+          },
+          "finished": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "mean_lead_time_secs": {
+            "type": "number",
+            "format": "double"
+          },
+          "mean_review_requests": {
+            "type": "number",
+            "format": "double"
+          },
+          "median_lead_time_secs": {
+            "type": "number",
+            "format": "double"
+          },
+          "win_rate": {
+            "type": "number",
+            "format": "double"
+          }
+        }
       },
       "PathStateDto": {
         "type": "object",

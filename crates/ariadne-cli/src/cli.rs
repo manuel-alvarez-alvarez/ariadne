@@ -524,6 +524,7 @@ const LISTINGS: &[&str] = &[
     "repo ls",
     "session ls",
     "stats models",
+    "stats outcomes",
     "stats switches",
     "stats tools",
     "task history",

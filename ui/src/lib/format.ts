@@ -140,6 +140,16 @@ export function cachedShare({ input_tokens, cached_input_tokens }: TokenUsage): 
   return `${(Math.min(1000, Math.max(0, tenths)) / 10).toFixed(1)}%`
 }
 
+/**
+ * A fraction from 0 to 1 as a percentage, one decimal place: `89.1%`. The
+ * same rounding as {@link cachedShare}, for a rate that is not a token share
+ * — a finish rate, a win rate.
+ */
+export function formatRate(fraction: number): string {
+  const tenths = Math.round(fraction * 1000)
+  return `${(Math.min(1000, Math.max(0, tenths)) / 10).toFixed(1)}%`
+}
+
 // ── Identifiers ───────────────────────────────────────────────────────────
 
 /**

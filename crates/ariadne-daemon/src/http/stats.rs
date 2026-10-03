@@ -5,11 +5,15 @@ use axum::extract::{Query, State};
 use chrono::{DateTime, Duration, Utc};
 
 use ariadne_api::stats::{
-    AuthorReviewStatDto, MessageStatDto, ModelStatDto, ModelStatsResponse, PermissionStatDto,
-    ReviewStatsDto, ReviewerStatDto, SkillCountDto, StatsQuery, SwitchReasonCountDto,
-    SwitchStatDto, SwitchStatsResponse, ToolModelStatDto, ToolStatDto, ToolStatsDto,
+    AuthorReviewStatDto, MessageStatDto, ModelStatDto, ModelStatsResponse, OutcomeStatDto,
+    OutcomeStatsDto, OutcomeTotalsDto, PermissionStatDto, ReviewStatsDto, ReviewerStatDto,
+    SkillCountDto, StatsQuery, SwitchReasonCountDto, SwitchStatDto, SwitchStatsResponse,
+    ToolModelStatDto, ToolStatDto, ToolStatsDto,
 };
-use ariadne_store::{ModelStatRow, ReviewStats, StatsFilter, SwitchStatRow};
+use ariadne_store::{
+    ModelStatRow, OutcomeStatRow, OutcomeStats, OutcomeTotals, ReviewStats, StatsFilter,
+    SwitchStatRow,
+};
 
 use super::AppState;
 use super::error::{ApiError, ApiResult, Json};
@@ -144,6 +148,19 @@ pub(super) async fn switches(
     }))
 }
 
+#[utoipa::path(get, path = "/v1/stats/outcomes", tag = "stats",
+    params(StatsQuery),
+    responses((status = 200, body = OutcomeStatsDto),
+              (status = 400, description = "`since` is neither a moment nor a span")))]
+pub(super) async fn outcomes(
+    State(state): State<AppState>,
+    Query(query): Query<StatsQuery>,
+) -> ApiResult<Json<OutcomeStatsDto>> {
+    let filter = stats_filter(&query, Utc::now())?;
+    let stats = state.store.outcome_stats(&filter).await?;
+    Ok(Json(outcome_stats_dto(stats)))
+}
+
 /// The store's filter for a stats query, `since` read against `now`. Every
 /// stats route reads its query through this.
 pub(super) fn stats_filter(query: &StatsQuery, now: DateTime<Utc>) -> ApiResult<StatsFilter> {
@@ -212,6 +229,44 @@ fn switch_stat_dto(row: SwitchStatRow) -> SwitchStatDto {
         exhaustions: row.exhaustions,
         automatic_share: row.automatic_share,
         arrivals: row.arrivals,
+    }
+}
+
+fn outcome_stats_dto(stats: OutcomeStats) -> OutcomeStatsDto {
+    OutcomeStatsDto {
+        items: stats.rows.into_iter().map(outcome_stat_dto).collect(),
+        totals: outcome_totals_dto(stats.totals),
+    }
+}
+
+fn outcome_stat_dto(row: OutcomeStatRow) -> OutcomeStatDto {
+    OutcomeStatDto {
+        model: row.model,
+        finished: row.finished,
+        failed: row.failed,
+        cancelled: row.cancelled,
+        finish_rate: row.finish_rate,
+        median_lead_time_secs: row.median_lead_time_secs,
+        mean_lead_time_secs: row.mean_lead_time_secs,
+        mean_review_requests: row.mean_review_requests,
+        contests_entered: row.contests_entered,
+        contests_won: row.contests_won,
+        win_rate: row.win_rate,
+    }
+}
+
+fn outcome_totals_dto(totals: OutcomeTotals) -> OutcomeTotalsDto {
+    OutcomeTotalsDto {
+        finished: totals.finished,
+        failed: totals.failed,
+        cancelled: totals.cancelled,
+        finish_rate: totals.finish_rate,
+        median_lead_time_secs: totals.median_lead_time_secs,
+        mean_lead_time_secs: totals.mean_lead_time_secs,
+        mean_review_requests: totals.mean_review_requests,
+        contests_entered: totals.contests_entered,
+        contests_won: totals.contests_won,
+        win_rate: totals.win_rate,
     }
 }
 

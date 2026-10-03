@@ -911,6 +911,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/stats/outcomes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["stats_outcomes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/stats/reviews": {
         parameters: {
             query?: never;
@@ -2039,6 +2055,71 @@ export interface components {
             model: string;
             /** @description The absolute path of an existing directory the agent works in. */
             working_directory: string;
+        };
+        /**
+         * @description How one author model ended its tasks, and did in the contests it entered,
+         *     over the `task_ended` and `pick` facts the filter keeps.
+         */
+        OutcomeStatDto: {
+            /** Format: int64 */
+            cancelled: number;
+            /**
+             * Format: int64
+             * @description Contests this model's author was staffed in, as the winner or a loser.
+             */
+            contests_entered: number;
+            /** Format: int64 */
+            contests_won: number;
+            /** Format: int64 */
+            failed: number;
+            /**
+             * Format: double
+             * @description `finished` over every ending counted, 0 to 1.
+             */
+            finish_rate: number;
+            /** Format: int64 */
+            finished: number;
+            /** Format: double */
+            mean_lead_time_secs: number;
+            /** Format: double */
+            mean_review_requests: number;
+            /** Format: double */
+            median_lead_time_secs: number;
+            model: string;
+            /**
+             * Format: double
+             * @description `contests_won` over `contests_entered`, 0 to 1.
+             */
+            win_rate: number;
+        };
+        /** @description Response of `GET /v1/stats/outcomes`. */
+        OutcomeStatsDto: {
+            /** @description One row per author model, ordered by model. */
+            items: components["schemas"]["OutcomeStatDto"][];
+            totals: components["schemas"]["OutcomeTotalsDto"];
+        };
+        /** @description The same figures, summed across every model. */
+        OutcomeTotalsDto: {
+            /** Format: int64 */
+            cancelled: number;
+            /** Format: int64 */
+            contests_entered: number;
+            /** Format: int64 */
+            contests_won: number;
+            /** Format: int64 */
+            failed: number;
+            /** Format: double */
+            finish_rate: number;
+            /** Format: int64 */
+            finished: number;
+            /** Format: double */
+            mean_lead_time_secs: number;
+            /** Format: double */
+            mean_review_requests: number;
+            /** Format: double */
+            median_lead_time_secs: number;
+            /** Format: double */
+            win_rate: number;
         };
         /** @description A file or directory the daemon depends on. */
         PathStateDto: {
@@ -4525,6 +4606,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ModelStatsResponse"];
+                };
+            };
+            /** @description `since` is neither a moment nor a span */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    stats_outcomes: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Only facts written since then: an RFC 3339 moment, or a span back
+                 *     from now, `<n>m`, `<n>h`, `<n>d` or `<n>w` (`24h`, `7d`, `30d`).
+                 *     Absent is every fact there is.
+                 */
+                since?: string | null;
+                /** @description Only facts about this repository id. */
+                repo?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OutcomeStatsDto"];
                 };
             };
             /** @description `since` is neither a moment nor a span */

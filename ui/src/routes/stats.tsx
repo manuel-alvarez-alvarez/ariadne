@@ -16,6 +16,7 @@ import { useSearchParams } from "react-router-dom"
 import type { StatsFilter } from "@/api"
 import { PageHeader } from "@/components/page-header"
 import { ModelsPanel } from "@/components/stats/models-panel"
+import { OutcomesPanel } from "@/components/stats/outcomes-panel"
 import { ReviewsPanel } from "@/components/stats/reviews-panel"
 import { SwitchesPanel } from "@/components/stats/switches-panel"
 import { ToolsPanel } from "@/components/stats/tools-panel"
@@ -109,6 +110,7 @@ export function StatsPage() {
       <ReviewsPanel filter={filter} />
       <SwitchesPanel filter={filter} />
       <ToolsPanel filter={filter} />
+      <OutcomesPanel filter={filter} />
     </div>
   )
 }

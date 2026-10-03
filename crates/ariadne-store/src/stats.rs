@@ -5,7 +5,7 @@
 //! `stat_facts` and nothing else, so a stats read costs the facts it counts and
 //! never a scan of `agent_events` — see `migrations/0001_init.sql`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ariadne_core::TokenUsage;
 use ariadne_core::id::new_id;
@@ -19,6 +19,12 @@ const SESSION_ENDED: &str = "session_ended";
 
 /// The fact a session writes as it leaves one model for another.
 const SWITCH: &str = "switch";
+
+/// The fact a task writes when it reaches one of its three endings.
+const TASK_ENDED: &str = "task_ended";
+
+/// The fact a contested task's pick writes once the winner is settled.
+const PICK: &str = "pick";
 
 /// One fact on its way into the ledger. The store gives it its id and its
 /// `created_at`.
@@ -140,6 +146,62 @@ pub struct PermissionStatRow {
     pub answer: String,
     pub permissions: u64,
     pub mean_wait_ms: f64,
+}
+
+/// How one author model did at ending tasks, and at winning the contests it
+/// entered, over the `task_ended` and `pick` facts the filter keeps.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OutcomeStatRow {
+    pub model: String,
+    pub finished: u64,
+    pub failed: u64,
+    pub cancelled: u64,
+    /// `finished` over every ending counted, 0 where none were.
+    pub finish_rate: f64,
+    pub median_lead_time_secs: f64,
+    pub mean_lead_time_secs: f64,
+    pub mean_review_requests: f64,
+    /// Contests this model's author was staffed in, as the winner or a loser.
+    pub contests_entered: u64,
+    pub contests_won: u64,
+    /// `contests_won` over `contests_entered`, 0 where none were entered.
+    pub win_rate: f64,
+}
+
+/// The same figures, summed across every model the filter keeps.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct OutcomeTotals {
+    pub finished: u64,
+    pub failed: u64,
+    pub cancelled: u64,
+    pub finish_rate: f64,
+    pub median_lead_time_secs: f64,
+    pub mean_lead_time_secs: f64,
+    pub mean_review_requests: f64,
+    pub contests_entered: u64,
+    pub contests_won: u64,
+    pub win_rate: f64,
+}
+
+/// Answer of [`Store::outcome_stats`]: one row per author model, ordered by
+/// model, and the totals across all of them.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct OutcomeStats {
+    pub rows: Vec<OutcomeStatRow>,
+    pub totals: OutcomeTotals,
+}
+
+/// What one model's `task_ended` facts and `pick` facts add up to, before the
+/// rates are taken.
+#[derive(Debug, Clone, Default)]
+struct Outcome {
+    finished: u64,
+    failed: u64,
+    cancelled: u64,
+    lead_times: Vec<f64>,
+    review_requests: Vec<f64>,
+    contests_entered: u64,
+    contests_won: u64,
 }
 
 /// One row of the main aggregate, in the order its `SELECT` names them.
@@ -618,6 +680,91 @@ impl Store {
             exhaustions: total_exhaustions,
         })
     }
+
+    /// How each author model ended its tasks, and how it did in the contests
+    /// it was staffed in, over the `task_ended` and `pick` facts the filter
+    /// keeps.
+    pub async fn outcome_stats(&self, filter: &StatsFilter) -> Result<OutcomeStats> {
+        let (narrow, binds) = narrowed(filter);
+
+        let mut q =
+            sqlx::query_as::<_, (Option<String>, Option<String>, Option<f64>, Option<f64>)>(
+                sqlx::AssertSqlSafe(format!(
+                    "SELECT model, json_extract(data, '$.status'),
+                        CAST(json_extract(data, '$.lead_time_secs') AS REAL),
+                        CAST(json_extract(data, '$.review_requests') AS REAL)
+                   FROM stat_facts
+                  WHERE kind = ?{narrow}"
+                )),
+            )
+            .bind(TASK_ENDED);
+        for bind in &binds {
+            q = q.bind(bind);
+        }
+        let ended = q.fetch_all(self.r()).await?;
+
+        let mut by_model: HashMap<String, Outcome> = HashMap::new();
+        for (model, status, lead_time, review_requests) in ended {
+            if let Some(model) = model {
+                add_ending(
+                    by_model.entry(model).or_default(),
+                    status.as_deref(),
+                    lead_time,
+                    review_requests,
+                );
+            }
+        }
+
+        let mut q = sqlx::query_as::<_, (String,)>(sqlx::AssertSqlSafe(format!(
+            "SELECT data FROM stat_facts WHERE kind = ?{narrow}"
+        )))
+        .bind(PICK);
+        for bind in &binds {
+            q = q.bind(bind);
+        }
+        for (data,) in q.fetch_all(self.r()).await? {
+            add_contest(&mut by_model, &data);
+        }
+
+        // The totals are the sum of the rows below, never a count of its own:
+        // a fact whose model could not be resolved names no row, and a model
+        // entered in a contest only once however many of its own authors
+        // that contest held.
+        let totals = outcome_totals(by_model.values());
+        let mut rows: Vec<OutcomeStatRow> = by_model
+            .into_iter()
+            .map(|(model, outcome)| outcome_row(model, &outcome))
+            .collect();
+        rows.sort_by(|a, b| a.model.cmp(&b.model));
+
+        Ok(OutcomeStats { rows, totals })
+    }
+}
+
+/// Fold one `pick` fact's `data` into the models it named: the winner and
+/// every loser, each counted as entered once, however many of a contest's
+/// authors shared it — two authors on the same model is one entry for that
+/// model, not two.
+fn add_contest(by_model: &mut HashMap<String, Outcome>, data: &str) {
+    let Ok(data) = serde_json::from_str::<serde_json::Value>(data) else {
+        return;
+    };
+    let Some(winner) = data["winner_model"].as_str() else {
+        return;
+    };
+    let losers = data["loser_models"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|v| v.as_str());
+    let models: HashSet<&str> = std::iter::once(winner).chain(losers).collect();
+    for model in models {
+        let row = by_model.entry(model.to_string()).or_default();
+        row.contests_entered += 1;
+        if model == winner {
+            row.contests_won += 1;
+        }
+    }
 }
 
 fn median(values: &[i64]) -> f64 {
@@ -631,6 +778,107 @@ fn median(values: &[i64]) -> f64 {
 
 fn percentile90(values: &[i64]) -> f64 {
     values[((values.len() * 90).div_ceil(100)).saturating_sub(1)] as f64
+}
+
+/// Fold one `task_ended` fact's status, lead time and review requests into a
+/// running outcome.
+fn add_ending(
+    outcome: &mut Outcome,
+    status: Option<&str>,
+    lead_time: Option<f64>,
+    review_requests: Option<f64>,
+) {
+    match status {
+        Some("finished") => outcome.finished += 1,
+        Some("failed") => outcome.failed += 1,
+        Some("cancelled") => outcome.cancelled += 1,
+        _ => {}
+    }
+    if let Some(lead_time) = lead_time {
+        outcome.lead_times.push(lead_time);
+    }
+    if let Some(review_requests) = review_requests {
+        outcome.review_requests.push(review_requests);
+    }
+}
+
+fn outcome_row(model: String, outcome: &Outcome) -> OutcomeStatRow {
+    let ended = outcome.finished + outcome.failed + outcome.cancelled;
+    OutcomeStatRow {
+        model,
+        finished: outcome.finished,
+        failed: outcome.failed,
+        cancelled: outcome.cancelled,
+        finish_rate: rate(outcome.finished, ended),
+        median_lead_time_secs: median_f64(&outcome.lead_times),
+        mean_lead_time_secs: mean_f64(&outcome.lead_times),
+        mean_review_requests: mean_f64(&outcome.review_requests),
+        contests_entered: outcome.contests_entered,
+        contests_won: outcome.contests_won,
+        win_rate: rate(outcome.contests_won, outcome.contests_entered),
+    }
+}
+
+/// The totals across every model row: the sum of their counts, and the mean
+/// and the median over every one of their lead times and review requests
+/// together — never a count taken on the side, which is what let a fact with
+/// no row of its own, or one contest counted into two rows, throw the totals
+/// out of step with what the rows actually add up to.
+fn outcome_totals<'a>(rows: impl Iterator<Item = &'a Outcome>) -> OutcomeTotals {
+    let mut sum = Outcome::default();
+    for row in rows {
+        sum.finished += row.finished;
+        sum.failed += row.failed;
+        sum.cancelled += row.cancelled;
+        sum.contests_entered += row.contests_entered;
+        sum.contests_won += row.contests_won;
+        sum.lead_times.extend(&row.lead_times);
+        sum.review_requests.extend(&row.review_requests);
+    }
+    let ended = sum.finished + sum.failed + sum.cancelled;
+    OutcomeTotals {
+        finished: sum.finished,
+        failed: sum.failed,
+        cancelled: sum.cancelled,
+        finish_rate: rate(sum.finished, ended),
+        median_lead_time_secs: median_f64(&sum.lead_times),
+        mean_lead_time_secs: mean_f64(&sum.lead_times),
+        mean_review_requests: mean_f64(&sum.review_requests),
+        contests_entered: sum.contests_entered,
+        contests_won: sum.contests_won,
+        win_rate: rate(sum.contests_won, sum.contests_entered),
+    }
+}
+
+/// `n` over `total`, 0 where there is nothing to take a share of.
+fn rate(n: u64, total: u64) -> f64 {
+    match total {
+        0 => 0.0,
+        total => n as f64 / total as f64,
+    }
+}
+
+/// The arithmetic mean of `values`, 0 for none.
+fn mean_f64(values: &[f64]) -> f64 {
+    match values.len() {
+        0 => 0.0,
+        len => values.iter().sum::<f64>() / len as f64,
+    }
+}
+
+/// The median of `values`, 0 for none.
+fn median_f64(values: &[f64]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let mid = sorted.len() / 2;
+    if sorted.len().is_multiple_of(2) {
+        (sorted[mid - 1] + sorted[mid]) / 2.0
+    } else {
+        sorted[mid]
+    }
 }
 
 /// The clauses a filter adds to a `WHERE`, and the values they bind, in order.

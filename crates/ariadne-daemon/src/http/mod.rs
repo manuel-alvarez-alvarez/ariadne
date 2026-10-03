@@ -145,6 +145,7 @@ impl AppState {
         logs::snapshot, logs::stream,
         stats::models, stats::reviews,
         stats::tools, stats::switches,
+        stats::outcomes,
     ),
     components(schemas(
         ariadne_api::stream::DomainEvent, ariadne_api::stream::ResyncDto,
@@ -277,6 +278,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/stats/reviews", get(stats::reviews))
         .route("/v1/stats/tools", get(stats::tools))
         .route("/v1/stats/switches", get(stats::switches))
+        .route("/v1/stats/outcomes", get(stats::outcomes))
         // events
         .route("/v1/events", get(events::list))
         .route("/v1/events/stream", get(stream::stream))

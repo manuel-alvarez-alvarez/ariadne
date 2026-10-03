@@ -879,6 +879,7 @@ async fn a_restart_finishes_a_settlement_the_daemon_died_in() {
     // of its own, both approved, the pick complete, and the winner written —
     // then nothing, which is the crash.
     let mut worktrees = Vec::new();
+    let mut sessions = Vec::new();
     for (n, author) in c.authors.iter().enumerate() {
         let session = h
             .launcher
@@ -894,6 +895,7 @@ async fn a_restart_finishes_a_settlement_the_daemon_died_in() {
             ),
         );
         worktrees.push(worktree);
+        sessions.push(session);
     }
     h.advance(&c.task, TaskStatus::UnderReview).await;
     for author in &c.authors {
@@ -902,12 +904,18 @@ async fn a_restart_finishes_a_settlement_the_daemon_died_in() {
     }
     let winner = &c.authors[1];
     let loser = &c.authors[0];
+    let winner_session = &sessions[winner.ordinal as usize];
     h.store
         .record_pick(&c.task.id, &c.reviewer.id, &winner.id)
         .await
         .unwrap();
     h.store
-        .set_task_picked(&c.task.id, &winner.id)
+        .set_task_picked(
+            &c.task.id,
+            &winner.id,
+            Some(&winner_session.id),
+            winner_session.launch_id.as_deref(),
+        )
         .await
         .unwrap();
 

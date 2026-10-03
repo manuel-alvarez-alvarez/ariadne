@@ -150,3 +150,46 @@ pub struct SwitchStatsResponse {
     /// Exhaustions over every row.
     pub exhaustions: u64,
 }
+
+/// How one author model ended its tasks, and did in the contests it entered,
+/// over the `task_ended` and `pick` facts the filter keeps.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct OutcomeStatDto {
+    pub model: String,
+    pub finished: u64,
+    pub failed: u64,
+    pub cancelled: u64,
+    /// `finished` over every ending counted, 0 to 1.
+    pub finish_rate: f64,
+    pub median_lead_time_secs: f64,
+    pub mean_lead_time_secs: f64,
+    pub mean_review_requests: f64,
+    /// Contests this model's author was staffed in, as the winner or a loser.
+    pub contests_entered: u64,
+    pub contests_won: u64,
+    /// `contests_won` over `contests_entered`, 0 to 1.
+    pub win_rate: f64,
+}
+
+/// The same figures, summed across every model.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct OutcomeTotalsDto {
+    pub finished: u64,
+    pub failed: u64,
+    pub cancelled: u64,
+    pub finish_rate: f64,
+    pub median_lead_time_secs: f64,
+    pub mean_lead_time_secs: f64,
+    pub mean_review_requests: f64,
+    pub contests_entered: u64,
+    pub contests_won: u64,
+    pub win_rate: f64,
+}
+
+/// Response of `GET /v1/stats/outcomes`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct OutcomeStatsDto {
+    /// One row per author model, ordered by model.
+    pub items: Vec<OutcomeStatDto>,
+    pub totals: OutcomeTotalsDto,
+}

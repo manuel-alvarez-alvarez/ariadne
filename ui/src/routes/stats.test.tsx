@@ -4,16 +4,23 @@
  * The Stats screen against a stubbed daemon.
  *
  * What is pinned: the screen asks `GET /v1/stats/models`,
- * `GET /v1/stats/reviews`, `GET /v1/stats/switches` and `GET /v1/stats/tools`
- * with the filters in its URL, renders each panel off its own answer, and
- * keeps the answer under the key `qk` names, which is the one the dispatcher
- * invalidates.
+ * `GET /v1/stats/reviews`, `GET /v1/stats/switches`, `GET /v1/stats/tools`
+ * and `GET /v1/stats/outcomes` with the filters in its URL, renders each
+ * panel off its own answer, and keeps each under the key `qk` names, which
+ * is the one the dispatcher invalidates.
  */
 
 import { screen, within } from "@testing-library/react"
 import { beforeEach, describe, expect, it } from "vitest"
 
-import { type ModelStatDto, qk, type SwitchStatDto, type ToolStatDto } from "@/api"
+import {
+  type ModelStatDto,
+  type OutcomeStatDto,
+  type OutcomeTotalsDto,
+  qk,
+  type SwitchStatDto,
+  type ToolStatDto,
+} from "@/api"
 import { aRepository } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { StatsPage } from "./stats"
@@ -47,6 +54,36 @@ const SWITCH_ROW: SwitchStatDto = {
   exhaustions: 2,
   automatic_share: 2 / 3,
   arrivals: 1,
+}
+
+const OUTCOMES: { items: OutcomeStatDto[]; totals: OutcomeTotalsDto } = {
+  items: [
+    {
+      model: "stub:test-model",
+      finished: 7,
+      failed: 2,
+      cancelled: 1,
+      finish_rate: 0.7,
+      median_lead_time_secs: 310,
+      mean_lead_time_secs: 400,
+      mean_review_requests: 2.5,
+      contests_entered: 3,
+      contests_won: 2,
+      win_rate: 2 / 3,
+    },
+  ],
+  totals: {
+    finished: 7,
+    failed: 2,
+    cancelled: 1,
+    finish_rate: 0.7,
+    median_lead_time_secs: 310,
+    mean_lead_time_secs: 400,
+    mean_review_requests: 2.5,
+    contests_entered: 3,
+    contests_won: 2,
+    win_rate: 2 / 3,
+  },
 }
 
 /** The URLs of every stats request the screen made. */
@@ -83,6 +120,7 @@ beforeEach(() => {
     if (url.pathname === "/v1/stats/switches") {
       return jsonResponse({ items: [SWITCH_ROW], switches: 3, exhaustions: 2 })
     }
+    if (url.pathname === "/v1/stats/outcomes") return jsonResponse(OUTCOMES)
     return jsonResponse({ items: [ROW] })
   })
 })
@@ -105,6 +143,7 @@ describe("StatsPage", () => {
     expect(within(reviews).getAllByText("2").length).toBeGreaterThan(0)
     expect(asked.map((url) => url.pathname).sort()).toEqual([
       "/v1/stats/models",
+      "/v1/stats/outcomes",
       "/v1/stats/reviews",
       "/v1/stats/switches",
       "/v1/stats/tools",
@@ -122,6 +161,33 @@ describe("StatsPage", () => {
     expect(cells.getByText("2")).toBeDefined()
     expect(cells.getByText("66.7%")).toBeDefined()
     expect(cells.getByText("1")).toBeDefined()
+  })
+
+  it("renders the outcomes panel from the daemon's rows, totals included", async () => {
+    renderScreen(<StatsPage />, { route: "/stats" })
+
+    const panel = await screen.findByRole("region", { name: "Outcomes" })
+    const row = (await within(panel).findByText("stub:test-model")).closest("tr")
+    if (!row) throw new Error("no row for the model")
+    const cells = within(row)
+    expect(cells.getByText("7")).toBeDefined()
+    expect(cells.getByText("70.0%")).toBeDefined()
+    expect(cells.getByText("2/3")).toBeDefined()
+    expect(within(panel).getByText("Totals")).toBeDefined()
+  })
+
+  it("renders the tools panel from the daemon's rows", async () => {
+    const { queryClient } = renderScreen(<StatsPage />, { route: "/stats?since=7d" })
+
+    const panel = await screen.findByRole("region", { name: "Tools" })
+    expect(await within(panel).findByText("Bash")).toBeDefined()
+    expect(within(panel).getByText("100ms")).toBeDefined()
+    expect(within(panel).getByText("console")).toBeDefined()
+    expect(queryClient.getQueryData(qk.stats.tools({ since: "7d" }))).toEqual({
+      tools: [TOOL],
+      models: [{ model: "stub:test-model", calls: 4, mean_duration_ms: 40 }],
+      permissions: [{ decided_by: "console", answer: "allow", permissions: 1, mean_wait_ms: 20 }],
+    })
   })
 
   it("asks with the filters in its URL, under the key qk names", async () => {
@@ -145,19 +211,8 @@ describe("StatsPage", () => {
       switches: 3,
       exhaustions: 2,
     })
-  })
-
-  it("renders the tools panel from the daemon's rows", async () => {
-    const { queryClient } = renderScreen(<StatsPage />, { route: "/stats?since=7d" })
-
-    const panel = await screen.findByRole("region", { name: "Tools" })
-    expect(await within(panel).findByText("Bash")).toBeDefined()
-    expect(within(panel).getByText("100ms")).toBeDefined()
-    expect(within(panel).getByText("console")).toBeDefined()
-    expect(queryClient.getQueryData(qk.stats.tools({ since: "7d" }))).toEqual({
-      tools: [TOOL],
-      models: [{ model: "stub:test-model", calls: 4, mean_duration_ms: 40 }],
-      permissions: [{ decided_by: "console", answer: "allow", permissions: 1, mean_wait_ms: 20 }],
-    })
+    expect(queryClient.getQueryData(qk.stats.outcomes({ since: "7d", repo: "01JREPO" }))).toEqual(
+      OUTCOMES,
+    )
   })
 })

@@ -44,6 +44,29 @@ daemon itself once a model is exhausted). A row shows:
   to 100%.
 - `arrivals`: sessions that arrived on this model from another.
 
+## Outcomes
+
+The `outcomes` stat has one row for each author model, and a totals row
+summing every model. A task writes the fact a row is built from once it
+reaches `finished`, `cancelled` or `failed`; the model, effort and skills on
+that row are the task's picked author where several wrote it, or its one
+author where only one did. A row shows:
+
+- `finished`, `failed`, `cancelled`: how many of that model's tasks ended
+  each way, and `finish_rate`: `finished` over all three.
+- lead time: the mean and the median time from a task's creation to its
+  ending.
+- `mean_review_requests`: the mean count of review requests a task of that
+  model's sent before it ended.
+- a contest: several authors wrote the same task side by side and the
+  reviewers picked the one that lands. `contests_entered` counts every
+  contest that model's author was staffed in, win or lose; `contests_won`
+  counts the ones it won; `win_rate` is the one over the other. Two authors
+  of one contest on the same model count as one entry for it, not two.
+
+The totals row is the sum of the rows above it, not a count of its own: it
+holds nothing that is not on one of them.
+
 ## From the CLI
 
 ```sh
@@ -52,21 +75,24 @@ ariadne stats models --since 7d
 ariadne stats models --repo <repo-id> --format json
 ariadne stats switches --since 7d
 ariadne stats tools --since 7d
+ariadne stats outcomes --since 30d
 ```
 
 `--repo` takes a repository id or a unique prefix of one. The table prints
 tokens in the same form as every other table, such as `↑1.2M 89.1% ↓45k`, and
 takes the table flags (`--no-trunc`, `-o`, `--columns`). `--format json`
-prints the rows that the daemon sent.
+prints the rows that the daemon sent. `stats outcomes` prints one row per
+model and a totals row after it.
 
 ## In the desktop app
 
 Open **Stats** in the sidebar. Choose a span (all time, 24 hours, 7 days or 30
 days) and a repository at the top of the screen; both stay in the address, so
 a reload keeps them. The **Models** panel shows the same rows as
-`ariadne stats models`, and the **Switches** panel the same rows as
-`ariadne stats switches`; both update by themselves as sessions end and
-switch.
+`ariadne stats models`, the **Switches** panel the same rows as
+`ariadne stats switches`, and the **Outcomes** panel the same rows as
+`ariadne stats outcomes`; all of them update by themselves as sessions end,
+switch, and as tasks move.
 
 ## Reviews
 
@@ -86,7 +112,9 @@ answers by who decided and by answer, with the total and mean wait. The
 `GET /v1/stats/models?since=7d&repo=<repo-id>` returns `{"items": [...]}`, one
 item per model and seat. `GET /v1/stats/switches` returns `{"items": [...],
 "switches": ..., "exhaustions": ...}`, one item per model, with the totals
-over every one of them. A `since` that is neither a span nor a moment returns
+over every one of them. `GET /v1/stats/outcomes` takes the same filters and
+returns `{"items": [...], "totals": {...}}`, one item per author model and the
+totals across them. A `since` that is neither a span nor a moment returns
 `400` with the code `invalid_request`.
 
 `GET /v1/stats/reviews?since=7d&repo=<repo-id>` returns author, reviewer and

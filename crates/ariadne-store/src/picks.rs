@@ -13,8 +13,12 @@
 use std::collections::HashSet;
 
 use ariadne_core::MessageKind;
+use ariadne_core::id::new_id;
 
 use crate::{Result, Store, StoreError, TaskAgent, TaskPick, now};
+
+/// The fact a contested task's settled pick writes.
+const PICK: &str = "pick";
 
 impl Store {
     /// Whether every author of a task stands approved: each one has an open
@@ -95,17 +99,118 @@ impl Store {
         )
     }
 
-    /// Record which author the pick settled on. The winner's branch is what
-    /// the task lands from here.
-    pub async fn set_task_picked(&self, task_id: &str, agent_id: &str) -> Result<()> {
+    /// Record which author the pick settled on, and the `pick` fact (023)
+    /// that same settlement writes: the winner's model, effort and skills,
+    /// the losing authors' models, and how many reviewers staffed the task.
+    /// The winner's branch is what the task lands from here.
+    ///
+    /// `session_id` and `launch_id` are the winner's own live session where
+    /// the caller has one — `None` where it does not, which the fact then
+    /// carries as `NULL`, the way a loose `session_ended` fact would.
+    ///
+    /// Both writes are one transaction, so there is no moment where the
+    /// winner is on the task without the fact that says who it beat: a
+    /// daemon that died between the two, which is what a fact written
+    /// afterwards on its own would have to survive, cannot happen here.
+    /// Each settled contest calls this once, so each one writes its own
+    /// fact — a task retried clears the winner (`Self::clear_task_picks`)
+    /// and lets the next settlement write a fact of its own, rather than
+    /// finding one already there and skipping it.
+    pub async fn set_task_picked(
+        &self,
+        task_id: &str,
+        agent_id: &str,
+        session_id: Option<&str>,
+        launch_id: Option<&str>,
+    ) -> Result<()> {
+        let mut tx = self.w().begin().await?;
         let n = sqlx::query("UPDATE tasks SET picked_agent_id = ?, updated_at = ? WHERE id = ?")
             .bind(agent_id)
             .bind(now())
             .bind(task_id)
-            .execute(self.w())
+            .execute(&mut *tx)
             .await?
             .rows_affected();
+        if n > 0 {
+            Self::record_pick_fact_in_tx(&mut tx, task_id, agent_id, session_id, launch_id).await?;
+        }
+        tx.commit().await?;
         self.publish_task_update(task_id, n).await
+    }
+
+    /// The fact half of [`Self::set_task_picked`], in its own transaction:
+    /// the model, the effort and the skills are the winner's own agent row,
+    /// which outlives any one session of it; `session_id` and `launch_id`
+    /// are the live session the caller named, carried straight through.
+    async fn record_pick_fact_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        task_id: &str,
+        agent_id: &str,
+        session_id: Option<&str>,
+        launch_id: Option<&str>,
+    ) -> Result<()> {
+        let (repo_id, goal_id): (String, String) =
+            sqlx::query_as("SELECT repo_id, goal_id FROM tasks WHERE id = ?")
+                .bind(task_id)
+                .fetch_one(&mut **tx)
+                .await?;
+        let authors: Vec<(String, String, Option<String>)> = sqlx::query_as(
+            "SELECT id, model, effort FROM task_agents
+              WHERE task_id = ? AND seat = 'author' ORDER BY ordinal",
+        )
+        .bind(task_id)
+        .fetch_all(&mut **tx)
+        .await?;
+        let Some((_, winner_model, winner_effort)) =
+            authors.iter().find(|(id, _, _)| id == agent_id)
+        else {
+            // The winner named is not this task's own author: nothing here
+            // to build a fact from.
+            return Ok(());
+        };
+        let loser_models: Vec<&str> = authors
+            .iter()
+            .filter(|(id, _, _)| id != agent_id)
+            .map(|(_, model, _)| model.as_str())
+            .collect();
+        let skills: Vec<String> = sqlx::query_scalar(
+            "SELECT skill_name FROM task_agent_skills WHERE agent_id = ? ORDER BY ordinal",
+        )
+        .bind(agent_id)
+        .fetch_all(&mut **tx)
+        .await?;
+        let reviewers: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM task_agents WHERE task_id = ? AND seat = 'reviewer'",
+        )
+        .bind(task_id)
+        .fetch_one(&mut **tx)
+        .await?;
+        let data = serde_json::json!({
+            "winner_model": winner_model,
+            "loser_models": loser_models,
+            "reviewers": reviewers.max(0),
+        });
+        let skills_json = serde_json::to_string(&skills).expect("a list of names serializes");
+        sqlx::query(
+            "INSERT INTO stat_facts (id, kind, created_at, repo_id, goal_id, task_id, session_id,
+                                      launch_id, seat, model, effort, skills, data)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'author', ?, ?, ?, ?)",
+        )
+        .bind(new_id())
+        .bind(PICK)
+        .bind(now())
+        .bind(&repo_id)
+        .bind(&goal_id)
+        .bind(task_id)
+        .bind(session_id)
+        .bind(launch_id)
+        .bind(winner_model)
+        .bind(winner_effort)
+        .bind(skills_json)
+        .bind(data.to_string())
+        .execute(&mut **tx)
+        .await?;
+        Ok(())
     }
 
     /// Forget the picks of a task, and the winner they settled on: a task
