@@ -9,14 +9,15 @@
  * session is a drill-down: it takes the panel over, task header and tabs
  * included, with a link back to the task.
  *
- * Opened from a goal's panel (`stackedOnGoal`), it occupies the same pane
- * and carries the breadcrumb back to the goal.
+ * The breadcrumb to its goal is the task's own `goal_id`, not where the panel
+ * was opened from — every task has one, whatever opened this panel — and
+ * clicking it replaces this panel with the goal's in the same pane.
  */
 
 import { useQuery } from "@tanstack/react-query"
 import { ChevronRightIcon } from "lucide-react"
 import { useRef } from "react"
-import { Link, useSearchParams } from "react-router-dom"
+import { useNavigate, useSearchParams } from "react-router-dom"
 
 import type { TaskDto } from "@/api"
 import { CopyableIdMenu } from "@/components/copyable-id"
@@ -54,16 +55,7 @@ import { TaskSessions, TaskSessionView } from "./task-sessions"
 const TABS = ["description", "messages", "history", "diff", "sessions"] as const
 type Tab = (typeof TABS)[number]
 
-export function TaskPanel({
-  taskId,
-  onClose,
-  stackedOnGoal,
-}: {
-  taskId: string
-  onClose: () => void
-  /** The goal whose panel this one opened over, when there is one under it. */
-  stackedOnGoal?: string
-}) {
+export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => void }) {
   const [search, setSearch] = useSearchParams()
   const task = useQuery(taskQueryOptions(taskId))
   const tab = TABS.find((value) => value === search.get("tab")) ?? "description"
@@ -89,15 +81,6 @@ export function TaskPanel({
 
   return (
     <PanelSheet onClose={onClose} panelRef={panel}>
-      {stackedOnGoal ? (
-        <PanelBreadcrumb
-          goalId={stackedOnGoal}
-          taskTitle={task.data?.title}
-          taskId={taskId}
-          onOpenGoal={onClose}
-        />
-      ) : null}
-
       {/* A selected session replaces the task view entirely — the panel is
             that session's now, and the way back is the link it carries. It is
             checked before the task query so a link into a session opens on it
@@ -127,7 +110,8 @@ export function TaskPanel({
         </>
       ) : (
         <>
-          <TaskHeader task={task.data} showGoalLink={stackedOnGoal === undefined} />
+          <PanelBreadcrumb goalId={task.data.goal_id} taskId={taskId} taskTitle={task.data.title} />
+          <TaskHeader task={task.data} />
           <PaneBody>
             <TaskFacts task={task.data} />
 
@@ -176,23 +160,21 @@ export function TaskPanel({
 }
 
 /**
- * Where this panel sits: the goal it belongs to, then the task itself. The
- * goal segment drops this panel back onto the one underneath it, which is what
- * closing it does — the goal stays mounted while this task is open.
+ * Where this panel sits: the goal it belongs to, then the task itself.
+ * Clicking the goal replaces this panel with the goal's, in the same pane.
  */
 function PanelBreadcrumb({
   goalId,
   taskId,
   taskTitle,
-  onOpenGoal,
 }: {
   goalId: string
   taskId: string
   /** The task's own name, once it is loaded. */
   taskTitle?: string
-  onOpenGoal: () => void
 }) {
   const goal = useQuery(goalQueryOptions(goalId))
+  const navigate = useNavigate()
   return (
     <nav
       aria-label="Breadcrumb"
@@ -201,7 +183,9 @@ function PanelBreadcrumb({
     >
       <button
         type="button"
-        onClick={onOpenGoal}
+        // Replaces rather than pushes: the goal panel takes this one's place
+        // in the pane, not a step stacked over it.
+        onClick={() => navigate(paths.goal(goalId), { replace: true })}
         // The ring every other control in the app wears: this one is the first
         // thing focused when a deep link opens the panel, and it was showing
         // the browser's own outline there.
@@ -217,21 +201,11 @@ function PanelBreadcrumb({
   )
 }
 
-function TaskHeader({ task, showGoalLink }: { task: TaskDto; showGoalLink: boolean }) {
+function TaskHeader({ task }: { task: TaskDto }) {
   const status = TASK_STATUS_META[primaryStatus(task.status)]
   const sub = subStatus(task.status)
   return (
     <PaneHeader>
-      {/* Only when the goal is not already open behind this panel: stacked,
-          the breadcrumb above is the way back to it. */}
-      {showGoalLink ? (
-        <Link
-          to={paths.goal(task.goal_id)}
-          className="w-fit text-xs text-muted-foreground underline-offset-3 hover:underline"
-        >
-          ← Open the goal
-        </Link>
-      ) : null}
       {/* The actions stay on the title row whatever the task's status, which
           is what the title shrinking rather than wrapping the row buys: a
           `Cancel task` on its own line under the title read as a second row of

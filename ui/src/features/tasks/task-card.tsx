@@ -79,6 +79,9 @@ export function TaskCard({
   const status = TASK_STATUS_META[primaryStatus(task.status)]
   const sub = subStatus(task.status)
   const terminal = task.status === "cancelled"
+  // `to.replace` is set exactly when a goal panel is open — the card's own
+  // link is replacing it rather than stacking on it, on the board behind it
+  // or in the goal's own task list alike (`routes/paths.ts`'s `taskPanelTo`).
   const to = useTaskPanelTo(task.id)
   // The reason is still what outlines the card even where the badge for it is
   // dropped: it is the same fact, said once.
@@ -95,6 +98,7 @@ export function TaskCard({
     >
       <Link
         to={to}
+        replace={to.replace}
         aria-describedby={hints.length > 0 ? hintsId : undefined}
         className="block rounded-lg px-2.5 pt-2.5 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
       >

@@ -11,13 +11,13 @@
  * (`?session=`) is a drill-down: it takes the panel over, goal header and tabs
  * included, with a link back to the goal.
  *
- * A task opened from here takes over this pane (`stackedPanel`)
- * until it closes — see {@link GoalSheet}.
+ * A task opened from here replaces this panel in the pane — see
+ * `task-card.tsx` and `task-panel.tsx`'s breadcrumb for the way back.
  */
 
 import { useQuery } from "@tanstack/react-query"
 import { PlusIcon } from "lucide-react"
-import { type ReactNode, type RefObject, useRef, useState } from "react"
+import { useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 
 import { ApiError, type GoalDto } from "@/api"
@@ -57,33 +57,16 @@ type Tab = (typeof TABS)[number]
 /** Where the panel opens when the URL does not say: the tasks, always. */
 const DEFAULT_TAB: Tab = "tasks"
 
-export function GoalPanel({
-  goalId,
-  onClose,
-  stackedPanel,
-}: {
-  goalId: string
-  onClose: () => void
-  /**
-   * The task panel, when one is open over this goal. The goal stays mounted
-   * but hidden until the task closes.
-   */
-  stackedPanel?: ReactNode
-}) {
+export function GoalPanel({ goalId, onClose }: { goalId: string; onClose: () => void }) {
   const goal = useQuery(goalQueryOptions(goalId))
   const error = ApiError.is(goal.error) ? goal.error : null
   const [search] = useSearchParams()
   const selectSession = usePanelSessionNavigation()
-  // `tab` and `session` belong to whichever panel is on top: while a task is
-  // stacked over this one they are its, and this goal shows its own default.
-  const sessionId = stackedPanel ? null : search.get("session")
+  const sessionId = search.get("session")
   // Going back from a session hands focus to the row that opened it, which the
-  // frame cannot do for us — nothing closed. Only while this panel is the one
-  // on top, though: `sessionId` above also goes null when a task stacks over
-  // it, and that is a task opening rather than a session being left. See
-  // `useFocusReturn`.
+  // frame cannot do for us — nothing closed. See `useFocusReturn`.
   const panel = useRef<HTMLDivElement>(null)
-  useFocusReturn(sessionId, panel, !stackedPanel)
+  useFocusReturn(sessionId, panel)
 
   // A selected session replaces the goal view entirely — the panel is that
   // session's now, and the way back is the link it carries. It is checked
@@ -91,19 +74,19 @@ export function GoalPanel({
   // waiting for the goal it hangs off.
   if (sessionId) {
     return (
-      <GoalSheet onClose={onClose} stackedPanel={stackedPanel} panelRef={panel}>
+      <PanelSheet onClose={onClose} panelRef={panel}>
         <GoalSessionView
           goalId={goalId}
           goalTitle={goal.data?.title}
           sessionId={sessionId}
           onSelect={selectSession}
         />
-      </GoalSheet>
+      </PanelSheet>
     )
   }
 
   return (
-    <GoalSheet onClose={onClose} stackedPanel={stackedPanel} panelRef={panel}>
+    <PanelSheet onClose={onClose} panelRef={panel}>
       {error ? (
         <>
           <PaneTitle className="sr-only">Goal {goalId}</PaneTitle>
@@ -128,29 +111,7 @@ export function GoalPanel({
       {goal.data ? (
         <GoalView goal={goal.data} onSelectSession={selectSession} onDeleted={onClose} />
       ) : null}
-    </GoalSheet>
-  )
-}
-
-/** The covered goal stays mounted so its task opener can receive focus again. */
-function GoalSheet({
-  onClose,
-  stackedPanel,
-  panelRef,
-  children,
-}: {
-  onClose: () => void
-  stackedPanel?: ReactNode
-  panelRef?: RefObject<HTMLDivElement | null>
-  children: ReactNode
-}) {
-  return (
-    <>
-      <PanelSheet onClose={onClose} hidden={Boolean(stackedPanel)} panelRef={panelRef}>
-        {children}
-      </PanelSheet>
-      {stackedPanel}
-    </>
+    </PanelSheet>
   )
 }
 
@@ -266,9 +227,10 @@ function GoalView({
         open={newTaskOpen}
         onOpenChange={setNewTaskOpen}
         // Opening the new task's panel is the same gesture as opening it from
-        // a lane: `?task=` stacks it over this goal (see `detail-panels.tsx`),
-        // pushed so Back lands here.
-        onCreated={(task) => setSearch(taskPanelTo(search, task.id).search)}
+        // a lane: `?task=` replaces this goal's panel (see `detail-panels.tsx`).
+        // Replaced rather than pushed — the task's panel takes this goal's
+        // place in the pane, not a step stacked over it.
+        onCreated={(task) => setSearch(taskPanelTo(search, task.id).search, { replace: true })}
       />
     </>
   )

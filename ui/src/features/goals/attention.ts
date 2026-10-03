@@ -325,7 +325,7 @@ export function attentionTarget(
   item: AttentionItem,
   current: URLSearchParams,
   pathname: string,
-): { pathname?: string; search: string } {
+): { pathname?: string; search: string; replace?: boolean } {
   const { session, sessionReason, taskId } = item
   if (session && (sessionReason === "waiting_permission" || sessionReason === "waiting_input")) {
     return sessionTerminalFrom(pathname, current, session.id)

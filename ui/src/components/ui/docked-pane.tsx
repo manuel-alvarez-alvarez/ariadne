@@ -25,7 +25,6 @@ const PaneTitleId = createContext<string | undefined>(undefined)
 export function DockedPane({
   onClose,
   children,
-  hidden,
   ...props
 }: ComponentProps<"div"> & { onClose: () => void }) {
   const titleId = useId()
@@ -55,11 +54,7 @@ export function DockedPane({
         role="region"
         aria-labelledby={titleId}
         tabIndex={-1}
-        hidden={hidden}
-        className={cn(
-          "fixed inset-0 z-40 flex min-h-0 w-full shrink-0 flex-col gap-4 border-l bg-background p-4 text-sm outline-none md:relative md:inset-auto md:z-auto md:w-[var(--pane-width)]",
-          hidden && "hidden",
-        )}
+        className="fixed inset-0 z-40 flex min-h-0 w-full shrink-0 flex-col gap-4 border-l bg-background p-4 text-sm outline-none md:relative md:inset-auto md:z-auto md:w-[var(--pane-width)]"
         style={{ "--pane-width": `${width}px` } as CSSProperties}
         {...props}
       >

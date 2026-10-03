@@ -267,11 +267,13 @@ and scrollable, with no scrim or focus trap. Below `md` the pane covers the
 screen at full width. Its left handle resizes it from 24rem to 60% of the
 window; the default is 36rem and the settings store remembers the width.
 `PanelSheet` owns close decisions and focus return, over `ui/docked-pane.tsx`.
-A task hides the goal view while it occupies the same pane, with its breadcrumb
-back. Session drill-downs replace the body. Escape within the pane closes the
-current task, goal or standalone session through the existing history helpers;
-Escape on the board does nothing to it. Modal portals own their own Escape.
-Headers do not shrink. `PaneBody` takes the remaining height and scrolls, with
+The pane holds one panel at a time: a task opened from a goal replaces the
+goal's panel rather than stacking on it, carrying a breadcrumb back that
+reopens the goal in its place. Session drill-downs replace the body. Escape
+within the pane closes it outright — the current task, goal or standalone
+session, through the existing history helpers, never back to a goal a task
+replaced; Escape on the board does nothing to it. Modal portals own their own
+Escape. Headers do not shrink. `PaneBody` takes the remaining height and scrolls, with
 one `h-full` child to give a session view its height. Keep `ui/sheet.tsx` for
 modal drawers and the learned-permission detail.
 
@@ -329,9 +331,9 @@ exist for what the screen underneath has open: a new task in the goal whose
 panel is up, `ariadne attach <id>` for the task or session that is. It searches
 the goal, task, session and skill lists that are **already in the query
 cache** — the same keys their own screens read, fetched only while it is open —
-and its rows navigate through `src/routes/paths.ts`, so a task stacks its panel
-on whatever screen it was opened over. Two notes on the matching, both in
-`score.ts`:
+and its rows navigate through `src/routes/paths.ts`, so a task opens on
+whatever screen it was opened over, replacing a goal already open there. Two
+notes on the matching, both in `score.ts`:
 
 - ulids live in an entry's `keywords`, matched literally, never fuzzily: 26
   characters of random letters answer to almost any subsequence query, so

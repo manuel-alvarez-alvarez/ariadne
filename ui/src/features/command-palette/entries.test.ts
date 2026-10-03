@@ -238,13 +238,14 @@ describe("paletteTargetTo", () => {
     )
   })
 
-  it("stacks a task's panel on whatever the palette was opened over", () => {
+  it("opens a task's panel over whatever the palette was opened over, dropping any open goal", () => {
     const target = paletteTargetTo(
       { kind: "task", taskId: "t1" },
       new URLSearchParams("goal=g1&status=active"),
       OVER,
     )
-    expect(target).toEqual({ search: "?goal=g1&status=active&task=t1" })
+    // Replaces rather than pushes: the task takes the open goal's place.
+    expect(target).toEqual({ search: "?status=active&task=t1", replace: true })
   })
 
   it("drops the panel state the previous panel put on the URL", () => {

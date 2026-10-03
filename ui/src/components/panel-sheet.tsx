@@ -12,12 +12,10 @@ import { DockedPane } from "@/components/ui/docked-pane"
 export function PanelSheet({
   onClose,
   children,
-  hidden = false,
   panelRef,
 }: {
   onClose: () => void
   children: ReactNode
-  hidden?: boolean
   panelRef?: RefObject<HTMLDivElement | null>
 }) {
   const ownRef = useRef<HTMLDivElement>(null)
@@ -25,18 +23,18 @@ export function PanelSheet({
   const opener = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
-    if (hidden) return
     opener.current ??= document.activeElement instanceof HTMLElement ? document.activeElement : null
     const first = panel.current?.querySelector<HTMLElement>(
       'button:not(:disabled), a[href], [role="tab"]',
     )
     ;(first ?? panel.current)?.focus()
-  }, [hidden, panel])
+  }, [panel])
 
   useEffect(
     () => () => {
-      // A task's opener is in the goal view, which becomes visible on this same
-      // commit. Wait until React has removed the hidden frame before focusing it.
+      // The opener is on the screen behind the pane, which becomes clickable
+      // again on this same commit. Wait until React has removed this panel
+      // before focusing it.
       const target = opener.current
       queueMicrotask(() => {
         if (target?.isConnected) target.focus()
@@ -48,7 +46,6 @@ export function PanelSheet({
   return (
     <DockedPane
       ref={panel}
-      hidden={hidden}
       onClose={onClose}
       onKeyDown={(event) => {
         if (event.key !== "Escape" || !event.currentTarget.contains(event.target as Node)) return

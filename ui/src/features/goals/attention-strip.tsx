@@ -176,11 +176,15 @@ function Row({ item }: { item: AttentionItem }) {
   // everywhere (see {@link attentionTarget}).
   const { pathname } = useLocation()
   const status = item.taskReason && item.task ? TASK_STATUS_META[item.task.status] : null
+  const target = attentionTarget(item, search, pathname)
 
   return (
     <li>
       <Link
-        to={attentionTarget(item, search, pathname)}
+        to={target}
+        // Set exactly when the target is a task panel replacing an open
+        // goal's, rather than stacking on it (`target.replace`).
+        replace={target.replace}
         className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 text-sm transition-colors hover:bg-muted/50"
       >
         {status ? (

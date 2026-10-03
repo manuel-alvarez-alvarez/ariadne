@@ -152,8 +152,8 @@ export function buildPaletteEntries({
 
 /**
  * The route a picked entry navigates to, against the screen the palette was
- * opened over — which is what makes a task stack on the goal that is already
- * open rather than replacing it.
+ * opened over — which is what makes a task open on whatever screen is
+ * showing, replacing a goal already open on it rather than sitting over it.
  *
  * The screen is its `pathname` as well as its params, because a task panel does
  * not open on every screen: the sessions one reads `?task=` as a filter of its
@@ -163,12 +163,17 @@ export function buildPaletteEntries({
  * A session is shown inside the panel of the task it ran; an orchestrator session
  * belongs to no task, and the goal panel only exists on the board, so that one
  * leaves the current screen for it.
+ *
+ * A task target's `replace` (set by `taskPanelTo` in `routes/paths.ts`) rides
+ * along on every kind built on it — `task`, `attention`, and `session` inside
+ * a task — so `go` only has to read it off what comes back, never work it
+ * out again.
  */
 export function paletteTargetTo(
   target: PaletteTarget,
   search: URLSearchParams,
   pathname: string,
-): string | { pathname?: string; search: string } {
+): string | { pathname?: string; search: string; replace?: boolean } {
   switch (target.kind) {
     case "goal":
       return paths.goal(target.goalId)

@@ -2,8 +2,8 @@
  * ⌘K: everything the app can show or do, one search away.
  *
  * Mounted once by the shell (`src/components/app-shell.tsx`), so it opens over
- * whatever screen is up and its picks land relative to it — a task stacks its
- * panel on the goal already open, a session opens inside its task's panel.
+ * whatever screen is up and its picks land relative to it — a task replaces
+ * the goal already open, a session opens inside its task's panel.
  *
  * It adds no requests of its own: the five lists it searches are the same
  * cache entries the goals board, the session panels, the skills screen and the
@@ -152,7 +152,11 @@ export function CommandPalette({
   }
 
   function go(entry: PaletteEntry) {
-    run(() => void navigate(paletteTargetTo(entry.target, search, pathname)))
+    const target = paletteTargetTo(entry.target, search, pathname)
+    // A task target may ask to replace rather than push — see `entries.ts` —
+    // which a plain string target never does.
+    const replace = typeof target === "string" ? undefined : target.replace
+    run(() => void navigate(target, { replace }))
   }
 
   return (
@@ -314,7 +318,12 @@ export function CommandPalette({
           // The same landing the goal panel's own button gives it: the new
           // task's panel, over whatever is on screen — or on the board, from
           // the one screen where that panel does not open (`taskPanelFrom`).
-          onCreated={(task) => void navigate(taskPanelFrom(pathname, search, task.id))}
+          // Replaces rather than pushes when that screen had the goal open
+          // (`target.replace`), same as the goal panel's own create button.
+          onCreated={(task) => {
+            const target = taskPanelFrom(pathname, search, task.id)
+            void navigate(target, { replace: target.replace })
+          }}
         />
       ) : null}
     </>

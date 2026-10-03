@@ -1,26 +1,32 @@
 /**
  * What the side panels do to browser history.
  *
- * Opening one is a link (a goal on the board, a task in a lane), so it pushes:
- * the panel is somewhere the user went, and Back is how they leave it again.
- * Closing therefore steps *back* over that entry instead of writing a new one.
- * Rewriting the URL in place would look right — the panel does close — but it
- * leaves the entry that opened the panel sitting behind the closed one, and the
- * next Back reopens what was just closed. That is true of a stack as well:
- * closing the task, then the goal, unwinds the two entries that opened them.
+ * Opening one from a list is a link (a goal on the board, a task in a lane
+ * with nothing else open), so it pushes: the panel is somewhere the user
+ * went, and Back is how they leave it again. Closing therefore steps *back*
+ * over that entry instead of writing a new one. Rewriting the URL in place
+ * would look right — the panel does close — but it leaves the entry that
+ * opened the panel sitting behind the closed one, and the next Back reopens
+ * what was just closed.
  *
  * When there is nothing of ours behind — the panel came from a deep link or a
  * reload, so its entry is the first of the session — closing has nothing to
  * step back to and rewrites the URL instead.
  *
- * In-panel navigation (a tab, a session, a dependency) replaces, so a panel is
- * one entry however long the user stays inside it.
+ * In-panel navigation (a tab, a session, a dependency, a task opened over a
+ * goal) replaces rather than pushes, so a panel is one entry however long the
+ * user stays inside it and whatever else it shows along the way — see
+ * `features/tasks/task-card.tsx` and `task-panel.tsx`'s breadcrumb, which is
+ * why a task and a goal never share a history entry's params for `closePanel`
+ * to have to tell apart.
  */
 
 /**
  * The params each panel owns. A closing panel takes its own state with it:
  * `tab` and `session` say where *inside* a panel the user was and mean nothing
- * once it is gone, and a goal takes the task stacked on it down with it.
+ * once it is gone. A task also drops a stray `goal` — the two never open
+ * together on purpose, but a hand-written URL can still hold both, and a task
+ * replaces the goal rather than sitting over it.
  *
  * The session panel is the one `session` with no panel around it (see
  * `components/detail-panels.tsx`); its `tab` is the session view's own
@@ -28,7 +34,7 @@
  */
 const PANEL_PARAMS = {
   goal: ["goal", "task", "tab", "session"],
-  task: ["task", "tab", "session"],
+  task: ["task", "goal", "tab", "session"],
   session: ["session", "tab"],
 } as const satisfies Record<string, readonly string[]>
 
@@ -42,26 +48,9 @@ export function closePanel(
   search: URLSearchParams,
   historyState: unknown,
 ): CloseStep {
-  return canStepBack(historyState) && isTopmost(panel, search)
+  return canStepBack(historyState)
     ? { kind: "back" }
     : { kind: "rewrite", search: withoutPanel(panel, search) }
-}
-
-/**
- * Whether the panel being closed is the one on top of the stack.
- *
- * Only the topmost panel can be closed from the UI — the sheet under it is
- * behind the other's backdrop, and Escape goes to the top one. Closing through
- * a panel that still has one stacked on it would take the stack apart a layer
- * at a time, so it rewrites the URL and takes the whole stack down at once.
- *
- * There is only ever one stack, and only one way to stack: a task over a goal.
- * So a goal with a task on it is the single case of a panel that is not the
- * top one — the session panel opens where neither of those is, and nothing
- * opens over it.
- */
-function isTopmost(panel: Panel, search: URLSearchParams): boolean {
-  return panel !== "goal" || !search.has("task")
 }
 
 /**

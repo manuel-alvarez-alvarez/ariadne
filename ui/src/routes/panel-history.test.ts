@@ -47,13 +47,9 @@ class History {
 
 describe("closing a panel", () => {
   it("does not leave an entry behind that Back would reopen it from", () => {
-    // The board, a goal opened from a lane, one of its tasks opened over it.
+    // The board, then a goal opened from a lane.
     const history = new History("")
     history.push("goal=g1")
-    history.push("goal=g1&task=t1")
-
-    history.close("task")
-    expect(history.current).toBe("goal=g1") // back onto the goal it was opened from
 
     history.close("goal")
     expect(history.current).toBe("")
@@ -63,28 +59,36 @@ describe("closing a panel", () => {
     expect(history.index).toBe(0)
   })
 
+  it("does not step back into the goal a task replaced", () => {
+    // The board, a goal opened from a lane, one of its tasks opened over it —
+    // a task replaces its goal in the same entry rather than stacking on it
+    // (see `task-card.tsx`), so there is nothing of the goal's left to step
+    // back into.
+    const history = new History("")
+    history.push("goal=g1")
+    history.replace("task=t1")
+
+    history.close("task")
+    expect(history.current).toBe("") // back past the goal, onto the bare board
+  })
+
   it("closes in place when its entry is the first of the session", () => {
     // A deep link, or a reload on an open panel: there is nothing to step back
     // to, so the URL is rewritten instead.
-    const history = new History("goal=g1&task=t1")
+    const history = new History("task=t1")
 
     history.close("task")
-    expect(history.current).toBe("goal=g1")
-    expect(history.entries).toHaveLength(1)
-
-    history.close("goal")
     expect(history.current).toBe("")
     expect(history.entries).toHaveLength(1)
   })
 
-  it("takes the whole stack down when it is closed from underneath", () => {
-    // Not reachable from the UI — the goal's sheet is behind the task's while
-    // one is stacked on it — but a step back would only close the task.
-    const history = new History("")
-    history.push("goal=g1")
-    history.push("goal=g1&task=t1")
+  it("clears a stray goal alongside the task it replaces, even hand-typed", () => {
+    // `?goal=` and `?task=` never open together through the app, but a
+    // deep link can still hold both — and a task's close must not leave the
+    // goal panel to reappear from it.
+    const history = new History("goal=g1&task=t1")
 
-    history.close("goal")
+    history.close("task")
     expect(history.current).toBe("")
   })
 

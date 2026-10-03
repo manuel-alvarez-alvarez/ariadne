@@ -35,6 +35,7 @@ import { expect, it } from "vitest"
 
 import { type components, type MessageDto, qk, type SessionDto, type TaskDto } from "@/api"
 import { DetailPanels } from "@/components/detail-panels"
+import { GoalSwimlanes } from "@/features/goals/goal-swimlanes"
 import { shortId } from "@/lib/format"
 import { aGoal, aSession, aSessionPage } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
@@ -557,34 +558,105 @@ it("waits for a list before putting a number on its tab, then says zero", async 
   expect(within(tab(/^Messages/)).getByLabelText("0 messages").textContent).toBe("0")
 })
 
-it("unwinds the task and goal in one pane with Escape", async () => {
+it("closes the pane outright on Escape, rather than falling back to the goal", async () => {
+  // A hand-written URL holding both: nothing in the app opens them together,
+  // but the task still has to win and Escape still has to empty the pane —
+  // not fall back to the goal the stray `?goal=` names.
   const { location } = renderScreen(<DetailPanels />, {
     route: `/goals?goal=${TASK.goal_id}&task=${TASK.id}`,
     seed: (client) => client.setQueryData(qk.tasks.detail(TASK.id), TASK),
   })
   const user = userEvent.setup()
-  const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" })
-  expect(screen.getAllByRole("region")).toHaveLength(1)
-  within(breadcrumb).getByRole("button").focus()
-  await user.keyboard("{Escape}")
-  expect(location.url).toBe(`/goals?goal=${TASK.goal_id}`)
+  expect(document.querySelectorAll('[data-slot="docked-pane"]')).toHaveLength(1)
+  // The breadcrumb's own button is the first focusable thing in the sheet,
+  // and takes focus on mount — Escape reaches the pane from there.
+  await screen.findByRole("navigation", { name: "Breadcrumb" })
   await user.keyboard("{Escape}")
   expect(location.url).toBe("/goals")
+  expect(document.querySelectorAll('[data-slot="docked-pane"]')).toHaveLength(0)
 })
 
-it("returns focus to the task card after closing its stacked view", async () => {
+it("opens the goal from the task's breadcrumb, replacing the task in the pane", async () => {
+  const goal = aGoal({ id: TASK.goal_id, title: "Ship the board" })
+  const { location } = renderScreen(<DetailPanels />, {
+    route: `/goals?task=${TASK.id}`,
+    seed: (client) => {
+      client.setQueryData(qk.tasks.detail(TASK.id), TASK)
+      client.setQueryData(qk.goals.detail(TASK.goal_id), goal)
+    },
+  })
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole("button", { name: goal.title }))
+
+  expect(location.url).toBe(`/goals?goal=${TASK.goal_id}`)
+  // One panel in the pane, the goal's — the task is gone, not stacked under it.
+  expect(document.querySelectorAll('[data-slot="docked-pane"]')).toHaveLength(1)
+  expect(await screen.findByRole("region", { name: goal.title })).toBeDefined()
+})
+
+it("replaces the goal with the task it opens, mounting only the one panel", async () => {
+  // Stubbed rather than merely seeded: nothing observes the task's own detail
+  // query until the click below mounts its panel, and a seeded entry nothing
+  // is yet watching is not one `gcTime: 0` promises to keep around.
+  daemonFetch.mockImplementation((input: Request | string | URL) => {
+    const url = new URL(typeof input === "string" ? input : (input as Request).url)
+    if (url.pathname === `/v1/tasks/${TASK.id}`) return Promise.resolve(jsonResponse(TASK))
+    return new Promise(() => {})
+  })
   renderScreen(<DetailPanels />, {
     route: `/goals?goal=${TASK.goal_id}`,
     seed: (client) => {
       client.setQueryData(qk.goals.detail(TASK.goal_id), aGoal({ id: TASK.goal_id }))
       client.setQueryData(qk.tasks.list({ goal: TASK.goal_id }), [TASK])
-      client.setQueryData(qk.tasks.detail(TASK.id), TASK)
     },
   })
   const user = userEvent.setup()
   const card = screen.getByRole("link", { name: new RegExp(TASK.title) })
   await user.click(card)
-  expect(screen.getAllByRole("region")).toHaveLength(1)
+
+  // One panel in the DOM: the task's. No hidden goal panel stays in it.
+  expect(document.querySelectorAll('[data-slot="docked-pane"]')).toHaveLength(1)
+  expect(await screen.findByRole("heading", { name: TASK.title })).toBeDefined()
+
   await user.keyboard("{Escape}")
+  // The board, with no panel — not back onto the goal it was opened from. The
+  // card that opened it was the goal panel's own, which closed alongside the
+  // task, so there is no opener left on screen for focus to return to; see
+  // the board-level case below for that.
+  expect(document.querySelectorAll('[data-slot="docked-pane"]')).toHaveLength(0)
+})
+
+it("closes to an empty pane and returns focus to the board card that opened it", async () => {
+  daemonFetch.mockImplementation((input: Request | string | URL) => {
+    const url = new URL(typeof input === "string" ? input : (input as Request).url)
+    if (url.pathname === `/v1/tasks/${TASK.id}`) return Promise.resolve(jsonResponse(TASK))
+    return new Promise(() => {})
+  })
+  renderScreen(
+    <>
+      <main>
+        <GoalSwimlanes goals={[aGoal({ id: TASK.goal_id })]} />
+      </main>
+      <DetailPanels />
+    </>,
+    {
+      route: "/goals",
+      seed: (client) => {
+        client.setQueryData(qk.goals.detail(TASK.goal_id), aGoal({ id: TASK.goal_id }))
+        client.setQueryData(qk.tasks.list({}), [TASK])
+      },
+    },
+  )
+  const user = userEvent.setup()
+  const card = screen.getByRole("link", { name: new RegExp(TASK.title) })
+  await user.click(card)
+
+  expect(document.querySelectorAll('[data-slot="docked-pane"]')).toHaveLength(1)
+  expect(await screen.findByRole("heading", { name: TASK.title })).toBeDefined()
+
+  await user.keyboard("{Escape}")
+  await waitFor(() =>
+    expect(document.querySelectorAll('[data-slot="docked-pane"]')).toHaveLength(0),
+  )
   await waitFor(() => expect(document.activeElement).toBe(card))
 })

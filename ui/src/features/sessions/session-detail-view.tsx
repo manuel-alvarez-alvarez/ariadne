@@ -209,7 +209,15 @@ export function SessionDetailView({
             )}
             {context === "task" || !session.task_id ? null : (
               <Fact label="Task">
-                <Link to={taskTo} className="block truncate hover:underline">
+                {/* Replaces rather than pushes exactly when this session is a
+                    goal's own drill-down (`taskTo.replace`): the task panel
+                    takes the goal's place in the pane rather than stacking on
+                    it, same as the task panel's own breadcrumb. */}
+                <Link
+                  to={taskTo}
+                  replace={taskTo.replace}
+                  className="block truncate hover:underline"
+                >
                   {task.data?.title ?? <Mono>{session.task_id}</Mono>}
                 </Link>
               </Fact>

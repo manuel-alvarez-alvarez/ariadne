@@ -69,9 +69,25 @@ export const paths = {
 } as const
 
 /**
+ * Where a panel opens: the same screen unless a `pathname` says otherwise.
+ *
+ * `replace` is set only where it matters — the caller's `navigate`/`Link`
+ * otherwise pushes, which is right for opening a panel from a list. It is
+ * true exactly where a target drops a `goal` that was open: a task panel
+ * swaps into the goal's place in the same history entry rather than stacking
+ * a new one over it, which is what keeps closing the task from stepping back
+ * into the goal it replaced (`routes/panel-history.ts`).
+ */
+interface PanelTarget {
+  pathname?: string
+  search: string
+  replace?: boolean
+}
+
+/**
  * Link target that opens the task's panel over the current screen: same
  * pathname, `?task=` added, every other filter or panel param kept — so a
- * task opened from a goal's lane stacks on that goal's panel.
+ * task opened from a goal's lane replaces that goal's panel in the pane.
  *
  * Only for callers that can only ever be on a screen where `?task=` *is* a
  * panel — the board. Everything else goes through {@link taskPanelFrom}, which
@@ -79,20 +95,20 @@ export const paths = {
  *
  * The panel's own params go: `tab` and `session` belong to whichever panel
  * put them there, and would otherwise open the new one on a tab or a session
- * that is not its.
+ * that is not its. `goal` goes too — a task panel replaces the goal's rather
+ * than sitting over it, and the task's own `goal_id` is the way back (see
+ * `features/tasks/task-panel.tsx`'s breadcrumb). Every caller gets the
+ * `replace` this drop asks for by reading it off the returned target —
+ * {@link PanelTarget} — rather than working it out again itself.
  */
-export function taskPanelTo(current: URLSearchParams, taskId: string): { search: string } {
+export function taskPanelTo(current: URLSearchParams, taskId: string): PanelTarget {
   const next = withoutArrival(current)
+  const replace = next.has("goal")
   next.set("task", taskId)
   next.delete("tab")
   next.delete("session")
-  return { search: `?${next.toString()}` }
-}
-
-/** Where a panel opens: the same screen unless a `pathname` says otherwise. */
-interface PanelTarget {
-  pathname?: string
-  search: string
+  next.delete("goal")
+  return replace ? { search: `?${next.toString()}`, replace } : { search: `?${next.toString()}` }
 }
 
 /**

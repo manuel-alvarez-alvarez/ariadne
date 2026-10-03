@@ -11,11 +11,13 @@
  * pure test can see.
  */
 
-import { screen, within } from "@testing-library/react"
+import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { useState } from "react"
 import { beforeEach, expect, it, vi } from "vitest"
 
 import type { GoalDto, RepositoryDto, SessionDto, TaskDto } from "@/api"
+import { DetailPanels } from "@/components/detail-panels"
 import { useStreamStore } from "@/stores/stream"
 import { aGoal, aRepository, aSession, aSessionPage, aSkill, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
@@ -39,18 +41,23 @@ const REPOSITORY: RepositoryDto = aRepository({
 function stubDaemon(tasks: TaskDto[] = [TASK, STUCK]) {
   daemonFetch.mockImplementation((input: Request | string | URL) => {
     const { pathname } = new URL(typeof input === "string" ? input : (input as Request).url)
+    const task = tasks.find((candidate) => pathname === `/v1/tasks/${candidate.id}`)
     const body =
       pathname === "/v1/goals"
         ? [GOAL]
-        : pathname === "/v1/tasks"
-          ? tasks
-          : pathname === "/v1/sessions"
-            ? aSessionPage([SESSION])
-            : pathname === "/v1/profiles"
-              ? [aSkill()]
-              : pathname === "/v1/repositories"
-                ? [REPOSITORY]
-                : []
+        : pathname === `/v1/goals/${GOAL.id}`
+          ? GOAL
+          : pathname === "/v1/tasks"
+            ? tasks
+            : task
+              ? task
+              : pathname === "/v1/sessions"
+                ? aSessionPage([SESSION])
+                : pathname === "/v1/profiles"
+                  ? [aSkill()]
+                  : pathname === "/v1/repositories"
+                    ? [REPOSITORY]
+                    : []
     return Promise.resolve(jsonResponse(body))
   })
 }
@@ -120,6 +127,53 @@ it("offers a new task in the goal whose panel is open", async () => {
   renderPalette(`/goals?goal=${GOAL.id}`)
 
   expect(await screen.findByText("New task")).toBeTruthy()
+})
+
+/**
+ * The shell owns `open`, closing the dialog once a pick is made — which is
+ * what uncovers the pane underneath. Every other test here only asserts on
+ * the dialog's own content, where `open` staying `true` makes no difference;
+ * this one needs the close to land, same as the app.
+ */
+function PaletteOverPane() {
+  const [open, setOpen] = useState(true)
+  return (
+    <>
+      <CommandPalette open={open} {...handlers} onOpenChange={setOpen} />
+      <DetailPanels />
+    </>
+  )
+}
+
+it("replaces the open goal with a task picked from the palette, and Escape empties the pane rather than reopening the goal", async () => {
+  const user = userEvent.setup()
+  renderScreen(<PaletteOverPane />, { route: `/goals?goal=${GOAL.id}` })
+  await user.type(await screen.findByRole("combobox"), "sessions screen")
+  // `screen.getByText("Tasks")` is ambiguous here: the goal panel underneath
+  // has its own "Tasks" tab. The cmdk group heading is the one carrying the
+  // attribute cmdk itself renders.
+  const tasksGroup = await waitFor(() => {
+    const heading = [...document.querySelectorAll("[cmdk-group-heading]")].find(
+      (el) => el.textContent === "Tasks",
+    )
+    const found = heading?.closest("[cmdk-group]")
+    if (!(found instanceof HTMLElement)) throw new Error("no Tasks cmdk group")
+    return found
+  })
+  await user.click(within(tasksGroup).getByText(TASK.title))
+
+  // One panel in the DOM: the task's. The goal panel it replaced is gone,
+  // not stacked under it.
+  await waitFor(() =>
+    expect(document.querySelectorAll('[data-slot="docked-pane"]')).toHaveLength(1),
+  )
+  expect(await screen.findByRole("heading", { name: TASK.title })).toBeDefined()
+
+  await user.keyboard("{Escape}")
+  // The board, with no panel — not back onto the goal it was opened from.
+  await waitFor(() =>
+    expect(document.querySelectorAll('[data-slot="docked-pane"]')).toHaveLength(0),
+  )
 })
 
 it("has no task to offer over a screen with no goal open", async () => {

@@ -25,7 +25,7 @@
 import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { useLocation } from "react-router-dom"
-import { beforeEach, expect, it } from "vitest"
+import { beforeEach, expect, it, vi } from "vitest"
 
 import type { GoalDto, SessionDto, TaskDto } from "@/api"
 import { aGoal, aSession, aTask } from "@/test/fixtures"
@@ -70,11 +70,15 @@ beforeEach(() => {
   stubWebSocket()
 })
 
-function renderView(session: SessionDto = SESSION, entry = "/goals?goal=g1") {
+function renderView(
+  session: SessionDto = SESSION,
+  entry = "/goals?goal=g1",
+  context?: "goal" | "task",
+) {
   renderScreen(
     <>
       <CurrentSearch />
-      <SessionDetailView session={session} />
+      <SessionDetailView session={session} context={context} />
     </>,
     { route: entry },
   )
@@ -217,6 +221,26 @@ it("shows no Task row for an orchestrator session, which has none", () => {
   renderView({ ...SESSION, task_id: null, task_agent_id: null, seat: "orchestrator" })
 
   expect(screen.queryByText("Task")).toBeNull()
+})
+
+it("replaces the goal with the task when followed from a goal's own session, rather than stacking on it", async () => {
+  const user = userEvent.setup()
+  renderView(SESSION, `/goals?goal=${GOAL.id}&tab=sessions&session=${SESSION.id}`, "goal")
+  const pushSpy = vi.spyOn(window.history, "pushState")
+  const replaceSpy = vi.spyOn(window.history, "replaceState")
+
+  await user.click(await screen.findByRole("link", { name: TASK.title }))
+
+  // Replaced rather than pushed: a task panel takes the goal's place in the
+  // pane instead of stacking a new entry over it, same as the task panel's
+  // own breadcrumb back.
+  expect(pushSpy).not.toHaveBeenCalled()
+  expect(replaceSpy).toHaveBeenCalled()
+  await waitFor(() => expect(currentSearch().get("task")).toBe(TASK.id))
+  expect(currentSearch().has("goal")).toBe(false)
+
+  pushSpy.mockRestore()
+  replaceSpy.mockRestore()
 })
 
 it("shows no Directory row when the session has no working directory", () => {

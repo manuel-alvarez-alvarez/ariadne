@@ -129,7 +129,12 @@ function useAttentionToasts(
         // rather than stacking a second one under it.
         id: `attention-${key}`,
         description: attentionSubject(item),
-        action: { label: "Open", onClick: () => void navigate(target) },
+        // `target.replace` when it is a task panel swapping in for an open
+        // goal's, same reasoning as the strip's own row.
+        action: {
+          label: "Open",
+          onClick: () => void navigate(target, { replace: target.replace }),
+        },
       })
     }
   }, [items, ready, quiet, navigate, search, pathname])

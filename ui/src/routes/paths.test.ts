@@ -22,15 +22,15 @@ describe("taskPanelTo", () => {
   it("keeps the params the screen owns", () => {
     const to = taskPanelTo(new URLSearchParams("goal=g1&status=running"), "t1")
     const params = new URLSearchParams(to.search)
-    expect(params.get("goal")).toBe("g1")
     expect(params.get("status")).toBe("running")
     expect(params.get("task")).toBe("t1")
   })
 
-  it("drops the params the panel it replaces owned", () => {
-    const to = taskPanelTo(new URLSearchParams("task=t1&tab=diff&session=s1"), "t2")
+  it("drops the goal it replaces, along with the panel's own params", () => {
+    const to = taskPanelTo(new URLSearchParams("goal=g1&task=t1&tab=diff&session=s1"), "t2")
     const params = new URLSearchParams(to.search)
     expect(params.get("task")).toBe("t2")
+    expect(params.has("goal")).toBe(false)
     expect(params.has("tab")).toBe(false)
     expect(params.has("session")).toBe(false)
   })
@@ -110,9 +110,10 @@ describe("taskSessionPanelFrom", () => {
 })
 
 describe("taskPanelFrom", () => {
-  it("stacks the panel on the screen it was asked from", () => {
+  it("opens over the screen it was asked from, dropping any goal behind it", () => {
     const to = taskPanelFrom(OVER, new URLSearchParams("goal=g1"), "t1")
     expect(to).toEqual(taskPanelTo(new URLSearchParams("goal=g1"), "t1"))
+    expect(new URLSearchParams(to.search).has("goal")).toBe(false)
   })
 
   it("opens on the board from the sessions screen, whose `?task=` is a filter", () => {

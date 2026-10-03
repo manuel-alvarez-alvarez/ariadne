@@ -37,13 +37,15 @@ Out: the daemon endpoints themselves (012).
    The screen stays accessible, clickable and scrollable, with no scrim or
    focus trap. The left handle resizes the pane between 24rem and 60% of
    the window; its default width is 36rem and settings preserve the choice.
-   Below `md`, the pane covers the screen at full width. A task opened from
-   a goal occupies the same pane, with the breadcrumb back to the goal.
-   Session drill-downs use that pane too. Escape inside it closes the current
-   task, then the goal; Escape on the board leaves it open. Closing preserves
-   the existing history and focus return. The header does not shrink, and
-   the body scrolls within the remaining height, with one full-height child
-   for the session view.
+   Below `md`, the pane covers the screen at full width. The pane holds one
+   panel at a time: a task opened from a goal replaces the goal's panel
+   rather than stacking on it, carrying a breadcrumb back that reopens the
+   goal in its place. Session drill-downs use that pane too. Escape inside
+   it, or its own close control, closes the pane outright — never back to a
+   goal a task replaced, even from a URL that names both. Closing preserves
+   the existing history and, where an opener is still on the screen, focus
+   return. The header does not shrink, and the body scrolls within the
+   remaining height, with one full-height child for the session view.
 3. Screens: the goals board (swimlanes plus an attention strip) has Active,
    All and Finished status segments. A status-menu icon holds a custom
    selection. Each lane header shows a progress bar, done/total and tokens.
@@ -484,8 +486,18 @@ Out: the daemon endpoints themselves (012).
 - Goal details leave the board accessible, and another lane title changes the
   open pane (`ui/src/components/detail-panels.test.tsx::keeps the board accessible and follows another lane title with a goal open`,
   `ui/src/features/goals/goal-panel.test.tsx::renders a goal without a modal dialog`).
-- Escape unwinds a task and its goal in one pane
-  (`ui/src/features/tasks/task-panel.test.tsx::unwinds the task and goal in one pane with Escape`).
+- A task opened from a goal replaces it, mounting only the task's panel, and
+  closes outright on Escape rather than falling back to the goal — even from
+  a URL that names both
+  (`ui/src/features/tasks/task-panel.test.tsx::replaces the goal with the task it opens, mounting only the one panel`,
+  `::closes the pane outright on Escape, rather than falling back to the goal`,
+  `ui/src/components/detail-panels.test.tsx::unmounts the goal outright once a task replaces it, and focuses the task`).
+- The task panel's breadcrumb opens its goal in the pane's place
+  (`ui/src/features/tasks/task-panel.test.tsx::opens the goal from the task's breadcrumb, replacing the task in the pane`,
+  `ui/src/components/detail-panels.test.tsx::gives the task panel's breadcrumb the app's own focus ring, once the task names its goal`).
+- Closing a task opened straight from the board returns focus to the card
+  that opened it, same as any other panel
+  (`ui/src/features/tasks/task-panel.test.tsx::closes to an empty pane and returns focus to the board card that opened it`).
 - Dragging clamps and persists the pane width across a remount
   (`ui/src/components/panel-sheet.test.tsx::clamps a dragged pane width and restores it from settings on remount`).
 - The session frame supplies the remaining height through its scrolling body
