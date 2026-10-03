@@ -1,7 +1,7 @@
 ---
 id: how-a-task-ends
 status: current
-updated: 2026-10-03
+updated: 2026-10-04
 areas: [daemon, store, prompts]
 commits: [ad268ee0, 305ee064, 45c5e131, 8174c256, 90ac6e67, 524856c7, fdd0c5b6, a69b953f, 29e6d84e, f79c8e15, a4d7da95]
 tests:
@@ -32,8 +32,8 @@ and `finished` (001).
    when the goal is created, and every task of the goal follows it:
    - `merge` — the author puts the change on the base branch itself;
    - `pull_request` — the author opens a request and sees it through: it
-     answers what is written on it, and the task ends when the request is
-     merged;
+     answers what is written on it, waits for a human to merge it, and the
+     task ends once that merge lands;
    - `none` — nothing is landed, and what the task produced is the whole of
      it: a published tag, a filed report, a document that lives elsewhere;
    - `feature_branch` — the tasks land on a branch of the goal, one per
@@ -95,10 +95,11 @@ and `finished` (001).
    session keeps reporting activity (009). It answers every comment, and a
    change somebody asks for is made on the branch and put through the Ariadne
    reviewers before it is pushed (004).
-9. Once the request is approved and green it is merged with `--squash`, the
-   base branch is fast-forwarded in the primary checkout, and the sha is
-   reported with `finish_task`. A request closed unmerged ends the task with
-   `fail_task`.
+9. Ariadne never merges the request: a human does, once it is approved and
+   green. The author waits for that merge the same way it waited for the
+   checks and the comments, then fast-forwards the base branch in the
+   primary checkout and reports the sha with `finish_task`. A request closed
+   unmerged ends the task with `fail_task`.
 10. `feature_branch` ends in a final task per repository: the one task that
     depends directly on every other task of that repository. Two such tasks
     would depend on each other, so at most one matches. It needs no reviewer.
@@ -118,8 +119,8 @@ and `finished` (001).
     repository base branch. Its landing briefing is a text of its own: push
     the goal branch, open the request from it to the base branch with `gh` or
     `glab` and record it, make every check green with fixes on the goal
-    branch, answer every comment, merge with `--squash`, fast-forward the
-    base branch in the primary checkout, delete the goal branch local and
+    branch, answer every comment, wait for a human to merge it, fast-forward
+    the base branch in the primary checkout, delete the goal branch local and
     remote, then `finish_task` with the base branch sha. A cleanup never
     deletes the goal branch.
 11. `none`: the author is briefed to check that what the task asked for is
@@ -193,6 +194,9 @@ and `finished` (001).
   (`defaults.rs::each_landing_briefing_is_one_strategy_and_nothing_of_the_other`),
   and nothing the author still has to run comes after `finish_task`
   (`defaults.rs::nothing_the_author_still_has_to_run_comes_after_the_call_that_ends_the_task`).
+- No landing briefing names a forge merge command: a human merges every
+  request, never the author
+  (`defaults.rs::no_landing_names_a_forge_merge_command`).
 - The `merge` briefing runs the whole suite once, between the rebase and the
   fast-forward
   (`defaults.rs::the_direct_landing_runs_the_whole_suite_after_the_rebase_and_before_the_fast_forward`),

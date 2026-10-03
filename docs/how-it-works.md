@@ -22,13 +22,13 @@ each task author works in its own git worktree.
    reviewers choose the result to land.
 5. The goal's landing decides how its tasks reach the base branch. `none`
    lands nothing. `merge` fast-forwards a squash of each task onto the base
-   branch. `pull_request` opens a request per task and sees it through the
-   forge. `feature_branch` branches every task from a goal branch, one per
-   repository, and merges it there; the one task that depends on every other
-   task of that repository then opens the pull request from the goal branch
-   to the base branch, makes it green, merges it, and deletes the goal
-   branch. The daemon removes completed worktrees according to its
-   configuration.
+   branch. `pull_request` opens a request per task, makes it green, answers
+   every comment, then waits: a human merges it, never Ariadne. `feature_branch`
+   branches every task from a goal branch, one per repository, and merges it
+   there; the one task that depends on every other task of that repository
+   then opens the pull request from the goal branch to the base branch, makes
+   it green, waits for a human to merge it, and deletes the goal branch. The
+   daemon removes completed worktrees according to its configuration.
 
 ## Sessions and attention
 

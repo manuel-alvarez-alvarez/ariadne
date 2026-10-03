@@ -420,11 +420,13 @@ Approved. Squash {branch} onto {base_branch} in {repo_path}. `<remote>` is what 
 /// added on top and the base is merged in. The merge commit costs nothing —
 /// the forge squashes the request when it merges it.
 ///
-/// Waiting happens inside this session, in a poll and sleep loop, and the
-/// sleep is capped at five minutes for the daemon's sake: a session that has
-/// reported nothing for `QUIET_FLAG_SECS` is flagged as stalled and the
-/// relaunch follows at `QUIET_RELAUNCH_SECS` — 600 s and 1800 s — while every
-/// poll counts as activity.
+/// Ariadne never merges a request: a human does, in their own time, on the
+/// forge. So the author only ever waits for that merge, inside this session,
+/// in the same poll and sleep loop it already polls checks and comments
+/// with. The sleep is capped at five minutes for the daemon's sake: a
+/// session that has reported nothing for `QUIET_FLAG_SECS` is flagged as
+/// stalled and the relaunch follows at `QUIET_RELAUNCH_SECS` — 600 s and
+/// 1800 s — while every poll counts as activity.
 const LANDING_PULL_REQUEST: &str = r#"# Land task: {task_title}
 
 Approved. Publish {branch} against {base_branch}. `<remote>` is what `git -C {repo_path} remote -v` names. github.com takes `gh`, GitLab `glab`. Neither, or `auth status` shows no account: `fail_task` with the failed check.
@@ -433,7 +435,8 @@ Approved. Publish {branch} against {base_branch}. `<remote>` is what `git -C {re
 2. `git push -u <remote> {branch}`. Then `gh pr create --base {base_branch}` or `glab mr create --target-branch {base_branch}`. Title it by the repository's commit conventions. Fill its template. Call `record_pull_request` with the URL.
 3. Poll it and its comments (`gh pr view`, `glab mr view`). `sleep 300` between polls, never longer in one call. Never end your turn while it is open.
 4. Answer every comment. Commit a change on {branch}. Put it through `request_review`. Push it once approved. A published branch only grows: no `commit --amend`, no rebase, no forced push. If it stops merging cleanly, `git merge --no-edit <remote>/{base_branch}` and push plainly.
-5. Finished: `gh pr merge --squash` or `glab mr merge --squash`. In {repo_path}, fetch and `git merge --ff-only <remote>/{base_branch}`. Then `finish_task` with `git rev-parse {base_branch}`. Closed unmerged: `fail_task` with that."#;
+5. Never merge it. Poll it the same way until a human merges it.
+6. Merged: in {repo_path}, fetch and `git merge --ff-only <remote>/{base_branch}`. Then `finish_task` with `git rev-parse {base_branch}`. Closed unmerged: `fail_task` with that."#;
 
 /// What the author of the final task of a `feature_branch` goal is briefed
 /// with: the one request that takes the goal branch onto the base branch.
@@ -442,6 +445,10 @@ Approved. Publish {branch} against {base_branch}. `<remote>` is what `git -C {re
 /// branch and `{base_branch}` the repository base. Every other task of the
 /// repository already landed on it, and their reviewers judged each one: the
 /// request is where the forge's checks and its readers see the goal whole.
+///
+/// The author never merges this request either: it waits for a human to
+/// merge it, the same way [`LANDING_PULL_REQUEST`] does, before it fast-
+/// forwards the base branch onto what the human merged.
 ///
 /// The author's worktree holds the goal branch, and git deletes no branch a
 /// worktree has checked out. So the worktree lets go of it before the delete.
@@ -457,8 +464,8 @@ Approved. Publish the goal branch {branch} against {base_branch}. Work on {branc
 2. `gh pr create --base {base_branch} --head {branch}` or `glab mr create --target-branch {base_branch} --source-branch {branch}`. Title it by the repository's commit conventions. Fill its template. Call `record_pull_request` with the URL.
 3. Poll its checks and comments (`gh pr view`, `glab mr view`). `sleep 300` between polls, never longer in one call. Never end your turn while it is open. Fix a failed check on {branch} and push it.
 4. Answer every comment. Commit a change on {branch} and push it. No amend, no rebase, no forced push. If it stops merging cleanly, `git merge --no-edit <remote>/{base_branch}` and push plainly.
-5. All checks green: `gh pr merge --squash` or `glab mr merge --squash`.
-6. `git -C {repo_path} fetch <remote> {base_branch}`. Then `merge --ff-only <remote>/{base_branch}` if on {base_branch}. Else `fetch <remote> {base_branch}:{base_branch}`.
+5. Never merge it. A human merges it. Poll it the same way.
+6. Merged: `git -C {repo_path} fetch <remote> {base_branch}`. Then `merge --ff-only <remote>/{base_branch}` if on {base_branch}. Else `fetch <remote> {base_branch}:{base_branch}`.
 7. `git checkout --detach`. Then `git -C {repo_path} branch -D {branch}` and `git push <remote> --delete {branch}`.
 8. `finish_task` with `git -C {repo_path} rev-parse {base_branch}`. Closed unmerged: `fail_task` with that."#;
 
@@ -1164,8 +1171,6 @@ mod tests {
             for command in [
                 "git -C {repo_path} push",
                 "git push",
-                "gh pr merge",
-                "glab mr merge",
                 "request_review",
                 "record_pull_request",
             ] {
@@ -1508,16 +1513,15 @@ mod tests {
             assert!(direct.contains(step), "the direct briefing has no {step}");
         }
 
-        // Published, answered and merged by the author, on either forge.
+        // Published and answered by the author, merged by a human, on either forge.
         for step in [
             "auth status",
             "gh pr create",
             "gh pr view",
-            "gh pr merge",
             "glab mr create",
             "glab mr view",
-            "glab mr merge",
             "record_pull_request",
+            "Never merge it",
             "`finish_task`",
         ] {
             assert!(
@@ -1556,8 +1560,8 @@ mod tests {
 
     /// The final task of a `feature_branch` goal publishes the goal branch
     /// against the base branch, and runs the eight steps in their order: the
-    /// push, the request, the checks, the comments, the squash, the
-    /// fast-forward, the delete and the call that ends the task.
+    /// push, the request, the checks, the comments, the wait for a human to
+    /// merge it, the fast-forward, the delete and the call that ends the task.
     #[test]
     fn the_final_landing_takes_the_goal_branch_onto_the_base_in_order() {
         let text = final_landing_prompt();
@@ -1569,8 +1573,8 @@ mod tests {
             "`record_pull_request`",
             "Fix a failed check on {branch}",
             "Answer every comment",
-            "`gh pr merge --squash`",
-            "`glab mr merge --squash`",
+            "Never merge it",
+            "A human merges it",
             "`git -C {repo_path} fetch <remote> {base_branch}`",
             "`merge --ff-only <remote>/{base_branch}`",
             "`git -C {repo_path} branch -D {branch}`",
@@ -1590,6 +1594,17 @@ mod tests {
                 !text.contains(other),
                 "the {FINAL_LANDING} names {other}, which is a task branch's"
             );
+        }
+    }
+
+    /// A human merges every request. No landing briefing names the command
+    /// that would let the author merge one itself, on either forge.
+    #[test]
+    fn no_landing_names_a_forge_merge_command() {
+        for (name, text) in every_landing() {
+            for command in ["gh pr merge", "glab mr merge"] {
+                assert!(!text.contains(command), "the {name} names {command}");
+            }
         }
     }
 
