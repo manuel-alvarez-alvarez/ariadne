@@ -19,8 +19,8 @@ pub struct Timeouts {
     /// within a second; one that does not is killed when this runs out, as it
     /// was before.
     pub cancel_grace: Duration,
-    /// How long one discovery probe of an agent may take, and how long one
-    /// agent's `session/list` pages may take together.
+    /// How long one discovery ACP exchange and its OpenCode delete may each
+    /// take, and how long one agent's `session/list` pages may take together.
     pub probe: Duration,
     /// How long an outside conversation can take to load before resume fails.
     pub session_load: Duration,

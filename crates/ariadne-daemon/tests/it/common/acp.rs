@@ -363,6 +363,10 @@ const STUB: &str = r#"#!/usr/bin/env python3
 import json, os, select, subprocess, sys, time
 
 script = json.load(open(sys.argv[1]))
+if sys.argv[2:4] == ["session", "delete"]:
+    with open(script["log"], "a") as f:
+        f.write(json.dumps({"method": "cli/session/delete", "args": sys.argv[2:]}) + "\n")
+    sys.exit(script.get("delete_exit", 0))
 # An agent slow to come up: nothing is said, and nothing read, until
 # `start_delay` seconds have passed — the window in which the daemon has
 # launched a session and heard nothing from it yet.

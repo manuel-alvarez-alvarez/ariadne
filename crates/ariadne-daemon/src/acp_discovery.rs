@@ -640,6 +640,7 @@ async fn probe(
     // The timeout sits inside the probe so a slow agent is still reported
     // with every capability it showed before it stopped answering.
     let mut discovered = None;
+    let mut opened_session = None;
     let result = tokio::time::timeout(
         timeout,
         Client
@@ -647,8 +648,17 @@ async fn probe(
             .name("ariadne-discovery")
             .connect_with(pipes(stdin, stdout), async |cx| {
                 let shortcut = cached.clone().filter(|_| !reread);
-                discovered =
-                    Some(probe_protocol(&entry, &cx, cwd, shortcut, &mut capabilities).await);
+                discovered = Some(
+                    probe_protocol(
+                        &entry,
+                        &cx,
+                        cwd,
+                        shortcut,
+                        &mut opened_session,
+                        &mut capabilities,
+                    )
+                    .await,
+                );
                 Ok(())
             }),
     )
@@ -664,6 +674,11 @@ async fn probe(
     };
     let _ = child.start_kill();
     let _ = child.wait().await;
+    if entry.id == "opencode-acp"
+        && let Some(session_id) = opened_session
+    {
+        delete_opencode_catalog_session(&entry, cwd, &session_id, timeout).await;
+    }
     match result {
         Ok(discovery) => discovery,
         Err(error) => {
@@ -689,6 +704,7 @@ async fn probe_protocol(
     cx: &ConnectionTo<Agent>,
     cwd: &Path,
     cached: Option<CachedCatalog>,
+    opened_session: &mut Option<String>,
     capabilities: &mut AcpCapabilitiesDto,
 ) -> Result<Discovery> {
     let initialized = call(cx, "initialize", initialize())
@@ -721,7 +737,7 @@ async fn probe_protocol(
         }
         None => {
             let closes = advertised.session_capabilities.close.is_some();
-            read_catalog(cx, cwd, closes, capabilities).await?
+            read_catalog(entry, cx, cwd, closes, opened_session, capabilities).await?
         }
     };
 
@@ -753,29 +769,33 @@ async fn probe_protocol(
     })
 }
 
-/// Open a session to read the agent's catalog off it, then close it again
-/// where the agent can (`closes`), so it holds nothing for a session nobody
-/// will prompt.
+/// Open a session to read the agent's catalog, then release the session.
 async fn read_catalog(
+    entry: &RegistryEntry,
     cx: &ConnectionTo<Agent>,
     cwd: &Path,
     closes: bool,
+    opened_session: &mut Option<String>,
     capabilities: &mut AcpCapabilitiesDto,
 ) -> Result<Catalog> {
     let setup = call(cx, "session/new", v1::NewSessionRequest::new(cwd))
         .await
         .context("session/new failed")?;
-    let session_id = setup.session_id.clone();
+    let session_id = setup.session_id.to_string();
+    *opened_session = Some(session_id.clone());
     capabilities.session_new = true;
     if closes {
         // Best effort: the catalog is read either way, and the process is
         // gone as soon as the probe ends.
-        let _ = call(
+        if let Err(error) = call(
             cx,
             "session/close",
-            v1::CloseSessionRequest::new(session_id.to_string()),
+            v1::CloseSessionRequest::new(session_id.clone()),
         )
-        .await;
+        .await
+        {
+            tracing::warn!(agent = %entry.id, session_id = %session_id, error = %error, "closing discovery session failed");
+        }
     }
     let options = setup.config_options.unwrap_or_default();
     let model = find_config_option(&options, &["model"], &["model"]);
@@ -802,6 +822,36 @@ async fn read_catalog(
             .and_then(crate::acp::current_value)
             .map(str::to_string),
     })
+}
+
+/// Delete the database row left by OpenCode's catalog session. This runs
+/// after the ACP probe so a failed or stalled CLI cannot reject its catalog.
+async fn delete_opencode_catalog_session(
+    entry: &RegistryEntry,
+    cwd: &Path,
+    session_id: &str,
+    timeout: Duration,
+) {
+    let mut command = Command::new(&entry.program);
+    command
+        .args(["session", "delete", session_id])
+        .current_dir(cwd)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    apply_agent_launch_environment(&mut command, &entry.id);
+    match tokio::time::timeout(timeout, command.status()).await {
+        Ok(Ok(status)) if status.success() => {}
+        Ok(Ok(status)) => {
+            tracing::warn!(agent = %entry.id, session_id, %status, "deleting discovery session failed");
+        }
+        Ok(Err(error)) => {
+            tracing::warn!(agent = %entry.id, session_id, error = %error, "deleting discovery session failed");
+        }
+        Err(_) => {
+            tracing::warn!(agent = %entry.id, session_id, "deleting discovery session timed out");
+        }
+    }
 }
 
 /// What a probe tells an agent it is, on `initialize`.

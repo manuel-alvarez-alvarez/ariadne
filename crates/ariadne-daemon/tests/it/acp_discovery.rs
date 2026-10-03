@@ -1089,6 +1089,89 @@ fn has(methods: &[String], method: &str) -> bool {
     methods.iter().any(|m| m == method)
 }
 
+/// OpenCode's CLI removes the session that the catalog read created, after
+/// the advertised ACP close, using the session id returned by the agent.
+#[tokio::test]
+async fn an_opencode_probe_closes_and_deletes_its_catalog_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut setup = script();
+    setup["session_id"] = json!("catalog-session-123");
+    setup["capabilities"]["sessionCapabilities"]["close"] = json!({});
+    let agent = stub_acp_agent(dir.path(), setup);
+    let h = harness_with_agent("opencode-acp", &agent).await;
+
+    agent.clear_messages();
+    let agents = h.launcher.registry.refresh().await;
+    assert_eq!(agents[0].status, ariadne_api::agents::AcpAgentStatus::Ready);
+    let messages = agent.messages();
+    assert_eq!(
+        messages
+            .iter()
+            .filter_map(|message| message["method"].as_str())
+            .collect::<Vec<_>>(),
+        [
+            "initialize",
+            "session/new",
+            "session/close",
+            "cli/session/delete"
+        ]
+    );
+    assert_eq!(messages[2]["params"]["sessionId"], "catalog-session-123");
+    assert_eq!(
+        messages[3]["args"],
+        json!(["session", "delete", "catalog-session-123"])
+    );
+}
+
+/// A failed CLI delete reports no probe error and leaves the catalog usable.
+#[tokio::test]
+async fn a_failed_opencode_delete_keeps_the_agent_ready_with_its_catalog() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut setup = script();
+    setup["capabilities"]["sessionCapabilities"]["close"] = json!({});
+    setup["delete_exit"] = json!(7);
+    let agent = stub_acp_agent(dir.path(), setup);
+    let h = harness_with_agent("opencode-acp", &agent).await;
+
+    assert!(has(&agent.methods(), "cli/session/delete"));
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    assert_eq!(agents[0]["status"], "ready", "{agents:#?}");
+    let models: Vec<Value> = h.get("/v1/models").await;
+    assert!(
+        models
+            .iter()
+            .any(|model| model["id"] == "opencode-acp:old-model"),
+        "{models:#?}"
+    );
+}
+
+/// The OpenCode cleanup is selected by registry id, not by the program's
+/// ability to accept a `session delete` command.
+#[tokio::test]
+async fn a_non_opencode_probe_runs_no_session_delete() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut setup = script();
+    setup["capabilities"]["sessionCapabilities"]["close"] = json!({});
+    let opencode_dir = dir.path().join("opencode");
+    std::fs::create_dir(&opencode_dir).unwrap();
+    let opencode = stub_acp_agent(&opencode_dir, setup.clone());
+    let opencode_h = harness_with_agent("opencode-acp", &opencode).await;
+    let opencode_agents: Vec<Value> = opencode_h.get("/v1/acp-agents").await;
+    assert_eq!(
+        opencode_agents[0]["status"], "ready",
+        "{opencode_agents:#?}"
+    );
+    assert!(has(&opencode.methods(), "cli/session/delete"));
+
+    let agent = stub_acp_agent(dir.path(), setup);
+    let h = harness_with_agent("other-acp", &agent).await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    assert_eq!(agents[0]["status"], "ready", "{agents:#?}");
+    assert!(has(&agent.methods(), "session/close"));
+    assert!(!has(&agent.methods(), "cli/session/delete"));
+}
+
 /// A daemon start reads an agent's catalog once per agent version: the store
 /// keeps it, a start at the same version opens no session, a new version is
 /// read again, and so is every version on an explicit refresh. The session a

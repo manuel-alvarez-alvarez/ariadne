@@ -57,6 +57,12 @@ is pinned (011), what the session is briefed with (006), the console a person
 reads and types into (008), and the sweep that retires a row whose agent is
 gone (009).
 
+Discovery closes each catalog session when the agent advertises `session/close`.
+For `opencode-acp`, it then runs the registry entry's program as
+`session delete <session id>` with the probe's launch environment and a
+discovery timeout. A failed close or delete is logged as a warning and does
+not reject the agent or discard its catalog.
+
 ## Behavior
 
 1. The agent is a direct child of the daemon. It runs the registry command
@@ -288,6 +294,12 @@ gone (009).
 
 ## Acceptance criteria
 
+- An OpenCode probe closes and deletes the session id returned by
+  `session/new` (`acp_discovery.rs::an_opencode_probe_closes_and_deletes_its_catalog_session`).
+- A failed OpenCode delete keeps the agent ready with its catalog
+  (`acp_discovery.rs::a_failed_opencode_delete_keeps_the_agent_ready_with_its_catalog`).
+- A non-OpenCode probe does not run session delete
+  (`acp_discovery.rs::a_non_opencode_probe_runs_no_session_delete`).
 - `learn` publishes four choices and preserves the agent choices, records a
   family answer, reuses it for another call in that family, and asks about a
   different family
