@@ -1736,12 +1736,17 @@ export interface components {
              * @description The registered repositories the goal works in, as they stand now: a
              *     goal references them, so an edit to one shows up here.
              */
-            repos: components["schemas"]["RepositoryDto"][];
+            repos: components["schemas"]["GoalRepositoryDto"][];
             status: components["schemas"]["GoalStatus"];
             title: string;
             updated_at: string;
             /** @description What the agents of this goal have spent between them. */
             usage: components["schemas"]["GoalUsageDto"];
+        };
+        /** @description A registered repository together with the branch this goal owns in it. */
+        GoalRepositoryDto: components["schemas"]["RepositoryDto"] & {
+            /** @description Null until a feature branch goal creates its branch at plan finalization. */
+            goal_branch?: string | null;
         };
         /**
          * @description Goal lifecycle status.

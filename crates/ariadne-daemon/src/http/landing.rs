@@ -51,11 +51,12 @@ pub(super) async fn verify_merged(
     reported: Option<&str>,
 ) -> ApiResult<()> {
     let repo_path = std::path::PathBuf::from(&repo.path);
+    let base_branch = state.store.task_landing_branch(task, repo).await?;
     let on_the_base = async |rev: &str| {
         state
             .launcher
             .git
-            .is_ancestor(&repo_path, rev, &repo.base_branch)
+            .is_ancestor(&repo_path, rev, &base_branch)
             .await
             .map_err(unresolved)
     };
@@ -64,8 +65,7 @@ pub(super) async fn verify_merged(
         // What the task produced is the task's own to have put where it
         // belongs, and no check here can see it.
         Landing::None => {}
-        // A feature branch lands its tasks as a merge does, until the goal
-        // has a branch of its own to land them on.
+        // Both endings verify the task against its landing branch.
         Landing::Merge | Landing::FeatureBranch => {
             // The branch that lands is the picked winner's, on a task
             // staffed with several authors; the task's own everywhere else.
@@ -78,7 +78,16 @@ pub(super) async fn verify_merged(
             if !on_the_base(&branch).await? {
                 return Err(ApiError::conflict(format!(
                     "merge not verified: {branch} is not an ancestor of {} in {}",
-                    repo.base_branch, repo.path
+                    base_branch, repo.path
+                )));
+            }
+            if task.landing() == Landing::FeatureBranch
+                && let Some(sha) = reported
+                && !on_the_base(sha).await?
+            {
+                return Err(ApiError::conflict(format!(
+                    "merge not verified: {sha} is not on {base_branch} in {}",
+                    repo.path
                 )));
             }
         }
@@ -93,7 +102,7 @@ pub(super) async fn verify_merged(
                 return Err(ApiError::conflict(format!(
                     "merge not verified: {sha} is not on {} in {} — fetch the remote \
                      and fast-forward the base branch first",
-                    repo.base_branch, repo.path
+                    base_branch, repo.path
                 )));
             }
         }
@@ -617,10 +626,11 @@ pub(super) async fn diff(
             "branch {branch} does not exist yet (task not started?)"
         )));
     }
+    let base_branch = state.store.task_landing_branch(&task, &repo).await?;
     state
         .launcher
         .git
-        .diff(&repo_path, &repo.base_branch, &branch)
+        .diff(&repo_path, &base_branch, &branch)
         .await
         .map_err(unresolved)
 }

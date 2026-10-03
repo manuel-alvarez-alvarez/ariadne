@@ -80,7 +80,7 @@ const ID_TAIL: usize = 6;
 /// Only ASCII letters and digits survive, which keeps the result a valid git
 /// ref (`git check-ref-format --branch`) whatever the title was. A title with
 /// nothing to slug falls back to `task-<tail>`.
-fn branch_name(title: &str, id: &str) -> String {
+pub(crate) fn branch_name(title: &str, id: &str) -> String {
     let tail = id_tail(id);
     let slug = slug(title);
     let head = if slug.is_empty() { "task" } else { &slug };

@@ -48,8 +48,21 @@ agent is briefed with in its worktree (006).
    under the same name with an `-a<n>` tail — `…-r9jr7c-a2` for the second.
    The branches the pick passes over are removed with their worktrees when
    it settles.
-7. An author gets a writable worktree of its own, on its own branch, cut
-   from the base branch of the task's repository. When that base has no
+7. A `feature_branch` goal creates one goal branch in each repository when
+   its plan finalizes, before tasks start. Each branch starts at the repository
+   base. Its name uses the goal title slug and the short goal id tail.
+   Finalization pushes each branch when a remote exists and stores it in
+   `goal_repositories.goal_branch`. A failed push leaves the goal in planning;
+   a retry reuses the branch. Tasks branch from and land on that goal branch.
+   Author, reviewer and landing briefings name it as their base, and merge
+   verification and review diffs use it. The landing command fast-forwards
+   that branch without changing the primary checkout's branch or local edits.
+   It merges when the checkout holds the target, and otherwise fetches the
+   task branch into the target ref locally. Other goals use the repository base.
+   A feature branch goal refuses an unborn base with a message that asks for
+   its first commit. Finalization disables terminal credential prompts for pushes.
+   An author gets a writable worktree of its own, on its own task branch.
+   When the repository base has no
    commits the task branch is cut orphan, the author's first commit is the
    repository's first, and the task's diff is read against the empty tree
    because there is no merge base to read it against. It is read against the
@@ -68,6 +81,7 @@ agent is briefed with in its worktree (006).
    of its own: it is the first repository of its goal.
 10. Worktrees are removed when the work that owned them ends; whether finished
     and cancelled work keeps its worktree for inspection is configuration.
+    Task cleanup preserves the goal branch.
 11. The daemon watches each task branch's head and announces a move on the
     event stream, so clients see a commit without polling. The watch is
     established for the worktrees found at startup and goes when the worktree
@@ -114,6 +128,18 @@ agent is briefed with in its worktree (006).
   `store.rs::a_repository_a_goal_holds_cannot_be_deleted`).
 - A branch is named after the task's title
   (`store.rs::task_branch_is_named_after_the_title`).
+- Finalization creates and pushes a goal branch from each repository base.
+  Two tasks land there without moving the repository base. Merge verification
+  refuses a task present only on the repository base. Task cleanup keeps the
+  goal branch, and review diffs exclude changes from earlier tasks
+  (`landing_lifecycle.rs::feature_tasks_land_on_the_goal_branch_and_keep_the_base_unchanged`).
+- An unborn base stops feature branch finalization with a clear message
+  (`goal_repositories.rs::a_feature_goal_refuses_an_unborn_base_with_a_clear_message`).
+- A failed goal branch push keeps the goal in planning and permits retry
+  without terminal credential prompts
+  (`goal_repositories.rs::a_failed_goal_branch_push_keeps_planning_and_can_retry`).
+  Other landings create no goal branch
+  (`::other_landings_finalize_without_a_goal_branch`).
 - Worktrees are created, verified and removed, and a reviewer's is refreshed
   between reviews, over whatever the reviewer left in it
   (`managers.rs::git_worktree_lifecycle_and_merge_verification`,

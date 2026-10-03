@@ -2,8 +2,12 @@
 
 use ariadne_core::id::new_id;
 use ariadne_core::{GoalStatus, Landing};
+use sqlx::{FromRow, Row};
 
-use crate::{AgentPin, Change, Goal, Repository, Result, Store, StoreError, not_found, now};
+use crate::{
+    AgentPin, Change, Goal, GoalRepository, Repository, Result, Store, StoreError, Task, not_found,
+    now,
+};
 
 #[derive(Debug, Clone)]
 pub struct NewGoal {
@@ -176,14 +180,82 @@ impl Store {
     /// holds references, not copies. Ordered like
     /// [`Store::list_repositories`].
     pub async fn list_goal_repositories(&self, goal_id: &str) -> Result<Vec<Repository>> {
-        Ok(sqlx::query_as::<_, Repository>(
-            "SELECT r.* FROM goal_repositories gr
+        Ok(self
+            .list_goal_repositories_with_branches(goal_id)
+            .await?
+            .into_iter()
+            .map(|(repo, _)| repo)
+            .collect())
+    }
+
+    /// Read registered repositories and their goal branches in one snapshot.
+    pub async fn list_goal_repositories_with_branches(
+        &self,
+        goal_id: &str,
+    ) -> Result<Vec<(Repository, Option<String>)>> {
+        let rows = sqlx::query(
+            "SELECT r.*, gr.goal_branch FROM goal_repositories gr
                JOIN repositories r ON r.id = gr.repository_id
               WHERE gr.goal_id = ?
               ORDER BY r.path, r.base_branch",
         )
         .bind(goal_id)
         .fetch_all(self.r())
-        .await?)
+        .await?;
+        rows.iter()
+            .map(|row| Ok((Repository::from_row(row)?, row.try_get("goal_branch")?)))
+            .collect()
+    }
+}
+
+impl Goal {
+    /// The goal branch uses the same title and id naming rules as a task.
+    pub fn branch_name(&self) -> String {
+        crate::tasks::branch_name(&self.title, &self.id)
+    }
+}
+
+impl Store {
+    pub async fn get_goal_repository(
+        &self,
+        goal_id: &str,
+        repository_id: &str,
+    ) -> Result<GoalRepository> {
+        sqlx::query_as("SELECT * FROM goal_repositories WHERE goal_id = ? AND repository_id = ?")
+            .bind(goal_id)
+            .bind(repository_id)
+            .fetch_optional(self.r())
+            .await?
+            .ok_or_else(|| not_found("goal_repository", repository_id))
+    }
+
+    pub async fn set_goal_branch(
+        &self,
+        goal_id: &str,
+        repository_id: &str,
+        branch: &str,
+    ) -> Result<()> {
+        let n = sqlx::query(
+            "UPDATE goal_repositories SET goal_branch = ? WHERE goal_id = ? AND repository_id = ?",
+        )
+        .bind(branch)
+        .bind(goal_id)
+        .bind(repository_id)
+        .execute(self.w())
+        .await?
+        .rows_affected();
+        if n == 0 {
+            return Err(not_found("goal_repository", repository_id));
+        }
+        self.publish_goal_update(goal_id).await
+    }
+
+    /// The branch this task lands on: its goal's branch, or the repository base.
+    pub async fn task_landing_branch(&self, task: &Task, repo: &Repository) -> Result<String> {
+        Ok(self
+            .get_goal_repository(&task.goal_id, &task.repo_id)
+            .await?
+            .goal_branch
+            .unwrap_or_else(|| repo.base_branch.clone()))
     }
 }

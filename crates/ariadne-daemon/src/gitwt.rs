@@ -30,7 +30,11 @@ pub struct GitManager;
 
 impl GitManager {
     async fn git(&self, repo: &Path, args: &[&str]) -> Result<String> {
-        let output = Command::new("git")
+        let mut command = Command::new("git");
+        if args.first() == Some(&"push") {
+            command.env("GIT_TERMINAL_PROMPT", "0");
+        }
+        let output = command
             .arg("-C")
             .arg(repo)
             .args(args)
@@ -46,6 +50,42 @@ impl GitManager {
             );
         }
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    /// Create a goal branch once and publish it before its tasks can start.
+    /// Reuse the local branch after a failed push, so finalization can retry.
+    pub(crate) async fn create_goal_branch(
+        &self,
+        repo: &Path,
+        branch: &str,
+        base: &str,
+    ) -> Result<()> {
+        if !self.branch_exists(repo, branch).await? {
+            if !self.branch_exists(repo, base).await? {
+                bail!(
+                    "base branch {base} has no commits; create its first commit before finalizing a feature branch goal"
+                );
+            }
+            self.git(repo, &["branch", branch, base]).await?;
+        }
+        let remotes = self.git(repo, &["remote"]).await?;
+        if let Some(remote) = remotes
+            .lines()
+            .find(|r| *r == "origin")
+            .or_else(|| remotes.lines().next())
+        {
+            self.git(
+                repo,
+                &[
+                    "push",
+                    "--set-upstream",
+                    remote,
+                    &format!("refs/heads/{branch}:refs/heads/{branch}"),
+                ],
+            )
+            .await?;
+        }
+        Ok(())
     }
 
     /// Create an author worktree on `branch` (created at `base` when new).

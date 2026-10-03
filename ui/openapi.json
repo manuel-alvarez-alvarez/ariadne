@@ -4265,7 +4265,7 @@
           "repos": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/RepositoryDto"
+              "$ref": "#/components/schemas/GoalRepositoryDto"
             },
             "description": "The registered repositories the goal works in, as they stand now: a\ngoal references them, so an edit to one shows up here."
           },
@@ -4283,6 +4283,26 @@
             "description": "What the agents of this goal have spent between them."
           }
         }
+      },
+      "GoalRepositoryDto": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RepositoryDto"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "goal_branch": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Null until a feature branch goal creates its branch at plan finalization."
+              }
+            }
+          }
+        ],
+        "description": "A registered repository together with the branch this goal owns in it."
       },
       "GoalStatus": {
         "type": "string",

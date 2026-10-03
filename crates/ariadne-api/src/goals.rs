@@ -27,7 +27,7 @@ pub struct GoalDto {
     pub landing: Landing,
     /// The registered repositories the goal works in, as they stand now: a
     /// goal references them, so an edit to one shows up here.
-    pub repos: Vec<RepositoryDto>,
+    pub repos: Vec<GoalRepositoryDto>,
     /// What the agents of this goal have spent between them.
     pub usage: GoalUsageDto,
     pub created_at: String,
@@ -91,4 +91,21 @@ pub struct CreateGoalRequest {
     /// once the goal is created.
     #[serde(default)]
     pub landing: Option<Landing>,
+}
+
+/// A registered repository together with the branch this goal owns in it.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct GoalRepositoryDto {
+    #[serde(flatten)]
+    pub repository: RepositoryDto,
+    /// Null until a feature branch goal creates its branch at plan finalization.
+    pub goal_branch: Option<String>,
+}
+
+impl std::ops::Deref for GoalRepositoryDto {
+    type Target = RepositoryDto;
+
+    fn deref(&self) -> &Self::Target {
+        &self.repository
+    }
 }

@@ -6,7 +6,7 @@
 //! worth reading, so [`dto!`] is what writes the first.
 
 use ariadne_api::events::AgentEventDto;
-use ariadne_api::goals::{GoalDto, GoalUsageDto};
+use ariadne_api::goals::{GoalDto, GoalRepositoryDto, GoalUsageDto};
 use ariadne_api::messages::MessageDto;
 use ariadne_api::permissions::{
     LearnedPermissionDto, LearnedPermissionLevel, LearnedPermissionScope, LearnedPermissionTarget,
@@ -68,12 +68,12 @@ pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
     /// which the caller loads.
     fn goal_dto(
         g: store::Goal,
-        repos: Vec<store::Repository>,
+        repos: Vec<GoalRepositoryDto>,
         usage: GoalUsageDto,
     ) -> GoalDto {
         status: g.status(),
         landing: g.landing(),
-        repos: repos.into_iter().map(repository_dto).collect(),
+        repos: repos,
         usage: usage,
         .. id, title, description, orchestrated, model, effort,
            created_at, updated_at
@@ -343,7 +343,15 @@ pub(crate) fn outside_entry(outside: &OutsideSessionDto) -> SessionEntryDto {
 /// [`goal_dto`] with everything it needs loaded: the repositories the goal
 /// references, and what every session under it has spent.
 pub(crate) async fn goal_dto_of(store: &Store, goal: store::Goal) -> Result<GoalDto, StoreError> {
-    let repos = store.list_goal_repositories(&goal.id).await?;
+    let repos = store
+        .list_goal_repositories_with_branches(&goal.id)
+        .await?
+        .into_iter()
+        .map(|(repo, goal_branch)| GoalRepositoryDto {
+            repository: repository_dto(repo),
+            goal_branch,
+        })
+        .collect();
     let usage = goal_usage(store, &goal.id).await?;
     Ok(goal_dto(goal, repos, usage))
 }

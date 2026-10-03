@@ -402,7 +402,8 @@ Approved. Squash {branch} onto {base_branch} in {repo_path}. `<remote>` is what 
 2. `git rebase {base_branch}` in your worktree. Conflicts are yours.
 3. If the rebase changed nothing, keep the reviewer-approved SHA in HEAD. Skip checks. Otherwise, run the whole suite, build and linters once. On a later pass, do that only after a conflict or a base change to a task file. Else check the crates either side changed. Fix failures on {branch}; return to step 2.
 4. `git reset --soft "$(git merge-base {base_branch} HEAD)" && git commit`, with a Conventional Commits subject.
-5. If `git diff --stat {base_branch} HEAD` lists only task files, run `git -C {repo_path} merge --ff-only {branch}`. Else, or if it fails, go to step 1.
+5. If `git diff --stat {base_branch} HEAD` lists files outside this task, go to step 1.
+   Run `git -C {repo_path} merge --ff-only {branch}` if {repo_path} is on {base_branch}; else `git -C {repo_path} fetch . {branch}:{base_branch}`. On failure, go to step 1.
 6. `git -C {repo_path} push <remote> {base_branch}`. Push first: `finish_task` removes your worktree.
 7. `finish_task` with `git -C {repo_path} rev-parse {base_branch}`."#;
 
@@ -735,8 +736,9 @@ mod tests {
         // counted apart, because a repository could rewrite the other two and
         // never that one. Nothing rewrites any of them now, so they are one
         // set, and the total is the two plus the third at its own cap.
-        const LANDING_TOTAL: usize = 2850;
-        const GRAND_TOTAL: usize = 7530;
+        // The direct landing now handles a target outside the current checkout.
+        const LANDING_TOTAL: usize = 3000;
+        const GRAND_TOTAL: usize = 7680;
 
         // A cap per seat, not one for the three. The orchestrator's carried
         // its playbook up to 1750; the playbook is the `orchestration` skill
@@ -758,7 +760,7 @@ mod tests {
             _ => 300,
         };
         let landing_cap = |landing: Landing| match landing {
-            Landing::Merge | Landing::FeatureBranch => 1150,
+            Landing::Merge | Landing::FeatureBranch => 1300,
             Landing::PullRequest => 1300,
             Landing::None => 420,
         };

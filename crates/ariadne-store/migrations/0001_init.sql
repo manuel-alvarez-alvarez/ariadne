@@ -137,6 +137,7 @@ CREATE TABLE goals (
 CREATE TABLE goal_repositories (
     goal_id       TEXT NOT NULL REFERENCES goals (id) ON DELETE CASCADE,
     repository_id TEXT NOT NULL REFERENCES repositories (id),
+    goal_branch   TEXT,
     PRIMARY KEY (goal_id, repository_id)
 );
 -- Deleting a repository asks who still holds it, which reads this way round.

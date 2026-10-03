@@ -230,6 +230,22 @@ pub(super) async fn finalize(
     if tasks.is_empty() {
         return Err(ApiError::conflict("cannot finalize a plan with no tasks"));
     }
+    if goal.landing() == ariadne_core::Landing::FeatureBranch {
+        let branch = goal.branch_name();
+        for repo in state.store.list_goal_repositories(&id).await? {
+            let link = state.store.get_goal_repository(&id, &repo.id).await?;
+            if link.goal_branch.is_some() {
+                continue;
+            }
+            state
+                .launcher
+                .git
+                .create_goal_branch(std::path::Path::new(&repo.path), &branch, &repo.base_branch)
+                .await
+                .map_err(|e| ApiError::conflict(e.to_string()))?;
+            state.store.set_goal_branch(&id, &repo.id, &branch).await?;
+        }
+    }
     let goal = state.store.set_goal_status(&id, GoalStatus::Active).await?;
     // Wake the scheduler: pending tasks with no deps become ready now.
     for task in tasks {

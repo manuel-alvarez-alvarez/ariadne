@@ -61,6 +61,7 @@ async fn a_spawned_author_is_briefed_from_the_builtin_template() {
         &task,
         &cast.goal,
         &cast.repo,
+        &cast.repo.base_branch,
         &[],
     );
     let launch = h.launch_file(&session.id).expect("a launch file");
@@ -146,6 +147,7 @@ async fn a_spawn_assembles_the_default_briefing_word_for_word() {
             &task,
             &h.store.get_goal(&task.goal_id).await.unwrap(),
             &cast.repo,
+            &cast.repo.base_branch,
             &[],
         ),
         expected

@@ -577,7 +577,14 @@ impl Launcher {
         }
         let template = prompts::template_for(PromptKind::AuthorBriefing);
         let seen = seat.task_as_seen(&task, Some(worktree.display().to_string()));
-        let mut briefing = prompts::author_briefing(template, &seen, &goal, &repo, &deps);
+        let mut briefing = prompts::author_briefing(
+            template,
+            &seen,
+            &goal,
+            &repo,
+            &self.store.task_landing_branch(&seen, &repo).await?,
+            &deps,
+        );
         if !then.is_empty() {
             briefing.push_str("\n\n");
             briefing.push_str(then);
@@ -755,13 +762,14 @@ impl Launcher {
             }
         };
         if !worktree.exists() {
+            let base_branch = self.store.task_landing_branch(task, repo).await?;
             std::fs::create_dir_all(worktree.parent().unwrap())?;
             self.git
                 .add_worktree(
                     &PathBuf::from(&repo.path),
                     &worktree,
                     &seat.branch,
-                    &repo.base_branch,
+                    &base_branch,
                 )
                 .await?;
         }
@@ -902,8 +910,14 @@ impl Launcher {
             None => task.clone(),
         };
         let template = prompts::template_for(PromptKind::ReviewerBriefing);
-        let briefing =
-            prompts::reviewer_briefing(template, &seen, &goal, &repo, summary.as_deref());
+        let briefing = prompts::reviewer_briefing(
+            template,
+            &seen,
+            &goal,
+            &repo,
+            &self.store.task_landing_branch(&seen, &repo).await?,
+            summary.as_deref(),
+        );
         self.spawn(&session, worktree, briefing).await?;
         self.store
             .get_session(&session.id)
@@ -1181,6 +1195,7 @@ impl Launcher {
                 task.landing_prompt_text(),
                 &seen,
                 &repo,
+                &self.store.task_landing_branch(&seen, &repo).await?,
             ));
         }
         let template = prompts::template_for(PromptKind::AuthorResume);
@@ -1455,7 +1470,14 @@ impl Launcher {
         }
         let template = prompts::template_for(PromptKind::AuthorBriefing);
         let seen = seat.task_as_seen(&task, Some(worktree.display().to_string()));
-        let briefing = prompts::author_briefing(template, &seen, &goal, &repo, &deps);
+        let briefing = prompts::author_briefing(
+            template,
+            &seen,
+            &goal,
+            &repo,
+            &self.store.task_landing_branch(&seen, &repo).await?,
+            &deps,
+        );
         let resume = self.author_resume_text(&task).await?;
         Ok(SwitchPlan {
             worktree: Some(worktree.display().to_string()),
@@ -1515,8 +1537,14 @@ impl Launcher {
             None => task.clone(),
         };
         let template = prompts::template_for(PromptKind::ReviewerBriefing);
-        let briefing =
-            prompts::reviewer_briefing(template, &seen, &goal, &repo, summary.as_deref());
+        let briefing = prompts::reviewer_briefing(
+            template,
+            &seen,
+            &goal,
+            &repo,
+            &self.store.task_landing_branch(&seen, &repo).await?,
+            summary.as_deref(),
+        );
         let template = prompts::template_for(PromptKind::ReviewerResume);
         let resume = prompts::reviewer_resume_briefing(template, &seen, summary.as_deref());
         Ok(SwitchPlan {
@@ -1690,7 +1718,11 @@ impl Launcher {
                 branches.push(author_branch(&task.branch, author.ordinal));
             }
             branches.dedup();
+            let base_branch = self.store.task_landing_branch(&task, &repo).await?;
             for branch in branches {
+                if branch == base_branch {
+                    continue;
+                }
                 if self
                     .git
                     .branch_exists(&repo_path, &branch)

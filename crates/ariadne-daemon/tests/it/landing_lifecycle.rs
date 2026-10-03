@@ -727,3 +727,205 @@ async fn an_author_that_cannot_reopen_its_conversation_is_started_afresh_to_land
         "the refused conversation is not resumed again"
     );
 }
+
+#[tokio::test]
+async fn feature_tasks_land_on_the_goal_branch_and_keep_the_base_unchanged() {
+    let h = harness().scheduler().discover_agents().await;
+    let path = h.git_repo("repo");
+    let repo = h.repository(&path).await;
+    let spare_path = h.git_repo("spare");
+    let spare = h.repository(&spare_path).await;
+    h.store
+        .update_repository(
+            &spare.id,
+            ariadne_store::RepositoryUpdate {
+                base_branch: Some("next".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let remote = h.at("remote.git");
+    sh(
+        &path,
+        &format!(
+            "git init -q --bare '{}' && git remote add origin '{}'",
+            remote.display(),
+            remote.display()
+        ),
+    );
+    let goal = h
+        .store
+        .create_goal(ariadne_store::NewGoal {
+            title: "Ship feature".into(),
+            description: String::new(),
+            repository_ids: vec![repo.id.clone(), spare.id.clone()],
+            pin: test_pin(),
+            landing: Some(Landing::FeatureBranch),
+        })
+        .await
+        .unwrap();
+    let first = h.task_on(&goal, &repo, "First change", 1, test_pin()).await;
+    let second = h
+        .store
+        .create_task(ariadne_store::NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id.clone(),
+            title: "Second change".into(),
+            description: String::new(),
+            agents: vec![
+                NewTaskAgent::new(Seat::Author, ["coding"], test_pin()),
+                NewTaskAgent::new(Seat::Reviewer, ["code-review"], test_pin()),
+            ],
+            depends_on: vec![first.id.clone()],
+        })
+        .await
+        .unwrap();
+    let orchestrator = h.orchestrator_session(&goal).await;
+    let before: serde_json::Value = h.get(&format!("/v1/goals/{}", goal.id)).await;
+    assert!(
+        before["repos"][0]
+            .get("goal_branch")
+            .is_some_and(serde_json::Value::is_null)
+    );
+    let finalized: serde_json::Value = h
+        .json(
+            as_session(
+                &format!("/v1/goals/{}/finalize", goal.id),
+                &orchestrator.id,
+                serde_json::json!({}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    let branch = format!("ship-feature-{}", &goal.id[goal.id.len() - 6..]);
+    for entry in finalized["repos"].as_array().unwrap() {
+        assert_eq!(entry["goal_branch"], branch);
+        let checkout = PathBuf::from(entry["path"].as_str().unwrap());
+        assert_eq!(
+            sh(&checkout, &format!("git rev-parse {branch}")),
+            sh(
+                &checkout,
+                &format!("git rev-parse {}", entry["base_branch"].as_str().unwrap())
+            )
+        );
+    }
+    assert_eq!(
+        sh(&path, &format!("git rev-parse {branch}")),
+        sh(&remote, &format!("git rev-parse {branch}"))
+    );
+    let base = sh(&path, "git rev-parse main");
+    std::fs::write(path.join("file.txt"), "user edits\n").unwrap();
+    let mut previous = base.clone();
+    for (index, task) in [first, second].iter().enumerate() {
+        h.reconcile_task_until(&task.id, TIMEOUT, "the author to start", async || {
+            h.status(&task.id).await == TaskStatus::InProgress
+                && h.running_session(&task.id, Seat::Author).await.is_some()
+        })
+        .await;
+        let author = h.running_session(&task.id, Seat::Author).await.unwrap();
+        let worktree = PathBuf::from(author.worktree_path.as_ref().unwrap());
+        assert_eq!(sh(&worktree, "git rev-parse HEAD"), previous);
+        assert!(h.told(&author.id).contains(&format!("onto {branch}")));
+        sh(
+            &worktree,
+            &format!(
+                "echo change > change{index}.txt && git add . && git -c user.email=t@t -c user.name=t commit -qm 'feat: add change'"
+            ),
+        );
+        let reviewer = h
+            .store
+            .list_task_reviewers(&task.id)
+            .await
+            .unwrap()
+            .remove(0);
+        h.store
+            .transition_task(&task.id, TaskStatus::UnderReview, Actor::Author, None, None)
+            .await
+            .unwrap();
+        h.reconcile_task_until(&task.id, TIMEOUT, "the reviewer to start", async || {
+            h.running_session(&task.id, Seat::Reviewer).await.is_some()
+        })
+        .await;
+        let reviewing = h.running_session(&task.id, Seat::Reviewer).await.unwrap();
+        assert!(h.told(&reviewing.id).contains(&format!("onto {branch}")));
+        h.verdict(task, &reviewer.id, MessageKind::Approve, "looks right")
+            .await;
+        h.reconcile_task_until(&task.id, TIMEOUT, "the landing briefing", async || {
+            h.status(&task.id).await == TaskStatus::Approved
+                && h.told(&author.id).contains("# Land task:")
+        })
+        .await;
+        assert!(
+            h.told(&author.id)
+                .contains(&format!("git merge-base {branch} HEAD"))
+        );
+        let (status, body) = h.send(get(&format!("/v1/tasks/{}/diff", task.id))).await;
+        assert_eq!(status, StatusCode::OK);
+        let diff = String::from_utf8(body).unwrap();
+        assert!(diff.contains(&format!("change{index}.txt")));
+        if index == 1 {
+            assert!(!diff.contains("change0.txt"));
+        }
+        let sha = sh(&worktree, "git rev-parse HEAD");
+        if index == 0 {
+            // A commit present only on the repository base does not land this task.
+            sh(&path, &format!("git update-ref refs/heads/main {sha}"));
+            h.error(
+                as_session(
+                    &format!("/v1/tasks/{}/transitions", task.id),
+                    &author.id,
+                    serde_json::json!({"to": "finished", "merge_commit": sha}),
+                ),
+                StatusCode::CONFLICT,
+            )
+            .await;
+            sh(&path, &format!("git update-ref refs/heads/main {base}"));
+        }
+        let briefing = h.told(&author.id);
+        let merge = briefing
+            .split('`')
+            .skip(1)
+            .step_by(2)
+            .find(|command| command.contains(&format!("fetch . {}:{branch}", task.branch)))
+            .expect("the landing briefing carries the fetch command");
+        sh(&worktree, merge);
+        assert_eq!(sh(&path, "git branch --show-current"), "main");
+        assert_eq!(
+            std::fs::read_to_string(path.join("file.txt")).unwrap(),
+            "user edits\n"
+        );
+        if index == 0 {
+            let base_only = sh(&path, "git rev-parse next");
+            sh(
+                &path,
+                &format!("git update-ref refs/heads/main {base_only}"),
+            );
+            h.error(
+                as_session(
+                    &format!("/v1/tasks/{}/transitions", task.id),
+                    &author.id,
+                    serde_json::json!({"to": "finished", "merge_commit": base_only}),
+                ),
+                StatusCode::CONFLICT,
+            )
+            .await;
+            sh(&path, &format!("git update-ref refs/heads/main {base}"));
+        }
+        let landed: TaskDto = h
+            .json(
+                as_session(
+                    &format!("/v1/tasks/{}/transitions", task.id),
+                    &author.id,
+                    serde_json::json!({"to": "finished", "merge_commit": sha}),
+                ),
+                StatusCode::OK,
+            )
+            .await;
+        assert_eq!(landed.status, TaskStatus::Finished);
+        h.launcher.cleanup_task(&task.id, true, true).await.unwrap();
+        assert_eq!(sh(&path, &format!("git rev-parse {branch}")), sha);
+        assert_eq!(sh(&path, "git rev-parse main"), base);
+        previous = sha;
+    }
+}

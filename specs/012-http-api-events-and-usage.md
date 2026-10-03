@@ -56,7 +56,9 @@ and the ACP runtime that reports the agent events (021).
    and the refusal names the field. A response DTO denies nothing.
    `CreateGoalRequest` takes the goal's `landing` and `GoalDto` carries it.
    The task requests take none, and `TaskDto.landing` is a read-only copy of
-   the goal's (005).
+   the goal's (005). Each repository in `GoalDto.repos` carries `goal_branch`,
+   a string after feature branch finalization, or null before it and for
+   other landings.
 4. Every write emits a **fat event**: the changed entity, whole, so a client
    can apply it without a re-fetch. A task transition carries the transition
    that caused it, whether it came through HTTP or from the scheduler.
@@ -319,6 +321,11 @@ and the ACP runtime that reports the agent events (021).
 - A body with a field its DTO does not declare is refused, and the refusal
   names the field
   (`unknown_fields.rs::an_unknown_field_is_refused_and_named`).
+- Repository entries in `GoalDto` carry null `goal_branch` during planning
+  and the created branch after feature branch finalization
+  (`landing_lifecycle.rs::feature_tasks_land_on_the_goal_branch_and_keep_the_base_unchanged`).
+  Other landings keep null
+  (`goal_repositories.rs::other_landings_finalize_without_a_goal_branch`).
 - A goal is created with the `landing` its request names, and `TaskDto`
   answers it back for each task
   (`landing_lifecycle.rs::a_pull_request_goal_briefs_every_task_to_land_by_pull_request`);

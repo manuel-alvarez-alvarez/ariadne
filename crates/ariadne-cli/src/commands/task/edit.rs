@@ -187,7 +187,12 @@ pub(crate) fn update_request(edits: Edits) -> Result<UpdateTaskRequest> {
 /// have not been given.
 pub(crate) async fn resolve_repo(client: &Client, goal_id: &str, spec: &str) -> Result<String> {
     let g: GoalDto = client.get_json(&format!("/v1/goals/{goal_id}")).await?;
-    match pick_repo(&g.repos, spec) {
+    let repos = g
+        .repos
+        .iter()
+        .map(|r| r.repository.clone())
+        .collect::<Vec<_>>();
+    match pick_repo(&repos, spec) {
         Some(id) => Ok(id),
         None => bail!(
             "goal {goal_id} has no repo \"{spec}\" — it has {}",

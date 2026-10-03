@@ -160,6 +160,7 @@ pub fn author_briefing(
     task: &Task,
     goal: &Goal,
     repo: &Repository,
+    base_branch: &str,
     deps: &[Task],
 ) -> String {
     let dep_lines = if deps.is_empty() {
@@ -181,7 +182,7 @@ pub fn author_briefing(
                 task.worktree_path.as_deref().unwrap_or("<worktree>"),
             ),
             ("branch", &task.branch),
-            ("base_branch", &repo.base_branch),
+            ("base_branch", base_branch),
             ("repo_path", &repo.path),
             ("landing", goal.landing().as_str()),
             ("dependencies", &dep_lines),
@@ -205,6 +206,7 @@ pub(crate) fn reviewer_briefing(
     task: &Task,
     goal: &Goal,
     repo: &Repository,
+    base_branch: &str,
     summary: Option<&str>,
 ) -> String {
     render(
@@ -214,7 +216,7 @@ pub(crate) fn reviewer_briefing(
             ("task_description", &task.description),
             ("goal_title", &goal.title),
             ("branch", &task.branch),
-            ("base_branch", &repo.base_branch),
+            ("base_branch", base_branch),
             ("repo_path", &repo.path),
             ("summary", summary.unwrap_or("(none provided)")),
         ],
@@ -280,13 +282,18 @@ pub(crate) fn changes_requested_briefing(template: &str, feedback: &[(String, St
 /// which is the text set on it or the default of its merge strategy — so what
 /// is rendered here is the one procedure the author runs, and nothing of the
 /// other.
-pub(crate) fn landing_briefing(template: &str, task: &Task, repo: &Repository) -> String {
+pub(crate) fn landing_briefing(
+    template: &str,
+    task: &Task,
+    repo: &Repository,
+    base_branch: &str,
+) -> String {
     render(
         template,
         &[
             ("task_title", &task.title),
             ("branch", &task.branch),
-            ("base_branch", &repo.base_branch),
+            ("base_branch", base_branch),
             ("repo_path", &repo.path),
         ],
     )
@@ -439,12 +446,19 @@ mod tests {
                 PromptKind::IncomingMessage => {
                     incoming_message_briefing(&template, &message(), "your reviewer")
                 }
-                PromptKind::AuthorBriefing => author_briefing(&template, &task, &goal, &repo, &[]),
+                PromptKind::AuthorBriefing => {
+                    author_briefing(&template, &task, &goal, &repo, &repo.base_branch, &[])
+                }
                 PromptKind::AuthorResume => author_resume_briefing(&template, &task),
                 PromptKind::ChangesRequested => changes_requested_briefing(&template, &feedback),
-                PromptKind::ReviewerBriefing => {
-                    reviewer_briefing(&template, &task, &goal, &repo, Some("done"))
-                }
+                PromptKind::ReviewerBriefing => reviewer_briefing(
+                    &template,
+                    &task,
+                    &goal,
+                    &repo,
+                    &repo.base_branch,
+                    Some("done"),
+                ),
                 PromptKind::ReviewerResume => {
                     reviewer_resume_briefing(&template, &task, Some("done"))
                 }
@@ -468,7 +482,7 @@ mod tests {
             .map(|name| format!("{{{name}}}"))
             .collect::<Vec<_>>()
             .join("\n");
-        let rendered = landing_briefing(&template, &task, &repo);
+        let rendered = landing_briefing(&template, &task, &repo, &repo.base_branch);
         assert!(
             !rendered.contains('{'),
             "the landing briefing left a placeholder of its own unfilled: {rendered}"
@@ -554,6 +568,7 @@ mod tests {
                     &task,
                     &goal,
                     &repo,
+                    &repo.base_branch,
                     &deps,
                 ),
                 vec![
@@ -585,6 +600,7 @@ mod tests {
                     &task,
                     &goal,
                     &repo,
+                    &repo.base_branch,
                     None,
                 ),
                 vec![
@@ -641,7 +657,8 @@ mod tests {
                 ..task.clone()
             };
             let template = default_landing_prompt(landing);
-            let rendered = landing_briefing(task.landing_prompt_text(), &task, &repo);
+            let rendered =
+                landing_briefing(task.landing_prompt_text(), &task, &repo, &repo.base_branch);
             assert_eq!(
                 rendered,
                 filled(template, &landing_values),
@@ -673,6 +690,7 @@ mod tests {
             &task,
             &goal,
             &repo,
+            &repo.base_branch,
             &deps,
         );
         assert!(author.starts_with(&format!("# Task: {}", task.title)));
@@ -689,6 +707,7 @@ mod tests {
             &task,
             &goal,
             &repo,
+            &repo.base_branch,
             None,
         );
         assert!(reviewer.starts_with(&format!("# Review task: {}", task.title)));
@@ -701,7 +720,7 @@ mod tests {
             "{changes}"
         );
 
-        let landing = landing_briefing(task.landing_prompt_text(), &task, &repo);
+        let landing = landing_briefing(task.landing_prompt_text(), &task, &repo, &repo.base_branch);
         assert!(landing.starts_with(&format!("# Land task: {}", task.title)));
     }
 
@@ -717,14 +736,24 @@ mod tests {
             ..merging.clone()
         };
 
-        let direct = landing_briefing(merging.landing_prompt_text(), &merging, &repo);
+        let direct = landing_briefing(
+            merging.landing_prompt_text(),
+            &merging,
+            &repo,
+            &repo.base_branch,
+        );
         assert!(
             direct.contains("git reset --soft \"$(git merge-base main HEAD)\""),
             "{direct}"
         );
         assert!(!direct.contains("gh pr"), "{direct}");
 
-        let published = landing_briefing(publishing.landing_prompt_text(), &publishing, &repo);
+        let published = landing_briefing(
+            publishing.landing_prompt_text(),
+            &publishing,
+            &repo,
+            &repo.base_branch,
+        );
         assert!(
             published.contains("gh pr create --base main"),
             "{published}"
@@ -743,7 +772,12 @@ mod tests {
             landing: "none".into(),
             ..merging.clone()
         };
-        let landed = landing_briefing(nothing.landing_prompt_text(), &nothing, &repo);
+        let landed = landing_briefing(
+            nothing.landing_prompt_text(),
+            &nothing,
+            &repo,
+            &repo.base_branch,
+        );
         assert!(landed.contains("lands nothing"), "{landed}");
         assert!(!landed.contains("gh pr"), "{landed}");
         assert!(!landed.contains("reset --soft"), "{landed}");
@@ -849,6 +883,7 @@ mod tests {
             &task,
             &goal,
             &repo,
+            &repo.base_branch,
             &[],
         );
         assert!(briefing.contains("- Worktree (your cwd): <worktree>"));

@@ -234,6 +234,14 @@ pub struct LearnedPermission {
     pub updated_at: String,
 }
 
+/// The branch a goal owns in one registered repository.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct GoalRepository {
+    pub goal_id: String,
+    pub repository_id: String,
+    pub goal_branch: Option<String>,
+}
+
 /// A git repository registered once, globally, and named by id from there on.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Repository {

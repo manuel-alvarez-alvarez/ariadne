@@ -200,3 +200,128 @@ async fn a_goal_cannot_be_created_on_an_unknown_repository() {
     let goals: Vec<GoalDto> = h.get("/v1/goals").await;
     assert!(goals.is_empty(), "neither attempt left a goal behind");
 }
+
+#[tokio::test]
+async fn other_landings_finalize_without_a_goal_branch() {
+    for landing in ["none", "merge", "pull_request"] {
+        let h = harness().await;
+        let path = h.git_repo("repo");
+        let repo = register(&h, &path, "main").await;
+        let goal: GoalDto = h.json(post_json("/v1/goals", serde_json::json!({
+            "title": "Ship it", "repository_ids": [repo.id], "model": pinned(), "landing": landing,
+        })), StatusCode::CREATED).await;
+        task_in(&h, &goal).await;
+        let stored = h.store.get_goal(&goal.id).await.unwrap();
+        let orchestrator = h.orchestrator_session(&stored).await;
+        let refs = sh(&path, "git show-ref");
+        let finalized: serde_json::Value = h
+            .json(
+                common::as_session(
+                    &format!("/v1/goals/{}/finalize", goal.id),
+                    &orchestrator.id,
+                    serde_json::json!({}),
+                ),
+                StatusCode::OK,
+            )
+            .await;
+        assert!(
+            finalized["repos"][0]
+                .get("goal_branch")
+                .is_some_and(serde_json::Value::is_null)
+        );
+        assert_eq!(sh(&path, "git show-ref"), refs);
+    }
+}
+
+#[tokio::test]
+async fn a_failed_goal_branch_push_keeps_planning_and_can_retry() {
+    let h = harness().await;
+    let path = h.git_repo("repo");
+    let repo = register(&h, &path, "main").await;
+    let goal: GoalDto = h.json(post_json("/v1/goals", serde_json::json!({
+        "title": "Ship it", "repository_ids": [repo.id], "model": pinned(), "landing": "feature_branch",
+    })), StatusCode::CREATED).await;
+    let task = task_in(&h, &goal).await;
+    let stored = h.store.get_goal(&goal.id).await.unwrap();
+    let orchestrator = h.orchestrator_session(&stored).await;
+    let remote = h.at("remote.git");
+    sh(
+        &path,
+        &format!("git remote add origin '{}'", remote.display()),
+    );
+    h.error(
+        common::as_session(
+            &format!("/v1/goals/{}/finalize", goal.id),
+            &orchestrator.id,
+            serde_json::json!({}),
+        ),
+        StatusCode::CONFLICT,
+    )
+    .await;
+    assert_eq!(
+        h.store.get_goal(&goal.id).await.unwrap().status(),
+        ariadne_core::GoalStatus::Planning
+    );
+    assert_eq!(h.status(&task.id).await, ariadne_core::TaskStatus::Pending);
+    let before_retry = sh(&path, "git show-ref --heads");
+    std::fs::write(
+        path.join(".git/hooks/pre-push"),
+        "#!/bin/sh\ntest \"$GIT_TERMINAL_PROMPT\" = 0\n",
+    )
+    .unwrap();
+    sh(&path, "chmod +x .git/hooks/pre-push");
+    sh(&path, &format!("git init -q --bare '{}'", remote.display()));
+    let finalized: serde_json::Value = h
+        .json(
+            common::as_session(
+                &format!("/v1/goals/{}/finalize", goal.id),
+                &orchestrator.id,
+                serde_json::json!({}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(sh(&path, "git show-ref --heads"), before_retry);
+    let branch = finalized["repos"][0]["goal_branch"].as_str().unwrap();
+    assert_eq!(
+        sh(&remote, &format!("git rev-parse {branch}")),
+        sh(&path, "git rev-parse main")
+    );
+}
+
+#[tokio::test]
+async fn a_feature_goal_refuses_an_unborn_base_with_a_clear_message() {
+    let h = harness().await;
+    let path = h.at("empty");
+    std::fs::create_dir_all(&path).unwrap();
+    sh(&path, "git init -q -b main");
+    let repo = register(&h, &path, "main").await;
+    let goal: GoalDto = h.json(post_json("/v1/goals", serde_json::json!({
+        "title": "Ship it", "repository_ids": [repo.id], "model": pinned(), "landing": "feature_branch",
+    })), StatusCode::CREATED).await;
+    task_in(&h, &goal).await;
+    let stored = h.store.get_goal(&goal.id).await.unwrap();
+    let orchestrator = h.orchestrator_session(&stored).await;
+    let error = h
+        .error(
+            common::as_session(
+                &format!("/v1/goals/{}/finalize", goal.id),
+                &orchestrator.id,
+                serde_json::json!({}),
+            ),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    assert!(
+        error
+            .error
+            .message
+            .contains("base branch main has no commits; create its first commit before finalizing"),
+        "{}",
+        error.error.message
+    );
+    assert_eq!(
+        h.store.get_goal(&goal.id).await.unwrap().status(),
+        ariadne_core::GoalStatus::Planning
+    );
+}
