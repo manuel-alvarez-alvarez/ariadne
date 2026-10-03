@@ -4,8 +4,11 @@
 use axum::extract::{Query, State};
 use chrono::{DateTime, Duration, Utc};
 
-use ariadne_api::stats::{ModelStatDto, ModelStatsResponse, SkillCountDto, StatsQuery};
-use ariadne_store::{ModelStatRow, StatsFilter};
+use ariadne_api::stats::{
+    AuthorReviewStatDto, MessageStatDto, ModelStatDto, ModelStatsResponse, ReviewStatsDto,
+    ReviewerStatDto, SkillCountDto, StatsQuery,
+};
+use ariadne_store::{ModelStatRow, ReviewStats, StatsFilter};
 
 use super::AppState;
 use super::error::{ApiError, ApiResult, Json};
@@ -27,6 +30,54 @@ pub(super) async fn models(
         .map(model_stat_dto)
         .collect();
     Ok(Json(ModelStatsResponse { items }))
+}
+
+#[utoipa::path(get, path = "/v1/stats/reviews", tag = "stats", params(StatsQuery), responses((status = 200, body = ReviewStatsDto), (status = 400)))]
+pub(super) async fn reviews(
+    State(state): State<AppState>,
+    Query(query): Query<StatsQuery>,
+) -> ApiResult<Json<ReviewStatsDto>> {
+    let stats = state
+        .store
+        .review_stats(&stats_filter(&query, Utc::now())?)
+        .await?;
+    Ok(Json(review_stats_dto(stats)))
+}
+
+fn review_stats_dto(stats: ReviewStats) -> ReviewStatsDto {
+    ReviewStatsDto {
+        authors: stats
+            .authors
+            .into_iter()
+            .map(|r| AuthorReviewStatDto {
+                model: r.model,
+                approvals: r.approvals,
+                mean_rounds: r.mean_rounds,
+                median_rounds: r.median_rounds,
+                first_pass_rate: r.first_pass_rate,
+            })
+            .collect(),
+        reviewers: stats
+            .reviewers
+            .into_iter()
+            .map(|r| ReviewerStatDto {
+                model: r.model,
+                verdicts: r.verdicts,
+                approve_share: r.approve_share,
+                mean_latency_secs: r.mean_latency_secs,
+            })
+            .collect(),
+        messages: stats
+            .messages
+            .into_iter()
+            .map(|r| MessageStatDto {
+                kind: r.kind,
+                from_actor: r.from_actor,
+                total: r.total,
+                mean_per_task: r.mean_per_task,
+            })
+            .collect(),
+    }
 }
 
 /// The store's filter for a stats query, `since` read against `now`. Every

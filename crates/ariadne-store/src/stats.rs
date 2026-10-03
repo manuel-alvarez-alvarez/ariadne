@@ -70,6 +70,39 @@ pub struct ModelStatRow {
     pub skills: Vec<(String, u64)>,
 }
 
+/// Aggregates of the review facts in the ledger.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ReviewStats {
+    pub authors: Vec<AuthorReviewStatRow>,
+    pub reviewers: Vec<ReviewerStatRow>,
+    pub messages: Vec<MessageStatRow>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AuthorReviewStatRow {
+    pub model: String,
+    pub approvals: u64,
+    pub mean_rounds: f64,
+    pub median_rounds: f64,
+    pub first_pass_rate: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReviewerStatRow {
+    pub model: String,
+    pub verdicts: u64,
+    pub approve_share: f64,
+    pub mean_latency_secs: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MessageStatRow {
+    pub kind: String,
+    pub from_actor: String,
+    pub total: u64,
+    pub mean_per_task: f64,
+}
+
 /// One row of the main aggregate, in the order its `SELECT` names them.
 type ModelSums = (
     String,
@@ -239,6 +272,98 @@ impl Store {
                 },
             )
             .collect())
+    }
+
+    /// How authors, reviewers and the channel performed, from review facts only.
+    pub async fn review_stats(&self, filter: &StatsFilter) -> Result<ReviewStats> {
+        let (narrow, binds) = narrowed(filter);
+        let mut verdicts = sqlx::query_as::<_, (Option<String>, String, i64, f64)>(sqlx::AssertSqlSafe(format!(
+            "SELECT json_extract(data, '$.author_model'), json_extract(data, '$.verdict'),
+                    json_extract(data, '$.round'), CAST(json_extract(data, '$.latency_secs') AS REAL)
+               FROM stat_facts WHERE kind = 'verdict'{narrow} ORDER BY id"
+        )));
+        for bind in &binds {
+            verdicts = verdicts.bind(bind);
+        }
+        let verdicts = verdicts.fetch_all(self.r()).await?;
+        let mut authors: HashMap<String, Vec<i64>> = HashMap::new();
+        let mut reviewers: HashMap<String, Vec<(String, f64)>> = HashMap::new();
+        for (author, verdict, round, _latency) in verdicts {
+            if verdict == "approve"
+                && let Some(author) = author
+            {
+                authors.entry(author).or_default().push(round);
+            }
+            // The fact's model is the reviewer model.
+            // Re-read it below with the same narrow predicate to preserve the ledger-only rule.
+        }
+        let mut reviewer_rows = sqlx::query_as::<_, (String, String, f64)>(sqlx::AssertSqlSafe(format!(
+            "SELECT model, json_extract(data, '$.verdict'), CAST(json_extract(data, '$.latency_secs') AS REAL)
+               FROM stat_facts WHERE kind = 'verdict' AND model IS NOT NULL{narrow} ORDER BY model"
+        )));
+        for bind in &binds {
+            reviewer_rows = reviewer_rows.bind(bind);
+        }
+        for (model, verdict, latency) in reviewer_rows.fetch_all(self.r()).await? {
+            reviewers.entry(model).or_default().push((verdict, latency));
+        }
+        let mut author_rows: Vec<_> = authors
+            .into_iter()
+            .map(|(model, mut rounds)| {
+                rounds.sort_unstable();
+                let n = rounds.len() as f64;
+                let median = if rounds.len() % 2 == 0 {
+                    (rounds[rounds.len() / 2 - 1] + rounds[rounds.len() / 2]) as f64 / 2.0
+                } else {
+                    rounds[rounds.len() / 2] as f64
+                };
+                AuthorReviewStatRow {
+                    model,
+                    approvals: rounds.len() as u64,
+                    mean_rounds: rounds.iter().sum::<i64>() as f64 / n,
+                    median_rounds: median,
+                    first_pass_rate: rounds.iter().filter(|&&r| r == 1).count() as f64 / n,
+                }
+            })
+            .collect();
+        author_rows.sort_by(|a, b| a.model.cmp(&b.model));
+        let mut reviewer_rows: Vec<_> = reviewers
+            .into_iter()
+            .map(|(model, rows)| {
+                let n = rows.len() as f64;
+                ReviewerStatRow {
+                    model,
+                    verdicts: rows.len() as u64,
+                    approve_share: rows.iter().filter(|(v, _)| v == "approve").count() as f64 / n,
+                    mean_latency_secs: rows.iter().map(|(_, l)| l).sum::<f64>() / n,
+                }
+            })
+            .collect();
+        reviewer_rows.sort_by(|a, b| a.model.cmp(&b.model));
+        let mut messages = sqlx::query_as::<_, (String, String, i64, f64)>(sqlx::AssertSqlSafe(format!(
+            "SELECT json_extract(data, '$.kind'), json_extract(data, '$.from_actor'), COUNT(*), COUNT(*) * 1.0 / COUNT(DISTINCT task_id)
+               FROM stat_facts WHERE kind = 'message' AND task_id IS NOT NULL{narrow}
+           GROUP BY json_extract(data, '$.kind'), json_extract(data, '$.from_actor') ORDER BY 1, 2"
+        )));
+        for bind in &binds {
+            messages = messages.bind(bind);
+        }
+        let messages = messages
+            .fetch_all(self.r())
+            .await?
+            .into_iter()
+            .map(|(kind, from_actor, total, mean_per_task)| MessageStatRow {
+                kind,
+                from_actor,
+                total: total as u64,
+                mean_per_task,
+            })
+            .collect();
+        Ok(ReviewStats {
+            authors: author_rows,
+            reviewers: reviewer_rows,
+            messages,
+        })
     }
 }
 

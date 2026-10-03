@@ -4,16 +4,20 @@
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
+use chrono::DateTime;
+use serde_json::json;
+use tracing::warn;
 
 use ariadne_api::messages::{MessageDto, MessageListQuery, SendMessageRequest};
 use ariadne_api::tasks::{PickWinnerRequest, RecordPullRequestRequest, TaskDto};
 use ariadne_core::{Actor, AttentionReason, Landing, Seat, TaskStatus};
-use ariadne_store::{MessageFilter, NewMessage, Repository, Task};
+use ariadne_store::{MessageFilter, NewMessage, Repository, SessionFilter, Task};
 
 use super::AppState;
 use super::caller::{CallCtx, call_ctx, ensure_task_scope};
 use super::convert::{message_dto, task_dto_of};
 use super::error::{ApiError, ApiResult, Json};
+use crate::stats::session_fact;
 
 /// Git could not answer about the task's branch: a conflict, since what the
 /// caller asked for cannot be established rather than being wrong.
@@ -414,7 +418,7 @@ pub(super) async fn send(
         }
     }
 
-    Ok(state
+    let message = state
         .store
         .send_message(NewMessage {
             goal_id: goal_id.to_string(),
@@ -427,7 +431,118 @@ pub(super) async fn send(
             to_agent_id,
             body: body.to_string(),
         })
-        .await?)
+        .await?;
+    record_message_fact(state, ctx, task, &message).await;
+    if req.kind.is_verdict() {
+        record_verdict_fact(state, ctx, task.expect("a verdict needs a task"), &message).await;
+    }
+    Ok(message)
+}
+
+/// Record every stored task message. A sender session supplies the model and
+/// seat; messages from the user or daemon still keep their task and goal.
+async fn record_message_fact(
+    state: &AppState,
+    ctx: &CallCtx,
+    task: Option<&Task>,
+    message: &ariadne_store::Message,
+) {
+    let data = json!({ "kind": message.kind, "from_actor": message.from_actor, "to_actor": message.to_actor });
+    let fact = match ctx.session.as_ref() {
+        Some(session) => session_fact(&state.store, &session.id, "message", data).await,
+        None => Ok(ariadne_store::NewStatFact {
+            kind: "message".into(),
+            repo_id: task.map(|t| t.repo_id.clone()),
+            goal_id: Some(message.goal_id.clone()),
+            task_id: message.task_id.clone(),
+            session_id: None,
+            launch_id: None,
+            seat: None,
+            model: None,
+            effort: None,
+            skills: vec![],
+            data,
+        }),
+    };
+    match fact {
+        Ok(fact) => match state.store.record_fact(fact).await {
+            Ok(()) => {}
+            Err(error) => warn!(error = %error, "could not record a message fact"),
+        },
+        Err(error) => warn!(error = %error, "could not record a message fact"),
+    }
+}
+
+/// A verdict describes both the reviewer that sent it and the author change it
+/// judged. The channel is the round counter: each request from that author is
+/// one review boundary.
+async fn record_verdict_fact(
+    state: &AppState,
+    ctx: &CallCtx,
+    task: &Task,
+    message: &ariadne_store::Message,
+) {
+    let Some(reviewer) = ctx.session.as_ref() else {
+        return;
+    };
+    let Some(author_id) = message.to_agent_id.as_deref() else {
+        return;
+    };
+    let messages = match state
+        .store
+        .list_messages(MessageFilter {
+            task_id: Some(task.id.clone()),
+            ..Default::default()
+        })
+        .await
+    {
+        Ok(rows) => rows,
+        Err(error) => {
+            warn!(error = %error, "could not read review messages for a verdict fact");
+            return;
+        }
+    };
+    let requests: Vec<_> = messages
+        .iter()
+        .filter(|m| {
+            m.kind.as_str() == "review_request" && m.from_agent_id.as_deref() == Some(author_id)
+        })
+        .collect();
+    let Some(request) = requests.last() else {
+        return;
+    };
+    let author = match state
+        .store
+        .list_sessions(SessionFilter {
+            task_id: Some(task.id.clone()),
+            ..Default::default()
+        })
+        .await
+    {
+        Ok(sessions) => sessions
+            .into_iter()
+            .filter(|s| s.task_agent_id.as_deref() == Some(author_id))
+            .max_by(|left, right| left.id.cmp(&right.id)),
+        Err(error) => {
+            warn!(error = %error, "could not find the author session for a verdict fact");
+            return;
+        }
+    };
+    let latency_secs = match (
+        DateTime::parse_from_rfc3339(&request.created_at),
+        DateTime::parse_from_rfc3339(&message.created_at),
+    ) {
+        (Ok(start), Ok(end)) => (end - start).num_seconds().max(0),
+        _ => 0,
+    };
+    let data = json!({ "verdict": message.kind, "author_model": author.as_ref().map(|s| &s.model), "author_session_id": author.as_ref().map(|s| &s.id), "round": requests.len(), "latency_secs": latency_secs });
+    match session_fact(&state.store, &reviewer.id, "verdict", data).await {
+        Ok(fact) => match state.store.record_fact(fact).await {
+            Ok(()) => {}
+            Err(error) => warn!(error = %error, "could not record a verdict fact"),
+        },
+        Err(error) => warn!(error = %error, "could not record a verdict fact"),
+    }
 }
 
 /// Which branch of a task a diff is asked about: one author's of several, or

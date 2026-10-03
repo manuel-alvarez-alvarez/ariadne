@@ -163,6 +163,7 @@ export const qk = {
   stats: {
     all: () => ["stats"] as const,
     models: (filter: StatsFilter) => ["stats", "list", "models", filter] as const,
+    reviews: (filter: StatsFilter) => ["stats", "list", "reviews", filter] as const,
   },
   learnedPermissions: {
     all: () => ["learned-permissions"] as const,

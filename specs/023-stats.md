@@ -119,11 +119,21 @@ fact and its rules here when it is built.
 
 ### The command
 
-17. `ariadne stats <family> [--since <duration|date>] [--repo <id>]` prints a
+17. The `reviews` family records a `message` fact for every stored task
+    message, with `kind`, `from_actor` and `to_actor`; the sender session
+    supplies its model and seat. An accepted verdict also records a `verdict`
+    fact from the reviewer session: verdict, author model and session, its
+    author's request count as the derived round, and latency from the latest
+    request. Its aggregate returns author approval counts, mean and median
+    rounds and first-pass rate; reviewer verdict count, approve share and mean
+    latency; and messages by kind and sender with total and mean per task.
+    `since` and `repo` filter its facts.
+
+18. `ariadne stats <family> [--since <duration|date>] [--repo <id>]` prints a
     family. `ariadne stats` alone prints `models`. `--repo` takes an id or a
     unique prefix of one (014). `--since` is sent to the daemon as it was
     written.
-18. `ariadne stats models` prints a table of `MODEL`, `SEAT`, `SESSIONS`,
+19. `ariadne stats models` prints a table of `MODEL`, `SEAT`, `SESSIONS`,
     `FAILED`, `STALLED`, `TOKENS`, `LIFETIME` and `SKILLS`. `TOKENS` is the
     usage cell every other table prints (`↑1.2M 89.1% ↓45k`), `LIFETIME` is
     the mean lifetime, and `SKILLS` is `name count` per skill.
@@ -132,14 +142,14 @@ fact and its rules here when it is built.
 
 ### The screen
 
-19. The desktop app has a Stats screen at `#/stats`, titled `Stats`, last in
+20. The desktop app has a Stats screen at `#/stats`, titled `Stats`, last in
     the sidebar. Its header holds a `since` selector (all time, 24 hours, 7
     days, 30 days) and a repository selector. Both live in the URL
     (`?since=7d&repo=<id>`), and the screen hands them to every panel as one
     `{ since, repo }`.
-20. Each family is a panel of its own. The models panel shows one row per
+21. Each family is a panel of its own. The models panel shows one row per
     model and seat, its tokens as the app's token figure.
-21. The stats queries sit under the query-key group `stats`
+22. The stats queries sit under the query-key group `stats`
     (`qk.stats.models(filter)`). Every `task_updated` and `session_updated`
     event invalidates the whole group, since either may be a fact.
 
@@ -150,6 +160,15 @@ fact and its rules here when it is built.
   (`store.rs::a_recorded_fact_is_read_back_by_model_stats`).
 - `since` and `repo_id` narrow the facts
   (`store.rs::model_stats_keep_the_facts_since_the_filter_and_of_its_repository`).
+- Review aggregates drop facts older than `since`
+  (`store.rs::review_stats_drop_facts_older_than_since`).
+- Verdict facts count review requests as rounds, message facts record each
+  stored message, and the review endpoint returns author metrics
+  (`review_stats.rs::verdicts_record_rounds_messages_and_review_stats`).
+- The reviews command serializes its DTO and names its three table groups
+  (`commands/stats.rs::tests::reviews_json_has_the_dto_and_the_table_has_three_groups`).
+- The Stats screen asks for the reviews panel alongside model stats
+  (`stats.test.tsx` "renders the models panel from the daemon's rows").
 - Deleting the goal keeps the fact
   (`store.rs::a_fact_outlives_the_goal_it_is_about`).
 - A fact is written once per launch

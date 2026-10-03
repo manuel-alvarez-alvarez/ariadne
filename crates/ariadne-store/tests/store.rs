@@ -4115,6 +4115,39 @@ fn run(status: &str, reason: Option<&str>, lifetime_secs: i64) -> serde_json::Va
     })
 }
 
+#[tokio::test]
+async fn review_stats_drop_facts_older_than_since() {
+    let (store, _dir) = test_store().await;
+    let mut fact = ended(
+        "01REPO",
+        "reviewer",
+        serde_json::json!({"verdict":"approve", "author_model":"stub:author", "round": 1, "latency_secs": 4}),
+    );
+    fact.kind = "verdict".into();
+    fact.model = Some("stub:reviewer".into());
+    store.record_fact(fact).await.unwrap();
+    assert_eq!(
+        store
+            .review_stats(&StatsFilter::default())
+            .await
+            .unwrap()
+            .authors[0]
+            .approvals,
+        1
+    );
+    assert!(
+        store
+            .review_stats(&StatsFilter {
+                since: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+                repo_id: None
+            })
+            .await
+            .unwrap()
+            .authors
+            .is_empty()
+    );
+}
+
 /// Facts recorded are what `model_stats` sums: one row for the model in
 /// its seat, counting the runs, the failed and the stalled ones, their tokens,
 /// the cached share, the mean lifetime and each skill.

@@ -149,6 +149,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("skill rm", true),
     ("skill set", true),
     ("stats models", true),
+    ("stats reviews", true),
     ("task attach", false),
     ("task cancel", true),
     ("task create", true),

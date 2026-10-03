@@ -34,6 +34,19 @@ const ROW: ModelStatDto = {
 
 /** The URLs of every stats request the screen made. */
 let asked: URL[] = []
+const REVIEWS = {
+  authors: [
+    {
+      model: "stub:test-model",
+      approvals: 1,
+      mean_rounds: 2,
+      median_rounds: 2,
+      first_pass_rate: 0,
+    },
+  ],
+  reviewers: [],
+  messages: [],
+}
 
 beforeEach(() => {
   asked = []
@@ -42,6 +55,7 @@ beforeEach(() => {
     const url = new URL(request.url)
     if (url.pathname === "/v1/repositories") return jsonResponse([aRepository()])
     asked.push(url)
+    if (url.pathname === "/v1/stats/reviews") return jsonResponse(REVIEWS)
     return jsonResponse({ items: [ROW] })
   })
 })
@@ -60,7 +74,9 @@ describe("StatsPage", () => {
     expect(cells.getByText("45k", { exact: false })).toBeDefined()
     expect(cells.getByText("4m")).toBeDefined()
     expect(cells.getByText("coding 4, migration 1")).toBeDefined()
-    expect(asked.map((url) => url.pathname)).toEqual(["/v1/stats/models"])
+    const reviews = await screen.findByRole("region", { name: "Reviews" })
+    expect(within(reviews).getAllByText("2").length).toBeGreaterThan(0)
+    expect(asked.map((url) => url.pathname)).toEqual(["/v1/stats/models", "/v1/stats/reviews"])
   })
 
   it("asks with the filters in its URL, under the key qk names", async () => {

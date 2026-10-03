@@ -16,6 +16,7 @@ import { useSearchParams } from "react-router-dom"
 import type { StatsFilter } from "@/api"
 import { PageHeader } from "@/components/page-header"
 import { ModelsPanel } from "@/components/stats/models-panel"
+import { ReviewsPanel } from "@/components/stats/reviews-panel"
 import {
   Select,
   SelectContent,
@@ -103,6 +104,7 @@ export function StatsPage() {
         }
       />
       <ModelsPanel filter={filter} />
+      <ReviewsPanel filter={filter} />
     </div>
   )
 }

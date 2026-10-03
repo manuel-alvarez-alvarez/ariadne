@@ -39,6 +39,7 @@ mod plan_finalize;
 mod prompts;
 mod repositories;
 mod resume;
+mod review_stats;
 mod scheduler_attention;
 mod scheduler_dependencies;
 mod session_list;

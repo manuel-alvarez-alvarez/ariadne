@@ -52,8 +52,17 @@ days) and a repository at the top of the screen; both stay in the address, so
 a reload keeps them. The **Models** panel shows the same rows as
 `ariadne stats models`, and it updates by itself when a session ends.
 
+## Reviews
+
+`ariadne stats reviews` shows author approval rounds, reviewer verdict and
+latency figures, and message flow by kind and sender. The Stats screen shows
+author figures in its **Reviews** panel. It takes the same filters as models.
+
 ## From the API
 
 `GET /v1/stats/models?since=7d&repo=<repo-id>` returns `{"items": [...]}`, one
 item per model and seat. A `since` that is neither a span nor a moment returns
 `400` with the code `invalid_request`.
+
+`GET /v1/stats/reviews?since=7d&repo=<repo-id>` returns author, reviewer and
+message aggregates.

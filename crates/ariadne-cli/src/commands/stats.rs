@@ -4,13 +4,14 @@
 use anyhow::Result;
 use clap::Subcommand;
 
-use ariadne_api::stats::{ModelStatDto, ModelStatsResponse, StatsQuery};
+use ariadne_api::stats::{ModelStatDto, ModelStatsResponse, ReviewStatsDto, StatsQuery};
 use ariadne_client::Client;
 
 use super::query_path;
 use super::resolve::{self, Kind};
 use crate::output::{
-    Column, Format, UNCAPPED, col, dash, duration, empty_state, print_list, usage_cell,
+    Column, Format, UNCAPPED, col, dash, duration, empty_state, print, print_list, print_table,
+    usage_cell,
 };
 
 /// Columns of `stats models`. The model and its seat are what a row is about,
@@ -25,11 +26,32 @@ const MODELS: &[Column] = &[
     col("lifetime", UNCAPPED).rank(1),
     col("skills", 48).rank(0),
 ];
+const REVIEW_AUTHORS: &[Column] = &[
+    col("model", UNCAPPED),
+    col("approvals", UNCAPPED),
+    col("mean rounds", UNCAPPED),
+    col("median rounds", UNCAPPED),
+    col("first pass", UNCAPPED),
+];
+const REVIEWERS: &[Column] = &[
+    col("model", UNCAPPED),
+    col("verdicts", UNCAPPED),
+    col("approve share", UNCAPPED),
+    col("mean latency", UNCAPPED),
+];
+const REVIEW_MESSAGES: &[Column] = &[
+    col("kind", UNCAPPED),
+    col("from", UNCAPPED),
+    col("total", UNCAPPED),
+    col("mean per task", UNCAPPED),
+];
 
 #[derive(Subcommand)]
 pub(crate) enum StatsCommand {
     /// How each model did in each seat: sessions, failures, stalls, tokens
     Models,
+    /// How reviews and their messages flowed
+    Reviews,
 }
 
 /// The filters every family takes, as the command line gave them.
@@ -54,7 +76,59 @@ pub(crate) async fn run(
     };
     match cmd.unwrap_or(StatsCommand::Models) {
         StatsCommand::Models => models(client, &query, format).await,
+        StatsCommand::Reviews => reviews(client, &query, format).await,
     }
+}
+
+async fn reviews(client: &Client, query: &StatsQuery, format: Format) -> Result<()> {
+    let response: ReviewStatsDto = client
+        .get_json(&query_path("/v1/stats/reviews", query)?)
+        .await?;
+    print(format, &response, || {
+        let authors = response
+            .authors
+            .iter()
+            .map(|r| {
+                vec![
+                    r.model.clone(),
+                    r.approvals.to_string(),
+                    format!("{:.1}", r.mean_rounds),
+                    format!("{:.1}", r.median_rounds),
+                    format!("{:.1}%", r.first_pass_rate * 100.0),
+                ]
+            })
+            .collect::<Vec<_>>();
+        let reviewers = response
+            .reviewers
+            .iter()
+            .map(|r| {
+                vec![
+                    r.model.clone(),
+                    r.verdicts.to_string(),
+                    format!("{:.1}%", r.approve_share * 100.0),
+                    duration(r.mean_latency_secs.round() as u64),
+                ]
+            })
+            .collect::<Vec<_>>();
+        let messages = response
+            .messages
+            .iter()
+            .map(|r| {
+                vec![
+                    r.kind.clone(),
+                    r.from_actor.clone(),
+                    r.total.to_string(),
+                    format!("{:.1}", r.mean_per_task),
+                ]
+            })
+            .collect::<Vec<_>>();
+        println!("Authors");
+        print_table(REVIEW_AUTHORS, &authors).expect("print authors");
+        println!("Reviewers");
+        print_table(REVIEWERS, &reviewers).expect("print reviewers");
+        println!("Messages");
+        print_table(REVIEW_MESSAGES, &messages).expect("print messages");
+    })
 }
 
 async fn models(client: &Client, query: &StatsQuery, format: Format) -> Result<()> {
@@ -195,5 +269,55 @@ mod tests {
         assert!(row.contains("↑1.2M 89.1% ↓45k"), "{row}");
         assert!(row.contains("4m 20s"), "{row}");
         assert!(row.contains("coding 4, migration 1"), "{row}");
+    }
+
+    #[test]
+    fn review_tables_print_the_three_groups_and_rows() {
+        let view = View::plain();
+        let authors = render_table(
+            REVIEW_AUTHORS,
+            &[vec![
+                "stub:author".into(),
+                "1".into(),
+                "2.0".into(),
+                "2.0".into(),
+                "0.0%".into(),
+            ]],
+            &view,
+        )
+        .unwrap();
+        let reviewers = render_table(
+            REVIEWERS,
+            &[vec![
+                "stub:reviewer".into(),
+                "2".into(),
+                "50.0%".into(),
+                "4s".into(),
+            ]],
+            &view,
+        )
+        .unwrap();
+        let messages = render_table(
+            REVIEW_MESSAGES,
+            &[vec![
+                "approve".into(),
+                "reviewer".into(),
+                "1".into(),
+                "1.0".into(),
+            ]],
+            &view,
+        )
+        .unwrap();
+        let printed = format!("Authors\n{authors}\nReviewers\n{reviewers}\nMessages\n{messages}");
+        for value in [
+            "Authors",
+            "stub:author",
+            "Reviewers",
+            "stub:reviewer",
+            "Messages",
+            "approve",
+        ] {
+            assert!(printed.contains(value), "{printed}");
+        }
     }
 }

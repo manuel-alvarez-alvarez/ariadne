@@ -2237,6 +2237,55 @@
         }
       }
     },
+    "/v1/stats/reviews": {
+      "get": {
+        "tags": [
+          "stats"
+        ],
+        "operationId": "reviews",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Only facts written since then: an RFC 3339 moment, or a span back\nfrom now, `<n>m`, `<n>h`, `<n>d` or `<n>w` (`24h`, `7d`, `30d`).\nAbsent is every fact there is.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "repo",
+            "in": "query",
+            "description": "Only facts about this repository id.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewStatsDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/tasks": {
       "get": {
         "tags": [
@@ -3238,6 +3287,38 @@
           "stalled",
           "exhausted"
         ]
+      },
+      "AuthorReviewStatDto": {
+        "type": "object",
+        "required": [
+          "model",
+          "approvals",
+          "mean_rounds",
+          "median_rounds",
+          "first_pass_rate"
+        ],
+        "properties": {
+          "approvals": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "first_pass_rate": {
+            "type": "number",
+            "format": "double"
+          },
+          "mean_rounds": {
+            "type": "number",
+            "format": "double"
+          },
+          "median_rounds": {
+            "type": "number",
+            "format": "double"
+          },
+          "model": {
+            "type": "string"
+          }
+        }
       },
       "BinaryDto": {
         "type": "object",
@@ -4435,6 +4516,32 @@
           "message"
         ]
       },
+      "MessageStatDto": {
+        "type": "object",
+        "required": [
+          "kind",
+          "from_actor",
+          "total",
+          "mean_per_task"
+        ],
+        "properties": {
+          "from_actor": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "mean_per_task": {
+            "type": "number",
+            "format": "double"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "ModelDto": {
         "type": "object",
         "description": "One thing an agent can be pinned to, as served by `GET /v1/models`: a\nregistry agent on a model discovery found it offering\n(`claude-acp:claude-opus-5`). Every entry names both halves — there\nis no bare-agent entry, because a model is required wherever an agent is\npinned.\n\nThe id is what a request writes as its `model`, whole. `agent_id` is its\nregistry prefix. Discovery supplies the description and efforts.\nThe user sets the enabled flag and optional rank independently.",
@@ -4863,6 +4970,61 @@
             "type": "integer",
             "format": "int64",
             "description": "Events this connection lost. Informational: they cannot be recovered.",
+            "minimum": 0
+          }
+        }
+      },
+      "ReviewStatsDto": {
+        "type": "object",
+        "required": [
+          "authors",
+          "reviewers",
+          "messages"
+        ],
+        "properties": {
+          "authors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuthorReviewStatDto"
+            }
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MessageStatDto"
+            }
+          },
+          "reviewers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReviewerStatDto"
+            }
+          }
+        }
+      },
+      "ReviewerStatDto": {
+        "type": "object",
+        "required": [
+          "model",
+          "verdicts",
+          "approve_share",
+          "mean_latency_secs"
+        ],
+        "properties": {
+          "approve_share": {
+            "type": "number",
+            "format": "double"
+          },
+          "mean_latency_secs": {
+            "type": "number",
+            "format": "double"
+          },
+          "model": {
+            "type": "string"
+          },
+          "verdicts": {
+            "type": "integer",
+            "format": "int64",
             "minimum": 0
           }
         }

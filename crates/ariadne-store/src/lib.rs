@@ -38,7 +38,10 @@ pub use picks::picked_winner;
 pub use repositories::{NewRepository, RepositoryUpdate};
 pub use sessions::{NewSession, SessionFilter};
 pub use skills::NewSkill;
-pub use stats::{ModelStatRow, NewStatFact, StatsFilter};
+pub use stats::{
+    AuthorReviewStatRow, MessageStatRow, ModelStatRow, NewStatFact, ReviewStats, ReviewerStatRow,
+    StatsFilter,
+};
 pub use task_agents::NewTaskAgent;
 pub use tasks::{NewTask, TaskFilter, TaskUpdate, author_branch};
 pub use usage::{AgentUsage, SeatUsage};

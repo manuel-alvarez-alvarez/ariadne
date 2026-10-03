@@ -54,3 +54,32 @@ pub struct ModelStatsResponse {
     /// One row per model and seat, ordered by model and then by seat.
     pub items: Vec<ModelStatDto>,
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct AuthorReviewStatDto {
+    pub model: String,
+    pub approvals: u64,
+    pub mean_rounds: f64,
+    pub median_rounds: f64,
+    pub first_pass_rate: f64,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ReviewerStatDto {
+    pub model: String,
+    pub verdicts: u64,
+    pub approve_share: f64,
+    pub mean_latency_secs: f64,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct MessageStatDto {
+    pub kind: String,
+    pub from_actor: String,
+    pub total: u64,
+    pub mean_per_task: f64,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ReviewStatsDto {
+    pub authors: Vec<AuthorReviewStatDto>,
+    pub reviewers: Vec<ReviewerStatDto>,
+    pub messages: Vec<MessageStatDto>,
+}

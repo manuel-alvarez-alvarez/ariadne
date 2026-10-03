@@ -911,6 +911,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/stats/reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["stats_reviews"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tasks": {
         parameters: {
             query?: never;
@@ -1340,6 +1356,17 @@ export interface components {
          * @enum {string}
          */
         AttentionReason: "waiting_permission" | "waiting_input" | "waiting_user" | "agent_error" | "disconnected" | "stalled" | "exhausted";
+        AuthorReviewStatDto: {
+            /** Format: int64 */
+            approvals: number;
+            /** Format: double */
+            first_pass_rate: number;
+            /** Format: double */
+            mean_rounds: number;
+            /** Format: double */
+            median_rounds: number;
+            model: string;
+        };
         /** @description A binary as the daemon can — or cannot — find it. */
         BinaryDto: {
             /**
@@ -1879,6 +1906,14 @@ export interface components {
          * @enum {string}
          */
         MessageKind: "review_request" | "approve" | "request_changes" | "message";
+        MessageStatDto: {
+            from_actor: string;
+            kind: string;
+            /** Format: double */
+            mean_per_task: number;
+            /** Format: int64 */
+            total: number;
+        };
         /**
          * @description One thing an agent can be pinned to, as served by `GET /v1/models`: a
          *     registry agent on a model discovery found it offering
@@ -2081,6 +2116,20 @@ export interface components {
              * @description Events this connection lost. Informational: they cannot be recovered.
              */
             missed: number;
+        };
+        ReviewStatsDto: {
+            authors: components["schemas"]["AuthorReviewStatDto"][];
+            messages: components["schemas"]["MessageStatDto"][];
+            reviewers: components["schemas"]["ReviewerStatDto"][];
+        };
+        ReviewerStatDto: {
+            /** Format: double */
+            approve_share: number;
+            /** Format: double */
+            mean_latency_secs: number;
+            model: string;
+            /** Format: int64 */
+            verdicts: number;
         };
         /**
          * @description Where an agent sits: the orchestrator of a goal, or the author or a
@@ -4367,6 +4416,40 @@ export interface operations {
                 };
             };
             /** @description `since` is neither a moment nor a span */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    stats_reviews: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Only facts written since then: an RFC 3339 moment, or a span back
+                 *     from now, `<n>m`, `<n>h`, `<n>d` or `<n>w` (`24h`, `7d`, `30d`).
+                 *     Absent is every fact there is.
+                 */
+                since?: string | null;
+                /** @description Only facts about this repository id. */
+                repo?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewStatsDto"];
+                };
+            };
             400: {
                 headers: {
                     [name: string]: unknown;
