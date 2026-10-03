@@ -14,6 +14,8 @@ tests:
   - crates/ariadne-cli/src/commands/stats.rs
   - crates/ariadne-cli/src/cli/tests.rs
   - ui/src/routes/stats.test.tsx
+  - ui/src/components/stats/status-colors.test.ts
+  - ui/src/components/stats/chart-configs.test.ts
   - ui/src/events/dispatch.test.ts
   - ui/src/components/app-shell.test.tsx
 ---
@@ -213,9 +215,25 @@ fact and its rules here when it is built.
     days, 30 days) and a repository selector. Both live in the URL
     (`?since=7d&repo=<id>`), and the screen hands them to every panel as one
     `{ since, repo }`.
-32. Each family is a panel of its own. The models panel shows one row per
-    model and seat, its tokens as the app's token figure. The switches panel
-    shows one row per model, its automatic share as a percentage.
+32. Each family is a panel of its own, and every panel draws the one shared
+    heading, `StatSectionHeading` (`text-sm font-medium`), so the five read
+    as one section style. A row is a horizontal bar, not a table: one bar per
+    model, seat or tool, built by the one shared `StatBarChart`, sorted by
+    its first series descending so a long model id still reads as a label at
+    the left. The models panel draws sessions per model and seat, stacked
+    bars of ended and failed with stalled as a second series beside them —
+    `stalled` can overlap `failed`, so stacking it in would draw a bar past
+    `sessions` — and a second chart of tokens per model and seat; the
+    switches panel draws switches per model, split into exhausted,
+    automatic and other, with arrivals as a second series beside them. Every
+    chart keeps an `sr-only` table of the same numbers under it, for a screen
+    reader and for a test. A family with no rows renders its heading and the
+    one muted sentence its empty state always said, and no chart. The bars'
+    colours carry one meaning each, off the status ramp in `index.css`
+    through the shared `STATUS_COLORS` module — finished or ended on
+    `status-done`, failed on `status-danger`, stalled on `status-warn`,
+    cancelled on `status-pending`, a neutral count on `status-active` — so
+    the same meaning is the same colour in every panel.
 33. The stats queries sit under the query-key group `stats`
     (`qk.stats.models(filter)`, `qk.stats.switches(filter)`). Every
     `task_updated` and `session_updated` event invalidates the whole group,
@@ -290,10 +308,15 @@ fact and its rules here when it is built.
     `CONTESTS` and `WIN_RATE`, one row per model and a totals row after
     them. `--format json` prints the DTO whole, totals included. It takes
     the table flags of a listing (014).
-44. The desktop app's Outcomes panel shows the same rows as
-    `ariadne stats outcomes`, the totals row included, under the same
-    `since` and `repo` the screen's header sets, and under the same query-
-    key group (`qk.stats.outcomes(filter)`).
+44. The desktop app's Outcomes panel draws the per-model rows of
+    `ariadne stats outcomes` as a chart, stacked bars of tasks per model
+    split into finished, failed and cancelled, and a second chart of median
+    lead time per model; finish rate, win rate, contests and mean reviews
+    go in the first chart's tooltip. The totals row is the CLI's own and is
+    not drawn: a chart compares models against each other, which a totals
+    bar is not one of. It reads under the same `since` and `repo` the
+    screen's header sets, and under the same query-key group
+    (`qk.stats.outcomes(filter)`).
 
 ## Acceptance criteria
 
@@ -310,7 +333,7 @@ fact and its rules here when it is built.
 - The reviews command serializes its DTO and names its three table groups
   (`commands/stats.rs::tests::reviews_json_has_the_dto_and_the_table_has_three_groups`).
 - The Stats screen asks for the reviews panel alongside model stats
-  (`stats.test.tsx` "renders the models panel from the daemon's rows").
+  (`stats.test.tsx` "draws the models panel's charts from the daemon's rows").
 - Tool durations produce the documented median and nearest-rank p90, and
   `since` excludes later facts
   (`store.rs::tool_stats_keep_the_facts_since_the_filter_and_measure_percentiles`).
@@ -321,7 +344,7 @@ fact and its rules here when it is built.
   prints its tool and permission groups
   (`commands/stats.rs::tools_json_prints_the_dto_and_the_table_groups_its_rows`).
 - The tools panel renders the daemon response under `qk.stats.tools`
-  (`stats.test.tsx` "renders the tools panel from the daemon's rows").
+  (`stats.test.tsx` "draws the tools panel's charts from the daemon's rows").
 - `switch_stats` honours `since`
   (`store.rs::switch_stats_keeps_the_facts_since_the_filter`).
 - Deleting the goal keeps the fact
@@ -383,12 +406,12 @@ fact and its rules here when it is built.
   (`cli/tests.rs::the_listing_flags_are_advertised_exactly_where_they_are_honored`),
   and `stats` alone parses as `models` with the filters on either side of the
   family (`cli/tests.rs::stats_alone_runs_models_and_takes_the_filters_either_side`).
-- The Stats screen renders the models panel from the daemon's rows
-  (`stats.test.tsx` "renders the models panel from the daemon's rows"), and
+- The Stats screen draws the models panel's charts from the daemon's rows
+  (`stats.test.tsx` "draws the models panel's charts from the daemon's rows"), and
   asks with the filters in its URL under the key `qk` names
   (`stats.test.tsx` "asks with the filters in its URL, under the key qk names").
-- The Stats screen renders the switches panel from the daemon's rows
-  (`stats.test.tsx` "renders the switches panel from the daemon's rows").
+- The Stats screen draws the switches panel's chart from the daemon's rows
+  (`stats.test.tsx` "draws the switches panel's chart from the daemon's rows").
 - A task or a session update invalidates the stats
   (`dispatch.test.ts` "refetches every stat when a task or a session moves").
 - Stats is the last entry of the sidebar
@@ -422,10 +445,35 @@ fact and its rules here when it is built.
 - `stats outcomes` is classified and takes the table flags of a listing
   (`cli/tests.rs::every_command_in_the_tree_is_classified`,
   `::the_listing_flags_are_advertised_exactly_where_they_are_honored`).
-- The outcomes panel renders from a mocked response, totals row included,
-  under the key `qk.stats.outcomes` names
-  (`stats.test.tsx` "renders the outcomes panel from the daemon's rows, totals
-  included", "asks with the filters in its URL, under the key qk names").
+- The outcomes panel draws its charts from a mocked response, under the key
+  `qk.stats.outcomes` names
+  (`stats.test.tsx` "draws the outcomes panel's charts from the daemon's
+  rows", "asks with the filters in its URL, under the key qk names").
+- The reviews panel's chart reads the author rows of a mocked response
+  (`stats.test.tsx` "draws the reviews panel's chart from the daemon's
+  rows").
+- The five panels' headings share one class list
+  (`stats.test.tsx` "gives the five panels the same heading style").
+- An empty family renders its heading and one sentence, with no chart
+  (`stats.test.tsx` "renders an empty family as its heading and one
+  sentence, with no chart").
+- `STATUS_COLORS` maps each meaning to the status ramp's own CSS variable
+  (`status-colors.test.ts` "maps each meaning to the status ramp's own CSS
+  variable, so every panel's chart draws it the same").
+- Every chart's own series config names the right meaning for each key, and
+  the same meaning is the same colour wherever it is drawn again
+  (`chart-configs.test.ts`, one test per panel's config and one that compares
+  them against each other).
+- A session's `ended` count is the rest of `sessions` once `failed` is taken
+  out, not `failed` and `stalled` both, so a run that is both does not count
+  against it twice (`stats.test.tsx` "draws the models panel's charts from
+  the daemon's rows"). `stalled` stands beside the `ended`/`failed` stack
+  rather than inside it, so it draws no bar past `sessions`
+  (`chart-configs.test.ts`).
+- The tools panel draws the permission chart on its own facts: a tool with no
+  completed call still charts the permission replies that named it
+  (`stats.test.tsx` "draws the permission chart even where no tool call
+  completed").
 
 ## Sources
 
@@ -446,7 +494,14 @@ fact and its rules here when it is built.
 `crates/ariadne-cli/src/commands/stats.rs`,
 `ui/src/routes/stats.tsx`,
 `ui/src/components/stats/models-panel.tsx`,
+`ui/src/components/stats/reviews-panel.tsx`,
 `ui/src/components/stats/switches-panel.tsx`,
+`ui/src/components/stats/tools-panel.tsx`,
 `ui/src/components/stats/outcomes-panel.tsx`,
+`ui/src/components/stats/stat-bar-chart.tsx`,
+`ui/src/components/stats/stat-query-state.tsx`,
+`ui/src/components/stats/chart-configs.ts`,
+`ui/src/components/stats/status-colors.ts`,
+`ui/src/components/stats/section-heading.tsx`,
 `ui/src/api/query-keys.ts`,
 `ui/src/events/dispatch.ts`.

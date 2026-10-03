@@ -199,7 +199,7 @@ function SkillList({
             <section key={group.key} aria-labelledby={`skills-${group.key}`} className="mb-4">
               <h3
                 id={`skills-${group.key}`}
-                className="px-1 pb-1 font-medium text-muted-foreground text-xs uppercase tracking-wide"
+                className="border-b px-1 pb-2 text-sm font-medium text-muted-foreground"
               >
                 {group.title}
               </h3>

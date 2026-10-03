@@ -28,16 +28,31 @@
  * current — a session going idle or being killed elsewhere updates this view
  * without a refetch. The console is the exception: it is a terminal, not
  * cacheable state, and owns its own connection (see `session-terminal.tsx`).
+ *
+ * The facts are dense, like the goal and task panels' own, and a chevron
+ * folds them to the one line that still says what the console beneath them
+ * is running and what it has spent — open by default, in local state nothing
+ * outlives this mount. The stamps that say when (`Started`, `Last activity`)
+ * sit on their own meta line under the heading instead of taking a fact's
+ * width, the way the goal panel's own stamps do.
+ *
+ * This view is a flex column of a height its parent gives it: the tabs block
+ * grows to fill whatever is left under the facts, and the console tab's
+ * content grows inside *that*, so the terminal can ask for `h-full` and get a
+ * real number rather than its own fallback height. A parent that gives this
+ * view no height leaves the console at its `min-h`, same as before.
  */
 
 import { useQuery } from "@tanstack/react-query"
-import type { ReactNode } from "react"
+import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
+import { type ReactNode, useState } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 
 import type { SessionDto } from "@/api"
 import { CopyableId, CopyableIdMenu } from "@/components/copyable-id"
 import { Fact, FactList } from "@/components/fact-list"
 import { TokenFigure } from "@/components/token-figure"
+import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { When } from "@/components/when"
 // Both read at the module that owns them rather than through their feature's
@@ -45,7 +60,7 @@ import { When } from "@/components/when"
 // leads back here, and the round trip is an import cycle.
 import { goalQueryOptions } from "@/features/goals/queries"
 import { SeatSummary } from "@/features/models/agent-summary"
-import { pinLabel } from "@/features/models/model-ref"
+import { ModelPin } from "@/features/models/model-pin"
 import { taskQueryOptions } from "@/features/tasks/queries"
 import { sessionCopyEntries } from "@/lib/clipboard"
 import { formatTokens } from "@/lib/format"
@@ -98,6 +113,15 @@ export function SessionDetailView({
   // a prompt: what it is waiting for is an answer, so the console takes the
   // keyboard rather than waiting to be clicked. Read once, on arrival.
   const focusTerminal = useTerminalFocusRequest()
+  // Open by default — a session is opened to be read — and never remembered
+  // past this mount: a fold is a glance away from being undone, not a
+  // setting.
+  const [factsOpen, setFactsOpen] = useState(true)
+  const hasContext =
+    session.context_used !== null &&
+    session.context_used !== undefined &&
+    session.context_size !== null &&
+    session.context_size !== undefined
 
   // Replaces rather than pushes: which half of a session is on screen is not a
   // step of its own, and Back should leave the session, not walk its tabs.
@@ -108,144 +132,161 @@ export function SessionDetailView({
   }
 
   return (
-    <div className="space-y-4">
-      <header className="flex flex-wrap items-center gap-3">
-        <h1 className="min-w-0 truncate font-heading text-xl font-semibold tracking-tight">
-          {sessionHeading(session)}
-        </h1>
-        <SessionStatusBadge status={session.status} />
-        {/* Next to the status rather than instead of it: the two are
-            orthogonal — an agent blocked on a permission prompt is still
-            running — and the pair is what says what to do about it. */}
-        {session.attention_reason ? (
-          <SessionAttentionBadge attention={session.attention_reason} />
-        ) : null}
-        <CopyableIdMenu
-          value={session.id}
-          label="session id"
-          entries={sessionCopyEntries(session.id)}
-          className="text-xs text-muted-foreground"
-        />
-        <div className="ml-auto">
-          <SessionActions
-            session={session}
-            onResumed={onResumed}
-            onSwitched={onSwitched}
-            goalCancelled={goal.data?.status === "cancelled"}
+    <div className="flex h-full min-h-0 flex-col gap-4">
+      <div className="flex flex-col gap-1">
+        <header className="flex flex-wrap items-center gap-3">
+          <h1 className="min-w-0 truncate font-heading text-base font-semibold">
+            {sessionHeading(session)}
+          </h1>
+          <SessionStatusBadge status={session.status} />
+          {/* Next to the status rather than instead of it: the two are
+              orthogonal — an agent blocked on a permission prompt is still
+              running — and the pair is what says what to do about it. */}
+          {session.attention_reason ? (
+            <SessionAttentionBadge attention={session.attention_reason} />
+          ) : null}
+          <div className="ml-auto">
+            <SessionActions
+              session={session}
+              onResumed={onResumed}
+              onSwitched={onSwitched}
+              goalCancelled={goal.data?.status === "cancelled"}
+            />
+          </div>
+        </header>
+        {/* The id and the two stamps that say when, under the heading rather
+            than two facts of their own further down. */}
+        <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+          <CopyableIdMenu
+            value={session.id}
+            label="session id"
+            entries={sessionCopyEntries(session.id)}
+          />
+          <span aria-hidden="true">·</span>
+          <span>started</span>
+          <When at={session.created_at} label="started" />
+          <span aria-hidden="true">·</span>
+          <span>{session.ended_at ? "ended" : "last activity"}</span>
+          <When
+            at={session.ended_at ?? session.last_activity_at}
+            label={session.ended_at ? "ended" : "last activity"}
           />
         </div>
-      </header>
+      </div>
 
       {/* Under the header rather than beside the badge: what to do about a
           blocked agent is a sentence, and the console it is about is below. */}
       <SessionBlockedBanner session={session} />
 
-      <FactList>
-        {context === "goal" || !session.goal_id ? null : (
-          <Fact label="Goal">
-            <Link to={paths.goal(session.goal_id)} className="block truncate hover:underline">
-              {goal.data?.title ?? <Mono>{session.goal_id}</Mono>}
-            </Link>
-          </Fact>
-        )}
-        {context === "task" || !session.goal_id ? null : (
-          <Fact label="Task">
-            {session.task_id ? (
-              <Link to={taskTo} className="block truncate hover:underline">
-                {task.data?.title ?? <Mono>{session.task_id}</Mono>}
-              </Link>
-            ) : (
-              <span className="text-muted-foreground">— (orchestrator session)</span>
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-expanded={factsOpen}
+            aria-label={`${factsOpen ? "Collapse" : "Expand"} session facts`}
+            onClick={() => setFactsOpen((open) => !open)}
+          >
+            {factsOpen ? <ChevronDownIcon /> : <ChevronRightIcon />}
+          </Button>
+          {/* Folded, the facts are the one line that still says what the
+              console below is running and what it has spent. */}
+          {factsOpen ? null : (
+            <div className="flex min-w-0 items-center gap-3 text-xs">
+              <ModelPin model={session.model} effort={session.effort} mode="line" />
+              <TokenFigure usage={session.usage} />
+            </div>
+          )}
+        </div>
+        {factsOpen ? (
+          <FactList dense>
+            {context === "goal" || !session.goal_id ? null : (
+              <Fact label="Goal">
+                <Link to={paths.goal(session.goal_id)} className="block truncate hover:underline">
+                  {goal.data?.title ?? <Mono>{session.goal_id}</Mono>}
+                </Link>
+              </Fact>
             )}
-          </Fact>
-        )}
-        {/* One fact, not two: what the agent runs on is the tail of this line
-            (`claude-agent-acp:claude-opus-5`), and a Model row under it repeated
-            that tail with the agent half taken off. The session's own snapshot,
-            not the profile's current fields — the profile may have been edited
-            since this agent was launched. A loose session — one resumed from
-            an outside conversation — names its agent the same way, having no
-            seat to lead with. */}
-        <Fact label="Agent">
-          {session.seat ? (
-            <SeatSummary seat={session.seat} model={session.model} effort={session.effort} />
-          ) : (
-            <span className="text-muted-foreground">{pinLabel(session.model, session.effort)}</span>
-          )}
-        </Fact>
-        {session.switched_from ? (
-          <Fact label="Continues">
-            <Link to={switchedFromTo} replace className="block truncate hover:underline">
-              <Mono>{session.switched_from}</Mono>
-            </Link>
-          </Fact>
+            {context === "task" || !session.task_id ? null : (
+              <Fact label="Task">
+                <Link to={taskTo} className="block truncate hover:underline">
+                  {task.data?.title ?? <Mono>{session.task_id}</Mono>}
+                </Link>
+              </Fact>
+            )}
+            {/* One fact, not two: what the agent runs on is the tail of this line
+                (`claude-agent-acp:claude-opus-5`), and a Model row under it repeated
+                that tail with the agent half taken off. The session's own snapshot,
+                not the profile's current fields — the profile may have been edited
+                since this agent was launched. A loose session — one resumed from
+                an outside conversation — names its agent the same way, having no
+                seat to lead with. */}
+            <Fact label="Agent">
+              {session.seat ? (
+                <SeatSummary seat={session.seat} model={session.model} effort={session.effort} />
+              ) : (
+                <ModelPin model={session.model} effort={session.effort} mode="line" />
+              )}
+            </Fact>
+            {session.switched_from ? (
+              <Fact label="Continues">
+                <Link to={switchedFromTo} replace className="block truncate hover:underline">
+                  <Mono>{session.switched_from}</Mono>
+                </Link>
+              </Fact>
+            ) : null}
+            {session.worktree_path ? (
+              <Fact label="Directory">
+                <CopyableId value={session.worktree_path} label="working directory" />
+              </Fact>
+            ) : null}
+            <Fact label="Agent session id">
+              {session.internal_session_id ? (
+                <CopyableId value={session.internal_session_id} label="agent session id" />
+              ) : (
+                <Dash />
+              )}
+            </Fact>
+            {/* Every transcript this agent reported under, summed — so a session
+                resumed into the same agent conversation reads as one figure. Zeros
+                until it reports anything, which is a number and not a blank: an
+                agent that has spent nothing is what a session just spawned is. */}
+            <Fact label="Tokens">
+              <TokenFigure usage={session.usage} />
+            </Fact>
+            {hasContext ? (
+              <Fact label="Context">
+                <ContextMeter used={session.context_used ?? 0} size={session.context_size ?? 0} />
+              </Fact>
+            ) : null}
+            {session.attention_reason ? (
+              <Fact label="Needs attention since">
+                <When at={session.attention_since} label="since" />
+              </Fact>
+            ) : null}
+          </FactList>
         ) : null}
-        <Fact label="Directory">
-          {session.worktree_path ? (
-            <CopyableId
-              value={session.worktree_path}
-              label="working directory"
-              className="text-xs"
-            />
-          ) : (
-            <Dash />
-          )}
-        </Fact>
-        <Fact label="Agent session id">
-          {session.internal_session_id ? (
-            <CopyableId
-              value={session.internal_session_id}
-              label="agent session id"
-              className="text-xs"
-            />
-          ) : (
-            <Dash />
-          )}
-        </Fact>
-        {/* Every transcript this agent reported under, summed — so a session
-            resumed into the same agent conversation reads as one figure. Zeros
-            until it reports anything, which is a number and not a blank: an
-            agent that has spent nothing is what a session just spawned is. */}
-        <Fact label="Tokens">
-          <TokenFigure usage={session.usage} />
-        </Fact>
-        {session.context_used !== null &&
-        session.context_used !== undefined &&
-        session.context_size !== null &&
-        session.context_size !== undefined ? (
-          <Fact label="Context">
-            <span className="tabular-nums">
-              {formatTokens(session.context_used)} / {formatTokens(session.context_size)}
-            </span>
-          </Fact>
-        ) : null}
-        {session.attention_reason ? (
-          <Fact label="Needs attention since">
-            <When at={session.attention_since} label="since" />
-          </Fact>
-        ) : null}
-        <Fact label="Started">
-          <When at={session.created_at} label="started" />
-        </Fact>
-        <Fact label={session.ended_at ? "Ended" : "Last activity"}>
-          <When
-            at={session.ended_at ?? session.last_activity_at}
-            label={session.ended_at ? "ended" : "last activity"}
-          />
-        </Fact>
-      </FactList>
+      </div>
 
-      <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
+      {/* `min-h-0 flex-1` so this block, not the view's own height, is what
+          grows to fill the panel — and the console tab's content below
+          inherits the same contract, which is how it ends up with a real
+          height to hand `SessionTerminal` instead of its own fallback. */}
+      <Tabs
+        value={tab}
+        onValueChange={(value) => setTab(value as Tab)}
+        className="flex min-h-0 flex-1 flex-col"
+      >
         <TabsList>
           <TabsTrigger value="terminal">Console</TabsTrigger>
           <TabsTrigger value="activity">Agent activity</TabsTrigger>
         </TabsList>
-        <TabsContent value="terminal" className="pt-3">
+        <TabsContent value="terminal" className="min-h-0 flex-1 pt-3">
           <SessionTerminal
             sessionId={session.id}
             status={session.status}
             autoFocus={focusTerminal}
-            className="h-[min(36rem,70vh)]"
+            className="h-full min-h-[24rem]"
           />
         </TabsContent>
         <TabsContent value="activity" className="pt-3">
@@ -267,4 +308,29 @@ function Mono({ children }: { children: ReactNode }) {
 
 function Dash() {
   return <span className="text-muted-foreground">—</span>
+}
+
+/**
+ * The reported context window as a bar, 4rem wide, beside the pair of
+ * figures it is a bar *of* — decorative rather than its own fact, since the
+ * text beside it already says the same thing a screen reader can read.
+ */
+function ContextMeter({ used, size }: { used: number; size: number }) {
+  const fraction = size > 0 ? Math.min(1, Math.max(0, used / size)) : 0
+  return (
+    <span className="flex items-center gap-2">
+      <span
+        aria-hidden="true"
+        className="h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-muted"
+      >
+        <span
+          className="block h-full rounded-full bg-foreground"
+          style={{ width: `${fraction * 100}%` }}
+        />
+      </span>
+      <span className="tabular-nums">
+        {formatTokens(used)} / {formatTokens(size)}
+      </span>
+    </span>
+  )
 }

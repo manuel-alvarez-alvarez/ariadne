@@ -34,6 +34,7 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import {
   ListChecksIcon,
+  Loader2Icon,
   type LucideIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -45,13 +46,15 @@ import { useMemo, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 
-import type { GoalDto, SessionDto, TaskDto } from "@/api"
-import { DataTable } from "@/components/data-table"
+import { ApiError, type GoalDto, type SessionDto, type TaskDto } from "@/api"
+import { ErrorState } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
+import { ScrollableTable } from "@/components/scroll-edge"
 import { TokenFigure } from "@/components/token-figure"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { TableCell, TableRow } from "@/components/ui/table"
+import { Skeleton } from "@/components/ui/skeleton"
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { When } from "@/components/when"
 import { goalsQueryOptions } from "@/features/goals/queries"
 import { parseModelRef, pinLabel } from "@/features/models/model-ref"
@@ -104,6 +107,22 @@ import { useSessionFilters } from "./use-session-filters"
 type Row =
   | { kind: "ariadne"; session: SessionDto }
   | { kind: "outside"; session: OutsideSessionDto }
+
+const LOADING_ROWS = ["first", "second", "third"]
+const SESSION_COLUMNS = [
+  { key: "title", header: "Title", className: "min-w-56" },
+  { key: "status", header: "Status" },
+  { key: "work", header: "Work", className: "min-w-48" },
+  { key: "agent", header: "Agent" },
+  { key: "tokens", header: "Tokens", className: "text-right" },
+  { key: "activity", header: "Last activity", className: "text-right" },
+]
+const NETWORK_ERROR_DESCRIPTION =
+  "The daemon is not answering. Check the URL in settings and that it is listening on TCP."
+
+function errorDescription(error: unknown): string | undefined {
+  return ApiError.is(error) && error.isNetworkError ? NETWORK_ERROR_DESCRIPTION : undefined
+}
 
 function rowKey(row: Row): string {
   return row.kind === "ariadne"
@@ -262,9 +281,7 @@ export function SessionsPage() {
     )
   }
 
-  const isPending = ariadneSessions.isPending || (outsideEligible && outsideSessions.isPending)
-  const isError = ariadneSessions.isError || outsideSessions.isError
-  const error = ariadneSessions.error ?? outsideSessions.error
+  const outsidePending = outsideEligible && outsideSessions.isPending
 
   return (
     <div className="flex flex-col gap-4">
@@ -312,7 +329,11 @@ export function SessionsPage() {
 
           <div className="ml-auto flex items-center gap-3">
             {outsideEligible ? (
-              <p className="text-sm text-muted-foreground tabular-nums">{`${rows.length} of ${total} sessions`}</p>
+              <p className="text-sm text-muted-foreground tabular-nums">
+                {outsidePending
+                  ? `${ariadneRows.length} sessions · looking for outside conversations`
+                  : `${rows.length} of ${total} sessions`}
+              </p>
             ) : null}
             <Button
               variant="outline"
@@ -391,54 +412,34 @@ export function SessionsPage() {
 
       <ScopeChips goal={goal} task={task} onClear={filterBy} />
 
-      <DataTable
-        query={{
-          data: isPending ? undefined : rows,
-          isPending,
-          isError,
-          error,
-          refetch: () => {
+      {ariadneSessions.isError ? (
+        <ErrorState
+          title="Could not load sessions"
+          error={ariadneSessions.error}
+          description={errorDescription(ariadneSessions.error)}
+          onRetry={() => {
             void ariadneSessions.refetch()
             void outsideSessions.refetch()
-          },
-        }}
-        errorTitle="Could not load sessions"
-        columns={[
-          { header: "Title", className: "min-w-56" },
-          { header: "Status" },
-          { header: "Work", className: "min-w-48" },
-          { header: "Agent" },
-          { header: "Tokens", className: "text-right" },
-          { header: "Last activity", className: "text-right" },
-        ]}
-        empty={
-          <p className="px-4 py-8 text-center text-sm text-muted-foreground">No sessions found.</p>
-        }
-        rowKey={rowKey}
-        renderRow={(row) => (
-          <SessionRow
-            key={rowKey(row)}
-            row={row}
-            title={
-              row.kind === "ariadne"
-                ? ariadneTitle(row.session, goalsById, tasksById)
-                : row.session.first_prompt
-            }
-            goalTitle={
-              row.kind === "ariadne" && row.session.goal_id
-                ? goalsById.get(row.session.goal_id)?.title
-                : undefined
-            }
-            taskTitle={
-              row.kind === "ariadne" && row.session.task_id
-                ? tasksById.get(row.session.task_id)?.title
-                : undefined
-            }
-            resuming={resumingKey === rowKey(row)}
-            onSelect={() => handleSelect(row)}
-            onScope={filterBy}
-          />
-        )}
+          }}
+        />
+      ) : null}
+      {outsideSessions.isError ? (
+        <ErrorState
+          title="Could not load outside conversations"
+          error={outsideSessions.error}
+          description={errorDescription(outsideSessions.error)}
+          onRetry={() => void outsideSessions.refetch()}
+        />
+      ) : null}
+      <SessionsTable
+        rows={rows}
+        ariadnePending={ariadneSessions.isPending}
+        outsidePending={outsidePending}
+        goalsById={goalsById}
+        tasksById={tasksById}
+        resumingKey={resumingKey}
+        onSelect={handleSelect}
+        onScope={filterBy}
       />
       {outsideEligible && outsideSessions.hasNextPage ? (
         <Button
@@ -451,6 +452,107 @@ export function SessionsPage() {
         </Button>
       ) : null}
     </div>
+  )
+}
+
+function SessionsTable({
+  rows,
+  ariadnePending,
+  outsidePending,
+  goalsById,
+  tasksById,
+  resumingKey,
+  onSelect,
+  onScope,
+}: {
+  rows: Row[]
+  ariadnePending: boolean
+  outsidePending: boolean
+  goalsById: Map<string, GoalDto>
+  tasksById: Map<string, TaskDto>
+  resumingKey: string | null
+  onSelect: (row: Row) => void
+  onScope: (param: FilterParam, id: string) => void
+}) {
+  return (
+    <ScrollableTable className="rounded-xl border">
+      <TableHeader>
+        <TableRow className="hover:bg-transparent">
+          {SESSION_COLUMNS.map((column) => (
+            <TableHead key={column.key} className={column.className}>
+              {column.header}
+            </TableHead>
+          ))}
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {ariadnePending ? (
+          <SessionLoadingRows />
+        ) : rows.length ? (
+          rows.map((row) => (
+            <SessionRow
+              key={rowKey(row)}
+              row={row}
+              title={
+                row.kind === "ariadne"
+                  ? ariadneTitle(row.session, goalsById, tasksById)
+                  : row.session.first_prompt
+              }
+              goalTitle={
+                row.kind === "ariadne" && row.session.goal_id
+                  ? goalsById.get(row.session.goal_id)?.title
+                  : undefined
+              }
+              taskTitle={
+                row.kind === "ariadne" && row.session.task_id
+                  ? tasksById.get(row.session.task_id)?.title
+                  : undefined
+              }
+              resuming={resumingKey === rowKey(row)}
+              onSelect={() => onSelect(row)}
+              onScope={onScope}
+            />
+          ))
+        ) : outsidePending ? null : (
+          <TableRow className="hover:bg-transparent">
+            <TableCell colSpan={SESSION_COLUMNS.length} className="p-0">
+              <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+                No sessions found.
+              </p>
+            </TableCell>
+          </TableRow>
+        )}
+        {outsidePending ? <OutsideLoadingRow /> : null}
+      </TableBody>
+    </ScrollableTable>
+  )
+}
+
+function SessionLoadingRows() {
+  return LOADING_ROWS.map((row) => (
+    <TableRow key={row} className="hover:bg-transparent">
+      {SESSION_COLUMNS.map((column) => (
+        <TableCell key={column.key}>
+          <Skeleton className="h-4 w-full" />
+        </TableCell>
+      ))}
+    </TableRow>
+  ))
+}
+
+function OutsideLoadingRow() {
+  return (
+    <TableRow className="hover:bg-transparent">
+      <TableCell
+        colSpan={SESSION_COLUMNS.length}
+        className="py-3 text-center text-sm text-muted-foreground"
+      >
+        <span className="inline-flex items-center gap-2">
+          <Loader2Icon className="size-4 animate-spin" aria-hidden />
+          Looking for outside conversations…
+        </span>
+      </TableCell>
+    </TableRow>
   )
 }
 

@@ -200,13 +200,18 @@ describe("AgentsPage", () => {
     expect(screen.getByText(/none — Ariadne's own arguments only/)).toBeDefined()
   })
 
-  it("counts both what it lists and what those can be staffed on", async () => {
+  it("keeps Refresh beside the tabs and puts the turned-off count in its hint", async () => {
+    const user = userEvent.setup()
     renderScreen(<AgentsPage />)
 
-    // One line for the page, because the catalog is now part of it: how many
-    // agents there are, how many models between them, and — the fact no single
-    // row carries — how many of those are turned off.
-    expect(await screen.findByText("3 agents, 2 models, 1 turned off")).toBeDefined()
+    const tabs = await screen.findByRole("tablist")
+    const refresh = screen.getByRole("button", { name: "Refresh" })
+    expect(tabs.parentElement?.className).toContain("justify-between")
+    expect(tabs.parentElement?.contains(refresh)).toBe(true)
+    expect(screen.queryByText("3 agents, 2 models, 1 turned off")).toBeNull()
+
+    await user.hover(refresh)
+    expect(await screen.findByText(/1 model turned off/)).toBeDefined()
   })
 
   it("shows only concrete model ids in the agent tables", async () => {
@@ -233,7 +238,8 @@ describe("AgentsPage", () => {
     renderScreen(<AgentsPage />)
 
     expect(await screen.findByText("No agents")).toBeDefined()
-    expect(screen.getByText("0 agents, 0 models")).toBeDefined()
+    expect(screen.queryByText("0 agents, 0 models")).toBeNull()
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeDefined()
     expect(screen.queryByRole("button", { name: /Edit .* flags/ })).toBeNull()
   })
 

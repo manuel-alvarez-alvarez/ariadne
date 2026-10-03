@@ -21,7 +21,6 @@ import type { LearnedPermissionDto } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { ErrorState } from "@/components/error-state"
 import { Fact, FactList } from "@/components/fact-list"
-import { PanelSheet } from "@/components/panel-sheet"
 import { StatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -31,7 +30,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { When } from "@/components/when"
 import { permissionModeLabel } from "@/features/repositories/permission-modes"
@@ -51,7 +50,12 @@ export function LearnedPermissionDetail({ id, onClose }: { id: string; onClose: 
   const learned = useQuery(learnedPermissionQueryOptions(id))
 
   return (
-    <PanelSheet onClose={onClose}>
+    <Sheet
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose()
+      }}
+    >
       <SheetContent className="sm:max-w-lg" aria-describedby={undefined}>
         <SheetHeader>
           <SheetTitle>{learned.data ? learned.data.tool_name : `Row ${shortId(id)}`}</SheetTitle>
@@ -72,7 +76,7 @@ export function LearnedPermissionDetail({ id, onClose }: { id: string; onClose: 
           <LearnedPermissionDetailView learned={learned.data} />
         )}
       </SheetContent>
-    </PanelSheet>
+    </Sheet>
   )
 }
 

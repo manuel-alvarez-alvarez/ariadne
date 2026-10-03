@@ -84,7 +84,7 @@ describe("RepositoriesPage", () => {
     expect(screen.getByText("no description")).toBeDefined()
     expect(screen.getByText("Auto")).toBeDefined()
     expect(screen.getByText("Learn")).toBeDefined()
-    expect(screen.getByText("2 repositories")).toBeDefined()
+    expect(screen.queryByText("2 repositories")).toBeNull()
   })
 
   it("says nothing about how work ends, which is the task's own", async () => {

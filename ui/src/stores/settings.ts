@@ -65,6 +65,9 @@ interface SettingsState {
    */
   sidebarCollapsed: boolean
   toggleSidebar: () => void
+  /** The inspector width in pixels, clamped to the window by its frame. */
+  panelWidth: number
+  setPanelWidth: (width: number) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -83,6 +86,8 @@ export const useSettingsStore = create<SettingsState>()(
       setSessionGoalFilter: (value) => set({ sessionGoalFilter: value }),
       sessionTaskFilter: "",
       setSessionTaskFilter: (value) => set({ sessionTaskFilter: value }),
+      panelWidth: 576,
+      setPanelWidth: (panelWidth) => set({ panelWidth }),
       sidebarCollapsed: false,
       toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
     }),
@@ -96,6 +101,7 @@ export const useSettingsStore = create<SettingsState>()(
         sessionGoalFilter: state.sessionGoalFilter,
         sessionTaskFilter: state.sessionTaskFilter,
         sidebarCollapsed: state.sidebarCollapsed,
+        panelWidth: state.panelWidth,
       }),
       onRehydrateStorage: () => (state) => {
         if (state) setApiBaseUrl(state.baseUrl)

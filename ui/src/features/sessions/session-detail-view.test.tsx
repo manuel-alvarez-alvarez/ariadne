@@ -201,6 +201,58 @@ it("hides context when the agent has not reported a window", () => {
   expect(screen.queryByText("Context")).toBeNull()
 })
 
+it("shows the context window behind a 4rem meter sized to how much of it is used", () => {
+  renderView({ ...SESSION, context_used: 250_000, context_size: 1_000_000 })
+
+  const figures = screen.getByText("250k / 1M")
+  const track = figures.previousElementSibling
+  if (!track) throw new Error("no meter track beside the context figures")
+  expect(track.className).toContain("w-16")
+  const fill = track.firstElementChild
+  expect(fill).toBeInstanceOf(HTMLElement)
+  expect((fill as HTMLElement).style.width).toBe("25%")
+})
+
+it("shows no Task row for an orchestrator session, which has none", () => {
+  renderView({ ...SESSION, task_id: null, task_agent_id: null, seat: "orchestrator" })
+
+  expect(screen.queryByText("Task")).toBeNull()
+})
+
+it("shows no Directory row when the session has no working directory", () => {
+  renderView({ ...SESSION, worktree_path: null })
+
+  expect(screen.queryByText("Directory")).toBeNull()
+})
+
+it("shows a Directory row, copyable, when the session has a working directory", () => {
+  renderView({ ...SESSION, worktree_path: "/home/me/.ariadne/worktrees/g1/t1" })
+
+  expect(screen.getByText("Directory")).toBeDefined()
+  expect(screen.getByRole("button", { name: "Copy working directory" })).toBeDefined()
+})
+
+it("collapses the facts to one line behind a chevron, open by default", async () => {
+  const user = userEvent.setup()
+  renderView()
+
+  expect(screen.getByText("Agent")).toBeDefined()
+  const collapse = screen.getByRole("button", { name: "Collapse session facts" })
+
+  await user.click(collapse)
+
+  // The fact labels are gone, but what the chevron leaves behind still says
+  // what the console beneath is running and what it has spent.
+  expect(screen.queryByText("Agent")).toBeNull()
+  const line = screen.getByRole("button", { name: "Expand session facts" }).nextElementSibling
+  if (!line) throw new Error("no one-line summary left behind the chevron")
+  expect(line.textContent).toContain("claude-agent-acp:claude-opus-5")
+  expect(line.textContent).toContain("12k")
+
+  await user.click(screen.getByRole("button", { name: "Expand session facts" }))
+  expect(screen.getByText("Agent")).toBeDefined()
+})
+
 it("links to the session it continues", () => {
   renderView({ ...SESSION, switched_from: "01JSESS000000000000000OLD" })
 

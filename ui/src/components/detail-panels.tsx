@@ -10,10 +10,9 @@
  * session the panel is drilled into (`?tab=sessions&session=`) — which is why
  * the standalone one is exactly the case where no panel owns it.
  *
- * Open together, the goal and the task are one stack rather than two panels:
- * the task panel is handed to the goal panel, which renders it inside its own
- * dialog (see `goal-panel.tsx`), so the goal keeps showing behind it, the
- * screen is darkened once, and Escape closes only the sheet on top.
+ * Open together, the goal and task occupy one pane. The goal keeps its view
+ * mounted but hidden while the task is selected, so closing the task returns
+ * to the goal and its opener without a second visible frame or backdrop.
  *
  * Closing a panel unwinds the history entry that opened it — see
  * `routes/panel-history.ts` for why that is not the same as rewriting the URL.

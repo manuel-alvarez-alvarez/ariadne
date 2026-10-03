@@ -5,8 +5,9 @@
  * An agent has no name and no page: it is what it knows and what it runs on.
  * So the skills are the identity — each one linking to itself — and the model
  * beneath them is quiet secondary text, drawn by {@link ModelPin} in its
- * wrapping mode so a long id breaks rather than clips in a fact cell half a
- * panel wide.
+ * one-line mode so a long id is cut in the middle rather than breaking the
+ * fact it sits in over three lines; the whole pin is still a focus away, in
+ * its tooltip.
  *
  * There is nothing behind the pin to disagree with it. What the orchestrator
  * sized this agent at, or what the user chose instead, is simply what it runs
@@ -62,7 +63,7 @@ export function AgentSummary({
           ))
         )}
       </span>
-      <ModelPin model={model} effort={effort} mode="wrap" className="text-muted-foreground" />
+      <ModelPin model={model} effort={effort} mode="line" className="text-muted-foreground" />
     </span>
   )
 }
@@ -89,7 +90,7 @@ export function SeatSummary({
   return (
     <span className={cn("flex min-w-0 flex-col gap-0.5", className)}>
       <span>{SEAT_LABELS[seat]}</span>
-      <ModelPin model={model} effort={effort} mode="wrap" className="text-muted-foreground" />
+      <ModelPin model={model} effort={effort} mode="line" className="text-muted-foreground" />
     </span>
   )
 }

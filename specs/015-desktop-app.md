@@ -30,9 +30,25 @@ Out: the daemon endpoints themselves (012).
 
 1. Every user-facing action exists here and in the CLI alike (014). A feature
    that lands in one is not finished until it is in the other.
-2. The shell is a sidebar and a main area; a panel opens beside a list rather
-   than replacing it, and the URL carries which panel is open.
-3. Screens: the goals board (swimlanes plus an attention strip), the task
+2. The shell is a sidebar, ending in the daemon connection status, and a main
+   area under one header bar — the screen's name as its only `h1`, and a
+   screen's own actions at the header's end. Goal, task and session details
+   occupy one docked pane beside `<main>`. The URL selects its contents.
+   The screen stays accessible, clickable and scrollable, with no scrim or
+   focus trap. The left handle resizes the pane between 24rem and 60% of
+   the window; its default width is 36rem and settings preserve the choice.
+   Below `md`, the pane covers the screen at full width. A task opened from
+   a goal occupies the same pane, with the breadcrumb back to the goal.
+   Session drill-downs use that pane too. Escape inside it closes the current
+   task, then the goal; Escape on the board leaves it open. Closing preserves
+   the existing history and focus return. The header does not shrink, and
+   the body scrolls within the remaining height, with one full-height child
+   for the session view.
+3. Screens: the goals board (swimlanes plus an attention strip) has Active,
+   All and Finished status segments. A status-menu icon holds a custom
+   selection. Each lane header shows a progress bar, done/total and tokens.
+   Its title hint carries the created stamp. The bar and a collapsed lane
+   retain the lane summary. The task
    panel (facts, diff, messages, history), sessions — Ariadne's own and every
    outside conversation an ACP agent stored on its own, merged into one
    listing, each shown in its console — skills, repositories, the agents of
@@ -85,8 +101,16 @@ Out: the daemon endpoints themselves (012).
     agent; the orchestrator's own playbook is not among them, for the author
     or a reviewer. The skills screen marks that playbook beside its built-in
     mark, staying editable and resettable like any other shipped skill.
-17. The agent activity feed shows each event's one-line summary from the
-    daemon; its raw payload stays available under the row.
+17. The agent activity feed shows each event by its kind in plain words: Tool
+    call, Tool result, Permission asked, Permission answered, Agent said, and
+    so on for every kind the daemon records; an unknown kind shows its raw name.
+    A colored dot from the status ramp — warn for permission events, danger for
+    errors, active for agent messages, pending for tool calls — precedes the
+    plain words. The summary is the daemon's one-line gist, or derived from the
+    payload when empty: the tool name and its first argument, showing `Read
+    /tmp/x.png` or `Bash git status`. Consecutive rows of the same kind and the
+    same tool fold into one, such as `Tool call · Read /file ×7`, which expands
+    to the individual rows. Each row still expands to its raw payload.
 18. The sessions screen lists both kinds of session in one table, newest
     activity first: the title, the status, the work — in one column, the
     seat a session holds as a badge, the goal it is under and the task under
@@ -138,7 +162,10 @@ Out: the daemon endpoints themselves (012).
     takes it out of the merged rows, since neither is something an outside
     session could match either. `status` and `seat` are remembered between
     visits, the way this screen's filters always were; the rest are not,
-    since they are for finding one conversation. The Ariadne half arrives
+    since they are for finding one conversation. The Ariadne half renders as
+    soon as it answers; while the outside half is still loading, its rows
+    stay visible with one trailing loading row, and the count reads `<n>
+    sessions · looking for outside conversations`. The Ariadne half arrives
     whole, so only the outside half pages: Load more asks for the
     `next_cursor` the last page carried and appends what comes back, and one
     count line — shown only while the outside half is part of the merged
@@ -155,11 +182,14 @@ Out: the daemon endpoints themselves (012).
     cached page at once and the outside half is fetched again; a
     `session_created` event does the same, for a resume made from the CLI or
     another window.
-19. On a task staffed with several authors (004) the task panel shows every
-    one of them — its skills, its model, its own branch, and its status in the
-    pick: the votes it has so far, or "Picked" once it is the one that won —
-    and the reviewer pick itself: which author each reviewer chose. A task
-    with one author shows the singular Author fact and no pick, unchanged.
+19. The goal, task and session panels open on a dense fact list above their
+    tabs — `text-xs`, three columns at `sm` and four at `lg`, no card frame —
+    rather than the framed grid further down an entity's own screen. On a
+    task staffed with several authors (004) the task panel shows every one of
+    them — its skills, its model, its own branch, and its status in the pick:
+    the votes it has so far, or "Picked" once it is the one that won — and the
+    reviewer pick itself: which author each reviewer chose. A task with one
+    author shows the singular Author fact and no pick, unchanged.
 20. Every session is shown in its console, as the CLI draws it: a terminal
     emulator (xterm.js) on the daemon's terminal socket
     (`GET /v1/sessions/{id}/console/terminal`, 008), in which the daemon
@@ -223,15 +253,17 @@ Out: the daemon endpoints themselves (012).
     in the daemon's order, named by its agent id. Each tab holds that agent's
     extra flags and the models of the catalog whose `agent_id` is that agent.
     A flag edit replaces the list whole through `PUT /v1/agents/{id}`. A
-    Refresh control above the tabs calls `POST /v1/acp-agents/refresh` once,
+    Refresh control beside the tabs calls `POST /v1/acp-agents/refresh` once,
     which reprobes every registry agent and picks up one installed since the
     daemon started; on its answer the agent configs, the ACP agents and the
     models are all reloaded, since a rediscovered agent can move any of the
     three. The control shows a pending state while the call runs, and a
-    failed call is toasted, leaving the screen as it was.
+    failed call is toasted, leaving the screen as it was. Its tooltip also
+    says how many models are turned off; each tab keeps its own model count.
 30. A session panel shows a reported context window as `<used> / <size>`,
-    using the compact spelling of token figures. It shows no context fact
-    before the agent reports one, and it never shows a cost.
+    using the compact spelling of token figures, beside a 4rem meter of how
+    much of it is used. It shows no context fact before the agent reports
+    one, and it never shows a cost.
 31. Every session outside a cancelled goal offers Switch beside its session
     actions. Its dialog starts on the session's pin, checks the pin's
     `<agent>:<model>` shape, and posts its model and optional effort to
@@ -283,7 +315,9 @@ Out: the daemon endpoints themselves (012).
     lays its facts out in the card as a grid, with no "Details" popover:
     what runs (flavour on device), the memory, the GPU, the machine, the
     Python version, the weights, the last refresh's age, the endpoint, and
-    the installed and latest release. Every control sends its own change the
+    the installed and latest release. The Thresholds, Model, and Status and
+    hardware headings use sentence case, medium small text, and a rule below;
+    the status facts use four columns at `lg`. Every control sends its own change the
     moment it is made, there is no Save button, and a handle sends once, on
     release, never on every drag step — and a refusal is toasted with the
     daemon's own message and puts the control back to the row the daemon
@@ -337,7 +371,8 @@ Out: the daemon endpoints themselves (012).
     the trigger as a `title`; the popup is wide enough for a full path rather
     than the trigger's own width, and a `?repository=` id the registry does
     not carry still shows a readable label instead of an empty trigger. A
-    filtered empty state offers Clear filter, which drops `?repository=`. Add
+    filtered empty state offers Clear filter, which drops `?repository=`. The
+    tab shows no row count above the table. Add
     approval opens a form for the repository, the tool name and the kind
     (`POST /v1/permissions/learned`), whose own repository picker follows the
     same folder-name-with-path convention; each row's Edit changes the tool
@@ -435,12 +470,33 @@ Out: the daemon endpoints themselves (012).
     (023). Its header holds a `since` selector — all time, 24 hours, 7 days,
     30 days — and a repository selector, both kept in the URL as `?since=`
     and `?repo=`. The screen passes `{ since, repo }` to each panel under
-    `src/components/stats/`. The models panel lists `GET /v1/stats/models`,
-    one row per model and seat, its tokens as the token figure. Its query key
-    is `qk.stats.models(filter)`, and every `task_updated` and
-    `session_updated` event invalidates the `stats` group — parity with
-    `ariadne stats models` (014).
+    `src/components/stats/`. Every panel draws its own heading with the one
+    shared `StatSectionHeading`, `text-sm font-medium`, so the five read as
+    one section style rather than Reviews standing out at its own size. The
+    models panel lists `GET /v1/stats/models`, as a horizontal bar chart of
+    sessions per model and seat, split into ended, failed and stalled, and a
+    second chart of tokens per model and seat. Its query key is
+    `qk.stats.models(filter)`, and every `task_updated` and `session_updated`
+    event invalidates the `stats` group — parity with `ariadne stats models`
+    (014). Every chart on the screen is `StatBarChart` (023): one row per
+    model, seat or tool, sorted by its first series descending, colour-coded
+    by meaning off the status ramp through the `STATUS_COLORS` module so
+    "failed" is the same red in every panel, and backed by an `sr-only` table
+    of the same numbers for a screen reader. A family with no rows renders
+    its heading and the one muted sentence its empty state always said, and
+    no chart frame.
 
+- Goal details leave the board accessible, and another lane title changes the
+  open pane (`ui/src/components/detail-panels.test.tsx::keeps the board accessible and follows another lane title with a goal open`,
+  `ui/src/features/goals/goal-panel.test.tsx::renders a goal without a modal dialog`).
+- Escape unwinds a task and its goal in one pane
+  (`ui/src/features/tasks/task-panel.test.tsx::unwinds the task and goal in one pane with Escape`).
+- Dragging clamps and persists the pane width across a remount
+  (`ui/src/components/panel-sheet.test.tsx::clamps a dragged pane width and restores it from settings on remount`).
+- The session frame supplies the remaining height through its scrolling body
+  (`ui/src/features/sessions/session-panel.test.tsx::gives the console view the remaining pane height`).
+- A console modal handles Escape without closing the surrounding pane
+  (`ui/src/features/sessions/session-panel.test.tsx::keeps modal Escape separate from the pane close`).
 - The Stats screen renders the models panel from a stubbed answer, and asks
   with the filters in its URL under the key `qk` names
   (`ui/src/routes/stats.test.tsx::renders the models panel from the daemon's
@@ -551,10 +607,12 @@ Out: the daemon endpoints themselves (012).
   `::refuses a leading colon, which names no agent`,
   `::refuses a trailing colon, which names no model`,
   `::splits at the first colon`).
-- A model pin wraps whole in a panel fact, and a one-line table pin cuts its
-  middle without cutting its effort; focus opens its whole value
+- A model pin cuts its middle without cutting its effort in a panel fact and
+  in a table row alike, and focus opens its whole value in a tooltip; a pin
+  still wraps whole where a call site asks for that instead
   (`ui/src/features/models/model-pin.test.tsx::wraps every character of a pin without a tooltip`,
   `::keeps an effort visible beside a middle-cut model and opens the whole pin on focus`,
+  `::holds a fact's pin to one line, cut in the middle, with the whole pin in its tooltip`,
   `::leaves out an empty effort and its at sign`).
 - The sessions list uses the one-line pin and keeps its effort beside the
   middle-cut model
@@ -566,9 +624,10 @@ Out: the daemon endpoints themselves (012).
 - The agent activity feed shows the daemon's summary and opens and closes the
   raw payload under its row
   (`ui/src/features/sessions/session-activity.test.tsx`).
-- A session panel shows its reported context window with compact token figures
-  and hides an unreported one
+- A session panel shows its reported context window with compact token
+  figures beside a meter of how much is used, and hides an unreported one
   (`ui/src/features/sessions/session-detail-view.test.tsx::shows the reported context window with compact token figures`,
+  `::shows the context window behind a 4rem meter sized to how much of it is used`,
   `::hides context when the agent has not reported a window`).
 - One table lists Ariadne sessions and outside sessions together, newest
   activity first, and an outside row's empty status, goal and task, naming
@@ -822,13 +881,38 @@ Out: the daemon endpoints themselves (012).
   `::sends a landing picked by hand instead of the repository's default`,
   `::keeps a hand-picked landing once a different repository becomes the
   first`).
-- The goal panel's facts show the goal's landing, and a feature-branch
-  goal's repositories each show their own goal branch next to their base
-  branch once the plan has cut one
+- The goal panel's facts show the goal's landing, and name each repository by
+  its folder with its base branch bracketed after it and a feature-branch
+  goal's own branch after that once the plan has cut one — the full path
+  stays in a tooltip and stays copyable
   (`ui/src/features/goals/goal-panel.test.tsx::shows the goal's landing
   among its facts`,
-  `::shows each repository's goal branch next to its base branch`,
-  `::shows no goal branch for a repository that has not been cut one yet`).
+  `::names each repository by its folder, with its base branch bracketed and
+  its goal branch after`,
+  `::holds the full path of each repository in its tooltip, and keeps it
+  copyable`).
+- A screen's name appears once, as the header's only `h1`, with that screen's
+  own actions at the header's end, and the shell renders no footer of its
+  own — the sidebar's last child is the daemon connection status, whose click
+  still opens the logs drawer
+  (`ui/src/components/app-shell.test.tsx::shows the screen's name once, as
+  the header's only h1, with its actions at the header's end`,
+  `::renders no footer, and ends the sidebar with the connection status,
+  whose click opens the logs drawer`).
+- A `PageHeader` carries no heading of its own: its `actions` portal into the
+  header through `PageHeaderContext`, and its `description` becomes the
+  tooltip of the header's title; mounted on its own, with no shell around it,
+  it renders `actions` in place instead
+  (`ui/src/components/page-header.test.tsx::shows its description as the
+  tooltip of the shell's header title`,
+  `::renders its actions in place, with no heading, when there is no shell to
+  hand them to`).
+- The rail drops the wordmark for the mark alone, and the connection status
+  for the dot alone, each named by its own tooltip
+  (`ui/src/components/app-shell.test.tsx::replaces the wordmark with the
+  mark alone in the rail, next to the status dot`,
+  `ui/src/components/connection-status.test.tsx::shows the dot alone in the
+  rail, named by a tooltip instead of a label`).
 
 ## Sources
 

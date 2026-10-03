@@ -171,7 +171,7 @@ describe("the table", () => {
     expect(screen.getByText("Write")).toBeDefined()
     expect(screen.getByText("AI")).toBeDefined()
     expect(screen.getByText("Reject")).toBeDefined()
-    expect(screen.getByText("2 rows")).toBeDefined()
+    expect(screen.queryByText("2 rows")).toBeNull()
 
     // The AI score column: a label badge and the danger for a row the model
     // scored, an em dash for one that was never called (`ALLOWED_ROW`).

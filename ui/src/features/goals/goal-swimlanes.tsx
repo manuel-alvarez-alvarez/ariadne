@@ -24,7 +24,6 @@ import { goalUsageRows, TokenFigure } from "@/components/token-figure"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { When } from "@/components/when"
 import { type SessionAttention, SessionAttentionBadge } from "@/features/sessions/session-display"
 import {
   BOARD_STATUSES,
@@ -35,11 +34,11 @@ import {
   taskListQueryOptions,
 } from "@/features/tasks"
 import { useHorizontalOverflow } from "@/hooks/use-scroll-overflow"
-import { cn, folderName } from "@/lib/format"
+import { cn, folderName, formatAbsolute } from "@/lib/format"
 import { paths } from "@/routes/paths"
 import { type BoardAttention, taskAttentionReason, useBoardAttention } from "./attention"
 import { useCollapsedLanes } from "./collapsed-lanes"
-import { laneSummary, orderLanes } from "./lanes"
+import { laneCounts, laneSummary, orderLanes } from "./lanes"
 import { GOAL_STATUS_META, isStillPlanning, isTerminalGoalStatus } from "./status"
 
 /**
@@ -217,7 +216,11 @@ function Lane({
   collapsed: boolean
   onToggle: () => void
 }) {
-  const total = tasks?.all.length ?? 0
+  const counts = laneCounts(tasks?.all ?? [])
+  const total = counts.pipeline
+  const done = counts.finished
+  const danger = counts.failed + counts.stalled
+  const summary = laneSummary(tasks?.all ?? [])
   const repos = goal.repos.map((repo) => `${repo.path} [${repo.base_branch}]`).join("\n")
   // Folder name, not the full path: the header is a line among five other
   // cells, and the path in full is what the tooltip on the title already
@@ -262,6 +265,7 @@ function Lane({
             <span className="whitespace-pre-line text-background/70">
               {repos || "Open the goal"}
             </span>
+            <span className="text-background/70">created {formatAbsolute(goal.created_at)}</span>
           </TooltipContent>
         </Tooltip>
         {repoSummary && (
@@ -273,18 +277,44 @@ function Lane({
           tone={GOAL_STATUS_META[goal.status].badge}
         />
         {orchestrator ? <SessionAttentionBadge attention={orchestrator} /> : null}
-        <span className="flex items-baseline gap-1 whitespace-nowrap text-xs text-muted-foreground">
-          {/* Where the lane is up to, and the whole of what a folded lane
-              says: how far through the pipeline it is, and what is stuck or
-              waiting in it. "N tasks" was the one number about a goal that
-              stops changing the moment the orchestrator is done. */}
-          {laneSummary(tasks?.all ?? [])} · created <When at={goal.created_at} label="created" /> ·{" "}
-          {/* What the whole goal has cost — orchestrator, authors and reviewers —
-              which is the one number the board can show without opening
-              anything. The hint behind it names the halves and splits the
-              total between the three roles. */}
-          <TokenFigure usage={goal.usage.total} rows={goalUsageRows(goal.usage)} />
-        </span>
+        {collapsed ? (
+          <span className="whitespace-nowrap text-xs text-muted-foreground">{summary}</span>
+        ) : (
+          <span className="flex items-center gap-2 whitespace-nowrap text-xs text-muted-foreground">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <div
+                    role="progressbar"
+                    aria-label={summary}
+                    aria-valuemin={0}
+                    aria-valuemax={total}
+                    aria-valuenow={done}
+                    className="flex h-1 w-16 overflow-hidden rounded-full bg-muted"
+                  />
+                }
+              >
+                <span
+                  className="bg-status-done"
+                  style={{ width: `${(done / Math.max(total, 1)) * 100}%` }}
+                />
+                <span
+                  className="bg-status-danger"
+                  style={{ width: `${(danger / Math.max(total, 1)) * 100}%` }}
+                />
+              </TooltipTrigger>
+              <TooltipContent>{summary}</TooltipContent>
+            </Tooltip>
+            <span>
+              {done}/{total}
+            </span>
+            {/* What the whole goal has cost — orchestrator, authors and reviewers —
+                which is the one number the board can show without opening
+                anything. The hint behind it names the halves and splits the
+                total between the three roles. */}
+            <TokenFigure usage={goal.usage.total} rows={goalUsageRows(goal.usage)} />
+          </span>
+        )}
       </header>
 
       {collapsed ? null : total === 0 ? (

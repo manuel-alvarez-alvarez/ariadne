@@ -34,8 +34,9 @@ import userEvent from "@testing-library/user-event"
 import { expect, it } from "vitest"
 
 import { type components, type MessageDto, qk, type SessionDto, type TaskDto } from "@/api"
+import { DetailPanels } from "@/components/detail-panels"
 import { shortId } from "@/lib/format"
-import { aSession, aSessionPage } from "@/test/fixtures"
+import { aGoal, aSession, aSessionPage } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { TaskPanel } from "./task-panel"
 
@@ -554,4 +555,36 @@ it("waits for a list before putting a number on its tab, then says zero", async 
   // been opened to find.
   await waitFor(() => expect(tab(/^Sessions/).textContent).toBe("Sessions0"))
   expect(within(tab(/^Messages/)).getByLabelText("0 messages").textContent).toBe("0")
+})
+
+it("unwinds the task and goal in one pane with Escape", async () => {
+  const { location } = renderScreen(<DetailPanels />, {
+    route: `/goals?goal=${TASK.goal_id}&task=${TASK.id}`,
+    seed: (client) => client.setQueryData(qk.tasks.detail(TASK.id), TASK),
+  })
+  const user = userEvent.setup()
+  const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" })
+  expect(screen.getAllByRole("region")).toHaveLength(1)
+  within(breadcrumb).getByRole("button").focus()
+  await user.keyboard("{Escape}")
+  expect(location.url).toBe(`/goals?goal=${TASK.goal_id}`)
+  await user.keyboard("{Escape}")
+  expect(location.url).toBe("/goals")
+})
+
+it("returns focus to the task card after closing its stacked view", async () => {
+  renderScreen(<DetailPanels />, {
+    route: `/goals?goal=${TASK.goal_id}`,
+    seed: (client) => {
+      client.setQueryData(qk.goals.detail(TASK.goal_id), aGoal({ id: TASK.goal_id }))
+      client.setQueryData(qk.tasks.list({ goal: TASK.goal_id }), [TASK])
+      client.setQueryData(qk.tasks.detail(TASK.id), TASK)
+    },
+  })
+  const user = userEvent.setup()
+  const card = screen.getByRole("link", { name: new RegExp(TASK.title) })
+  await user.click(card)
+  expect(screen.getAllByRole("region")).toHaveLength(1)
+  await user.keyboard("{Escape}")
+  await waitFor(() => expect(document.activeElement).toBe(card))
 })

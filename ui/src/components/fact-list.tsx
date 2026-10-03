@@ -27,6 +27,7 @@ import { cn } from "@/lib/format"
 
 export function FactList({
   columns = 3,
+  dense = false,
   framed = true,
   className,
   children,
@@ -37,10 +38,17 @@ export function FactList({
    * worktree paths — which a third column only cuts shorter.
    *
    * One column below `sm` either way: a 48rem panel on a narrow window is not
-   * two of anything.
+   * two of anything. Ignored by {@link dense}, which sets its own count.
    */
   columns?: 2 | 3
-  /** The card the facts sit in. Off where the surface around them is already one. */
+  /**
+   * The compact strip a panel opens on, above its tabs: `text-xs`, tighter
+   * gaps, no card frame, and more columns than a panel keeps room for further
+   * down — three at `sm`, four at `lg` — since what sits here is read at a
+   * glance on the way to the tabs rather than studied on its own.
+   */
+  dense?: boolean
+  /** The card the facts sit in. Off where the surface around them is already one, and always off when {@link dense}. */
   framed?: boolean
   className?: string
   children: ReactNode
@@ -48,9 +56,10 @@ export function FactList({
   return (
     <dl
       className={cn(
-        "grid gap-x-6 gap-y-3 text-sm",
-        columns === 3 ? "sm:grid-cols-2 lg:grid-cols-3" : "sm:grid-cols-2",
-        framed && "rounded-lg border bg-card p-3",
+        "grid",
+        dense ? "gap-x-4 gap-y-1 text-xs sm:grid-cols-3 lg:grid-cols-4" : "gap-x-6 gap-y-3 text-sm",
+        !dense && (columns === 3 ? "sm:grid-cols-2 lg:grid-cols-3" : "sm:grid-cols-2"),
+        !dense && framed && "rounded-lg border bg-card p-3",
         className,
       )}
     >

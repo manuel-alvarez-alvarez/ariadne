@@ -236,20 +236,23 @@ it("holds every task of a plan still being written in the first column", async (
   expect(laneHeader(planning.title).textContent).toContain("Planning")
 })
 
-it("carries the goal's own total in the lane header", async () => {
+it("shows lane progress, tokens and the created stamp in the title hint", async () => {
   stubDaemon({ tasks: [TASK] })
   renderBoard()
 
   await screen.findByText(TASK.title)
-  // In the header, beside where the lane is up to and the goal's age — not on
-  // a card, which is one task's worth of a figure that is the whole goal's.
-  const meta = screen.getByText(/0\/1 finished · created/)
-  expect(meta.closest("header")).not.toBeNull()
+  const header = laneHeader(GOAL.title)
+  const progress = within(header).getByRole("progressbar", { name: "0/1 finished" })
+  expect(progress.getAttribute("aria-valuenow")).toBe("0")
+  expect(within(header).getByText("0/1")).not.toBeNull()
   // Input first and output after it, each behind its own arrow; the word the
   // arrows stand for is there for a screen reader and nowhere else, since the
   // header has no room to spell "tokens" out beside them.
-  expect(meta.textContent).toContain("1.2M in, 89.1% cached, 45k out")
-  expect(meta.textContent).not.toContain("tokens")
+  expect(header.textContent).toContain("1.2M in, 89.1% cached, 45k out")
+  expect(header.textContent).not.toContain("created")
+
+  screen.getByRole("link", { name: GOAL.title }).focus()
+  expect(await screen.findByText(/^created /)).not.toBeNull()
 })
 
 it("says zero for a goal whose agents have spent nothing", async () => {
@@ -259,9 +262,7 @@ it("says zero for a goal whose agents have spent nothing", async () => {
   await screen.findByText(TASK.title)
   // Both halves, and a figure rather than a dash: an agent that has spent
   // nothing has spent nothing, which is a number the daemon knows.
-  expect(screen.getByText(/0\/1 finished · created/).textContent).toContain(
-    "0 in, 0.0% cached, 0 out",
-  )
+  expect(laneHeader(GOAL.title).textContent).toContain("0 in, 0.0% cached, 0 out")
 })
 
 // ── The repository, in the header itself ──────────────────────────────────
@@ -310,7 +311,7 @@ it("shows nothing extra for a goal on no repository", async () => {
 
 // ── Where the lane is up to ───────────────────────────────────────────────
 
-it("counts how far through the pipeline the lane is, and what is stuck in it", async () => {
+it("keeps the lane summary as the progress hint", async () => {
   const tasks = [
     ...statuses("finished", 3),
     ...statuses("in_progress", 2),
@@ -321,20 +322,37 @@ it("counts how far through the pipeline the lane is, and what is stuck in it", a
   renderBoard()
 
   await screen.findByText("finished 1")
-  // "N tasks" was the one number about a goal that stops changing the moment
-  // the orchestrator is done; this is the one that does not.
-  expect(laneHeader(GOAL.title).textContent).toContain("3/7 finished · 1 failed · 1 waiting")
+  const user = userEvent.setup()
+  await user.hover(within(laneHeader(GOAL.title)).getByRole("progressbar"))
+  expect(await screen.findByText("3/7 finished · 1 failed · 1 waiting")).not.toBeNull()
 })
 
-it("says nothing about what a lane has none of", async () => {
+it("keeps omitted counts out of the progress hint", async () => {
   stubDaemon({ tasks: statuses("in_progress", 2) })
   renderBoard()
 
   await screen.findByText("in_progress 1")
-  const header = laneHeader(GOAL.title).textContent ?? ""
-  expect(header).toContain("0/2 finished")
-  expect(header).not.toContain("failed")
-  expect(header).not.toContain("waiting")
+  const user = userEvent.setup()
+  await user.hover(within(laneHeader(GOAL.title)).getByRole("progressbar"))
+  const hint = await screen.findByText("0/2 finished")
+  expect(hint.textContent).not.toContain("failed")
+  expect(hint.textContent).not.toContain("waiting")
+})
+
+it("excludes cancelled tasks from open lane progress", async () => {
+  const tasks = [...statuses("finished", 7), ...statuses("cancelled", 1)]
+  stubDaemon({ tasks })
+  renderBoard()
+
+  await screen.findByText("finished 1")
+  const progress = within(laneHeader(GOAL.title)).getByRole("progressbar")
+  expect(progress.getAttribute("aria-valuemax")).toBe("7")
+  expect(progress.getAttribute("aria-valuenow")).toBe("7")
+  expect(within(laneHeader(GOAL.title)).getByText("7/7")).not.toBeNull()
+
+  const user = userEvent.setup()
+  await user.hover(progress)
+  expect(await screen.findByText("7 tasks finished · 1 cancelled")).not.toBeNull()
 })
 
 // ── The reading order, and what a finished lane says ──────────────────────

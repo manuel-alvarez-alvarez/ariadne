@@ -67,7 +67,6 @@ export function AgentsPage() {
 
   const configs = useQuery(agentConfigsQueryOptions())
   const models = useQuery(modelsQueryOptions())
-  const refresh = useRefreshAcpAgents()
 
   function openEdit(config: AgentConfigDto) {
     setEditing(config)
@@ -81,38 +80,8 @@ export function AgentsPage() {
       <PageHeader
         title="Agents"
         description="The ACP agents Ariadne spawns sessions with. The flags are appended to every launch of that agent, whichever profile is running on it, and a model turned off is taken out of the catalog the orchestrator sizes a plan from."
-        actions={
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="outline"
-                  pending={refresh.isPending}
-                  onClick={() =>
-                    refresh.mutate(undefined, {
-                      onError: (error) =>
-                        toast.error("Could not refresh agents", {
-                          description: describeError(error),
-                        }),
-                    })
-                  }
-                />
-              }
-            >
-              <RefreshCwIcon />
-              Refresh
-            </TooltipTrigger>
-            <TooltipContent>{REFRESH_HINT}</TooltipContent>
-          </Tooltip>
-        }
+        actions={null}
       />
-
-      {configs.data && models.data ? (
-        <p className="text-sm text-muted-foreground">
-          {plural(configs.data.length, "agent")}, {plural(models.data.length, "model")}
-          {off > 0 ? `, ${off} turned off` : null}
-        </p>
-      ) : null}
 
       {/*
         The catalog failing is said once, above the tabs, rather than inside
@@ -132,6 +101,7 @@ export function AgentsPage() {
         configs={configs}
         models={models.data ?? []}
         modelsPending={models.isPending && !models.isError}
+        off={off}
         picked={picked}
         onPick={setPicked}
         onEdit={openEdit}
@@ -162,6 +132,7 @@ function AgentTabs({
   configs,
   models,
   modelsPending,
+  off,
   picked,
   onPick,
   onEdit,
@@ -169,23 +140,49 @@ function AgentTabs({
   configs: ConfigsQuery
   models: ModelDto[]
   modelsPending: boolean
+  off: number
   picked: string | undefined
   onPick: (kind: string) => void
   onEdit: (config: AgentConfigDto) => void
 }) {
+  const refresh = useRefreshAcpAgents()
+
   if (configs.isError) {
     return (
-      <ErrorState
-        title="Could not load the agents"
-        error={configs.error}
-        description={networkHint(configs.error)}
-        onRetry={() => void configs.refetch()}
-      />
+      <>
+        <div className="flex justify-end">
+          <RefreshAgents refresh={refresh} off={off} />
+        </div>
+        <ErrorState
+          title="Could not load the agents"
+          error={configs.error}
+          description={networkHint(configs.error)}
+          onRetry={() => void configs.refetch()}
+        />
+      </>
     )
   }
 
-  if (configs.isPending) return <Skeleton className="h-96 rounded-xl" />
-  if (!configs.data?.length) return <NoAgents />
+  if (configs.isPending) {
+    return (
+      <>
+        <div className="flex justify-end">
+          <RefreshAgents refresh={refresh} off={off} />
+        </div>
+        <Skeleton className="h-96 rounded-xl" />
+      </>
+    )
+  }
+  if (!configs.data?.length) {
+    return (
+      <>
+        <div className="flex justify-end">
+          <RefreshAgents refresh={refresh} off={off} />
+        </div>
+        <NoAgents />
+      </>
+    )
+  }
 
   // The reader's choice while they have one, the daemon's first agent before
   // that — and again if the agent they were on stops being one of the answers.
@@ -194,24 +191,27 @@ function AgentTabs({
 
   return (
     <Tabs value={current} onValueChange={(value) => onPick(value as string)}>
-      <TabsList>
-        {configs.data.map((config) => (
-          <TabsTrigger key={config.agent_id} value={config.agent_id}>
-            {config.agent_id}
-            {/* How big that agent's catalog is — the rows behind the tab, which
-                is what this pill means everywhere else. Which of them are on
-                is the switch column's answer, not a number's. */}
-            <TabCount
-              count={
-                modelsPending
-                  ? undefined
-                  : models.filter((model) => model.agent_id === config.agent_id).length
-              }
-              noun="model"
-            />
-          </TabsTrigger>
-        ))}
-      </TabsList>
+      <div className="flex items-center justify-between gap-2">
+        <TabsList>
+          {configs.data.map((config) => (
+            <TabsTrigger key={config.agent_id} value={config.agent_id}>
+              {config.agent_id}
+              {/* How big that agent's catalog is — the rows behind the tab, which
+                  is what this pill means everywhere else. Which of them are on
+                  is the switch column's answer, not a number's. */}
+              <TabCount
+                count={
+                  modelsPending
+                    ? undefined
+                    : models.filter((model) => model.agent_id === config.agent_id).length
+                }
+                noun="model"
+              />
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        <RefreshAgents refresh={refresh} off={off} />
+      </div>
       {configs.data.map((config) => (
         <TabsContent key={config.agent_id} value={config.agent_id} className="pt-3">
           <AgentPanel
@@ -224,6 +224,41 @@ function AgentTabs({
         </TabsContent>
       ))}
     </Tabs>
+  )
+}
+
+function RefreshAgents({
+  refresh,
+  off,
+}: {
+  refresh: ReturnType<typeof useRefreshAcpAgents>
+  off: number
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="outline"
+            pending={refresh.isPending}
+            onClick={() =>
+              refresh.mutate(undefined, {
+                onError: (error) =>
+                  toast.error("Could not refresh agents", {
+                    description: describeError(error),
+                  }),
+              })
+            }
+          />
+        }
+      >
+        <RefreshCwIcon />
+        Refresh
+      </TooltipTrigger>
+      <TooltipContent>
+        {REFRESH_HINT} {plural(off, "model")} turned off.
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -252,10 +287,10 @@ function AgentPanel({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex items-center gap-2 overflow-x-auto">
         <span className="text-muted-foreground text-sm">Extra flags</span>
         {config.extra_flags.length > 0 ? (
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex gap-1.5">
             {config.extra_flags.map((flag) => (
               <Badge key={flag} variant="outline" className="font-mono">
                 {flag}

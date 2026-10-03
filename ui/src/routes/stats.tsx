@@ -106,11 +106,13 @@ export function StatsPage() {
           </>
         }
       />
-      <ModelsPanel filter={filter} />
-      <ReviewsPanel filter={filter} />
-      <SwitchesPanel filter={filter} />
-      <ToolsPanel filter={filter} />
-      <OutcomesPanel filter={filter} />
+      <div className="flex flex-col gap-3">
+        <ModelsPanel filter={filter} />
+        <ReviewsPanel filter={filter} />
+        <SwitchesPanel filter={filter} />
+        <ToolsPanel filter={filter} />
+        <OutcomesPanel filter={filter} />
+      </div>
     </div>
   )
 }

@@ -65,11 +65,7 @@ const STATE_TONE: Record<AiPermissionsStatusDto["state"], string> = {
 }
 
 function SectionHeading({ children }: { children: string }) {
-  return (
-    <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-      {children}
-    </h3>
-  )
+  return <h3 className="border-b pb-2 text-sm font-medium text-muted-foreground">{children}</h3>
 }
 
 const MEMORY_FORMAT = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 })
@@ -328,7 +324,7 @@ export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
 
       <div className="flex flex-col gap-2">
         <SectionHeading>Status and hardware</SectionHeading>
-        <FactList framed={false}>
+        <FactList framed={false} className="lg:grid-cols-4">
           <Fact label="Running">
             {status.flavour} on {status.device}
           </Fact>

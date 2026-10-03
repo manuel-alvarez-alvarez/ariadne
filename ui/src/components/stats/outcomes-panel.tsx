@@ -2,102 +2,135 @@
  * The outcomes panel of the Stats screen: how tasks end per author model, and
  * who wins a contest several authors ran, off `GET /v1/stats/outcomes`.
  *
- * A row is a model's own figures; the last row is the totals the daemon
- * already summed across every model. Both come straight off the daemon's
- * aggregate, same as the models panel.
+ * The figures are the daemon's own aggregate, same as the models panel:
+ * nothing here adds anything up.
  */
 
 import { queryOptions, useQuery } from "@tanstack/react-query"
 
-import {
-  api,
-  type OutcomeStatDto,
-  type OutcomeTotalsDto,
-  qk,
-  type StatsFilter,
-  unwrap,
-} from "@/api"
-import { DataTable } from "@/components/data-table"
+import { api, type OutcomeStatDto, qk, type StatsFilter, unwrap } from "@/api"
 import { EmptyState } from "@/components/empty-state"
-import { TableCell, TableRow } from "@/components/ui/table"
 import { formatDuration, formatRate } from "@/lib/format"
+import { ENDINGS_CONFIG, LEAD_TIME_CONFIG } from "./chart-configs"
+import { StatSectionHeading } from "./section-heading"
+import { StatBarChart } from "./stat-bar-chart"
+import { StatQueryState } from "./stat-query-state"
 
-const COLUMNS = [
-  { header: "Model" },
-  { header: "Finished", className: "text-right" },
-  { header: "Failed", className: "text-right" },
-  { header: "Cancelled", className: "text-right" },
-  { header: "Finish rate", className: "text-right" },
-  { header: "Mean lead time", className: "text-right" },
-  { header: "Median lead time", className: "text-right" },
-  { header: "Mean reviews", className: "text-right" },
-  { header: "Contests", className: "text-right" },
-  { header: "Win rate", className: "text-right" },
-]
+interface OutcomeRow {
+  label: string
+  finished: number
+  failed: number
+  cancelled: number
+  finish_rate: number
+  win_rate: number
+  contests_entered: number
+  contests_won: number
+  mean_lead_time_secs: number
+  median_lead_time_secs: number
+  mean_review_requests: number
+}
 
-/** One row of the table: a model's own figures, or the totals across all. */
-type OutcomeRow =
-  | (OutcomeStatDto & { isTotal: false })
-  | (OutcomeTotalsDto & { model: string; isTotal: true })
+function toRows(items: OutcomeStatDto[]): OutcomeRow[] {
+  return items.map((row) => ({
+    label: row.model,
+    finished: row.finished,
+    failed: row.failed,
+    cancelled: row.cancelled,
+    finish_rate: row.finish_rate,
+    win_rate: row.win_rate,
+    contests_entered: row.contests_entered,
+    contests_won: row.contests_won,
+    mean_lead_time_secs: row.mean_lead_time_secs,
+    median_lead_time_secs: row.median_lead_time_secs,
+    mean_review_requests: row.mean_review_requests,
+  }))
+}
 
 /** `GET /v1/stats/outcomes`, narrowed by the screen's filter. */
 function outcomeStatsQueryOptions(filter: StatsFilter) {
   return queryOptions({
     queryKey: qk.stats.outcomes(filter),
     queryFn: () => unwrap(api().GET("/v1/stats/outcomes", { params: { query: filter } })),
-    select: (response): OutcomeRow[] =>
-      response.items.length === 0
-        ? []
-        : [
-            ...response.items.map((item) => ({ ...item, isTotal: false as const })),
-            { ...response.totals, model: "Totals", isTotal: true as const },
-          ],
+    select: (response) => toRows(response.items),
   })
 }
 
 export function OutcomesPanel({ filter }: { filter: StatsFilter }) {
   const stats = useQuery(outcomeStatsQueryOptions(filter))
-  return (
-    <section aria-label="Outcomes" className="flex flex-col gap-2">
-      <h2 className="font-heading text-sm font-semibold">Outcomes</h2>
-      <DataTable
-        query={stats}
-        errorTitle="Could not load the outcome stats"
-        columns={COLUMNS}
-        empty={
-          <EmptyState
-            title="No task has ended in this span"
-            description="A row appears for each author model once a task on it ends."
-          />
-        }
-        rowKey={(row) => row.model}
-        renderRow={(row) => <OutcomeStatRow row={row} />}
-      />
-    </section>
-  )
-}
+  const rows = stats.data ?? []
 
-function OutcomeStatRow({ row }: { row: OutcomeRow }) {
   return (
-    <TableRow className={row.isTotal ? "font-semibold" : undefined}>
-      <TableCell className={row.isTotal ? undefined : "font-mono text-xs"}>{row.model}</TableCell>
-      <TableCell className="text-right tabular-nums">{row.finished}</TableCell>
-      <TableCell className="text-right tabular-nums">{row.failed}</TableCell>
-      <TableCell className="text-right tabular-nums">{row.cancelled}</TableCell>
-      <TableCell className="text-right tabular-nums">{formatRate(row.finish_rate)}</TableCell>
-      <TableCell className="text-right tabular-nums">
-        {formatDuration(row.mean_lead_time_secs)}
-      </TableCell>
-      <TableCell className="text-right tabular-nums">
-        {formatDuration(row.median_lead_time_secs)}
-      </TableCell>
-      <TableCell className="text-right tabular-nums">
-        {row.mean_review_requests.toFixed(1)}
-      </TableCell>
-      <TableCell className="text-right tabular-nums">
-        {row.contests_won}/{row.contests_entered}
-      </TableCell>
-      <TableCell className="text-right tabular-nums">{formatRate(row.win_rate)}</TableCell>
-    </TableRow>
+    <section aria-label="Outcomes" className="flex flex-col gap-3">
+      <StatSectionHeading>Outcomes</StatSectionHeading>
+      <StatQueryState query={stats} errorTitle="Could not load the outcome stats">
+        {rows.length === 0 ? (
+          <EmptyState emphasis="quiet" title="No task has ended in this span" />
+        ) : (
+          <>
+            <StatBarChart
+              data={[...rows].sort(
+                (a, b) =>
+                  b.finished + b.failed + b.cancelled - (a.finished + a.failed + a.cancelled),
+              )}
+              config={ENDINGS_CONFIG}
+              bars={[["finished", "failed", "cancelled"]]}
+              caption="Tasks per author model, by how they ended"
+              columns={[
+                { header: "Model", render: (row) => row.label },
+                { header: "Finished", render: (row) => row.finished },
+                { header: "Failed", render: (row) => row.failed },
+                { header: "Cancelled", render: (row) => row.cancelled },
+                { header: "Finish rate", render: (row) => formatRate(row.finish_rate) },
+                { header: "Win rate", render: (row) => formatRate(row.win_rate) },
+                {
+                  header: "Contests",
+                  render: (row) => `${row.contests_won}/${row.contests_entered}`,
+                },
+                {
+                  header: "Mean lead time",
+                  render: (row) => formatDuration(row.mean_lead_time_secs),
+                },
+                { header: "Mean reviews", render: (row) => row.mean_review_requests.toFixed(1) },
+              ]}
+              tooltip={(row) => (
+                <div className="flex flex-col gap-1">
+                  <p className="font-medium">{row.label}</p>
+                  <p>Finished: {row.finished}</p>
+                  <p>Failed: {row.failed}</p>
+                  <p>Cancelled: {row.cancelled}</p>
+                  <p>Finish rate: {formatRate(row.finish_rate)}</p>
+                  <p>Win rate: {formatRate(row.win_rate)}</p>
+                  <p>
+                    Contests: {row.contests_won}/{row.contests_entered}
+                  </p>
+                  <p>Mean lead time: {formatDuration(row.mean_lead_time_secs)}</p>
+                  <p>Mean reviews: {row.mean_review_requests.toFixed(1)}</p>
+                </div>
+              )}
+            />
+            <StatBarChart
+              data={[...rows].sort((a, b) => b.median_lead_time_secs - a.median_lead_time_secs)}
+              config={LEAD_TIME_CONFIG}
+              bars={["median_lead_time_secs"]}
+              caption="Median lead time per model"
+              columns={[
+                { header: "Model", render: (row) => row.label },
+                {
+                  header: "Median lead time",
+                  render: (row) => formatDuration(row.median_lead_time_secs),
+                },
+              ]}
+              tooltip={(row) => (
+                <div className="flex flex-col gap-1">
+                  <p className="font-medium">{row.label}</p>
+                  <p>Median: {formatDuration(row.median_lead_time_secs)}</p>
+                  <p>Mean: {formatDuration(row.mean_lead_time_secs)}</p>
+                </div>
+              )}
+            />
+          </>
+        )}
+      </StatQueryState>
+    </section>
   )
 }

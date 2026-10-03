@@ -32,7 +32,7 @@ import { Link } from "react-router-dom"
 import { ErrorState } from "@/components/error-state"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { PaneBody, PaneHeader, PaneTitle } from "@/components/ui/docked-pane"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { sessionQueryOptions } from "@/features/sessions/queries"
@@ -82,7 +82,7 @@ export function TaskSessionView({
 
   return (
     <>
-      <SheetHeader>
+      <PaneHeader>
         {/* `max-w-full` and the truncating label are what keep a long task
             title out from under the sheet's close button: a button is
             `whitespace-nowrap` and `w-fit`, so without them it grows straight
@@ -97,39 +97,41 @@ export function TaskSessionView({
           <ArrowLeftIcon />
           <span className="truncate">Back to {taskTitle ?? `task ${shortId(taskId)}`}</span>
         </Button>
-        {/* The panel is a dialog and needs a name of its own; the view below
+        {/* The pane needs a name of its own; the view below
             carries the visible heading. */}
-        <SheetTitle className="sr-only">Session {shortId(sessionId)}</SheetTitle>
-      </SheetHeader>
+        <PaneTitle className="sr-only">Session {shortId(sessionId)}</PaneTitle>
+      </PaneHeader>
 
-      {session.isPending ? (
-        <div className="space-y-3">
-          <Skeleton className="h-8 w-64" />
-          <Skeleton className="h-32 w-full" />
-          <Skeleton className="h-72 w-full" />
-        </div>
-      ) : session.error ? (
-        <ErrorState
-          title={`Could not load session ${shortId(sessionId)}`}
-          error={session.error}
-          onRetry={() => void session.refetch()}
-        />
-      ) : foreign ? (
-        <Alert variant="destructive">
-          <AlertTitle>Not a session of this task</AlertTitle>
-          <AlertDescription>
-            Session {shortId(sessionId)} belongs to another task, so it is not shown here.
-          </AlertDescription>
-        </Alert>
-      ) : (
-        <SessionDetailView
-          session={session.data}
-          context="task"
-          // A resume hands back the session to attach to; the panel follows it.
-          onResumed={(revived) => onSelect(revived.id)}
-          onSwitched={(successor) => onSelect(successor.id)}
-        />
-      )}
+      <PaneBody>
+        {session.isPending ? (
+          <div className="space-y-3">
+            <Skeleton className="h-8 w-64" />
+            <Skeleton className="h-32 w-full" />
+            <Skeleton className="h-72 w-full" />
+          </div>
+        ) : session.error ? (
+          <ErrorState
+            title={`Could not load session ${shortId(sessionId)}`}
+            error={session.error}
+            onRetry={() => void session.refetch()}
+          />
+        ) : foreign ? (
+          <Alert variant="destructive">
+            <AlertTitle>Not a session of this task</AlertTitle>
+            <AlertDescription>
+              Session {shortId(sessionId)} belongs to another task, so it is not shown here.
+            </AlertDescription>
+          </Alert>
+        ) : (
+          <SessionDetailView
+            session={session.data}
+            context="task"
+            // A resume hands back the session to attach to; the panel follows it.
+            onResumed={(revived) => onSelect(revived.id)}
+            onSwitched={(successor) => onSelect(successor.id)}
+          />
+        )}
+      </PaneBody>
     </>
   )
 }

@@ -22,7 +22,6 @@ import { DataTable, RowAction } from "@/components/data-table"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { TableCell, TableRow } from "@/components/ui/table"
-import { plural } from "@/lib/format"
 
 import { DeleteRepositoryDialog } from "./delete-repository-dialog"
 import { NoRepositories as SharedNoRepositories } from "./no-repositories"
@@ -77,12 +76,6 @@ export function RepositoriesPage() {
           </Button>
         }
       />
-
-      {repositories.data ? (
-        <p className="text-sm text-muted-foreground">
-          {plural(repositories.data.length, "repository", "repositories")}
-        </p>
-      ) : null}
 
       <DataTable
         query={repositories}
