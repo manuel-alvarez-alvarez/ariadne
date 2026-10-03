@@ -152,8 +152,10 @@ The ACP runtime belongs to 021.
     discovery did not find ready is not read at all: no row of it could be
     resumed.
 18. The two sources are merged by `(agent_id, internal_session_id)`. A session
-    `session/list` answered with is listed as it answered it, whatever the
-    disk holds; only a title it has none of is taken from the disk. A
+    `session/list` answered with is listed as it answered it, except an
+    `opencode-acp` row absent from a readable OpenCode database. An unreadable
+    database keeps every ACP row. Other agents keep every ACP row whatever
+    the disk holds. Only a title the ACP row lacks comes from the disk. A
     transcript with neither a user turn nor an assistant turn is no
     conversation of anybody's and is not listed, and that rule takes away no
     row `session/list` answered with.
@@ -317,8 +319,14 @@ The ACP runtime belongs to 021.
   neither is a root session with no message
   (`::a_session_with_no_message_is_not_listed`).
 - A row the agent listed stays listed whatever `opencode.db` says of it,
-  including a row absent from it entirely
+  when the database is missing
   (`stored_conversations_opencode.rs::a_row_the_agent_lists_stays_listed_whatever_the_disk_says`).
+- An OpenCode ACP row with no message leaves the page when the database is
+  readable (`stored_conversations_opencode.rs::an_empty_session_the_agent_lists_is_not_in_the_page`).
+- An OpenCode ACP row with a message stays under the agent's title
+  (`stored_conversations_opencode.rs::a_session_with_messages_the_agent_lists_stays_in_the_page`).
+- An unreadable OpenCode database keeps every ACP row
+  (`stored_conversations_opencode.rs::an_unreadable_database_keeps_every_agent_row`).
 - A missing `opencode.db` leaves the listing working and is never created by
   the reader
   (`stored_conversations_opencode.rs::a_missing_database_leaves_the_listing_working`).

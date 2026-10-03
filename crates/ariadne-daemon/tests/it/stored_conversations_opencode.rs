@@ -155,6 +155,19 @@ async fn a_session_the_agent_does_not_list_is_listed_with_its_model_and_tokens()
     let pool = db(&h).await;
     session(
         &pool,
+        "listed",
+        None,
+        "/work/listed",
+        "Listed by the agent",
+        now - TimeDelta::hours(2),
+        None,
+        0,
+        0,
+    )
+    .await;
+    message(&pool, "msg-listed", "listed").await;
+    session(
+        &pool,
         "on-disk",
         None,
         "/work/on-disk",
@@ -283,6 +296,124 @@ async fn a_session_with_no_message_is_not_listed() {
 
     assert_eq!(ids(&page), [] as [&str; 0]);
     assert_eq!(page.total, 0);
+}
+
+/// An ACP row for a root session without messages leaves the sessions page
+/// when the OpenCode database can answer the listing query.
+#[tokio::test]
+async fn an_empty_session_the_agent_lists_is_not_in_the_page() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = Utc::now();
+    let stub = stub_listing(
+        dir.path(),
+        json!([{"sessionId": "empty", "cwd": "/work/empty", "title": "New session",
+                "updatedAt": hours_before(now, 1)}]),
+    );
+    let h = harness_with(&stub).await;
+    let pool = db(&h).await;
+    session(
+        &pool,
+        "empty",
+        None,
+        "/work/empty",
+        "New session",
+        now,
+        None,
+        0,
+        0,
+    )
+    .await;
+
+    let page = listing(&h, "refresh=true").await;
+
+    assert_eq!(ids(&page), [] as [&str; 0]);
+    assert_eq!(page.total, 0);
+}
+
+/// A listed OpenCode row with a message keeps the agent's title and remains
+/// in the page while another listed row without messages leaves it.
+#[tokio::test]
+async fn a_session_with_messages_the_agent_lists_stays_in_the_page() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = Utc::now();
+    let stub = stub_listing(
+        dir.path(),
+        json!([
+            {"sessionId": "with-message", "cwd": "/work/with-message", "title": "Agent title",
+             "updatedAt": hours_before(now, 1)},
+            {"sessionId": "empty", "cwd": "/work/empty", "title": "New session",
+             "updatedAt": hours_before(now, 2)}
+        ]),
+    );
+    let h = harness_with(&stub).await;
+    let pool = db(&h).await;
+    session(
+        &pool,
+        "with-message",
+        None,
+        "/work/with-message",
+        "Database title",
+        now,
+        None,
+        0,
+        0,
+    )
+    .await;
+    message(&pool, "msg-1", "with-message").await;
+    session(
+        &pool,
+        "empty",
+        None,
+        "/work/empty",
+        "New session",
+        now,
+        None,
+        0,
+        0,
+    )
+    .await;
+
+    let page = listing(&h, "refresh=true").await;
+
+    assert_eq!(ids(&page), ["with-message"]);
+    assert_eq!(
+        row(&page, "with-message").title.as_deref(),
+        Some("Agent title")
+    );
+}
+
+/// A failed database query cannot prove an ACP row empty, so the next
+/// refresh keeps it after a readable database had removed it.
+#[tokio::test]
+async fn an_unreadable_database_keeps_every_agent_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = Utc::now();
+    let stub = stub_listing(
+        dir.path(),
+        json!([{"sessionId": "empty", "cwd": "/work/empty", "title": "New session",
+                "updatedAt": hours_before(now, 1)}]),
+    );
+    let h = harness_with(&stub).await;
+    let pool = db(&h).await;
+    session(
+        &pool,
+        "empty",
+        None,
+        "/work/empty",
+        "New session",
+        now,
+        None,
+        0,
+        0,
+    )
+    .await;
+    assert!(ids(&listing(&h, "refresh=true").await).is_empty());
+
+    pool.execute("DROP TABLE message").await.unwrap();
+    let page = listing(&h, "refresh=true").await;
+
+    assert_eq!(ids(&page), ["empty"]);
+    assert_eq!(page.total, 1);
 }
 
 /// A row the agent answered with stays listed whatever the disk rules say:

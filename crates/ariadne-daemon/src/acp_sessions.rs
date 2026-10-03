@@ -9,8 +9,8 @@
 //! The outside half has two sources, merged by `(agent, internal id)`: what
 //! each agent answered over `session/list`, and what it left on disk
 //! ([`crate::stored_conversations`]). ACP is the first of them — a row it
-//! answered with is listed however the disk reads — and the disk is where the
-//! model and the tokens of a row come from.
+//! answered with is listed however the disk reads, except an OpenCode row
+//! absent from a readable database. The disk also holds the model and tokens.
 
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
@@ -34,7 +34,7 @@ use ariadne_store::{AgentSession, SessionFilter, Store, TaskFilter};
 
 use crate::acp_discovery::AgentRegistry;
 use crate::http::convert::{outside_entry, session_entry_of};
-use crate::stored_conversations::{DiskConversations, fill_page};
+use crate::stored_conversations::{DiskConversations, DiskListing, fill_page};
 use crate::transcript::TranscriptHomes;
 
 /// How old the snapshot may be before a request takes it again.
@@ -201,7 +201,7 @@ impl OutsideSessions {
     /// An agent the last discovery did not find ready is not read at all: its
     /// conversations are none of this daemon's, and no row of one could be
     /// resumed.
-    async fn disk_sessions(&self, registry: &AgentRegistry) -> Vec<OutsideSessionDto> {
+    async fn disk_sessions(&self, registry: &AgentRegistry) -> DiskListing {
         let ready: Vec<String> = registry
             .agents()
             .await
@@ -214,7 +214,10 @@ impl OutsideSessions {
             Ok(sessions) => sessions,
             Err(error) => {
                 tracing::warn!(error = %error, "reading the conversations on disk failed");
-                Vec::new()
+                DiskListing {
+                    sessions: Vec::new(),
+                    opencode_readable: false,
+                }
             }
         }
     }
@@ -238,7 +241,7 @@ impl OutsideSessions {
 /// ACP and what they left on disk. Neither waits for the other.
 async fn gather(
     listed: impl Future<Output = Vec<OutsideSessionDto>>,
-    disk: impl Future<Output = Vec<OutsideSessionDto>>,
+    disk: impl Future<Output = DiskListing>,
 ) -> Vec<OutsideSessionDto> {
     let (listed, disk) = tokio::join!(listed, disk);
     merge(listed, disk)
@@ -247,18 +250,29 @@ async fn gather(
 /// The two sources as one: every session `listed` over ACP, and every one on
 /// disk that is not among them, by `(agent, internal id)`.
 ///
-/// ACP answered from the agent itself, so its row stands: a conversation it
-/// listed stays listed however the disk reads it, and its fields are the ones
-/// the row keeps. Only a title it has none of is taken from the disk, for an
-/// agent whose index carries no title.
-fn merge(listed: Vec<OutsideSessionDto>, disk: Vec<OutsideSessionDto>) -> Vec<OutsideSessionDto> {
-    let mut sessions = listed;
+/// ACP rows stand except OpenCode rows absent from a readable database.
+/// The agent's fields stand; only a missing title comes from the disk.
+fn merge(listed: Vec<OutsideSessionDto>, disk: DiskListing) -> Vec<OutsideSessionDto> {
+    let opencode_ids: HashSet<&str> = disk
+        .sessions
+        .iter()
+        .filter(|session| session.agent_id == "opencode-acp")
+        .map(|session| session.internal_session_id.as_str())
+        .collect();
+    let mut sessions: Vec<_> = listed
+        .into_iter()
+        .filter(|session| {
+            session.agent_id != "opencode-acp"
+                || !disk.opencode_readable
+                || opencode_ids.contains(session.internal_session_id.as_str())
+        })
+        .collect();
     let mut at: HashMap<(String, String), usize> = sessions
         .iter()
         .enumerate()
         .map(|(at, session)| (session_key(session), at))
         .collect();
-    for session in disk {
+    for session in disk.sessions {
         match at.get(&session_key(&session)) {
             Some(&at) => {
                 let row = &mut sessions[at];
@@ -662,7 +676,12 @@ mod tests {
 
         let sessions = tokio::time::timeout(
             Duration::from_secs(30),
-            gather(source("listed"), source("disk")),
+            gather(source("listed"), async {
+                DiskListing {
+                    sessions: source("disk").await,
+                    opencode_readable: false,
+                }
+            }),
         )
         .await
         .expect("both sources to answer");

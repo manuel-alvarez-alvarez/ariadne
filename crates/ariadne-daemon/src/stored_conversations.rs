@@ -90,6 +90,11 @@ pub(crate) trait StoredConversations: Send + Sync {
     /// directory, the title and the last activity its file holds.
     fn conversations(&self) -> Vec<OutsideSessionDto>;
 
+    /// A failed read cannot establish which conversations are absent.
+    fn readable_conversations(&self) -> Option<Vec<OutsideSessionDto>> {
+        Some(self.conversations())
+    }
+
     /// What one conversation ran on and what it spent, or `None` where the
     /// agent stored no such conversation.
     fn figures(&self, internal_session_id: &str) -> Option<Figures>;
@@ -99,6 +104,11 @@ pub(crate) trait StoredConversations: Send + Sync {
 pub(crate) struct DiskConversations {
     readers: HashMap<String, Box<dyn StoredConversations>>,
     listing_cache: Arc<Mutex<ListingCaches>>,
+}
+
+pub(crate) struct DiskListing {
+    pub(crate) sessions: Vec<OutsideSessionDto>,
+    pub(crate) opencode_readable: bool,
 }
 
 impl DiskConversations {
@@ -133,22 +143,32 @@ impl DiskConversations {
     /// Every conversation on disk of the agents `agents` names, each row under
     /// the agent id its reader is registered by. An agent with no reader, and
     /// an agent this daemon does not have, contribute nothing.
-    pub(crate) fn conversations(&self, agents: &[String]) -> Vec<OutsideSessionDto> {
-        let sessions = agents
-            .iter()
-            .filter_map(|agent_id| Some((agent_id, self.readers.get(agent_id)?)))
-            .flat_map(|(agent_id, reader)| {
-                reader.conversations().into_iter().map(|mut session| {
-                    session.agent_id = agent_id.clone();
-                    session
-                })
-            })
-            .collect();
+    pub(crate) fn conversations(&self, agents: &[String]) -> DiskListing {
+        let mut sessions = Vec::new();
+        let mut opencode_readable = false;
+        for agent_id in agents {
+            let Some(reader) = self.readers.get(agent_id) else {
+                continue;
+            };
+            let Some(rows) = reader.readable_conversations() else {
+                continue;
+            };
+            if agent_id == OPENCODE_AGENT_ID {
+                opencode_readable = true;
+            }
+            sessions.extend(rows.into_iter().map(|mut session| {
+                session.agent_id = agent_id.clone();
+                session
+            }));
+        }
         self.listing_cache
             .lock()
             .expect("the listing cache lock")
             .save_if_dirty();
-        sessions
+        DiskListing {
+            sessions,
+            opencode_readable,
+        }
     }
 
     /// The figures of the conversations `asked` names, by `(agent id, internal
@@ -915,10 +935,12 @@ struct FiguresRow {
 
 impl StoredConversations for OpencodeConversations {
     fn conversations(&self) -> Vec<OutsideSessionDto> {
+        self.readable_conversations().unwrap_or_default()
+    }
+
+    fn readable_conversations(&self) -> Option<Vec<OutsideSessionDto>> {
         tokio::runtime::Handle::current().block_on(async {
-            let Some(pool) = opencode_connect(&self.db).await else {
-                return Vec::new();
-            };
+            let pool = opencode_connect(&self.db).await?;
             let rows: Vec<SessionRow> = query_as(
                 "SELECT id, directory, title, time_updated FROM session \
                  WHERE parent_id IS NULL \
@@ -926,16 +948,21 @@ impl StoredConversations for OpencodeConversations {
             )
             .fetch_all(&pool)
             .await
-            .unwrap_or_default();
-            rows.into_iter()
-                .map(|row| OutsideSessionDto {
-                    agent_id: String::new(),
-                    internal_session_id: row.id,
-                    working_directory: row.directory.unwrap_or_default(),
-                    last_activity_at: row.time_updated.map(opencode_moment).unwrap_or_default(),
-                    first_prompt: row.title.unwrap_or_default(),
-                })
-                .collect()
+            .inspect_err(
+                |error| tracing::warn!(error = %error, "reading the opencode sessions failed"),
+            )
+            .ok()?;
+            Some(
+                rows.into_iter()
+                    .map(|row| OutsideSessionDto {
+                        agent_id: String::new(),
+                        internal_session_id: row.id,
+                        working_directory: row.directory.unwrap_or_default(),
+                        last_activity_at: row.time_updated.map(opencode_moment).unwrap_or_default(),
+                        first_prompt: row.title.unwrap_or_default(),
+                    })
+                    .collect(),
+            )
         })
     }
 
