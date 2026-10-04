@@ -217,10 +217,6 @@ async fn attention_fact(
 
 /// The clauses a filter adds to a `WHERE`, and the values they bind, in order.
 /// The clauses are literals; every value goes in as a binding.
-#[allow(
-    dead_code,
-    reason = "the six family tasks use it, and a later task removes this attribute once they land"
-)]
 fn narrowed(filter: &StatsFilter) -> (String, Vec<String>) {
     let mut sql = String::new();
     let mut binds = Vec::new();
@@ -244,10 +240,6 @@ pub enum Bucket {
     Week,
 }
 
-#[allow(
-    dead_code,
-    reason = "the six family tasks use it, and a later task removes this attribute once they land"
-)]
 impl Bucket {
     /// The longest span drawn a day at a time.
     const DAILY_SPAN_DAYS: i64 = 31;
@@ -284,10 +276,6 @@ impl Bucket {
 
 /// The median of `values`: the middle one, or the mean of the two middle
 /// ones where the count is even. 0 for none.
-#[allow(
-    dead_code,
-    reason = "the six family tasks use it, and a later task removes this attribute once they land"
-)]
 fn median(values: &[f64]) -> f64 {
     let sorted = sorted(values);
     let middle = sorted.len() / 2;
@@ -300,10 +288,6 @@ fn median(values: &[f64]) -> f64 {
 
 /// The 90th percentile of `values` by nearest rank: the smallest value that
 /// at least 90% of them are at or below. 0 for none.
-#[allow(
-    dead_code,
-    reason = "the six family tasks use it, and a later task removes this attribute once they land"
-)]
 fn p90(values: &[f64]) -> f64 {
     let sorted = sorted(values);
     match sorted.len() {
@@ -312,10 +296,6 @@ fn p90(values: &[f64]) -> f64 {
     }
 }
 
-#[allow(
-    dead_code,
-    reason = "the six family tasks use it, and a later task removes this attribute once they land"
-)]
 fn sorted(values: &[f64]) -> Vec<f64> {
     let mut sorted = values.to_vec();
     sorted.sort_by(f64::total_cmp);

@@ -21,18 +21,6 @@ const root = process.env.CHECK_UNUSED_ROOT ?? fileURLToPath(new URL("..", import
 
 /** Files whose exports are a public surface with no in-repo caller. */
 const ENTRYPOINTS = new Set(["src/main.tsx"])
-/**
- * The shared pieces of the Stats screen's frame. The six family tasks use
- * these pieces, and a later task removes this set once they land.
- */
-const FRAME = new Set([
-  "src/components/stats/chart-configs.ts",
-  "src/components/stats/stat-bar-chart.tsx",
-  "src/components/stats/stat-table.tsx",
-  "src/components/stats/stat-tiles.tsx",
-  "src/components/stats/stat-time-chart.tsx",
-  "src/components/stats/status-colors.ts",
-])
 /** Generated; not ours to prune. */
 const GENERATED = new Set(["src/api/schema.d.ts"])
 const SOURCE_EXTENSIONS = [".ts", ".tsx", ".css"]
@@ -177,13 +165,7 @@ for (const [path, text] of sources) {
 
 const unusedExports = []
 for (const [path, text] of sources) {
-  if (
-    !path.startsWith("src/") ||
-    GENERATED.has(path) ||
-    ENTRYPOINTS.has(path) ||
-    FRAME.has(path) ||
-    isTestFile(path)
-  )
+  if (!path.startsWith("src/") || GENERATED.has(path) || ENTRYPOINTS.has(path) || isTestFile(path))
     continue
   if (path.endsWith(".css")) continue
   for (const name of exportedNames(text)) {
@@ -244,11 +226,7 @@ for (const [path, text] of sources) {
 
 const orphanFiles = files.filter(
   (path) =>
-    !GENERATED.has(path) &&
-    !ENTRYPOINTS.has(path) &&
-    !FRAME.has(path) &&
-    !isTestFile(path) &&
-    !importedFiles.has(path),
+    !GENERATED.has(path) && !ENTRYPOINTS.has(path) && !isTestFile(path) && !importedFiles.has(path),
 )
 if (orphanFiles.length > 0) {
   failed = true
