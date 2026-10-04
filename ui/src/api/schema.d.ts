@@ -1507,6 +1507,12 @@ export interface components {
             version?: string | null;
         };
         /**
+         * @description The step a time axis is drawn at: a bar a day over a short span, a bar a
+         *     week over a long one.
+         * @enum {string}
+         */
+        BucketDto: "day" | "week";
+        /**
          * @description Body of `POST /v1/goals/{id}/complete`: the orchestrator says the goal is
          *     done. Its call, not the user's, and it carries nothing — every task being
          *     finished or cancelled is the whole of the argument, and the daemon checks
@@ -2070,6 +2076,21 @@ export interface components {
          * @enum {string}
          */
         ModelRank: "frontier" | "balanced" | "fast" | "local";
+        /** @description What one model spent, every seat that ran on it pooled together. */
+        ModelSpendDto: {
+            /** Format: int64 */
+            cached_input_tokens: number;
+            /** Format: int64 */
+            input_tokens: number;
+            model: string;
+            /** Format: int64 */
+            output_tokens: number;
+            /**
+             * Format: double
+             * @description `input_tokens + output_tokens` over the same total of every model.
+             */
+            share: number;
+        };
         /** @description Session measures and the measures specific to this seat. */
         ModelStatDto: {
             author?: null | components["schemas"]["AuthorModelStatDto"];
@@ -2131,6 +2152,18 @@ export interface components {
              *     Nothing is written to find out.
              */
             writable: boolean;
+        };
+        /**
+         * @description What a finished task spends, on average: the tokens of every session of a
+         *     task that finished, divided by how many tasks finished. 0 where none.
+         */
+        PerFinishedTaskDto: {
+            /** Format: double */
+            input_tokens: number;
+            /** Format: double */
+            output_tokens: number;
+            /** Format: int64 */
+            tasks: number;
         };
         PermissionDeciderDto: {
             /** Format: int64 */
@@ -2483,11 +2516,69 @@ export interface components {
          * @enum {string}
          */
         SkillSeat: "orchestrator" | "task";
+        /** @description What was spent in one bucket of the time axis. */
+        SpendBucketDto: {
+            /** Format: int64 */
+            cached_input_tokens: number;
+            /** Format: int64 */
+            input_tokens: number;
+            /** Format: int64 */
+            output_tokens: number;
+            /** @description The RFC 3339 start of the bucket. */
+            start: string;
+        };
         /**
-         * @description Response of `GET /v1/stats/spend`: what did it spend? Empty until its task
-         *     fills it in.
+         * @description Response of `GET /v1/stats/spend`: what did it spend? Tokens over time, by
+         *     model, and per finished task — never a cost.
          */
-        SpendStatsDto: Record<string, never>;
+        SpendStatsDto: {
+            /** @default week */
+            bucket: components["schemas"]["BucketDto"];
+            /**
+             * @description One row per bucket from the first fact to the last, zeros included.
+             * @default []
+             */
+            buckets: components["schemas"]["SpendBucketDto"][];
+            /**
+             * @description One row per model, every seat pooled, heaviest first.
+             * @default []
+             */
+            by_model: components["schemas"]["ModelSpendDto"][];
+            /**
+             * @default {
+             *       "tasks": 0,
+             *       "input_tokens": 0,
+             *       "output_tokens": 0
+             *     }
+             */
+            per_finished_task: components["schemas"]["PerFinishedTaskDto"];
+            /**
+             * @default {
+             *       "sessions": 0,
+             *       "input_tokens": 0,
+             *       "cached_input_tokens": 0,
+             *       "output_tokens": 0,
+             *       "cached_share": 0
+             *     }
+             */
+            totals: components["schemas"]["SpendTotalsDto"];
+        };
+        /** @description Tokens spent across every ended session the filter keeps. */
+        SpendTotalsDto: {
+            /** Format: int64 */
+            cached_input_tokens: number;
+            /**
+             * Format: double
+             * @description `cached_input_tokens` over `input_tokens`; 0 where `input_tokens` is 0.
+             */
+            cached_share: number;
+            /** Format: int64 */
+            input_tokens: number;
+            /** Format: int64 */
+            output_tokens: number;
+            /** Format: int64 */
+            sessions: number;
+        };
         StatusTimeDto: {
             /** Format: double */
             median_secs: number;

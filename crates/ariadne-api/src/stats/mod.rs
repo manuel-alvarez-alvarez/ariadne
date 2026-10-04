@@ -12,7 +12,9 @@ pub use attention::{
     AttentionFlagDto, AttentionStatsDto, PermissionDeciderDto, PermissionStatsDto,
 };
 pub use models::{AuthorModelStatDto, ModelStatDto, ModelStatsDto, ReviewerModelStatDto};
-pub use spend::SpendStatsDto;
+pub use spend::{
+    BucketDto, ModelSpendDto, PerFinishedTaskDto, SpendBucketDto, SpendStatsDto, SpendTotalsDto,
+};
 pub use time::{LeadTimeDto, PersonWaitDto, StatusTimeDto, TimeStatsDto};
 pub use tools::{OtherToolsDto, ToolKindStatDto, ToolStatDto, ToolStatsDto, ToolsStatsQuery};
 pub use work::{WorkBucketDto, WorkStatsDto, WorkTotalsDto};

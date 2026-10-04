@@ -19,7 +19,7 @@ mod work;
 
 pub use attention::AttentionStats;
 pub use models::{AuthorModelStat, ModelStat, ModelStats, ReviewerModelStat};
-pub use spend::SpendStats;
+pub use spend::{ModelSpend, PerFinishedTask, SpendBucket, SpendStats, SpendTotals};
 pub use time::{LeadTime, PersonWait, StatusTime, TimeStats};
 pub use tools::{OtherTools, ToolKindStats, ToolStatRow, ToolStats};
 pub use work::WorkStats;
@@ -238,12 +238,8 @@ fn narrowed(filter: &StatsFilter) -> (String, Vec<String>) {
 
 /// The step of a time axis: one bar per day over a short span, one per week
 /// over a long one.
-#[allow(
-    dead_code,
-    reason = "the six family tasks use it, and a later task removes this attribute once they land"
-)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Bucket {
+pub enum Bucket {
     Day,
     Week,
 }

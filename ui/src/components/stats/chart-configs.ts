@@ -44,3 +44,14 @@ export const TOOL_CALLS_CONFIG: ChartConfig = {
   ok: { label: "Ok", color: STATUS_COLORS.active },
   errors: { label: "Errors", color: STATUS_COLORS.danger },
 }
+
+/**
+ * Input and output tokens, the two series the Spend section stacks: neither
+ * is a status, so each draws in one of the ramp's two most neutral colours
+ * rather than borrowing a meaning — done or danger — that belongs to an
+ * outcome.
+ */
+export const SPEND_CONFIG: ChartConfig = {
+  input_tokens: { label: "Input", color: STATUS_COLORS.active },
+  output_tokens: { label: "Output", color: STATUS_COLORS.done },
+}

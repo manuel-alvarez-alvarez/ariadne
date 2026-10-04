@@ -99,7 +99,18 @@ then a status table. The Stats screen shows the same headline figures and a
 
 ## Spend
 
-Its task writes this section.
+What did it spend: tokens over time, by model, and per finished task. Stats
+show tokens, never cost — nothing here converts one to the other.
+
+The totals are every ended session's tokens: how much went in, how much of
+that the prompt cache served, and how much came out. Per finished task is the
+same two figures — in and out — averaged over however many tasks finished in
+the span.
+
+The chart over time stacks input and output tokens per bucket, the cached
+share alongside in the tooltip. The chart by model is one bar per model that
+ran, every seat it ran in pooled together, each bar's share of the whole
+spend in its tooltip.
 
 ## Models
 

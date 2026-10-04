@@ -345,7 +345,44 @@ changes landed, over time.
 
 ### Spend
 
-Built by its task.
+What did it spend? Tokens, never a cost: the ledger holds no price, and
+nothing here converts one.
+
+38. `Store::spend_stats` reads every `session_ended` fact the filter keeps and
+    answers `SpendStats { totals, per_finished_task, bucket, buckets,
+    by_model }`.
+39. `totals` sums every kept fact's `input_tokens`, `cached_input_tokens` and
+    `output_tokens`, counts the facts as `sessions`, and carries
+    `cached_share`: `cached_input_tokens` over `input_tokens`, 0 where
+    `input_tokens` is 0.
+40. `per_finished_task` is the tokens of every kept `session_ended` fact whose
+    `task_id` names a task with a kept `task_ended` fact of status
+    `finished`, divided by how many such tasks there are — `tasks`,
+    `input_tokens` and `output_tokens`. 0 for all three where no task
+    finished.
+41. `bucket` is `Bucket::for_span` (rule 33) of the filter's own `since`.
+    `buckets` is one row per bucket from the one the first kept fact falls in
+    to the one the last falls in, zeros where a bucket between them holds no
+    fact, each with `start`, `input_tokens`, `cached_input_tokens` and
+    `output_tokens`.
+42. `by_model` is one row per model named by a kept fact, every seat pooled
+    into it, with `input_tokens`, `cached_input_tokens`, `output_tokens` and
+    `share` — `input_tokens + output_tokens` over the same total of every
+    model — the heaviest model first. A fact naming no model answers no row.
+43. `GET /v1/stats/spend` answers `SpendStatsDto`, the aggregate's own shape.
+44. `ariadne stats spend` prints the totals and the per-task figures as
+    `label: value` lines, then a table of `by_model` (`MODEL`, `TOKENS` — the
+    usage cell every table prints — `SHARE`), then a table of `buckets`
+    (`FROM`, `INPUT`, `CACHED`, `OUTPUT`). `--format json` prints the DTO
+    whole.
+45. `SpendSection` draws four tiles with `StatTiles`: input tokens, cache
+    share, output tokens, and tokens per finished task (`input_tokens +
+    output_tokens` of `per_finished_task`, hinted with the task count). Under
+    them, one `StatTimeChart` stacks `input_tokens` and `output_tokens` per
+    bucket, the bucket's own cached share added to its tooltip; one
+    `StatBarChart` draws one stacked bar per model of the same two keys, its
+    tooltip and its `sr-only` table carrying the model's three token counts
+    and its share. A family with no ended session is empty.
 
 ### Models
 
@@ -592,7 +629,29 @@ shared `since` and `repo` filter.
 
 #### Spend
 
-Built by its task.
+- The totals sum ended sessions and compute the cached share
+  (`spend.rs::tests::the_totals_sum_ended_sessions_and_compute_the_cached_share`),
+  pool every seat per model, heaviest first
+  (`spend.rs::tests::models_are_pooled_across_seats_and_ranked_heaviest_first`),
+  divide by finished tasks
+  (`spend.rs::tests::per_finished_task_averages_the_tokens_of_tasks_that_finished`),
+  bucket from the first fact to the last with zeros between
+  (`spend.rs::tests::buckets_run_from_the_first_fact_to_the_last_with_zeros_between`),
+  and honour `since` and `repo_id`
+  (`spend.rs::tests::since_and_repo_id_narrow_every_fact`).
+- `GET /v1/stats/spend` answers the totals, the buckets and the models for an
+  ended session
+  (`stats_spend.rs::the_spend_stat_answers_the_totals_the_buckets_and_the_models_for_an_ended_session`).
+- The table prints the totals and the per-task figures as `label: value`
+  lines
+  (`commands/stats/spend.rs::tests::the_totals_and_the_per_task_figures_print_as_label_value_lines`),
+  then a model row and a bucket row
+  (`commands/stats/spend.rs::tests::the_table_prints_a_model_row_and_a_bucket_row`),
+  and a family with no ended session is empty
+  (`commands/stats/spend.rs::tests::a_family_with_no_ended_session_is_empty`).
+- `SpendSection` draws the tiles and both charts from a mocked response
+  (`spend-section.test.tsx` "draws the tiles and both charts from a mocked
+  response").
 
 #### Models
 

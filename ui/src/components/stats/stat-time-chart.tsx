@@ -12,6 +12,7 @@
  * test, the same way `StatBarChart` keeps one.
  */
 
+import type { ReactNode } from "react"
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts"
 
 import {
@@ -39,6 +40,8 @@ export function StatTimeChart<T extends { bucket: string }>({
   keys,
   caption,
   extra = [],
+  tooltipExtra,
+  valueFormatter = String,
 }: {
   /** One row per bucket, oldest first, `bucket` its RFC 3339 start. */
   data: T[]
@@ -51,6 +54,12 @@ export function StatTimeChart<T extends { bucket: string }>({
    * bars, labelled the same way — a count the bar does not draw but the
    * reader still wants beside it. */
   extra?: (keyof T & string)[]
+  /** Extra lines for one bucket's tooltip, beyond its stacked keys — a
+   * share the bar has no room to draw of its own, such as a cached one. */
+  tooltipExtra?: (row: T) => ReactNode
+  /** How a stacked value reads on the axis and in the tooltip: raw by
+   * default, compact (`1.2M`) where the caller's values are tokens. */
+  valueFormatter?: (value: number) => string
 }) {
   return (
     <div className="flex flex-col gap-2">
@@ -68,7 +77,13 @@ export function StatTimeChart<T extends { bucket: string }>({
             tickLine={false}
             className="text-xs"
           />
-          <YAxis axisLine={false} tickLine={false} width={40} className="text-xs" />
+          <YAxis
+            axisLine={false}
+            tickLine={false}
+            width={40}
+            className="text-xs"
+            tickFormatter={valueFormatter}
+          />
           <ChartTooltip
             cursor={false}
             content={({ active, payload }) => {
@@ -78,9 +93,10 @@ export function StatTimeChart<T extends { bucket: string }>({
                   <p className="font-medium">{bucketLabel(row.bucket)}</p>
                   {[...keys, ...extra].map((key) => (
                     <p key={key}>
-                      {config[key]?.label ?? key}: {String(row[key])}
+                      {config[key]?.label ?? key}: {valueFormatter(Number(row[key]))}
                     </p>
                   ))}
+                  {tooltipExtra?.(row)}
                 </div>
               ) : null
             }}
@@ -112,7 +128,7 @@ export function StatTimeChart<T extends { bucket: string }>({
             <tr key={row.bucket}>
               <td>{bucketLabel(row.bucket)}</td>
               {[...keys, ...extra].map((key) => (
-                <td key={key}>{String(row[key])}</td>
+                <td key={key}>{valueFormatter(Number(row[key]))}</td>
               ))}
             </tr>
           ))}

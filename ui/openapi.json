@@ -3661,6 +3661,14 @@
           }
         }
       },
+      "BucketDto": {
+        "type": "string",
+        "description": "The step a time axis is drawn at: a bar a day over a short span, a bar a\nweek over a long one.",
+        "enum": [
+          "day",
+          "week"
+        ]
+      },
       "CompleteGoalRequest": {
         "type": "object",
         "description": "Body of `POST /v1/goals/{id}/complete`: the orchestrator says the goal is\ndone. Its call, not the user's, and it carries nothing — every task being\nfinished or cancelled is the whole of the argument, and the daemon checks\nthat itself.",
@@ -4940,6 +4948,42 @@
           "local"
         ]
       },
+      "ModelSpendDto": {
+        "type": "object",
+        "description": "What one model spent, every seat that ran on it pooled together.",
+        "required": [
+          "model",
+          "input_tokens",
+          "cached_input_tokens",
+          "output_tokens",
+          "share"
+        ],
+        "properties": {
+          "cached_input_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "input_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "model": {
+            "type": "string"
+          },
+          "output_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "share": {
+            "type": "number",
+            "format": "double",
+            "description": "`input_tokens + output_tokens` over the same total of every model."
+          }
+        }
+      },
       "ModelStatDto": {
         "type": "object",
         "description": "Session measures and the measures specific to this seat.",
@@ -5102,6 +5146,30 @@
           "writable": {
             "type": "boolean",
             "description": "Whether the daemon may write it, asked of the kernel (`access(2)`)\nrather than inferred from the permission bits, which say nothing\nabout the user the daemon happens to run as. For a path that does not\nexist yet this is its directory's answer: whether it could be created.\nNothing is written to find out."
+          }
+        }
+      },
+      "PerFinishedTaskDto": {
+        "type": "object",
+        "description": "What a finished task spends, on average: the tokens of every session of a\ntask that finished, divided by how many tasks finished. 0 where none.",
+        "required": [
+          "tasks",
+          "input_tokens",
+          "output_tokens"
+        ],
+        "properties": {
+          "input_tokens": {
+            "type": "number",
+            "format": "double"
+          },
+          "output_tokens": {
+            "type": "number",
+            "format": "double"
+          },
+          "tasks": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },
@@ -5955,9 +6023,131 @@
           "task"
         ]
       },
+      "SpendBucketDto": {
+        "type": "object",
+        "description": "What was spent in one bucket of the time axis.",
+        "required": [
+          "start",
+          "input_tokens",
+          "cached_input_tokens",
+          "output_tokens"
+        ],
+        "properties": {
+          "cached_input_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "input_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "start": {
+            "type": "string",
+            "description": "The RFC 3339 start of the bucket."
+          }
+        }
+      },
       "SpendStatsDto": {
         "type": "object",
-        "description": "Response of `GET /v1/stats/spend`: what did it spend? Empty until its task\nfills it in."
+        "description": "Response of `GET /v1/stats/spend`: what did it spend? Tokens over time, by\nmodel, and per finished task — never a cost.",
+        "properties": {
+          "bucket": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/BucketDto",
+                "description": "The step `buckets` is drawn at."
+              }
+            ],
+            "default": "week"
+          },
+          "buckets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SpendBucketDto"
+            },
+            "description": "One row per bucket from the first fact to the last, zeros included.",
+            "default": []
+          },
+          "by_model": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelSpendDto"
+            },
+            "description": "One row per model, every seat pooled, heaviest first.",
+            "default": []
+          },
+          "per_finished_task": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PerFinishedTaskDto"
+              }
+            ],
+            "default": {
+              "tasks": 0,
+              "input_tokens": 0,
+              "output_tokens": 0
+            }
+          },
+          "totals": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SpendTotalsDto"
+              }
+            ],
+            "default": {
+              "sessions": 0,
+              "input_tokens": 0,
+              "cached_input_tokens": 0,
+              "output_tokens": 0,
+              "cached_share": 0
+            }
+          }
+        }
+      },
+      "SpendTotalsDto": {
+        "type": "object",
+        "description": "Tokens spent across every ended session the filter keeps.",
+        "required": [
+          "sessions",
+          "input_tokens",
+          "cached_input_tokens",
+          "output_tokens",
+          "cached_share"
+        ],
+        "properties": {
+          "cached_input_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "cached_share": {
+            "type": "number",
+            "format": "double",
+            "description": "`cached_input_tokens` over `input_tokens`; 0 where `input_tokens` is 0."
+          },
+          "input_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "sessions": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
       },
       "StatusTimeDto": {
         "type": "object",
