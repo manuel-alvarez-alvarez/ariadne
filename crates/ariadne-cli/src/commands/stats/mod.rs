@@ -100,6 +100,8 @@ mod tests {
                     "in_status": [],
                     "waiting_on_person": {"prompts": 0, "total_secs": 0, "median_secs": 0}
                 })
+            } else if uri.path() == "/v1/stats/models" {
+                serde_json::json!({"items": []})
             } else {
                 serde_json::json!({})
             };

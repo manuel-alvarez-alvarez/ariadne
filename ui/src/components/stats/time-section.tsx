@@ -29,7 +29,7 @@ export function TimeSection({ filter }: { filter: StatsFilter }) {
       title="Time"
       description="How long does it take?"
       query={stats}
-      isEmpty={(data) => data.tasks === 0}
+      isEmpty={(data) => !data.tasks}
       empty="No work was timed in this span."
     >
       {(data) => {

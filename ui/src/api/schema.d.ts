@@ -1896,6 +1896,14 @@ export interface components {
          * @enum {string}
          */
         Landing: "merge" | "pull_request" | "none" | "feature_branch";
+        LeadTimeDto: {
+            /** Format: double */
+            mean_secs: number;
+            /** Format: double */
+            median_secs: number;
+            /** Format: double */
+            p90_secs: number;
+        };
         /**
          * @description One user choice or denial of an ACP permission request, keyed by the
          *     repository, the tool name, the level and the normalized input.
@@ -2164,6 +2172,14 @@ export interface components {
             person_share: number;
             /** Format: int64 */
             total: number;
+        };
+        PersonWaitDto: {
+            /** Format: double */
+            median_secs: number;
+            /** Format: int64 */
+            prompts: number;
+            /** Format: double */
+            total_secs: number;
         };
         /**
          * @description One reviewer picking the winning author of a task staffed with several:
@@ -2463,6 +2479,15 @@ export interface components {
          *     fills it in.
          */
         SpendStatsDto: Record<string, never>;
+        StatusTimeDto: {
+            /** Format: double */
+            median_secs: number;
+            /** Format: double */
+            share: number;
+            status: string;
+            /** Format: double */
+            total_secs: number;
+        };
         /**
          * @description Switch a session to another model or agent: the old session ends, and a
          *     new one starts on the same seat, on this pin, in a new conversation.
@@ -2697,11 +2722,14 @@ export interface components {
             /** @description The ordered risk tags derived from the complete request. */
             risk_tags?: string[] | null;
         };
-        /**
-         * @description Response of `GET /v1/stats/time`: how long does it take? Empty until its task
-         *     fills it in.
-         */
-        TimeStatsDto: Record<string, never>;
+        /** @description Response of `GET /v1/stats/time`: how long does finished work take? */
+        TimeStatsDto: {
+            in_status: components["schemas"]["StatusTimeDto"][];
+            lead_time: components["schemas"]["LeadTimeDto"];
+            /** Format: int64 */
+            tasks: number;
+            waiting_on_person: components["schemas"]["PersonWaitDto"];
+        };
         /**
          * @description Tokens spent, as the agents' own transcripts report them.
          *

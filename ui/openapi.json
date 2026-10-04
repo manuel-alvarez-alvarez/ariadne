@@ -4599,6 +4599,28 @@
           "feature_branch"
         ]
       },
+      "LeadTimeDto": {
+        "type": "object",
+        "required": [
+          "median_secs",
+          "p90_secs",
+          "mean_secs"
+        ],
+        "properties": {
+          "mean_secs": {
+            "type": "number",
+            "format": "double"
+          },
+          "median_secs": {
+            "type": "number",
+            "format": "double"
+          },
+          "p90_secs": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
       "LearnedPermissionDto": {
         "type": "object",
         "description": "One user choice or denial of an ACP permission request, keyed by the\nrepository, the tool name, the level and the normalized input.",
@@ -5220,6 +5242,29 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "PersonWaitDto": {
+        "type": "object",
+        "required": [
+          "prompts",
+          "total_secs",
+          "median_secs"
+        ],
+        "properties": {
+          "median_secs": {
+            "type": "number",
+            "format": "double"
+          },
+          "prompts": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_secs": {
+            "type": "number",
+            "format": "double"
           }
         }
       },
@@ -5874,6 +5919,32 @@
         "type": "object",
         "description": "Response of `GET /v1/stats/spend`: what did it spend? Empty until its task\nfills it in."
       },
+      "StatusTimeDto": {
+        "type": "object",
+        "required": [
+          "status",
+          "total_secs",
+          "median_secs",
+          "share"
+        ],
+        "properties": {
+          "median_secs": {
+            "type": "number",
+            "format": "double"
+          },
+          "share": {
+            "type": "number",
+            "format": "double"
+          },
+          "status": {
+            "type": "string"
+          },
+          "total_secs": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
       "SwitchSessionRequest": {
         "type": "object",
         "description": "Switch a session to another model or agent: the old session ends, and a\nnew one starts on the same seat, on this pin, in a new conversation.",
@@ -6343,7 +6414,32 @@
       },
       "TimeStatsDto": {
         "type": "object",
-        "description": "Response of `GET /v1/stats/time`: how long does it take? Empty until its task\nfills it in."
+        "description": "Response of `GET /v1/stats/time`: how long does finished work take?",
+        "required": [
+          "tasks",
+          "lead_time",
+          "in_status",
+          "waiting_on_person"
+        ],
+        "properties": {
+          "in_status": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StatusTimeDto"
+            }
+          },
+          "lead_time": {
+            "$ref": "#/components/schemas/LeadTimeDto"
+          },
+          "tasks": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "waiting_on_person": {
+            "$ref": "#/components/schemas/PersonWaitDto"
+          }
+        }
       },
       "TokenUsageDto": {
         "type": "object",
