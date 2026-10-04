@@ -20,8 +20,30 @@ import { StatsPage } from "./stats"
 /** The six families, in the order the screen shows them. */
 const FAMILIES = ["work", "time", "spend", "models", "attention", "tools"] as const
 
+/**
+ * `tools` and `attention` each answer a shaped DTO rather than the bare `{}`
+ * the rest still do — an empty one holds nothing to show, the same as `{}`
+ * does for them. Their sections read their own fields regardless of what
+ * route this screen test is pinning, so their answer cannot be the empty
+ * object either.
+ */
+const EMPTY_BODIES: Record<string, unknown> = {
+  "/v1/stats/tools": { calls: 0, errors: 0, tools: 0, by_kind: [], top: [], other: {} },
+  "/v1/stats/attention": {
+    permissions: { total: 0, person_share: 0, by_decider: [] },
+    flags: [],
+    sessions_failed: 0,
+    sessions_stalled: 0,
+    exhaustions: 0,
+  },
+}
+
 /** The URLs of every stats request the screen made. */
 let asked: URL[] = []
+
+function emptyBody(pathname: string): unknown {
+  return EMPTY_BODIES[pathname] ?? {}
+}
 
 beforeEach(() => {
   asked = []
@@ -30,7 +52,7 @@ beforeEach(() => {
     const url = new URL(request.url)
     if (url.pathname === "/v1/repositories") return jsonResponse([aRepository()])
     asked.push(url)
-    return jsonResponse({})
+    return jsonResponse(emptyBody(url.pathname))
   })
 })
 
@@ -65,7 +87,9 @@ describe("StatsPage", () => {
       const url = asked.find((asked) => asked.pathname === `/v1/stats/${family}`)
       expect(url?.searchParams.get("since"), family).toBe("7d")
       expect(url?.searchParams.get("repo"), family).toBe("01JREPO")
-      expect(queryClient.getQueryData(qk.stats[family](filter)), family).toEqual({})
+      expect(queryClient.getQueryData(qk.stats[family](filter)), family).toEqual(
+        emptyBody(`/v1/stats/${family}`),
+      )
     }
   })
 
@@ -77,7 +101,7 @@ describe("StatsPage", () => {
       if (url.pathname === "/v1/stats/work") {
         return errorResponse(500, "internal", "the ledger is not answering")
       }
-      return jsonResponse({})
+      return jsonResponse(emptyBody(url.pathname))
     })
     renderScreen(<StatsPage />, { route: "/stats" })
 

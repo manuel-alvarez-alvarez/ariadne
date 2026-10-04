@@ -21,7 +21,7 @@ pub use attention::AttentionStats;
 pub use models::{AuthorModelStat, ModelStat, ModelStats, ReviewerModelStat};
 pub use spend::SpendStats;
 pub use time::{LeadTime, PersonWait, StatusTime, TimeStats};
-pub use tools::ToolStats;
+pub use tools::{OtherTools, ToolKindStats, ToolStatRow, ToolStats};
 pub use work::WorkStats;
 
 use ariadne_core::id::new_id;

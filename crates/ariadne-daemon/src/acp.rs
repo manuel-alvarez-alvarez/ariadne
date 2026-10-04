@@ -1690,7 +1690,8 @@ impl RuntimeIncoming {
                         .unwrap_or_default()
                         .to_string();
                     self.sink.record_stat_fact("tool_call", json!({
-                        "tool_name": name,
+                        "tool_name": tool_name_of(&merged.call),
+                        "kind": tool_call_kind(&merged.call),
                         "duration_ms": duration_ms,
                         "ok": merged.call.get("status").and_then(Value::as_str) != Some("failed"),
                     }));
@@ -2754,6 +2755,41 @@ fn terminal_tool_status(update: &Value) -> bool {
     )
 }
 
+/// The agent's own name for the tool: `/name`, `/_meta/claudeCode/toolName`,
+/// `/title`, `/toolCallId`, in order; `"ACP tool"` where the call names none.
+/// Shared by the `tool_call` fact and [`permission_signature`], so a tool
+/// reads under the same name in both.
+fn tool_name_of(tool_call: &Value) -> String {
+    [
+        "/name",
+        "/_meta/claudeCode/toolName",
+        "/title",
+        "/toolCallId",
+    ]
+    .into_iter()
+    .find_map(|pointer| tool_call.pointer(pointer).and_then(Value::as_str))
+    .unwrap_or("ACP tool")
+    .to_string()
+}
+
+/// The ACP kind of a tool call (023 rule 21): `read`, `edit`, `delete`,
+/// `move`, `search`, `execute`, `think`, `fetch` or `switch_mode`; `other`
+/// where the call names none, or a kind this fact does not track.
+fn tool_call_kind(call: &Value) -> &'static str {
+    match call.get("kind").and_then(Value::as_str) {
+        Some("read") => "read",
+        Some("edit") => "edit",
+        Some("delete") => "delete",
+        Some("move") => "move",
+        Some("search") => "search",
+        Some("execute") => "execute",
+        Some("think") => "think",
+        Some("fetch") => "fetch",
+        Some("switch_mode") => "switch_mode",
+        _ => "other",
+    }
+}
+
 /// The option that approves a permission request: the first the agent marks
 /// as allowing, and the first of any kind where it marks none. `None` only
 /// where there is nothing to select, which the reply spells as cancelled.
@@ -2847,16 +2883,7 @@ struct PermissionSignature {
 /// The tool name is the agent's own name for the tool where it sends one
 /// (`Bash`, `Read`, `mcp__ariadne__create_task`), else the title.
 fn permission_signature(tool_call: &Value) -> PermissionSignature {
-    let tool_name = [
-        "/name",
-        "/_meta/claudeCode/toolName",
-        "/title",
-        "/toolCallId",
-    ]
-    .into_iter()
-    .find_map(|pointer| tool_call.pointer(pointer).and_then(Value::as_str))
-    .unwrap_or("ACP tool")
-    .to_string();
+    let tool_name = tool_name_of(tool_call);
     let raw_input = tool_call
         .get("rawInput")
         .filter(|raw_input| !raw_input.is_null())

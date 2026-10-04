@@ -2110,6 +2110,15 @@ export interface components {
             /** @description The absolute path of an existing directory the agent works in. */
             working_directory: string;
         };
+        /** @description The tools beyond the query's `limit`, summed into one row. */
+        OtherToolsDto: {
+            /** Format: int64 */
+            calls: number;
+            /** Format: int64 */
+            errors: number;
+            /** Format: int64 */
+            tools: number;
+        };
         /** @description A file or directory the daemon depends on. */
         PathStateDto: {
             exists: boolean;
@@ -2754,10 +2763,79 @@ export interface components {
             output_tokens: number;
         };
         /**
-         * @description Response of `GET /v1/stats/tools`: what do the agents do? Empty until its task
-         *     fills it in.
+         * @description How one kind of tool call performed: how often it ran, how many failed,
+         *     and how long its calls took.
          */
-        ToolStatsDto: Record<string, never>;
+        ToolKindStatDto: {
+            /** Format: int64 */
+            calls: number;
+            /** Format: int64 */
+            errors: number;
+            kind: string;
+            /** Format: double */
+            median_duration_ms: number;
+            /** Format: double */
+            p90_duration_ms: number;
+        };
+        /**
+         * @description How one tool performed: how often it ran, how many of its calls failed,
+         *     and how long they took.
+         */
+        ToolStatDto: {
+            /** Format: int64 */
+            calls: number;
+            /** Format: int64 */
+            errors: number;
+            kind: string;
+            /** Format: double */
+            median_duration_ms: number;
+            /** Format: double */
+            p90_duration_ms: number;
+            tool_name: string;
+        };
+        /**
+         * @description Response of `GET /v1/stats/tools`: what do the agents do?
+         *
+         *     `#[serde(default)]`: a shared stats CLI test answers every family's route
+         *     with `{}`; the other five families are empty structs today and the
+         *     fields here fall back to [`ToolStatsDto::default`] the same way.
+         */
+        ToolStatsDto: {
+            /**
+             * @description One row per kind, the most calls first.
+             * @default []
+             */
+            by_kind: components["schemas"]["ToolKindStatDto"][];
+            /**
+             * Format: int64
+             * @default 0
+             */
+            calls: number;
+            /**
+             * Format: int64
+             * @default 0
+             */
+            errors: number;
+            /**
+             * @default {
+             *       "tools": 0,
+             *       "calls": 0,
+             *       "errors": 0
+             *     }
+             */
+            other: components["schemas"]["OtherToolsDto"];
+            /**
+             * Format: int64
+             * @description The count of distinct tool names.
+             * @default 0
+             */
+            tools: number;
+            /**
+             * @description The tools with the most calls, up to the query's `limit`.
+             * @default []
+             */
+            top: components["schemas"]["ToolStatDto"][];
+        };
         TransitionRequest: {
             /** @description Required when `to` is `finished`, unless the task lands nothing. */
             merge_commit?: string | null;
@@ -4798,6 +4876,8 @@ export interface operations {
                 since?: string | null;
                 /** @description Only facts about this repository id. */
                 repo?: string | null;
+                /** @description How many of the top tools to list, 1 to 100. Defaults to 10. */
+                limit?: number | null;
             };
             header?: never;
             path?: never;
@@ -4813,7 +4893,7 @@ export interface operations {
                     "application/json": components["schemas"]["ToolStatsDto"];
                 };
             };
-            /** @description `since` is neither a moment nor a span */
+            /** @description `since` is neither a moment nor a span, or `limit` is not 1 to 100 */
             400: {
                 headers: {
                     [name: string]: unknown;

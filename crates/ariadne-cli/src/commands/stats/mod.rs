@@ -33,7 +33,11 @@ pub(crate) enum StatsCommand {
     /// How much it needed you
     Attention,
     /// What the agents do
-    Tools,
+    Tools {
+        /// How many of the top tools to list, 1 to 100
+        #[arg(long)]
+        limit: Option<u32>,
+    },
 }
 
 /// The filters every family takes, as the command line gave them.
@@ -62,7 +66,7 @@ pub(crate) async fn run(
         StatsCommand::Spend => spend::run(client, &query, format).await,
         StatsCommand::Models(args) => models::run(client, &query, format, args).await,
         StatsCommand::Attention => attention::run(client, &query, format).await,
-        StatsCommand::Tools => tools::run(client, &query, format).await,
+        StatsCommand::Tools { limit } => tools::run(client, &query, limit, format).await,
     }
 }
 
@@ -128,7 +132,7 @@ mod tests {
             StatsCommand::Spend,
             StatsCommand::Models(models::Args::default()),
             StatsCommand::Attention,
-            StatsCommand::Tools,
+            StatsCommand::Tools { limit: None },
         ] {
             let filters = Filters {
                 since: Some("7d".into()),

@@ -165,10 +165,17 @@ decided, not a change to how they decide it.
 ### The tool facts
 
 21. A `tool_call` fact is written when an ACP tool call ends. Its `data` is
-    `tool_name`, `duration_ms`, and `ok`; a failed ACP status writes `ok = false`.
-    The runtime keeps the opening instant with each open call and spawns the
-    `session_fact` and ledger write, so neither a tool update nor a turn waits
-    for SQLite.
+    `tool_name` (the agent's own name for the tool: `/name`,
+    `/_meta/claudeCode/toolName`, `/title`, `/toolCallId`, in order — the same
+    lookup and the same order the learned-permission key names the tool by),
+    `kind` (the ACP kind of the call — `read`, `edit`, `delete`, `move`,
+    `search`, `execute`, `think`, `fetch`, `switch_mode` or `other` — `other`
+    where the call names none), `duration_ms`, and `ok`; a failed ACP status
+    writes `ok = false`. The runtime keeps the opening instant with each open
+    call and spawns the `session_fact` and ledger write, so neither a tool
+    update nor a turn waits for SQLite. The `tool_name` the `pre_tool_use` and
+    `post_tool_use` event payloads carry is unchanged by this: it stays the
+    call's title, the console's and the transcript's own name for it.
 22. A `permission` fact is written after each ACP permission reply. Its
     `data` is `tool_name`, `decided_by`, `answer` (`allow`, `deny`, or
     `cancelled`), `console_option_id`, and `wait_ms`.
@@ -407,7 +414,38 @@ shared `since` and `repo` filter.
 
 ### Tools
 
-Built by its task.
+38. `Store::tools_stats(filter, limit)` answers `ToolStats`: `calls` and
+    `errors`, the totals over the facts the filter keeps; `tools`, the count
+    of distinct tool names; `by_kind`, one row per kind with `calls`,
+    `errors`, `median_duration_ms` and `p90_duration_ms`, the most calls
+    first; `top`, the `limit` tools with the most calls, each the same four
+    figures plus its `tool_name` and `kind`; and `other`, the rest of the
+    tools summed into `tools`, `calls` and `errors`. A tool is grouped by its
+    `tool_name` alone, never by `(tool_name, kind)`: `tools` and `top` count
+    and rank distinct names, so a stable name whose calls carry more than
+    one kind is still one tool, and its row's own `kind` is whichever one
+    most of its calls carry, the lowest name breaking a tie. A `tool_call`
+    fact with no `kind` predates rule 21's stable name and is not counted.
+    The median and the p90 are rule 32's, read over each group's own
+    `duration_ms`.
+39. `ToolStatsDto` mirrors the aggregate. `GET /v1/stats/tools` takes
+    `since` and `repo` (rules 12 to 14) and `limit` — 1 to 100, 10 where it
+    is absent, and `400 invalid_request` for anything else — in its own
+    query type, `ToolsStatsQuery`, rather than the shared `StatsQuery` every
+    other family's route takes.
+40. `ariadne stats tools [--limit <n>]` prints the totals as `calls`,
+    `errors` and `tools` lines, a table of `by_kind` (`KIND`, `CALLS`,
+    `ERRORS`, `MEDIAN`, `P90`, most calls first), and a table of `top`
+    (`TOOL`, `KIND`, `CALLS`, `ERRORS`, `MEDIAN`, `P90`) with an `other` row
+    last where there is one. `--limit` is the `tools` subcommand's own flag,
+    not one of rule 34's shared filters. `--format json` prints the DTO
+    whole.
+41. `ToolsSection` draws `StatTiles` of `calls`, `errors`, the error rate and
+    the distinct tool count, then one `StatBarChart` of `by_kind` and one of
+    `top` with its `other` row last, each stacking a call's `ok` and
+    `errors` count, the median and the p90 in the tooltip. Neither chart
+    draws more than the section's own limit plus one rows, whatever the
+    answer holds.
 
 ## Acceptance criteria
 
@@ -595,7 +633,28 @@ Built by its task.
 
 #### Tools
 
-Built by its task.
+- A tool call named by `/name` or by `/_meta/claudeCode/toolName` writes its
+  `tool_call` fact under that name, with its ACP `kind`; a call with a title
+  alone is named by the title
+  (`stats_tools.rs::a_tool_call_fact_is_named_by_its_stable_name_and_kind`).
+- `tools_stats` groups by kind and by tool, keeps the top `limit` tools and
+  sums the rest into `other`, skips a fact with no `kind`, measures the
+  median and the p90, and keeps only the facts `since` and `repo_id` select
+  (`store.rs::tool_stats_group_by_kind_and_tool_and_measure_percentiles`).
+- A stable name whose calls carry more than one kind is still one tool, its
+  row summing every kind's calls under the one most of them carry
+  (`store.rs::a_tool_named_once_under_more_than_one_kind_is_still_one_tool`).
+- `GET /v1/stats/tools?limit=1` answers one top tool and the rest in
+  `other`, and a `limit` outside 1 to 100 is refused with a 400 naming it
+  (`stats_tools.rs::limit_keeps_the_top_tools_and_sums_the_rest_into_other`,
+  `::a_limit_outside_1_to_100_is_refused`).
+- `ariadne stats tools --format json` reads the DTO off the route, and the
+  table prints a row per kind and the top tools with an `other` row
+  (`commands/stats/tools.rs::tests::json_prints_the_dto_and_the_table_groups_its_rows`).
+- `ToolsSection` draws the tiles and both charts from an answer with more
+  tools than the limit it draws, and never draws more than the limit plus
+  one rows (`tools-section.test.tsx` "draws the tiles and both charts, never
+  more than the limit plus one rows").
 
 ## Sources
 

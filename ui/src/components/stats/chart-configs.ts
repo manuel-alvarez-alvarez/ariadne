@@ -33,3 +33,14 @@ export const WORK_CONFIG = {
 export const TIME_STATUS_CONFIG = {
   total_secs: { label: "Total", color: STATUS_COLORS.active },
 } satisfies ChartConfig
+
+/**
+ * A tool call's own two series, stacked in both of the Tools section's
+ * charts: calls per kind, and the top tools. "Ok" carries no lifecycle
+ * meaning of its own, so it is the neutral count; a failed call is the one
+ * danger colour every panel agrees on.
+ */
+export const TOOL_CALLS_CONFIG: ChartConfig = {
+  ok: { label: "Ok", color: STATUS_COLORS.active },
+  errors: { label: "Errors", color: STATUS_COLORS.danger },
+}

@@ -2414,6 +2414,20 @@
                 "null"
               ]
             }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "How many of the top tools to list, 1 to 100. Defaults to 10.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
           }
         ],
         "responses": {
@@ -2428,7 +2442,7 @@
             }
           },
           "400": {
-            "description": "`since` is neither a moment nor a span"
+            "description": "`since` is neither a moment nor a span, or `limit` is not 1 to 100"
           }
         }
       }
@@ -5044,6 +5058,32 @@
         },
         "additionalProperties": false
       },
+      "OtherToolsDto": {
+        "type": "object",
+        "description": "The tools beyond the query's `limit`, summed into one row.",
+        "required": [
+          "tools",
+          "calls",
+          "errors"
+        ],
+        "properties": {
+          "calls": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "errors": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "tools": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "PathStateDto": {
         "type": "object",
         "description": "A file or directory the daemon depends on.",
@@ -6470,9 +6510,130 @@
           }
         }
       },
+      "ToolKindStatDto": {
+        "type": "object",
+        "description": "How one kind of tool call performed: how often it ran, how many failed,\nand how long its calls took.",
+        "required": [
+          "kind",
+          "calls",
+          "errors",
+          "median_duration_ms",
+          "p90_duration_ms"
+        ],
+        "properties": {
+          "calls": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "errors": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string"
+          },
+          "median_duration_ms": {
+            "type": "number",
+            "format": "double"
+          },
+          "p90_duration_ms": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "ToolStatDto": {
+        "type": "object",
+        "description": "How one tool performed: how often it ran, how many of its calls failed,\nand how long they took.",
+        "required": [
+          "tool_name",
+          "kind",
+          "calls",
+          "errors",
+          "median_duration_ms",
+          "p90_duration_ms"
+        ],
+        "properties": {
+          "calls": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "errors": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string"
+          },
+          "median_duration_ms": {
+            "type": "number",
+            "format": "double"
+          },
+          "p90_duration_ms": {
+            "type": "number",
+            "format": "double"
+          },
+          "tool_name": {
+            "type": "string"
+          }
+        }
+      },
       "ToolStatsDto": {
         "type": "object",
-        "description": "Response of `GET /v1/stats/tools`: what do the agents do? Empty until its task\nfills it in."
+        "description": "Response of `GET /v1/stats/tools`: what do the agents do?\n\n`#[serde(default)]`: a shared stats CLI test answers every family's route\nwith `{}`; the other five families are empty structs today and the\nfields here fall back to [`ToolStatsDto::default`] the same way.",
+        "properties": {
+          "by_kind": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ToolKindStatDto"
+            },
+            "description": "One row per kind, the most calls first.",
+            "default": []
+          },
+          "calls": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0,
+            "minimum": 0
+          },
+          "errors": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0,
+            "minimum": 0
+          },
+          "other": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/OtherToolsDto"
+              }
+            ],
+            "default": {
+              "tools": 0,
+              "calls": 0,
+              "errors": 0
+            }
+          },
+          "tools": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The count of distinct tool names.",
+            "default": 0,
+            "minimum": 0
+          },
+          "top": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ToolStatDto"
+            },
+            "description": "The tools with the most calls, up to the query's `limit`.",
+            "default": []
+          }
+        }
       },
       "TransitionRequest": {
         "type": "object",

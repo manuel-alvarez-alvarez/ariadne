@@ -157,4 +157,17 @@ tables; `--format json` returns the full response.
 
 ## Tools
 
-Its task writes this section.
+What do the agents do? Each ended tool call writes one fact, under the
+tool's own name — `Bash`, `Edit`, `Read`, an MCP tool's full name — and the
+kind of thing it did: `read`, `edit`, `delete`, `move`, `search`, `execute`,
+`think`, `fetch`, `switch_mode` or `other`.
+
+`ariadne stats tools` prints the total calls and errors, a table of the
+calls by kind, and a table of the tools with the most calls, the rest summed
+into one `other` row. `--limit` sets how many tools the table — and the
+desktop app's chart — show, 1 to 100, 10 by default. The Tools section of
+the desktop app draws the same two groupings as bar charts, ok and errors
+stacked, with the median and the p90 call duration in the tooltip.
+
+A tool call recorded before this existed has no kind of its own, and does
+not count.
