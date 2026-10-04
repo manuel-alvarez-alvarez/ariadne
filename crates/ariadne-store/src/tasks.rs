@@ -622,6 +622,31 @@ impl Store {
         Ok(task)
     }
 
+    /// Change a task status at a supplied time. Integration tests use this to
+    /// prove elapsed status time without depending on a wall clock.
+    pub async fn transition_task_at(
+        &self,
+        id: &str,
+        to: TaskStatus,
+        actor: Actor,
+        reason: Option<&str>,
+        merge_commit: Option<&str>,
+        at: &str,
+    ) -> Result<Task> {
+        let mut tx = self.w().begin().await?;
+        let task: Task = Self::fetch_by_in_tx(&mut tx, "task", TASK_ROWS, id).await?;
+        let transition =
+            Self::transition_in_tx_at(&mut tx, &task, to, actor, reason, merge_commit, Some(at))
+                .await?;
+        tx.commit().await?;
+        let task = self.get_task(id).await?;
+        self.publish(Change::TaskUpdated {
+            task: task.clone(),
+            transition: Some(transition),
+        });
+        Ok(task)
+    }
+
     /// Validate against the state machine, apply the status change with its
     /// side-column updates, and write the audit row — the shared body of every
     /// status change, inside the caller's transaction. Returns the audit row
@@ -634,8 +659,21 @@ impl Store {
         reason: Option<&str>,
         merge_commit: Option<&str>,
     ) -> Result<TaskTransition> {
+        Self::transition_in_tx_at(tx, task, to, actor, reason, merge_commit, None).await
+    }
+
+    async fn transition_in_tx_at(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        task: &Task,
+        to: TaskStatus,
+        actor: Actor,
+        reason: Option<&str>,
+        merge_commit: Option<&str>,
+        at: Option<&str>,
+    ) -> Result<TaskTransition> {
         let from = task.status();
         check_transition(from, to, actor)?;
+        let timestamp = at.map(str::to_string).unwrap_or_else(now);
 
         // A task that lands something is finished by the sha it landed as.
         // One that lands nothing has no sha to give, and demanding one would
@@ -656,7 +694,7 @@ impl Store {
         )
         .bind(to.as_str())
         .bind(merge_commit)
-        .bind(now())
+        .bind(&timestamp)
         .bind(&task.id)
         .execute(&mut **tx)
         .await?;
@@ -668,7 +706,7 @@ impl Store {
             to_status: to.as_str().to_string(),
             actor: actor.as_str().to_string(),
             reason: reason.map(str::to_string),
-            created_at: now(),
+            created_at: timestamp,
         };
         sqlx::query(
             "INSERT INTO task_transitions (id, task_id, from_status, to_status, actor, reason, created_at)
@@ -742,11 +780,13 @@ impl Store {
             (Ok(created), Ok(ended)) => (ended - created).num_seconds().max(0),
             _ => 0,
         };
+        let status_secs = Self::task_status_secs_in_tx(tx, task).await?;
         let data = serde_json::json!({
             "status": to.as_str(),
             "reason": reason,
             "landing": task.landing().as_str(),
             "lead_time_secs": lead_time_secs,
+            "status_secs": status_secs,
             "review_requests": review_requests.max(0),
             "authors": authors.len(),
             "picked": task.picked_agent_id.is_some(),
@@ -771,6 +811,45 @@ impl Store {
         .execute(&mut **tx)
         .await?;
         Ok(())
+    }
+
+    /// Time starts at task creation in `pending`, then each transition ends
+    /// the status before it and begins the next one. The ending status has no
+    /// later transition, so it carries no time.
+    async fn task_status_secs_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        task: &Task,
+    ) -> Result<serde_json::Value> {
+        let transitions: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT from_status, to_status, created_at FROM task_transitions
+             WHERE task_id = ? ORDER BY created_at, id",
+        )
+        .bind(&task.id)
+        .fetch_all(&mut **tx)
+        .await?;
+        let mut seconds = serde_json::Map::new();
+        let mut status = "pending".to_string();
+        let mut started = task.created_at.clone();
+        for (from, to, at) in transitions {
+            if status == from {
+                let elapsed = match (
+                    DateTime::parse_from_rfc3339(&started),
+                    DateTime::parse_from_rfc3339(&at),
+                ) {
+                    (Ok(started), Ok(ended)) => (ended - started).num_seconds().max(0),
+                    _ => 0,
+                };
+                let total = seconds
+                    .get(&status)
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(0)
+                    + elapsed;
+                seconds.insert(status.clone(), serde_json::Value::from(total));
+            }
+            status = to;
+            started = at;
+        }
+        Ok(serde_json::Value::Object(seconds))
     }
 
     pub async fn list_task_transitions(&self, task_id: &str) -> Result<Vec<TaskTransition>> {

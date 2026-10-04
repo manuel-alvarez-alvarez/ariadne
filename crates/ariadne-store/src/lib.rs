@@ -39,8 +39,8 @@ pub use repositories::{NewRepository, RepositoryUpdate};
 pub use sessions::{NewSession, SessionFilter};
 pub use skills::NewSkill;
 pub use stats::{
-    AttentionStats, AuthorModelStat, ModelStat, ModelStats, NewStatFact, ReviewerModelStat,
-    SpendStats, StatsFilter, TimeStats, ToolStats, WorkStats,
+    AttentionStats, AuthorModelStat, LeadTime, ModelStat, ModelStats, NewStatFact, PersonWait,
+    ReviewerModelStat, SpendStats, StatsFilter, StatusTime, TimeStats, ToolStats, WorkStats,
 };
 pub use task_agents::NewTaskAgent;
 pub use tasks::{NewTask, TaskFilter, TaskUpdate, author_branch};

@@ -20,7 +20,7 @@ mod work;
 pub use attention::AttentionStats;
 pub use models::{AuthorModelStat, ModelStat, ModelStats, ReviewerModelStat};
 pub use spend::SpendStats;
-pub use time::TimeStats;
+pub use time::{LeadTime, PersonWait, StatusTime, TimeStats};
 pub use tools::ToolStats;
 pub use work::WorkStats;
 

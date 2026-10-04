@@ -13,7 +13,7 @@ pub use attention::{
 };
 pub use models::{AuthorModelStatDto, ModelStatDto, ModelStatsDto, ReviewerModelStatDto};
 pub use spend::SpendStatsDto;
-pub use time::TimeStatsDto;
+pub use time::{LeadTimeDto, PersonWaitDto, StatusTimeDto, TimeStatsDto};
 pub use tools::ToolStatsDto;
 pub use work::{WorkBucketDto, WorkStatsDto, WorkTotalsDto};
 

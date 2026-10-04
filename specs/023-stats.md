@@ -188,7 +188,11 @@ decided, not a change to how they decide it.
     005 spells it), `lead_time_secs` (from the task's `created_at` to the
     transition), `review_requests` (the count of `review_request` messages
     on the task) and `authors` (the count of author agents staffed), and
-    `picked` (true where `picked_agent_id` is set). The repository, the
+    `picked` (true where `picked_agent_id` is set), and `status_secs` (an
+    object with the seconds in `pending`, `ready`, `in_progress`,
+    `under_review`, `changes_requested` and `approved`, summed across the
+    task's whole life from its transitions). The ending status has no time.
+    The repository, the
     goal and the task are the task's own; there is no session to one.
 25. The model, the effort and the skills are the picked author's where the
     task staffed several authors, the one author's where it staffed a
@@ -316,7 +320,21 @@ changes landed, over time.
 
 ### Time
 
-Built by its task.
+38. `time_stats` reads `task_ended` facts whose status is `finished`. It
+    answers their count, median, nearest-rank p90 and mean lead time; a
+    missing value is zero. Its status rows follow the lifecycle order:
+    `pending`, `ready`, `in_progress`, `under_review`, `changes_requested`
+    and `approved`. Each gives total time, median time and its share of the
+    status total. A fact without `status_secs` contributes no status time.
+39. The family also counts `permission` facts where `decided_by` is `console`:
+    the value the daemon writes for a person who answered. It answers their
+    prompt count, total seconds and median seconds from `wait_ms`. Both the
+    task and permission reads honour `since` and `repo`.
+40. `ariadne stats time` prints the lead-time and person-waiting figures as
+    label and value lines, then `STATUS`, `TOTAL`, `MEDIAN` and `SHARE` rows.
+    The desktop section shows median and p90 lead time, person wait time and
+    prompt count, then a "Where the time goes" status bar chart with each
+    row's median and share in its tooltip.
 
 ### Spend
 
@@ -524,7 +542,15 @@ Built by its task.
 
 #### Time
 
-Built by its task.
+- A finished task records time in every status it passed
+  (`outcome_stats.rs::a_finished_task_writes_one_task_ended_fact`).
+- The aggregate reports lead time, status shares and person waits and filters
+  by `since` and repository
+  (`stats/time.rs::tests::time_stats_measures_finished_tasks_statuses_and_person_waits`).
+- The route reads a finished task into the time DTO
+  (`stats_time.rs::the_time_stat_answers_and_is_in_the_api_document`).
+- The desktop section renders its tiles and status chart from `qk.stats.time`
+  (`time-section.test.tsx::asks_for_its_family_with_the_filter_and_draws_its_time_figures`).
 
 #### Spend
 

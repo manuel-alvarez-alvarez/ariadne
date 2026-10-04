@@ -86,7 +86,16 @@ ariadne stats work --format json
 
 ## Time
 
-Its task writes this section.
+Time shows how long finished tasks took from creation to their ending. It
+shows the median, p90 and mean lead time, then breaks time down by task status:
+pending, ready, in progress, under review, changes requested and approved.
+Each status has its total, median and share of all recorded status time.
+
+It also shows how long work waited for a person to answer a permission prompt.
+Only console decisions count there; automated, learned and AI decisions do
+not wait on a person. The CLI prints the headline lead and waiting figures,
+then a status table. The Stats screen shows the same headline figures and a
+"Where the time goes" chart with each status's median and share.
 
 ## Spend
 

@@ -88,12 +88,22 @@ mod tests {
     /// Every path and query a call sent, in order.
     type Seen = Arc<Mutex<Vec<String>>>;
 
-    /// A daemon that answers every stats route with an empty listing, and
-    /// keeps the path and the query of each call.
+    /// A daemon that answers every stats route, and keeps the path and query
+    /// of each call.
     async fn serve() -> (Client, Seen) {
         async fn handler(State(seen): State<Seen>, uri: Uri) -> axum::Json<serde_json::Value> {
             seen.lock().unwrap().push(uri.to_string());
-            axum::Json(serde_json::json!({"items": []}))
+            let body = if uri.path() == "/v1/stats/time" {
+                serde_json::json!({
+                    "tasks": 0,
+                    "lead_time": {"median_secs": 0, "p90_secs": 0, "mean_secs": 0},
+                    "in_status": [],
+                    "waiting_on_person": {"prompts": 0, "total_secs": 0, "median_secs": 0}
+                })
+            } else {
+                serde_json::json!({})
+            };
+            axum::Json(body)
         }
         let seen = Seen::default();
         let app = Router::new()

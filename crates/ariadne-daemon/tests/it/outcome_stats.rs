@@ -6,6 +6,7 @@ use crate::common;
 
 use ariadne_core::{Actor, MessageKind, Seat, TaskStatus};
 use ariadne_store::{AgentPin, AgentSession, NewMessage, NewTask, NewTaskAgent, SessionFilter};
+use chrono::{Duration as ChronoDuration, Utc};
 
 use common::{Harness, eventually, harness, test_pin};
 use std::time::Duration;
@@ -23,6 +24,20 @@ async fn start(h: &Harness, task_id: &str) {
         .unwrap();
     h.store
         .transition_task(task_id, TaskStatus::InProgress, Actor::Daemon, None, None)
+        .await
+        .unwrap();
+}
+
+async fn transition_at(
+    h: &Harness,
+    task_id: &str,
+    to: TaskStatus,
+    actor: Actor,
+    reason: Option<&str>,
+    at: String,
+) {
+    h.store
+        .transition_task_at(task_id, to, actor, reason, None, &at)
         .await
         .unwrap();
 }
@@ -75,6 +90,18 @@ async fn a_finished_task_writes_one_task_ended_fact() {
     assert_eq!(fact.data["authors"], 1);
     assert_eq!(fact.data["picked"], false);
     assert!(fact.data["lead_time_secs"].as_i64().unwrap() >= 0);
+    for status in [
+        "pending",
+        "ready",
+        "in_progress",
+        "under_review",
+        "approved",
+    ] {
+        assert!(
+            fact.data["status_secs"][status].is_number(),
+            "{status}: {fact:?}"
+        );
+    }
 }
 
 /// A task retried after it failed, and that fails again, writes a fact for
@@ -83,46 +110,68 @@ async fn a_finished_task_writes_one_task_ended_fact() {
 async fn a_retried_task_that_fails_again_writes_two_facts() {
     let h = harness().await;
     let cast = h.cast().await;
-    start(&h, &cast.task.id).await;
-    h.store
-        .transition_task(
-            &cast.task.id,
-            TaskStatus::Failed,
-            Actor::Author,
-            Some("could not do it"),
-            None,
-        )
-        .await
-        .unwrap();
-    // The user's own retry, back to the top of the walk.
-    h.store
-        .transition_task(&cast.task.id, TaskStatus::Ready, Actor::User, None, None)
-        .await
-        .unwrap();
-    h.store
-        .transition_task(
-            &cast.task.id,
-            TaskStatus::InProgress,
-            Actor::Daemon,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    h.store
-        .transition_task(
-            &cast.task.id,
-            TaskStatus::Failed,
-            Actor::Author,
-            Some("still could not do it"),
-            None,
-        )
-        .await
-        .unwrap();
+    let clock = Utc::now() - ChronoDuration::seconds(6);
+    let at = |seconds| (clock + ChronoDuration::seconds(seconds)).to_rfc3339();
+    transition_at(
+        &h,
+        &cast.task.id,
+        TaskStatus::Ready,
+        Actor::Daemon,
+        None,
+        at(0),
+    )
+    .await;
+    transition_at(
+        &h,
+        &cast.task.id,
+        TaskStatus::InProgress,
+        Actor::Daemon,
+        None,
+        at(1),
+    )
+    .await;
+    transition_at(
+        &h,
+        &cast.task.id,
+        TaskStatus::Failed,
+        Actor::Author,
+        Some("could not do it"),
+        at(2),
+    )
+    .await;
+    transition_at(
+        &h,
+        &cast.task.id,
+        TaskStatus::Ready,
+        Actor::User,
+        None,
+        at(3),
+    )
+    .await;
+    transition_at(
+        &h,
+        &cast.task.id,
+        TaskStatus::InProgress,
+        Actor::Daemon,
+        None,
+        at(4),
+    )
+    .await;
+    transition_at(
+        &h,
+        &cast.task.id,
+        TaskStatus::Failed,
+        Actor::Author,
+        Some("still could not do it"),
+        at(5),
+    )
+    .await;
 
     let facts = h.facts("task_ended").await;
     assert_eq!(facts.len(), 2, "{facts:?}");
     assert!(facts.iter().all(|f| f.data["status"] == "failed"));
+    assert_eq!(facts[0].data["status_secs"]["ready"], 1, "{facts:?}");
+    assert_eq!(facts[1].data["status_secs"]["ready"], 2, "{facts:?}");
 }
 
 /// The live author sessions of a task, in no particular order.

@@ -28,3 +28,8 @@ export const WORK_CONFIG = {
   goals_completed: { label: "Goals completed" },
   landed: { label: "Landed" },
 } satisfies ChartConfig
+
+/** The total task time in each lifecycle status. */
+export const TIME_STATUS_CONFIG = {
+  total_secs: { label: "Total", color: STATUS_COLORS.active },
+} satisfies ChartConfig
