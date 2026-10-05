@@ -71,14 +71,33 @@ it("opens on the shared header: a truncating title, then status, id and stamps",
   expect(idAt).toBeLessThan(startedAt)
 })
 
-it("gives the console view the remaining pane height", async () => {
+it("keeps the console inside the remaining pane height", async () => {
   renderScreen(<SessionPanel sessionId={SESSION_ID} onClose={() => {}} />)
   const console = await screen.findByLabelText("Console terminal")
   const body = console.closest('[data-slot="pane-body"]')
   expect(body?.className).toContain("min-h-0")
   expect(body?.className).toContain("flex-1")
   expect(body?.className).toContain("overflow-y-auto")
-  expect(body?.firstElementChild?.className).toContain("h-full")
+  const bodyContent = body?.firstElementChild
+  expect(bodyContent?.className).toContain("h-full")
+  expect(bodyContent?.className).toContain("flex")
+
+  const view = bodyContent?.firstElementChild
+  expect(view?.className).toContain("h-full")
+  expect(view?.className).toContain("min-h-0")
+  expect(view?.className).toContain("flex")
+
+  const tabs = view?.querySelector('[data-slot="tabs"]')
+  expect(tabs?.className).toContain("min-h-0")
+  expect(tabs?.className).toContain("flex")
+
+  const content = console.closest('[data-slot="tabs-content"]')
+  expect(content?.className).toContain("min-h-0")
+  expect(content?.className).toContain("flex-col")
+  const terminalBox = console.parentElement?.parentElement?.parentElement
+  expect(terminalBox?.className).toContain("min-h-0")
+  expect(terminalBox?.className).toContain("flex")
+  expect(terminalBox?.className).not.toContain("min-h-[24rem]")
 })
 
 it("keeps modal Escape separate from the pane close", async () => {

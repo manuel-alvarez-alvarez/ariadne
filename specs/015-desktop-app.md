@@ -579,8 +579,9 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/components/panel-sheet.test.tsx::keeps the dragged width when the pane closes in mid-drag`).
 - A double-click of the handle resets the pane to 36rem
   (`ui/src/components/panel-sheet.test.tsx::resets the pane to 36rem on a double-click of the handle`).
-- The session frame supplies the remaining height through its scrolling body
-  (`ui/src/features/sessions/session-panel.test.tsx::gives the console view the remaining pane height`).
+- The console fills the remaining pane height in a standalone session and a goal drill-down
+  (`ui/src/features/sessions/session-panel.test.tsx::keeps the console inside the remaining pane height`,
+  `ui/src/features/goals/goal-panel.test.tsx::drills into a session with a breadcrumb back to the goal, and no Back button`).
 - A console modal handles Escape without closing the surrounding pane
   (`ui/src/features/sessions/session-panel.test.tsx::keeps modal Escape separate from the pane close`).
 - The Stats screen renders its five sections in order, and asks every family

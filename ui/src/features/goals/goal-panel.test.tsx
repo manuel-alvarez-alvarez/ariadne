@@ -335,6 +335,23 @@ it("drills into a session with a breadcrumb back to the goal, and no Back button
   const crumb = await screen.findByRole("navigation", { name: "Breadcrumb" })
   expect(within(crumb).getByRole("button", { name: GOAL.title })).toBeDefined()
   expect(screen.queryByRole("button", { name: /^Back to /, hidden: true })).toBeNull()
+
+  const console = await screen.findByLabelText("Console terminal")
+  const body = console.closest('[data-slot="pane-body"]')
+  const bodyContent = body?.firstElementChild
+  const view = bodyContent?.firstElementChild
+  expect(view?.className).toContain("min-h-0")
+  expect(view?.className).toContain("flex")
+  const tabs = view?.querySelector('[data-slot="tabs"]')
+  expect(tabs?.className).toContain("min-h-0")
+  expect(tabs?.className).toContain("flex")
+  const content = console.closest('[data-slot="tabs-content"]')
+  expect(content?.className).toContain("min-h-0")
+  expect(content?.className).toContain("flex-col")
+  const terminalBox = console.parentElement?.parentElement?.parentElement
+  expect(terminalBox?.className).toContain("min-h-0")
+  expect(terminalBox?.className).toContain("flex")
+  expect(terminalBox?.className).not.toContain("min-h-[24rem]")
 })
 
 it("renders the loading state inside the pane's scrolling body", () => {

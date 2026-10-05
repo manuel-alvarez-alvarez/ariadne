@@ -39,8 +39,8 @@
  * This view is a flex column of a height its parent gives it: the tabs block
  * grows to fill whatever is left under the facts, and the console tab's
  * content grows inside *that*, so the terminal can ask for `h-full` and get a
- * real number rather than its own fallback height. A parent that gives this
- * view no height leaves the console at its `min-h`, same as before.
+ * real number rather than its own fallback height. The console takes the
+ * space the pane leaves, even when the pane is short.
  */
 
 import { useQuery } from "@tanstack/react-query"
@@ -315,12 +315,12 @@ export function SessionDetailView({
           <TabsTrigger value="terminal">Console</TabsTrigger>
           <TabsTrigger value="activity">Agent activity</TabsTrigger>
         </TabsList>
-        <TabsContent value="terminal" className="min-h-0 flex-1 pt-3">
+        <TabsContent value="terminal" className="min-h-0 flex flex-1 flex-col pt-3">
           <SessionTerminal
             sessionId={session.id}
             status={session.status}
             autoFocus={focusTerminal}
-            className="h-full min-h-[24rem]"
+            className="h-full min-h-0"
           />
         </TabsContent>
         <TabsContent value="activity" className="pt-3">
