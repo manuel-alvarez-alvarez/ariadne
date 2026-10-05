@@ -26,12 +26,12 @@ import {
   ChartLegendContent,
   ChartTooltip,
 } from "@/components/ui/chart"
+import { CHART_HEIGHT_PX, MAX_BAR_PX } from "./stat-time-chart"
 
 /** One bar of its own, or several keys stacked into one. */
 type StatBarGroup = string | string[]
 
 const ROW_HEIGHT_PX = 28
-const MIN_HEIGHT_PX = 96
 
 export function StatBarChart<T extends { label: string }>({
   data,
@@ -50,17 +50,19 @@ export function StatBarChart<T extends { label: string }>({
   caption: string
   columns: { header: string; render: (row: T) => ReactNode }[]
 }) {
-  const height = Math.max(MIN_HEIGHT_PX, data.length * ROW_HEIGHT_PX)
+  const height = Math.max(CHART_HEIGHT_PX, data.length * ROW_HEIGHT_PX)
   const legend = bars.some((group) => Array.isArray(group) && group.length > 1) || bars.length > 1
   return (
     // `relative`: the lone positioned ancestor the `sr-only` table below needs.
     // `sr-only` is `position: absolute`, and with no ancestor positioned it
     // places against the document instead of this box, stretching the page
-    // past the viewport and drawing a second scrollbar.
-    <div className="relative flex flex-col gap-2">
+    // past the viewport and drawing a second scrollbar. The chart is absolute
+    // too, so this box takes its height from the card and never from the
+    // chart: it grows into the room its row leaves, and shrinks back with it.
+    <div className="relative flex-1" style={{ minHeight: height }}>
       {/* `block`, not the base `flex justify-center`: a centred flex row leaves
           its `width: 100%` child to shrink-wrap instead of filling it. */}
-      <ChartContainer config={config} className="block aspect-auto w-full" style={{ height }}>
+      <ChartContainer config={config} className="absolute inset-0 block aspect-auto">
         <BarChart data={data} layout="vertical" margin={{ left: 0, right: 8, top: 4, bottom: 4 }}>
           <CartesianGrid horizontal={false} stroke="var(--color-border)" strokeOpacity={0.5} />
           <YAxis
@@ -92,6 +94,7 @@ export function StatBarChart<T extends { label: string }>({
                 key={key}
                 dataKey={key}
                 stackId={stackId}
+                maxBarSize={MAX_BAR_PX}
                 fill={`var(--color-${key})`}
                 stroke="var(--color-background)"
                 strokeWidth={keys.length > 1 ? 2 : 0}

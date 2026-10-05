@@ -13,7 +13,7 @@ import { StatSection } from "./stat-section"
 import { StatTable } from "./stat-table"
 
 /** `GET /v1/stats/models`, narrowed by the screen's filter. */
-function modelsStatsQueryOptions(filter: StatsFilter) {
+export function modelsStatsQueryOptions(filter: StatsFilter) {
   return queryOptions({
     queryKey: qk.stats.models(filter),
     queryFn: (): Promise<ModelStatsDto> =>
@@ -21,11 +21,12 @@ function modelsStatsQueryOptions(filter: StatsFilter) {
   })
 }
 
-export function ModelsSection({ filter }: { filter: StatsFilter }) {
+export function ModelsSection({ filter, className }: { filter: StatsFilter; className?: string }) {
   const stats = useQuery(modelsStatsQueryOptions(filter))
   return (
     <StatSection
       title="Models"
+      className={className}
       description="Which model does the job?"
       query={stats}
       isEmpty={(data) => !data.items?.some((row) => groups.some(({ seat }) => row.seat === seat))}

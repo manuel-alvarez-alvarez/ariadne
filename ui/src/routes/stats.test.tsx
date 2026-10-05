@@ -6,7 +6,9 @@
  * What is pinned: the screen draws the five families in order, each a section
  * under its own heading, asks each `GET /v1/stats/<family>` with the filters
  * in its URL, and keeps each answer under the key `qk` names, which is the
- * one the dispatcher invalidates. What each section draws is its own test's.
+ * one the dispatcher invalidates. Above them stands the key-figure row, read
+ * off the same answers, and the sections lie in a card grid. What each
+ * section draws is its own test's.
  */
 
 import { screen, within } from "@testing-library/react"
@@ -88,6 +90,59 @@ describe("StatsPage", () => {
       expect(queryClient.getQueryData(qk.stats[family](filter)), family).toEqual(
         emptyBody(`/v1/stats/${family}`),
       )
+    }
+  })
+
+  it("leads with the key figures, read off the work, spend and models answers", async () => {
+    const bodies: Record<string, unknown> = {
+      "/v1/stats/work": {
+        totals: { tasks_finished: 7, finish_rate: 0.7, median_goal_lead_time_secs: 3_600 },
+        buckets: [],
+      },
+      "/v1/stats/spend": {
+        totals: { sessions: 0, input_tokens: 1_200_000, output_tokens: 300_000 },
+      },
+      "/v1/stats/models": {
+        items: [
+          { seat: "other", model: "a", interventions: { total: 4, person_secs: 600 } },
+          { seat: "other", model: "b", interventions: { total: 3, person_secs: 1_200 } },
+        ],
+      },
+    }
+    daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(String(input), init)
+      const url = new URL(request.url)
+      if (url.pathname === "/v1/repositories") return jsonResponse([aRepository()])
+      return jsonResponse(bodies[url.pathname] ?? emptyBody(url.pathname))
+    })
+    renderScreen(<StatsPage />, { route: "/stats" })
+
+    const row = await screen.findByRole("region", { name: "Key figures" })
+    await within(row).findByText("30m")
+    const figures = within(row)
+      .getAllByRole("term")
+      .map((term) => [term.textContent, term.nextElementSibling?.textContent])
+    expect(figures).toEqual([
+      ["Tasks finished", "7"],
+      ["Finish rate", "70.0%"],
+      ["Median goal lead time", "1h"],
+      ["Total tokens", "1.5M"],
+      ["Interventions", "7"],
+      ["Person time", "30m"],
+    ])
+  })
+
+  it("lays Models across the full width, and the other four out as a two-column card grid", async () => {
+    renderScreen(<StatsPage />, { route: "/stats" })
+
+    const models = await screen.findByRole("region", { name: "Models" })
+    const grid = models.parentElement
+    expect(grid?.className).toBe("grid grid-cols-1 items-stretch gap-4 xl:grid-cols-2")
+    expect(models.className).toContain("xl:col-span-2")
+    for (const name of ["Models", "Work", "Time", "Spend", "Attention"]) {
+      const card = screen.getByRole("region", { name })
+      expect(card.parentElement, name).toBe(grid)
+      expect(card.className, name).toContain("rounded-xl border bg-card p-4")
     }
   })
 

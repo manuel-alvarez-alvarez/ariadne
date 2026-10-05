@@ -49,9 +49,15 @@ sentence that says so.
 
 Open **Stats** in the sidebar. Choose a span (all time, 24 hours, 7 days or 30
 days) and a repository at the top of the screen; both stay in the address, so
-a reload keeps them. The screen shows one section per family, each under its
-question, in this order: Models, Work, Time, Spend, Attention and Tools. The
-sections update by themselves as sessions end and as tasks move.
+a reload keeps them.
+
+The screen is a dashboard. A row of key figures comes first: tasks finished,
+finish rate, median goal lead time, total tokens, interventions, and the time
+a person spent. Under it, each family is a card under its question, in this
+order: Models, Work, Time, Spend and Attention. Models spans the full width.
+On a wide window, the other four cards show in two columns; on a narrow
+window, they show in one. The figures update by themselves as sessions end
+and as tasks move.
 
 ## From the API
 

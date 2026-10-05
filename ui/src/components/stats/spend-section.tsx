@@ -14,7 +14,7 @@ import { StatTile, StatTiles } from "./stat-tiles"
 import { StatTimeChart } from "./stat-time-chart"
 
 /** `GET /v1/stats/spend`, narrowed by the screen's filter. */
-function spendStatsQueryOptions(filter: StatsFilter) {
+export function spendStatsQueryOptions(filter: StatsFilter) {
   return queryOptions({
     queryKey: qk.stats.spend(filter),
     queryFn: (): Promise<SpendStatsDto> =>
@@ -55,7 +55,7 @@ export function SpendSection({ filter }: { filter: StatsFilter }) {
         const perTask = data.per_finished_task.input_tokens + data.per_finished_task.output_tokens
 
         return (
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-1 flex-col gap-4">
             <StatTiles>
               <StatTile label="Input tokens" value={formatTokens(data.totals.input_tokens)} />
               <StatTile label="Cache share" value={formatShare(data.totals.cached_share)} />
