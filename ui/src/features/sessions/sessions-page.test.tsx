@@ -351,6 +351,37 @@ it("sends each filter to the daemon under the name that filter has, on the endpo
   )
 })
 
+it("keeps a space typed into Search titles after the search settles", async () => {
+  renderPage()
+  await waitFor(() => row(TASK.title))
+  const user = userEvent.setup()
+  const search = screen.getByLabelText("Search titles") as HTMLInputElement
+
+  await user.type(search, "fix ")
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  expect(search.value).toBe("fix ")
+  await user.type(search, "login")
+
+  await waitFor(() => expect(queriesTo("outside").at(-1)?.get("q")).toBe("fix login"))
+  expect(search.value).toBe("fix login")
+})
+
+it("keeps an inner space in the Directory filter after it settles", async () => {
+  renderPage()
+  await waitFor(() => row(TASK.title))
+  const user = userEvent.setup()
+  await user.click(screen.getByRole("button", { name: "Filter by directory" }))
+  const directory = (await screen.findByLabelText("Working directory")) as HTMLInputElement
+
+  await user.type(directory, "/Users/me/My ")
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  expect(directory.value).toBe("/Users/me/My ")
+  await user.type(directory, "Projects")
+
+  await waitFor(() => expect(queriesTo("outside").at(-1)?.get("dir")).toBe("/Users/me/My Projects"))
+  expect(directory.value).toBe("/Users/me/My Projects")
+})
+
 it("opens the window picker on the last 7 days, asking the daemon for nothing extra", async () => {
   renderPage()
   await waitFor(() => row(TASK.title))

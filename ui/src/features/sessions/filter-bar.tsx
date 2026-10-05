@@ -423,8 +423,8 @@ export function TypedFilter({
   settle.current = onSettle
 
   useEffect(() => {
-    if (unsettled.current === null) setText(value)
-  }, [value])
+    if (unsettled.current === null && value !== text.trim()) setText(value)
+  }, [text, value])
 
   useEffect(
     () => () => {
