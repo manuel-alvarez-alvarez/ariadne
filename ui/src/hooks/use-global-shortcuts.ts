@@ -3,19 +3,26 @@
  *
  * One listener for all of them, on `window` and in the bubble phase: a
  * shortcut is the *last* thing a keystroke should mean, so anything that
- * handled it first — a dialog, a menu, a text field — keeps it.
+ * handled it first — a dialog's own binding, an editor's own chord — keeps
+ * it (the `defaultPrevented` check).
  *
  * Two vocabularies (see `@/lib/shortcuts`): ⌘ chords for the two things that
  * open over everything, and typed chords for the rest — `n` for a new goal,
  * `[` for the sidebar rail, `?` for the sheet that lists all of this, `g` then
  * a letter for the screens, the way keyboard-first apps spell navigation.
- * Typed chords are guarded twice over: never while the keystroke is
- * text (a field, an editor, a session's console), and never from inside a dialog
- * or a menu, where a bare letter belongs to whatever is on top.
+ * The ⌘ chords are matched first and fire wherever the keyboard is, a text
+ * field and a session's console included — the same as every browser's own
+ * ⌘K — but not while a dialog or a menu is up, where a second one opening
+ * over it would be a surprise. Typed chords are guarded twice over: never
+ * while the keystroke is text (a field, an editor, a session's console),
+ * and never from inside a dialog or a menu, where a bare letter belongs to
+ * whatever is on top.
  *
  * `Escape` is deliberately absent. It belongs to whatever is on top (the
  * palette, then the panel stack), and Base UI's dialogs already close the
- * topmost one; a global handler would close two layers at a time.
+ * topmost one; a global handler would close two layers at a time. A
+ * console's own ⌘Escape — leaving it for the pane or the modal around it —
+ * is bound in `session-terminal.tsx`, not here.
  */
 
 import { useEffect, useRef } from "react"
@@ -112,6 +119,10 @@ export const SHORTCUT_HELP: readonly ShortcutHelp[] = [
   })),
   { keys: keySequenceLabel(HELP_SHORTCUT), what: "Show this list" },
   { keys: "Esc", what: "Close the palette, then the topmost panel" },
+  {
+    keys: shortcutLabel({ key: "Esc" }),
+    what: "Leave a focused console for the pane or the modal around it",
+  },
 ]
 
 /**
@@ -154,26 +165,34 @@ export function useGlobalShortcuts({
       // Somebody already acted on this keystroke (an open combobox, an
       // editor's own bindings); a second meaning would be a surprise.
       if (event.defaultPrevented) return
-      // Where the keystroke is going owns it: a text field, an editor, or the
-      // console a session is being typed into.
-      if (isTypingTarget(event.target as TypingTarget | null)) return
 
-      const held = matchesShortcut(event, PALETTE_SHORTCUT)
-        ? onOpenPalette
-        : matchesShortcut(event, SETTINGS_SHORTCUT)
-          ? onOpenSettings
-          : null
+      // A dialog or a menu is up: it owns every keystroke aimed at it, the
+      // ⌘ chords below included — a second one opening over it would be a
+      // surprise.
+      const inOverlay = event.target instanceof Element && event.target.closest(OVERLAY_SELECTOR)
+
+      const held =
+        !inOverlay && matchesShortcut(event, PALETTE_SHORTCUT)
+          ? onOpenPalette
+          : !inOverlay && matchesShortcut(event, SETTINGS_SHORTCUT)
+            ? onOpenSettings
+            : null
       if (held) {
         clearPending()
         // Both chords are the browser's too (⌘K focuses the address bar in
-        // Chrome, ⌘, opens preferences in Safari) — claim them.
+        // Chrome, ⌘, opens preferences in Safari) — claim them, wherever the
+        // keyboard is: a text field and a session's console included.
         event.preventDefault()
         held()
         return
       }
 
+      // Where the keystroke is going owns it: a text field, an editor, or the
+      // console a session is being typed into.
+      if (isTypingTarget(event.target as TypingTarget | null)) return
+
       // A dialog or a menu is up: a bare letter is being typed *at it*.
-      if (event.target instanceof Element && event.target.closest(OVERLAY_SELECTOR)) return
+      if (inOverlay) return
 
       const lead = pending.current?.key ?? null
       const screen = SCREEN_SHORTCUTS.find(({ chord }) => matchesKeySequence(event, chord, lead))

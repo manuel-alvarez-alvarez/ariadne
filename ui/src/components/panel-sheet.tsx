@@ -66,9 +66,10 @@ export function PanelSheet({
       onClose={onClose}
       onKeyDown={(event) => {
         if (event.key !== "Escape" || !event.currentTarget.contains(event.target as Node)) return
-        // The inline console sends Escape as input and also lets the panel
-        // close. Its Expand modal stops propagation itself (spec rule 20).
-        if (event.defaultPrevented && !(event.target as Element).closest(".xterm")) return
+        // A focused console, or a dialog opened from this pane, already
+        // answered this Escape (spec rule 21) — a close here would be a
+        // second meaning for one keystroke.
+        if (event.defaultPrevented) return
         event.stopPropagation()
         onClose()
       }}

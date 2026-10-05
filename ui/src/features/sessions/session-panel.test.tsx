@@ -6,7 +6,7 @@ import { beforeEach, expect, it, vi } from "vitest"
 
 import { aGoal, aSession, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
-import { FakeWebSocket, stubWebSocket } from "@/test/web-socket"
+import { FakeWebSocket, latestSocket, stubWebSocket } from "@/test/web-socket"
 
 import { SessionPanel } from "./session-panel"
 
@@ -30,17 +30,39 @@ beforeEach(() => {
   })
 })
 
-it("closes the panel when focused Escape reaches its console", async () => {
+it("sends focused Escape to its console and keeps the panel open", async () => {
   const onClose = vi.fn()
   renderScreen(<SessionPanel sessionId={SESSION_ID} onClose={onClose} />)
 
   await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
+  const socket = latestSocket()
+  socket.succeed()
   const textarea = screen.getByLabelText("Console terminal").querySelector("textarea")
   if (!textarea) throw new Error("the terminal has no textarea to type into")
 
   fireEvent.keyDown(textarea, { key: "Escape", code: "Escape" })
 
-  await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+  expect(socket.messages.at(-1)).toEqual({ type: "key", code: "esc", modifiers: [] })
+  expect(onClose).not.toHaveBeenCalled()
+  expect(screen.getByRole("region", { name: "Author session" })).toBeDefined()
+})
+
+it("moves focus to the panel's close button on ⌘Escape, and sends nothing to the console", async () => {
+  const onClose = vi.fn()
+  renderScreen(<SessionPanel sessionId={SESSION_ID} onClose={onClose} />)
+
+  await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
+  const socket = latestSocket()
+  socket.succeed()
+  const sentBeforeChord = socket.messages.length
+  const textarea = screen.getByLabelText("Console terminal").querySelector("textarea")
+  if (!textarea) throw new Error("the terminal has no textarea to type into")
+
+  fireEvent.keyDown(textarea, { key: "Escape", code: "Escape", metaKey: true })
+
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close" }))
+  expect(socket.messages).toHaveLength(sentBeforeChord)
+  expect(onClose).not.toHaveBeenCalled()
 })
 
 /**

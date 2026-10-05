@@ -238,7 +238,11 @@ Out: the daemon endpoints themselves (012).
     in a near-fullscreen modal, and its Collapse control restores it to the
     panel. Each move closes the old socket before it opens a fresh socket,
     refits the emulator, and sends the new size before input. Focused Escape
-    remains console input; Escape outside the terminal closes the modal.
+    remains console input in the panel and in the modal alike; Escape
+    outside the console closes the panel or the modal. ⌘Escape leaves a
+    focused console without sending it Escape or closing anything itself: it
+    moves focus to the panel's Close button, or to the modal's Collapse
+    button, so the plain Escape that follows closes what is now focused.
 22. Every key press is sent as a `key` message, the DOM key mapped one to
     one onto crossterm's code and modifiers — a printable character as
     itself, the named keys by name, F1 to F12 by number, Shift+Tab as
@@ -282,7 +286,10 @@ Out: the daemon endpoints themselves (012).
     ended while blocked is told to resume first. No other attention reason
     shows the banner.
 29. The typed keyboard chords (`n`, `g` then a letter, `?`, `[`) are ignored
-    while a field, an editor or a session's terminal has the keyboard.
+    while a field, an editor or a session's terminal has the keyboard. The
+    held ⌘ chords (⌘K, ⌘,) are not: they fire from a field or a session's
+    console too, the same as every browser's own ⌘K, but neither fires
+    while a dialog or a menu is up.
 30. The agents screen has one tab per registry agent from `GET /v1/agents`,
     in the daemon's order, named by its agent id. Each tab holds that agent's
     extra flags and the models of the catalog whose `agent_id` is that agent.
@@ -838,14 +845,21 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/sessions/session-terminal.test.tsx::sends its size before anything else`).
 - The terminal opens in a near-fullscreen modal, closes its previous socket
   before its modal socket opens and resizes, restores a fresh panel socket on
-  collapse, and gives terminal Escape priority only in the modal while outside
-  Escape dismisses the modal and focused panel Escape closes its panel
+  collapse, and gives a focused console Escape in the panel and in the modal
+  alike, while Escape outside the console still closes the pane or dismisses
+  the modal
   (`ui/src/features/sessions/session-terminal.test.tsx::expands the console into a near-fullscreen modal`,
   `::closes the panel socket before opening and resizing the modal console`,
   `::collapses the modal console into the panel on a fresh socket`,
   `::keeps the modal open when focused Escape belongs to the console`,
   `::closes the modal when Escape occurs outside the console`,
-  `ui/src/features/sessions/session-panel.test.tsx::closes the panel when focused Escape reaches its console`).
+  `ui/src/features/sessions/session-panel.test.tsx::sends focused Escape to its console and keeps the panel open`,
+  `ui/src/components/panel-sheet.test.tsx::leaves Escape on the board alone and returns focus when the pane closes`).
+- ⌘Escape leaves a focused console for the Close button around it in the
+  panel, or the Collapse button in the modal, sending nothing to the agent
+  and closing neither by itself
+  (`ui/src/features/sessions/session-panel.test.tsx::moves focus to the panel's close button on ⌘Escape, and sends nothing to the console`,
+  `ui/src/features/sessions/session-terminal.test.tsx::moves focus to Collapse on ⌘Escape, and sends nothing to the console`).
 - The bytes of a binary frame appear in the terminal
   (`ui/src/features/sessions/session-terminal.test.tsx::writes the bytes of a binary frame into the terminal`).
 - A key press is sent as a `key` message with its code and modifiers — a
@@ -878,6 +892,13 @@ Out: the daemon endpoints themselves (012).
   a textarea
   (`ui/src/lib/shortcuts.test.ts::is true for form fields, the console's textarea included`,
   `ui/src/components/keyboard-shortcuts-dialog.test.tsx::says what the two vocabularies are, since neither is guessable`).
+- ⌘K opens the command palette from a text field and from a session's
+  console alike, and does nothing while a dialog is up
+  (`ui/src/hooks/use-global-shortcuts.test.tsx::opens the palette on ⌘K from a text field`,
+  `::opens the palette on ⌘K from a session's console`,
+  `::does nothing on ⌘K while a dialog is up`).
+- The cheat sheet lists ⌘Escape
+  (`ui/src/components/keyboard-shortcuts-dialog.test.tsx::lists every chord, screen by screen`).
 - An agent's skills wrap onto as many lines as they need, clipping none of
   them, with the model it runs on below them in muted text and no middot
   before it; each skill still links to its skill and still shows its summary

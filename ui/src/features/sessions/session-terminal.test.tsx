@@ -222,6 +222,24 @@ it("keeps the modal open when focused Escape belongs to the console", async () =
   expect(screen.getByRole("dialog", { name: "Session console" })).not.toBeNull()
 })
 
+it("moves focus to Collapse on ⌘Escape, and sends nothing to the console", async () => {
+  const user = userEvent.setup()
+  await renderPane()
+  await user.click(screen.getByRole("button", { name: "Expand the console" }))
+  await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2))
+  const modalSocket = latestSocket()
+  modalSocket.succeed()
+  const sentBeforeChord = modalSocket.messages.length
+
+  fireEvent.keyDown(keyboard(), { key: "Escape", code: "Escape", metaKey: true })
+
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: "Collapse the console back into the panel" }),
+  )
+  expect(modalSocket.messages).toHaveLength(sentBeforeChord)
+  expect(screen.getByRole("dialog", { name: "Session console" })).not.toBeNull()
+})
+
 it("closes the modal when Escape occurs outside the console", async () => {
   const user = userEvent.setup()
   await renderPane()

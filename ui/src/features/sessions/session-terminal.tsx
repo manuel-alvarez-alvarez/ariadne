@@ -113,6 +113,7 @@ function TerminalPane({
   const host = useRef<HTMLElement>(null)
   const terminal = useRef<Terminal | null>(null)
   const socket = useRef<TerminalSocket | null>(null)
+  const collapseButton = useRef<HTMLButtonElement>(null)
   const [socketStatus, setSocketStatus] = useState<TerminalSocketStatus>("connecting")
   const [error, setError] = useState<string | null>(null)
   /** The status the daemon last reported on the socket; the cache's until then. */
@@ -169,12 +170,29 @@ function TerminalPane({
       })
       term.attachCustomKeyEventHandler((event) => {
         if (event.type !== "keydown") return false
+        if (event.metaKey && event.key === "Escape") {
+          // ⌘Escape leaves the console without closing anything itself: the
+          // panel's Close button, or the modal's Collapse button, takes the
+          // keyboard, and a plain Escape next closes what is now focused.
+          event.preventDefault()
+          event.stopPropagation()
+          if (onCollapse) {
+            collapseButton.current?.focus()
+          } else {
+            host.current
+              ?.closest<HTMLElement>('[data-slot="docked-pane"]')
+              ?.querySelector<HTMLElement>('[data-slot="pane-close"]')
+              ?.focus()
+          }
+          return false
+        }
         const message = terminalKeyMessage(event)
         if (message === null) return false
         event.preventDefault()
-        // A focused terminal owns Escape only in the modal. A panel keeps its
-        // usual Escape dismissal behavior.
-        if (onCollapse && event.key === "Escape") event.stopPropagation()
+        // A focused console owns Escape in the panel and in the modal alike;
+        // the pane or the dialog around it decides its own Escape only once
+        // the keyboard has left the console.
+        if (event.key === "Escape") event.stopPropagation()
         link.send(message)
         return false
       })
@@ -263,6 +281,7 @@ function TerminalPane({
         ) : null}
         {onCollapse ? (
           <Button
+            ref={collapseButton}
             size="icon-xs"
             variant="ghost"
             onClick={onCollapse}
