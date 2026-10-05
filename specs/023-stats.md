@@ -1,7 +1,7 @@
 ---
 id: stats
 status: current
-updated: 2026-10-04
+updated: 2026-10-05
 areas: [api, store, daemon, cli, ui]
 commits: []
 tests:
@@ -385,68 +385,46 @@ nothing here converts one.
 `Store::model_stats` reads only filtered `stat_facts` and returns `ModelStats { items }`.
 `GET /v1/stats/models` returns the same fields through `ModelStatsDto` and the shared `StatsQuery`.
 Each named model gets one row per seat, including models named only inside verdicts or picks.
+A verdict names its `author_model` as an author, and a pick names its winner and losers as authors.
+A model named only by a `switch` fact, a `permission` fact with `decided_by = console`, or an
+`attention` fact with reason `waiting_input`, `waiting_user`, `stalled` or `agent_error` gets a row too.
+Such a row carries zero figures.
 Rows sort by orchestrator, author, reviewer, then no seat, and by model within each seat.
-A fact without a model contributes no session row.
-Both filters apply before any aggregation or task matching.
+A fact without a model contributes to no figure.
+Both filters apply before any aggregation.
 
-Each row counts ended sessions, failed sessions, sessions whose attention reason is `stalled`, and switches with reason `exhausted`.
-Switches count against the model and seat left.
-Usage sums input, cached input, and output tokens from ended sessions.
-Cached share is cached input tokens divided by input tokens.
-Mean lifetime is summed session lifetime divided by ended sessions.
-Total lifetime (`total_lifetime_secs`) is the summed session lifetime itself.
-
-Each row carries `interventions`, the times a person stepped in for that model in that seat.
-`permissions` counts `permission` facts with `decided_by = console`; an AI or learned answer is no intervention.
-`questions` counts `attention` facts with reason `waiting_input` or `waiting_user`.
-`stalls` counts `attention` facts with reason `stalled` or `agent_error`.
-An `attention` fact with reason `waiting_permission` counts nowhere, because its prompt already counts as a permission.
-`total` is the sum of the three counts.
-`person_secs` sums `wait_ms / 1000` of those permissions and `wait_secs` of those attention facts.
-A model with only such facts still gets a row.
-
-Author rows carry an `author` object; other rows carry null.
-Finished, failed, and cancelled task counts count `task_ended` facts, including repeated endings.
-Finish rate is finished endings divided by all three ending counts.
-First-pass rate divides tasks with a round-one approval by tasks with any verdict, grouped by author model.
-An approval from any reviewer qualifies; repeated verdicts count the task once.
-Mean review rounds is the mean `review_requests` across this model's task endings.
-Each pick counts one contest entered per distinct model named among its winner and losers.
-Each pick counts one win for its winner model, even when that model also appears among losers.
-Win rate is contests won divided by contests entered.
-Tokens per finished task averages matching author-session input plus output over distinct finished tasks attributed to this model.
-Matching requires the same model and task, and finished tasks without sessions contribute zero tokens.
+Each row carries `model`, `seat`, `tasks`, `goals`, `tokens`, `time_secs`, `messages`,
+`rounds_per_task` and `changes_per_task`.
+`tasks` counts the distinct tasks of this model's `session_ended` facts in this seat.
+`goals` counts the distinct goals of the same facts.
+`tokens` sums `input_tokens` and `output_tokens` of those facts.
 Cached tokens are already part of input and are never added again.
-Median lead time (`median_lead_time_secs`) is the median `lead_time_secs` of this model's finished `task_ended` facts.
-Interventions per finished task (`interventions_per_finished_task`) is `interventions.total` divided by finished endings, and null without one.
-Only the `author` object carries the two, so other seats have no such rate.
+`time_secs` sums their `lifetime_secs`.
+`messages` counts the `message` facts this model sent in this seat.
 
-Reviewer rows carry a `reviewer` object; other rows carry null.
-Verdicts count each verdict fact from that reviewer model.
-Approve share is approval verdicts divided by all verdicts.
-Mean latency is summed verdict latency divided by verdicts.
-Every share and mean with a zero denominator is zero.
+`rounds_per_task` is null except for authors.
+For an author it is the mean `review_requests` over this model's `task_ended` facts with status `finished`.
+`changes_per_task` is null except for reviewers.
+For a reviewer it divides this model's `verdict` facts with verdict `changes_requested`
+by the distinct tasks this model gave a verdict on.
+Each of the two is zero without a denominator.
 
 The CLI prints one comparison table per seat, headed by the seat.
 `--seat orchestrator|author|reviewer` belongs only to `stats models` and limits table output.
 JSON output always contains the complete DTO, regardless of `--seat`.
-A seatless row uses session columns under `NONE` in the CLI and remains available in JSON.
+A seatless row uses the TASKS columns under `NONE` in the CLI and remains available in JSON.
 The desktop section draws Authors, Reviewers, and Orchestrators through `StatTable`, omitting empty seats.
 Responses without rows for the three displayed seats use the shared empty state, including responses with only seatless rows.
 Each desktop table sorts by its first count descending, then by model.
 
 | Seat | Columns |
 | --- | --- |
-| Author | MODEL, TASKS, FINISH_RATE, FIRST_PASS, ROUNDS, WIN_RATE, TOKENS/TASK, INTERVENTIONS/TASK, FAILED, EXHAUSTED, INTERVENTIONS, TOTAL_TIME |
-| Reviewer | MODEL, VERDICTS, APPROVE, LATENCY, FAILED, EXHAUSTED, INTERVENTIONS, TOTAL_TIME |
-| Orchestrator | MODEL, SESSIONS, TOKENS, LIFETIME, FAILED, EXHAUSTED, INTERVENTIONS, TOTAL_TIME |
+| Author | MODEL, TASKS, TOKENS, TIME, MESSAGES, ROUNDS/TASK |
+| Reviewer | MODEL, TASKS, TOKENS, TIME, MESSAGES, CHANGES/TASK |
+| Orchestrator | MODEL, GOALS, TOKENS, TIME, MESSAGES |
 
-The CLI adds LEAD_TIME before INTERVENTIONS/TASK for authors, and PERSON_TIME before TOTAL_TIME for every seat.
-TASKS is the sum of finished, failed, and cancelled endings; FAILED always means failed sessions.
-INTERVENTIONS is `interventions.total`, and TOTAL_TIME is `total_lifetime_secs`.
-INTERVENTIONS/TASK prints with one decimal, and `-` where the rate is null.
-In the desktop, a hover or a focus on INTERVENTIONS shows permissions, questions, stalls and person time.
-Rates print as percentages with one decimal, durations use the existing duration formatter, and tokens use compact notation.
+TOKENS uses compact notation and TIME the existing duration formatter.
+ROUNDS/TASK and CHANGES/TASK print with one decimal.
 
 ### Attention
 
@@ -463,7 +441,7 @@ stalled ending sessions and exhausted switches. Every count and mean obeys the
 shared `since` and `repo` filter.
 
 The response also carries `interventions`, the times a person stepped in,
-by the same rules the models family uses for its own per-row count:
+by these rules:
 `permissions` counts `permission` facts with `decided_by = console`;
 `questions` counts `attention` facts with reason `waiting_input` or
 `waiting_user`; `stalls` counts `attention` facts with reason `stalled` or
@@ -652,41 +630,35 @@ alongside the family's other totals, and the Stats screen's key figures (rule
 
 #### Models
 
-- Author sessions, endings, verdicts, and picks produce every author figure, with duplicate contest models counted once
-  (`stats/models.rs::tests::author_figures_combine_sessions_outcomes_reviews_and_contests`).
-- Each verdict contributes to reviewer count, approval share, and mean latency
-  (`stats/models.rs::tests::reviewer_figures_count_each_verdict_and_its_latency`).
-- Every fact and the session-to-task match obey both filters, including the exact time boundary
+- Each row counts the distinct tasks and goals, the tokens without cached tokens again,
+  the time and the messages of its model and seat
+  (`stats/models.rs::tests::each_figure_counts_the_sessions_and_messages_of_its_model_and_seat`).
+- Rounds per task is the mean over finished tasks, for authors only
+  (`stats/models.rs::tests::rounds_per_task_is_the_mean_review_requests_of_finished_tasks_for_authors_only`).
+- Changes per task divides changes requested by the tasks reviewed, for reviewers only
+  (`stats/models.rs::tests::changes_per_task_divides_changes_requested_by_the_tasks_reviewed_for_reviewers_only`).
+- Both review figures are zero without a denominator
+  (`stats/models.rs::tests::the_review_figures_are_zero_without_a_denominator`).
+- Every fact obeys both filters, including the exact time boundary
   (`stats/models.rs::tests::every_fact_is_filtered_by_time_and_repository`).
-- Payload-only models get rows; seat ordering, absent seats, and empty denominators hold
-  (`stats/models.rs::tests::rows_include_models_named_only_in_payloads_and_sort_by_seat_then_model`).
-- Repeated verdicts and finished endings preserve task-based denominators
-  (`stats/models.rs::tests::first_pass_counts_reviewed_tasks_once`,
-  `::finished_task_tokens_count_each_task_once_and_exclude_other_seats`).
-- The route returns author and reviewer figures for a finished task with an approval
-  (`stats_models.rs::a_finished_task_and_approval_answer_author_and_reviewer_rows`).
-- CLI tables group each seat, and only the models command accepts `--seat`
-  (`commands/stats/models.rs::tests::tables_group_models_by_seat_and_format_the_figures`,
+- Rows sort by seat, then by model
+  (`stats/models.rs::tests::rows_sort_by_seat_then_model`).
+- Models named only in verdict or pick payloads, or only by switch, console permission and
+  attention facts, get rows under both filters
+  (`stats/models.rs::tests::models_named_only_in_payloads_and_other_facts_get_rows_under_both_filters`).
+- The route answers the new shape per model and seat under both filters
+  (`stats_models.rs::each_model_and_seat_answers_its_figures_under_both_filters`).
+- CLI tables print each seat's columns and figures in seat order, and only the models command accepts `--seat`
+  (`commands/stats/models.rs::tests::each_seat_prints_its_own_columns_and_figures`,
+  `::every_seat_prints_a_table_in_seat_order`,
   `::the_seat_option_belongs_only_to_models_and_prints_one_table`).
 - JSON preserves the complete DTO with a seat selected
   (`commands/stats/models.rs::tests::json_reads_the_complete_dto_even_with_a_seat_selected`).
-- The desktop reads under `qk.stats.models`, draws three sorted and formatted tables, and omits empty seats
-  (`models-section.test.tsx`: "draws three seat tables with formatted figures and count ordering",
+- The desktop reads under `qk.stats.models`, draws three sorted tables with their columns and formats, and omits empty seats
+  (`models-section.test.tsx`: "draws three seat tables with their columns, formats and count ordering",
   "omits a table when its seat has no rows", and the section's empty-state test).
-
 - A response containing only seatless rows shows the shared empty state and no table
   (`models-section.test.tsx`: "shows the empty state when the response contains only seatless rows").
-- Console permissions, questions and stalls count per model and seat, with person time, total lifetime,
-  the author's median lead time and rate, and no `waiting_permission` or AI-decided fact
-  (`stats/models.rs::tests::interventions_count_what_a_person_answered_per_model_and_seat`,
-  `stats_models.rs::interventions_and_time_answer_per_model_and_seat`).
-- The rate per finished task is null without a finished task
-  (`stats/models.rs::tests::the_intervention_rate_is_null_without_a_finished_task`).
-- The CLI shows interventions, person time and total time per seat, and lead time and the rate for authors
-  (`commands/stats/models.rs::tests::every_seat_shows_interventions_and_time_and_authors_their_rate`).
-- The desktop shows INTERVENTIONS and TOTAL_TIME per seat, INTERVENTIONS/TASK for authors, and the breakdown on hover
-  (`models-section.test.tsx`: "shows interventions and total time per seat, and the rate per finished task for authors",
-  "shows the intervention breakdown and the person time behind the total").
 
 #### Attention
 

@@ -7,7 +7,6 @@
  */
 
 import { screen, within } from "@testing-library/react"
-import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it } from "vitest"
 
 import { qk } from "@/api"
@@ -40,47 +39,34 @@ it("asks for its family with the filter, and says its empty sentence", async () 
   expect(queryClient.getQueryData(qk.stats.models(filter))).toEqual({ items: [] })
 })
 
-const usage = { input_tokens: 2000, cached_input_tokens: 1000, output_tokens: 400 }
 const base = {
-  sessions: 3,
-  failed_sessions: 1,
-  stalled_sessions: 1,
-  exhaustions: 2,
-  usage,
-  cached_share: 0.5,
-  mean_lifetime_secs: 90,
-  total_lifetime_secs: 270,
-  interventions: { permissions: 1, questions: 2, stalls: 1, total: 4, person_secs: 600 },
-  author: null,
-  reviewer: null,
-}
-const author = {
-  tasks_finished: 2,
-  tasks_failed: 1,
-  tasks_cancelled: 1,
-  finish_rate: 0.5,
-  first_pass_rate: 0.75,
-  mean_review_rounds: 1.5,
-  contests_entered: 4,
-  contests_won: 1,
-  win_rate: 0.25,
-  tokens_per_finished_task: 1200,
-  median_lead_time_secs: 3600,
-  interventions_per_finished_task: 2,
+  tasks: 4,
+  goals: 2,
+  tokens: 2400,
+  time_secs: 270,
+  messages: 6,
+  rounds_per_task: null,
+  changes_per_task: null,
 }
 
-it("draws three seat tables with formatted figures and count ordering", async () => {
+/** Each column header of a table, and the cells of each of its rows. */
+function cells(table: HTMLElement) {
+  return within(table)
+    .getAllByRole("row")
+    .map((row) =>
+      within(row)
+        .queryAllByRole(row.querySelector("th") ? "columnheader" : "cell")
+        .map((cell) => cell.textContent),
+    )
+}
+
+it("draws three seat tables with their columns, formats and count ordering", async () => {
   const response = {
     items: [
-      { ...base, model: "writer-small", seat: "author", author },
-      { ...base, model: "writer-large", seat: "author", author: { ...author, tasks_finished: 9 } },
-      {
-        ...base,
-        model: "judge",
-        seat: "reviewer",
-        reviewer: { verdicts: 8, approve_share: 0.625, mean_latency_secs: 120 },
-      },
-      { ...base, model: "planner", seat: "orchestrator" },
+      { ...base, model: "writer-small", seat: "author", rounds_per_task: 1.25 },
+      { ...base, model: "writer-large", seat: "author", tasks: 9, rounds_per_task: 2 },
+      { ...base, model: "judge", seat: "reviewer", tokens: 1_500_000, changes_per_task: 0.4 },
+      { ...base, model: "planner", seat: "orchestrator", time_secs: 7200, messages: 12 },
     ],
   }
   daemonFetch.mockResolvedValue(jsonResponse(response))
@@ -90,28 +76,25 @@ it("draws three seat tables with formatted figures and count ordering", async ()
   expect(
     screen.getAllByRole("table").map((table) => table.querySelector("caption")?.textContent),
   ).toEqual(["Authors", "Reviewers", "Orchestrators"])
-  expect(
-    within(authors)
-      .getAllByRole("row")
-      .slice(1)
-      .map((row) => within(row).getAllByRole("cell")[0]?.textContent),
-  ).toEqual(["writer-large", "writer-small"])
-  expect(within(authors).getAllByRole("row")[2]?.textContent).toBe(
-    "writer-small450.0%75.0%1.525.0%1.2k2.01244m",
-  )
-  expect(
-    within(screen.getByRole("table", { name: "Reviewers" })).getAllByRole("row")[1]?.textContent,
-  ).toBe("judge862.5%2m1244m")
-  expect(
-    within(screen.getByRole("table", { name: "Orchestrators" })).getAllByRole("row")[1]
-      ?.textContent,
-  ).toBe("planner32.4k1m1244m")
+  expect(cells(authors)).toEqual([
+    ["MODEL", "TASKS", "TOKENS", "TIME", "MESSAGES", "ROUNDS/TASK"],
+    ["writer-large", "9", "2.4k", "4m", "6", "2.0"],
+    ["writer-small", "4", "2.4k", "4m", "6", "1.3"],
+  ])
+  expect(cells(screen.getByRole("table", { name: "Reviewers" }))).toEqual([
+    ["MODEL", "TASKS", "TOKENS", "TIME", "MESSAGES", "CHANGES/TASK"],
+    ["judge", "4", "1.5M", "4m", "6", "0.4"],
+  ])
+  expect(cells(screen.getByRole("table", { name: "Orchestrators" }))).toEqual([
+    ["MODEL", "GOALS", "TOKENS", "TIME", "MESSAGES"],
+    ["planner", "2", "2.4k", "2h", "12"],
+  ])
   expect(queryClient.getQueryData(qk.stats.models(filter))).toEqual(response)
 })
 
 it("omits a table when its seat has no rows", async () => {
   daemonFetch.mockResolvedValue(
-    jsonResponse({ items: [{ ...base, model: "writer", seat: "author", author }] }),
+    jsonResponse({ items: [{ ...base, model: "writer", seat: "author", rounds_per_task: 0 }] }),
   )
   renderScreen(<ModelsSection filter={{}} />, { route: "/stats" })
   await screen.findByRole("table", { name: "Authors" })
@@ -125,66 +108,4 @@ it("shows the empty state when the response contains only seatless rows", async 
   const section = await screen.findByRole("region", { name: "Models" })
   expect(await within(section).findByText("No model ran in this span.")).toBeDefined()
   expect(within(section).queryByRole("table")).toBeNull()
-})
-
-it("shows interventions and total time per seat, and the rate per finished task for authors", async () => {
-  daemonFetch.mockResolvedValue(
-    jsonResponse({
-      items: [
-        { ...base, model: "writer", seat: "author", author },
-        {
-          ...base,
-          model: "idle",
-          seat: "author",
-          author: { ...author, interventions_per_finished_task: null },
-        },
-        {
-          ...base,
-          model: "judge",
-          seat: "reviewer",
-          reviewer: { verdicts: 8, approve_share: 0.625, mean_latency_secs: 120 },
-        },
-      ],
-    }),
-  )
-  renderScreen(<ModelsSection filter={{}} />, { route: "/stats" })
-  const authors = await screen.findByRole("table", { name: "Authors" })
-  const cell = (table: HTMLElement, model: string, header: string) => {
-    const headers = within(table)
-      .getAllByRole("columnheader")
-      .map((th) => th.textContent)
-    const row = within(table)
-      .getAllByRole("row")
-      .find((tr) => within(tr).queryAllByRole("cell")[0]?.textContent === model)
-    return row && within(row).getAllByRole("cell")[headers.indexOf(header)]?.textContent
-  }
-  expect(cell(authors, "writer", "INTERVENTIONS")).toBe("4")
-  expect(cell(authors, "writer", "TOTAL_TIME")).toBe("4m")
-  expect(cell(authors, "writer", "INTERVENTIONS/TASK")).toBe("2.0")
-  expect(cell(authors, "idle", "INTERVENTIONS/TASK")).toBe("-")
-  const reviewers = screen.getByRole("table", { name: "Reviewers" })
-  expect(cell(reviewers, "judge", "INTERVENTIONS")).toBe("4")
-  expect(cell(reviewers, "judge", "TOTAL_TIME")).toBe("4m")
-  expect(within(reviewers).queryByRole("columnheader", { name: "INTERVENTIONS/TASK" })).toBeNull()
-})
-
-it("shows the intervention breakdown and the person time behind the total", async () => {
-  daemonFetch.mockResolvedValue(
-    jsonResponse({
-      items: [
-        {
-          ...base,
-          model: "writer",
-          seat: "author",
-          author,
-          interventions: { permissions: 3, questions: 2, stalls: 1, total: 6, person_secs: 600 },
-        },
-      ],
-    }),
-  )
-  renderScreen(<ModelsSection filter={{}} />, { route: "/stats" })
-  const authors = await screen.findByRole("table", { name: "Authors" })
-  await userEvent.hover(within(authors).getByText("6"))
-  const breakdown = await screen.findByText("Person time")
-  expect(breakdown.closest("dl")?.textContent).toBe("Permissions3Questions2Stalls1Person time10m")
 })

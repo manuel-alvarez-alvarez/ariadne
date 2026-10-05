@@ -2,11 +2,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use ariadne_core::TokenUsage;
 use serde_json::Value;
 use sqlx::Row;
 
-use super::{StatsFilter, median, narrowed};
+use super::{StatsFilter, narrowed};
 use crate::{Result, Store};
 
 /// Models compared within each seat.
@@ -15,72 +14,37 @@ pub struct ModelStats {
     pub items: Vec<ModelStat>,
 }
 
-/// Session measures and the measures specific to this seat.
+/// What one model did in one seat.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ModelStat {
     pub model: String,
     pub seat: Option<String>,
-    pub sessions: u64,
-    pub failed_sessions: u64,
-    pub stalled_sessions: u64,
-    pub exhaustions: u64,
-    pub usage: TokenUsage,
-    pub cached_share: f64,
-    pub mean_lifetime_secs: f64,
-    pub total_lifetime_secs: f64,
-    pub interventions: ModelInterventions,
-    pub author: Option<AuthorModelStat>,
-    pub reviewer: Option<ReviewerModelStat>,
+    /// Distinct tasks with a session of this model in this seat.
+    pub tasks: u64,
+    /// Distinct goals with a session of this model in this seat.
+    pub goals: u64,
+    /// Input and output tokens of the ended sessions. Cached tokens are part of input.
+    pub tokens: u64,
+    /// The sum of the session lifetimes.
+    pub time_secs: f64,
+    /// The messages this model sent in this seat.
+    pub messages: u64,
+    /// Authors only: the mean review requests over finished tasks, zero without one.
+    pub rounds_per_task: Option<f64>,
+    /// Reviewers only: changes requested over the tasks given a verdict, zero without one.
+    pub changes_per_task: Option<f64>,
 }
 
-/// The times a person stepped in for this model in this seat.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct ModelInterventions {
-    pub permissions: u64,
-    pub questions: u64,
-    pub stalls: u64,
-    pub total: u64,
-    pub person_secs: f64,
-}
-
-/// Outcomes attributed to an author model.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct AuthorModelStat {
-    pub tasks_finished: u64,
-    pub tasks_failed: u64,
-    pub tasks_cancelled: u64,
-    pub finish_rate: f64,
-    pub first_pass_rate: f64,
-    pub mean_review_rounds: f64,
-    pub contests_entered: u64,
-    pub contests_won: u64,
-    pub win_rate: f64,
-    pub tokens_per_finished_task: f64,
-    pub median_lead_time_secs: f64,
-    pub interventions_per_finished_task: Option<f64>,
-}
-
-/// Verdicts attributed to a reviewer model.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct ReviewerModelStat {
-    pub verdicts: u64,
-    pub approve_share: f64,
-    pub mean_latency_secs: f64,
-}
-
-/// Intermediate totals retain task identities until all filtered facts are read.
+/// Intermediate totals retain task and goal identities until all filtered facts are read.
 #[derive(Default)]
 struct Totals {
     row: ModelStat,
-    lifetime: f64,
-    review_rounds: f64,
+    tasks: BTreeSet<String>,
+    goals: BTreeSet<String>,
+    rounds: f64,
+    finished: u64,
+    changes: u64,
     reviewed_tasks: BTreeSet<String>,
-    first_pass_tasks: BTreeSet<String>,
-    finished_tasks: BTreeSet<String>,
-    task_tokens: BTreeMap<String, u64>,
-    lead_times: Vec<f64>,
-    approvals: u64,
-    latency: f64,
 }
 
 type Rows = BTreeMap<(u8, String), Totals>;
@@ -96,8 +60,6 @@ fn row<'a>(rows: &'a mut Rows, model: &str, seat: Option<&str>) -> &'a mut Total
         row: ModelStat {
             model: model.into(),
             seat: seat.map(str::to_owned),
-            author: (seat == Some("author")).then(AuthorModelStat::default),
-            reviewer: (seat == Some("reviewer")).then(ReviewerModelStat::default),
             ..ModelStat::default()
         },
         ..Totals::default()
@@ -116,11 +78,12 @@ impl Store {
     /// Which model does the job, over the facts the filter keeps.
     pub async fn model_stats(&self, filter: &StatsFilter) -> Result<ModelStats> {
         let (clause, binds) = narrowed(filter);
-        // Only a person's answer is an intervention. A `waiting_permission` attention
-        // fact is left out, because its prompt already counts as a permission.
+        // Every fact that names a model gives it a row, even where it adds to no figure.
+        // Only a person's answer and a flag a person cleared count; a `waiting_permission`
+        // attention fact is left out, because its prompt is already a permission.
         let sql = format!(
-            "SELECT kind, model, seat, task_id, data FROM stat_facts
-             WHERE (kind IN ('session_ended', 'switch', 'task_ended', 'pick', 'verdict')
+            "SELECT kind, model, seat, goal_id, task_id, data FROM stat_facts
+             WHERE (kind IN ('session_ended', 'message', 'task_ended', 'verdict', 'switch', 'pick')
                     OR (kind = 'permission' AND json_extract(data, '$.decided_by') = 'console')
                     OR (kind = 'attention' AND json_extract(data, '$.reason')
                         IN ('waiting_input', 'waiting_user', 'stalled', 'agent_error'))){clause}"
@@ -136,138 +99,73 @@ impl Store {
             let kind: String = fact.try_get("kind")?;
             let model: Option<String> = fact.try_get("model")?;
             let seat: Option<String> = fact.try_get("seat")?;
+            let goal: Option<String> = fact.try_get("goal_id")?;
             let task: Option<String> = fact.try_get("task_id")?;
             let data: sqlx::types::Json<Value> = fact.try_get("data")?;
+            // A verdict names its author's model, and a pick names every entrant.
+            let authors: Vec<&str> = match kind.as_str() {
+                "verdict" => data["author_model"].as_str().into_iter().collect(),
+                "pick" => data["winner_model"]
+                    .as_str()
+                    .into_iter()
+                    .chain(
+                        data["loser_models"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(Value::as_str),
+                    )
+                    .collect(),
+                _ => Vec::new(),
+            };
+            for author in authors {
+                row(&mut rows, author, Some("author"));
+            }
+            let Some(model) = model.as_deref() else {
+                continue;
+            };
             let number = |key: &str| data[key].as_u64().unwrap_or(0);
-            let seconds = |key: &str| data[key].as_f64().unwrap_or(0.0);
-            if let Some(model) = model.as_deref() {
-                let totals = row(&mut rows, model, seat.as_deref());
-                match kind.as_str() {
-                    "session_ended" => {
-                        totals.row.sessions += 1;
-                        totals.row.failed_sessions += u64::from(data["status"] == "failed");
-                        totals.row.stalled_sessions +=
-                            u64::from(data["attention_reason"] == "stalled");
-                        let usage = TokenUsage {
-                            input_tokens: number("input_tokens"),
-                            cached_input_tokens: number("cached_input_tokens"),
-                            output_tokens: number("output_tokens"),
-                        };
-                        totals.row.usage += usage;
-                        totals.lifetime += seconds("lifetime_secs");
-                        if seat.as_deref() == Some("author")
-                            && let Some(task) = &task
-                        {
-                            *totals.task_tokens.entry(task.clone()).or_default() +=
-                                usage.input_tokens.saturating_add(usage.output_tokens);
-                        }
-                    }
-                    "switch" => totals.row.exhaustions += u64::from(data["reason"] == "exhausted"),
-                    "task_ended" => {
-                        if let Some(author) = &mut totals.row.author {
-                            match data["status"].as_str() {
-                                Some("finished") => {
-                                    author.tasks_finished += 1;
-                                    totals.lead_times.push(seconds("lead_time_secs"));
-                                    if let Some(task) = &task {
-                                        totals.finished_tasks.insert(task.clone());
-                                    }
-                                }
-                                Some("failed") => author.tasks_failed += 1,
-                                Some("cancelled") => author.tasks_cancelled += 1,
-                                _ => {}
-                            }
-                            totals.review_rounds += seconds("review_requests");
-                        }
-                    }
-                    "permission" => {
-                        totals.row.interventions.permissions += 1;
-                        totals.row.interventions.person_secs += seconds("wait_ms") / 1_000.0;
-                    }
-                    "attention" => {
-                        let interventions = &mut totals.row.interventions;
-                        match data["reason"].as_str() {
-                            Some("waiting_input" | "waiting_user") => interventions.questions += 1,
-                            _ => interventions.stalls += 1,
-                        }
-                        interventions.person_secs += seconds("wait_secs");
-                    }
-                    "verdict" => {
-                        if let Some(reviewer) = &mut totals.row.reviewer {
-                            reviewer.verdicts += 1;
-                            totals.approvals += u64::from(data["verdict"] == "approve");
-                            totals.latency += seconds("latency_secs");
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            if kind == "verdict"
-                && let Some(model) = data["author_model"].as_str()
-            {
-                let totals = row(&mut rows, model, Some("author"));
-                if let Some(task) = &task {
-                    totals.reviewed_tasks.insert(task.clone());
-                    if number("round") == 1 && data["verdict"] == "approve" {
-                        totals.first_pass_tasks.insert(task.clone());
-                    }
-                }
-            }
-            if kind == "pick" {
-                let winner = data["winner_model"].as_str();
-                let mut entrants = BTreeSet::new();
-                if let Some(winner) = winner {
-                    entrants.insert(winner);
-                }
-                if let Some(losers) = data["loser_models"].as_array() {
-                    entrants.extend(losers.iter().filter_map(Value::as_str));
-                }
-                for model in entrants {
-                    let author = row(&mut rows, model, Some("author"))
+            let totals = row(&mut rows, model, seat.as_deref());
+            match kind.as_str() {
+                "session_ended" => {
+                    totals.tasks.extend(task);
+                    totals.goals.extend(goal);
+                    totals.row.tokens = totals
                         .row
-                        .author
-                        .as_mut()
-                        .unwrap();
-                    author.contests_entered += 1;
-                    author.contests_won += u64::from(Some(model) == winner);
+                        .tokens
+                        .saturating_add(number("input_tokens"))
+                        .saturating_add(number("output_tokens"));
+                    totals.row.time_secs += data["lifetime_secs"].as_f64().unwrap_or(0.0);
                 }
+                "message" => totals.row.messages += 1,
+                "task_ended" if data["status"] == "finished" => {
+                    totals.finished += 1;
+                    totals.rounds += number("review_requests") as f64;
+                }
+                "verdict" => {
+                    totals.changes += u64::from(data["verdict"] == "changes_requested");
+                    totals.reviewed_tasks.extend(task);
+                }
+                _ => {}
             }
         }
         let items = rows
             .into_values()
             .map(|mut totals| {
                 let row = &mut totals.row;
-                row.cached_share =
-                    ratio(row.usage.cached_input_tokens as f64, row.usage.input_tokens);
-                row.mean_lifetime_secs = ratio(totals.lifetime, row.sessions);
-                row.total_lifetime_secs = totals.lifetime;
-                let interventions = &mut row.interventions;
-                interventions.total =
-                    interventions.permissions + interventions.questions + interventions.stalls;
-                if let Some(author) = &mut row.author {
-                    let tasks =
-                        author.tasks_finished + author.tasks_failed + author.tasks_cancelled;
-                    author.finish_rate = ratio(author.tasks_finished as f64, tasks);
-                    author.first_pass_rate = ratio(
-                        totals.first_pass_tasks.len() as f64,
-                        totals.reviewed_tasks.len() as u64,
-                    );
-                    author.mean_review_rounds = ratio(totals.review_rounds, tasks);
-                    author.win_rate = ratio(author.contests_won as f64, author.contests_entered);
-                    let tokens: u64 = totals
-                        .finished_tasks
-                        .iter()
-                        .map(|task| totals.task_tokens.get(task).copied().unwrap_or(0))
-                        .sum();
-                    author.tokens_per_finished_task =
-                        ratio(tokens as f64, totals.finished_tasks.len() as u64);
-                    author.median_lead_time_secs = median(&totals.lead_times);
-                    author.interventions_per_finished_task = (author.tasks_finished > 0)
-                        .then(|| row.interventions.total as f64 / author.tasks_finished as f64);
-                }
-                if let Some(reviewer) = &mut row.reviewer {
-                    reviewer.approve_share = ratio(totals.approvals as f64, reviewer.verdicts);
-                    reviewer.mean_latency_secs = ratio(totals.latency, reviewer.verdicts);
+                row.tasks = totals.tasks.len() as u64;
+                row.goals = totals.goals.len() as u64;
+                match row.seat.as_deref() {
+                    Some("author") => {
+                        row.rounds_per_task = Some(ratio(totals.rounds, totals.finished))
+                    }
+                    Some("reviewer") => {
+                        row.changes_per_task = Some(ratio(
+                            totals.changes as f64,
+                            totals.reviewed_tasks.len() as u64,
+                        ))
+                    }
+                    _ => {}
                 }
                 totals.row
             })
@@ -282,213 +180,277 @@ mod tests {
     use crate::NewStatFact;
     use serde_json::{Value, json};
 
-    async fn fact(
-        store: &Store,
-        kind: &str,
-        model: Option<&str>,
-        seat: Option<&str>,
-        task: &str,
+    struct Fact<'a> {
+        kind: &'a str,
+        model: Option<&'a str>,
+        seat: Option<&'a str>,
+        goal: Option<&'a str>,
+        task: Option<&'a str>,
         data: Value,
-    ) {
+    }
+
+    impl Default for Fact<'_> {
+        fn default() -> Self {
+            Self {
+                kind: "session_ended",
+                model: Some("writer"),
+                seat: Some("author"),
+                goal: None,
+                task: None,
+                data: json!({}),
+            }
+        }
+    }
+
+    async fn record(store: &Store, fact: Fact<'_>) {
         store
             .record_fact(NewStatFact {
-                kind: kind.into(),
-                model: model.map(str::to_owned),
-                seat: seat.map(str::to_owned),
+                kind: fact.kind.into(),
+                model: fact.model.map(str::to_owned),
+                seat: fact.seat.map(str::to_owned),
                 repo_id: Some("repo".into()),
-                task_id: Some(task.into()),
-                goal_id: None,
+                task_id: fact.task.map(str::to_owned),
+                goal_id: fact.goal.map(str::to_owned),
                 session_id: None,
                 launch_id: None,
                 effort: None,
                 skills: vec![],
-                data,
+                data: fact.data,
             })
             .await
             .unwrap();
     }
 
-    async fn fixture() -> (tempfile::TempDir, Store) {
+    async fn store() -> (tempfile::TempDir, Store) {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(dir.path().join("stats.db")).await.unwrap();
-        for (task, status, rounds) in [
-            ("done", "finished", 1),
-            ("failed", "failed", 3),
-            ("cancelled", "cancelled", 2),
-        ] {
-            fact(
-                &store,
-                "task_ended",
-                Some("writer"),
-                Some("author"),
-                task,
-                json!({"status": status, "review_requests": rounds}),
-            )
-            .await;
-        }
-        for (task, status, reason, input, cached, output, lifetime) in [
-            ("done", "exited", "", 100, 40, 20, 30),
-            ("done", "failed", "stalled", 200, 80, 40, 90),
-            ("failed", "exited", "waiting_input", 900, 0, 100, 60),
-        ] {
-            fact(
-                &store,
-                "session_ended",
-                Some("writer"),
-                Some("author"),
-                task,
-                json!({"status": status, "attention_reason": reason, "input_tokens": input,
-                "cached_input_tokens": cached, "output_tokens": output, "lifetime_secs": lifetime}),
-            )
-            .await;
-        }
-        for (task, round, verdict, latency) in [
-            ("done", 1, "approve", 10),
-            ("done", 1, "approve", 20),
-            ("failed", 1, "changes_requested", 30),
-            ("failed", 2, "approve", 60),
-        ] {
-            fact(&store, "verdict", Some("judge"), Some("reviewer"), task,
-                json!({"author_model": "writer", "round": round, "verdict": verdict, "latency_secs": latency})).await;
-        }
-        fact(
-            &store,
-            "session_ended",
-            Some("judge"),
-            Some("reviewer"),
-            "done",
-            json!({"status":"failed", "attention_reason":"stalled", "input_tokens":50,
-            "cached_input_tokens":25, "output_tokens":10, "lifetime_secs":120}),
-        )
-        .await;
-        for reason in ["exhausted", "requested"] {
-            fact(
-                &store,
-                "switch",
-                Some("writer"),
-                Some("author"),
-                "done",
-                json!({"reason":reason}),
-            )
-            .await;
-        }
-        for (winner, losers) in [
-            ("writer", vec!["writer", "other", "other"]),
-            ("other", vec!["writer", "writer"]),
-        ] {
-            fact(
-                &store,
-                "pick",
-                Some(winner),
-                Some("author"),
-                "contest",
-                json!({"winner_model":winner, "loser_models":losers}),
-            )
-            .await;
-        }
         (dir, store)
     }
 
-    #[tokio::test]
-    async fn author_figures_combine_sessions_outcomes_reviews_and_contests() {
-        let (_dir, store) = fixture().await;
-        let stats = store.model_stats(&StatsFilter::default()).await.unwrap();
-        let row = stats
+    fn find<'a>(stats: &'a ModelStats, model: &str, seat: Option<&str>) -> &'a ModelStat {
+        stats
             .items
             .iter()
-            .find(|row| row.model == "writer")
-            .unwrap();
+            .find(|r| r.model == model && r.seat.as_deref() == seat)
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn each_figure_counts_the_sessions_and_messages_of_its_model_and_seat() {
+        let (_dir, store) = store().await;
+        for (seat, goal, task, input, cached, output, lifetime) in [
+            ("author", "g1", Some("t1"), 100, 40, 20, 30.0),
+            ("author", "g1", Some("t1"), 200, 200, 30, 60.5),
+            ("author", "g2", Some("t2"), 300, 0, 50, 10.0),
+            ("orchestrator", "g1", None, 1_000, 0, 100, 500.0),
+        ] {
+            record(
+                &store,
+                Fact {
+                    seat: Some(seat),
+                    goal: Some(goal),
+                    task,
+                    data: json!({"input_tokens": input, "cached_input_tokens": cached,
+                    "output_tokens": output, "lifetime_secs": lifetime}),
+                    ..Fact::default()
+                },
+            )
+            .await;
+        }
+        for seat in ["author", "author", "orchestrator"] {
+            record(
+                &store,
+                Fact {
+                    kind: "message",
+                    seat: Some(seat),
+                    task: Some("t3"),
+                    ..Fact::default()
+                },
+            )
+            .await;
+        }
+        record(
+            &store,
+            Fact {
+                kind: "message",
+                model: None,
+                ..Fact::default()
+            },
+        )
+        .await;
+
+        let stats = store.model_stats(&StatsFilter::default()).await.unwrap();
+        assert_eq!(stats.items.len(), 2);
         assert_eq!(
-            (
-                row.sessions,
-                row.failed_sessions,
-                row.stalled_sessions,
-                row.exhaustions
-            ),
-            (3, 1, 1, 1)
-        );
-        assert_eq!(
-            row.usage,
-            TokenUsage {
-                input_tokens: 1200,
-                cached_input_tokens: 120,
-                output_tokens: 160
+            find(&stats, "writer", Some("author")),
+            &ModelStat {
+                model: "writer".into(),
+                seat: Some("author".into()),
+                tasks: 2,
+                goals: 2,
+                tokens: 700,
+                time_secs: 100.5,
+                messages: 2,
+                rounds_per_task: Some(0.0),
+                changes_per_task: None,
             }
         );
-        assert_eq!(row.cached_share, 0.1);
-        assert_eq!(row.mean_lifetime_secs, 60.0);
         assert_eq!(
-            row.author,
-            Some(AuthorModelStat {
-                tasks_finished: 1,
-                tasks_failed: 1,
-                tasks_cancelled: 1,
-                finish_rate: 1.0 / 3.0,
-                first_pass_rate: 0.5,
-                mean_review_rounds: 2.0,
-                contests_entered: 2,
-                contests_won: 1,
-                win_rate: 0.5,
-                tokens_per_finished_task: 360.0,
-                median_lead_time_secs: 0.0,
-                interventions_per_finished_task: Some(0.0),
-            })
-        );
-        assert_eq!(row.reviewer, None);
-        let other = stats
-            .items
-            .iter()
-            .find(|row| row.model == "other")
-            .unwrap()
-            .author
-            .as_ref()
-            .unwrap();
-        assert_eq!(
-            (other.contests_entered, other.contests_won, other.win_rate),
-            (2, 1, 0.5)
+            find(&stats, "writer", Some("orchestrator")),
+            &ModelStat {
+                model: "writer".into(),
+                seat: Some("orchestrator".into()),
+                tasks: 0,
+                goals: 1,
+                tokens: 1_100,
+                time_secs: 500.0,
+                messages: 1,
+                rounds_per_task: None,
+                changes_per_task: None,
+            }
         );
     }
 
     #[tokio::test]
-    async fn reviewer_figures_count_each_verdict_and_its_latency() {
-        let (_dir, store) = fixture().await;
+    async fn rounds_per_task_is_the_mean_review_requests_of_finished_tasks_for_authors_only() {
+        let (_dir, store) = store().await;
+        for (model, seat, status, rounds) in [
+            ("writer", Some("author"), "finished", 1),
+            ("writer", Some("author"), "finished", 4),
+            ("writer", Some("author"), "failed", 9),
+            ("writer", Some("author"), "cancelled", 9),
+            ("other", Some("author"), "finished", 7),
+            ("writer", None, "finished", 5),
+        ] {
+            record(
+                &store,
+                Fact {
+                    kind: "task_ended",
+                    model: Some(model),
+                    seat,
+                    task: Some("t"),
+                    data: json!({"status": status, "review_requests": rounds}),
+                    ..Fact::default()
+                },
+            )
+            .await;
+        }
         let stats = store.model_stats(&StatsFilter::default()).await.unwrap();
-        let row = stats.items.iter().find(|row| row.model == "judge").unwrap();
         assert_eq!(
-            (row.sessions, row.failed_sessions, row.stalled_sessions),
-            (1, 1, 1)
+            find(&stats, "writer", Some("author")).rounds_per_task,
+            Some(2.5)
         );
         assert_eq!(
-            row.usage,
-            TokenUsage {
-                input_tokens: 50,
-                cached_input_tokens: 25,
-                output_tokens: 10
-            }
+            find(&stats, "other", Some("author")).rounds_per_task,
+            Some(7.0)
         );
-        assert_eq!((row.cached_share, row.mean_lifetime_secs), (0.5, 120.0));
+        let seatless = find(&stats, "writer", None);
         assert_eq!(
-            row.reviewer,
-            Some(ReviewerModelStat {
-                verdicts: 4,
-                approve_share: 0.75,
-                mean_latency_secs: 30.0
-            })
+            (seatless.rounds_per_task, seatless.changes_per_task),
+            (None, None)
         );
-        assert_eq!(row.author, None);
+        assert_eq!(
+            find(&stats, "writer", Some("author")).changes_per_task,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn changes_per_task_divides_changes_requested_by_the_tasks_reviewed_for_reviewers_only() {
+        let (_dir, store) = store().await;
+        for (model, task, verdict) in [
+            ("judge", "t1", "changes_requested"),
+            ("judge", "t1", "changes_requested"),
+            ("judge", "t1", "approve"),
+            ("judge", "t2", "approve"),
+            ("judge", "t3", "changes_requested"),
+            ("judge", "t4", "approve"),
+            ("other", "t1", "approve"),
+        ] {
+            record(
+                &store,
+                Fact {
+                    kind: "verdict",
+                    model: Some(model),
+                    seat: Some("reviewer"),
+                    task: Some(task),
+                    data: json!({"verdict": verdict, "author_model": "writer"}),
+                    ..Fact::default()
+                },
+            )
+            .await;
+        }
+        let stats = store.model_stats(&StatsFilter::default()).await.unwrap();
+        let judge = find(&stats, "judge", Some("reviewer"));
+        assert_eq!(
+            (judge.changes_per_task, judge.rounds_per_task),
+            (Some(0.75), None)
+        );
+        assert_eq!(
+            find(&stats, "other", Some("reviewer")).changes_per_task,
+            Some(0.0)
+        );
+        // The author model the verdicts name gets a row of its own.
+        assert_eq!(
+            find(&stats, "writer", Some("author")).rounds_per_task,
+            Some(0.0)
+        );
+    }
+
+    #[tokio::test]
+    async fn the_review_figures_are_zero_without_a_denominator() {
+        let (_dir, store) = store().await;
+        for (seat, kind) in [("author", "message"), ("reviewer", "session_ended")] {
+            record(
+                &store,
+                Fact {
+                    kind,
+                    seat: Some(seat),
+                    task: Some("t"),
+                    ..Fact::default()
+                },
+            )
+            .await;
+        }
+        let stats = store.model_stats(&StatsFilter::default()).await.unwrap();
+        assert_eq!(
+            find(&stats, "writer", Some("author")).rounds_per_task,
+            Some(0.0)
+        );
+        assert_eq!(
+            find(&stats, "writer", Some("reviewer")).changes_per_task,
+            Some(0.0)
+        );
     }
 
     #[tokio::test]
     async fn every_fact_is_filtered_by_time_and_repository() {
-        let (_dir, store) = fixture().await;
+        let (_dir, store) = store().await;
+        for kind in ["session_ended", "message", "task_ended", "verdict"] {
+            record(
+                &store,
+                Fact {
+                    kind,
+                    seat: Some(if kind == "verdict" {
+                        "reviewer"
+                    } else {
+                        "author"
+                    }),
+                    task: Some("old"),
+                    data: json!({"status": "finished", "review_requests": 9, "input_tokens": 900,
+                        "verdict": "changes_requested"}),
+                    ..Fact::default()
+                },
+            )
+            .await;
+        }
         sqlx::query("UPDATE stat_facts SET created_at = '2026-01-01T00:00:00.000Z'")
             .execute(store.w())
             .await
             .unwrap();
         for (repo, since) in [
             (Some("elsewhere"), None),
-            (None, Some("2026-02-01T00:00:00Z")),
-            (Some("repo"), Some("2026-02-01T00:00:00Z")),
+            (None, Some("2026-01-01T00:00:00.001Z")),
         ] {
             let filter = StatsFilter {
                 repo_id: repo.map(str::to_owned),
@@ -496,78 +458,71 @@ mod tests {
             };
             assert!(store.model_stats(&filter).await.unwrap().items.is_empty());
         }
-        let filter = StatsFilter {
+        let boundary = StatsFilter {
             repo_id: Some("repo".into()),
             since: Some("2026-01-01T00:00:00Z".parse().unwrap()),
         };
-        assert_eq!(store.model_stats(&filter).await.unwrap().items.len(), 3);
-        fact(
-            &store,
-            "session_ended",
-            Some("writer"),
-            Some("author"),
-            "done",
-            json!({"input_tokens":1000, "output_tokens":100}),
-        )
-        .await;
-        let filter = StatsFilter {
-            since: Some("2026-02-01T00:00:00Z".parse().unwrap()),
+        let stats = store.model_stats(&boundary).await.unwrap();
+        assert_eq!(find(&stats, "writer", Some("author")).tokens, 900);
+        assert_eq!(
+            find(&stats, "writer", Some("reviewer")).changes_per_task,
+            Some(1.0)
+        );
+        for kind in ["session_ended", "task_ended", "verdict"] {
+            record(
+                &store,
+                Fact {
+                    kind,
+                    seat: Some(if kind == "verdict" {
+                        "reviewer"
+                    } else {
+                        "author"
+                    }),
+                    task: Some("new"),
+                    data: json!({"status": "finished", "review_requests": 1, "input_tokens": 10,
+                        "verdict": "approve"}),
+                    ..Fact::default()
+                },
+            )
+            .await;
+        }
+        let recent = StatsFilter {
             repo_id: Some("repo".into()),
+            since: Some("2026-02-01T00:00:00Z".parse().unwrap()),
         };
-        let stats = store.model_stats(&filter).await.unwrap();
-        let row = &stats.items[0];
-        assert_eq!(row.sessions, 1);
-        assert_eq!(row.author.as_ref().unwrap().tokens_per_finished_task, 0.0);
+        let stats = store.model_stats(&recent).await.unwrap();
+        let row = find(&stats, "writer", Some("author"));
+        assert_eq!(
+            (row.tasks, row.tokens, row.messages, row.rounds_per_task),
+            (1, 10, 0, Some(1.0))
+        );
+        assert_eq!(
+            find(&stats, "writer", Some("reviewer")).changes_per_task,
+            Some(0.0)
+        );
     }
 
     #[tokio::test]
-    async fn rows_include_models_named_only_in_payloads_and_sort_by_seat_then_model() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(dir.path().join("stats.db")).await.unwrap();
+    async fn rows_sort_by_seat_then_model() {
+        let (_dir, store) = store().await;
         for (model, seat) in [
             ("z", None),
             ("z", Some("reviewer")),
             ("z", Some("author")),
             ("z", Some("orchestrator")),
             ("a", Some("orchestrator")),
+            ("b", Some("author")),
         ] {
-            fact(
+            record(
                 &store,
-                "switch",
-                Some(model),
-                seat,
-                "task",
-                json!({"reason":"exhausted"}),
+                Fact {
+                    model: Some(model),
+                    seat,
+                    ..Fact::default()
+                },
             )
             .await;
         }
-        fact(
-            &store,
-            "verdict",
-            None,
-            Some("reviewer"),
-            "task",
-            json!({"author_model":"payload", "round":2, "verdict":"approve"}),
-        )
-        .await;
-        fact(
-            &store,
-            "pick",
-            None,
-            None,
-            "task",
-            json!({"winner_model":"winner", "loser_models":["loser","loser"]}),
-        )
-        .await;
-        fact(
-            &store,
-            "message",
-            Some("ignored"),
-            Some("author"),
-            "task",
-            json!({}),
-        )
-        .await;
         let stats = store.model_stats(&StatsFilter::default()).await.unwrap();
         assert_eq!(
             stats
@@ -578,245 +533,96 @@ mod tests {
             vec![
                 (Some("orchestrator"), "a"),
                 (Some("orchestrator"), "z"),
-                (Some("author"), "loser"),
-                (Some("author"), "payload"),
-                (Some("author"), "winner"),
+                (Some("author"), "b"),
                 (Some("author"), "z"),
                 (Some("reviewer"), "z"),
                 (None, "z"),
             ]
         );
-        let row = &stats.items[5];
-        assert_eq!(row.author, Some(AuthorModelStat::default()));
-        assert_eq!(
-            (row.cached_share, row.mean_lifetime_secs, row.exhaustions),
-            (0.0, 0.0, 1)
-        );
-        assert_eq!(stats.items[6].reviewer, Some(ReviewerModelStat::default()));
-        assert_eq!(stats.items[3].author.as_ref().unwrap().first_pass_rate, 0.0);
     }
 
     #[tokio::test]
-    async fn first_pass_counts_reviewed_tasks_once() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(dir.path().join("stats.db")).await.unwrap();
-        for (task, round, verdict) in [
-            ("one", 1, "approve"),
-            ("one", 1, "approve"),
-            ("two", 1, "changes_requested"),
-            ("two", 2, "approve"),
-            ("three", 2, "approve"),
+    async fn models_named_only_in_payloads_and_other_facts_get_rows_under_both_filters() {
+        let (_dir, store) = store().await;
+        let facts = [
+            Fact {
+                kind: "verdict",
+                model: None,
+                seat: Some("reviewer"),
+                data: json!({"author_model": "payload", "verdict": "approve"}),
+                ..Fact::default()
+            },
+            Fact {
+                kind: "pick",
+                model: None,
+                seat: None,
+                data: json!({"winner_model": "winner", "loser_models": ["loser", "loser"]}),
+                ..Fact::default()
+            },
+            Fact {
+                kind: "switch",
+                model: Some("switched"),
+                data: json!({"reason": "exhausted"}),
+                ..Fact::default()
+            },
+            Fact {
+                kind: "permission",
+                model: Some("asked"),
+                data: json!({"decided_by": "console", "wait_ms": 1_000}),
+                ..Fact::default()
+            },
+            Fact {
+                kind: "attention",
+                model: Some("stuck"),
+                data: json!({"reason": "stalled", "wait_secs": 5}),
+                ..Fact::default()
+            },
+            Fact {
+                kind: "permission",
+                model: Some("ai-only"),
+                data: json!({"decided_by": "ai", "wait_ms": 1_000}),
+                ..Fact::default()
+            },
+            Fact {
+                kind: "attention",
+                model: Some("prompted"),
+                data: json!({"reason": "waiting_permission", "wait_secs": 5}),
+                ..Fact::default()
+            },
+        ];
+        for fact in facts {
+            record(&store, fact).await;
+        }
+        let empty = ModelStat {
+            seat: Some("author".into()),
+            rounds_per_task: Some(0.0),
+            ..ModelStat::default()
+        };
+        let named: Vec<ModelStat> = ["asked", "loser", "payload", "stuck", "switched", "winner"]
+            .into_iter()
+            .map(|model| ModelStat {
+                model: model.into(),
+                ..empty.clone()
+            })
+            .collect();
+        let all = store.model_stats(&StatsFilter::default()).await.unwrap();
+        assert_eq!(all.items, named);
+        let kept = StatsFilter {
+            repo_id: Some("repo".into()),
+            since: Some("2000-01-01T00:00:00Z".parse().unwrap()),
+        };
+        assert_eq!(store.model_stats(&kept).await.unwrap().items, named);
+        for filter in [
+            StatsFilter {
+                repo_id: Some("elsewhere".into()),
+                since: None,
+            },
+            StatsFilter {
+                repo_id: None,
+                since: Some("2999-01-01T00:00:00Z".parse().unwrap()),
+            },
         ] {
-            fact(&store, "verdict", Some("judge"), Some("reviewer"), task,
-                json!({"author_model":"writer", "round":round, "verdict":verdict, "latency_secs":0})).await;
+            assert!(store.model_stats(&filter).await.unwrap().items.is_empty());
         }
-        let stats = store.model_stats(&StatsFilter::default()).await.unwrap();
-        let author = stats.items[0].author.as_ref().unwrap();
-        assert_eq!(author.first_pass_rate, 1.0 / 3.0);
-        assert_eq!(author.finish_rate, 0.0);
-        assert_eq!(author.mean_review_rounds, 0.0);
-        assert_eq!(author.win_rate, 0.0);
-    }
-
-    #[tokio::test]
-    async fn finished_task_tokens_count_each_task_once_and_exclude_other_seats() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(dir.path().join("stats.db")).await.unwrap();
-        for task in ["one", "one", "without-session"] {
-            fact(
-                &store,
-                "task_ended",
-                Some("writer"),
-                Some("author"),
-                task,
-                json!({"status":"finished", "review_requests":2}),
-            )
-            .await;
-        }
-        for (model, seat, task, input) in [
-            ("writer", "author", "one", 100),
-            ("writer", "author", "unfinished", 1000),
-            ("writer", "reviewer", "one", 1000),
-            ("other", "author", "one", 1000),
-        ] {
-            fact(
-                &store,
-                "session_ended",
-                Some(model),
-                Some(seat),
-                task,
-                json!({"input_tokens":input, "cached_input_tokens":input, "output_tokens":20}),
-            )
-            .await;
-        }
-        let stats = store.model_stats(&StatsFilter::default()).await.unwrap();
-        let row = stats
-            .items
-            .iter()
-            .find(|r| r.model == "writer" && r.seat.as_deref() == Some("author"))
-            .unwrap();
-        let author = row.author.as_ref().unwrap();
-        assert_eq!(author.tokens_per_finished_task, 60.0);
-        assert_eq!(author.tasks_finished, 3);
-        assert_eq!(author.finish_rate, 1.0);
-        assert_eq!(author.mean_review_rounds, 2.0);
-        assert_eq!(row.cached_share, 1.0);
-    }
-
-    #[tokio::test]
-    async fn interventions_count_what_a_person_answered_per_model_and_seat() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(dir.path().join("stats.db")).await.unwrap();
-        for (seat, decided_by, wait_ms) in [
-            ("author", "console", 4_000),
-            ("author", "console", 6_000),
-            ("author", "ai", 50_000),
-            ("author", "learned", 50_000),
-            ("reviewer", "console", 1_000),
-        ] {
-            fact(
-                &store,
-                "permission",
-                Some("writer"),
-                Some(seat),
-                "one",
-                json!({"decided_by": decided_by, "wait_ms": wait_ms}),
-            )
-            .await;
-        }
-        for (seat, reason, wait_secs) in [
-            ("author", "waiting_input", 20),
-            ("author", "waiting_user", 30),
-            ("author", "stalled", 100),
-            ("author", "agent_error", 200),
-            ("author", "waiting_permission", 9_000),
-            ("reviewer", "stalled", 7),
-        ] {
-            fact(
-                &store,
-                "attention",
-                Some("writer"),
-                Some(seat),
-                "one",
-                json!({"reason": reason, "wait_secs": wait_secs}),
-            )
-            .await;
-        }
-        for (task, lead) in [("one", 300), ("two", 100), ("three", 1_000)] {
-            fact(
-                &store,
-                "task_ended",
-                Some("writer"),
-                Some("author"),
-                task,
-                json!({"status": "finished", "lead_time_secs": lead}),
-            )
-            .await;
-        }
-        fact(
-            &store,
-            "task_ended",
-            Some("writer"),
-            Some("author"),
-            "four",
-            json!({"status": "failed", "lead_time_secs": 9_000}),
-        )
-        .await;
-        for (seat, lifetime) in [("author", 40), ("author", 80), ("reviewer", 15)] {
-            fact(
-                &store,
-                "session_ended",
-                Some("writer"),
-                Some(seat),
-                "one",
-                json!({"lifetime_secs": lifetime}),
-            )
-            .await;
-        }
-        fact(
-            &store,
-            "permission",
-            Some("quiet"),
-            Some("author"),
-            "one",
-            json!({"decided_by": "ai", "wait_ms": 1_000}),
-        )
-        .await;
-        fact(
-            &store,
-            "attention",
-            Some("quiet"),
-            Some("author"),
-            "one",
-            json!({"reason": "waiting_permission", "wait_secs": 10}),
-        )
-        .await;
-
-        let stats = store.model_stats(&StatsFilter::default()).await.unwrap();
-        assert_eq!(
-            stats
-                .items
-                .iter()
-                .map(|r| (r.model.as_str(), r.seat.as_deref()))
-                .collect::<Vec<_>>(),
-            vec![("writer", Some("author")), ("writer", Some("reviewer"))]
-        );
-        let author = &stats.items[0];
-        assert_eq!(
-            author.interventions,
-            ModelInterventions {
-                permissions: 2,
-                questions: 2,
-                stalls: 2,
-                total: 6,
-                person_secs: 360.0,
-            }
-        );
-        assert_eq!(author.total_lifetime_secs, 120.0);
-        let figures = author.author.as_ref().unwrap();
-        assert_eq!(figures.median_lead_time_secs, 300.0);
-        assert_eq!(figures.interventions_per_finished_task, Some(2.0));
-        let reviewer = &stats.items[1];
-        assert_eq!(
-            reviewer.interventions,
-            ModelInterventions {
-                permissions: 1,
-                questions: 0,
-                stalls: 1,
-                total: 2,
-                person_secs: 8.0,
-            }
-        );
-        assert_eq!(reviewer.total_lifetime_secs, 15.0);
-        assert_eq!(reviewer.author, None);
-    }
-
-    #[tokio::test]
-    async fn the_intervention_rate_is_null_without_a_finished_task() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(dir.path().join("stats.db")).await.unwrap();
-        fact(
-            &store,
-            "attention",
-            Some("writer"),
-            Some("author"),
-            "one",
-            json!({"reason": "waiting_input", "wait_secs": 5}),
-        )
-        .await;
-        fact(
-            &store,
-            "task_ended",
-            Some("writer"),
-            Some("author"),
-            "one",
-            json!({"status": "failed", "lead_time_secs": 50}),
-        )
-        .await;
-        let stats = store.model_stats(&StatsFilter::default()).await.unwrap();
-        let author = stats.items[0].author.as_ref().unwrap();
-        assert_eq!(stats.items[0].interventions.total, 1);
-        assert_eq!(author.interventions_per_finished_task, None);
-        assert_eq!(author.median_lead_time_secs, 0.0);
     }
 }

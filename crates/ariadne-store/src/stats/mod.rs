@@ -17,7 +17,7 @@ mod time;
 mod work;
 
 pub use attention::AttentionStats;
-pub use models::{AuthorModelStat, ModelInterventions, ModelStat, ModelStats, ReviewerModelStat};
+pub use models::{ModelStat, ModelStats};
 pub use spend::{ModelSpend, PerFinishedTask, SpendBucket, SpendStats, SpendTotals};
 pub use time::{LeadTime, PersonWait, StatusTime, TimeStats};
 pub use work::WorkStats;

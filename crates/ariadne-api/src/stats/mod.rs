@@ -11,9 +11,7 @@ pub use attention::{
     AttentionFlagDto, AttentionInterventionsDto, AttentionStatsDto, PermissionDeciderDto,
     PermissionStatsDto,
 };
-pub use models::{
-    AuthorModelStatDto, ModelInterventionsDto, ModelStatDto, ModelStatsDto, ReviewerModelStatDto,
-};
+pub use models::{ModelStatDto, ModelStatsDto};
 pub use spend::{
     BucketDto, ModelSpendDto, PerFinishedTaskDto, SpendBucketDto, SpendStatsDto, SpendTotalsDto,
 };

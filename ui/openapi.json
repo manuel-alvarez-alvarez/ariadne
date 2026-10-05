@@ -3551,82 +3551,6 @@
           }
         }
       },
-      "AuthorModelStatDto": {
-        "type": "object",
-        "description": "Outcomes attributed to an author model.",
-        "required": [
-          "tasks_finished",
-          "tasks_failed",
-          "tasks_cancelled",
-          "finish_rate",
-          "first_pass_rate",
-          "mean_review_rounds",
-          "contests_entered",
-          "contests_won",
-          "win_rate",
-          "tokens_per_finished_task",
-          "median_lead_time_secs"
-        ],
-        "properties": {
-          "contests_entered": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "contests_won": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "finish_rate": {
-            "type": "number",
-            "format": "double"
-          },
-          "first_pass_rate": {
-            "type": "number",
-            "format": "double"
-          },
-          "interventions_per_finished_task": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double",
-            "description": "Interventions divided by finished tasks; null without a finished task."
-          },
-          "mean_review_rounds": {
-            "type": "number",
-            "format": "double"
-          },
-          "median_lead_time_secs": {
-            "type": "number",
-            "format": "double"
-          },
-          "tasks_cancelled": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "tasks_failed": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "tasks_finished": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "tokens_per_finished_task": {
-            "type": "number",
-            "format": "double"
-          },
-          "win_rate": {
-            "type": "number",
-            "format": "double"
-          }
-        }
-      },
       "BinaryDto": {
         "type": "object",
         "description": "A binary as the daemon can — or cannot — find it.",
@@ -4939,43 +4863,6 @@
           }
         }
       },
-      "ModelInterventionsDto": {
-        "type": "object",
-        "description": "The times a person stepped in for this model in this seat: permissions\ndecided at the console, questions and stalls. `person_secs` is how long\nthose waited on the person.",
-        "required": [
-          "permissions",
-          "questions",
-          "stalls",
-          "total",
-          "person_secs"
-        ],
-        "properties": {
-          "permissions": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "person_secs": {
-            "type": "number",
-            "format": "double"
-          },
-          "questions": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "stalls": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "total": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          }
-        }
-      },
       "ModelRank": {
         "type": "string",
         "description": "A user-set rank, independent of discovery and model availability.",
@@ -5024,63 +4911,46 @@
       },
       "ModelStatDto": {
         "type": "object",
-        "description": "Session measures and the measures specific to this seat.",
+        "description": "What one model did in one seat.",
         "required": [
           "model",
-          "sessions",
-          "failed_sessions",
-          "stalled_sessions",
-          "exhaustions",
-          "usage",
-          "cached_share",
-          "mean_lifetime_secs",
-          "total_lifetime_secs",
-          "interventions"
+          "tasks",
+          "goals",
+          "tokens",
+          "time_secs",
+          "messages"
         ],
         "properties": {
-          "author": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/AuthorModelStatDto"
-              }
-            ]
+          "changes_per_task": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Changes requested over the tasks this reviewer model gave a verdict on;\nnull except for reviewers."
           },
-          "cached_share": {
-            "type": "number",
-            "format": "double"
-          },
-          "exhaustions": {
+          "goals": {
             "type": "integer",
             "format": "int64",
+            "description": "Distinct goals with a session of this model in this seat.",
             "minimum": 0
           },
-          "failed_sessions": {
+          "messages": {
             "type": "integer",
             "format": "int64",
+            "description": "The messages this model sent in this seat.",
             "minimum": 0
-          },
-          "interventions": {
-            "$ref": "#/components/schemas/ModelInterventionsDto"
-          },
-          "mean_lifetime_secs": {
-            "type": "number",
-            "format": "double"
           },
           "model": {
             "type": "string"
           },
-          "reviewer": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReviewerModelStatDto"
-              }
-            ]
+          "rounds_per_task": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The mean review requests over this author model's finished tasks; null\nexcept for authors."
           },
           "seat": {
             "type": [
@@ -5088,23 +4958,22 @@
               "null"
             ]
           },
-          "sessions": {
+          "tasks": {
             "type": "integer",
             "format": "int64",
+            "description": "Distinct tasks with a session of this model in this seat.",
             "minimum": 0
           },
-          "stalled_sessions": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "total_lifetime_secs": {
+          "time_secs": {
             "type": "number",
             "format": "double",
-            "description": "The sum of the lifetimes of the ended sessions."
+            "description": "The sum of the session lifetimes."
           },
-          "usage": {
-            "$ref": "#/components/schemas/TokenUsageDto"
+          "tokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Input and output tokens of the ended sessions. Cached tokens are part of input.",
+            "minimum": 0
           }
         }
       },
@@ -5527,30 +5396,6 @@
             "type": "integer",
             "format": "int64",
             "description": "Events this connection lost. Informational: they cannot be recovered.",
-            "minimum": 0
-          }
-        }
-      },
-      "ReviewerModelStatDto": {
-        "type": "object",
-        "description": "Verdicts attributed to a reviewer model.",
-        "required": [
-          "verdicts",
-          "approve_share",
-          "mean_latency_secs"
-        ],
-        "properties": {
-          "approve_share": {
-            "type": "number",
-            "format": "double"
-          },
-          "mean_latency_secs": {
-            "type": "number",
-            "format": "double"
-          },
-          "verdicts": {
-            "type": "integer",
-            "format": "int64",
             "minimum": 0
           }
         }

@@ -4,10 +4,7 @@ use axum::extract::{Query, State};
 use chrono::Utc;
 use utoipa::OpenApi;
 
-use ariadne_api::stats::{
-    AuthorModelStatDto, ModelInterventionsDto, ModelStatDto, ModelStatsDto, ReviewerModelStatDto,
-    StatsQuery,
-};
+use ariadne_api::stats::{ModelStatDto, ModelStatsDto, StatsQuery};
 use ariadne_store::ModelStats;
 
 use super::stats_filter;
@@ -39,40 +36,13 @@ fn dto(stats: ModelStats) -> ModelStatsDto {
             .map(|row| ModelStatDto {
                 model: row.model,
                 seat: row.seat,
-                sessions: row.sessions,
-                failed_sessions: row.failed_sessions,
-                stalled_sessions: row.stalled_sessions,
-                exhaustions: row.exhaustions,
-                usage: row.usage.into(),
-                cached_share: row.cached_share,
-                mean_lifetime_secs: row.mean_lifetime_secs,
-                total_lifetime_secs: row.total_lifetime_secs,
-                interventions: ModelInterventionsDto {
-                    permissions: row.interventions.permissions,
-                    questions: row.interventions.questions,
-                    stalls: row.interventions.stalls,
-                    total: row.interventions.total,
-                    person_secs: row.interventions.person_secs,
-                },
-                author: row.author.map(|a| AuthorModelStatDto {
-                    tasks_finished: a.tasks_finished,
-                    tasks_failed: a.tasks_failed,
-                    tasks_cancelled: a.tasks_cancelled,
-                    finish_rate: a.finish_rate,
-                    first_pass_rate: a.first_pass_rate,
-                    mean_review_rounds: a.mean_review_rounds,
-                    contests_entered: a.contests_entered,
-                    contests_won: a.contests_won,
-                    win_rate: a.win_rate,
-                    tokens_per_finished_task: a.tokens_per_finished_task,
-                    median_lead_time_secs: a.median_lead_time_secs,
-                    interventions_per_finished_task: a.interventions_per_finished_task,
-                }),
-                reviewer: row.reviewer.map(|r| ReviewerModelStatDto {
-                    verdicts: r.verdicts,
-                    approve_share: r.approve_share,
-                    mean_latency_secs: r.mean_latency_secs,
-                }),
+                tasks: row.tasks,
+                goals: row.goals,
+                tokens: row.tokens,
+                time_secs: row.time_secs,
+                messages: row.messages,
+                rounds_per_task: row.rounds_per_task,
+                changes_per_task: row.changes_per_task,
             })
             .collect(),
     }

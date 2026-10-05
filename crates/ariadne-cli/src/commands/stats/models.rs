@@ -56,8 +56,8 @@ fn render(stats: &ModelStatsDto, seat: Option<ModelSeat>, view: &View) -> Result
         ModelSeat::Reviewer => "reviewer",
     });
     let mut groups = Vec::new();
-    let percent = |rate: f64| format!("{:.1}%", rate * 100.0);
-    // A seatless session remains in JSON and uses the session columns in the table.
+    let mean = |value: Option<f64>| format!("{:.1}", value.unwrap_or(0.0));
+    // A seatless session remains in JSON and uses the task columns in the table.
     for seat in [Some("orchestrator"), Some("author"), Some("reviewer"), None] {
         if selected.is_some() && selected != seat {
             continue;
@@ -70,46 +70,22 @@ fn render(stats: &ModelStatsDto, seat: Option<ModelSeat>, view: &View) -> Result
         if items.is_empty() {
             continue;
         }
-        let headers = match seat {
-            Some("author") => vec![
-                "model",
-                "tasks",
-                "finish_rate",
-                "first_pass",
-                "rounds",
-                "win_rate",
-                "tokens/task",
-                "lead_time",
-                "interventions/task",
-                "failed",
-                "exhausted",
-                "interventions",
-                "person_time",
-                "total_time",
-            ],
-            Some("reviewer") => vec![
-                "model",
-                "verdicts",
-                "approve",
-                "latency",
-                "failed",
-                "exhausted",
-                "interventions",
-                "person_time",
-                "total_time",
-            ],
-            _ => vec![
-                "model",
-                "sessions",
-                "tokens",
-                "lifetime",
-                "failed",
-                "exhausted",
-                "interventions",
-                "person_time",
-                "total_time",
-            ],
-        };
+        let mut headers = vec![
+            "model",
+            if seat == Some("orchestrator") {
+                "goals"
+            } else {
+                "tasks"
+            },
+            "tokens",
+            "time",
+            "messages",
+        ];
+        match seat {
+            Some("author") => headers.push("rounds/task"),
+            Some("reviewer") => headers.push("changes/task"),
+            _ => {}
+        }
         let columns: Vec<_> = headers
             .into_iter()
             .map(|header| col(header, UNCAPPED))
@@ -117,43 +93,23 @@ fn render(stats: &ModelStatsDto, seat: Option<ModelSeat>, view: &View) -> Result
         let rows: Vec<Vec<String>> = items
             .into_iter()
             .map(|r| {
-                let mut cells = vec![r.model.clone()];
+                let mut cells = vec![
+                    r.model.clone(),
+                    if seat == Some("orchestrator") {
+                        r.goals
+                    } else {
+                        r.tasks
+                    }
+                    .to_string(),
+                    tokens(r.tokens),
+                    duration(r.time_secs as u64),
+                    r.messages.to_string(),
+                ];
                 match seat {
-                    Some("author") => {
-                        let a = r.author.clone().unwrap_or_default();
-                        cells.extend([
-                            (a.tasks_finished + a.tasks_failed + a.tasks_cancelled).to_string(),
-                            percent(a.finish_rate),
-                            percent(a.first_pass_rate),
-                            format!("{:.1}", a.mean_review_rounds),
-                            percent(a.win_rate),
-                            tokens(a.tokens_per_finished_task.round() as u64),
-                            duration(a.median_lead_time_secs as u64),
-                            a.interventions_per_finished_task
-                                .map_or_else(|| "-".into(), |rate| format!("{rate:.1}")),
-                        ]);
-                    }
-                    Some("reviewer") => {
-                        let review = r.reviewer.clone().unwrap_or_default();
-                        cells.extend([
-                            review.verdicts.to_string(),
-                            percent(review.approve_share),
-                            duration(review.mean_latency_secs as u64),
-                        ]);
-                    }
-                    _ => cells.extend([
-                        r.sessions.to_string(),
-                        tokens(r.usage.input_tokens.saturating_add(r.usage.output_tokens)),
-                        duration(r.mean_lifetime_secs as u64),
-                    ]),
+                    Some("author") => cells.push(mean(r.rounds_per_task)),
+                    Some("reviewer") => cells.push(mean(r.changes_per_task)),
+                    _ => {}
                 }
-                cells.extend([
-                    r.failed_sessions.to_string(),
-                    r.exhaustions.to_string(),
-                    r.interventions.total.to_string(),
-                    duration(r.interventions.person_secs as u64),
-                    duration(r.total_lifetime_secs as u64),
-                ]);
                 cells
             })
             .collect();
@@ -176,9 +132,7 @@ fn render(stats: &ModelStatsDto, seat: Option<ModelSeat>, view: &View) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ariadne_api::stats::{
-        AuthorModelStatDto, ModelInterventionsDto, ModelStatDto, ReviewerModelStatDto,
-    };
+    use ariadne_api::stats::ModelStatDto;
     use clap::Parser;
 
     fn stats() -> ModelStatsDto {
@@ -187,79 +141,120 @@ mod tests {
                 ModelStatDto {
                     model: "planner".into(),
                     seat: Some("orchestrator".into()),
-                    sessions: 3,
+                    tasks: 9,
+                    goals: 3,
+                    tokens: 2_500_000,
+                    time_secs: 7_200.0,
+                    messages: 12,
                     ..Default::default()
                 },
                 ModelStatDto {
                     model: "writer".into(),
                     seat: Some("author".into()),
-                    total_lifetime_secs: 7_200.0,
-                    interventions: ModelInterventionsDto {
-                        permissions: 3,
-                        questions: 2,
-                        stalls: 2,
-                        total: 7,
-                        person_secs: 900.0,
-                    },
-                    author: Some(AuthorModelStatDto {
-                        tasks_finished: 2,
-                        tasks_failed: 1,
-                        tasks_cancelled: 1,
-                        finish_rate: 0.5,
-                        first_pass_rate: 0.75,
-                        mean_review_rounds: 1.5,
-                        win_rate: 0.25,
-                        tokens_per_finished_task: 1200.0,
-                        median_lead_time_secs: 1_800.0,
-                        interventions_per_finished_task: Some(3.5),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
+                    tasks: 4,
+                    goals: 2,
+                    tokens: 1_200,
+                    time_secs: 1_800.0,
+                    messages: 6,
+                    rounds_per_task: Some(1.25),
+                    changes_per_task: None,
                 },
                 ModelStatDto {
                     model: "judge".into(),
                     seat: Some("reviewer".into()),
-                    reviewer: Some(ReviewerModelStatDto {
-                        verdicts: 8,
-                        approve_share: 0.625,
-                        mean_latency_secs: 120.0,
-                    }),
-                    ..Default::default()
+                    tasks: 5,
+                    goals: 2,
+                    tokens: 800,
+                    time_secs: 120.0,
+                    messages: 7,
+                    rounds_per_task: None,
+                    changes_per_task: Some(0.4),
                 },
             ],
         }
     }
 
+    /// The cells of a plain table line; a duration holds one space, a gap two.
+    fn cells(line: &str) -> Vec<&str> {
+        line.split("  ")
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+            .collect()
+    }
+
+    /// The heading, the header and the one row of a seat's table.
+    fn table(seat: ModelSeat) -> (String, Vec<String>, Vec<String>) {
+        let text = render(&stats(), Some(seat), &View::plain()).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 3, "{text}");
+        let owned = |line: &str| cells(line).into_iter().map(str::to_owned).collect();
+        (lines[0].trim().to_owned(), owned(lines[1]), owned(lines[2]))
+    }
+
     #[test]
-    fn tables_group_models_by_seat_and_format_the_figures() {
+    fn each_seat_prints_its_own_columns_and_figures() {
+        assert_eq!(
+            table(ModelSeat::Author),
+            (
+                "AUTHOR".into(),
+                [
+                    "MODEL",
+                    "TASKS",
+                    "TOKENS",
+                    "TIME",
+                    "MESSAGES",
+                    "ROUNDS/TASK"
+                ]
+                .map(String::from)
+                .to_vec(),
+                ["writer", "4", "1.2k", "30m 0s", "6", "1.2"]
+                    .map(String::from)
+                    .to_vec(),
+            )
+        );
+        assert_eq!(
+            table(ModelSeat::Reviewer),
+            (
+                "REVIEWER".into(),
+                [
+                    "MODEL",
+                    "TASKS",
+                    "TOKENS",
+                    "TIME",
+                    "MESSAGES",
+                    "CHANGES/TASK"
+                ]
+                .map(String::from)
+                .to_vec(),
+                ["judge", "5", "800", "2m 0s", "7", "0.4"]
+                    .map(String::from)
+                    .to_vec(),
+            )
+        );
+        assert_eq!(
+            table(ModelSeat::Orchestrator),
+            (
+                "ORCHESTRATOR".into(),
+                ["MODEL", "GOALS", "TOKENS", "TIME", "MESSAGES"]
+                    .map(String::from)
+                    .to_vec(),
+                ["planner", "3", "2.5M", "2h 0m", "12"]
+                    .map(String::from)
+                    .to_vec(),
+            )
+        );
+    }
+
+    #[test]
+    fn every_seat_prints_a_table_in_seat_order() {
         let text = render(&stats(), None, &View::plain()).unwrap();
-        for heading in ["AUTHOR", "REVIEWER", "ORCHESTRATOR"] {
-            assert!(text.contains(heading), "{text}");
-        }
-        for figure in [
-            "writer", "judge", "planner", "50.0%", "75.0%", "25.0%", "62.5%", "1.2k", "2m",
-        ] {
-            assert!(text.contains(figure), "{figure}: {text}");
-        }
-        for header in [
-            "MODEL",
-            "TASKS",
-            "FINISH_RATE",
-            "FIRST_PASS",
-            "ROUNDS",
-            "WIN_RATE",
-            "TOKENS/TASK",
-            "FAILED",
-            "EXHAUSTED",
-            "VERDICTS",
-            "APPROVE",
-            "LATENCY",
-            "SESSIONS",
-            "TOKENS",
-            "LIFETIME",
-        ] {
-            assert!(text.contains(header), "{header}: {text}");
-        }
+        let headings: Vec<_> = text
+            .lines()
+            .filter(|l| ["ORCHESTRATOR", "AUTHOR", "REVIEWER"].contains(&l.trim()))
+            .collect();
+        assert_eq!(headings, ["ORCHESTRATOR", "AUTHOR", "REVIEWER"], "{text}");
+        let empty = render(&ModelStatsDto::default(), None, &View::plain()).unwrap();
+        assert_eq!(empty, "No model ran in that span.");
     }
 
     #[test]
@@ -323,50 +318,14 @@ mod tests {
             serde_json::from_value::<ModelStatsDto>(value.clone()).unwrap(),
             expected
         );
-        assert_eq!(value["items"].as_array().unwrap().len(), 3);
-        assert_eq!(value["items"][1]["author"]["first_pass_rate"], 0.75);
+        assert_eq!(
+            value["items"][2],
+            serde_json::json!({
+                "model": "judge", "seat": "reviewer", "tasks": 5, "goals": 2, "tokens": 800,
+                "time_secs": 120.0, "messages": 7, "rounds_per_task": null,
+                "changes_per_task": 0.4
+            })
+        );
         server.abort();
-    }
-
-    /// The cells of a plain table line; a duration holds one space, a gap two.
-    fn cells(line: &str) -> Vec<&str> {
-        line.split("  ")
-            .map(str::trim)
-            .filter(|c| !c.is_empty())
-            .collect()
-    }
-
-    #[test]
-    fn every_seat_shows_interventions_and_time_and_authors_their_rate() {
-        let text = render(&stats(), Some(ModelSeat::Author), &View::plain()).unwrap();
-        let lines: Vec<&str> = text.lines().collect();
-        let header = cells(lines[1]);
-        let writer = cells(lines[2]);
-        let cell = |name: &str| writer[header.iter().position(|h| *h == name).unwrap()];
-        assert_eq!(cell("LEAD_TIME"), "30m 0s", "{text}");
-        assert_eq!(cell("INTERVENTIONS/TASK"), "3.5", "{text}");
-        assert_eq!(cell("INTERVENTIONS"), "7", "{text}");
-        assert_eq!(cell("PERSON_TIME"), "15m 0s", "{text}");
-        assert_eq!(cell("TOTAL_TIME"), "2h 0m", "{text}");
-        for seat in [ModelSeat::Reviewer, ModelSeat::Orchestrator] {
-            let text = render(&stats(), Some(seat), &View::plain()).unwrap();
-            for header in ["INTERVENTIONS", "PERSON_TIME", "TOTAL_TIME"] {
-                assert!(text.contains(header), "{header}: {text}");
-            }
-            assert!(!text.contains("INTERVENTIONS/TASK"), "{text}");
-        }
-        let mut idle = stats();
-        idle.items[1]
-            .author
-            .as_mut()
-            .unwrap()
-            .interventions_per_finished_task = None;
-        let text = render(&idle, Some(ModelSeat::Author), &View::plain()).unwrap();
-        let lines: Vec<&str> = text.lines().collect();
-        let rate = cells(lines[1])
-            .iter()
-            .position(|h| *h == "INTERVENTIONS/TASK")
-            .unwrap();
-        assert_eq!(cells(lines[2])[rate], "-", "{text}");
     }
 }

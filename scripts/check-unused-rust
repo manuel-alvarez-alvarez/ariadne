@@ -66,6 +66,9 @@ IGNORED = {
     "crates/ariadne-store/src/stats/attention.rs: AttentionFlag": (
         "the public AttentionStats flags field carries it to the daemon"
     ),
+    "crates/ariadne-store/src/stats/attention.rs: AttentionInterventions": (
+        "the public AttentionStats interventions field carries it to the daemon"
+    ),
 }
 
 DECLARATION = re.compile(

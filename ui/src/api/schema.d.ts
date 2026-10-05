@@ -1466,36 +1466,6 @@ export interface components {
              */
             sessions_stalled: number;
         };
-        /** @description Outcomes attributed to an author model. */
-        AuthorModelStatDto: {
-            /** Format: int64 */
-            contests_entered: number;
-            /** Format: int64 */
-            contests_won: number;
-            /** Format: double */
-            finish_rate: number;
-            /** Format: double */
-            first_pass_rate: number;
-            /**
-             * Format: double
-             * @description Interventions divided by finished tasks; null without a finished task.
-             */
-            interventions_per_finished_task?: number | null;
-            /** Format: double */
-            mean_review_rounds: number;
-            /** Format: double */
-            median_lead_time_secs: number;
-            /** Format: int64 */
-            tasks_cancelled: number;
-            /** Format: int64 */
-            tasks_failed: number;
-            /** Format: int64 */
-            tasks_finished: number;
-            /** Format: double */
-            tokens_per_finished_task: number;
-            /** Format: double */
-            win_rate: number;
-        };
         /** @description A binary as the daemon can — or cannot — find it. */
         BinaryDto: {
             /**
@@ -2090,23 +2060,6 @@ export interface components {
             rank?: null | components["schemas"]["ModelRank"];
         };
         /**
-         * @description The times a person stepped in for this model in this seat: permissions
-         *     decided at the console, questions and stalls. `person_secs` is how long
-         *     those waited on the person.
-         */
-        ModelInterventionsDto: {
-            /** Format: int64 */
-            permissions: number;
-            /** Format: double */
-            person_secs: number;
-            /** Format: int64 */
-            questions: number;
-            /** Format: int64 */
-            stalls: number;
-            /** Format: int64 */
-            total: number;
-        };
-        /**
          * @description A user-set rank, independent of discovery and model availability.
          * @enum {string}
          */
@@ -2126,31 +2079,47 @@ export interface components {
              */
             share: number;
         };
-        /** @description Session measures and the measures specific to this seat. */
+        /** @description What one model did in one seat. */
         ModelStatDto: {
-            author?: null | components["schemas"]["AuthorModelStatDto"];
-            /** Format: double */
-            cached_share: number;
-            /** Format: int64 */
-            exhaustions: number;
-            /** Format: int64 */
-            failed_sessions: number;
-            interventions: components["schemas"]["ModelInterventionsDto"];
-            /** Format: double */
-            mean_lifetime_secs: number;
-            model: string;
-            reviewer?: null | components["schemas"]["ReviewerModelStatDto"];
-            seat?: string | null;
-            /** Format: int64 */
-            sessions: number;
-            /** Format: int64 */
-            stalled_sessions: number;
             /**
              * Format: double
-             * @description The sum of the lifetimes of the ended sessions.
+             * @description Changes requested over the tasks this reviewer model gave a verdict on;
+             *     null except for reviewers.
              */
-            total_lifetime_secs: number;
-            usage: components["schemas"]["TokenUsageDto"];
+            changes_per_task?: number | null;
+            /**
+             * Format: int64
+             * @description Distinct goals with a session of this model in this seat.
+             */
+            goals: number;
+            /**
+             * Format: int64
+             * @description The messages this model sent in this seat.
+             */
+            messages: number;
+            model: string;
+            /**
+             * Format: double
+             * @description The mean review requests over this author model's finished tasks; null
+             *     except for authors.
+             */
+            rounds_per_task?: number | null;
+            seat?: string | null;
+            /**
+             * Format: int64
+             * @description Distinct tasks with a session of this model in this seat.
+             */
+            tasks: number;
+            /**
+             * Format: double
+             * @description The sum of the session lifetimes.
+             */
+            time_secs: number;
+            /**
+             * Format: int64
+             * @description Input and output tokens of the ended sessions. Cached tokens are part of input.
+             */
+            tokens: number;
         };
         /** @description Models compared within each seat. */
         ModelStatsDto: {
@@ -2322,15 +2291,6 @@ export interface components {
              * @description Events this connection lost. Informational: they cannot be recovered.
              */
             missed: number;
-        };
-        /** @description Verdicts attributed to a reviewer model. */
-        ReviewerModelStatDto: {
-            /** Format: double */
-            approve_share: number;
-            /** Format: double */
-            mean_latency_secs: number;
-            /** Format: int64 */
-            verdicts: number;
         };
         /**
          * @description Where an agent sits: the orchestrator of a goal, or the author or a
