@@ -18,7 +18,7 @@ import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/h
 import { StatsPage } from "./stats"
 
 /** The six families, in the order the screen shows them. */
-const FAMILIES = ["work", "time", "spend", "models", "attention", "tools"] as const
+const FAMILIES = ["models", "work", "time", "spend", "attention", "tools"] as const
 
 /**
  * `tools` and `attention` each answer a shaped DTO rather than the bare `{}`
@@ -62,10 +62,10 @@ describe("StatsPage", () => {
 
     const headings = await screen.findAllByRole("heading", { level: 2 })
     expect(headings.map((heading) => heading.textContent)).toEqual([
+      "Models",
       "Work",
       "Time",
       "Spend",
-      "Models",
       "Attention",
       "Tools",
     ])

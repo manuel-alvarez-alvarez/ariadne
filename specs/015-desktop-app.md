@@ -472,7 +472,7 @@ Out: the daemon endpoints themselves (012).
     (023). Its header holds a `since` selector — all time, 24 hours, 7 days,
     30 days — and a repository selector, both kept in the URL as `?since=`
     and `?repo=`. The screen passes `{ since, repo }` to six sections, in
-    order: Work, Time, Spend, Models, Attention and Tools, each
+    order: Models, Work, Time, Spend, Attention and Tools, each
     `src/components/stats/<family>-section.tsx`. Every section draws through
     the shared `StatSection`: its heading, `text-sm font-medium`, the one
     sentence of the question it answers, the read's error or skeleton, and
@@ -481,7 +481,12 @@ Out: the daemon endpoints themselves (012).
     `task_updated` and `session_updated` event invalidates the `stats` group
     — parity with `ariadne stats <family>` (014). A chart is colour-coded by
     meaning off the status ramp through the `STATUS_COLORS` module, and backed
-    by an `sr-only` table of the same numbers for a screen reader.
+    by an `sr-only` table of the same numbers for a screen reader; that
+    table's wrapper carries `relative` so the table's own `absolute`
+    positioning stays inside it rather than the document, which would
+    otherwise stretch the page past the viewport into a second scrollbar.
+    `SpendSection` draws one `StatTimeChart` of input and output tokens and no
+    by-model chart — the Models section is where a model is compared.
 
 - Goal details leave the board accessible, and another lane title changes the
   open pane (`ui/src/components/detail-panels.test.tsx::keeps the board accessible and follows another lane title with a goal open`,

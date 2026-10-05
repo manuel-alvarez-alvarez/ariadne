@@ -62,7 +62,11 @@ export function StatTimeChart<T extends { bucket: string }>({
   valueFormatter?: (value: number) => string
 }) {
   return (
-    <div className="flex flex-col gap-2">
+    // `relative`: the lone positioned ancestor the `sr-only` table below needs.
+    // `sr-only` is `position: absolute`, and with no ancestor positioned it
+    // places against the document instead of this box, stretching the page
+    // past the viewport and drawing a second scrollbar.
+    <div className="relative flex flex-col gap-2">
       <ChartContainer
         config={config}
         className="block aspect-auto w-full"

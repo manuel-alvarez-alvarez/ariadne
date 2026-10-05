@@ -50,9 +50,9 @@ sentence that says so.
 
 Open **Stats** in the sidebar. Choose a span (all time, 24 hours, 7 days or 30
 days) and a repository at the top of the screen; both stay in the address, so
-a reload keeps them. The screen shows one section per family, in the order of
-the table above, each under its question. The sections update by themselves
-as sessions end and as tasks move.
+a reload keeps them. The screen shows one section per family, each under its
+question, in this order: Models, Work, Time, Spend, Attention and Tools. The
+sections update by themselves as sessions end and as tasks move.
 
 ## From the API
 
@@ -99,8 +99,9 @@ then a status table. The Stats screen shows the same headline figures and a
 
 ## Spend
 
-What did it spend: tokens over time, by model, and per finished task. Stats
-show tokens, never cost — nothing here converts one to the other.
+What did it spend: tokens over time and per finished task. Stats show
+tokens, never cost — nothing here converts one to the other. Compare models
+by tokens in the Models section instead.
 
 The totals are every ended session's tokens: how much went in, how much of
 that the prompt cache served, and how much came out. Per finished task is the
@@ -108,9 +109,7 @@ same two figures — in and out — averaged over however many tasks finished in
 the span.
 
 The chart over time stacks input and output tokens per bucket, the cached
-share alongside in the tooltip. The chart by model is one bar per model that
-ran, every seat it ran in pooled together, each bar's share of the whole
-spend in its tooltip.
+share alongside in the tooltip.
 
 ## Models
 

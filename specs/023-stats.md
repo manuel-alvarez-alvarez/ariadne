@@ -234,10 +234,11 @@ decided, not a change to how they decide it.
 ### The frame
 
 29. The stats are six families. Each answers one question a user asks, and
-    the screen, the command and the docs show them in this order: `work`
-    (what got done?), `time` (how long does it take?), `spend` (what did it
-    spend?), `models` (which model does the job?), `attention` (how much did
-    it need me?) and `tools` (what do the agents do?).
+    the command and the docs show them in this order: `work` (what got
+    done?), `time` (how long does it take?), `spend` (what did it spend?),
+    `models` (which model does the job?), `attention` (how much did it need
+    me?) and `tools` (what do the agents do?). The desktop screen leads with
+    `models` instead, ahead of `work` (rule 36).
 30. `GET /v1/stats/<family>` answers the family's own DTO: `WorkStatsDto`,
     `TimeStatsDto`, `SpendStatsDto`, `ModelStatsDto`, `AttentionStatsDto` and
     `ToolStatsDto`. Every route takes the filters of rules 12 to 14 and sits
@@ -268,9 +269,10 @@ decided, not a change to how they decide it.
     days, 30 days) and a repository selector. Both live in the URL
     (`?since=7d&repo=<id>`), and the screen hands them to every section as
     one `{ since, repo }`.
-36. The screen renders six sections in the order of rule 29: `WorkSection`,
-    `TimeSection`, `SpendSection`, `ModelsSection`, `AttentionSection` and
-    `ToolsSection`. Each draws through the shared `StatSection`: its heading
+36. The screen renders six sections in this order: `ModelsSection`,
+    `WorkSection`, `TimeSection`, `SpendSection`, `AttentionSection` and
+    `ToolsSection` — `ModelsSection` ahead of rule 29's own order. Each draws
+    through the shared `StatSection`: its heading
     (`text-sm font-medium`), one sentence of the question it answers, the
     read's error or skeleton, and the one muted sentence of an empty family.
     The other shared pieces are `StatTiles` and `StatTile` (a label, a value
@@ -278,7 +280,10 @@ decided, not a change to how they decide it.
     right-aligned, columns given by the caller), `StatTimeChart` (stacked
     bars per bucket on a date axis) and `StatBarChart` (a horizontal bar per
     row). Every chart keeps an `sr-only` table of the same numbers under it,
-    for a screen reader and for a test. A colour carries one meaning, off the
+    for a screen reader and for a test, in a `relative` wrapper: `sr-only` is
+    `position: absolute`, and with no ancestor positioned the table would lay
+    out against the document and draw a second scrollbar. A colour carries
+    one meaning, off the
     status ramp in `index.css` through the shared `STATUS_COLORS` module —
     finished or ended on `status-done`, failed on `status-danger`, stalled on
     `status-warn`, cancelled on `status-pending`, a neutral count on
@@ -379,10 +384,9 @@ nothing here converts one.
     share, output tokens, and tokens per finished task (`input_tokens +
     output_tokens` of `per_finished_task`, hinted with the task count). Under
     them, one `StatTimeChart` stacks `input_tokens` and `output_tokens` per
-    bucket, the bucket's own cached share added to its tooltip; one
-    `StatBarChart` draws one stacked bar per model of the same two keys, its
-    tooltip and its `sr-only` table carrying the model's three token counts
-    and its share. A family with no ended session is empty.
+    bucket, the bucket's own cached share added to its tooltip. It draws no
+    chart of `by_model`: `ModelsSection` is where a model is compared. A
+    family with no ended session is empty.
 
 ### Models
 
@@ -666,9 +670,10 @@ shared `since` and `repo` filter.
   (`commands/stats/spend.rs::tests::the_table_prints_a_model_row_and_a_bucket_row`),
   and a family with no ended session is empty
   (`commands/stats/spend.rs::tests::a_family_with_no_ended_session_is_empty`).
-- `SpendSection` draws the tiles and both charts from a mocked response
-  (`spend-section.test.tsx` "draws the tiles and both charts from a mocked
-  response").
+- `SpendSection` draws the tiles and the time chart from a mocked response,
+  with no by-model chart
+  (`spend-section.test.tsx` "draws the tiles and the time chart from a
+  mocked response, with no by-model chart").
 
 #### Models
 

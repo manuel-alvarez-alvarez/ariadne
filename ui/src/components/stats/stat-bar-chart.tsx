@@ -53,7 +53,11 @@ export function StatBarChart<T extends { label: string }>({
   const height = Math.max(MIN_HEIGHT_PX, data.length * ROW_HEIGHT_PX)
   const legend = bars.some((group) => Array.isArray(group) && group.length > 1) || bars.length > 1
   return (
-    <div className="flex flex-col gap-2">
+    // `relative`: the lone positioned ancestor the `sr-only` table below needs.
+    // `sr-only` is `position: absolute`, and with no ancestor positioned it
+    // places against the document instead of this box, stretching the page
+    // past the viewport and drawing a second scrollbar.
+    <div className="relative flex flex-col gap-2">
       {/* `block`, not the base `flex justify-center`: a centred flex row leaves
           its `width: 100%` child to shrink-wrap instead of filling it. */}
       <ChartContainer config={config} className="block aspect-auto w-full" style={{ height }}>

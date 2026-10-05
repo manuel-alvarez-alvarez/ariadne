@@ -108,10 +108,10 @@ export function StatsPage() {
         }
       />
       <div className="flex flex-col gap-6">
+        <ModelsSection filter={filter} />
         <WorkSection filter={filter} />
         <TimeSection filter={filter} />
         <SpendSection filter={filter} />
-        <ModelsSection filter={filter} />
         <AttentionSection filter={filter} />
         <ToolsSection filter={filter} />
       </div>
