@@ -105,6 +105,9 @@ function renderPage(entry: string = paths.skills()) {
         <button type="button" onClick={() => void navigate(-1)}>
           go back
         </button>
+        <button type="button" onClick={() => void navigate(paths.agents())}>
+          go to agents
+        </button>
         <output data-testid="search">{location.search}</output>
       </>
     )
@@ -120,6 +123,9 @@ function renderPage(entry: string = paths.skills()) {
         </>
       ),
     },
+    // Another screen entirely, the way a sidebar link would open one: not a
+    // skill selection, so no `SKILL_PARAM` is involved in leaving to it.
+    { path: paths.agents(), element: <p>Agents screen</p> },
   ])
   return renderScreen(<RouterProvider router={router} />, { route: null })
 }
@@ -292,13 +298,109 @@ describe("the selection", () => {
     renderPage(paths.skill(CODING.name))
     await editorFor("coding")
 
-    await user.type(screen.getByRole("textbox", { name: "Document" }), "typed over it")
     await user.click(item("code-review"))
 
     await editorFor("code-review")
     expect((screen.getByRole("textbox", { name: "Document" }) as HTMLTextAreaElement).value).toBe(
       REVIEW.document,
     )
+  })
+})
+
+describe("leaving a dirty skill", () => {
+  it("asks before switching to a different skill", async () => {
+    const user = userEvent.setup()
+    renderPage(paths.skill(CODING.name))
+    await editorFor("coding")
+
+    const textarea = screen.getByRole("textbox", { name: "Document" }) as HTMLTextAreaElement
+    await user.type(textarea, "typed over it")
+    await user.click(item("code-review"))
+
+    expect(await screen.findByRole("dialog", { name: "Discard changes?" })).toBeDefined()
+    // Blocked: the selection has not moved, and the box still has what was
+    // typed, once the dialog in front of it is answered.
+    expect(selectedInUrl()).toBe("coding")
+    expect(textarea.value).toBe(`${CODING.document}typed over it`)
+  })
+
+  it("keeps the draft and stays, on Keep editing", async () => {
+    const user = userEvent.setup()
+    renderPage(paths.skill(CODING.name))
+    await editorFor("coding")
+
+    await user.type(screen.getByRole("textbox", { name: "Document" }), "typed over it")
+    await user.click(item("code-review"))
+
+    const dialog = await screen.findByRole("dialog", { name: "Discard changes?" })
+    await user.click(within(dialog).getByRole("button", { name: "Keep editing" }))
+
+    expect(screen.queryByRole("dialog", { name: "Discard changes?" })).toBeNull()
+    expect(await editorFor("coding")).toBeDefined()
+    expect(selectedInUrl()).toBe("coding")
+    expect((screen.getByRole("textbox", { name: "Document" }) as HTMLTextAreaElement).value).toBe(
+      `${CODING.document}typed over it`,
+    )
+  })
+
+  it("discards the draft and switches, on Discard", async () => {
+    const user = userEvent.setup()
+    renderPage(paths.skill(CODING.name))
+    await editorFor("coding")
+
+    await user.type(screen.getByRole("textbox", { name: "Document" }), "typed over it")
+    await user.click(item("code-review"))
+
+    const dialog = await screen.findByRole("dialog", { name: "Discard changes?" })
+    await user.click(within(dialog).getByRole("button", { name: "Discard" }))
+
+    expect(await editorFor("code-review")).toBeDefined()
+    expect(selectedInUrl()).toBe("code-review")
+    expect((screen.getByRole("textbox", { name: "Document" }) as HTMLTextAreaElement).value).toBe(
+      REVIEW.document,
+    )
+  })
+
+  it("asks before Back leaves a dirty skill, too", async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByRole("link", { name: /^coding/ })
+    await user.click(item("coding"))
+    await editorFor("coding")
+
+    await user.type(screen.getByRole("textbox", { name: "Document" }), "typed over it")
+    await user.click(screen.getByRole("button", { name: "go back" }))
+
+    const dialog = await screen.findByRole("dialog", { name: "Discard changes?" })
+    await user.click(within(dialog).getByRole("button", { name: "Discard" }))
+
+    expect(await screen.findByText("Select a skill, or write one.")).toBeDefined()
+    expect(selectedInUrl()).toBeNull()
+  })
+
+  it("asks before a route to another screen leaves a dirty skill, too", async () => {
+    const user = userEvent.setup()
+    renderPage(paths.skill(CODING.name))
+    await editorFor("coding")
+
+    await user.type(screen.getByRole("textbox", { name: "Document" }), "typed over it")
+    await user.click(screen.getByRole("button", { name: "go to agents" }))
+
+    const dialog = await screen.findByRole("dialog", { name: "Discard changes?" })
+    await user.click(within(dialog).getByRole("button", { name: "Discard" }))
+
+    expect(await screen.findByText("Agents screen")).toBeDefined()
+  })
+
+  it("leaves a clean skill with no prompt", async () => {
+    const user = userEvent.setup()
+    renderPage(paths.skill(CODING.name))
+    await editorFor("coding")
+
+    await user.click(item("code-review"))
+
+    expect(await editorFor("code-review")).toBeDefined()
+    expect(screen.queryByRole("dialog", { name: "Discard changes?" })).toBeNull()
   })
 })
 

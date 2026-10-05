@@ -677,6 +677,27 @@ Out: the daemon endpoints themselves (012).
   skill suggestions, for the author and every reviewer
   (`ui/src/features/tasks/task-form-dialog.test.tsx::suggests no
   orchestrator-only skill for the author or a reviewer`).
+- The skill editor's draft is never overwritten out from under a typing user:
+  it follows the selected skill's document only while the draft still reads
+  exactly what it was last set from, and holds its ground once it does not —
+  through a change from elsewhere (the CLI, Reset, another window) and
+  through the refetch of a save of its own alike
+  (`ui/src/features/skills/skill-editor.test.tsx::follows the row when the
+  document changes under it`, `::keeps a dirty draft when the row changes
+  underneath it, and says so`, `::keeps text typed after a click on Save,
+  once the saved document comes back`). A draft held back this way says a
+  newer version is waiting, with a way to load it in the draft's place
+  (`ui/src/features/skills/skill-editor.test.tsx::loads the new version on
+  request, replacing the draft`).
+- The skills screen asks before a dirty draft is left — by switching to
+  another skill, by Back, or by a route to another screen entirely, such as a
+  sidebar link — and only then: Keep editing cancels the move and keeps the
+  draft, Discard carries it out, and a clean draft never asks at all
+  (`ui/src/features/skills/skills-page.test.tsx::asks before switching to a
+  different skill`, `::keeps the draft and stays, on Keep editing`,
+  `::discards the draft and switches, on Discard`, `::asks before Back leaves
+  a dirty skill, too`, `::asks before a route to another screen leaves a
+  dirty skill, too`, `::leaves a clean skill with no prompt`).
 - The repository dialog is a path, a base branch, a description, a
   permission mode and a default landing — not the merge-strategy or
   landing-briefing fields that used to sit there

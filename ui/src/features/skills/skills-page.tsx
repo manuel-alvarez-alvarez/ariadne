@@ -18,9 +18,10 @@
 import { useQuery } from "@tanstack/react-query"
 import { PlusIcon } from "lucide-react"
 import { useState } from "react"
-import { Link, useSearchParams } from "react-router-dom"
+import { Link, useBlocker, useSearchParams } from "react-router-dom"
 
 import type { SkillDto } from "@/api"
+import { ConfirmDialog } from "@/components/confirm-dialog"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
@@ -42,6 +43,12 @@ export function SkillsPage() {
 
   const skills = useQuery(skillsQueryOptions())
   const selected = skills.data?.find((skill) => skill.name === selectedName)
+
+  // The editor reports its own dirtiness; what happens with that is the
+  // screen's call, since leaving — to another skill, to the list, or off the
+  // screen entirely — is a navigation the screen is the one to see coming.
+  const [dirty, setDirty] = useState(false)
+  const blocker = useBlocker(dirty)
 
   /**
    * Selects a skill. It pushes: a selection is what a link points at, so Back
@@ -106,9 +113,11 @@ export function SkillsPage() {
             )}
           >
             {selected ? (
-              // Keyed by the skill: a selection is a fresh editor, never one
-              // skill's document left in the box under another's name.
-              <SkillEditor key={selected.name} skill={selected} onDeleted={clearSelection} />
+              // Not keyed by the skill: a selection staying the same instance
+              // is what lets a dirty draft survive a switch that gets asked
+              // about and then cancelled, rather than one that always wipes
+              // the box clean on the spot.
+              <SkillEditor skill={selected} onDeleted={clearSelection} onDirtyChange={setDirty} />
             ) : selectedName ? (
               // A link to a skill that is gone — deleted since, or never this
               // daemon's — lands here rather than on nothing at all.
@@ -138,6 +147,21 @@ export function SkillsPage() {
         open={createOpen}
         onOpenChange={setCreateOpen}
         onCreated={(skill) => select(skill.name)}
+      />
+
+      <ConfirmDialog
+        open={blocker.state === "blocked"}
+        onClose={() => {
+          if (blocker.state === "blocked") blocker.reset()
+        }}
+        title="Discard changes?"
+        description="This skill has unsaved changes. Leaving now drops them."
+        confirmLabel="Discard"
+        dismissLabel="Keep editing"
+        destructive
+        onConfirm={() => {
+          if (blocker.state === "blocked") blocker.proceed()
+        }}
       />
     </div>
   )
