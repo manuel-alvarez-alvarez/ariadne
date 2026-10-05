@@ -254,11 +254,17 @@ decided, not a change to how they decide it.
     the sidebar. Its header holds a `since` selector (all time, 24 hours, 7
     days, 30 days) and a repository selector. Both live in the URL
     (`?since=7d&repo=<id>`), and the screen hands them to every section as
-    one `{ since, repo }`.
-35. The screen renders five sections in this order: `ModelsSection`,
-    `WorkSection`, `TimeSection`, `SpendSection` and `AttentionSection` —
-    `ModelsSection` ahead of rule 28's own order. Each draws through the
-    shared `StatSection`: its heading
+    one `{ since, repo }`. The screen is a dashboard: it leads with a `Key
+    figures` row — tasks finished, finish rate and median goal lead time off
+    the work family, total tokens (input and output) off the spend family,
+    and interventions and person time, the models family's
+    `interventions.total` and `interventions.person_secs` summed over its
+    rows — each figure reading `—` until its answer is in.
+35. Under the key figures, the screen renders five sections in this order:
+    `ModelsSection`, `WorkSection`, `TimeSection`, `SpendSection` and
+    `AttentionSection` — `ModelsSection` ahead of rule 28's own order — laid
+    out as a card grid: one column, and two from `xl` up, where `ModelsSection`
+    spans both. Each draws through the shared `StatSection`: its heading
     (`text-sm font-medium`), one sentence of the question it answers, the
     read's error or skeleton, and the one muted sentence of an empty family.
     The other shared pieces are `StatTiles` and `StatTile` (a label, a value
@@ -545,7 +551,12 @@ shared `since` and `repo` filter.
   key `qk` names (`stats.test.tsx` "asks every family with the filters in
   its URL, under the key qk names"), and renders an error rather than the
   empty sentence when a read fails (`stats.test.tsx` "renders an error, not
-  the empty sentence, when the daemon refuses a read").
+  the empty sentence, when the daemon refuses a read"). It leads with the
+  key figures, read off the work, spend and models answers, and lays Models
+  across the full width with the other four as a two-column card grid
+  (`stats.test.tsx` "leads with the key figures, read off the work, spend
+  and models answers", "lays Models across the full width, and the other
+  four out as a two-column card grid").
 - Each section asks for its family with the filter under
   `qk.stats.<family>(filter)`, and says its empty sentence under its heading
   and its question (`<family>-section.test.tsx` "asks for its family with
