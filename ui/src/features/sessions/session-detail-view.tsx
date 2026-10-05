@@ -51,6 +51,7 @@ import { Link, useSearchParams } from "react-router-dom"
 import type { SessionDto } from "@/api"
 import { CopyableId, CopyableIdMenu } from "@/components/copyable-id"
 import { Fact, FactList } from "@/components/fact-list"
+import { PanelHeader } from "@/components/panel-header"
 import { TokenFigure } from "@/components/token-figure"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -73,6 +74,78 @@ import { SessionAttentionBadge, SessionStatusBadge, sessionHeading } from "./ses
 import { SessionTerminal } from "./session-terminal"
 
 /**
+ * The session panel's own header: the breadcrumb back to whichever goal or
+ * task it is drilled into, its heading, its actions, and the dense line of
+ * its status, id and when it last moved — the one piece of a session's view
+ * that is not shared between its three homes (the standalone session panel,
+ * and the goal's and the task's own drill-downs), since each wraps a
+ * different breadcrumb — or none — around the same content.
+ */
+export function SessionPanelHeader({
+  session,
+  breadcrumb,
+  onResumed,
+  onSwitched,
+}: {
+  session: SessionDto
+  /** The goal or task this session is shown inside; omitted for the standalone panel. */
+  breadcrumb?: { label: string; onClick: () => void }
+  /** Where to go once a resume hands the session back; see {@link SessionActions}. */
+  onResumed?: (session: SessionDto) => void
+  /** Where to go once a switch creates a successor session. */
+  onSwitched?: (session: SessionDto) => void
+}) {
+  const goal = useQuery({
+    ...goalQueryOptions(session.goal_id ?? ""),
+    enabled: Boolean(session.goal_id),
+  })
+  return (
+    <PanelHeader
+      breadcrumb={breadcrumb}
+      title={sessionHeading(session)}
+      actions={
+        <SessionActions
+          session={session}
+          onResumed={onResumed}
+          onSwitched={onSwitched}
+          goalCancelled={goal.data?.status === "cancelled"}
+        />
+      }
+      status={
+        <>
+          <SessionStatusBadge status={session.status} />
+          {/* Next to the status rather than instead of it: the two are
+              orthogonal — an agent blocked on a permission prompt is still
+              running — and the pair is what says what to do about it. */}
+          {session.attention_reason ? (
+            <SessionAttentionBadge attention={session.attention_reason} />
+          ) : null}
+        </>
+      }
+      id={
+        <CopyableIdMenu
+          value={session.id}
+          label="session id"
+          entries={sessionCopyEntries(session.id)}
+        />
+      }
+      stamps={
+        <>
+          <span>started</span>
+          <When at={session.created_at} label="started" />
+          <span aria-hidden="true">·</span>
+          <span>{session.ended_at ? "ended" : "last activity"}</span>
+          <When
+            at={session.ended_at ?? session.last_activity_at}
+            label={session.ended_at ? "ended" : "last activity"}
+          />
+        </>
+      }
+    />
+  )
+}
+
+/**
  * The two halves of what a session is doing; the console is what is opened
  * for. Its tab is still `terminal` on the wire, so links made before the
  * console keep working — see `paths.ts`'s `sessionTerminalFrom`.
@@ -83,8 +156,6 @@ type Tab = (typeof TABS)[number]
 export function SessionDetailView({
   session,
   context,
-  onResumed,
-  onSwitched,
 }: {
   session: SessionDto
   /**
@@ -92,10 +163,6 @@ export function SessionDetailView({
    * dropped, since inside its own panel it would only point at itself.
    */
   context?: "goal" | "task"
-  /** Where to go once a resume hands the session back; see {@link SessionActions}. */
-  onResumed?: (session: SessionDto) => void
-  /** Where to go once a switch creates a successor session. */
-  onSwitched?: (session: SessionDto) => void
 }) {
   const goal = useQuery({
     ...goalQueryOptions(session.goal_id ?? ""),
@@ -133,47 +200,6 @@ export function SessionDetailView({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <header className="flex flex-wrap items-center gap-3">
-          <h1 className="min-w-0 truncate font-heading text-base font-semibold">
-            {sessionHeading(session)}
-          </h1>
-          <SessionStatusBadge status={session.status} />
-          {/* Next to the status rather than instead of it: the two are
-              orthogonal — an agent blocked on a permission prompt is still
-              running — and the pair is what says what to do about it. */}
-          {session.attention_reason ? (
-            <SessionAttentionBadge attention={session.attention_reason} />
-          ) : null}
-          <div className="ml-auto">
-            <SessionActions
-              session={session}
-              onResumed={onResumed}
-              onSwitched={onSwitched}
-              goalCancelled={goal.data?.status === "cancelled"}
-            />
-          </div>
-        </header>
-        {/* The id and the two stamps that say when, under the heading rather
-            than two facts of their own further down. */}
-        <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-          <CopyableIdMenu
-            value={session.id}
-            label="session id"
-            entries={sessionCopyEntries(session.id)}
-          />
-          <span aria-hidden="true">·</span>
-          <span>started</span>
-          <When at={session.created_at} label="started" />
-          <span aria-hidden="true">·</span>
-          <span>{session.ended_at ? "ended" : "last activity"}</span>
-          <When
-            at={session.ended_at ?? session.last_activity_at}
-            label={session.ended_at ? "ended" : "last activity"}
-          />
-        </div>
-      </div>
-
       {/* Under the header rather than beside the badge: what to do about a
           blocked agent is a sentence, and the console it is about is below. */}
       <SessionBlockedBanner session={session} />

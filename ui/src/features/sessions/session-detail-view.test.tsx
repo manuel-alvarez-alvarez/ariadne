@@ -277,6 +277,12 @@ it("collapses the facts to one line behind a chevron, open by default", async ()
   expect(screen.getByText("Agent")).toBeDefined()
 })
 
+it("renders no h1 of its own, since the shared header above it carries the heading", () => {
+  renderView()
+
+  expect(document.querySelector("h1")).toBeNull()
+})
+
 it("links to the session it continues", () => {
   renderView({ ...SESSION, switched_from: "01JSESS000000000000000OLD" })
 

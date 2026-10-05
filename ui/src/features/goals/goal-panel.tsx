@@ -26,6 +26,7 @@ import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { Fact, FactList } from "@/components/fact-list"
 import { Markdown } from "@/components/markdown"
+import { PanelHeader } from "@/components/panel-header"
 import { PanelSheet } from "@/components/panel-sheet"
 import { StatusBadge } from "@/components/status-badge"
 import { TabCount } from "@/components/tab-count"
@@ -87,40 +88,52 @@ export function GoalPanel({ goalId, onClose }: { goalId: string; onClose: () => 
 
   return (
     <PanelSheet onClose={onClose} panelRef={panel}>
-      {error ? (
-        <>
-          <PaneTitle className="sr-only">Goal {goalId}</PaneTitle>
-          <ErrorState
-            showIcon
-            title={error.status === 404 ? "No such goal" : "Could not load goal"}
-            error={error}
-            // A goal that does not exist will not start existing on a retry.
-            onRetry={error.status === 404 ? undefined : () => void goal.refetch()}
-          />
-        </>
-      ) : null}
-
-      {goal.isPending ? (
-        <>
-          <PaneTitle className="sr-only">Loading goal</PaneTitle>
-          <Skeleton className="h-7 w-2/3" />
-          <Skeleton className="h-40 w-full" />
-        </>
-      ) : null}
-
       {goal.data ? (
-        <GoalView goal={goal.data} onSelectSession={selectSession} onDeleted={onClose} />
-      ) : null}
+        <GoalView
+          goal={goal.data}
+          error={error}
+          onRetry={() => void goal.refetch()}
+          onSelectSession={selectSession}
+          onDeleted={onClose}
+        />
+      ) : (
+        <>
+          <PaneHeader>
+            <PaneTitle className="sr-only">{error ? `Goal ${goalId}` : "Loading goal"}</PaneTitle>
+          </PaneHeader>
+          <PaneBody>
+            {error ? (
+              <ErrorState
+                showIcon
+                title={error.status === 404 ? "No such goal" : "Could not load goal"}
+                error={error}
+                // A goal that does not exist will not start existing on a retry.
+                onRetry={error.status === 404 ? undefined : () => void goal.refetch()}
+              />
+            ) : (
+              <>
+                <Skeleton className="h-7 w-2/3" />
+                <Skeleton className="h-40 w-full" />
+              </>
+            )}
+          </PaneBody>
+        </>
+      )}
     </PanelSheet>
   )
 }
 
 function GoalView({
   goal,
+  error,
+  onRetry,
   onSelectSession,
   onDeleted,
 }: {
   goal: GoalDto
+  /** A refetch that failed with this goal already cached; the stale data below is still shown. */
+  error: ApiError | null
+  onRetry: () => void
   /** Opens a session over the whole panel; owned by {@link GoalPanel}. */
   onSelectSession: (sessionId: string) => void
   /** Closes the panel once the goal it is showing has been deleted. */
@@ -149,17 +162,10 @@ function GoalView({
 
   return (
     <>
-      <PaneHeader>
-        {/* What can be done to the goal sits at the end of the title row, the
-            same slot the task and session panels put their actions in. */}
-        <div className="flex flex-wrap items-center gap-3">
-          <PaneTitle>{goal.title}</PaneTitle>
-          <StatusBadge
-            box="badge"
-            label={GOAL_STATUS_META[goal.status].label}
-            tone={GOAL_STATUS_META[goal.status].badge}
-          />
-          <div className="ml-auto flex shrink-0 items-center gap-2">
+      <PanelHeader
+        title={goal.title}
+        actions={
+          <div className="flex items-center gap-2">
             {canCreateTask ? (
               <Button variant="outline" size="sm" onClick={() => setNewTaskOpen(true)}>
                 <PlusIcon />
@@ -170,22 +176,34 @@ function GoalView({
                 panel's own close is what the action ends on. */}
             <GoalActions goal={goal} onDeleted={onDeleted} />
           </div>
-        </div>
-        {/* The id and the two stamps that matter about a goal, on the one line
-            under its title — a fact each would only repeat what this already
-            says in passing. */}
-        <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-          <CopyableIdMenu value={goal.id} label="goal id" entries={goalCopyEntries(goal.id)} />
-          <span aria-hidden="true">·</span>
-          <span>created</span>
-          <When at={goal.created_at} label="created" />
-          <span aria-hidden="true">·</span>
-          <span>updated</span>
-          <When at={goal.updated_at} label="updated" />
-        </div>
-      </PaneHeader>
+        }
+        status={
+          <StatusBadge
+            box="badge"
+            label={GOAL_STATUS_META[goal.status].label}
+            tone={GOAL_STATUS_META[goal.status].badge}
+          />
+        }
+        id={<CopyableIdMenu value={goal.id} label="goal id" entries={goalCopyEntries(goal.id)} />}
+        stamps={
+          <>
+            <span>created</span>
+            <When at={goal.created_at} label="created" />
+            <span aria-hidden="true">·</span>
+            <span>updated</span>
+            <When at={goal.updated_at} label="updated" />
+          </>
+        }
+      />
 
       <PaneBody>
+        {/* A refetch can fail with the goal already cached — the dashboard
+            keeps polling it — and the stale data is still worth showing, with
+            one notice above it rather than losing the panel to the error. */}
+        {error ? (
+          <ErrorState title="Could not refresh this goal" error={error} onRetry={onRetry} />
+        ) : null}
+
         <GoalMetadata goal={goal} />
 
         <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>

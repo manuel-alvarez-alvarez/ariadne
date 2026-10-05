@@ -26,17 +26,16 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { ArrowLeftIcon } from "lucide-react"
 import { Link } from "react-router-dom"
 
 import { ErrorState } from "@/components/error-state"
+import { PanelHeader } from "@/components/panel-header"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
-import { PaneBody, PaneHeader, PaneTitle } from "@/components/ui/docked-pane"
+import { PaneBody } from "@/components/ui/docked-pane"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { sessionQueryOptions } from "@/features/sessions/queries"
-import { SessionDetailView } from "@/features/sessions/session-detail-view"
+import { SessionDetailView, SessionPanelHeader } from "@/features/sessions/session-detail-view"
 import { SessionsList } from "@/features/sessions/sessions-list"
 import { shortId } from "@/lib/format"
 import { usePanelSessionTo } from "@/routes/paths"
@@ -79,28 +78,26 @@ export function TaskSessionView({
   // is nobody's task). It is not one of this task's, and the panel would
   // present it as if it were — with kill and resume on it.
   const foreign = session.data !== undefined && session.data.task_id !== taskId
+  const breadcrumb = {
+    label: taskTitle ?? `task ${shortId(taskId)}`,
+    // The way back to the task: replaces rather than pushes, same as every
+    // other navigation inside a panel.
+    onClick: () => onSelect(null),
+  }
 
   return (
     <>
-      <PaneHeader>
-        {/* `max-w-full` and the truncating label are what keep a long task
-            title out from under the sheet's close button: a button is
-            `whitespace-nowrap` and `w-fit`, so without them it grows straight
-            through the header's own right padding (the goal panel's way back
-            is the same one). */}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="-ml-2 w-fit max-w-full"
-          onClick={() => onSelect(null)}
-        >
-          <ArrowLeftIcon />
-          <span className="truncate">Back to {taskTitle ?? `task ${shortId(taskId)}`}</span>
-        </Button>
-        {/* The pane needs a name of its own; the view below
-            carries the visible heading. */}
-        <PaneTitle className="sr-only">Session {shortId(sessionId)}</PaneTitle>
-      </PaneHeader>
+      {session.data && !foreign ? (
+        <SessionPanelHeader
+          session={session.data}
+          breadcrumb={breadcrumb}
+          // A resume hands back the session to attach to; the panel follows it.
+          onResumed={(revived) => onSelect(revived.id)}
+          onSwitched={(successor) => onSelect(successor.id)}
+        />
+      ) : (
+        <PanelHeader breadcrumb={breadcrumb} title={`Session ${shortId(sessionId)}`} />
+      )}
 
       <PaneBody>
         {session.isPending ? (
@@ -123,13 +120,7 @@ export function TaskSessionView({
             </AlertDescription>
           </Alert>
         ) : (
-          <SessionDetailView
-            session={session.data}
-            context="task"
-            // A resume hands back the session to attach to; the panel follows it.
-            onResumed={(revived) => onSelect(revived.id)}
-            onSwitched={(successor) => onSelect(successor.id)}
-          />
+          <SessionDetailView session={session.data} context="task" />
         )}
       </PaneBody>
     </>

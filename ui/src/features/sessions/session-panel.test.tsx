@@ -43,6 +43,34 @@ it("closes the panel when focused Escape reaches its console", async () => {
   await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
 })
 
+/**
+ * The shared header's own rows, top to bottom: the title (truncating rather
+ * than wrapping, with the full text as its `title` attribute), then the meta
+ * row of status, id and the stamps — the standalone session panel opens on no
+ * breadcrumb, since nothing is open behind it.
+ */
+it("opens on the shared header: a truncating title, then status, id and stamps", async () => {
+  renderScreen(<SessionPanel sessionId={SESSION_ID} onClose={() => {}} />)
+
+  const title = await screen.findByRole("heading", { name: "Author session" })
+  expect(title.className).toContain("truncate")
+  expect(title.getAttribute("title")).toBe("Author session")
+
+  const header = title.parentElement?.parentElement
+  if (!header) throw new Error("no header around the title")
+  const [titleRow, meta] = [...header.children]
+  expect(titleRow instanceof HTMLElement && titleRow.contains(title)).toBe(true)
+  if (!(meta instanceof HTMLElement)) throw new Error("no meta row")
+  // Status first, then the id, then the stamps.
+  const text = meta.textContent ?? ""
+  const statusAt = text.indexOf("Running")
+  const idAt = text.indexOf(SESSION_ID)
+  const startedAt = text.indexOf("started")
+  expect(statusAt).toBeGreaterThanOrEqual(0)
+  expect(statusAt).toBeLessThan(idAt)
+  expect(idAt).toBeLessThan(startedAt)
+})
+
 it("gives the console view the remaining pane height", async () => {
   renderScreen(<SessionPanel sessionId={SESSION_ID} onClose={() => {}} />)
   const console = await screen.findByLabelText("Console terminal")
@@ -74,5 +102,7 @@ it("keeps modal Escape separate from the pane close", async () => {
   )
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
   expect(onClose).not.toHaveBeenCalled()
-  expect(screen.getByRole("region", { name: /^Session / })).toBeDefined()
+  // The pane's own name is the session's heading, rendered by the shared
+  // header now rather than left sr-only behind it.
+  expect(screen.getByRole("region", { name: "Author session" })).toBeDefined()
 })

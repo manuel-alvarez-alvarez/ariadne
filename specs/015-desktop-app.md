@@ -190,14 +190,30 @@ Out: the daemon endpoints themselves (012).
     cached page at once and the outside half is fetched again; a
     `session_created` event does the same, for a resume made from the CLI or
     another window.
-19. The goal, task and session panels open on a dense fact list above their
-    tabs — `text-xs`, three columns at `sm` and four at `lg`, no card frame —
-    rather than the framed grid further down an entity's own screen. On a
-    task staffed with several authors (004) the task panel shows every one of
-    them — its skills, its model, its own branch, and its status in the pick:
-    the votes it has so far, or "Picked" once it is the one that won — and the
-    reviewer pick itself: which author each reviewer chose. A task with one
-    author shows the singular Author fact and no pick, unchanged.
+19. The goal, task and session panels, and the session drill-downs inside the
+    goal's and the task's own, share one header component: an optional
+    breadcrumb row back to the entity this one is drilled into (a goal, for a
+    task's or a session's own panel; a task, for one of its sessions), with
+    the focus ring every other control in the app wears; the title row, the
+    title truncating to one line with the full text as its `title` attribute
+    and the panel's own actions at the row's end; and the dense meta row,
+    the entity's status badge first, then its id, then when it was made and
+    when it last moved. A goal opened straight from the board carries no
+    breadcrumb, nor does a session opened on its own. A session drill-down's
+    breadcrumb replaces the "Back to …" button it used to be. The loading and
+    the error state of a panel render inside its scrolling body, under a
+    header that names the entity only where its data already has, so a
+    failed refetch of a goal already cached shows that goal, under its one
+    title, with one inline notice above it rather than a second title and a
+    lost panel. The goal, task and session panels open on a dense fact list
+    above their tabs — `text-xs`, three columns at `sm` and four at `lg`, no
+    card frame — rather than the framed grid further down an entity's own
+    screen. On a task staffed with several authors (004) the task panel shows
+    every one of them — its skills, its model, its own branch, and its status
+    in the pick: the votes it has so far, or "Picked" once it is the one that
+    won — and the reviewer pick itself: which author each reviewer chose. A
+    task with one author shows the singular Author fact and no pick,
+    unchanged.
 20. Every session is shown in its console, as the CLI draws it: a terminal
     emulator (xterm.js) on the daemon's terminal socket
     (`GET /v1/sessions/{id}/console/terminal`, 008), in which the daemon
@@ -530,6 +546,28 @@ Out: the daemon endpoints themselves (012).
 - The task panel's breadcrumb opens its goal in the pane's place
   (`ui/src/features/tasks/task-panel.test.tsx::opens the goal from the task's breadcrumb, replacing the task in the pane`,
   `ui/src/components/detail-panels.test.tsx::gives the task panel's breadcrumb the app's own focus ring, once the task names its goal`).
+- The goal, the task and the session panel each open on the shared header's
+  rows in order, with a title that truncates rather than wraps and carries
+  the full text as its `title` attribute
+  (`ui/src/features/goals/goal-panel.test.tsx::opens on the shared header: a truncating title, then status, id and stamps`,
+  `ui/src/features/tasks/task-panel.test.tsx::opens on the shared header: a breadcrumb, a truncating title, then status, id and stamps`,
+  `ui/src/features/sessions/session-panel.test.tsx::opens on the shared header: a truncating title, then status, id and stamps`).
+- A session drilled into from a goal's or a task's own panel shows a
+  breadcrumb back to it, and no "Back to …" button
+  (`ui/src/features/goals/goal-panel.test.tsx::drills into a session with a breadcrumb back to the goal, and no Back button`,
+  `ui/src/features/tasks/task-panel.test.tsx::drills into a session with a breadcrumb back to the task, and no Back button`).
+- The session view renders no `h1` of its own, the shared header above it
+  carrying the heading instead
+  (`ui/src/features/sessions/session-detail-view.test.tsx::renders no h1 of its own, since the shared header above it carries the heading`).
+- A goal panel with cached data and a failed refetch keeps showing that goal,
+  under one title, with one inline notice above it
+  (`ui/src/features/goals/goal-panel.test.tsx::keeps the cached goal on a failed refetch, with one title and one notice`).
+- The goal panel's and the task panel's loading and error states render
+  inside the pane's scrolling body
+  (`ui/src/features/goals/goal-panel.test.tsx::renders the loading state inside the pane's scrolling body`,
+  `::renders the goal's load failure inside the pane's scrolling body`,
+  `ui/src/features/tasks/task-panel.test.tsx::renders the loading state inside the pane's scrolling body`,
+  `::renders the task's load failure inside the pane's scrolling body`).
 - Closing a task opened straight from the board returns focus to the card
   that opened it, same as any other panel
   (`ui/src/features/tasks/task-panel.test.tsx::closes to an empty pane and returns focus to the board card that opened it`).

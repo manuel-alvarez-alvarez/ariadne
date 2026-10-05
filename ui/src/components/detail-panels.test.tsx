@@ -55,7 +55,9 @@ function mountPanels(at: string) {
 
 it("unmounts the goal outright once a task replaces it, and focuses the task", async () => {
   mountPanels(`${paths.goals()}?goal=g1&tab=sessions&session=s1`)
-  const goalSheet = screen.getByText("Session s1").closest('[data-slot="docked-pane"]')
+  const goalSheet = screen
+    .getByRole("heading", { name: "Session s1" })
+    .closest('[data-slot="docked-pane"]')
   if (!goalSheet) throw new Error("no sheet holding the goal's session")
   // The pane takes focus on mount.
   await waitFor(() => expect(goalSheet.contains(document.activeElement)).toBe(true))
@@ -68,7 +70,7 @@ it("unmounts the goal outright once a task replaces it, and focuses the task", a
   })
 
   // Gone outright, not merely hidden behind the task's sheet.
-  expect(screen.queryByText("Session s1")).toBeNull()
+  expect(screen.queryByRole("heading", { name: "Session s1" })).toBeNull()
   expect(document.querySelectorAll('[data-slot="docked-pane"]')).toHaveLength(1)
 
   const taskSheet = screen.getByText("Loading task").closest('[data-slot="docked-pane"]')
