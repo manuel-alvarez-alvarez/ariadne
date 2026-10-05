@@ -731,3 +731,51 @@ it("names the scope by its short id while the app has no title for it", async ()
 
   expect(await screen.findByText(shortId(gone))).toBeTruthy()
 })
+
+it("clears the scope chip on a click of its button", async () => {
+  stubDaemon({ sessions: [ENGINEER] })
+  const user = userEvent.setup()
+  const seen = renderPage(`/sessions?goal=${GOAL.id}`)
+  await waitFor(() => row(TASK.title))
+
+  const clear = await screen.findByRole("button", { name: "Show sessions for every goal" })
+  await user.click(clear)
+
+  await waitFor(() => expect(seen.url).toBe("/sessions"))
+})
+
+it("reaches an outside conversation row with Tab and opens it with Enter", async () => {
+  const user = userEvent.setup()
+  const seen = renderPage()
+  const outsideRow = await waitFor(() => row(OUTSIDE.first_prompt))
+
+  // Tab through header controls and Ariadne row to reach outside row
+  for (let i = 0; i < 30; i++) {
+    await user.tab()
+    if (document.activeElement === outsideRow) break
+  }
+
+  expect(document.activeElement).toBe(outsideRow)
+
+  await user.keyboard("{Enter}")
+
+  await waitFor(() => expect(seen.url).toContain("session="))
+})
+
+it("reaches an outside conversation row with Tab and opens it with Space", async () => {
+  const user = userEvent.setup()
+  const seen = renderPage()
+  const outsideRow = await waitFor(() => row(OUTSIDE.first_prompt))
+
+  // Tab through header controls and Ariadne row to reach outside row
+  for (let i = 0; i < 30; i++) {
+    await user.tab()
+    if (document.activeElement === outsideRow) break
+  }
+
+  expect(document.activeElement).toBe(outsideRow)
+
+  await user.keyboard(" ")
+
+  await waitFor(() => expect(seen.url).toContain("session="))
+})

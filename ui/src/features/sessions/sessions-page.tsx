@@ -578,11 +578,20 @@ function SessionRow({
     row.kind === "outside" ? row.session.working_directory : row.session.worktree_path
   return (
     <TableRow
-      className="cursor-pointer"
+      tabIndex={0}
+      className="cursor-pointer bg-background focus-visible:outline-none focus-visible:-outline-offset-2 focus-visible:ring-2 focus-visible:ring-ring/50"
       aria-busy={resuming}
+      aria-label={title}
       onClick={(event) => {
         const target = event.target as Element
         if (event.currentTarget.contains(target) && !target.closest("button, a")) onSelect()
+      }}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault()
+          onSelect()
+        }
       }}
     >
       <TableCell className="max-w-72">
@@ -788,12 +797,12 @@ function ScopeChip({
       </span>
       <Button
         variant="ghost"
-        size="icon-xs"
+        size="icon"
         aria-label={`Show sessions for every ${what.toLowerCase()}`}
         onClick={onClear}
-        className="size-4 rounded-full text-muted-foreground hover:text-foreground"
+        className="size-6 rounded-full text-muted-foreground hover:text-foreground"
       >
-        <XIcon />
+        <XIcon className="size-4" />
       </Button>
     </Badge>
   )

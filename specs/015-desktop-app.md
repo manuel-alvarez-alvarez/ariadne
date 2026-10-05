@@ -771,6 +771,10 @@ Out: the daemon endpoints themselves (012).
   of the session the daemon answers
   (`ui/src/features/sessions/sessions-page.test.tsx::opens an Ariadne row's own panel directly, asking the resume endpoint for nothing`,
   `::resumes an outside row once, then opens the console of the session it answers`).
+- A keyboard user reaches an outside conversation row with Tab and opens it
+  with Enter or Space, showing a focus ring
+  (`ui/src/features/sessions/sessions-page.test.tsx::reaches an outside conversation row with Tab and opens it with Enter`,
+  `::reaches an outside conversation row with Tab and opens it with Space`).
 - Every row shows where its agent runs under its title, and a resumed outside
   conversation is listed once, as the session that holds it, with its
   directory; a created session refetches the outside half, an updated one
