@@ -524,6 +524,8 @@ Out: the daemon endpoints themselves (012).
     figure — a key figure, a tile, a table column and a chart series —
     explains itself in one short sentence, shown on hover and on keyboard
     focus and wired as its accessible description (023).
+38. Toasts show at the bottom left, clear of the header and the pane
+    (`ui/src/components/ui/sonner.test.tsx::renders toasts at the bottom left`).
 
 - Goal details float over the board without a modal dialog, and a click on
   the scrim closes them
