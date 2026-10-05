@@ -279,13 +279,14 @@ double-click resets the width to the 36rem default.
 It opens a panel on its first control after the close button.
 The pane holds one panel at a time: a task opened from a goal replaces the
 goal's panel rather than stacking on it, carrying a breadcrumb back that
-reopens the goal in its place. Session drill-downs replace the body. Escape
-within the pane closes it outright — the current task, goal or standalone
-session, through the existing history helpers, never back to a goal a task
-replaced; Escape on the board does nothing to it. Modal portals own their own
-Escape. Headers do not shrink. `PaneBody` takes the remaining height and scrolls, with
-one `h-full` child to give a session view its height. Keep `ui/sheet.tsx` for
-modal drawers and the learned-permission detail.
+reopens the goal in its place. Session drill-downs replace the panel outright,
+header and tabs included. Escape within the pane closes it outright — the
+current task, goal or standalone session, through the existing history
+helpers, never back to a goal a task replaced; Escape on the board does
+nothing to it. Modal portals own their own Escape. Headers do not shrink.
+`PaneBody` takes the remaining height and scrolls, with one `h-full` child to
+give a session view its height. Keep `ui/sheet.tsx` for modal drawers and the
+learned-permission detail.
 
 **The sessions screen is the one exception**, and the only place a param means
 two things: there `?goal=` and `?task=` are what the *list* is narrowed to — the
