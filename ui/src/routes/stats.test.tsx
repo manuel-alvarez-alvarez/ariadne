@@ -12,12 +12,22 @@
  */
 
 import { screen, within } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it } from "vitest"
 
 import { qk } from "@/api"
 import { aRepository } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { StatsPage } from "./stats"
+
+/** The explanation behind a key figure, read off its tooltip on hover. */
+async function explanationOf(container: HTMLElement, label: string): Promise<string | null> {
+  const user = userEvent.setup()
+  const trigger = within(container).getByText(label)
+  await user.hover(trigger)
+  const id = trigger.getAttribute("aria-describedby")
+  return id ? (document.getElementById(id)?.textContent ?? null) : null
+}
 
 /** The five families, in the order the screen shows them. */
 const FAMILIES = ["models", "work", "time", "spend", "attention"] as const
@@ -133,6 +143,32 @@ describe("StatsPage", () => {
       ["Interventions", "7"],
       ["Person time", "30m"],
     ])
+  })
+
+  it("explains every key figure, on hover", async () => {
+    renderScreen(<StatsPage />, { route: "/stats" })
+
+    const row = await screen.findByRole("region", { name: "Key figures" })
+    await within(row).findByText("Tasks finished")
+
+    expect(await explanationOf(row, "Tasks finished")).toBe(
+      "Tasks finished: the count of tasks that reached finished in this span.",
+    )
+    expect(await explanationOf(row, "Finish rate")).toBe(
+      "Finish rate: the share of finished, failed and cancelled tasks that finished.",
+    )
+    expect(await explanationOf(row, "Median goal lead time")).toBe(
+      "Median goal lead time: the median time from a goal's creation to its completion.",
+    )
+    expect(await explanationOf(row, "Total tokens")).toBe(
+      "Total tokens: input and output tokens spent across every session in this span.",
+    )
+    expect(await explanationOf(row, "Interventions")).toBe(
+      "Interventions: the count of permissions you answered, questions you were asked and stalls you cleared.",
+    )
+    expect(await explanationOf(row, "Person time")).toBe(
+      "Person time: the total time spent on those permissions, questions and stalls.",
+    )
   })
 
   it("lays Models across the full width, and the other four out as a two-column card grid", async () => {

@@ -27,6 +27,21 @@ function percent(fraction: number): string {
   return `${(fraction * 100).toFixed(1)}%`
 }
 
+/**
+ * What the Work figures mean, shared with the key-figure row above: the two
+ * read the same totals, so they explain them with the same sentence rather
+ * than a second one that could drift from it.
+ */
+export const WORK_EXPLAIN = {
+  tasksFinished: "Tasks finished: the count of tasks that reached finished in this span.",
+  goalsCompleted: "Goals completed: the count of goals that reached completed in this span.",
+  changesLanded:
+    "Changes landed: the count of finished tasks whose landing was a merge or a pull request.",
+  finishRate: "Finish rate: the share of finished, failed and cancelled tasks that finished.",
+  medianGoalLeadTime:
+    "Median goal lead time: the median time from a goal's creation to its completion.",
+}
+
 /** A bucket as [`StatTimeChart`] draws it: its start under the `bucket` key
  * every row of its axis carries. */
 function chartRow(bucket: WorkBucketDto) {
@@ -53,13 +68,30 @@ export function WorkSection({ filter }: { filter: StatsFilter }) {
       {(data) => (
         <div className="flex flex-1 flex-col gap-4">
           <StatTiles>
-            <StatTile label="Tasks finished" value={data.totals.tasks_finished} />
-            <StatTile label="Goals completed" value={data.totals.goals_completed} />
-            <StatTile label="Changes landed" value={data.totals.landed} />
-            <StatTile label="Finish rate" value={percent(data.totals.finish_rate)} />
+            <StatTile
+              label="Tasks finished"
+              value={data.totals.tasks_finished}
+              explain={WORK_EXPLAIN.tasksFinished}
+            />
+            <StatTile
+              label="Goals completed"
+              value={data.totals.goals_completed}
+              explain={WORK_EXPLAIN.goalsCompleted}
+            />
+            <StatTile
+              label="Changes landed"
+              value={data.totals.landed}
+              explain={WORK_EXPLAIN.changesLanded}
+            />
+            <StatTile
+              label="Finish rate"
+              value={percent(data.totals.finish_rate)}
+              explain={WORK_EXPLAIN.finishRate}
+            />
             <StatTile
               label="Median goal lead time"
               value={formatDuration(data.totals.median_goal_lead_time_secs)}
+              explain={WORK_EXPLAIN.medianGoalLeadTime}
             />
           </StatTiles>
           <StatTimeChart

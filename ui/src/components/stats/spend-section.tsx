@@ -57,19 +57,33 @@ export function SpendSection({ filter }: { filter: StatsFilter }) {
         return (
           <div className="flex flex-1 flex-col gap-4">
             <StatTiles>
-              <StatTile label="Input tokens" value={formatTokens(data.totals.input_tokens)} />
-              <StatTile label="Cache share" value={formatShare(data.totals.cached_share)} />
-              <StatTile label="Output tokens" value={formatTokens(data.totals.output_tokens)} />
+              <StatTile
+                label="Input tokens"
+                value={formatTokens(data.totals.input_tokens)}
+                explain="Input tokens: input tokens spent across every session in this span."
+              />
+              <StatTile
+                label="Cache share"
+                value={formatShare(data.totals.cached_share)}
+                explain="Cache share: the share of input tokens that were served from cache."
+              />
+              <StatTile
+                label="Output tokens"
+                value={formatTokens(data.totals.output_tokens)}
+                explain="Output tokens: output tokens spent across every session in this span."
+              />
               <StatTile
                 label="Tokens per finished task"
                 value={formatTokens(perTask)}
                 hint={`of ${plural(data.per_finished_task.tasks, "task")}`}
+                explain="Tokens per finished task: input and output tokens divided by the tasks that finished in this span."
               />
             </StatTiles>
             <StatTimeChart
               data={timeRows}
               config={SPEND_CONFIG}
               keys={["input_tokens", "output_tokens"]}
+              legendExtra={["cached_share"]}
               caption="Tokens spent over time"
               valueFormatter={formatTokens}
               tooltipExtra={(row) => <p>Cached: {cachedShare(row)}</p>}

@@ -5,7 +5,12 @@
  *
  * Every key's colour comes from `config`, built by the caller off
  * {@link import("./status-colors").STATUS_COLORS}, so the same meaning reads
- * as the same colour in every section.
+ * as the same colour in every section. The legend below it is drawn by
+ * `StatChartLegend` rather than recharts' own: recharts renders nothing,
+ * legend included, until its `ResponsiveContainer` measures a real box, and
+ * jsdom never gives it one — so a legend behind that line would be untestable
+ * and, for the same reason, is the one place a bar with no label of its own
+ * can carry its meaning on hover and on keyboard focus.
  *
  * The `sr-only` table beside the chart carries the same numbers a sighted
  * reader gets from the bars and the tooltip, for a screen reader and for a
@@ -15,13 +20,8 @@
 import type { ReactNode } from "react"
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts"
 
-import {
-  type ChartConfig,
-  ChartContainer,
-  ChartLegend,
-  ChartLegendContent,
-  ChartTooltip,
-} from "@/components/ui/chart"
+import { type ChartConfig, ChartContainer, ChartTooltip } from "@/components/ui/chart"
+import { StatChartLegend } from "./stat-chart-legend"
 
 /** The least height of every chart of the screen, so charts side by side align. */
 export const CHART_HEIGHT_PX = 160
@@ -43,6 +43,7 @@ export function StatTimeChart<T extends { bucket: string }>({
   keys,
   caption,
   extra = [],
+  legendExtra = [],
   tooltipExtra,
   valueFormatter = String,
 }: {
@@ -57,6 +58,11 @@ export function StatTimeChart<T extends { bucket: string }>({
    * bars, labelled the same way — a count the bar does not draw but the
    * reader still wants beside it. */
   extra?: (keyof T & string)[]
+  /** Config keys explained in the legend alone, beyond `keys` and `extra` —
+   * a figure `tooltipExtra` already renders its own way, such as a cached
+   * share, that still wants a hoverable, focusable place to carry its
+   * meaning. */
+  legendExtra?: string[]
   /** Extra lines for one bucket's tooltip, beyond its stacked keys — a
    * share the bar has no room to draw of its own, such as a cached one. */
   tooltipExtra?: (row: T) => ReactNode
@@ -65,81 +71,84 @@ export function StatTimeChart<T extends { bucket: string }>({
   valueFormatter?: (value: number) => string
 }) {
   return (
-    // `relative`: the lone positioned ancestor the `sr-only` table below needs.
-    // `sr-only` is `position: absolute`, and with no ancestor positioned it
-    // places against the document instead of this box, stretching the page
-    // past the viewport and drawing a second scrollbar. The chart is absolute
-    // too, so this box takes its height from the card and never from the
-    // chart: it grows into the room its row leaves, and shrinks back with it.
-    <div className="relative flex-1" style={{ minHeight: CHART_HEIGHT_PX }}>
-      <ChartContainer config={config} className="absolute inset-0 block aspect-auto">
-        <BarChart data={data} margin={{ left: 0, right: 8, top: 4, bottom: 4 }}>
-          <CartesianGrid vertical={false} stroke="var(--color-border)" strokeOpacity={0.5} />
-          <XAxis
-            dataKey="bucket"
-            tickFormatter={bucketLabel}
-            axisLine={false}
-            tickLine={false}
-            className="text-xs"
-          />
-          <YAxis
-            axisLine={false}
-            tickLine={false}
-            width={40}
-            className="text-xs"
-            tickFormatter={valueFormatter}
-          />
-          <ChartTooltip
-            cursor={false}
-            content={({ active, payload }) => {
-              const row = payload?.[0]?.payload as T | undefined
-              return active && row ? (
-                <div className="flex flex-col gap-1 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
-                  <p className="font-medium">{bucketLabel(row.bucket)}</p>
-                  {[...keys, ...extra].map((key) => (
-                    <p key={key}>
-                      {config[key]?.label ?? key}: {valueFormatter(Number(row[key]))}
-                    </p>
-                  ))}
-                  {tooltipExtra?.(row)}
-                </div>
-              ) : null
-            }}
-          />
-          {keys.length > 1 ? <ChartLegend content={<ChartLegendContent />} /> : null}
-          {keys.map((key, index) => (
-            <Bar
-              key={key}
-              dataKey={String(key)}
-              stackId="bucket"
-              maxBarSize={MAX_BAR_PX}
-              fill={`var(--color-${key})`}
-              radius={index === keys.length - 1 ? [4, 4, 0, 0] : 0}
+    <div className="flex flex-1 flex-col gap-1">
+      {/* `relative`: the lone positioned ancestor the `sr-only` table below
+          needs. `sr-only` is `position: absolute`, and with no ancestor
+          positioned it places against the document instead of this box,
+          stretching the page past the viewport and drawing a second
+          scrollbar. The chart is absolute too, so this box takes its height
+          from the room its row leaves and never from the chart: it grows
+          into that room, and shrinks back with it. */}
+      <div className="relative flex-1" style={{ minHeight: CHART_HEIGHT_PX }}>
+        <ChartContainer config={config} className="absolute inset-0 block aspect-auto">
+          <BarChart data={data} margin={{ left: 0, right: 8, top: 4, bottom: 4 }}>
+            <CartesianGrid vertical={false} stroke="var(--color-border)" strokeOpacity={0.5} />
+            <XAxis
+              dataKey="bucket"
+              tickFormatter={bucketLabel}
+              axisLine={false}
+              tickLine={false}
+              className="text-xs"
             />
-          ))}
-        </BarChart>
-      </ChartContainer>
-      <table className="sr-only">
-        <caption>{caption}</caption>
-        <thead>
-          <tr>
-            <th>Bucket</th>
-            {[...keys, ...extra].map((key) => (
-              <th key={key}>{config[key]?.label ?? key}</th>
+            <YAxis
+              axisLine={false}
+              tickLine={false}
+              width={40}
+              className="text-xs"
+              tickFormatter={valueFormatter}
+            />
+            <ChartTooltip
+              cursor={false}
+              content={({ active, payload }) => {
+                const row = payload?.[0]?.payload as T | undefined
+                return active && row ? (
+                  <div className="flex flex-col gap-1 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
+                    <p className="font-medium">{bucketLabel(row.bucket)}</p>
+                    {[...keys, ...extra].map((key) => (
+                      <p key={key}>
+                        {config[key]?.label ?? key}: {valueFormatter(Number(row[key]))}
+                      </p>
+                    ))}
+                    {tooltipExtra?.(row)}
+                  </div>
+                ) : null
+              }}
+            />
+            {keys.map((key, index) => (
+              <Bar
+                key={key}
+                dataKey={String(key)}
+                stackId="bucket"
+                maxBarSize={MAX_BAR_PX}
+                fill={`var(--color-${key})`}
+                radius={index === keys.length - 1 ? [4, 4, 0, 0] : 0}
+              />
             ))}
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((row) => (
-            <tr key={row.bucket}>
-              <td>{bucketLabel(row.bucket)}</td>
+          </BarChart>
+        </ChartContainer>
+        <table className="sr-only">
+          <caption>{caption}</caption>
+          <thead>
+            <tr>
+              <th>Bucket</th>
               {[...keys, ...extra].map((key) => (
-                <td key={key}>{valueFormatter(Number(row[key]))}</td>
+                <th key={key}>{config[key]?.label ?? key}</th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {data.map((row) => (
+              <tr key={row.bucket}>
+                <td>{bucketLabel(row.bucket)}</td>
+                {[...keys, ...extra].map((key) => (
+                  <td key={key}>{valueFormatter(Number(row[key]))}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <StatChartLegend config={config} keys={[...keys, ...extra, ...legendExtra]} />
     </div>
   )
 }

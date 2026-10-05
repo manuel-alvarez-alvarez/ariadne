@@ -27,6 +27,8 @@ tests:
   - ui/src/components/stats/models-section.test.tsx
   - ui/src/components/stats/attention-section.test.tsx
   - ui/src/components/stats/status-colors.test.ts
+  - ui/src/components/stats/stat-explain.test.tsx
+  - ui/src/components/stats/stat-chart-legend.test.tsx
   - ui/src/events/dispatch.test.ts
   - ui/src/components/app-shell.test.tsx
 ---
@@ -285,6 +287,21 @@ decided, not a change to how they decide it.
     the query-key group `stats`. Every `task_updated`, `session_updated` and
     `goal_updated` event invalidates the whole group (`qk.stats.all()`),
     since any of the three may be a fact.
+37. Every figure on the screen explains itself: a short plain sentence of
+    what it is, shown on hover and on keyboard focus through the app's
+    `Tooltip`, and wired as the figure's accessible description rather than a
+    sighted-only hint (`StatExplain`). `StatTile` and each `StatTable` column
+    take an `explain` string; a chart's figures carry theirs under
+    `ChartConfig`'s `explain` field, drawn by `StatChartLegend` — a legend
+    kept outside recharts' own measured area (`ResponsiveContainer`), so it
+    renders, and is explained, with no dependency on whatever size recharts
+    gives the chart itself. The legend carries every figure a chart draws
+    through its `config`, a bar of its own or not: `StatTimeChart`'s `keys`
+    and `extra`, and `StatBarChart`'s `bars`, each add their figures to it,
+    and both also take a `legendExtra` of config keys with neither a bar nor
+    a stacked slot — a figure the caller's own tooltip already carries its
+    own way, such as a bucket's cached share or a status row's median and
+    share, that still wants a hoverable, focusable place for its meaning.
 
 ### Work
 
@@ -560,6 +577,23 @@ alongside the family's other totals, and the Stats screen's key figures (rule
 - `STATUS_COLORS` maps each meaning to the status ramp's own CSS variable
   (`status-colors.test.ts` "maps each meaning to the status ramp's own CSS
   variable, so every panel's chart draws it the same").
+- `StatExplain` shows its sentence on hover and on keyboard focus, and names
+  it as the trigger's accessible description
+  (`stat-explain.test.tsx` "shows the explanation on hover, and names it as
+  the trigger's accessible description", "shows the explanation on keyboard
+  focus too, not only on hover").
+- `StatChartLegend` explains an entry whose series carries one, and renders
+  one with none plainly, with no trigger to open
+  (`stat-chart-legend.test.tsx` "explains an entry with an explanation, on
+  hover", "renders an entry with no explanation plainly, with no trigger to
+  open").
+- Every key figure, and every tile, column and chart series of the Work,
+  Time, Spend, Attention and Models sections, explains itself on hover
+  (`stats.test.tsx` "explains every key figure, on hover";
+  `work-section.test.tsx`, `time-section.test.tsx`, `spend-section.test.tsx`
+  and `attention-section.test.tsx`, each "explains every tile and every
+  chart series, on hover"; `models-section.test.tsx` "explains every column
+  of every seat table, on hover").
 
 #### Work
 

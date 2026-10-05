@@ -24,7 +24,7 @@ import { ModelsSection } from "@/components/stats/models-section"
 import { SpendSection, spendStatsQueryOptions } from "@/components/stats/spend-section"
 import { StatTile, StatTiles } from "@/components/stats/stat-tiles"
 import { TimeSection } from "@/components/stats/time-section"
-import { WorkSection, workStatsQueryOptions } from "@/components/stats/work-section"
+import { WORK_EXPLAIN, WorkSection, workStatsQueryOptions } from "@/components/stats/work-section"
 import {
   Select,
   SelectContent,
@@ -64,23 +64,35 @@ function KeyFigures({ filter }: { filter: StatsFilter }) {
   return (
     <section aria-label="Key figures">
       <StatTiles>
-        <StatTile label="Tasks finished" value={work?.tasks_finished ?? NONE} />
+        <StatTile
+          label="Tasks finished"
+          value={work?.tasks_finished ?? NONE}
+          explain={WORK_EXPLAIN.tasksFinished}
+        />
         <StatTile
           label="Finish rate"
           value={work ? `${(work.finish_rate * 100).toFixed(1)}%` : NONE}
+          explain={WORK_EXPLAIN.finishRate}
         />
         <StatTile
           label="Median goal lead time"
           value={work ? formatDuration(work.median_goal_lead_time_secs) : NONE}
+          explain={WORK_EXPLAIN.medianGoalLeadTime}
         />
         <StatTile
           label="Total tokens"
           value={spend ? formatTokens(spend.input_tokens + spend.output_tokens) : NONE}
+          explain="Total tokens: input and output tokens spent across every session in this span."
         />
-        <StatTile label="Interventions" value={interventions ?? NONE} />
+        <StatTile
+          label="Interventions"
+          value={interventions ?? NONE}
+          explain="Interventions: the count of permissions you answered, questions you were asked and stalls you cleared."
+        />
         <StatTile
           label="Person time"
           value={personSecs === undefined ? NONE : formatDuration(personSecs)}
+          explain="Person time: the total time spent on those permissions, questions and stalls."
         />
       </StatTiles>
     </section>

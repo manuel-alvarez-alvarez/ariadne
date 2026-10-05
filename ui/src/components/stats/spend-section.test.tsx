@@ -8,12 +8,30 @@
  */
 
 import { screen, within } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it } from "vitest"
 import type { SpendStatsDto } from "@/api"
 
 import { qk } from "@/api"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { SpendSection } from "./spend-section"
+
+/**
+ * The explanation behind a labelled figure, read off its tooltip on hover. A
+ * label such as "Input" also names a plain `sr-only` table header with no
+ * tooltip of its own, so the explained trigger is picked out by the one
+ * thing that marks it: its `aria-describedby`.
+ */
+async function explanationOf(container: HTMLElement, label: string): Promise<string | null> {
+  const user = userEvent.setup()
+  const trigger = within(container)
+    .getAllByText(label)
+    .find((el) => el.hasAttribute("aria-describedby"))
+  if (!trigger) throw new Error(`no explained trigger for "${label}"`)
+  await user.hover(trigger)
+  const id = trigger.getAttribute("aria-describedby")
+  return id ? (document.getElementById(id)?.textContent ?? null) : null
+}
 
 /** The URLs of every request the section made. */
 let asked: URL[] = []
@@ -106,4 +124,46 @@ it("draws the tiles and the time chart from a mocked response, with no by-model 
   expect(joined).toContain("40k")
   expect(joined).not.toContain("300000")
   expect(joined).not.toContain("stub:heavy")
+})
+
+it("explains every tile and every chart series, on hover", async () => {
+  mockSpend({
+    totals: {
+      sessions: 3,
+      input_tokens: 1_000_000,
+      cached_input_tokens: 800_000,
+      output_tokens: 100_000,
+      cached_share: 0.8,
+    },
+    per_finished_task: { tasks: 2, input_tokens: 400_000, output_tokens: 50_000 },
+    bucket: "week",
+    buckets: [],
+    by_model: [],
+  })
+  renderScreen(<SpendSection filter={{}} />, { route: "/stats" })
+
+  const section = await screen.findByRole("region", { name: "Spend" })
+  await within(section).findByText("Input tokens")
+
+  expect(await explanationOf(section, "Input tokens")).toBe(
+    "Input tokens: input tokens spent across every session in this span.",
+  )
+  expect(await explanationOf(section, "Cache share")).toBe(
+    "Cache share: the share of input tokens that were served from cache.",
+  )
+  expect(await explanationOf(section, "Output tokens")).toBe(
+    "Output tokens: output tokens spent across every session in this span.",
+  )
+  expect(await explanationOf(section, "Tokens per finished task")).toBe(
+    "Tokens per finished task: input and output tokens divided by the tasks that finished in this span.",
+  )
+  expect(await explanationOf(section, "Input")).toBe(
+    "Input: input tokens spent in this bucket, cache included.",
+  )
+  expect(await explanationOf(section, "Output")).toBe("Output: output tokens spent in this bucket.")
+  // "Cached" has no bar of its own — the bucket's own cached share is
+  // carried only in the tooltip (spec rule 45) — so it is legend-only.
+  expect(await explanationOf(section, "Cached")).toBe(
+    "Cached: the share of this bucket's input tokens that were served from cache.",
+  )
 })

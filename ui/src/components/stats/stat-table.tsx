@@ -15,6 +15,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { cn } from "@/lib/format"
+import { StatExplain } from "./stat-explain"
 
 export function StatTable<T>({
   rows,
@@ -24,7 +25,13 @@ export function StatTable<T>({
 }: {
   rows: T[]
   rowKey: (row: T) => string
-  columns: { header: string; numeric?: boolean; render: (row: T) => ReactNode }[]
+  columns: {
+    header: string
+    numeric?: boolean
+    /** What this column means, in one short plain sentence. */
+    explain: string
+    render: (row: T) => ReactNode
+  }[]
   /** What the table compares, for a screen reader. */
   caption: string
 }) {
@@ -35,7 +42,7 @@ export function StatTable<T>({
         <TableRow>
           {columns.map((column) => (
             <TableHead key={column.header} className={cn("h-8", column.numeric && "text-right")}>
-              {column.header}
+              <StatExplain explain={column.explain}>{column.header}</StatExplain>
             </TableHead>
           ))}
         </TableRow>

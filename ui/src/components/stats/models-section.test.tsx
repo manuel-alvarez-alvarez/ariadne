@@ -7,11 +7,21 @@
  */
 
 import { screen, within } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it } from "vitest"
 
 import { qk } from "@/api"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { ModelsSection } from "./models-section"
+
+/** The explanation behind a column header, read off its tooltip on hover. */
+async function explanationOf(container: HTMLElement, label: string): Promise<string | null> {
+  const user = userEvent.setup()
+  const trigger = within(container).getByText(label)
+  await user.hover(trigger)
+  const id = trigger.getAttribute("aria-describedby")
+  return id ? (document.getElementById(id)?.textContent ?? null) : null
+}
 
 /** The URLs of every request the section made. */
 let asked: URL[] = []
@@ -90,6 +100,48 @@ it("draws three seat tables with their columns, formats and count ordering", asy
     ["planner", "2", "2.4k", "2h", "12"],
   ])
   expect(queryClient.getQueryData(qk.stats.models(filter))).toEqual(response)
+})
+
+it("explains every column of every seat table, on hover", async () => {
+  const response = {
+    items: [
+      { ...base, model: "writer-small", seat: "author", rounds_per_task: 1.25 },
+      { ...base, model: "judge", seat: "reviewer", changes_per_task: 0.4 },
+      { ...base, model: "planner", seat: "orchestrator" },
+    ],
+  }
+  daemonFetch.mockResolvedValue(jsonResponse(response))
+  renderScreen(<ModelsSection filter={{}} />, { route: "/stats" })
+
+  const authors = await screen.findByRole("table", { name: "Authors" })
+  expect(await explanationOf(authors, "MODEL")).toBe(
+    "MODEL: the name of the model this row is about.",
+  )
+  expect(await explanationOf(authors, "TASKS")).toBe(
+    "TASKS: the count of distinct tasks this model worked as this seat.",
+  )
+  expect(await explanationOf(authors, "TOKENS")).toBe(
+    "TOKENS: input and output tokens this model used in this seat, cache not counted twice.",
+  )
+  expect(await explanationOf(authors, "TIME")).toBe(
+    "TIME: the summed session time this model ran in this seat.",
+  )
+  expect(await explanationOf(authors, "MESSAGES")).toBe(
+    "MESSAGES: the count of messages this model sent in this seat.",
+  )
+  expect(await explanationOf(authors, "ROUNDS/TASK")).toBe(
+    "ROUNDS/TASK: the mean number of review requests on each finished task.",
+  )
+
+  const reviewers = screen.getByRole("table", { name: "Reviewers" })
+  expect(await explanationOf(reviewers, "CHANGES/TASK")).toBe(
+    "CHANGES/TASK: the mean number of changes-requested verdicts on each task this model reviewed.",
+  )
+
+  const orchestrators = screen.getByRole("table", { name: "Orchestrators" })
+  expect(await explanationOf(orchestrators, "GOALS")).toBe(
+    "GOALS: the count of distinct goals this model orchestrated.",
+  )
 })
 
 it("omits a table when its seat has no rows", async () => {

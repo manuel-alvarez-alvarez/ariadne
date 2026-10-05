@@ -40,18 +40,29 @@ export function TimeSection({ filter }: { filter: StatsFilter }) {
               <StatTile
                 label="Median lead time"
                 value={formatDuration(data.lead_time.median_secs)}
+                explain="Median lead time: the median time from a finished task's creation to its finish."
               />
-              <StatTile label="P90 lead time" value={formatDuration(data.lead_time.p90_secs)} />
+              <StatTile
+                label="P90 lead time"
+                value={formatDuration(data.lead_time.p90_secs)}
+                explain="P90 lead time: the nearest-rank 90th percentile of that same lead time."
+              />
               <StatTile
                 label="Time waiting on a person"
                 value={formatDuration(data.waiting_on_person.total_secs)}
+                explain="Time waiting on a person: the total time spent on permission prompts you answered."
               />
-              <StatTile label="Prompts waited on" value={data.waiting_on_person.prompts} />
+              <StatTile
+                label="Prompts waited on"
+                value={data.waiting_on_person.prompts}
+                explain="Prompts waited on: the count of permission prompts you answered."
+              />
             </StatTiles>
             <StatBarChart
               data={rows}
               config={TIME_STATUS_CONFIG}
               bars={["total_secs"]}
+              legendExtra={["median_secs", "share"]}
               caption="Where the time goes"
               tooltip={(row) => (
                 <>

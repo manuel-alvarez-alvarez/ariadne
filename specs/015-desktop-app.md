@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-10-03
+updated: 2026-10-05
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, ced9f4f8, c11241f3]
 tests:
@@ -495,7 +495,10 @@ Out: the daemon endpoints themselves (012).
     positioning stays inside it rather than the document, which would
     otherwise stretch the page past the viewport into a second scrollbar.
     `SpendSection` draws one `StatTimeChart` of input and output tokens and no
-    by-model chart — the Models section is where a model is compared.
+    by-model chart — the Models section is where a model is compared. Every
+    figure — a key figure, a tile, a table column and a chart series —
+    explains itself in one short sentence, shown on hover and on keyboard
+    focus and wired as its accessible description (023).
 
 - Goal details leave the board accessible, and another lane title changes the
   open pane (`ui/src/components/detail-panels.test.tsx::keeps the board accessible and follows another lane title with a goal open`,
@@ -531,6 +534,12 @@ Out: the daemon endpoints themselves (012).
   session moves, since either may be a fact`); Stats is the last entry of the
   sidebar (`ui/src/components/app-shell.test.tsx::ends the navigation with
   stats, right after repositories and permissions`).
+- Every figure on the Stats screen explains itself on hover and on keyboard
+  focus, as its accessible description (023)
+  (`ui/src/components/stats/stat-explain.test.tsx`,
+  `ui/src/routes/stats.test.tsx::explains every key figure, on hover`, and
+  each section's own `::explains every tile and every chart series, on
+  hover` / `::explains every column of every seat table, on hover`).
 - 70 test files cover the features, the API layer and the event stream; each
   screen's behaviour is asserted in its own `*.test.tsx` beside it.
 - A task staffed with several authors shows each one's branch and its own

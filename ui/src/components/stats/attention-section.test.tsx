@@ -7,11 +7,29 @@
  */
 
 import { screen, within } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it } from "vitest"
 
 import { qk } from "@/api"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { AttentionSection } from "./attention-section"
+
+/**
+ * The explanation behind a labelled figure, read off its tooltip on hover. A
+ * label such as "Allow" also names a plain `sr-only` table header with no
+ * tooltip of its own, so the explained trigger is picked out by the one
+ * thing that marks it: its `aria-describedby`.
+ */
+async function explanationOf(container: HTMLElement, label: string): Promise<string | null> {
+  const user = userEvent.setup()
+  const trigger = within(container)
+    .getAllByText(label)
+    .find((el) => el.hasAttribute("aria-describedby"))
+  if (!trigger) throw new Error(`no explained trigger for "${label}"`)
+  await user.hover(trigger)
+  const id = trigger.getAttribute("aria-describedby")
+  return id ? (document.getElementById(id)?.textContent ?? null) : null
+}
 
 /** The URLs of every request the section made. */
 let asked: URL[] = []
@@ -91,4 +109,49 @@ it("draws its tiles and charts from the family response", async () => {
   expect(queryClient.getQueryData(qk.stats.attention(filter))).toMatchObject({
     sessions_stalled: 1,
   })
+})
+
+it("explains every tile and every chart series, on hover", async () => {
+  daemonFetch.mockImplementation(async () =>
+    jsonResponse({
+      permissions: {
+        total: 2,
+        person_share: 1,
+        by_decider: [
+          { decided_by: "console", total: 2, allowed: 1, denied: 1, cancelled: 0, mean_wait_ms: 0 },
+        ],
+      },
+      flags: [{ reason: "waiting_input", raised: 1, mean_wait_secs: 0 }],
+      sessions_failed: 0,
+      sessions_stalled: 0,
+      exhaustions: 0,
+    }),
+  )
+  renderScreen(<AttentionSection filter={{}} />, { route: "/stats" })
+
+  const section = await screen.findByRole("region", { name: "Attention" })
+  await within(section).findByText("Prompts you answered")
+
+  expect(await explanationOf(section, "Prompts you answered")).toBe(
+    "Prompts you answered: the count of permission prompts you answered.",
+  )
+  expect(await explanationOf(section, "Your mean wait")).toBe(
+    "Your mean wait: the mean time a permission prompt waited on you.",
+  )
+  expect(await explanationOf(section, "Questions asked")).toBe(
+    "Questions asked: the count of times an agent asked you a question.",
+  )
+  expect(await explanationOf(section, "Stalled sessions")).toBe(
+    "Stalled sessions: the count of sessions that ended stalled or in an agent error.",
+  )
+  expect(await explanationOf(section, "Allow")).toBe(
+    "Allow: permission prompts this decider allowed.",
+  )
+  expect(await explanationOf(section, "Deny")).toBe("Deny: permission prompts this decider denied.")
+  expect(await explanationOf(section, "Cancelled")).toBe(
+    "Cancelled: permission prompts this decider cancelled.",
+  )
+  expect(await explanationOf(section, "Raised")).toBe(
+    "Raised: attention flags raised for this reason.",
+  )
 })

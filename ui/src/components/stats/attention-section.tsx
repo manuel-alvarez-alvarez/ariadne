@@ -56,13 +56,26 @@ function AttentionFigures({ data }: { data: AttentionStatsDto }) {
   return (
     <div className="flex flex-1 flex-col gap-4">
       <StatTiles>
-        <StatTile label="Prompts you answered" value={person?.total ?? 0} />
-        <StatTile label="Your mean wait" value={formatDuration(personWait / 1000)} />
+        <StatTile
+          label="Prompts you answered"
+          value={person?.total ?? 0}
+          explain="Prompts you answered: the count of permission prompts you answered."
+        />
+        <StatTile
+          label="Your mean wait"
+          value={formatDuration(personWait / 1000)}
+          explain="Your mean wait: the mean time a permission prompt waited on you."
+        />
         <StatTile
           label="Questions asked"
           value={data.flags.find((flag) => flag.reason === "waiting_input")?.raised ?? 0}
+          explain="Questions asked: the count of times an agent asked you a question."
         />
-        <StatTile label="Stalled sessions" value={data.sessions_stalled} />
+        <StatTile
+          label="Stalled sessions"
+          value={data.sessions_stalled}
+          explain="Stalled sessions: the count of sessions that ended stalled or in an agent error."
+        />
       </StatTiles>
       <StatBarChart
         data={permissions}

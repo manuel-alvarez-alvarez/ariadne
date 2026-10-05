@@ -57,15 +57,45 @@ export function ModelsSection({ filter, className }: { filter: StatsFilter; clas
 }
 
 type Model = ModelStatsDto["items"][number]
-type Column = { header: string; numeric?: boolean; render: (row: Model) => ReactNode }
+type Column = {
+  header: string
+  numeric?: boolean
+  explain: string
+  render: (row: Model) => ReactNode
+}
 const mean = (value: number | null | undefined) => (value ?? 0).toFixed(1)
-const model: Column = { header: "MODEL", render: (row) => row.model }
+const model: Column = {
+  header: "MODEL",
+  explain: "MODEL: the name of the model this row is about.",
+  render: (row) => row.model,
+}
 const work: Column[] = [
-  { header: "TOKENS", numeric: true, render: (row) => formatTokens(row.tokens) },
-  { header: "TIME", numeric: true, render: (row) => formatDuration(row.time_secs) },
-  { header: "MESSAGES", numeric: true, render: (row) => row.messages },
+  {
+    header: "TOKENS",
+    numeric: true,
+    explain:
+      "TOKENS: input and output tokens this model used in this seat, cache not counted twice.",
+    render: (row) => formatTokens(row.tokens),
+  },
+  {
+    header: "TIME",
+    numeric: true,
+    explain: "TIME: the summed session time this model ran in this seat.",
+    render: (row) => formatDuration(row.time_secs),
+  },
+  {
+    header: "MESSAGES",
+    numeric: true,
+    explain: "MESSAGES: the count of messages this model sent in this seat.",
+    render: (row) => row.messages,
+  },
 ]
-const tasks: Column = { header: "TASKS", numeric: true, render: (row) => row.tasks }
+const tasks: Column = {
+  header: "TASKS",
+  numeric: true,
+  explain: "TASKS: the count of distinct tasks this model worked as this seat.",
+  render: (row) => row.tasks,
+}
 const groups: { seat: string; title: string; columns: Column[]; count: (row: Model) => number }[] =
   [
     {
@@ -76,7 +106,12 @@ const groups: { seat: string; title: string; columns: Column[]; count: (row: Mod
         model,
         tasks,
         ...work,
-        { header: "ROUNDS/TASK", numeric: true, render: (row) => mean(row.rounds_per_task) },
+        {
+          header: "ROUNDS/TASK",
+          numeric: true,
+          explain: "ROUNDS/TASK: the mean number of review requests on each finished task.",
+          render: (row) => mean(row.rounds_per_task),
+        },
       ],
     },
     {
@@ -87,13 +122,28 @@ const groups: { seat: string; title: string; columns: Column[]; count: (row: Mod
         model,
         tasks,
         ...work,
-        { header: "CHANGES/TASK", numeric: true, render: (row) => mean(row.changes_per_task) },
+        {
+          header: "CHANGES/TASK",
+          numeric: true,
+          explain:
+            "CHANGES/TASK: the mean number of changes-requested verdicts on each task this model reviewed.",
+          render: (row) => mean(row.changes_per_task),
+        },
       ],
     },
     {
       seat: "orchestrator",
       title: "Orchestrators",
       count: (row) => row.goals,
-      columns: [model, { header: "GOALS", numeric: true, render: (row) => row.goals }, ...work],
+      columns: [
+        model,
+        {
+          header: "GOALS",
+          numeric: true,
+          explain: "GOALS: the count of distinct goals this model orchestrated.",
+          render: (row) => row.goals,
+        },
+        ...work,
+      ],
     },
   ]
