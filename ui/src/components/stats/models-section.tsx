@@ -4,14 +4,16 @@
  */
 
 import { queryOptions, useQuery } from "@tanstack/react-query"
+import type { ReactNode } from "react"
 
 import { api, type ModelStatsDto, qk, type StatsFilter, unwrap } from "@/api"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { formatDuration, formatTokens } from "@/lib/format"
 import { StatSection } from "./stat-section"
 import { StatTable } from "./stat-table"
 
 /** `GET /v1/stats/models`, narrowed by the screen's filter. */
-function modelsStatsQueryOptions(filter: StatsFilter) {
+export function modelsStatsQueryOptions(filter: StatsFilter) {
   return queryOptions({
     queryKey: qk.stats.models(filter),
     queryFn: (): Promise<ModelStatsDto> =>
@@ -19,11 +21,12 @@ function modelsStatsQueryOptions(filter: StatsFilter) {
   })
 }
 
-export function ModelsSection({ filter }: { filter: StatsFilter }) {
+export function ModelsSection({ filter, className }: { filter: StatsFilter; className?: string }) {
   const stats = useQuery(modelsStatsQueryOptions(filter))
   return (
     <StatSection
       title="Models"
+      className={className}
       description="Which model does the job?"
       query={stats}
       isEmpty={(data) => !data.items?.some((row) => groups.some(({ seat }) => row.seat === seat))}
@@ -55,16 +58,42 @@ export function ModelsSection({ filter }: { filter: StatsFilter }) {
 }
 
 type Model = ModelStatsDto["items"][number]
-type Column = { header: string; numeric?: boolean; render: (row: Model) => string | number }
+type Column = { header: string; numeric?: boolean; render: (row: Model) => ReactNode }
 const percent = (rate: number) => `${(rate * 100).toFixed(1)}%`
 const tasks = (row: Model) =>
   (row.author?.tasks_finished ?? 0) +
   (row.author?.tasks_failed ?? 0) +
   (row.author?.tasks_cancelled ?? 0)
 const model: Column = { header: "MODEL", render: (row) => row.model }
+/** The total of a row's interventions, with its breakdown behind a hover or a focus. */
+function Interventions({ row }: { row: Model }) {
+  const { permissions, questions, stalls, total, person_secs } = row.interventions
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span />}>{total}</TooltipTrigger>
+      <TooltipContent>
+        <dl className="grid grid-cols-[auto_auto] gap-x-3 tabular-nums">
+          <dt>Permissions</dt>
+          <dd className="text-right">{permissions}</dd>
+          <dt>Questions</dt>
+          <dd className="text-right">{questions}</dd>
+          <dt>Stalls</dt>
+          <dd className="text-right">{stalls}</dd>
+          <dt>Person time</dt>
+          <dd className="text-right">{formatDuration(person_secs)}</dd>
+        </dl>
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
 const failures: Column[] = [
   { header: "FAILED", numeric: true, render: (row) => row.failed_sessions },
   { header: "EXHAUSTED", numeric: true, render: (row) => row.exhaustions },
+]
+const time: Column[] = [
+  { header: "INTERVENTIONS", numeric: true, render: (row) => <Interventions row={row} /> },
+  { header: "TOTAL_TIME", numeric: true, render: (row) => formatDuration(row.total_lifetime_secs) },
 ]
 const groups: { seat: string; title: string; columns: Column[]; count: (row: Model) => number }[] =
   [
@@ -96,7 +125,13 @@ const groups: { seat: string; title: string; columns: Column[]; count: (row: Mod
           numeric: true,
           render: (row) => formatTokens(row.author?.tokens_per_finished_task ?? 0),
         },
+        {
+          header: "INTERVENTIONS/TASK",
+          numeric: true,
+          render: (row) => row.author?.interventions_per_finished_task?.toFixed(1) ?? "-",
+        },
         ...failures,
+        ...time,
       ],
     },
     {
@@ -117,6 +152,7 @@ const groups: { seat: string; title: string; columns: Column[]; count: (row: Mod
           render: (row) => formatDuration(row.reviewer?.mean_latency_secs ?? 0),
         },
         ...failures,
+        ...time,
       ],
     },
     {
@@ -137,6 +173,7 @@ const groups: { seat: string; title: string; columns: Column[]; count: (row: Mod
           render: (row) => formatDuration(row.mean_lifetime_secs),
         },
         ...failures,
+        ...time,
       ],
     },
   ]

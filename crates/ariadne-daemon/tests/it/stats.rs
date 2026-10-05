@@ -1,6 +1,6 @@
 //! Integration tests for the stats ledger (023): the `session_ended` fact a
-//! session writes as a run of it ends, the `tool_call` and `permission`
-//! facts, and what every stats route shares.
+//! session writes as a run of it ends, the `permission` fact, and what every
+//! stats route shares.
 
 use crate::common;
 
@@ -105,16 +105,11 @@ async fn a_restarted_session_writes_a_fact_for_each_run() {
     assert_eq!(launches, [LAUNCH, "01launchtwoxxxxxxxxxxxxxxx"]);
 }
 
-/// A completed tool call and a console permission answer each write a fact.
+/// A console permission answer writes a fact.
 #[tokio::test]
-async fn a_tool_call_and_console_permission_write_their_facts() {
+async fn a_console_permission_answer_writes_a_fact() {
     let mut scripted = script();
     scripted["prompts"] = json!([{
-        "updates": [
-            {"sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "Bash",
-             "kind": "execute", "status": "pending", "rawInput": {"command": "ls"}},
-            {"sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "completed"},
-        ],
         "permission": {
             "toolCall": {"toolCallId": "call-2", "name": "Write", "kind": "write"},
             "options": [
@@ -143,13 +138,10 @@ async fn a_tool_call_and_console_permission_write_their_facts() {
         json!({"text": "yes"}),
     ))
     .await;
-    eventually(TIMEOUT, "the tool facts", || async {
-        h.facts("tool_call").await.len() == 1 && h.facts("permission").await.len() == 1
+    eventually(TIMEOUT, "the permission fact", || async {
+        h.facts("permission").await.len() == 1
     })
     .await;
-    let tool = &h.facts("tool_call").await[0];
-    assert_eq!(tool.data["tool_name"], "Bash");
-    assert!(tool.data["duration_ms"].as_u64().is_some());
     let permission = &h.facts("permission").await[0];
     assert_eq!(permission.data["decided_by"], "console");
     assert_eq!(permission.data["answer"], "allow");
@@ -170,11 +162,11 @@ async fn a_bad_since_is_refused() {
     assert!(error.error.message.contains("yesterday"), "{error:?}");
 }
 
-/// The families the stats had before the six answer no more.
+/// The families the stats had before the five answer no more.
 #[tokio::test]
 async fn the_old_families_are_gone() {
     let h = harness().await;
-    for family in ["reviews", "switches", "outcomes"] {
+    for family in ["reviews", "switches", "outcomes", "tools"] {
         let (status, _) = h.send(get(&format!("/v1/stats/{family}"))).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{family}");
     }

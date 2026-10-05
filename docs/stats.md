@@ -1,11 +1,11 @@
 # Stats
 
 See what the work did. Stats count what happened as the work ran: each
-session that ended, each task that ended, each switch, review, tool call and
+session that ended, each task that ended, each switch, review and
 permission answer. The daemon writes one record of each such event to a
 ledger in its database, and every stat adds up those records.
 
-The stats come in six families, and each one answers one question:
+The stats come in five families, and each one answers one question:
 
 | Family | Question |
 | --- | --- |
@@ -14,7 +14,6 @@ The stats come in six families, and each one answers one question:
 | `spend` | What did it spend? |
 | `models` | Which model does the job? |
 | `attention` | How much did it need me? |
-| `tools` | What do the agents do? |
 
 The records outlive the work. A stat still counts a session after you delete
 the goal it belonged to.
@@ -40,7 +39,7 @@ ariadne stats time --since 7d
 ariadne stats spend --repo <repo-id> --format json
 ```
 
-The families are `work`, `time`, `spend`, `models`, `attention` and `tools`.
+The families are `work`, `time`, `spend`, `models` and `attention`.
 `--repo` takes a repository id or a unique prefix of one. Each family takes
 the table flags (`--no-trunc`, `-o`, `--columns`), and `--format json` prints
 what the daemon sent, whole. A family with nothing to show prints one
@@ -50,9 +49,15 @@ sentence that says so.
 
 Open **Stats** in the sidebar. Choose a span (all time, 24 hours, 7 days or 30
 days) and a repository at the top of the screen; both stay in the address, so
-a reload keeps them. The screen shows one section per family, in the order of
-the table above, each under its question. The sections update by themselves
-as sessions end and as tasks move.
+a reload keeps them.
+
+The screen is a dashboard. A row of key figures comes first: tasks finished,
+finish rate, median goal lead time, total tokens, interventions, and the time
+a person spent. Under it, each family is a card under its question, in this
+order: Models, Work, Time, Spend and Attention. Models spans the full width.
+On a wide window, the other four cards show in two columns; on a narrow
+window, they show in one. The figures update by themselves as sessions end
+and as tasks move.
 
 ## From the API
 
@@ -99,8 +104,9 @@ then a status table. The Stats screen shows the same headline figures and a
 
 ## Spend
 
-What did it spend: tokens over time, by model, and per finished task. Stats
-show tokens, never cost — nothing here converts one to the other.
+What did it spend: tokens over time and per finished task. Stats show
+tokens, never cost — nothing here converts one to the other. Compare models
+by tokens in the Models section instead.
 
 The totals are every ended session's tokens: how much went in, how much of
 that the prompt cache served, and how much came out. Per finished task is the
@@ -108,9 +114,7 @@ same two figures — in and out — averaged over however many tasks finished in
 the span.
 
 The chart over time stacks input and output tokens per bucket, the cached
-share alongside in the tooltip. The chart by model is one bar per model that
-ran, every seat it ran in pooled together, each bar's share of the whole
-spend in its tooltip.
+share alongside in the tooltip.
 
 ## Models
 
@@ -145,7 +149,22 @@ Approve share is approval verdicts divided by all verdicts.
 Orchestrators show session count, input plus output tokens, and average session lifetime.
 Every table shows failed sessions and switches caused by exhaustion under FAILED and EXHAUSTED.
 
+Every table also shows how often a person stepped in for the model, and how long its sessions ran.
+INTERVENTIONS counts three things:
+
+- permissions that you answered at the console (an AI or learned answer does not count),
+- questions, where the agent waited for your input,
+- stalls, where the agent stalled or failed with an error.
+
+A session that waits on a permission counts once, as the permission.
+In the desktop, hover over or focus the INTERVENTIONS figure to see the three counts and the person time.
+Person time is how long those prompts and questions waited on you.
+TOTAL_TIME is the sum of the session lifetimes.
+Authors also show INTERVENTIONS/TASK, the interventions per finished task, and `-` without a finished task.
+The CLI also prints PERSON_TIME for every seat, and LEAD_TIME, the median lead time of finished tasks, for authors.
+
 The API and JSON also include all three token counts, stalled sessions, cached share, and session lifetime for every seat.
+They carry the intervention breakdown under `interventions` and the median lead time of an author under `author.median_lead_time_secs`.
 Cached share is cached input tokens divided by input tokens; cached tokens are already included in input.
 Rates and averages without observations are zero.
 Both filters apply to every contributing record, including records matched by task.
@@ -165,20 +184,3 @@ your mean wait, questions asked and stalled sessions. The charts break down
 permission answers by decider and attention flags by reason. In the CLI,
 `ariadne stats attention` prints those session figures followed by the two
 tables; `--format json` returns the full response.
-
-## Tools
-
-What do the agents do? Each ended tool call writes one fact, under the
-tool's own name — `Bash`, `Edit`, `Read`, an MCP tool's full name — and the
-kind of thing it did: `read`, `edit`, `delete`, `move`, `search`, `execute`,
-`think`, `fetch`, `switch_mode` or `other`.
-
-`ariadne stats tools` prints the total calls and errors, a table of the
-calls by kind, and a table of the tools with the most calls, the rest summed
-into one `other` row. `--limit` sets how many tools the table — and the
-desktop app's chart — show, 1 to 100, 10 by default. The Tools section of
-the desktop app draws the same two groupings as bar charts, ok and errors
-stacked, with the median and the p90 call duration in the tooltip.
-
-A tool call recorded before this existed has no kind of its own, and does
-not count.

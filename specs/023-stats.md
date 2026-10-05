@@ -16,7 +16,6 @@ tests:
   - crates/ariadne-daemon/tests/it/stats_spend.rs
   - crates/ariadne-daemon/tests/it/stats_models.rs
   - crates/ariadne-daemon/tests/it/stats_attention.rs
-  - crates/ariadne-daemon/tests/it/stats_tools.rs
   - crates/ariadne-daemon/src/http/stats/mod.rs
   - crates/ariadne-daemon/src/acp.rs
   - crates/ariadne-cli/src/commands/stats/mod.rs
@@ -27,7 +26,6 @@ tests:
   - ui/src/components/stats/spend-section.test.tsx
   - ui/src/components/stats/models-section.test.tsx
   - ui/src/components/stats/attention-section.test.tsx
-  - ui/src/components/stats/tools-section.test.tsx
   - ui/src/components/stats/status-colors.test.ts
   - ui/src/events/dispatch.test.ts
   - ui/src/components/app-shell.test.tsx
@@ -37,15 +35,15 @@ tests:
 
 What the work did. The daemon writes one fact to a ledger when a thing that
 tells performance happens, and every stat is an aggregate of that ledger. The
-stats are six families, each the answer to one question a user asks, read
+stats are five families, each the answer to one question a user asks, read
 with `GET /v1/stats/<family>`, `ariadne stats <family>` and the Stats screen
 of the desktop app.
 
 ## Scope
 
 In: the ledger, the rules a fact obeys, every fact kind (`attention`, `session_ended`,
-`switch`, `message`, `verdict`, `tool_call`, `permission`, `task_ended` and
-`pick`), the filters every family takes, the frame the six families share —
+`switch`, `message`, `verdict`, `permission`, `task_ended` and
+`pick`), the filters every family takes, the frame the five families share —
 their routes, the command, the screen and its shared pieces, the query keys
 and the bucket rule — and each family's own rules.
 
@@ -162,27 +160,15 @@ decided, not a change to how they decide it.
     `round` (the author's count of review requests on the task) and
     `latency_secs` (from the latest request to the verdict).
 
-### The tool facts
+### The permission facts
 
-21. A `tool_call` fact is written when an ACP tool call ends. Its `data` is
-    `tool_name` (the agent's own name for the tool: `/name`,
-    `/_meta/claudeCode/toolName`, `/title`, `/toolCallId`, in order — the same
-    lookup and the same order the learned-permission key names the tool by),
-    `kind` (the ACP kind of the call — `read`, `edit`, `delete`, `move`,
-    `search`, `execute`, `think`, `fetch`, `switch_mode` or `other` — `other`
-    where the call names none), `duration_ms`, and `ok`; a failed ACP status
-    writes `ok = false`. The runtime keeps the opening instant with each open
-    call and spawns the `session_fact` and ledger write, so neither a tool
-    update nor a turn waits for SQLite. The `tool_name` the `pre_tool_use` and
-    `post_tool_use` event payloads carry is unchanged by this: it stays the
-    call's title, the console's and the transcript's own name for it.
-22. A `permission` fact is written after each ACP permission reply. Its
+21. A `permission` fact is written after each ACP permission reply. Its
     `data` is `tool_name`, `decided_by`, `answer` (`allow`, `deny`, or
     `cancelled`), `console_option_id`, and `wait_ms`.
 
 ### The `task_ended` fact
 
-23. A task writes one `task_ended` fact each time it reaches `finished`,
+22. A task writes one `task_ended` fact each time it reaches `finished`,
     `cancelled` or `failed`. It is written in the same transaction as the
     status write, inside `Store::transition_task`'s shared body
     (`transition_in_tx`) — the one place every status change passes — rather
@@ -190,7 +176,7 @@ decided, not a change to how they decide it.
     `transition_task` can reach one of the three endings without the fact
     being written alongside it. A task retried and failed again writes one
     more fact.
-24. Its `data` holds `status` (`finished`, `cancelled` or `failed`),
+23. Its `data` holds `status` (`finished`, `cancelled` or `failed`),
     `reason` (the transition's own reason), `landing` (the task's own, as
     005 spells it), `lead_time_secs` (from the task's `created_at` to the
     transition), `review_requests` (the count of `review_request` messages
@@ -201,21 +187,21 @@ decided, not a change to how they decide it.
     task's whole life from its transitions). The ending status has no time.
     The repository, the
     goal and the task are the task's own; there is no session to one.
-25. The model, the effort and the skills are the picked author's where the
+24. The model, the effort and the skills are the picked author's where the
     task staffed several authors, the one author's where it staffed a
     single one, and none of the three where it staffed several and none
     was picked yet — a task cancelled or failed before its pick settled.
 
 ### The `pick` fact
 
-26. A contested task's settled pick writes one `pick` fact, inside
+25. A contested task's settled pick writes one `pick` fact, inside
     `Store::set_task_picked` itself (004 rule 14) rather than from the
     daemon once that call returns: the winner's column and this fact are
     one transaction, so there is no moment where a daemon could die with
     the winner written and the fact not. Its `data` holds `winner_model`,
     `loser_models` (the losing authors' models, as an array) and
     `reviewers` (the count of reviewers staffed on the task).
-27. The repository and the goal are the task's own, and the model, the
+26. The repository and the goal are the task's own, and the model, the
     effort and the skills are the winning `task_agents` row's own
     (`task_agent_skills`) rather than a session's: a session can end, be
     resumed under another one, or never have existed, none of which should
@@ -225,7 +211,7 @@ decided, not a change to how they decide it.
     and `launch_id` are the winner's live session where `run_the_pick`
     found one, carried straight through to the fact; absent where it found
     none.
-28. Each settled contest calls `set_task_picked` once, so each one writes
+27. Each settled contest calls `set_task_picked` once, so each one writes
     one fact of its own: a task retried clears the winner
     (`Store::clear_task_picks`) and runs its review again, and the next
     settlement's fact is its own rather than a second one of a task
@@ -233,44 +219,52 @@ decided, not a change to how they decide it.
 
 ### The frame
 
-29. The stats are six families. Each answers one question a user asks, and
-    the screen, the command and the docs show them in this order: `work`
-    (what got done?), `time` (how long does it take?), `spend` (what did it
-    spend?), `models` (which model does the job?), `attention` (how much did
-    it need me?) and `tools` (what do the agents do?).
-30. `GET /v1/stats/<family>` answers the family's own DTO: `WorkStatsDto`,
-    `TimeStatsDto`, `SpendStatsDto`, `ModelStatsDto`, `AttentionStatsDto` and
-    `ToolStatsDto`. Every route takes the filters of rules 12 to 14 and sits
+28. The stats are five families. Each answers one question a user asks, and
+    the command and the docs show them in this order: `work` (what got
+    done?), `time` (how long does it take?), `spend` (what did it spend?),
+    `models` (which model does the job?) and `attention` (how much did it
+    need me?). The desktop screen leads with `models` instead, ahead of
+    `work` (rule 35).
+29. `GET /v1/stats/<family>` answers the family's own DTO: `WorkStatsDto`,
+    `TimeStatsDto`, `SpendStatsDto`, `ModelStatsDto` and `AttentionStatsDto`.
+    Every route takes the filters of rules 12 to 14 and sits
     under the `stats` tag of the API document. No other route is under
     `/v1/stats/`.
-31. Each family is one file in each layer: `stats/<family>.rs` in the
+30. Each family is one file in each layer: `stats/<family>.rs` in the
     store (`Store::<family>_stats`), the API and the daemon, where the file
     owns its handler and its part of the API document;
     `commands/stats/<family>.rs` in the CLI; and `<family>-section.tsx` in
-    the desktop app. The `mod.rs` beside each registers the six once and
+    the desktop app. The `mod.rs` beside each registers the five once and
     holds what they share.
-32. A median averages the two middle values of an even count, and a p90 is
+31. A median averages the two middle values of an even count, and a p90 is
     the nearest-rank value. Both are 0 over no values.
-33. A family that draws a time axis buckets its facts by day where `since`
+32. A family that draws a time axis buckets its facts by day where `since`
     is 31 days or less back from now, and by week where it is further back
     or absent (`Bucket::for_span`). A fact falls in the bucket that starts at
     midnight UTC of its day, or of the Monday of its week
     (`Bucket::start_of`), written as an RFC 3339 moment.
-34. `ariadne stats [work|time|spend|models|attention|tools] [--since
+33. `ariadne stats [work|time|spend|models|attention] [--since
     <duration|date>] [--repo <id>]` prints a family. `ariadne stats` alone
     prints `work`. `--repo` takes an id or a unique prefix of one (014).
-    `--since` is sent to the daemon as it was written. Each of the six is a
+    `--since` is sent to the daemon as it was written. Each of the five is a
     listing: it takes the table flags (014), and `--format json` prints the
     DTO whole. The table of a family that holds nothing to show prints one
     muted sentence.
-35. The desktop app has a Stats screen at `#/stats`, titled `Stats`, last in
+34. The desktop app has a Stats screen at `#/stats`, titled `Stats`, last in
     the sidebar. Its header holds a `since` selector (all time, 24 hours, 7
     days, 30 days) and a repository selector. Both live in the URL
     (`?since=7d&repo=<id>`), and the screen hands them to every section as
-    one `{ since, repo }`.
-36. The screen renders six sections in the order of rule 29: `WorkSection`,
-    `TimeSection`, `SpendSection`, `ModelsSection`, `AttentionSection` and
-    `ToolsSection`. Each draws through the shared `StatSection`: its heading
+    one `{ since, repo }`. The screen is a dashboard: it leads with a `Key
+    figures` row — tasks finished, finish rate and median goal lead time off
+    the work family, total tokens (input and output) off the spend family,
+    and interventions and person time, the models family's
+    `interventions.total` and `interventions.person_secs` summed over its
+    rows — each figure reading `—` until its answer is in.
+35. Under the key figures, the screen renders five sections in this order:
+    `ModelsSection`, `WorkSection`, `TimeSection`, `SpendSection` and
+    `AttentionSection` — `ModelsSection` ahead of rule 28's own order — laid
+    out as a card grid: one column, and two from `xl` up, where `ModelsSection`
+    spans both. Each draws through the shared `StatSection`: its heading
     (`text-sm font-medium`), one sentence of the question it answers, the
     read's error or skeleton, and the one muted sentence of an empty family.
     The other shared pieces are `StatTiles` and `StatTile` (a label, a value
@@ -278,13 +272,16 @@ decided, not a change to how they decide it.
     right-aligned, columns given by the caller), `StatTimeChart` (stacked
     bars per bucket on a date axis) and `StatBarChart` (a horizontal bar per
     row). Every chart keeps an `sr-only` table of the same numbers under it,
-    for a screen reader and for a test. A colour carries one meaning, off the
+    for a screen reader and for a test, in a `relative` wrapper: `sr-only` is
+    `position: absolute`, and with no ancestor positioned the table would lay
+    out against the document and draw a second scrollbar. A colour carries
+    one meaning, off the
     status ramp in `index.css` through the shared `STATUS_COLORS` module —
     finished or ended on `status-done`, failed on `status-danger`, stalled on
     `status-warn`, cancelled on `status-pending`, a neutral count on
     `status-active` — and each chart's series config lives in
     `chart-configs.ts`.
-37. Each section reads its family under `qk.stats.<family>(filter)`, in
+36. Each section reads its family under `qk.stats.<family>(filter)`, in
     the query-key group `stats`. Every `task_updated`, `session_updated` and
     `goal_updated` event invalidates the whole group (`qk.stats.all()`),
     since any of the three may be a fact.
@@ -294,28 +291,28 @@ decided, not a change to how they decide it.
 What got done: goals completed, tasks finished, failed and cancelled, and
 changes landed, over time.
 
-38. A goal writes one `goal_ended` fact each time it moves to `completed` or
+37. A goal writes one `goal_ended` fact each time it moves to `completed` or
     `cancelled`. It is written inside `Store::set_goal_status`, in the same
     transaction as the status write, the way `task_ended` is written inside
-    `transition_in_tx` (rule 23) — the one place every goal status change
+    `transition_in_tx` (rule 22) — the one place every goal status change
     passes. A move to the same status writes no fact.
-39. Its `data` holds `status` (`completed` or `cancelled`), `lead_time_secs`
+38. Its `data` holds `status` (`completed` or `cancelled`), `lead_time_secs`
     (from the goal's `created_at` to the move), `tasks` (the count of its
     tasks), `tasks_finished` (those `finished`) and `landing` (the goal's
     own). `goal_id` is the goal's; `repo_id` is the goal's one repository, or
     null where it works in several; `model` and `effort` are the goal's
     orchestrator pin.
-40. `work_stats(filter) -> WorkStats { totals, bucket, buckets }` answers what
+39. `work_stats(filter) -> WorkStats { totals, bucket, buckets }` answers what
     got done. `totals` holds `goals_completed`, `goals_cancelled`,
     `median_goal_lead_time_secs` (over completed goals), `tasks_finished`,
     `tasks_failed`, `tasks_cancelled`, `finish_rate` (`tasks_finished` over
     the three, 0 where there are none) and `landed` (`task_ended` facts
     `finished` whose `landing` is `merge` or `pull_request`). `bucket` is
-    `Bucket::for_span(since)` (rule 33); `buckets` is one row per bucket from
+    `Bucket::for_span(since)` (rule 32); `buckets` is one row per bucket from
     the first fact to the last, zeros included, each with `start`,
     `tasks_finished`, `tasks_failed`, `tasks_cancelled`, `goals_completed`
     and `landed`. `since` and `repo_id` narrow every count, as rule 12 says.
-41. `GET /v1/stats/work` answers `WorkStatsDto`, `work_stats`'s own shape.
+40. `GET /v1/stats/work` answers `WorkStatsDto`, `work_stats`'s own shape.
     `ariadne stats work` prints the totals as `label: value` lines, then a
     table of the buckets, `FROM`, `FINISHED`, `FAILED`, `CANCELLED`, `GOALS`
     and `LANDED`; `--format json` prints the DTO whole. `WorkSection` draws
@@ -360,7 +357,7 @@ nothing here converts one.
     `finished`, divided by how many such tasks there are — `tasks`,
     `input_tokens` and `output_tokens`. 0 for all three where no task
     finished.
-41. `bucket` is `Bucket::for_span` (rule 33) of the filter's own `since`.
+41. `bucket` is `Bucket::for_span` (rule 32) of the filter's own `since`.
     `buckets` is one row per bucket from the one the first kept fact falls in
     to the one the last falls in, zeros where a bucket between them holds no
     fact, each with `start`, `input_tokens`, `cached_input_tokens` and
@@ -379,10 +376,9 @@ nothing here converts one.
     share, output tokens, and tokens per finished task (`input_tokens +
     output_tokens` of `per_finished_task`, hinted with the task count). Under
     them, one `StatTimeChart` stacks `input_tokens` and `output_tokens` per
-    bucket, the bucket's own cached share added to its tooltip; one
-    `StatBarChart` draws one stacked bar per model of the same two keys, its
-    tooltip and its `sr-only` table carrying the model's three token counts
-    and its share. A family with no ended session is empty.
+    bucket, the bucket's own cached share added to its tooltip. It draws no
+    chart of `by_model`: `ModelsSection` is where a model is compared. A
+    family with no ended session is empty.
 
 ### Models
 
@@ -398,6 +394,16 @@ Switches count against the model and seat left.
 Usage sums input, cached input, and output tokens from ended sessions.
 Cached share is cached input tokens divided by input tokens.
 Mean lifetime is summed session lifetime divided by ended sessions.
+Total lifetime (`total_lifetime_secs`) is the summed session lifetime itself.
+
+Each row carries `interventions`, the times a person stepped in for that model in that seat.
+`permissions` counts `permission` facts with `decided_by = console`; an AI or learned answer is no intervention.
+`questions` counts `attention` facts with reason `waiting_input` or `waiting_user`.
+`stalls` counts `attention` facts with reason `stalled` or `agent_error`.
+An `attention` fact with reason `waiting_permission` counts nowhere, because its prompt already counts as a permission.
+`total` is the sum of the three counts.
+`person_secs` sums `wait_ms / 1000` of those permissions and `wait_secs` of those attention facts.
+A model with only such facts still gets a row.
 
 Author rows carry an `author` object; other rows carry null.
 Finished, failed, and cancelled task counts count `task_ended` facts, including repeated endings.
@@ -411,6 +417,9 @@ Win rate is contests won divided by contests entered.
 Tokens per finished task averages matching author-session input plus output over distinct finished tasks attributed to this model.
 Matching requires the same model and task, and finished tasks without sessions contribute zero tokens.
 Cached tokens are already part of input and are never added again.
+Median lead time (`median_lead_time_secs`) is the median `lead_time_secs` of this model's finished `task_ended` facts.
+Interventions per finished task (`interventions_per_finished_task`) is `interventions.total` divided by finished endings, and null without one.
+Only the `author` object carries the two, so other seats have no such rate.
 
 Reviewer rows carry a `reviewer` object; other rows carry null.
 Verdicts count each verdict fact from that reviewer model.
@@ -428,11 +437,15 @@ Each desktop table sorts by its first count descending, then by model.
 
 | Seat | Columns |
 | --- | --- |
-| Author | MODEL, TASKS, FINISH_RATE, FIRST_PASS, ROUNDS, WIN_RATE, TOKENS/TASK, FAILED, EXHAUSTED |
-| Reviewer | MODEL, VERDICTS, APPROVE, LATENCY, FAILED, EXHAUSTED |
-| Orchestrator | MODEL, SESSIONS, TOKENS, LIFETIME, FAILED, EXHAUSTED |
+| Author | MODEL, TASKS, FINISH_RATE, FIRST_PASS, ROUNDS, WIN_RATE, TOKENS/TASK, INTERVENTIONS/TASK, FAILED, EXHAUSTED, INTERVENTIONS, TOTAL_TIME |
+| Reviewer | MODEL, VERDICTS, APPROVE, LATENCY, FAILED, EXHAUSTED, INTERVENTIONS, TOTAL_TIME |
+| Orchestrator | MODEL, SESSIONS, TOKENS, LIFETIME, FAILED, EXHAUSTED, INTERVENTIONS, TOTAL_TIME |
 
+The CLI adds LEAD_TIME before INTERVENTIONS/TASK for authors, and PERSON_TIME before TOTAL_TIME for every seat.
 TASKS is the sum of finished, failed, and cancelled endings; FAILED always means failed sessions.
+INTERVENTIONS is `interventions.total`, and TOTAL_TIME is `total_lifetime_secs`.
+INTERVENTIONS/TASK prints with one decimal, and `-` where the rate is null.
+In the desktop, a hover or a focus on INTERVENTIONS shows permissions, questions, stalls and person time.
 Rates print as percentages with one decimal, durations use the existing duration formatter, and tokens use compact notation.
 
 ### Attention
@@ -448,41 +461,6 @@ share answered by `console`, and reports each supported flag reason from
 clears plus ending sessions that carried it. It also counts failed sessions,
 stalled ending sessions and exhausted switches. Every count and mean obeys the
 shared `since` and `repo` filter.
-
-### Tools
-
-38. `Store::tools_stats(filter, limit)` answers `ToolStats`: `calls` and
-    `errors`, the totals over the facts the filter keeps; `tools`, the count
-    of distinct tool names; `by_kind`, one row per kind with `calls`,
-    `errors`, `median_duration_ms` and `p90_duration_ms`, the most calls
-    first; `top`, the `limit` tools with the most calls, each the same four
-    figures plus its `tool_name` and `kind`; and `other`, the rest of the
-    tools summed into `tools`, `calls` and `errors`. A tool is grouped by its
-    `tool_name` alone, never by `(tool_name, kind)`: `tools` and `top` count
-    and rank distinct names, so a stable name whose calls carry more than
-    one kind is still one tool, and its row's own `kind` is whichever one
-    most of its calls carry, the lowest name breaking a tie. A `tool_call`
-    fact with no `kind` predates rule 21's stable name and is not counted.
-    The median and the p90 are rule 32's, read over each group's own
-    `duration_ms`.
-39. `ToolStatsDto` mirrors the aggregate. `GET /v1/stats/tools` takes
-    `since` and `repo` (rules 12 to 14) and `limit` — 1 to 100, 10 where it
-    is absent, and `400 invalid_request` for anything else — in its own
-    query type, `ToolsStatsQuery`, rather than the shared `StatsQuery` every
-    other family's route takes.
-40. `ariadne stats tools [--limit <n>]` prints the totals as `calls`,
-    `errors` and `tools` lines, a table of `by_kind` (`KIND`, `CALLS`,
-    `ERRORS`, `MEDIAN`, `P90`, most calls first), and a table of `top`
-    (`TOOL`, `KIND`, `CALLS`, `ERRORS`, `MEDIAN`, `P90`) with an `other` row
-    last where there is one. `--limit` is the `tools` subcommand's own flag,
-    not one of rule 34's shared filters. `--format json` prints the DTO
-    whole.
-41. `ToolsSection` draws `StatTiles` of `calls`, `errors`, the error rate and
-    the distinct tool count, then one `StatBarChart` of `by_kind` and one of
-    `top` with its `other` row last, each stacking a call's `ok` and
-    `errors` count, the median and the p90 in the tooltip. Neither chart
-    draws more than the section's own limit plus one rows, whatever the
-    answer holds.
 
 ## Acceptance criteria
 
@@ -523,8 +501,8 @@ shared `since` and `repo` filter.
 - Verdict facts count review requests as rounds, and message facts record
   each stored message
   (`review_stats.rs::verdicts_record_rounds_and_messages_record_each_message`).
-- A tool completion and a console permission answer write their facts
-  (`stats.rs::a_tool_call_and_console_permission_write_their_facts`).
+- A console permission answer writes a fact
+  (`stats.rs::a_console_permission_answer_writes_a_fact`).
 - A task that finishes writes one `task_ended` fact with its status, its
   author's model and a lead time
   (`outcome_stats.rs::a_finished_task_writes_one_task_ended_fact`), and a task
@@ -564,16 +542,21 @@ shared `since` and `repo` filter.
   and `ariadne stats` alone runs `work`
   (`commands/stats/mod.rs::tests::stats_alone_runs_work`,
   `cli/tests.rs::stats_alone_runs_work_and_takes_the_filters_either_side`).
-- The six are classified and take the table flags of a listing
+- The five are classified and take the table flags of a listing
   (`cli/tests.rs::every_command_in_the_tree_is_classified`,
   `::the_listing_flags_are_advertised_exactly_where_they_are_honored`).
-- The Stats screen renders the six sections in order under one heading
-  style (`stats.test.tsx` "renders the six sections in order, under one
+- The Stats screen renders the five sections in order under one heading
+  style (`stats.test.tsx` "renders the five sections in order, under one
   heading style"), asks every family with the filters in its URL under the
   key `qk` names (`stats.test.tsx` "asks every family with the filters in
   its URL, under the key qk names"), and renders an error rather than the
   empty sentence when a read fails (`stats.test.tsx` "renders an error, not
-  the empty sentence, when the daemon refuses a read").
+  the empty sentence, when the daemon refuses a read"). It leads with the
+  key figures, read off the work, spend and models answers, and lays Models
+  across the full width with the other four as a two-column card grid
+  (`stats.test.tsx` "leads with the key figures, read off the work, spend
+  and models answers", "lays Models across the full width, and the other
+  four out as a two-column card grid").
 - Each section asks for its family with the filter under
   `qk.stats.<family>(filter)`, and says its empty sentence under its heading
   and its question (`<family>-section.test.tsx` "asks for its family with
@@ -649,9 +632,10 @@ shared `since` and `repo` filter.
   (`commands/stats/spend.rs::tests::the_table_prints_a_model_row_and_a_bucket_row`),
   and a family with no ended session is empty
   (`commands/stats/spend.rs::tests::a_family_with_no_ended_session_is_empty`).
-- `SpendSection` draws the tiles and both charts from a mocked response
-  (`spend-section.test.tsx` "draws the tiles and both charts from a mocked
-  response").
+- `SpendSection` draws the tiles and the time chart from a mocked response,
+  with no by-model chart
+  (`spend-section.test.tsx` "draws the tiles and the time chart from a
+  mocked response, with no by-model chart").
 
 #### Models
 
@@ -679,6 +663,17 @@ shared `since` and `repo` filter.
 
 - A response containing only seatless rows shows the shared empty state and no table
   (`models-section.test.tsx`: "shows the empty state when the response contains only seatless rows").
+- Console permissions, questions and stalls count per model and seat, with person time, total lifetime,
+  the author's median lead time and rate, and no `waiting_permission` or AI-decided fact
+  (`stats/models.rs::tests::interventions_count_what_a_person_answered_per_model_and_seat`,
+  `stats_models.rs::interventions_and_time_answer_per_model_and_seat`).
+- The rate per finished task is null without a finished task
+  (`stats/models.rs::tests::the_intervention_rate_is_null_without_a_finished_task`).
+- The CLI shows interventions, person time and total time per seat, and lead time and the rate for authors
+  (`commands/stats/models.rs::tests::every_seat_shows_interventions_and_time_and_authors_their_rate`).
+- The desktop shows INTERVENTIONS and TOTAL_TIME per seat, INTERVENTIONS/TASK for authors, and the breakdown on hover
+  (`models-section.test.tsx`: "shows interventions and total time per seat, and the rate per finished task for authors",
+  "shows the intervention breakdown and the person time behind the total").
 
 #### Attention
 
@@ -689,31 +684,6 @@ shared `since` and `repo` filter.
 - The route, command and screen expose the family, including its decider and
   flag charts (`stats_attention.rs`, `commands/stats/attention.rs`,
   `attention-section.test.tsx`).
-
-#### Tools
-
-- A tool call named by `/name` or by `/_meta/claudeCode/toolName` writes its
-  `tool_call` fact under that name, with its ACP `kind`; a call with a title
-  alone is named by the title
-  (`stats_tools.rs::a_tool_call_fact_is_named_by_its_stable_name_and_kind`).
-- `tools_stats` groups by kind and by tool, keeps the top `limit` tools and
-  sums the rest into `other`, skips a fact with no `kind`, measures the
-  median and the p90, and keeps only the facts `since` and `repo_id` select
-  (`store.rs::tool_stats_group_by_kind_and_tool_and_measure_percentiles`).
-- A stable name whose calls carry more than one kind is still one tool, its
-  row summing every kind's calls under the one most of them carry
-  (`store.rs::a_tool_named_once_under_more_than_one_kind_is_still_one_tool`).
-- `GET /v1/stats/tools?limit=1` answers one top tool and the rest in
-  `other`, and a `limit` outside 1 to 100 is refused with a 400 naming it
-  (`stats_tools.rs::limit_keeps_the_top_tools_and_sums_the_rest_into_other`,
-  `::a_limit_outside_1_to_100_is_refused`).
-- `ariadne stats tools --format json` reads the DTO off the route, and the
-  table prints a row per kind and the top tools with an `other` row
-  (`commands/stats/tools.rs::tests::json_prints_the_dto_and_the_table_groups_its_rows`).
-- `ToolsSection` draws the tiles and both charts from an answer with more
-  tools than the limit it draws, and never draws more than the limit plus
-  one rows (`tools-section.test.tsx` "draws the tiles and both charts, never
-  more than the limit plus one rows").
 
 ## Sources
 

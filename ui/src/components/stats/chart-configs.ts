@@ -35,17 +35,6 @@ export const TIME_STATUS_CONFIG = {
 } satisfies ChartConfig
 
 /**
- * A tool call's own two series, stacked in both of the Tools section's
- * charts: calls per kind, and the top tools. "Ok" carries no lifecycle
- * meaning of its own, so it is the neutral count; a failed call is the one
- * danger colour every panel agrees on.
- */
-export const TOOL_CALLS_CONFIG: ChartConfig = {
-  ok: { label: "Ok", color: STATUS_COLORS.active },
-  errors: { label: "Errors", color: STATUS_COLORS.danger },
-}
-
-/**
  * Input and output tokens, the two series the Spend section stacks: neither
  * is a status, so each draws in one of the ramp's two most neutral colours
  * rather than borrowing a meaning — done or danger — that belongs to an

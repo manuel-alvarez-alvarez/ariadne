@@ -1,12 +1,13 @@
 /**
  * The headline figures of a section, one tile each: what a figure is, its
- * value, and a short hint under it where the value needs one.
+ * value, and a short hint under it where the value needs one. The tiles wrap
+ * and grow, so each row of them fills its width and leaves no empty cell.
  */
 
 import type { ReactNode } from "react"
 
 export function StatTiles({ children }: { children: ReactNode }) {
-  return <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">{children}</dl>
+  return <dl className="flex flex-wrap gap-3">{children}</dl>
 }
 
 export function StatTile({
@@ -20,7 +21,7 @@ export function StatTile({
   hint?: ReactNode
 }) {
   return (
-    <div className="flex flex-col gap-0.5 rounded-lg border px-3 py-2">
+    <div className="flex min-w-28 flex-1 flex-col gap-0.5 rounded-lg border bg-card px-3 py-2">
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="text-xl font-semibold tabular-nums">{value}</dd>
       {hint ? <dd className="text-xs text-muted-foreground">{hint}</dd> : null}

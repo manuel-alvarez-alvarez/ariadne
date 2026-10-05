@@ -5,7 +5,8 @@ use chrono::Utc;
 use utoipa::OpenApi;
 
 use ariadne_api::stats::{
-    AuthorModelStatDto, ModelStatDto, ModelStatsDto, ReviewerModelStatDto, StatsQuery,
+    AuthorModelStatDto, ModelInterventionsDto, ModelStatDto, ModelStatsDto, ReviewerModelStatDto,
+    StatsQuery,
 };
 use ariadne_store::ModelStats;
 
@@ -45,6 +46,14 @@ fn dto(stats: ModelStats) -> ModelStatsDto {
                 usage: row.usage.into(),
                 cached_share: row.cached_share,
                 mean_lifetime_secs: row.mean_lifetime_secs,
+                total_lifetime_secs: row.total_lifetime_secs,
+                interventions: ModelInterventionsDto {
+                    permissions: row.interventions.permissions,
+                    questions: row.interventions.questions,
+                    stalls: row.interventions.stalls,
+                    total: row.interventions.total,
+                    person_secs: row.interventions.person_secs,
+                },
                 author: row.author.map(|a| AuthorModelStatDto {
                     tasks_finished: a.tasks_finished,
                     tasks_failed: a.tasks_failed,
@@ -56,6 +65,8 @@ fn dto(stats: ModelStats) -> ModelStatsDto {
                     contests_won: a.contests_won,
                     win_rate: a.win_rate,
                     tokens_per_finished_task: a.tokens_per_finished_task,
+                    median_lead_time_secs: a.median_lead_time_secs,
+                    interventions_per_finished_task: a.interventions_per_finished_task,
                 }),
                 reviewer: row.reviewer.map(|r| ReviewerModelStatDto {
                     verdicts: r.verdicts,

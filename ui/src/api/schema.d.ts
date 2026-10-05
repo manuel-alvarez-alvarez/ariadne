@@ -959,22 +959,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/stats/tools": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["stats_tools"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/stats/work": {
         parameters: {
             query?: never;
@@ -1465,8 +1449,15 @@ export interface components {
             finish_rate: number;
             /** Format: double */
             first_pass_rate: number;
+            /**
+             * Format: double
+             * @description Interventions divided by finished tasks; null without a finished task.
+             */
+            interventions_per_finished_task?: number | null;
             /** Format: double */
             mean_review_rounds: number;
+            /** Format: double */
+            median_lead_time_secs: number;
             /** Format: int64 */
             tasks_cancelled: number;
             /** Format: int64 */
@@ -2072,6 +2063,23 @@ export interface components {
             rank?: null | components["schemas"]["ModelRank"];
         };
         /**
+         * @description The times a person stepped in for this model in this seat: permissions
+         *     decided at the console, questions and stalls. `person_secs` is how long
+         *     those waited on the person.
+         */
+        ModelInterventionsDto: {
+            /** Format: int64 */
+            permissions: number;
+            /** Format: double */
+            person_secs: number;
+            /** Format: int64 */
+            questions: number;
+            /** Format: int64 */
+            stalls: number;
+            /** Format: int64 */
+            total: number;
+        };
+        /**
          * @description A user-set rank, independent of discovery and model availability.
          * @enum {string}
          */
@@ -2100,6 +2108,7 @@ export interface components {
             exhaustions: number;
             /** Format: int64 */
             failed_sessions: number;
+            interventions: components["schemas"]["ModelInterventionsDto"];
             /** Format: double */
             mean_lifetime_secs: number;
             model: string;
@@ -2109,6 +2118,11 @@ export interface components {
             sessions: number;
             /** Format: int64 */
             stalled_sessions: number;
+            /**
+             * Format: double
+             * @description The sum of the lifetimes of the ended sessions.
+             */
+            total_lifetime_secs: number;
             usage: components["schemas"]["TokenUsageDto"];
         };
         /** @description Models compared within each seat. */
@@ -2130,15 +2144,6 @@ export interface components {
             model: string;
             /** @description The absolute path of an existing directory the agent works in. */
             working_directory: string;
-        };
-        /** @description The tools beyond the query's `limit`, summed into one row. */
-        OtherToolsDto: {
-            /** Format: int64 */
-            calls: number;
-            /** Format: int64 */
-            errors: number;
-            /** Format: int64 */
-            tools: number;
         };
         /** @description A file or directory the daemon depends on. */
         PathStateDto: {
@@ -2852,80 +2857,6 @@ export interface components {
              * @description Completion tokens, thinking and reasoning included.
              */
             output_tokens: number;
-        };
-        /**
-         * @description How one kind of tool call performed: how often it ran, how many failed,
-         *     and how long its calls took.
-         */
-        ToolKindStatDto: {
-            /** Format: int64 */
-            calls: number;
-            /** Format: int64 */
-            errors: number;
-            kind: string;
-            /** Format: double */
-            median_duration_ms: number;
-            /** Format: double */
-            p90_duration_ms: number;
-        };
-        /**
-         * @description How one tool performed: how often it ran, how many of its calls failed,
-         *     and how long they took.
-         */
-        ToolStatDto: {
-            /** Format: int64 */
-            calls: number;
-            /** Format: int64 */
-            errors: number;
-            kind: string;
-            /** Format: double */
-            median_duration_ms: number;
-            /** Format: double */
-            p90_duration_ms: number;
-            tool_name: string;
-        };
-        /**
-         * @description Response of `GET /v1/stats/tools`: what do the agents do?
-         *
-         *     `#[serde(default)]`: a shared stats CLI test answers every family's route
-         *     with `{}`; the other five families are empty structs today and the
-         *     fields here fall back to [`ToolStatsDto::default`] the same way.
-         */
-        ToolStatsDto: {
-            /**
-             * @description One row per kind, the most calls first.
-             * @default []
-             */
-            by_kind: components["schemas"]["ToolKindStatDto"][];
-            /**
-             * Format: int64
-             * @default 0
-             */
-            calls: number;
-            /**
-             * Format: int64
-             * @default 0
-             */
-            errors: number;
-            /**
-             * @default {
-             *       "tools": 0,
-             *       "calls": 0,
-             *       "errors": 0
-             *     }
-             */
-            other: components["schemas"]["OtherToolsDto"];
-            /**
-             * Format: int64
-             * @description The count of distinct tool names.
-             * @default 0
-             */
-            tools: number;
-            /**
-             * @description The tools with the most calls, up to the query's `limit`.
-             * @default []
-             */
-            top: components["schemas"]["ToolStatDto"][];
         };
         TransitionRequest: {
             /** @description Required when `to` is `finished`, unless the task lands nothing. */
@@ -4948,43 +4879,6 @@ export interface operations {
                 };
             };
             /** @description `since` is neither a moment nor a span */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    stats_tools: {
-        parameters: {
-            query?: {
-                /**
-                 * @description Only facts written since then: an RFC 3339 moment, or a span back
-                 *     from now, `<n>m`, `<n>h`, `<n>d` or `<n>w` (`24h`, `7d`, `30d`).
-                 *     Absent is every fact there is.
-                 */
-                since?: string | null;
-                /** @description Only facts about this repository id. */
-                repo?: string | null;
-                /** @description How many of the top tools to list, 1 to 100. Defaults to 10. */
-                limit?: number | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ToolStatsDto"];
-                };
-            };
-            /** @description `since` is neither a moment nor a span, or `limit` is not 1 to 100 */
             400: {
                 headers: {
                     [name: string]: unknown;

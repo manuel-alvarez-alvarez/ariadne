@@ -54,7 +54,7 @@ function AttentionFigures({ data }: { data: AttentionStatsDto }) {
   const person = data.permissions.by_decider.find((row) => row.decided_by === "console")
   const personWait = person?.mean_wait_ms ?? 0
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-1 flex-col gap-4">
       <StatTiles>
         <StatTile label="Prompts you answered" value={person?.total ?? 0} />
         <StatTile label="Your mean wait" value={formatDuration(personWait / 1000)} />

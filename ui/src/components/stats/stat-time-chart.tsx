@@ -23,7 +23,10 @@ import {
   ChartTooltip,
 } from "@/components/ui/chart"
 
-const HEIGHT_PX = 160
+/** The least height of every chart of the screen, so charts side by side align. */
+export const CHART_HEIGHT_PX = 160
+/** The thickest a bar draws, however much room a grown chart gives it. */
+export const MAX_BAR_PX = 32
 
 /** The RFC 3339 start of a bucket as its axis label: `Sep 28`, read in UTC. */
 function bucketLabel(start: string): string {
@@ -62,12 +65,14 @@ export function StatTimeChart<T extends { bucket: string }>({
   valueFormatter?: (value: number) => string
 }) {
   return (
-    <div className="flex flex-col gap-2">
-      <ChartContainer
-        config={config}
-        className="block aspect-auto w-full"
-        style={{ height: HEIGHT_PX }}
-      >
+    // `relative`: the lone positioned ancestor the `sr-only` table below needs.
+    // `sr-only` is `position: absolute`, and with no ancestor positioned it
+    // places against the document instead of this box, stretching the page
+    // past the viewport and drawing a second scrollbar. The chart is absolute
+    // too, so this box takes its height from the card and never from the
+    // chart: it grows into the room its row leaves, and shrinks back with it.
+    <div className="relative flex-1" style={{ minHeight: CHART_HEIGHT_PX }}>
+      <ChartContainer config={config} className="absolute inset-0 block aspect-auto">
         <BarChart data={data} margin={{ left: 0, right: 8, top: 4, bottom: 4 }}>
           <CartesianGrid vertical={false} stroke="var(--color-border)" strokeOpacity={0.5} />
           <XAxis
@@ -107,6 +112,7 @@ export function StatTimeChart<T extends { bucket: string }>({
               key={key}
               dataKey={String(key)}
               stackId="bucket"
+              maxBarSize={MAX_BAR_PX}
               fill={`var(--color-${key})`}
               radius={index === keys.length - 1 ? [4, 4, 0, 0] : 0}
             />

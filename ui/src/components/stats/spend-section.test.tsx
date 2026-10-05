@@ -4,7 +4,7 @@
  * The Spend section against a stubbed daemon: it asks `GET /v1/stats/spend`
  * with the screen's filter, under the key `qk` names, says its empty
  * sentence under its heading and its question when nothing was spent, and
- * otherwise draws the tiles and both charts off the answer.
+ * otherwise draws the tiles and the time chart off the answer.
  */
 
 import { screen, within } from "@testing-library/react"
@@ -59,7 +59,7 @@ it("asks for its family with the filter, and says its empty sentence", async () 
   )
 })
 
-it("draws the tiles and both charts from a mocked response", async () => {
+it("draws the tiles and the time chart from a mocked response, with no by-model chart", async () => {
   const filter = {}
   mockSpend({
     totals: {
@@ -99,10 +99,11 @@ it("draws the tiles and both charts from a mocked response", async () => {
   expect(within(section).getByText("of 2 tasks")).toBeDefined()
 
   const tables = within(section).getAllByRole("table", { hidden: true })
+  expect(tables).toHaveLength(1)
   const joined = tables.map((table) => table.textContent).join("\n")
-  expect(joined).toContain("stub:heavy")
   expect(joined).toContain("Sep 28")
   expect(joined).toContain("300k")
   expect(joined).toContain("40k")
   expect(joined).not.toContain("300000")
+  expect(joined).not.toContain("stub:heavy")
 })

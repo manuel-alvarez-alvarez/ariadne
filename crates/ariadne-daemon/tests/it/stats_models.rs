@@ -74,3 +74,170 @@ async fn a_finished_task_and_approval_answer_author_and_reviewer_rows() {
     let excluded: ModelStatsDto = h.get("/v1/stats/models?repo=elsewhere").await;
     assert!(excluded.items.is_empty());
 }
+
+/// Interventions, session time and the author's lead time and rate reach the
+/// HTTP response per model and seat. A `waiting_permission` attention fact and
+/// a permission an AI decided count for nothing.
+#[tokio::test]
+async fn interventions_and_time_answer_per_model_and_seat() {
+    use ariadne_api::stats::ModelInterventionsDto;
+    use ariadne_store::NewStatFact;
+    use serde_json::{Value, json};
+
+    let h = harness().await;
+    let fact = |kind: &str, model: &str, seat: &str, data: Value| NewStatFact {
+        kind: kind.into(),
+        repo_id: Some("repo".into()),
+        goal_id: None,
+        task_id: None,
+        session_id: None,
+        launch_id: None,
+        seat: Some(seat.into()),
+        model: Some(model.into()),
+        effort: None,
+        skills: vec![],
+        data,
+    };
+    let facts = [
+        fact(
+            "permission",
+            "writer",
+            "author",
+            json!({"decided_by": "console", "wait_ms": 12_000}),
+        ),
+        fact(
+            "permission",
+            "writer",
+            "author",
+            json!({"decided_by": "ai", "wait_ms": 90_000}),
+        ),
+        fact(
+            "attention",
+            "writer",
+            "author",
+            json!({"reason": "waiting_input", "wait_secs": 30}),
+        ),
+        fact(
+            "attention",
+            "writer",
+            "author",
+            json!({"reason": "waiting_user", "wait_secs": 40}),
+        ),
+        fact(
+            "attention",
+            "writer",
+            "author",
+            json!({"reason": "stalled", "wait_secs": 50}),
+        ),
+        fact(
+            "attention",
+            "writer",
+            "author",
+            json!({"reason": "agent_error", "wait_secs": 60}),
+        ),
+        fact(
+            "attention",
+            "writer",
+            "author",
+            json!({"reason": "waiting_permission", "wait_secs": 999}),
+        ),
+        fact(
+            "task_ended",
+            "writer",
+            "author",
+            json!({"status": "finished", "lead_time_secs": 600}),
+        ),
+        fact(
+            "task_ended",
+            "writer",
+            "author",
+            json!({"status": "finished", "lead_time_secs": 200}),
+        ),
+        fact(
+            "task_ended",
+            "writer",
+            "author",
+            json!({"status": "cancelled", "lead_time_secs": 5}),
+        ),
+        fact(
+            "session_ended",
+            "writer",
+            "author",
+            json!({"lifetime_secs": 1_000}),
+        ),
+        fact(
+            "session_ended",
+            "writer",
+            "author",
+            json!({"lifetime_secs": 500}),
+        ),
+        fact(
+            "permission",
+            "judge",
+            "reviewer",
+            json!({"decided_by": "console", "wait_ms": 3_000}),
+        ),
+        fact(
+            "attention",
+            "judge",
+            "reviewer",
+            json!({"reason": "waiting_permission", "wait_secs": 999}),
+        ),
+        fact(
+            "session_ended",
+            "judge",
+            "reviewer",
+            json!({"lifetime_secs": 90}),
+        ),
+    ];
+    for fact in facts {
+        h.store.record_fact(fact).await.unwrap();
+    }
+
+    let stats: ModelStatsDto = h.get("/v1/stats/models?repo=repo").await;
+    assert_eq!(stats.items.len(), 2);
+    let writer = &stats.items[0];
+    assert_eq!(
+        (writer.model.as_str(), writer.seat.as_deref()),
+        ("writer", Some("author"))
+    );
+    assert_eq!(
+        writer.interventions,
+        ModelInterventionsDto {
+            permissions: 1,
+            questions: 2,
+            stalls: 2,
+            total: 5,
+            person_secs: 192.0
+        }
+    );
+    assert_eq!(writer.total_lifetime_secs, 1_500.0);
+    let author = writer.author.as_ref().unwrap();
+    assert_eq!(author.median_lead_time_secs, 400.0);
+    assert_eq!(author.interventions_per_finished_task, Some(2.5));
+
+    let judge = &stats.items[1];
+    assert_eq!(
+        (judge.model.as_str(), judge.seat.as_deref()),
+        ("judge", Some("reviewer"))
+    );
+    assert_eq!(
+        judge.interventions,
+        ModelInterventionsDto {
+            permissions: 1,
+            questions: 0,
+            stalls: 0,
+            total: 1,
+            person_secs: 3.0
+        }
+    );
+    assert_eq!(judge.total_lifetime_secs, 90.0);
+    assert!(judge.author.is_none());
+    let json: Value = h.get("/v1/stats/models?repo=repo").await;
+    assert!(
+        json["items"][1]
+            .get("interventions_per_finished_task")
+            .is_none()
+    );
+    assert_eq!(json["items"][0]["interventions"]["person_secs"], 192.0);
+}

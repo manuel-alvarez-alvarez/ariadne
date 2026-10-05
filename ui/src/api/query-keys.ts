@@ -167,7 +167,6 @@ export const qk = {
     spend: (filter: StatsFilter) => ["stats", "list", "spend", filter] as const,
     models: (filter: StatsFilter) => ["stats", "list", "models", filter] as const,
     attention: (filter: StatsFilter) => ["stats", "list", "attention", filter] as const,
-    tools: (filter: StatsFilter) => ["stats", "list", "tools", filter] as const,
   },
   learnedPermissions: {
     all: () => ["learned-permissions"] as const,

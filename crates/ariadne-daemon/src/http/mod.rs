@@ -164,7 +164,7 @@ impl AppState {
         (name = "events", description = "Agent events the ACP runtime reports, and the live domain-event stream"),
         (name = "models", description = "The model catalog discovery found each registry agent offering"),
         (name = "logs", description = "The daemon's own process log"),
-        (name = "stats", description = "How the tool and the models perform, read off the stats ledger"),
+        (name = "stats", description = "How work performs, read off the stats ledger"),
     )
 )]
 struct ApiDoc;

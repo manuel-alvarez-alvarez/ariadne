@@ -279,7 +279,7 @@ and the ACP runtime that reports the agent events (021).
 28. Session attention also has `exhausted`, for active work whose current
     model accepts no more work.
 29. The stats are served under `/v1/stats/<family>`, one route per family —
-    `work`, `time`, `spend`, `models`, `attention` and `tools` — each taking
+    `work`, `time`, `spend`, `models` and `attention` — each taking
     the `since` and `repo` filters and answering its own
     `<Family>StatsDto` (023). A bad `since` is `400 invalid_request`. A stat
     reads the stats ledger only, and counts no cost: the tokens are the ones

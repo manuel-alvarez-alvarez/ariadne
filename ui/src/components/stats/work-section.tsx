@@ -14,7 +14,7 @@ import { StatTile, StatTiles } from "./stat-tiles"
 import { StatTimeChart } from "./stat-time-chart"
 
 /** `GET /v1/stats/work`, narrowed by the screen's filter. */
-function workStatsQueryOptions(filter: StatsFilter) {
+export function workStatsQueryOptions(filter: StatsFilter) {
   return queryOptions({
     queryKey: qk.stats.work(filter),
     queryFn: (): Promise<WorkStatsDto> =>
@@ -51,7 +51,7 @@ export function WorkSection({ filter }: { filter: StatsFilter }) {
       empty="Nothing got done in this span."
     >
       {(data) => (
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-1 flex-col gap-4">
           <StatTiles>
             <StatTile label="Tasks finished" value={data.totals.tasks_finished} />
             <StatTile label="Goals completed" value={data.totals.goals_completed} />

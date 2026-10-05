@@ -229,10 +229,10 @@ same binary also serves (013).
     anything is sent, and the daemon's own refusal of an unknown id or a bad
     scope prints whole. There is no `add` or `edit`. A repository can be an
     id or path, and every verb supports JSON.
-35. `ariadne stats [work|time|spend|models|attention|tools] [--since
+35. `ariadne stats [work|time|spend|models|attention] [--since
     <duration|date>] [--repo <id>]` prints one stat family off
     `GET /v1/stats/<family>` (023). `ariadne stats` alone prints `work`.
-    Each of the six is a listing: it takes the table flags, and
+    Each of the five is a listing: it takes the table flags, and
     `--format json` prints the family's DTO whole.
 
 ## Acceptance criteria

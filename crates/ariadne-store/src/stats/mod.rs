@@ -14,14 +14,12 @@ mod attention;
 mod models;
 mod spend;
 mod time;
-mod tools;
 mod work;
 
 pub use attention::AttentionStats;
-pub use models::{AuthorModelStat, ModelStat, ModelStats, ReviewerModelStat};
+pub use models::{AuthorModelStat, ModelInterventions, ModelStat, ModelStats, ReviewerModelStat};
 pub use spend::{ModelSpend, PerFinishedTask, SpendBucket, SpendStats, SpendTotals};
 pub use time::{LeadTime, PersonWait, StatusTime, TimeStats};
-pub use tools::{OtherTools, ToolKindStats, ToolStatRow, ToolStats};
 pub use work::WorkStats;
 
 use ariadne_core::id::new_id;

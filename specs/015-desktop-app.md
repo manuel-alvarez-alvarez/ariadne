@@ -471,17 +471,31 @@ Out: the daemon endpoints themselves (012).
 36. The Stats screen is at `#/stats`, titled `Stats`, last in the sidebar
     (023). Its header holds a `since` selector — all time, 24 hours, 7 days,
     30 days — and a repository selector, both kept in the URL as `?since=`
-    and `?repo=`. The screen passes `{ since, repo }` to six sections, in
-    order: Work, Time, Spend, Models, Attention and Tools, each
-    `src/components/stats/<family>-section.tsx`. Every section draws through
-    the shared `StatSection`: its heading, `text-sm font-medium`, the one
-    sentence of the question it answers, the read's error or skeleton, and
-    the one muted sentence of an empty family. Each reads
+    and `?repo=`. The screen is a dashboard. It leads with a `Key figures`
+    row: tasks finished, finish rate and median goal lead time off the work
+    family, total tokens (input and output) off the spend family, and
+    interventions and person time, the models family's `interventions.total`
+    and `interventions.person_secs` summed over its rows; a figure reads `—`
+    until its answer is in. Under it, the screen passes `{ since, repo }` to
+    five sections, in order: Models, Work, Time, Spend and Attention, each
+    `src/components/stats/<family>-section.tsx`, laid out as a card grid —
+    one column, and two from `xl` up, where Models spans both. Every section
+    draws through the shared `StatSection`, a card: its heading,
+    `text-sm font-medium`, the one sentence of the question it answers, the
+    read's error or skeleton, and the one muted sentence of an empty family.
+    Cards in one grid row share its height; a chart is at least 160px high
+    and grows into the room its card leaves, and tiles wrap to fill each of
+    their rows. Each reads
     `GET /v1/stats/<family>` under `qk.stats.<family>(filter)`, and every
     `task_updated` and `session_updated` event invalidates the `stats` group
     — parity with `ariadne stats <family>` (014). A chart is colour-coded by
     meaning off the status ramp through the `STATUS_COLORS` module, and backed
-    by an `sr-only` table of the same numbers for a screen reader.
+    by an `sr-only` table of the same numbers for a screen reader; that
+    table's wrapper carries `relative` so the table's own `absolute`
+    positioning stays inside it rather than the document, which would
+    otherwise stretch the page past the viewport into a second scrollbar.
+    `SpendSection` draws one `StatTimeChart` of input and output tokens and no
+    by-model chart — the Models section is where a model is compared.
 
 - Goal details leave the board accessible, and another lane title changes the
   open pane (`ui/src/components/detail-panels.test.tsx::keeps the board accessible and follows another lane title with a goal open`,
@@ -504,11 +518,14 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/sessions/session-panel.test.tsx::gives the console view the remaining pane height`).
 - A console modal handles Escape without closing the surrounding pane
   (`ui/src/features/sessions/session-panel.test.tsx::keeps modal Escape separate from the pane close`).
-- The Stats screen renders its six sections in order, and asks every family
+- The Stats screen renders its five sections in order, and asks every family
   with the filters in its URL under the key `qk` names
-  (`ui/src/routes/stats.test.tsx::renders the six sections in order, under
+  (`ui/src/routes/stats.test.tsx::renders the five sections in order, under
   one heading style`, `::asks every family with the filters in its URL,
-  under the key qk names`); a
+  under the key qk names`); it leads with the key figures and lays the
+  sections out as a card grid (`::leads with the key figures, read off the
+  work, spend and models answers`, `::lays Models across the full width, and
+  the other four out as a two-column card grid`); a
   task or a session update invalidates the stats
   (`ui/src/events/dispatch.test.ts::refetches every stat when a task or a
   session moves, since either may be a fact`); Stats is the last entry of the
