@@ -7,6 +7,7 @@
  */
 
 import { screen, within } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it } from "vitest"
 
 import { qk } from "@/api"
@@ -48,6 +49,8 @@ const base = {
   usage,
   cached_share: 0.5,
   mean_lifetime_secs: 90,
+  total_lifetime_secs: 270,
+  interventions: { permissions: 1, questions: 2, stalls: 1, total: 4, person_secs: 600 },
   author: null,
   reviewer: null,
 }
@@ -62,6 +65,8 @@ const author = {
   contests_won: 1,
   win_rate: 0.25,
   tokens_per_finished_task: 1200,
+  median_lead_time_secs: 3600,
+  interventions_per_finished_task: 2,
 }
 
 it("draws three seat tables with formatted figures and count ordering", async () => {
@@ -92,15 +97,15 @@ it("draws three seat tables with formatted figures and count ordering", async ()
       .map((row) => within(row).getAllByRole("cell")[0]?.textContent),
   ).toEqual(["writer-large", "writer-small"])
   expect(within(authors).getAllByRole("row")[2]?.textContent).toBe(
-    "writer-small450.0%75.0%1.525.0%1.2k12",
+    "writer-small450.0%75.0%1.525.0%1.2k2.01244m",
   )
   expect(
     within(screen.getByRole("table", { name: "Reviewers" })).getAllByRole("row")[1]?.textContent,
-  ).toBe("judge862.5%2m12")
+  ).toBe("judge862.5%2m1244m")
   expect(
     within(screen.getByRole("table", { name: "Orchestrators" })).getAllByRole("row")[1]
       ?.textContent,
-  ).toBe("planner32.4k1m12")
+  ).toBe("planner32.4k1m1244m")
   expect(queryClient.getQueryData(qk.stats.models(filter))).toEqual(response)
 })
 
@@ -120,4 +125,66 @@ it("shows the empty state when the response contains only seatless rows", async 
   const section = await screen.findByRole("region", { name: "Models" })
   expect(await within(section).findByText("No model ran in this span.")).toBeDefined()
   expect(within(section).queryByRole("table")).toBeNull()
+})
+
+it("shows interventions and total time per seat, and the rate per finished task for authors", async () => {
+  daemonFetch.mockResolvedValue(
+    jsonResponse({
+      items: [
+        { ...base, model: "writer", seat: "author", author },
+        {
+          ...base,
+          model: "idle",
+          seat: "author",
+          author: { ...author, interventions_per_finished_task: null },
+        },
+        {
+          ...base,
+          model: "judge",
+          seat: "reviewer",
+          reviewer: { verdicts: 8, approve_share: 0.625, mean_latency_secs: 120 },
+        },
+      ],
+    }),
+  )
+  renderScreen(<ModelsSection filter={{}} />, { route: "/stats" })
+  const authors = await screen.findByRole("table", { name: "Authors" })
+  const cell = (table: HTMLElement, model: string, header: string) => {
+    const headers = within(table)
+      .getAllByRole("columnheader")
+      .map((th) => th.textContent)
+    const row = within(table)
+      .getAllByRole("row")
+      .find((tr) => within(tr).queryAllByRole("cell")[0]?.textContent === model)
+    return row && within(row).getAllByRole("cell")[headers.indexOf(header)]?.textContent
+  }
+  expect(cell(authors, "writer", "INTERVENTIONS")).toBe("4")
+  expect(cell(authors, "writer", "TOTAL_TIME")).toBe("4m")
+  expect(cell(authors, "writer", "INTERVENTIONS/TASK")).toBe("2.0")
+  expect(cell(authors, "idle", "INTERVENTIONS/TASK")).toBe("-")
+  const reviewers = screen.getByRole("table", { name: "Reviewers" })
+  expect(cell(reviewers, "judge", "INTERVENTIONS")).toBe("4")
+  expect(cell(reviewers, "judge", "TOTAL_TIME")).toBe("4m")
+  expect(within(reviewers).queryByRole("columnheader", { name: "INTERVENTIONS/TASK" })).toBeNull()
+})
+
+it("shows the intervention breakdown and the person time behind the total", async () => {
+  daemonFetch.mockResolvedValue(
+    jsonResponse({
+      items: [
+        {
+          ...base,
+          model: "writer",
+          seat: "author",
+          author,
+          interventions: { permissions: 3, questions: 2, stalls: 1, total: 6, person_secs: 600 },
+        },
+      ],
+    }),
+  )
+  renderScreen(<ModelsSection filter={{}} />, { route: "/stats" })
+  const authors = await screen.findByRole("table", { name: "Authors" })
+  await userEvent.hover(within(authors).getByText("6"))
+  const breakdown = await screen.findByText("Person time")
+  expect(breakdown.closest("dl")?.textContent).toBe("Permissions3Questions2Stalls1Person time10m")
 })

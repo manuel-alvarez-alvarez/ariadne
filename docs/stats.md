@@ -145,7 +145,22 @@ Approve share is approval verdicts divided by all verdicts.
 Orchestrators show session count, input plus output tokens, and average session lifetime.
 Every table shows failed sessions and switches caused by exhaustion under FAILED and EXHAUSTED.
 
+Every table also shows how often a person stepped in for the model, and how long its sessions ran.
+INTERVENTIONS counts three things:
+
+- permissions that you answered at the console (an AI or learned answer does not count),
+- questions, where the agent waited for your input,
+- stalls, where the agent stalled or failed with an error.
+
+A session that waits on a permission counts once, as the permission.
+In the desktop, hover over or focus the INTERVENTIONS figure to see the three counts and the person time.
+Person time is how long those prompts and questions waited on you.
+TOTAL_TIME is the sum of the session lifetimes.
+Authors also show INTERVENTIONS/TASK, the interventions per finished task, and `-` without a finished task.
+The CLI also prints PERSON_TIME for every seat, and LEAD_TIME, the median lead time of finished tasks, for authors.
+
 The API and JSON also include all three token counts, stalled sessions, cached share, and session lifetime for every seat.
+They carry the intervention breakdown under `interventions` and the median lead time of an author under `author.median_lead_time_secs`.
 Cached share is cached input tokens divided by input tokens; cached tokens are already included in input.
 Rates and averages without observations are zero.
 Both filters apply to every contributing record, including records matched by task.

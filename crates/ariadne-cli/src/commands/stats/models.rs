@@ -79,8 +79,13 @@ fn render(stats: &ModelStatsDto, seat: Option<ModelSeat>, view: &View) -> Result
                 "rounds",
                 "win_rate",
                 "tokens/task",
+                "lead_time",
+                "interventions/task",
                 "failed",
                 "exhausted",
+                "interventions",
+                "person_time",
+                "total_time",
             ],
             Some("reviewer") => vec![
                 "model",
@@ -89,6 +94,9 @@ fn render(stats: &ModelStatsDto, seat: Option<ModelSeat>, view: &View) -> Result
                 "latency",
                 "failed",
                 "exhausted",
+                "interventions",
+                "person_time",
+                "total_time",
             ],
             _ => vec![
                 "model",
@@ -97,6 +105,9 @@ fn render(stats: &ModelStatsDto, seat: Option<ModelSeat>, view: &View) -> Result
                 "lifetime",
                 "failed",
                 "exhausted",
+                "interventions",
+                "person_time",
+                "total_time",
             ],
         };
         let columns: Vec<_> = headers
@@ -117,6 +128,9 @@ fn render(stats: &ModelStatsDto, seat: Option<ModelSeat>, view: &View) -> Result
                             format!("{:.1}", a.mean_review_rounds),
                             percent(a.win_rate),
                             tokens(a.tokens_per_finished_task.round() as u64),
+                            duration(a.median_lead_time_secs as u64),
+                            a.interventions_per_finished_task
+                                .map_or_else(|| "-".into(), |rate| format!("{rate:.1}")),
                         ]);
                     }
                     Some("reviewer") => {
@@ -133,7 +147,13 @@ fn render(stats: &ModelStatsDto, seat: Option<ModelSeat>, view: &View) -> Result
                         duration(r.mean_lifetime_secs as u64),
                     ]),
                 }
-                cells.extend([r.failed_sessions.to_string(), r.exhaustions.to_string()]);
+                cells.extend([
+                    r.failed_sessions.to_string(),
+                    r.exhaustions.to_string(),
+                    r.interventions.total.to_string(),
+                    duration(r.interventions.person_secs as u64),
+                    duration(r.total_lifetime_secs as u64),
+                ]);
                 cells
             })
             .collect();
@@ -156,7 +176,9 @@ fn render(stats: &ModelStatsDto, seat: Option<ModelSeat>, view: &View) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ariadne_api::stats::{AuthorModelStatDto, ModelStatDto, ReviewerModelStatDto};
+    use ariadne_api::stats::{
+        AuthorModelStatDto, ModelInterventionsDto, ModelStatDto, ReviewerModelStatDto,
+    };
     use clap::Parser;
 
     fn stats() -> ModelStatsDto {
@@ -171,6 +193,14 @@ mod tests {
                 ModelStatDto {
                     model: "writer".into(),
                     seat: Some("author".into()),
+                    total_lifetime_secs: 7_200.0,
+                    interventions: ModelInterventionsDto {
+                        permissions: 3,
+                        questions: 2,
+                        stalls: 2,
+                        total: 7,
+                        person_secs: 900.0,
+                    },
                     author: Some(AuthorModelStatDto {
                         tasks_finished: 2,
                         tasks_failed: 1,
@@ -180,6 +210,8 @@ mod tests {
                         mean_review_rounds: 1.5,
                         win_rate: 0.25,
                         tokens_per_finished_task: 1200.0,
+                        median_lead_time_secs: 1_800.0,
+                        interventions_per_finished_task: Some(3.5),
                         ..Default::default()
                     }),
                     ..Default::default()
@@ -294,5 +326,47 @@ mod tests {
         assert_eq!(value["items"].as_array().unwrap().len(), 3);
         assert_eq!(value["items"][1]["author"]["first_pass_rate"], 0.75);
         server.abort();
+    }
+
+    /// The cells of a plain table line; a duration holds one space, a gap two.
+    fn cells(line: &str) -> Vec<&str> {
+        line.split("  ")
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+            .collect()
+    }
+
+    #[test]
+    fn every_seat_shows_interventions_and_time_and_authors_their_rate() {
+        let text = render(&stats(), Some(ModelSeat::Author), &View::plain()).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        let header = cells(lines[1]);
+        let writer = cells(lines[2]);
+        let cell = |name: &str| writer[header.iter().position(|h| *h == name).unwrap()];
+        assert_eq!(cell("LEAD_TIME"), "30m 0s", "{text}");
+        assert_eq!(cell("INTERVENTIONS/TASK"), "3.5", "{text}");
+        assert_eq!(cell("INTERVENTIONS"), "7", "{text}");
+        assert_eq!(cell("PERSON_TIME"), "15m 0s", "{text}");
+        assert_eq!(cell("TOTAL_TIME"), "2h 0m", "{text}");
+        for seat in [ModelSeat::Reviewer, ModelSeat::Orchestrator] {
+            let text = render(&stats(), Some(seat), &View::plain()).unwrap();
+            for header in ["INTERVENTIONS", "PERSON_TIME", "TOTAL_TIME"] {
+                assert!(text.contains(header), "{header}: {text}");
+            }
+            assert!(!text.contains("INTERVENTIONS/TASK"), "{text}");
+        }
+        let mut idle = stats();
+        idle.items[1]
+            .author
+            .as_mut()
+            .unwrap()
+            .interventions_per_finished_task = None;
+        let text = render(&idle, Some(ModelSeat::Author), &View::plain()).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        let rate = cells(lines[1])
+            .iter()
+            .position(|h| *h == "INTERVENTIONS/TASK")
+            .unwrap();
+        assert_eq!(cells(lines[2])[rate], "-", "{text}");
     }
 }

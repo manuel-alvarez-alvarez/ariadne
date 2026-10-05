@@ -398,6 +398,16 @@ Switches count against the model and seat left.
 Usage sums input, cached input, and output tokens from ended sessions.
 Cached share is cached input tokens divided by input tokens.
 Mean lifetime is summed session lifetime divided by ended sessions.
+Total lifetime (`total_lifetime_secs`) is the summed session lifetime itself.
+
+Each row carries `interventions`, the times a person stepped in for that model in that seat.
+`permissions` counts `permission` facts with `decided_by = console`; an AI or learned answer is no intervention.
+`questions` counts `attention` facts with reason `waiting_input` or `waiting_user`.
+`stalls` counts `attention` facts with reason `stalled` or `agent_error`.
+An `attention` fact with reason `waiting_permission` counts nowhere, because its prompt already counts as a permission.
+`total` is the sum of the three counts.
+`person_secs` sums `wait_ms / 1000` of those permissions and `wait_secs` of those attention facts.
+A model with only such facts still gets a row.
 
 Author rows carry an `author` object; other rows carry null.
 Finished, failed, and cancelled task counts count `task_ended` facts, including repeated endings.
@@ -411,6 +421,9 @@ Win rate is contests won divided by contests entered.
 Tokens per finished task averages matching author-session input plus output over distinct finished tasks attributed to this model.
 Matching requires the same model and task, and finished tasks without sessions contribute zero tokens.
 Cached tokens are already part of input and are never added again.
+Median lead time (`median_lead_time_secs`) is the median `lead_time_secs` of this model's finished `task_ended` facts.
+Interventions per finished task (`interventions_per_finished_task`) is `interventions.total` divided by finished endings, and null without one.
+Only the `author` object carries the two, so other seats have no such rate.
 
 Reviewer rows carry a `reviewer` object; other rows carry null.
 Verdicts count each verdict fact from that reviewer model.
@@ -428,11 +441,15 @@ Each desktop table sorts by its first count descending, then by model.
 
 | Seat | Columns |
 | --- | --- |
-| Author | MODEL, TASKS, FINISH_RATE, FIRST_PASS, ROUNDS, WIN_RATE, TOKENS/TASK, FAILED, EXHAUSTED |
-| Reviewer | MODEL, VERDICTS, APPROVE, LATENCY, FAILED, EXHAUSTED |
-| Orchestrator | MODEL, SESSIONS, TOKENS, LIFETIME, FAILED, EXHAUSTED |
+| Author | MODEL, TASKS, FINISH_RATE, FIRST_PASS, ROUNDS, WIN_RATE, TOKENS/TASK, INTERVENTIONS/TASK, FAILED, EXHAUSTED, INTERVENTIONS, TOTAL_TIME |
+| Reviewer | MODEL, VERDICTS, APPROVE, LATENCY, FAILED, EXHAUSTED, INTERVENTIONS, TOTAL_TIME |
+| Orchestrator | MODEL, SESSIONS, TOKENS, LIFETIME, FAILED, EXHAUSTED, INTERVENTIONS, TOTAL_TIME |
 
+The CLI adds LEAD_TIME before INTERVENTIONS/TASK for authors, and PERSON_TIME before TOTAL_TIME for every seat.
 TASKS is the sum of finished, failed, and cancelled endings; FAILED always means failed sessions.
+INTERVENTIONS is `interventions.total`, and TOTAL_TIME is `total_lifetime_secs`.
+INTERVENTIONS/TASK prints with one decimal, and `-` where the rate is null.
+In the desktop, a hover or a focus on INTERVENTIONS shows permissions, questions, stalls and person time.
 Rates print as percentages with one decimal, durations use the existing duration formatter, and tokens use compact notation.
 
 ### Attention
@@ -679,6 +696,17 @@ shared `since` and `repo` filter.
 
 - A response containing only seatless rows shows the shared empty state and no table
   (`models-section.test.tsx`: "shows the empty state when the response contains only seatless rows").
+- Console permissions, questions and stalls count per model and seat, with person time, total lifetime,
+  the author's median lead time and rate, and no `waiting_permission` or AI-decided fact
+  (`stats/models.rs::tests::interventions_count_what_a_person_answered_per_model_and_seat`,
+  `stats_models.rs::interventions_and_time_answer_per_model_and_seat`).
+- The rate per finished task is null without a finished task
+  (`stats/models.rs::tests::the_intervention_rate_is_null_without_a_finished_task`).
+- The CLI shows interventions, person time and total time per seat, and lead time and the rate for authors
+  (`commands/stats/models.rs::tests::every_seat_shows_interventions_and_time_and_authors_their_rate`).
+- The desktop shows INTERVENTIONS and TOTAL_TIME per seat, INTERVENTIONS/TASK for authors, and the breakdown on hover
+  (`models-section.test.tsx`: "shows interventions and total time per seat, and the rate per finished task for authors",
+  "shows the intervention breakdown and the person time behind the total").
 
 #### Attention
 

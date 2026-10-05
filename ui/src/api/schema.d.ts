@@ -1465,8 +1465,15 @@ export interface components {
             finish_rate: number;
             /** Format: double */
             first_pass_rate: number;
+            /**
+             * Format: double
+             * @description Interventions divided by finished tasks; null without a finished task.
+             */
+            interventions_per_finished_task?: number | null;
             /** Format: double */
             mean_review_rounds: number;
+            /** Format: double */
+            median_lead_time_secs: number;
             /** Format: int64 */
             tasks_cancelled: number;
             /** Format: int64 */
@@ -2072,6 +2079,23 @@ export interface components {
             rank?: null | components["schemas"]["ModelRank"];
         };
         /**
+         * @description The times a person stepped in for this model in this seat: permissions
+         *     decided at the console, questions and stalls. `person_secs` is how long
+         *     those waited on the person.
+         */
+        ModelInterventionsDto: {
+            /** Format: int64 */
+            permissions: number;
+            /** Format: double */
+            person_secs: number;
+            /** Format: int64 */
+            questions: number;
+            /** Format: int64 */
+            stalls: number;
+            /** Format: int64 */
+            total: number;
+        };
+        /**
          * @description A user-set rank, independent of discovery and model availability.
          * @enum {string}
          */
@@ -2100,6 +2124,7 @@ export interface components {
             exhaustions: number;
             /** Format: int64 */
             failed_sessions: number;
+            interventions: components["schemas"]["ModelInterventionsDto"];
             /** Format: double */
             mean_lifetime_secs: number;
             model: string;
@@ -2109,6 +2134,11 @@ export interface components {
             sessions: number;
             /** Format: int64 */
             stalled_sessions: number;
+            /**
+             * Format: double
+             * @description The sum of the lifetimes of the ended sessions.
+             */
+            total_lifetime_secs: number;
             usage: components["schemas"]["TokenUsageDto"];
         };
         /** @description Models compared within each seat. */

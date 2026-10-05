@@ -6,7 +6,7 @@ use ariadne_core::TokenUsage;
 use serde_json::Value;
 use sqlx::Row;
 
-use super::{StatsFilter, narrowed};
+use super::{StatsFilter, median, narrowed};
 use crate::{Result, Store};
 
 /// Models compared within each seat.
@@ -27,8 +27,20 @@ pub struct ModelStat {
     pub usage: TokenUsage,
     pub cached_share: f64,
     pub mean_lifetime_secs: f64,
+    pub total_lifetime_secs: f64,
+    pub interventions: ModelInterventions,
     pub author: Option<AuthorModelStat>,
     pub reviewer: Option<ReviewerModelStat>,
+}
+
+/// The times a person stepped in for this model in this seat.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ModelInterventions {
+    pub permissions: u64,
+    pub questions: u64,
+    pub stalls: u64,
+    pub total: u64,
+    pub person_secs: f64,
 }
 
 /// Outcomes attributed to an author model.
@@ -44,6 +56,8 @@ pub struct AuthorModelStat {
     pub contests_won: u64,
     pub win_rate: f64,
     pub tokens_per_finished_task: f64,
+    pub median_lead_time_secs: f64,
+    pub interventions_per_finished_task: Option<f64>,
 }
 
 /// Verdicts attributed to a reviewer model.
@@ -64,6 +78,7 @@ struct Totals {
     first_pass_tasks: BTreeSet<String>,
     finished_tasks: BTreeSet<String>,
     task_tokens: BTreeMap<String, u64>,
+    lead_times: Vec<f64>,
     approvals: u64,
     latency: f64,
 }
@@ -101,9 +116,14 @@ impl Store {
     /// Which model does the job, over the facts the filter keeps.
     pub async fn model_stats(&self, filter: &StatsFilter) -> Result<ModelStats> {
         let (clause, binds) = narrowed(filter);
+        // Only a person's answer is an intervention. A `waiting_permission` attention
+        // fact is left out, because its prompt already counts as a permission.
         let sql = format!(
             "SELECT kind, model, seat, task_id, data FROM stat_facts
-             WHERE kind IN ('session_ended', 'switch', 'task_ended', 'pick', 'verdict'){clause}"
+             WHERE (kind IN ('session_ended', 'switch', 'task_ended', 'pick', 'verdict')
+                    OR (kind = 'permission' AND json_extract(data, '$.decided_by') = 'console')
+                    OR (kind = 'attention' AND json_extract(data, '$.reason')
+                        IN ('waiting_input', 'waiting_user', 'stalled', 'agent_error'))){clause}"
         );
         // The only SQL fragments are literals from narrowed; every filter value is bound.
         let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
@@ -148,6 +168,7 @@ impl Store {
                             match data["status"].as_str() {
                                 Some("finished") => {
                                     author.tasks_finished += 1;
+                                    totals.lead_times.push(seconds("lead_time_secs"));
                                     if let Some(task) = &task {
                                         totals.finished_tasks.insert(task.clone());
                                     }
@@ -158,6 +179,18 @@ impl Store {
                             }
                             totals.review_rounds += seconds("review_requests");
                         }
+                    }
+                    "permission" => {
+                        totals.row.interventions.permissions += 1;
+                        totals.row.interventions.person_secs += seconds("wait_ms") / 1_000.0;
+                    }
+                    "attention" => {
+                        let interventions = &mut totals.row.interventions;
+                        match data["reason"].as_str() {
+                            Some("waiting_input" | "waiting_user") => interventions.questions += 1,
+                            _ => interventions.stalls += 1,
+                        }
+                        interventions.person_secs += seconds("wait_secs");
                     }
                     "verdict" => {
                         if let Some(reviewer) = &mut totals.row.reviewer {
@@ -207,6 +240,10 @@ impl Store {
                 row.cached_share =
                     ratio(row.usage.cached_input_tokens as f64, row.usage.input_tokens);
                 row.mean_lifetime_secs = ratio(totals.lifetime, row.sessions);
+                row.total_lifetime_secs = totals.lifetime;
+                let interventions = &mut row.interventions;
+                interventions.total =
+                    interventions.permissions + interventions.questions + interventions.stalls;
                 if let Some(author) = &mut row.author {
                     let tasks =
                         author.tasks_finished + author.tasks_failed + author.tasks_cancelled;
@@ -224,6 +261,9 @@ impl Store {
                         .sum();
                     author.tokens_per_finished_task =
                         ratio(tokens as f64, totals.finished_tasks.len() as u64);
+                    author.median_lead_time_secs = median(&totals.lead_times);
+                    author.interventions_per_finished_task = (author.tasks_finished > 0)
+                        .then(|| row.interventions.total as f64 / author.tasks_finished as f64);
                 }
                 if let Some(reviewer) = &mut row.reviewer {
                     reviewer.approve_share = ratio(totals.approvals as f64, reviewer.verdicts);
@@ -390,6 +430,8 @@ mod tests {
                 contests_won: 1,
                 win_rate: 0.5,
                 tokens_per_finished_task: 360.0,
+                median_lead_time_secs: 0.0,
+                interventions_per_finished_task: Some(0.0),
             })
         );
         assert_eq!(row.reviewer, None);
@@ -619,5 +661,162 @@ mod tests {
         assert_eq!(author.finish_rate, 1.0);
         assert_eq!(author.mean_review_rounds, 2.0);
         assert_eq!(row.cached_share, 1.0);
+    }
+
+    #[tokio::test]
+    async fn interventions_count_what_a_person_answered_per_model_and_seat() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path().join("stats.db")).await.unwrap();
+        for (seat, decided_by, wait_ms) in [
+            ("author", "console", 4_000),
+            ("author", "console", 6_000),
+            ("author", "ai", 50_000),
+            ("author", "learned", 50_000),
+            ("reviewer", "console", 1_000),
+        ] {
+            fact(
+                &store,
+                "permission",
+                Some("writer"),
+                Some(seat),
+                "one",
+                json!({"decided_by": decided_by, "wait_ms": wait_ms}),
+            )
+            .await;
+        }
+        for (seat, reason, wait_secs) in [
+            ("author", "waiting_input", 20),
+            ("author", "waiting_user", 30),
+            ("author", "stalled", 100),
+            ("author", "agent_error", 200),
+            ("author", "waiting_permission", 9_000),
+            ("reviewer", "stalled", 7),
+        ] {
+            fact(
+                &store,
+                "attention",
+                Some("writer"),
+                Some(seat),
+                "one",
+                json!({"reason": reason, "wait_secs": wait_secs}),
+            )
+            .await;
+        }
+        for (task, lead) in [("one", 300), ("two", 100), ("three", 1_000)] {
+            fact(
+                &store,
+                "task_ended",
+                Some("writer"),
+                Some("author"),
+                task,
+                json!({"status": "finished", "lead_time_secs": lead}),
+            )
+            .await;
+        }
+        fact(
+            &store,
+            "task_ended",
+            Some("writer"),
+            Some("author"),
+            "four",
+            json!({"status": "failed", "lead_time_secs": 9_000}),
+        )
+        .await;
+        for (seat, lifetime) in [("author", 40), ("author", 80), ("reviewer", 15)] {
+            fact(
+                &store,
+                "session_ended",
+                Some("writer"),
+                Some(seat),
+                "one",
+                json!({"lifetime_secs": lifetime}),
+            )
+            .await;
+        }
+        fact(
+            &store,
+            "permission",
+            Some("quiet"),
+            Some("author"),
+            "one",
+            json!({"decided_by": "ai", "wait_ms": 1_000}),
+        )
+        .await;
+        fact(
+            &store,
+            "attention",
+            Some("quiet"),
+            Some("author"),
+            "one",
+            json!({"reason": "waiting_permission", "wait_secs": 10}),
+        )
+        .await;
+
+        let stats = store.model_stats(&StatsFilter::default()).await.unwrap();
+        assert_eq!(
+            stats
+                .items
+                .iter()
+                .map(|r| (r.model.as_str(), r.seat.as_deref()))
+                .collect::<Vec<_>>(),
+            vec![("writer", Some("author")), ("writer", Some("reviewer"))]
+        );
+        let author = &stats.items[0];
+        assert_eq!(
+            author.interventions,
+            ModelInterventions {
+                permissions: 2,
+                questions: 2,
+                stalls: 2,
+                total: 6,
+                person_secs: 360.0,
+            }
+        );
+        assert_eq!(author.total_lifetime_secs, 120.0);
+        let figures = author.author.as_ref().unwrap();
+        assert_eq!(figures.median_lead_time_secs, 300.0);
+        assert_eq!(figures.interventions_per_finished_task, Some(2.0));
+        let reviewer = &stats.items[1];
+        assert_eq!(
+            reviewer.interventions,
+            ModelInterventions {
+                permissions: 1,
+                questions: 0,
+                stalls: 1,
+                total: 2,
+                person_secs: 8.0,
+            }
+        );
+        assert_eq!(reviewer.total_lifetime_secs, 15.0);
+        assert_eq!(reviewer.author, None);
+    }
+
+    #[tokio::test]
+    async fn the_intervention_rate_is_null_without_a_finished_task() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path().join("stats.db")).await.unwrap();
+        fact(
+            &store,
+            "attention",
+            Some("writer"),
+            Some("author"),
+            "one",
+            json!({"reason": "waiting_input", "wait_secs": 5}),
+        )
+        .await;
+        fact(
+            &store,
+            "task_ended",
+            Some("writer"),
+            Some("author"),
+            "one",
+            json!({"status": "failed", "lead_time_secs": 50}),
+        )
+        .await;
+        let stats = store.model_stats(&StatsFilter::default()).await.unwrap();
+        let author = stats.items[0].author.as_ref().unwrap();
+        assert_eq!(stats.items[0].interventions.total, 1);
+        assert_eq!(author.interventions_per_finished_task, None);
+        assert_eq!(author.median_lead_time_secs, 0.0);
     }
 }
