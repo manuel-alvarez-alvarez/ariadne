@@ -15,7 +15,6 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { ChevronRightIcon } from "lucide-react"
 import { useRef } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 
@@ -24,20 +23,20 @@ import { CopyableIdMenu } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { Markdown } from "@/components/markdown"
+import { PanelHeader } from "@/components/panel-header"
 import { PanelSheet } from "@/components/panel-sheet"
 import { StatusBadge } from "@/components/status-badge"
 import { TabCount } from "@/components/tab-count"
 import { PaneBody, PaneHeader, PaneTitle } from "@/components/ui/docked-pane"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { When, WhenDetail } from "@/components/when"
+import { When } from "@/components/when"
 import { goalQueryOptions } from "@/features/goals/queries"
 // Not the barrel: `@/features/sessions` re-exports the sessions table, which
 // imports this feature back (see `sessions-list.tsx`).
 import { sessionsQueryOptions } from "@/features/sessions/queries"
 import { useFocusReturn } from "@/hooks/use-focus-return"
 import { taskCopyEntries } from "@/lib/clipboard"
-import { shortId } from "@/lib/format"
 import { paths, usePanelSessionNavigation } from "@/routes/paths"
 
 import { taskMessagesQueryOptions, taskQueryOptions } from "./queries"
@@ -94,23 +93,30 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
         />
       ) : task.isPending ? (
         <>
-          <PaneTitle className="sr-only">Loading task</PaneTitle>
-          <Skeleton className="h-7 w-2/3" />
-          <Skeleton className="h-28 w-full" />
-          <Skeleton className="h-64 w-full" />
+          <PaneHeader>
+            <PaneTitle className="sr-only">Loading task</PaneTitle>
+          </PaneHeader>
+          <PaneBody>
+            <Skeleton className="h-7 w-2/3" />
+            <Skeleton className="h-28 w-full" />
+            <Skeleton className="h-64 w-full" />
+          </PaneBody>
         </>
       ) : task.error ? (
         <>
-          <PaneTitle className="sr-only">Task {taskId}</PaneTitle>
-          <ErrorState
-            title={`Could not load task ${taskId}`}
-            error={task.error}
-            onRetry={() => void task.refetch()}
-          />
+          <PaneHeader>
+            <PaneTitle className="sr-only">Task {taskId}</PaneTitle>
+          </PaneHeader>
+          <PaneBody>
+            <ErrorState
+              title={`Could not load task ${taskId}`}
+              error={task.error}
+              onRetry={() => void task.refetch()}
+            />
+          </PaneBody>
         </>
       ) : (
         <>
-          <PanelBreadcrumb goalId={task.data.goal_id} taskId={taskId} taskTitle={task.data.title} />
           <TaskHeader task={task.data} />
           <PaneBody>
             <TaskFacts task={task.data} />
@@ -160,82 +166,45 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
 }
 
 /**
- * Where this panel sits: the goal it belongs to, then the task itself.
- * Clicking the goal replaces this panel with the goal's, in the same pane.
+ * The task's header: the breadcrumb back to its goal, the title and its
+ * actions, and the dense line of its status, id and when it last moved.
+ *
+ * The breadcrumb is the task's own `goal_id`, not where the panel was opened
+ * from — every task has one, whatever opened this panel — and clicking it
+ * replaces this panel with the goal's in the same pane.
  */
-function PanelBreadcrumb({
-  goalId,
-  taskId,
-  taskTitle,
-}: {
-  goalId: string
-  taskId: string
-  /** The task's own name, once it is loaded. */
-  taskTitle?: string
-}) {
-  const goal = useQuery(goalQueryOptions(goalId))
-  const navigate = useNavigate()
-  return (
-    <nav
-      aria-label="Breadcrumb"
-      // Clears the sheet's own close button, which floats over this row.
-      className="flex shrink-0 min-w-0 items-center gap-1.5 pr-8 text-xs text-muted-foreground"
-    >
-      <button
-        type="button"
-        // Replaces rather than pushes: the goal panel takes this one's place
-        // in the pane, not a step stacked over it.
-        onClick={() => navigate(paths.goal(goalId), { replace: true })}
-        // The ring every other control in the app wears: this one is the first
-        // thing focused when a deep link opens the panel, and it was showing
-        // the browser's own outline there.
-        className="min-w-0 truncate rounded-xs underline-offset-3 outline-none hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
-      >
-        {goal.data?.title ?? "Goal"}
-      </button>
-      <ChevronRightIcon className="size-3 shrink-0" aria-hidden />
-      <span className="min-w-0 truncate font-medium text-foreground" aria-current="page">
-        {taskTitle ?? `task ${shortId(taskId)}`}
-      </span>
-    </nav>
-  )
-}
-
 function TaskHeader({ task }: { task: TaskDto }) {
+  const goal = useQuery(goalQueryOptions(task.goal_id))
+  const navigate = useNavigate()
   const status = TASK_STATUS_META[primaryStatus(task.status)]
   const sub = subStatus(task.status)
   return (
-    <PaneHeader>
-      {/* The actions stay on the title row whatever the task's status, which
-          is what the title shrinking rather than wrapping the row buys: a
-          `Cancel task` on its own line under the title read as a second row of
-          header, and which line it landed on came down to how long the title
-          was and how many buttons the status offers. */}
-      <div className="flex items-start gap-3">
-        <PaneTitle className="min-w-0 flex-1">{task.title}</PaneTitle>
-        <div className="shrink-0">
-          <TaskActions task={task} />
-        </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        <StatusBadge label={status.label} tone={status.badge} hint={status.hint} />
-        {sub && <StatusBadge label={sub.label} tone={sub.badge} hint={sub.hint} />}
-        {task.stalled && <StalledBadge />}
-        <CopyableIdMenu
-          value={task.id}
-          label="task id"
-          entries={taskCopyEntries(task.id)}
-          className="text-muted-foreground"
-        />
-        <span className="ml-auto text-muted-foreground">
-          updated{" "}
-          <When
-            at={task.updated_at}
-            label="updated"
-            detail={<WhenDetail label="created" at={task.created_at} />}
-          />
-        </span>
-      </div>
-    </PaneHeader>
+    <PanelHeader
+      breadcrumb={{
+        label: goal.data?.title ?? "Goal",
+        // Replaces rather than pushes: the goal panel takes this one's place
+        // in the pane, not a step stacked over it.
+        onClick: () => navigate(paths.goal(task.goal_id), { replace: true }),
+      }}
+      title={task.title}
+      actions={<TaskActions task={task} />}
+      status={
+        <>
+          <StatusBadge label={status.label} tone={status.badge} hint={status.hint} />
+          {sub && <StatusBadge label={sub.label} tone={sub.badge} hint={sub.hint} />}
+          {task.stalled && <StalledBadge />}
+        </>
+      }
+      id={<CopyableIdMenu value={task.id} label="task id" entries={taskCopyEntries(task.id)} />}
+      stamps={
+        <>
+          <span>created</span>
+          <When at={task.created_at} label="created" />
+          <span aria-hidden="true">·</span>
+          <span>updated</span>
+          <When at={task.updated_at} label="updated" />
+        </>
+      }
+    />
   )
 }

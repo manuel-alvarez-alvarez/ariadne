@@ -33,10 +33,16 @@ Out: the daemon endpoints themselves (012).
 2. The shell is a sidebar, ending in the daemon connection status, and a main
    area under one header bar — the screen's name as its only `h1`, and a
    screen's own actions at the header's end. Goal, task and session details
-   occupy one docked pane beside `<main>`. The URL selects its contents.
-   The screen stays accessible, clickable and scrollable, with no scrim or
-   focus trap. The left handle resizes the pane between 24rem and 60% of
-   the window; its default width is 36rem and settings preserve the choice.
+   occupy one pane that floats over the screen at its right edge. The URL
+   selects its contents. The screen keeps its full width and layout behind
+   the pane, under a scrim. A click on the scrim closes the pane, the same
+   as the close button, and Tab stays inside the pane while it is open. The
+   pane slides in from the right and the scrim fades in, unless the system
+   asks for reduced motion. The close button sits in the pane's header, as
+   its first tab stop. The left handle resizes the pane by pointer or
+   keyboard between 24rem and 60% of the window. A drag saves the width
+   once, on release, and a double-click resets it to the 36rem default;
+   settings preserve the choice.
    Below `md`, the pane covers the screen at full width. The pane holds one
    panel at a time: a task opened from a goal replaces the goal's panel
    rather than stacking on it, carrying a breadcrumb back that reopens the
@@ -184,14 +190,30 @@ Out: the daemon endpoints themselves (012).
     cached page at once and the outside half is fetched again; a
     `session_created` event does the same, for a resume made from the CLI or
     another window.
-19. The goal, task and session panels open on a dense fact list above their
-    tabs — `text-xs`, three columns at `sm` and four at `lg`, no card frame —
-    rather than the framed grid further down an entity's own screen. On a
-    task staffed with several authors (004) the task panel shows every one of
-    them — its skills, its model, its own branch, and its status in the pick:
-    the votes it has so far, or "Picked" once it is the one that won — and the
-    reviewer pick itself: which author each reviewer chose. A task with one
-    author shows the singular Author fact and no pick, unchanged.
+19. The goal, task and session panels, and the session drill-downs inside the
+    goal's and the task's own, share one header component: an optional
+    breadcrumb row back to the entity this one is drilled into (a goal, for a
+    task's or a session's own panel; a task, for one of its sessions), with
+    the focus ring every other control in the app wears; the title row, the
+    title truncating to one line with the full text as its `title` attribute
+    and the panel's own actions at the row's end; and the dense meta row,
+    the entity's status badge first, then its id, then when it was made and
+    when it last moved. A goal opened straight from the board carries no
+    breadcrumb, nor does a session opened on its own. A session drill-down's
+    breadcrumb replaces the "Back to …" button it used to be. The loading and
+    the error state of a panel render inside its scrolling body, under a
+    header that names the entity only where its data already has, so a
+    failed refetch of a goal already cached shows that goal, under its one
+    title, with one inline notice above it rather than a second title and a
+    lost panel. The goal, task and session panels open on a dense fact list
+    above their tabs — `text-xs`, three columns at `sm` and four at `lg`, no
+    card frame — rather than the framed grid further down an entity's own
+    screen. On a task staffed with several authors (004) the task panel shows
+    every one of them — its skills, its model, its own branch, and its status
+    in the pick: the votes it has so far, or "Picked" once it is the one that
+    won — and the reviewer pick itself: which author each reviewer chose. A
+    task with one author shows the singular Author fact and no pick,
+    unchanged.
 20. Every session is shown in its console, as the CLI draws it: a terminal
     emulator (xterm.js) on the daemon's terminal socket
     (`GET /v1/sessions/{id}/console/terminal`, 008), in which the daemon
@@ -500,9 +522,21 @@ Out: the daemon endpoints themselves (012).
     explains itself in one short sentence, shown on hover and on keyboard
     focus and wired as its accessible description (023).
 
-- Goal details leave the board accessible, and another lane title changes the
-  open pane (`ui/src/components/detail-panels.test.tsx::keeps the board accessible and follows another lane title with a goal open`,
+- Goal details float over the board without a modal dialog, and a click on
+  the scrim closes them
+  (`ui/src/components/detail-panels.test.tsx::floats a goal over the board, and a click on its scrim closes the goal`,
   `ui/src/features/goals/goal-panel.test.tsx::renders a goal without a modal dialog`).
+- Another `?goal=` swaps the open goal for that goal in the one pane
+  (`ui/src/components/detail-panels.test.tsx::swaps the open goal for another goal the URL names`).
+- An open goal leaves `<main>` alone in the shell's row, at its full width
+  (`ui/src/components/app-shell.test.tsx::keeps the screen at full width behind an open goal`).
+- A click on the scrim closes the pane through the same close as the close
+  button
+  (`ui/src/components/panel-sheet.test.tsx::closes the pane from a click on its scrim, as from its close button`).
+- The close button is the pane's first tab stop, and Tab from the last stop
+  stays in the pane
+  (`ui/src/components/panel-sheet.test.tsx::puts the close button first in the pane's tab order`,
+  `::keeps Tab inside the pane while it is open`).
 - A task opened from a goal replaces it, mounting only the task's panel, and
   closes outright on Escape rather than falling back to the goal — even from
   a URL that names both
@@ -512,13 +546,42 @@ Out: the daemon endpoints themselves (012).
 - The task panel's breadcrumb opens its goal in the pane's place
   (`ui/src/features/tasks/task-panel.test.tsx::opens the goal from the task's breadcrumb, replacing the task in the pane`,
   `ui/src/components/detail-panels.test.tsx::gives the task panel's breadcrumb the app's own focus ring, once the task names its goal`).
+- The goal, the task and the session panel each open on the shared header's
+  rows in order, with a title that truncates rather than wraps and carries
+  the full text as its `title` attribute
+  (`ui/src/features/goals/goal-panel.test.tsx::opens on the shared header: a truncating title, then status, id and stamps`,
+  `ui/src/features/tasks/task-panel.test.tsx::opens on the shared header: a breadcrumb, a truncating title, then status, id and stamps`,
+  `ui/src/features/sessions/session-panel.test.tsx::opens on the shared header: a truncating title, then status, id and stamps`).
+- A session drilled into from a goal's or a task's own panel shows a
+  breadcrumb back to it, and no "Back to …" button
+  (`ui/src/features/goals/goal-panel.test.tsx::drills into a session with a breadcrumb back to the goal, and no Back button`,
+  `ui/src/features/tasks/task-panel.test.tsx::drills into a session with a breadcrumb back to the task, and no Back button`).
+- The session view renders no `h1` of its own, the shared header above it
+  carrying the heading instead
+  (`ui/src/features/sessions/session-detail-view.test.tsx::renders no h1 of its own, since the shared header above it carries the heading`).
+- A goal panel with cached data and a failed refetch keeps showing that goal,
+  under one title, with one inline notice above it
+  (`ui/src/features/goals/goal-panel.test.tsx::keeps the cached goal on a failed refetch, with one title and one notice`).
+- The goal panel's and the task panel's loading and error states render
+  inside the pane's scrolling body
+  (`ui/src/features/goals/goal-panel.test.tsx::renders the loading state inside the pane's scrolling body`,
+  `::renders the goal's load failure inside the pane's scrolling body`,
+  `ui/src/features/tasks/task-panel.test.tsx::renders the loading state inside the pane's scrolling body`,
+  `::renders the task's load failure inside the pane's scrolling body`).
 - Closing a task opened straight from the board returns focus to the card
   that opened it, same as any other panel
   (`ui/src/features/tasks/task-panel.test.tsx::closes to an empty pane and returns focus to the board card that opened it`).
-- Dragging clamps and persists the pane width across a remount
-  (`ui/src/components/panel-sheet.test.tsx::clamps a dragged pane width and restores it from settings on remount`).
-- The session frame supplies the remaining height through its scrolling body
-  (`ui/src/features/sessions/session-panel.test.tsx::gives the console view the remaining pane height`).
+- A pointer drag clamps and persists the pane width across a remount, and
+  writes settings once, on release
+  (`ui/src/components/panel-sheet.test.tsx::clamps a dragged pane width and restores it from settings on remount`,
+  `::writes a dragged width to settings once, on release`).
+- A pane closed in mid-drag still saves the width dragged to
+  (`ui/src/components/panel-sheet.test.tsx::keeps the dragged width when the pane closes in mid-drag`).
+- A double-click of the handle resets the pane to 36rem
+  (`ui/src/components/panel-sheet.test.tsx::resets the pane to 36rem on a double-click of the handle`).
+- The console fills the remaining pane height in a standalone session and a goal drill-down
+  (`ui/src/features/sessions/session-panel.test.tsx::keeps the console inside the remaining pane height`,
+  `ui/src/features/goals/goal-panel.test.tsx::drills into a session with a breadcrumb back to the goal, and no Back button`).
 - A console modal handles Escape without closing the surrounding pane
   (`ui/src/features/sessions/session-panel.test.tsx::keeps modal Escape separate from the pane close`).
 - The Stats screen renders its five sections in order, and asks every family

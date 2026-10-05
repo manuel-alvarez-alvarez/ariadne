@@ -38,7 +38,7 @@ import { DetailPanels } from "@/components/detail-panels"
 import { GoalSwimlanes } from "@/features/goals/goal-swimlanes"
 import { shortId } from "@/lib/format"
 import { aGoal, aSession, aSessionPage } from "@/test/fixtures"
-import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
+import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { TaskPanel } from "./task-panel"
 
 type TaskPickDto = components["schemas"]["TaskPickDto"]
@@ -457,6 +457,57 @@ it("keeps the actions on the title row whatever the status offers", () => {
   expect(title.parentElement?.contains(cancel)).toBe(true)
 })
 
+/**
+ * The shared header's own rows, top to bottom: the breadcrumb back to the
+ * goal, the title (truncating rather than wrapping, with the full text as its
+ * `title` attribute), then the meta row of status, id and the two stamps.
+ */
+it("opens on the shared header: a breadcrumb, a truncating title, then status, id and stamps", async () => {
+  mount()
+
+  const crumb = await screen.findByRole("navigation", { name: "Breadcrumb" })
+  const title = screen.getByRole("heading", { name: TASK.title })
+  expect(title.className).toContain("truncate")
+  expect(title.getAttribute("title")).toBe(TASK.title)
+
+  const header = crumb.parentElement
+  if (!header) throw new Error("no header around the breadcrumb")
+  const [breadcrumbRow, titleRow, meta] = [...header.children]
+  expect(breadcrumbRow).toBe(crumb)
+  expect(titleRow instanceof HTMLElement && titleRow.contains(title)).toBe(true)
+  if (!(meta instanceof HTMLElement)) throw new Error("no meta row")
+  // Status first, then the id, then created and updated.
+  const text = meta.textContent ?? ""
+  const statusAt = text.indexOf("In progress")
+  const idAt = text.indexOf(TASK.id)
+  const createdAt = text.indexOf("created")
+  const updatedAt = text.indexOf("updated")
+  expect(statusAt).toBeGreaterThanOrEqual(0)
+  expect(statusAt).toBeLessThan(idAt)
+  expect(idAt).toBeLessThan(createdAt)
+  expect(createdAt).toBeLessThan(updatedAt)
+})
+
+it("renders the loading state inside the pane's scrolling body", () => {
+  // Never settling, so the panel stays on its skeleton.
+  daemonFetch.mockImplementation(() => new Promise(() => {}))
+  renderScreen(<TaskPanel taskId={TASK.id} onClose={() => {}} />)
+
+  const body = document.querySelector('[data-slot="pane-body"]')
+  if (!body) throw new Error("no pane body around the loading state")
+  expect(body.querySelector('[data-slot="skeleton"]')).not.toBeNull()
+})
+
+it("renders the task's load failure inside the pane's scrolling body", async () => {
+  daemonFetch.mockImplementation(() => Promise.resolve(errorResponse(500, "internal", "down")))
+  renderScreen(<TaskPanel taskId={TASK.id} onClose={() => {}} />)
+
+  const alert = await screen.findByRole("alert")
+  const body = document.querySelector('[data-slot="pane-body"]')
+  if (!body) throw new Error("no pane body around the error state")
+  expect(body.contains(alert)).toBe(true)
+})
+
 it("folds the sessions table down to what a panel holds", async () => {
   stubSessions()
   mount()
@@ -502,21 +553,20 @@ it("folds the sessions table down to what a panel holds", async () => {
 })
 
 /**
- * The way back out of a session picked inside the panel. A button is
- * `whitespace-nowrap`, so a title long enough runs it straight under the
- * sheet's close button; the label truncates instead, and the link stays one
- * line at every width.
+ * The way back out of a session picked inside the panel: a breadcrumb back to
+ * the task, the same shared row the task panel itself opens on — not a "Back
+ * to" button of its own.
  */
-it("keeps the way back from a session to one line", async () => {
+it("drills into a session with a breadcrumb back to the task, and no Back button", async () => {
   stubSessions()
   mount()
   const user = userEvent.setup()
   await user.click(screen.getByRole("tab", { name: /^Sessions/ }))
   await user.click(await screen.findByRole("button", { name: "Open Author session" }))
 
-  const back = await screen.findByRole("button", { name: `Back to ${TASK.title}` })
-  expect(back.className).toContain("max-w-full")
-  expect(back.querySelector("span")?.className).toContain("truncate")
+  const crumb = await screen.findByRole("navigation", { name: "Breadcrumb" })
+  expect(within(crumb).getByRole("button", { name: TASK.title })).toBeDefined()
+  expect(screen.queryByRole("button", { name: /^Back to /, hidden: true })).toBeNull()
 })
 
 /**

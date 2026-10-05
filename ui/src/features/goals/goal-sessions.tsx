@@ -23,15 +23,14 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { ArrowLeftIcon } from "lucide-react"
 
 import { ErrorState } from "@/components/error-state"
+import { PanelHeader } from "@/components/panel-header"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
-import { PaneBody, PaneHeader, PaneTitle } from "@/components/ui/docked-pane"
+import { PaneBody } from "@/components/ui/docked-pane"
 import { Skeleton } from "@/components/ui/skeleton"
 import { sessionQueryOptions } from "@/features/sessions/queries"
-import { SessionDetailView } from "@/features/sessions/session-detail-view"
+import { SessionDetailView, SessionPanelHeader } from "@/features/sessions/session-detail-view"
 import { SessionsList } from "@/features/sessions/sessions-list"
 import { shortId } from "@/lib/format"
 
@@ -72,27 +71,26 @@ export function GoalSessionView({
   // panel a session of some *other* goal. It is not one of this goal's, and the
   // panel would present it as if it were — with kill and resume on it.
   const foreign = session.data !== undefined && session.data.goal_id !== goalId
+  const breadcrumb = {
+    label: goalTitle ?? `goal ${shortId(goalId)}`,
+    // The way back to the goal: replaces rather than pushes, same as every
+    // other navigation inside a panel.
+    onClick: () => onSelect(null),
+  }
 
   return (
     <>
-      <PaneHeader>
-        {/* `max-w-full` and the truncating label are what keep a long goal
-            title out from under the sheet's close button: a button is
-            `whitespace-nowrap` and `w-fit`, so without them it grows straight
-            through the header's own right padding. */}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="-ml-2 w-fit max-w-full"
-          onClick={() => onSelect(null)}
-        >
-          <ArrowLeftIcon />
-          <span className="truncate">Back to {goalTitle ?? `goal ${shortId(goalId)}`}</span>
-        </Button>
-        {/* The pane needs a name of its own; the view below
-            carries the visible heading. */}
-        <PaneTitle className="sr-only">Session {shortId(sessionId)}</PaneTitle>
-      </PaneHeader>
+      {session.data && !foreign ? (
+        <SessionPanelHeader
+          session={session.data}
+          breadcrumb={breadcrumb}
+          // A resume hands back the session to attach to; the panel follows it.
+          onResumed={(revived) => onSelect(revived.id)}
+          onSwitched={(successor) => onSelect(successor.id)}
+        />
+      ) : (
+        <PanelHeader breadcrumb={breadcrumb} title={`Session ${shortId(sessionId)}`} />
+      )}
 
       <PaneBody>
         {session.isPending ? (
@@ -117,13 +115,7 @@ export function GoalSessionView({
             </AlertDescription>
           </Alert>
         ) : (
-          <SessionDetailView
-            session={session.data}
-            context="goal"
-            // A resume hands back the session to attach to; the panel follows it.
-            onResumed={(revived) => onSelect(revived.id)}
-            onSwitched={(successor) => onSelect(successor.id)}
-          />
+          <SessionDetailView session={session.data} context="goal" />
         )}
       </PaneBody>
     </>

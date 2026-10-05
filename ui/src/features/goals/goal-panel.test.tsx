@@ -19,13 +19,13 @@
  * `queries.ts`'s story.
  */
 
-import { screen, within } from "@testing-library/react"
+import { act, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it } from "vitest"
 
 import { type GoalDto, qk, type SessionDto, type TaskDto } from "@/api"
 import { aGoal, aRepository, aSession, aTask } from "@/test/fixtures"
-import { renderScreen } from "@/test/harness"
+import { daemonFetch, errorResponse, renderScreen } from "@/test/harness"
 import { GoalPanel } from "./goal-panel"
 
 const GOAL: GoalDto = aGoal({
@@ -286,4 +286,109 @@ it("renders a goal without a modal dialog", () => {
   mount()
   expect(screen.queryByRole("dialog")).toBeNull()
   expect(screen.getByRole("region", { name: GOAL.title })).toBeDefined()
+})
+
+/**
+ * The shared header's own rows, top to bottom: the title (truncating rather
+ * than wrapping, with the full text as its `title` attribute), then the meta
+ * row of status, id and the two stamps — the goal panel opens on no
+ * breadcrumb, since a goal is never drilled into from anything.
+ */
+it("opens on the shared header: a truncating title, then status, id and stamps", () => {
+  mount()
+
+  const title = screen.getByRole("heading", { name: GOAL.title })
+  expect(title.className).toContain("truncate")
+  expect(title.getAttribute("title")).toBe(GOAL.title)
+
+  const header = title.parentElement?.parentElement
+  if (!header) throw new Error("no header around the title")
+  const [titleRow, meta] = [...header.children]
+  expect(titleRow instanceof HTMLElement && titleRow.contains(title)).toBe(true)
+  if (!(meta instanceof HTMLElement)) throw new Error("no meta row")
+  // Status first, then the id, then the stamps.
+  const text = meta.textContent ?? ""
+  const statusAt = text.indexOf("Active")
+  const idAt = text.indexOf(GOAL.id)
+  const createdAt = text.indexOf("created")
+  expect(statusAt).toBeGreaterThanOrEqual(0)
+  expect(statusAt).toBeLessThan(idAt)
+  expect(idAt).toBeLessThan(createdAt)
+})
+
+it("drills into a session with a breadcrumb back to the goal, and no Back button", async () => {
+  const session = aSession({
+    id: "01JSESS0000000000000ORC01",
+    goal_id: GOAL.id,
+    seat: "orchestrator",
+    task_id: null,
+    task_agent_id: null,
+  })
+  renderScreen(<GoalPanel goalId={GOAL.id} onClose={() => {}} />, {
+    route: `/goals?goal=${GOAL.id}&tab=sessions&session=${session.id}`,
+    seed: (client) => {
+      client.setQueryData(qk.goals.detail(GOAL.id), GOAL)
+      client.setQueryData(qk.sessions.detail(session.id), session)
+    },
+  })
+
+  const crumb = await screen.findByRole("navigation", { name: "Breadcrumb" })
+  expect(within(crumb).getByRole("button", { name: GOAL.title })).toBeDefined()
+  expect(screen.queryByRole("button", { name: /^Back to /, hidden: true })).toBeNull()
+
+  const console = await screen.findByLabelText("Console terminal")
+  const body = console.closest('[data-slot="pane-body"]')
+  const bodyContent = body?.firstElementChild
+  const view = bodyContent?.firstElementChild
+  expect(view?.className).toContain("min-h-0")
+  expect(view?.className).toContain("flex")
+  const tabs = view?.querySelector('[data-slot="tabs"]')
+  expect(tabs?.className).toContain("min-h-0")
+  expect(tabs?.className).toContain("flex")
+  const content = console.closest('[data-slot="tabs-content"]')
+  expect(content?.className).toContain("min-h-0")
+  expect(content?.className).toContain("flex-col")
+  const terminalBox = console.parentElement?.parentElement?.parentElement
+  expect(terminalBox?.className).toContain("min-h-0")
+  expect(terminalBox?.className).toContain("flex")
+  expect(terminalBox?.className).not.toContain("min-h-[24rem]")
+})
+
+it("renders the loading state inside the pane's scrolling body", () => {
+  // Never settling, so the panel stays on its skeleton.
+  daemonFetch.mockImplementation(() => new Promise(() => {}))
+  renderScreen(<GoalPanel goalId={GOAL.id} onClose={() => {}} />, {
+    route: `/goals?goal=${GOAL.id}`,
+  })
+
+  const body = document.querySelector('[data-slot="pane-body"]')
+  if (!body) throw new Error("no pane body around the loading state")
+  expect(body.querySelector('[data-slot="skeleton"]')).not.toBeNull()
+})
+
+it("renders the goal's load failure inside the pane's scrolling body", async () => {
+  daemonFetch.mockImplementation(() => Promise.resolve(errorResponse(500, "internal", "down")))
+  renderScreen(<GoalPanel goalId={GOAL.id} onClose={() => {}} />, {
+    route: `/goals?goal=${GOAL.id}`,
+  })
+
+  const alert = await screen.findByRole("alert")
+  const body = document.querySelector('[data-slot="pane-body"]')
+  if (!body) throw new Error("no pane body around the error state")
+  expect(body.contains(alert)).toBe(true)
+})
+
+it("keeps the cached goal on a failed refetch, with one title and one notice", async () => {
+  const { queryClient } = renderScreen(<GoalPanel goalId={GOAL.id} onClose={() => {}} />, {
+    route: `/goals?goal=${GOAL.id}`,
+    seed: (client) => client.setQueryData(qk.goals.detail(GOAL.id), GOAL),
+  })
+
+  daemonFetch.mockImplementation(() => Promise.resolve(errorResponse(500, "internal", "down")))
+  await act(() => queryClient.refetchQueries({ queryKey: qk.goals.detail(GOAL.id) }))
+
+  // The cached goal is still shown, under its one title, with one notice
+  // above it rather than the panel losing it to the error.
+  expect(screen.getAllByRole("heading", { name: GOAL.title })).toHaveLength(1)
+  expect(await screen.findByText("Could not refresh this goal")).toBeDefined()
 })

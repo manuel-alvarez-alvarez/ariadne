@@ -254,11 +254,13 @@ export function AppShell() {
               <main className="min-h-0 min-w-0 flex-1 overflow-auto p-4">
                 <Outlet />
               </main>
-              <DetailPanels />
             </div>
           </div>
         </div>
 
+        {/* Floats over the screen rather than sitting in its row, so the
+            screen keeps its full width behind an open panel. */}
+        <DetailPanels />
         {/* Draws nothing: the window's title, the sidebar's count and the toast
             for an agent that got stuck while the user was on another screen. It
             is mounted here for the same reason the dialogs are — it has to be
