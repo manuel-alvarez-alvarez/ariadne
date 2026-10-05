@@ -250,6 +250,10 @@ pub struct PickWinnerRequest {
 pub struct RecordPullRequestRequest {
     /// The request's URL, e.g. `https://github.com/owner/repo/pull/12`.
     pub url: String,
+    /// Whether every required approval and check last read green. Defaults
+    /// to false, which records the URL without announcing it to the user.
+    #[serde(default)]
+    pub ready: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

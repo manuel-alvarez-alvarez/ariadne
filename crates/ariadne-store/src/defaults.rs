@@ -60,6 +60,16 @@ pub struct BuiltinSkill {
 /// the launcher loads this skill for every orchestrator session.
 pub const ORCHESTRATION_SKILL: &str = "orchestration";
 
+/// The skill that owns a published request: its name, and the launcher's
+/// marker for the author of a task whose landing publishes one.
+///
+/// Staffed on nobody — the orchestrator never lists it among the skills a
+/// task is created with — and loaded by the launcher itself instead, the way
+/// [`ORCHESTRATION_SKILL`] is: an author whose effective landing is
+/// `pull_request`, or the final task of a `feature_branch` goal, reads it
+/// from its first launch, every resume, and a model switch alike.
+pub const PULL_REQUEST_SKILL: &str = "pull-request";
+
 /// The skills a fresh database is seeded with, grouped by what they are for:
 /// orchestrating a goal, producing work, reviewing it, and operating what it
 /// produced.
@@ -67,8 +77,10 @@ pub const ORCHESTRATION_SKILL: &str = "orchestration";
 /// The catalog is the whole of what an agent can be, so adding a skill here is
 /// adding a kind of work Ariadne knows how to staff. One skill is nobody's to
 /// staff: [`ORCHESTRATION_SKILL`] belongs to the orchestrator's seat, and the
-/// store refuses a task agent staffed on it.
-pub const BUILTIN_SKILLS: [BuiltinSkill; 13] = [
+/// store refuses a task agent staffed on it. [`PULL_REQUEST_SKILL`] stays
+/// staffable — a task of its own may still ask for it by name — but the
+/// launcher adds it on its own to the one author the landing needs it for.
+pub const BUILTIN_SKILLS: [BuiltinSkill; 14] = [
     // Orchestrating.
     builtin(
         ORCHESTRATION_SKILL,
@@ -112,6 +124,10 @@ pub const BUILTIN_SKILLS: [BuiltinSkill; 13] = [
     builtin(
         "conflict-resolution",
         include_str!("../skills/conflict-resolution/SKILL.md"),
+    ),
+    builtin(
+        PULL_REQUEST_SKILL,
+        include_str!("../skills/pull-request/SKILL.md"),
     ),
 ];
 
@@ -408,35 +424,20 @@ Approved. Squash {branch} onto {base_branch} in {repo_path}. `<remote>` is what 
 7. `finish_task` with `git -C {repo_path} rev-parse {base_branch}`."#;
 
 /// What the author of an approved task in a `pull_request` repository is
-/// briefed with, unless the repository was given one of its own: publish it,
-/// then see it through in this session.
+/// briefed with, unless the repository was given one of its own: the task's
+/// own values, and the skill that holds the whole procedure.
 ///
-/// The forge is read off the `origin` remote at that moment — GitHub takes
-/// `gh`, GitLab `glab` — rather than configured anywhere, since the remote is
-/// the answer and cannot go stale.
-///
-/// A published branch is rebased once and never again: the people reading it
-/// are reading commits that have to stay where they are, so a revision is
-/// added on top and the base is merged in. The merge commit costs nothing —
-/// the forge squashes the request when it merges it.
-///
-/// Ariadne never merges a request: a human does, in their own time, on the
-/// forge. So the author only ever waits for that merge, inside this session,
-/// in the same poll and sleep loop it already polls checks and comments
-/// with. The sleep is capped at five minutes for the daemon's sake: a
-/// session that has reported nothing for `QUIET_FLAG_SECS` is flagged as
-/// stalled and the relaunch follows at `QUIET_RELAUNCH_SECS` — 600 s and
-/// 1800 s — while every poll counts as activity.
+/// The procedure used to be spelled out here — the forge, the rebase, the
+/// publish, the poll and sleep loop, the comments, the merge — and now lives
+/// in [`PULL_REQUEST_SKILL`] instead, the one place it is stated for both
+/// this ending and [`LANDING_GOAL_BRANCH`]. The launcher loads that skill for
+/// this author before this briefing ever reaches it (017), so naming it here
+/// is a pointer, not an introduction.
 const LANDING_PULL_REQUEST: &str = r#"# Land task: {task_title}
 
-Approved. Publish {branch} against {base_branch}. `<remote>` is what `git -C {repo_path} remote -v` names. github.com takes `gh`, GitLab `glab`. Neither, or `auth status` shows no account: `fail_task` with the failed check.
+Approved. Land {branch} onto {base_branch} in {repo_path} by a pull or merge request.
 
-1. `git fetch <remote> {base_branch} && git rebase <remote>/{base_branch}`. The only rebase, and it comes before the push.
-2. `git push -u <remote> {branch}`. Then `gh pr create --base {base_branch}` or `glab mr create --target-branch {base_branch}`. Title it by the repository's commit conventions. Fill its template. Call `record_pull_request` with the URL.
-3. Poll it and its comments (`gh pr view`, `glab mr view`). `sleep 300` between polls, never longer in one call. Never end your turn while it is open.
-4. Answer every comment. Commit a change on {branch}. Put it through `request_review`. Push it once approved. A published branch only grows: no `commit --amend`, no rebase, no forced push. If it stops merging cleanly, `git merge --no-edit <remote>/{base_branch}` and push plainly.
-5. Never merge it. Poll it the same way until a human merges it.
-6. Merged: in {repo_path}, fetch and `git merge --ff-only <remote>/{base_branch}`. Then `finish_task` with `git rev-parse {base_branch}`. Closed unmerged: `fail_task` with that."#;
+Read the `pull-request` skill. It holds the forge, the publish, the poll, the readiness notice and the merge."#;
 
 /// What the author of the final task of a `feature_branch` goal is briefed
 /// with: the one request that takes the goal branch onto the base branch.
@@ -448,7 +449,10 @@ Approved. Publish {branch} against {base_branch}. `<remote>` is what `git -C {re
 ///
 /// The author never merges this request either: it waits for a human to
 /// merge it, the same way [`LANDING_PULL_REQUEST`] does, before it fast-
-/// forwards the base branch onto what the human merged.
+/// forwards the base branch onto what the human merged. That whole procedure
+/// is [`PULL_REQUEST_SKILL`]'s now, which covers the final task's own steps
+/// too: no rebase, since every other task already landed on the goal
+/// branch, and the branch's delete, local and remote, once the merge lands.
 ///
 /// The author's worktree holds the goal branch, and git deletes no branch a
 /// worktree has checked out. So the worktree lets go of it before the delete.
@@ -458,16 +462,9 @@ pub fn final_landing_prompt() -> &'static str {
 
 const LANDING_GOAL_BRANCH: &str = r#"# Land goal branch: {task_title}
 
-Approved. Publish the goal branch {branch} against {base_branch}. Work on {branch} itself. `<remote>` is what `git -C {repo_path} remote -v` names. github.com takes `gh`, GitLab `glab`. Neither, or `auth status` shows no account: `fail_task` with the failed check.
+Approved. Land the goal branch {branch} onto {base_branch} in {repo_path} by a pull or merge request. Work on {branch} itself.
 
-1. `git push -u <remote> {branch}`.
-2. `gh pr create --base {base_branch} --head {branch}` or `glab mr create --target-branch {base_branch} --source-branch {branch}`. Title it by the repository's commit conventions. Fill its template. Call `record_pull_request` with the URL.
-3. Poll its checks and comments (`gh pr view`, `glab mr view`). `sleep 300` between polls, never longer in one call. Never end your turn while it is open. Fix a failed check on {branch} and push it.
-4. Answer every comment. Commit a change on {branch} and push it. No amend, no rebase, no forced push. If it stops merging cleanly, `git merge --no-edit <remote>/{base_branch}` and push plainly.
-5. Never merge it. A human merges it. Poll it the same way.
-6. Merged: `git -C {repo_path} fetch <remote> {base_branch}`. Then `merge --ff-only <remote>/{base_branch}` if on {base_branch}. Else `fetch <remote> {base_branch}:{base_branch}`.
-7. `git checkout --detach`. Then `git -C {repo_path} branch -D {branch}` and `git push <remote> --delete {branch}`.
-8. `finish_task` with `git -C {repo_path} rev-parse {base_branch}`. Closed unmerged: `fail_task` with that."#;
+Read the `pull-request` skill. It holds the final task's forge, publish, poll, readiness notice, merge and cleanup."#;
 
 /// What the author of an approved task that lands nothing is briefed with.
 ///
@@ -1164,7 +1161,16 @@ mod tests {
     /// alone with nothing left to notice.
     #[test]
     fn nothing_the_author_still_has_to_run_comes_after_the_call_that_ends_the_task() {
+        // The published endings carry no `finish_task` of their own any
+        // more: they point at `pull-request`, which is checked below on the
+        // same rule, once for both of them.
         for (name, text) in every_landing() {
+            if matches!(
+                name.as_str(),
+                "pull_request landing briefing" | "final landing briefing"
+            ) {
+                continue;
+            }
             let ends = text
                 .find("`finish_task`")
                 .unwrap_or_else(|| panic!("the {name} never ends the task"));
@@ -1178,6 +1184,20 @@ mod tests {
                     assert!(at < ends, "the {name} runs {command} after finish_task");
                 }
             }
+        }
+
+        let skill = default_skill_document(PULL_REQUEST_SKILL).unwrap();
+        let ends = skill
+            .find("`finish_task`")
+            .unwrap_or_else(|| panic!("the {PULL_REQUEST_SKILL} skill never ends the task"));
+        for command in ["Push your branch", "request_review", "record_pull_request"] {
+            let at = skill
+                .find(command)
+                .unwrap_or_else(|| panic!("the {PULL_REQUEST_SKILL} skill never runs {command}"));
+            assert!(
+                at < ends,
+                "the {PULL_REQUEST_SKILL} skill runs {command} after finish_task"
+            );
         }
 
         // And the reason is in the text, where the agent reading it is.
@@ -1513,7 +1533,22 @@ mod tests {
             assert!(direct.contains(step), "the direct briefing has no {step}");
         }
 
-        // Published and answered by the author, merged by a human, on either forge.
+        // The published briefing points at the skill that holds the
+        // procedure now, rather than spelling it out itself.
+        for step in ["`finish_task`", "`gh`", "`glab`"] {
+            assert!(
+                !published.contains(step),
+                "the published briefing still names {step} itself"
+            );
+        }
+        assert!(
+            published.to_lowercase().contains("pull-request` skill"),
+            "the published briefing does not point at the pull-request skill"
+        );
+
+        // Published and answered by the author, merged by a human, on
+        // either forge — the pull-request skill's procedure now.
+        let skill = default_skill_document(PULL_REQUEST_SKILL).unwrap();
         for step in [
             "auth status",
             "gh pr create",
@@ -1524,22 +1559,19 @@ mod tests {
             "Never merge it",
             "`finish_task`",
         ] {
-            assert!(
-                published.contains(step),
-                "the published briefing has no {step}"
-            );
+            assert!(skill.contains(step), "the pull-request skill has no {step}");
         }
 
         // The wait is a poll loop in the author's own session, and the cap
         // on one sleep is what keeps the daemon from relaunching it mid-wait.
-        assert!(published.contains("sleep 300"));
-        assert!(published.contains("never longer in one call"));
+        assert!(skill.contains("300 seconds"));
+        assert!(skill.contains("never longer in one call"));
 
         // A published branch only ever grows.
-        for never in ["forced push", "commit --amend"] {
+        for never in ["force the push", "rewrite"] {
             assert!(
-                published.contains(never),
-                "the published briefing does not forbid {never}"
+                skill.contains(never),
+                "the pull-request skill does not forbid a {never} push"
             );
         }
 
@@ -1552,8 +1584,8 @@ mod tests {
         }
         for squash in ["reset --soft", "merge --ff-only {branch}"] {
             assert!(
-                !published.contains(squash),
-                "the published briefing names {squash}, which is the other strategy's"
+                !skill.contains(squash),
+                "the pull-request skill names {squash}, which is the direct strategy's"
             );
         }
     }
@@ -1564,37 +1596,67 @@ mod tests {
     /// merge it, the fast-forward, the delete and the call that ends the task.
     #[test]
     fn the_final_landing_takes_the_goal_branch_onto_the_base_in_order() {
+        // The briefing carries the goal branch's own values and points at
+        // the skill; it names no git command of its own any more.
         let text = final_landing_prompt();
-        let mut at = 0;
-        for step in [
-            "`git push -u <remote> {branch}`",
-            "`gh pr create --base {base_branch} --head {branch}`",
-            "`glab mr create --target-branch {base_branch} --source-branch {branch}`",
-            "`record_pull_request`",
-            "Fix a failed check on {branch}",
-            "Answer every comment",
-            "Never merge it",
-            "A human merges it",
-            "`git -C {repo_path} fetch <remote> {base_branch}`",
-            "`merge --ff-only <remote>/{base_branch}`",
-            "`git -C {repo_path} branch -D {branch}`",
-            "`git push <remote> --delete {branch}`",
-            "`finish_task` with `git -C {repo_path} rev-parse {base_branch}`",
-        ] {
-            let found = text[at..]
-                .find(step)
-                .unwrap_or_else(|| panic!("the {FINAL_LANDING} has no {step} after its last step"));
-            at += found + step.len();
-        }
-
-        // The goal branch is the one branch it works on: it cuts no other,
-        // and a task branch's squash is not its procedure.
+        assert!(text.contains("Work on {branch} itself."));
+        assert!(text.to_lowercase().contains("pull-request` skill"));
         for other in ["reset --soft", "git rebase", "merge --ff-only {branch}"] {
             assert!(
                 !text.contains(other),
                 "the {FINAL_LANDING} names {other}, which is a task branch's"
             );
         }
+
+        // The skill runs the final task's own steps in order: skip the
+        // rebase, open and record the request, poll and answer it, wait for
+        // a human, fast-forward the base, then clean up the goal branch
+        // before it ends the task.
+        let skill = default_skill_document(PULL_REQUEST_SKILL).unwrap();
+        let mut at = 0;
+        for step in [
+            "skips the rebase",
+            "`record_pull_request`",
+            "Answer every comment",
+            "Fix a failed check",
+            "Never merge it",
+            "fast-forward the base branch",
+            "The final task only",
+            "`finish_task`",
+        ] {
+            let found = skill[at..].find(step).unwrap_or_else(|| {
+                panic!("the {PULL_REQUEST_SKILL} skill has no {step} after its last step")
+            });
+            at += found + step.len();
+        }
+    }
+
+    /// A resumed author with a `pr_url` already on its task skips straight
+    /// to polling: the skill's own step 1 names the step to jump to, and
+    /// that step has to be the poll, or a resumed author reads it as leave
+    /// to open a second request.
+    #[test]
+    fn the_skill_resumes_an_existing_request_at_the_poll_not_a_second_open() {
+        let skill = default_skill_document(PULL_REQUEST_SKILL).unwrap();
+        let marker = "skip to step ";
+        let at = skill
+            .find(marker)
+            .unwrap_or_else(|| panic!("the {PULL_REQUEST_SKILL} skill never resumes by number"));
+        let after = &skill[at + marker.len()..];
+        let digits = after
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(after.len());
+        let step: u32 = after[..digits].parse().unwrap();
+
+        let numbered = format!("\n{step}. ");
+        let body = skill
+            .find(&numbered)
+            .map(|at| &skill[at + numbered.len()..])
+            .unwrap_or_else(|| panic!("the {PULL_REQUEST_SKILL} skill has no step {step}"));
+        assert!(
+            body.starts_with("Poll the request"),
+            "step {step} is not the poll: {body}"
+        );
     }
 
     /// A human merges every request. No landing briefing names the command
@@ -1631,10 +1693,12 @@ mod tests {
         // whole suite is the author's seat text to say, and the run itself is
         // a step of the landing that owns it.
         //
+        // "--ff-only" is left out: the direct landing and the pull-request
+        // skill both fast-forward a branch with it, for two different
+        // endings, and neither restates the other's procedure.
         for marker in [
             "git merge --no-edit",
             "push plainly",
-            "--ff-only",
             "Call `request_review` with a short STE summary",
             "Call `submit_verdict` once per review you are asked for",
             "It starts every task and ends planning",
@@ -2143,7 +2207,9 @@ mod tests {
     /// paragraph.
     #[test]
     fn skill_size_caps_hold() {
-        const TOTAL: usize = 39_000;
+        // Raised from 39_000 for the pull-request skill, which the catalog
+        // gained whole.
+        const TOTAL: usize = 40_600;
         let cap = |name: &str| match name {
             // The orchestration playbook grew a step-4 choice — one author
             // for most tasks, several where the reviewers pick a winner —
@@ -2164,6 +2230,10 @@ mod tests {
             "debugging" => 3400,
             "code-review" => 4000,
             "coding" => 5400,
+            // Covers both landing shapes — an ordinary task's publish and
+            // an unreviewed final task's cleanup — and the readiness
+            // report, which no other skill carries.
+            PULL_REQUEST_SKILL => 4000,
             _ => 2400,
         };
 

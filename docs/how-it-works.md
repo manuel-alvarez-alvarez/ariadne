@@ -29,6 +29,13 @@ each task author works in its own git worktree.
    then opens the pull request from the goal branch to the base branch, makes
    it green, waits for a human to merge it, and deletes the goal branch. The
    daemon removes completed worktrees according to its configuration.
+6. Opening and defending a request is one skill, `pull-request`, that the
+   author of either kind of task above reads on its own: nobody has to staff
+   it. Publishing a request is not the same as it being ready to merge — the
+   skill reports the URL once and reports readiness only once every required
+   approval and check is green, which is what puts the task on `ariadne
+   attention` as waiting for you. A later change or a failed check takes that
+   notice back down until the skill reports ready again.
 
 ## Sessions and attention
 

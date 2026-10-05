@@ -311,7 +311,7 @@ async fn a_pull_request_goal_briefs_every_task_to_land_by_pull_request() {
         let (_worktree, author) = walk_to_approved(&h, &task, &reviewer.id).await;
         let told = h.told(&author.id);
         assert!(
-            told.contains("gh pr create --base main"),
+            told.to_lowercase().contains("pull-request` skill"),
             "{} is not briefed to open a request: {told}",
             task.title
         );
@@ -547,7 +547,7 @@ async fn a_squashed_request_lands_on_the_sha_the_author_fast_forwarded_to() {
     // the base for the author to run by mistake.
     let argv = h.told(&author.id);
     assert!(
-        argv.contains("gh pr create --base main"),
+        argv.to_lowercase().contains("pull-request` skill"),
         "the author was not briefed to publish it: {argv}"
     );
     for squashed in [
@@ -560,9 +560,8 @@ async fn a_squashed_request_lands_on_the_sha_the_author_fast_forwarded_to() {
         );
     }
 
-    // Publishing it is the author's next step, and reporting the URL is
-    // what hands the task to a human: nobody but them can merge a request, so
-    // the strip has to say so. Nothing said it before the report.
+    // Publishing it is the author's next step, but publication alone is not
+    // readiness: nothing says the strip is the user's yet.
     const URL: &str = "https://github.com/owner/repo/pull/12";
     assert_eq!(
         h.attention(&author).await,
@@ -582,8 +581,28 @@ async fn a_squashed_request_lands_on_the_sha_the_author_fast_forwarded_to() {
     assert_eq!(published.pr_url.as_deref(), Some(URL));
     assert_eq!(
         h.attention(&author).await,
+        None,
+        "publication alone does not announce readiness"
+    );
+
+    // Readiness is what hands the task to a human: nobody but them can
+    // merge a request, so the strip has to say so once the author reports
+    // every check and approval green.
+    let ready: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/pull-request", task.id),
+                &author.id,
+                serde_json::json!({"url": URL, "ready": true}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(ready.pr_url.as_deref(), Some(URL));
+    assert_eq!(
+        h.attention(&author).await,
         Some(AttentionReason::WaitingUser),
-        "a published request is the user's to merge, and the strip says so"
+        "a ready request is the user's to merge, and the strip says so"
     );
 
     // And it stays up while the author polls: what it reports is the agent

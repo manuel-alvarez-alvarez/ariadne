@@ -429,6 +429,7 @@ mod tests {
             stalled: stalled as i64,
             merge_commit: None,
             pr_url: None,
+            pr_ready: 0,
             picked_agent_id: None,
             created_at: String::new(),
             updated_at: String::new(),

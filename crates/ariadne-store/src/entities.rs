@@ -345,6 +345,9 @@ pub struct Task {
     /// URL of the pull or merge request this task was published as, once its
     /// author has reported one. None for a task landed directly.
     pub pr_url: Option<String>,
+    /// Whether that request's approvals and checks last read ready to merge.
+    /// Read through [`Task::pr_ready`].
+    pub pr_ready: i64,
     /// The author the reviewers picked, on a task staffed with several. Its
     /// branch is what lands. None for a one-author task, and until the pick
     /// settles.
@@ -356,6 +359,14 @@ pub struct Task {
 impl Task {
     pub fn is_stalled(&self) -> bool {
         self.stalled != 0
+    }
+
+    /// Whether the published request's approvals and checks last read ready
+    /// to merge. False while nothing is published, while a check or an
+    /// approval is pending, and again once a new change or a failed check
+    /// has invalidated an earlier ready read.
+    pub fn pr_ready(&self) -> bool {
+        self.pr_ready != 0
     }
 
     /// How this task ends: the landing of its goal. A row written by a

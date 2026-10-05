@@ -1,12 +1,14 @@
 ---
 id: how-a-task-ends
 status: current
-updated: 2026-10-04
+updated: 2026-10-05
 areas: [daemon, store, prompts]
 commits: [ad268ee0, 305ee064, 45c5e131, 8174c256, 90ac6e67, 524856c7, fdd0c5b6, a69b953f, 29e6d84e, f79c8e15, a4d7da95]
 tests:
   - crates/ariadne-daemon/tests/it/landing_lifecycle.rs
   - crates/ariadne-daemon/tests/it/final_tasks.rs
+  - crates/ariadne-daemon/tests/it/scheduler_attention.rs
+  - crates/ariadne-daemon/tests/it/skill_documents.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-daemon/tests/it/repositories.rs
   - crates/ariadne-store/tests/store.rs
@@ -87,7 +89,10 @@ and `finished` (001).
 6. `pull_request`: rebase once — the only rebase — push the branch, and open
    the request with `gh` (github.com) or `glab` (GitLab), whichever the
    `origin` remote calls for, following the repository's own templates. The
-   URL is recorded with `record_pull_request`.
+   URL is recorded with `record_pull_request`. The whole procedure — the
+   forge, the publish, the poll, the readiness report and the merge — is the
+   `pull-request` skill's (017), and the briefing carries only the task's own
+   values and a pointer to it.
 7. A published branch only grows: no amend, no rebase, no forced push. A base
    that has moved is merged in and pushed plainly.
 8. The author waits on its own published request in its own session, polling
@@ -95,11 +100,21 @@ and `finished` (001).
    session keeps reporting activity (009). It answers every comment, and a
    change somebody asks for is made on the branch and put through the Ariadne
    reviewers before it is pushed (004).
-9. Ariadne never merges the request: a human does, once it is approved and
-   green. The author waits for that merge the same way it waited for the
-   checks and the comments, then fast-forwards the base branch in the
-   primary checkout and reports the sha with `finish_task`. A request closed
-   unmerged ends the task with `fail_task`.
+9. Publishing a request is not the same as it being ready to merge.
+   `record_pull_request` takes a `ready` flag beside the URL, false by
+   default, so the URL alone never raises `waiting_user`. The author sets it
+   true once every required approval and check reads green, which raises
+   `waiting_user` on that one transition — a repeated `true` changes nothing,
+   and a later `false` takes it back down, so a check that fails after an
+   earlier ready report stops claiming the request is the user's and a later
+   ready report raises the notice again. Ariadne never merges the request: a
+   human does, once it is ready. The author waits for that merge the same way
+   it waited for the checks and the comments, then fast-forwards the base
+   branch in the primary checkout and reports the sha with `finish_task`. A
+   request closed unmerged ends the task with `fail_task`. A restart that
+   resumes the author while the request still reads ready raises
+   `waiting_user` again, the same way one that merely published it once did
+   (009).
 10. `feature_branch` ends in a final task per repository: the one task that
     depends directly on every other task of that repository. Two such tasks
     would depend on each other, so at most one matches. It needs no reviewer.
@@ -116,13 +131,11 @@ and `finished` (001).
     comes after is refused before the task exists. That return to `pending`
     is a wait rather than a failed spawn, so no number of them fails the
     final task. It lands on the
-    repository base branch. Its landing briefing is a text of its own: push
-    the goal branch, open the request from it to the base branch with `gh` or
-    `glab` and record it, make every check green with fixes on the goal
-    branch, answer every comment, wait for a human to merge it, fast-forward
-    the base branch in the primary checkout, delete the goal branch local and
-    remote, then `finish_task` with the base branch sha. A cleanup never
-    deletes the goal branch.
+    repository base branch. Its landing briefing is a text of its own, naming
+    the goal branch and the base branch and pointing at the `pull-request`
+    skill (017), which runs the same procedure as an ordinary task's request
+    and additionally deletes the goal branch, local and remote, once the
+    merge lands. A cleanup never deletes the goal branch before that.
 11. `none`: the author is briefed to check that what the task asked for is
     where the task said to put it, and that nothing is left only in the
     worktree, which is thrown away with the task. Then `finish_task`, with no
@@ -209,12 +222,30 @@ and `finished` (001).
   (`defaults.rs::a_late_squash_keeps_what_another_landing_put_on_the_base_branch`),
   and the brief names the merge-base squash and the guard
   (`::each_landing_briefing_is_one_strategy_and_nothing_of_the_other`).
+- The published and final-task briefings carry the task's values and point
+  at the `pull-request` skill rather than spelling out its procedure, which
+  the skill itself carries in order
+  (`defaults.rs::each_landing_briefing_is_one_strategy_and_nothing_of_the_other`,
+  `::the_final_landing_takes_the_goal_branch_onto_the_base_in_order`).
+- Publication alone leaves the task nobody's to merge; a ready report raises
+  `waiting_user` on the change into it, and a repeat of the same report
+  raises nothing again
+  (`landing_lifecycle.rs::a_squashed_request_lands_on_the_sha_the_author_fast_forwarded_to`).
+  A restart of the author while the request still reads ready raises it
+  again
+  (`scheduler_attention.rs::a_published_task_still_says_the_merge_is_the_users_after_its_author_is_resumed`).
+  The store answers whether a readiness report changed anything
+  (`store.rs::a_tasks_readiness_report_says_whether_it_changed`).
 
 ## Sources
 
 `crates/ariadne-store/src/defaults.rs` (`LANDING_*`,
-`final_landing_prompt`), `crates/ariadne-store/src/entities.rs`
-(`Goal::landing`, `Task::landing_prompt_text`),
+`final_landing_prompt`, `PULL_REQUEST_SKILL`),
+`crates/ariadne-store/skills/pull-request/SKILL.md`,
+`crates/ariadne-daemon/src/http/landing.rs` (`record_pull_request`),
+`crates/ariadne-store/src/tasks.rs` (`set_task_pull_request_ready`),
+`crates/ariadne-store/src/entities.rs`
+(`Goal::landing`, `Task::landing_prompt_text`, `Task::pr_ready`),
 `crates/ariadne-store/src/goals.rs` (`goal_landing`,
 `Store::task_landing_branch`), `crates/ariadne-store/src/tasks.rs`
 (`TASK_ROWS`, `Store::final_task`, `Store::start_on_goal_branch`),

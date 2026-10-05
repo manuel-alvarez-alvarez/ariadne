@@ -238,7 +238,11 @@ async fn the_final_task_waits_then_lands_the_goal_branch_on_the_base() {
     .await;
     let told = h.told(&author.id);
     assert!(
-        told.contains(&format!("gh pr create --base main --head {branch}")),
+        told.contains(&format!("Land the goal branch {branch} onto main")),
+        "{told}"
+    );
+    assert!(
+        told.to_lowercase().contains("pull-request` skill"),
         "{told}"
     );
 

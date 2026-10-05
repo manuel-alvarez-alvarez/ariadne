@@ -1908,6 +1908,10 @@ async fn a_published_task_still_says_the_merge_is_the_users_after_its_author_is_
         .set_task_pull_request(&w.task.id, "https://example.test/pull/1")
         .await
         .unwrap();
+    w.store
+        .set_task_pull_request_ready(&w.task.id, true)
+        .await
+        .unwrap();
 
     // One pass does all of it: the sweep retires the vanished agent and raises
     // the disconnect, and the task's own reconciliation puts an author back

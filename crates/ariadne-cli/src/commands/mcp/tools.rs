@@ -159,6 +159,10 @@ pub(super) struct RecordPullRequestReq {
     /// The URL of the pull request, as `gh pr create` or `glab mr create`
     /// printed it.
     pub url: String,
+    /// True once every required approval and check reads green. Ariadne
+    /// tells the user only on this change, and only once.
+    #[serde(default)]
+    pub ready: bool,
 }
 
 /// The two verdicts a review round ends in, as the one verdict tool takes
@@ -627,7 +631,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Report the URL of the pull request or merge request you opened for this task."
+        description = "Report the pull or merge request you opened. Set `ready` once every required approval and check is green."
     )]
     async fn record_pull_request(
         &self,
@@ -635,8 +639,14 @@ impl AriadneMcp {
     ) -> Result<CallToolResult, McpError> {
         let path = self.task_path(None, "/pull-request")?;
         json_result(
-            self.post(&path, &RecordPullRequestRequest { url: req.url })
-                .await?,
+            self.post(
+                &path,
+                &RecordPullRequestRequest {
+                    url: req.url,
+                    ready: req.ready,
+                },
+            )
+            .await?,
         )
     }
 

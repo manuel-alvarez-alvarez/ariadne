@@ -118,23 +118,30 @@ pub(super) async fn verify_merged(
     Ok(())
 }
 
-/// Record the pull or merge request the author opened for a task.
+/// Record the pull or merge request the author opened for a task, and
+/// whether it currently reads ready to merge.
 ///
 /// The URL travels as a tool call, so a published task is either one the UI
-/// and the CLI can point at or one that was never reported.
+/// and the CLI can point at or one that was never reported. Publication
+/// alone is not readiness: a request nobody can merge yet is not a human's
+/// to act on, so `ready` is what the pull-request skill reports once its own
+/// poll of the forge finds every required approval and check green.
 ///
-/// And this is the moment the task becomes the user's: a request nobody can
-/// merge but a human is exactly what `waiting_user` says, so it goes up here,
-/// on the session that opened it — the console they answer in, and the one place
-/// the request can be traced back to. It used to be raised by the message the
-/// landing briefing told the author to write, and a published task with
-/// nothing on the strip is one nobody knows to go and merge.
+/// This is the moment the task becomes the user's: a request ready to merge
+/// but a human is exactly what `waiting_user` says, so it goes up here, on
+/// the session that reported it — the console they answer in, and the one
+/// place the request can be traced back to. It is raised only on the
+/// transition into ready, so a poll that finds nothing changed raises
+/// nothing twice, and it comes back down the moment a later poll reports
+/// `ready: false` — a new change or a failed check that undid an earlier
+/// ready read.
 ///
-/// It stays up until the user acts: an agent's own events never take
-/// `waiting_user` down (`clear_agent_attention`), and the author polling its
-/// request is exactly such an agent. `Scheduler::keep_waiting_user` puts it
-/// back on whatever comes up when that author is restarted, which is what
-/// makes the two halves one flag rather than two.
+/// Once raised that way it stays up until the user acts: an agent's own
+/// events never take `waiting_user` down (`clear_agent_attention`), and the
+/// author polling its request is exactly such an agent.
+/// `Scheduler::keep_waiting_user` puts it back on whatever comes up when
+/// that author is restarted while the request still reads ready, which is
+/// what makes the two halves one flag rather than two.
 #[utoipa::path(post, path = "/v1/tasks/{id}/pull-request", tag = "tasks",
     request_body = RecordPullRequestRequest,
     params(("id" = String, Path, description = "task id")),
@@ -172,10 +179,21 @@ pub(super) async fn record_pull_request(
         ));
     }
     state.store.set_task_pull_request(&id, url).await?;
-    state
+    let became_ready = state
         .store
-        .set_session_attention(&author.id, AttentionReason::WaitingUser)
+        .set_task_pull_request_ready(&id, req.ready)
         .await?;
+    if req.ready && became_ready {
+        state
+            .store
+            .set_session_attention(&author.id, AttentionReason::WaitingUser)
+            .await?;
+    } else if !req.ready && became_ready {
+        state
+            .store
+            .clear_pull_request_ready_attention(&author.id)
+            .await?;
+    }
     state.notify_scheduler(&id);
     let task = state.store.get_task(&id).await?;
     Ok(Json(task_dto_of(&state.store, task).await?))

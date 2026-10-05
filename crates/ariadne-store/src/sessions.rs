@@ -365,6 +365,25 @@ impl Store {
         self.announce_clear(id, cleared).await
     }
 
+    /// Take `waiting_user` down because the readiness it announced is no
+    /// longer true: a new change or a failed check invalidated it.
+    ///
+    /// The one clear allowed to take `waiting_user` itself down: the regular
+    /// agent clears (`clear_agent_attention`, `clear_attention_after_idle`)
+    /// hold it up on purpose, since nothing about an agent working again
+    /// says the request stopped being ready. This one is the author's own
+    /// report that it did.
+    pub async fn clear_pull_request_ready_attention(&self, id: &str) -> Result<()> {
+        let cleared = self
+            .clear_attention(
+                id,
+                " AND attention_reason = ?",
+                &[AttentionReason::WaitingUser.as_str()],
+            )
+            .await?;
+        self.announce_clear(id, cleared).await
+    }
+
     /// Take the attention flag down, narrowed by `and`: the caller's clause
     /// says which reasons its clear is allowed to take with it. Answers the
     /// row it took the flag from, or none for a session with nothing up.

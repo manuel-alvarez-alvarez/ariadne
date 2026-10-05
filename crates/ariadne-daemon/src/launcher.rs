@@ -11,7 +11,9 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow};
 
 use ariadne_core::models::agent_of;
-use ariadne_core::{GoalStatus, PermissionMode, PromptKind, Seat, SessionStatus, TaskStatus};
+use ariadne_core::{
+    GoalStatus, Landing, PermissionMode, PromptKind, Seat, SessionStatus, TaskStatus,
+};
 use ariadne_store::{
     AgentPin, AgentSession, NewAgentEvent, NewSession, Repository, SessionFilter, Store, Task,
     TaskAgent, TaskFilter, author_branch,
@@ -115,7 +117,7 @@ impl Launcher {
         // The orchestrator is staffed by nobody, so its one skill — the
         // playbook — is named in code, and an edit to it reaches the next
         // launch the way any task agent's skill does.
-        let skills = match seat {
+        let mut skills = match seat {
             Seat::Orchestrator => vec![
                 self.store
                     .get_skill(ariadne_store::defaults::ORCHESTRATION_SKILL)
@@ -126,6 +128,21 @@ impl Launcher {
                 None => Vec::new(),
             },
         };
+        if seat == Seat::Author
+            && let Some(task_id) = &session.task_id
+            && self
+                .author_lands_by_pull_request(task_id, &session.task_agent_id)
+                .await?
+            && !skills
+                .iter()
+                .any(|skill| skill.name == ariadne_store::defaults::PULL_REQUEST_SKILL)
+        {
+            skills.push(
+                self.store
+                    .get_skill(ariadne_store::defaults::PULL_REQUEST_SKILL)
+                    .await?,
+            );
+        }
         let run_dir = self.run_dir(&session.id);
         // Written before the adapter plans anything, and by the same call that
         // renders the index, so what the prompt names is what is on disk.
@@ -172,6 +189,34 @@ impl Launcher {
             model,
             effort: session.effort.clone(),
             extra_flags,
+        })
+    }
+
+    /// Whether `task_agent_id` is the author the task's landing needs the
+    /// pull-request skill for: its landing is `pull_request`, or it is the
+    /// final task of a `feature_branch` goal, and it is the author on
+    /// whose branch that landing lands.
+    ///
+    /// A one-author task has nobody else to be, so every launch of its one
+    /// author qualifies. A several-author task names a winner once the pick
+    /// settles ([`Task::picked_agent_id`]); before that there is no wrong
+    /// answer yet, since landing is still goals away, so every author of it
+    /// qualifies too — the losing ones are gone by the time it matters
+    /// ([`crate::http::landing::pick_winner`]).
+    async fn author_lands_by_pull_request(
+        &self,
+        task_id: &str,
+        task_agent_id: &Option<String>,
+    ) -> Result<bool> {
+        let task = self.store.get_task(task_id).await?;
+        let publishes = task.landing() == Landing::PullRequest
+            || self.store.works_on_goal_branch(&task).await?;
+        if !publishes {
+            return Ok(false);
+        }
+        Ok(match &task.picked_agent_id {
+            Some(picked) => task_agent_id.as_deref() == Some(picked.as_str()),
+            None => true,
         })
     }
 

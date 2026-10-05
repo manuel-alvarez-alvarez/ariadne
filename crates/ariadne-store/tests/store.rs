@@ -1530,6 +1530,56 @@ async fn a_task_remembers_the_request_it_was_published_as() {
     assert_eq!(store.get_task(&task.id).await.unwrap().pr_url, None);
 }
 
+/// Whether a published request last read ready to merge: false until a
+/// report says otherwise, true only on the change into it, and false again
+/// once a later report takes it back — so a caller knows from the answer
+/// alone whether to raise or clear the notice, rather than reading the row
+/// twice.
+#[tokio::test]
+async fn a_tasks_readiness_report_says_whether_it_changed() {
+    let w = World::new().await;
+    let (store, task) = (&w.store, &w.task);
+    assert!(!store.get_task(&task.id).await.unwrap().pr_ready());
+
+    // The first ready report is a change.
+    assert!(
+        store
+            .set_task_pull_request_ready(&task.id, true)
+            .await
+            .unwrap()
+    );
+    assert!(store.get_task(&task.id).await.unwrap().pr_ready());
+
+    // A repeat of the same answer changes nothing.
+    assert!(
+        !store
+            .set_task_pull_request_ready(&task.id, true)
+            .await
+            .unwrap()
+    );
+    assert!(store.get_task(&task.id).await.unwrap().pr_ready());
+
+    // A later report that it stopped being ready is a change too.
+    assert!(
+        store
+            .set_task_pull_request_ready(&task.id, false)
+            .await
+            .unwrap()
+    );
+    assert!(!store.get_task(&task.id).await.unwrap().pr_ready());
+
+    // Clearing the request forgets its readiness with it: a retried task
+    // does not start its new request out as already ready.
+    let url = "https://github.com/ariadne/ariadne/pull/14";
+    store.set_task_pull_request(&task.id, url).await.unwrap();
+    store
+        .set_task_pull_request_ready(&task.id, true)
+        .await
+        .unwrap();
+    store.clear_task_pull_request(&task.id).await.unwrap();
+    assert!(!store.get_task(&task.id).await.unwrap().pr_ready());
+}
+
 #[tokio::test]
 async fn sessions_and_events_round_trip() {
     let w = World::new().await;
@@ -3069,6 +3119,60 @@ async fn a_database_from_before_the_squash_says_which_file_to_delete() {
         ariadne_store::pre_squash_database(dir.path().join("nothing.db")).await,
         None
     );
+}
+
+/// A database that only ever ran the squashed `0001_init.sql` — every
+/// database written before `pr_ready` was added — opens on this release the
+/// ordinary way: a new migration adds the column rather than editing the
+/// squashed one, so its checksum, and every database already recorded
+/// against it, stay as they were.
+///
+/// The old chain is run with sqlx's own migrator over a directory holding
+/// only that one file, the same one this release still ships, rather than a
+/// row planted by hand: what a real database of that era has is the
+/// bookkeeping sqlx itself would have written for it.
+#[tokio::test]
+async fn a_database_that_only_ran_the_squashed_migration_upgrades_in_place() {
+    const OLD_INIT: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/migrations/0001_init.sql"
+    ));
+
+    let dir = tempfile::tempdir().unwrap();
+    let old_migrations = dir.path().join("old_migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    std::fs::write(old_migrations.join("0001_init.sql"), OLD_INIT).unwrap();
+
+    let path = dir.path().join("old.db");
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}?mode=rwc", path.display()))
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations)
+        .await
+        .unwrap()
+        .run(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    // This release's own migrations run over it: the squashed one is
+    // unchanged and already recorded, so only the new one applies.
+    let store = Store::open(&path)
+        .await
+        .expect("a pre-pr_ready database failed to upgrade in place");
+
+    // The new column is there, usable, and starts every existing task out
+    // unready rather than refusing the read.
+    let (goal, repo) = seed_goal(&store).await;
+    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    assert!(!store.get_task(&task.id).await.unwrap().pr_ready());
+    assert!(
+        store
+            .set_task_pull_request_ready(&task.id, true)
+            .await
+            .unwrap()
+    );
+    assert!(store.get_task(&task.id).await.unwrap().pr_ready());
 }
 
 // -- token usage ------------------------------------------------------------

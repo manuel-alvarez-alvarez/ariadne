@@ -1211,9 +1211,9 @@ impl super::Scheduler {
     /// the row that went down was flagged with, for the caller that has that
     /// row. The task is the other, and the one that answers where the flag
     /// was already lost — swept aside by a `disconnected` before the resume,
-    /// or left on a superseded row: an approved task with a request recorded
-    /// on it has handed the merge to a human, and no restart of its author
-    /// merges it for them.
+    /// or left on a superseded row: an approved task whose request last read
+    /// ready to merge has handed the merge to a human, and no restart of its
+    /// author merges it for them.
     pub(super) async fn keep_waiting_user(
         &self,
         back: &AgentSession,
@@ -1225,7 +1225,7 @@ impl super::Scheduler {
             && let Some(task_id) = back.task_id.as_deref()
         {
             let task = self.store.get_task(task_id).await?;
-            owed = task.status() == TaskStatus::Approved && task.pr_url.is_some();
+            owed = task.status() == TaskStatus::Approved && task.pr_ready();
         }
         if owed {
             info!(session = %back.id, seat = ?back.seat, "the agent is back on its feet and the user is still owed, raising it again");
