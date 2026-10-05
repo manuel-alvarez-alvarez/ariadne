@@ -11,6 +11,7 @@ tests:
   - ui/src/api/**/*.test.ts
   - ui/src/components/**/*.test.tsx
   - ui/src/lib/**/*.test.ts
+  - ui/src/lib/tauri-config.test.ts
 ---
 
 # Desktop app
@@ -62,7 +63,7 @@ Out: the daemon endpoints themselves (012).
    listing, each shown in its console — skills, repositories, the agents of
    the daemon's ACP registry with their launch flags and the models each may
    be staffed on, Permissions — the AI permission model's settings behind the
-   `ai` permission mode (022) — Stats (rule 36), and a daemon-logs drawer.
+   `ai` permission mode (022) — Stats (rule 37), and a daemon-logs drawer.
 4. Types are generated from the daemon's OpenAPI document, so a DTO change
    that is not reflected here fails the typecheck rather than the app.
 5. One SSE connection serves the whole app, with a dispatcher and reconnect
@@ -86,30 +87,32 @@ Out: the daemon endpoints themselves (012).
    desktop shell matches the window on screen to the entry the installer
    wrote for it (016) — and therefore how the window gets the app's icon
    rather than a generic one.
-10. The primary surface is the macOS Tauri window (WebKit): a layout change is
+10. On macOS, the window accepts the first mouse click, so a click on an
+    inactive window also operates the control under the pointer.
+11. The primary surface is the macOS Tauri window (WebKit): a layout change is
     verified there, not only in a browser.
-11. The app is checked by `npm test`, `npm run typecheck`, `npm run lint` and
+12. The app is checked by `npm test`, `npm run typecheck`, `npm run lint` and
     `npm run check:unused` before a commit.
-12. A goal, task author and task reviewer each name a concrete
+13. A goal, task author and task reviewer each name a concrete
     `<agent>:<model>` before their form can submit, where `<agent>` is a
     registry agent id (011). An empty effort stays valid and uses that
     model's default effort.
-13. The model picker lists concrete catalog entries only, under one heading
+14. The model picker lists concrete catalog entries only, under one heading
     per registry agent, in the order the catalog first names each agent. No
     screen shows an automatic or default model; `auto` is an effort choice
     only.
-14. The client checks only the shape of a pin: one `:`, with text on both
+15. The client checks only the shape of a pin: one `:`, with text on both
     sides of it. Which agents exist is the daemon's answer, so the client
     refuses no agent id by name. Only the first `:` splits the pin; a later
     one is part of the model.
-15. A model the catalog lists takes only the efforts the catalog gives it. A
+16. A model the catalog lists takes only the efforts the catalog gives it. A
     model the catalog does not list takes a free-text effort, as the daemon
     takes any effort that is not blank for such a model (011).
-16. The task form's skill boxes suggest only skills that can staff a task
+17. The task form's skill boxes suggest only skills that can staff a task
     agent; the orchestrator's own playbook is not among them, for the author
     or a reviewer. The skills screen marks that playbook beside its built-in
     mark, staying editable and resettable like any other shipped skill.
-17. The agent activity feed shows each event by its kind in plain words: Tool
+18. The agent activity feed shows each event by its kind in plain words: Tool
     call, Tool result, Permission asked, Permission answered, Agent said, and
     so on for every kind the daemon records; an unknown kind shows its raw name.
     A colored dot from the status ramp — warn for permission events, danger for
@@ -119,7 +122,7 @@ Out: the daemon endpoints themselves (012).
     /tmp/x.png` or `Bash git status`. Consecutive rows of the same kind and the
     same tool fold into one, such as `Tool call · Read /file ×7`, which expands
     to the individual rows. Each row still expands to its raw payload.
-18. The sessions screen lists both kinds of session in one table, newest
+19. The sessions screen lists both kinds of session in one table, newest
     activity first: the title, the status, the work — in one column, the
     seat a session holds as a badge, the goal it is under and the task under
     that, each of which narrows the table to its sessions when picked — the
@@ -190,7 +193,7 @@ Out: the daemon endpoints themselves (012).
     cached page at once and the outside half is fetched again; a
     `session_created` event does the same, for a resume made from the CLI or
     another window.
-19. The goal, task and session panels, and the session drill-downs inside the
+20. The goal, task and session panels, and the session drill-downs inside the
     goal's and the task's own, share one header component: an optional
     breadcrumb row back to the entity this one is drilled into (a goal, for a
     task's or a session's own panel; a task, for one of its sessions), with
@@ -214,7 +217,7 @@ Out: the daemon endpoints themselves (012).
     won — and the reviewer pick itself: which author each reviewer chose. A
     task with one author shows the singular Author fact and no pick,
     unchanged.
-20. Every session is shown in its console, as the CLI draws it: a terminal
+21. Every session is shown in its console, as the CLI draws it: a terminal
     emulator (xterm.js) on the daemon's terminal socket
     (`GET /v1/sessions/{id}/console/terminal`, 008), in which the daemon
     runs the console of 008's rules 22 to 29 itself. The pane sends its
@@ -229,7 +232,7 @@ Out: the daemon endpoints themselves (012).
     panel. Each move closes the old socket before it opens a fresh socket,
     refits the emulator, and sends the new size before input. Focused Escape
     remains console input; Escape outside the terminal closes the modal.
-21. Every key press is sent as a `key` message, the DOM key mapped one to
+22. Every key press is sent as a `key` message, the DOM key mapped one to
     one onto crossterm's code and modifiers — a printable character as
     itself, the named keys by name, F1 to F12 by number, Shift+Tab as
     `back_tab` — and every paste as a `paste` with its text; xterm.js's own
@@ -239,7 +242,7 @@ Out: the daemon endpoints themselves (012).
     the paste event that becomes the `paste` keep working. Option on macOS
     reads the letter off the physical key, so Alt-B is a word left there
     too. Keys typed before the socket is open go nowhere.
-22. The pane takes the app's colours and font from the tokens the rest of
+23. The pane takes the app's colours and font from the tokens the rest of
     the UI is drawn in, in both themes, re-read when the theme switches:
     the six named terminal colours map onto the status ramp. It fills the
     box it is given, refits when that box changes, and the daemon redraws
@@ -247,33 +250,33 @@ Out: the daemon endpoints themselves (012).
     box-drawing glyphs — the input box's rules, a table's rule — are the
     emulator's own and join into one line; without one it keeps the DOM
     renderer, which takes them from the font.
-23. A drop of the socket is retried on the event stream's backoff, and the
+24. A drop of the socket is retried on the event stream's backoff, and the
     pane says it is reconnecting meanwhile. A close the daemon meant — the
     session ended, Ctrl-C twice, Ctrl-D — ends the console instead: the
     pane says the console closed, or that the session ended when the
     daemon's last status frame said so, and a Reopen button opens another.
-24. A session's view has two tabs over one space: the console, open by
+25. A session's view has two tabs over one space: the console, open by
     default, and the agent activity feed. The tab is in the URL (`?tab=`);
     the console's tab is `terminal` on the wire, so an older link still
     opens it. A tab value that is not one of the two opens the console.
     Leaving the console's tab closes its socket, and coming back opens a
     new one.
-25. The sessions list shows the pin the session was launched on
+26. The sessions list shows the pin the session was launched on
     (`<agent>:<model>`): the row cuts the model id in the middle when needed,
     keeps the effort after an `@` readable, and its hint holds the whole pin
     (`ui/src/features/sessions/sessions-list.test.tsx::keeps the effort beside
     a middle-cut model and gives the row a whole-pin hint`).
-26. A row of the attention strip for an agent blocked on a permission or an
+27. A row of the attention strip for an agent blocked on a permission or an
     input prompt opens that session's console with `?focus=`, so the terminal
     takes the keyboard on arrival.
-27. Above the console, a session blocked on a permission or an input prompt
+28. Above the console, a session blocked on a permission or an input prompt
     shows a banner that says where to answer: the picker in the console for
     a permission, the console's input for a question. A session that has
     ended while blocked is told to resume first. No other attention reason
     shows the banner.
-28. The typed keyboard chords (`n`, `g` then a letter, `?`, `[`) are ignored
+29. The typed keyboard chords (`n`, `g` then a letter, `?`, `[`) are ignored
     while a field, an editor or a session's terminal has the keyboard.
-29. The agents screen has one tab per registry agent from `GET /v1/agents`,
+30. The agents screen has one tab per registry agent from `GET /v1/agents`,
     in the daemon's order, named by its agent id. Each tab holds that agent's
     extra flags and the models of the catalog whose `agent_id` is that agent.
     A flag edit replaces the list whole through `PUT /v1/agents/{id}`. A
@@ -284,11 +287,11 @@ Out: the daemon endpoints themselves (012).
     three. The control shows a pending state while the call runs, and a
     failed call is toasted, leaving the screen as it was. Its tooltip also
     says how many models are turned off; each tab keeps its own model count.
-30. A session panel shows a reported context window as `<used> / <size>`,
+31. A session panel shows a reported context window as `<used> / <size>`,
     using the compact spelling of token figures, beside a 4rem meter of how
     much of it is used. It shows no context fact before the agent reports
     one, and it never shows a cost.
-31. Every session outside a cancelled goal offers Switch beside its session
+32. Every session outside a cancelled goal offers Switch beside its session
     actions. Its dialog starts on the session's pin, checks the pin's
     `<agent>:<model>` shape, and posts its model and optional effort to
     `POST /v1/sessions/{id}/switch`. A refusal shows the daemon's message; a
@@ -296,7 +299,7 @@ Out: the daemon endpoints themselves (012).
     A switched session links to the session it continues
     (`ui/src/features/sessions/session-actions.test.tsx`,
     `ui/src/features/sessions/session-detail-view.test.tsx`).
-32. Beside each model's switch, a picker shows its `rank` from `GET
+33. Beside each model's switch, a picker shows its `rank` from `GET
     /v1/models`: `frontier`, `balanced`, `fast`, `local`, or unranked where it
     is `null`. Picking one of the four, or Unranked to clear it, sends `PUT
     /v1/models/rank` with the model's id and the lowercase rank word (or
@@ -308,7 +311,7 @@ Out: the daemon endpoints themselves (012).
     row from the daemon's answer through the same `models` query key a switch
     write uses, and a refusal is toasted rather than swallowed, springing the
     picker back to what the daemon still says.
-33. The Permissions screen's AI tab holds one card, "AI", with an alert at the
+34. The Permissions screen's AI tab holds one card, "AI", with an alert at the
     top of the card for the last error, then a header that is one row: the
     title, a state badge — `disabled`, `installing`, `ready` or `failed` —
     the enabled switch, and a joined button group holding "Test a request"
@@ -373,7 +376,7 @@ Out: the daemon endpoints themselves (012).
     (`ui/src/features/repositories/repository-form-dialog.test.tsx::puts an
     ai_disabled refusal on the permission mode field, pointing at the
     Permissions screen`).
-34. The Permissions screen's Learned tab lists every learned approval
+35. The Permissions screen's Learned tab lists every learned approval
     (`GET /v1/permissions/learned`, filtered by `?repository=` when the URL
     carries one), its actions column pinned to the trailing edge the way
     `models/model-table.tsx`'s Available column is: the repository by its
@@ -431,7 +434,7 @@ Out: the daemon endpoints themselves (012).
     and the tags where the model was called`,
     `ui/src/events/dispatch.test.ts::patches created and updated details and
     refetches lists`).
-35. The AI tab's card carries a "Test a request" button in its header button
+36. The AI tab's card carries a "Test a request" button in its header button
     group, beside Refresh.
     It opens a wide dialog for `POST /v1/permissions/ai/test`: Title, Kind,
     Input (JSON, at least six rows), Options (one name per line), Locations
@@ -490,7 +493,7 @@ Out: the daemon endpoints themselves (012).
     `ui/src/features/permissions/ai-card.test.tsx::draws the marker and the
     label from a test result`, `::relabels the same danger once a threshold
     moves, with no second call`, `::draws no marker for an ai_error answer`).
-36. The Stats screen is at `#/stats`, titled `Stats`, last in the sidebar
+37. The Stats screen is at `#/stats`, titled `Stats`, last in the sidebar
     (023). Its header holds a `since` selector — all time, 24 hours, 7 days,
     30 days — and a repository selector, both kept in the URL as `?since=`
     and `?repo=`. The screen is a dashboard. It leads with a `Key figures`
@@ -1004,6 +1007,8 @@ Out: the daemon endpoints themselves (012).
   tooltip of the shell's header title`,
   `::renders its actions in place, with no heading, when there is no shell to
   hand them to`).
+- On macOS, a click on an inactive window operates the control under the pointer
+  (`ui/src/lib/tauri-config.test.ts::lets the first click operate a control on an inactive window`).
 - The rail drops the wordmark for the mark alone, and the connection status
   for the dot alone, each named by its own tooltip
   (`ui/src/components/app-shell.test.tsx::replaces the wordmark with the
