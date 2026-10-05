@@ -14,7 +14,7 @@ import { StatSection } from "./stat-section"
 import { StatTile, StatTiles } from "./stat-tiles"
 
 /** `GET /v1/stats/attention`, narrowed by the screen's filter. */
-function attentionStatsQueryOptions(filter: StatsFilter) {
+export function attentionStatsQueryOptions(filter: StatsFilter) {
   return queryOptions({
     queryKey: qk.stats.attention(filter),
     queryFn: (): Promise<AttentionStatsDto> =>

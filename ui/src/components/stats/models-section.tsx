@@ -13,7 +13,7 @@ import { StatSection } from "./stat-section"
 import { StatTable } from "./stat-table"
 
 /** `GET /v1/stats/models`, narrowed by the screen's filter. */
-export function modelsStatsQueryOptions(filter: StatsFilter) {
+function modelsStatsQueryOptions(filter: StatsFilter) {
   return queryOptions({
     queryKey: qk.stats.models(filter),
     queryFn: (): Promise<ModelStatsDto> =>

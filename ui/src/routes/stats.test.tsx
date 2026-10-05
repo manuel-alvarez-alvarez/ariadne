@@ -36,6 +36,7 @@ const EMPTY_BODIES: Record<string, unknown> = {
     sessions_failed: 0,
     sessions_stalled: 0,
     exhaustions: 0,
+    interventions: { permissions: 0, questions: 0, stalls: 0, total: 0, person_secs: 0 },
   },
 }
 
@@ -93,7 +94,7 @@ describe("StatsPage", () => {
     }
   })
 
-  it("leads with the key figures, read off the work, spend and models answers", async () => {
+  it("leads with the key figures, read off the work, spend and attention answers", async () => {
     const bodies: Record<string, unknown> = {
       "/v1/stats/work": {
         totals: { tasks_finished: 7, finish_rate: 0.7, median_goal_lead_time_secs: 3_600 },
@@ -102,11 +103,13 @@ describe("StatsPage", () => {
       "/v1/stats/spend": {
         totals: { sessions: 0, input_tokens: 1_200_000, output_tokens: 300_000 },
       },
-      "/v1/stats/models": {
-        items: [
-          { seat: "other", model: "a", interventions: { total: 4, person_secs: 600 } },
-          { seat: "other", model: "b", interventions: { total: 3, person_secs: 1_200 } },
-        ],
+      "/v1/stats/attention": {
+        permissions: { total: 0, person_share: 0, by_decider: [] },
+        flags: [],
+        sessions_failed: 0,
+        sessions_stalled: 0,
+        exhaustions: 0,
+        interventions: { permissions: 4, questions: 2, stalls: 1, total: 7, person_secs: 1_800 },
       },
     }
     daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {

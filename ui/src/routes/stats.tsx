@@ -19,8 +19,8 @@ import { useSearchParams } from "react-router-dom"
 
 import type { StatsFilter } from "@/api"
 import { PageHeader } from "@/components/page-header"
-import { AttentionSection } from "@/components/stats/attention-section"
-import { ModelsSection, modelsStatsQueryOptions } from "@/components/stats/models-section"
+import { AttentionSection, attentionStatsQueryOptions } from "@/components/stats/attention-section"
+import { ModelsSection } from "@/components/stats/models-section"
 import { SpendSection, spendStatsQueryOptions } from "@/components/stats/spend-section"
 import { StatTile, StatTiles } from "@/components/stats/stat-tiles"
 import { TimeSection } from "@/components/stats/time-section"
@@ -51,18 +51,16 @@ const NONE = "—"
 
 /**
  * The key figures over every section: three off the work family, the tokens
- * the spend family counted, and the interventions and person time of the
- * models family summed over its rows. Each reads `—` until its answer is in;
- * a failed read says so in its own section below.
+ * the spend family counted, and the interventions and person time off the
+ * attention family. Each reads `—` until its answer is in; a failed read
+ * says so in its own section below.
  */
 function KeyFigures({ filter }: { filter: StatsFilter }) {
   const work = useQuery(workStatsQueryOptions(filter)).data?.totals
   const spend = useQuery(spendStatsQueryOptions(filter)).data?.totals
-  const models = useQuery(modelsStatsQueryOptions(filter)).data?.items
-  const sum = (pick: (row: NonNullable<typeof models>[number]) => number) =>
-    models?.reduce((total, row) => total + pick(row), 0)
-  const interventions = sum((row) => row.interventions.total)
-  const personSecs = sum((row) => row.interventions.person_secs)
+  const attention = useQuery(attentionStatsQueryOptions(filter)).data
+  const interventions = attention?.interventions.total
+  const personSecs = attention?.interventions.person_secs
   return (
     <section aria-label="Key figures">
       <StatTiles>

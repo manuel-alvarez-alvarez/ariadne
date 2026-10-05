@@ -12,6 +12,19 @@ pub struct AttentionStatsDto {
     pub sessions_failed: u64,
     pub sessions_stalled: u64,
     pub exhaustions: u64,
+    pub interventions: AttentionInterventionsDto,
+}
+
+/// The times a person stepped in: permissions decided at the console,
+/// questions and stalls. `person_secs` is how long those waited on the
+/// person.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct AttentionInterventionsDto {
+    pub permissions: u64,
+    pub questions: u64,
+    pub stalls: u64,
+    pub total: u64,
+    pub person_secs: f64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]

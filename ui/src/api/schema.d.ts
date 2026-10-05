@@ -1403,6 +1403,23 @@ export interface components {
             reason: string;
         };
         /**
+         * @description The times a person stepped in: permissions decided at the console,
+         *     questions and stalls. `person_secs` is how long those waited on the
+         *     person.
+         */
+        AttentionInterventionsDto: {
+            /** Format: int64 */
+            permissions: number;
+            /** Format: double */
+            person_secs: number;
+            /** Format: int64 */
+            questions: number;
+            /** Format: int64 */
+            stalls: number;
+            /** Format: int64 */
+            total: number;
+        };
+        /**
          * @description Why a live agent session needs the user's attention.
          *
          *     Orthogonal to [`SessionStatus`]: a session waiting on a permission prompt
@@ -1420,6 +1437,16 @@ export interface components {
             exhaustions: number;
             /** @default [] */
             flags: components["schemas"]["AttentionFlagDto"][];
+            /**
+             * @default {
+             *       "permissions": 0,
+             *       "questions": 0,
+             *       "stalls": 0,
+             *       "total": 0,
+             *       "person_secs": 0
+             *     }
+             */
+            interventions: components["schemas"]["AttentionInterventionsDto"];
             /**
              * @default {
              *       "total": 0,

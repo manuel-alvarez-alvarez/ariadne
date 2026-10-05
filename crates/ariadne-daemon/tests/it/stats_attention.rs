@@ -77,3 +77,54 @@ async fn the_attention_stat_counts_a_console_reply_and_a_cleared_flag() {
         1
     );
 }
+
+/// A console permission and a cleared question each count as an
+/// intervention, and the response carries the `interventions` object.
+#[tokio::test]
+async fn the_attention_stat_answers_the_interventions_object() {
+    use ariadne_api::stats::AttentionInterventionsDto;
+    use ariadne_store::NewStatFact;
+
+    let h = harness().await;
+    let fact = |kind: &str, data: serde_json::Value| NewStatFact {
+        kind: kind.into(),
+        repo_id: Some("repo".into()),
+        goal_id: None,
+        task_id: None,
+        session_id: None,
+        launch_id: None,
+        seat: None,
+        model: None,
+        effort: None,
+        skills: vec![],
+        data,
+    };
+    for f in [
+        fact(
+            "permission",
+            json!({"decided_by": "console", "wait_ms": 4_000}),
+        ),
+        fact(
+            "attention",
+            json!({"reason": "waiting_input", "wait_secs": 20}),
+        ),
+        fact(
+            "attention",
+            json!({"reason": "waiting_permission", "wait_secs": 9_000}),
+        ),
+    ] {
+        h.store.record_fact(f).await.unwrap();
+    }
+
+    let stats: AttentionStatsDto = h.get("/v1/stats/attention?repo=repo").await;
+    assert_eq!(
+        stats.interventions,
+        AttentionInterventionsDto {
+            permissions: 1,
+            questions: 1,
+            stalls: 0,
+            total: 2,
+            person_secs: 24.0,
+        }
+    );
+}

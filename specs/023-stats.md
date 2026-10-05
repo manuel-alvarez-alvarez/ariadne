@@ -257,9 +257,9 @@ decided, not a change to how they decide it.
     one `{ since, repo }`. The screen is a dashboard: it leads with a `Key
     figures` row — tasks finished, finish rate and median goal lead time off
     the work family, total tokens (input and output) off the spend family,
-    and interventions and person time, the models family's
-    `interventions.total` and `interventions.person_secs` summed over its
-    rows — each figure reading `—` until its answer is in.
+    and interventions and person time off the attention family's own
+    `interventions.total` and `interventions.person_secs` — each figure
+    reading `—` until its answer is in.
 35. Under the key figures, the screen renders five sections in this order:
     `ModelsSection`, `WorkSection`, `TimeSection`, `SpendSection` and
     `AttentionSection` — `ModelsSection` ahead of rule 28's own order — laid
@@ -461,6 +461,19 @@ share answered by `console`, and reports each supported flag reason from
 clears plus ending sessions that carried it. It also counts failed sessions,
 stalled ending sessions and exhausted switches. Every count and mean obeys the
 shared `since` and `repo` filter.
+
+The response also carries `interventions`, the times a person stepped in,
+by the same rules the models family uses for its own per-row count:
+`permissions` counts `permission` facts with `decided_by = console`;
+`questions` counts `attention` facts with reason `waiting_input` or
+`waiting_user`; `stalls` counts `attention` facts with reason `stalled` or
+`agent_error`; an `attention` fact with reason `waiting_permission` counts
+nowhere; `total` is the sum of the three counts; `person_secs` sums
+`wait_ms / 1000` of those permissions and `wait_secs` of those attention
+facts. The time and repository filters apply before the counts.
+`ariadne stats attention` prints the interventions total and the person time
+alongside the family's other totals, and the Stats screen's key figures (rule
+34) read the two straight off this object.
 
 ## Acceptance criteria
 
@@ -684,6 +697,18 @@ shared `since` and `repo` filter.
 - The route, command and screen expose the family, including its decider and
   flag charts (`stats_attention.rs`, `commands/stats/attention.rs`,
   `attention-section.test.tsx`).
+- Interventions count permissions, questions and stalls, exclude
+  `waiting_permission`, sum `person_secs`, and obey both filters
+  (`stats/attention.rs::tests::interventions_count_permissions_questions_and_stalls_and_exclude_waiting_permission`,
+  `::interventions_honour_since_and_repo_id`).
+- `GET /v1/stats/attention` answers the `interventions` object
+  (`stats_attention.rs::the_attention_stat_answers_the_interventions_object`).
+- `ariadne stats attention` prints the interventions total and the person
+  time (`commands/stats/attention.rs::tests::the_kv_lines_carry_the_interventions_total_and_the_person_time`).
+- The Stats screen's Interventions and Person time tiles read off the
+  attention family, not the models family
+  (`stats.test.tsx` "leads with the key figures, read off the work, spend and
+  attention answers").
 
 ## Sources
 

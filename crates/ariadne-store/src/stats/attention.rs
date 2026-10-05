@@ -23,6 +23,19 @@ pub struct AttentionStats {
     pub sessions_failed: u64,
     pub sessions_stalled: u64,
     pub exhaustions: u64,
+    pub interventions: AttentionInterventions,
+}
+
+/// The times a person stepped in: permissions decided at the console,
+/// questions and stalls. `person_secs` is how long those waited on the
+/// person.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AttentionInterventions {
+    pub permissions: u64,
+    pub questions: u64,
+    pub stalls: u64,
+    pub total: u64,
+    pub person_secs: f64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -87,6 +100,10 @@ impl Store {
         let mut sessions_failed = 0;
         let mut sessions_stalled = 0;
         let mut exhaustions = 0;
+        let mut intervention_permissions = 0;
+        let mut intervention_questions = 0;
+        let mut intervention_stalls = 0;
+        let mut intervention_person_secs = 0.0;
 
         for (kind, data) in facts {
             let Ok(data) = serde_json::from_str::<Value>(&data) else {
@@ -108,6 +125,8 @@ impl Store {
                     }
                     if decided_by == "console" {
                         person_answers += 1;
+                        intervention_permissions += 1;
+                        intervention_person_secs += number(&data, "wait_ms") as f64 / 1_000.0;
                     }
                 }
                 "attention" => {
@@ -117,6 +136,17 @@ impl Store {
                         totals.raised += 1;
                         totals.wait_secs += number(&data, "wait_secs");
                         totals.clears += 1;
+                    }
+                    match string(&data, "reason") {
+                        Some("waiting_input" | "waiting_user") => {
+                            intervention_questions += 1;
+                            intervention_person_secs += number(&data, "wait_secs") as f64;
+                        }
+                        Some("stalled" | "agent_error") => {
+                            intervention_stalls += 1;
+                            intervention_person_secs += number(&data, "wait_secs") as f64;
+                        }
+                        _ => {}
                     }
                 }
                 "session_ended" => {
@@ -172,6 +202,13 @@ impl Store {
             sessions_failed,
             sessions_stalled,
             exhaustions,
+            interventions: AttentionInterventions {
+                permissions: intervention_permissions,
+                questions: intervention_questions,
+                stalls: intervention_stalls,
+                total: intervention_permissions + intervention_questions + intervention_stalls,
+                person_secs: intervention_person_secs,
+            },
         })
     }
 }
@@ -189,5 +226,146 @@ fn mean(sum: u64, count: u64) -> f64 {
         0.0
     } else {
         sum as f64 / count as f64
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::NewStatFact;
+    use serde_json::json;
+
+    async fn fact(store: &Store, kind: &str, repo: &str, data: Value) {
+        store
+            .record_fact(NewStatFact {
+                kind: kind.into(),
+                model: None,
+                seat: None,
+                repo_id: Some(repo.into()),
+                task_id: None,
+                goal_id: None,
+                session_id: None,
+                launch_id: None,
+                effort: None,
+                skills: vec![],
+                data,
+            })
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn interventions_count_permissions_questions_and_stalls_and_exclude_waiting_permission() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path().join("stats.db")).await.unwrap();
+        fact(
+            &store,
+            "permission",
+            "repo",
+            json!({"decided_by": "console", "wait_ms": 4_000}),
+        )
+        .await;
+        fact(
+            &store,
+            "permission",
+            "repo",
+            json!({"decided_by": "console", "wait_ms": 6_000}),
+        )
+        .await;
+        fact(
+            &store,
+            "permission",
+            "repo",
+            json!({"decided_by": "ai", "wait_ms": 50_000}),
+        )
+        .await;
+        fact(
+            &store,
+            "attention",
+            "repo",
+            json!({"reason": "waiting_input", "wait_secs": 20}),
+        )
+        .await;
+        fact(
+            &store,
+            "attention",
+            "repo",
+            json!({"reason": "waiting_user", "wait_secs": 30}),
+        )
+        .await;
+        fact(
+            &store,
+            "attention",
+            "repo",
+            json!({"reason": "stalled", "wait_secs": 100}),
+        )
+        .await;
+        fact(
+            &store,
+            "attention",
+            "repo",
+            json!({"reason": "agent_error", "wait_secs": 200}),
+        )
+        .await;
+        fact(
+            &store,
+            "attention",
+            "repo",
+            json!({"reason": "waiting_permission", "wait_secs": 9_000}),
+        )
+        .await;
+
+        let stats = store
+            .attention_stats(&StatsFilter::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            stats.interventions,
+            AttentionInterventions {
+                permissions: 2,
+                questions: 2,
+                stalls: 2,
+                total: 6,
+                person_secs: 360.0,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn interventions_honour_since_and_repo_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path().join("stats.db")).await.unwrap();
+        fact(
+            &store,
+            "permission",
+            "repo",
+            json!({"decided_by": "console", "wait_ms": 1_000}),
+        )
+        .await;
+        fact(
+            &store,
+            "attention",
+            "elsewhere",
+            json!({"reason": "stalled", "wait_secs": 5}),
+        )
+        .await;
+        sqlx::query("UPDATE stat_facts SET created_at = '2026-01-01T00:00:00.000Z'")
+            .execute(store.w())
+            .await
+            .unwrap();
+
+        let filter = StatsFilter {
+            repo_id: Some("repo".into()),
+            since: None,
+        };
+        let stats = store.attention_stats(&filter).await.unwrap();
+        assert_eq!(stats.interventions.total, 1);
+
+        let filter = StatsFilter {
+            repo_id: None,
+            since: Some("2026-02-01T00:00:00Z".parse().unwrap()),
+        };
+        let stats = store.attention_stats(&filter).await.unwrap();
+        assert_eq!(stats.interventions.total, 0);
     }
 }

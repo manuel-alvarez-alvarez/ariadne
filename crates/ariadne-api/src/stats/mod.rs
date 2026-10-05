@@ -8,7 +8,8 @@ mod time;
 mod work;
 
 pub use attention::{
-    AttentionFlagDto, AttentionStatsDto, PermissionDeciderDto, PermissionStatsDto,
+    AttentionFlagDto, AttentionInterventionsDto, AttentionStatsDto, PermissionDeciderDto,
+    PermissionStatsDto,
 };
 pub use models::{
     AuthorModelStatDto, ModelInterventionsDto, ModelStatDto, ModelStatsDto, ReviewerModelStatDto,

@@ -5,7 +5,8 @@ use chrono::Utc;
 use utoipa::OpenApi;
 
 use ariadne_api::stats::{
-    AttentionFlagDto, AttentionStatsDto, PermissionDeciderDto, PermissionStatsDto, StatsQuery,
+    AttentionFlagDto, AttentionInterventionsDto, AttentionStatsDto, PermissionDeciderDto,
+    PermissionStatsDto, StatsQuery,
 };
 use ariadne_store::AttentionStats;
 
@@ -21,7 +22,8 @@ use crate::http::error::{ApiResult, Json};
         AttentionStatsDto,
         PermissionStatsDto,
         PermissionDeciderDto,
-        AttentionFlagDto
+        AttentionFlagDto,
+        AttentionInterventionsDto
     ))
 )]
 pub(super) struct AttentionApi;
@@ -69,5 +71,12 @@ fn dto(stats: AttentionStats) -> AttentionStatsDto {
         sessions_failed: stats.sessions_failed,
         sessions_stalled: stats.sessions_stalled,
         exhaustions: stats.exhaustions,
+        interventions: AttentionInterventionsDto {
+            permissions: stats.interventions.permissions,
+            questions: stats.interventions.questions,
+            stalls: stats.interventions.stalls,
+            total: stats.interventions.total,
+            person_secs: stats.interventions.person_secs,
+        },
     }
 }
