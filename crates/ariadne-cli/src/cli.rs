@@ -527,7 +527,6 @@ const LISTINGS: &[&str] = &[
     "stats models",
     "stats spend",
     "stats time",
-    "stats tools",
     "stats work",
     "task history",
     "task ls",

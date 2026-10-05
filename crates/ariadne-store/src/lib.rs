@@ -40,9 +40,8 @@ pub use sessions::{NewSession, SessionFilter};
 pub use skills::NewSkill;
 pub use stats::{
     AttentionStats, AuthorModelStat, Bucket, LeadTime, ModelInterventions, ModelSpend, ModelStat,
-    ModelStats, NewStatFact, OtherTools, PerFinishedTask, PersonWait, ReviewerModelStat,
-    SpendBucket, SpendStats, SpendTotals, StatsFilter, StatusTime, TimeStats, ToolKindStats,
-    ToolStatRow, ToolStats, WorkStats,
+    ModelStats, NewStatFact, PerFinishedTask, PersonWait, ReviewerModelStat, SpendBucket,
+    SpendStats, SpendTotals, StatsFilter, StatusTime, TimeStats, WorkStats,
 };
 pub use task_agents::NewTaskAgent;
 pub use tasks::{NewTask, TaskFilter, TaskUpdate, author_branch};

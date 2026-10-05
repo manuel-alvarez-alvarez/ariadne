@@ -471,8 +471,8 @@ Out: the daemon endpoints themselves (012).
 36. The Stats screen is at `#/stats`, titled `Stats`, last in the sidebar
     (023). Its header holds a `since` selector — all time, 24 hours, 7 days,
     30 days — and a repository selector, both kept in the URL as `?since=`
-    and `?repo=`. The screen passes `{ since, repo }` to six sections, in
-    order: Models, Work, Time, Spend, Attention and Tools, each
+    and `?repo=`. The screen passes `{ since, repo }` to five sections, in
+    order: Models, Work, Time, Spend and Attention, each
     `src/components/stats/<family>-section.tsx`. Every section draws through
     the shared `StatSection`: its heading, `text-sm font-medium`, the one
     sentence of the question it answers, the read's error or skeleton, and
@@ -509,9 +509,9 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/sessions/session-panel.test.tsx::gives the console view the remaining pane height`).
 - A console modal handles Escape without closing the surrounding pane
   (`ui/src/features/sessions/session-panel.test.tsx::keeps modal Escape separate from the pane close`).
-- The Stats screen renders its six sections in order, and asks every family
+- The Stats screen renders its five sections in order, and asks every family
   with the filters in its URL under the key `qk` names
-  (`ui/src/routes/stats.test.tsx::renders the six sections in order, under
+  (`ui/src/routes/stats.test.tsx::renders the five sections in order, under
   one heading style`, `::asks every family with the filters in its URL,
   under the key qk names`); a
   task or a session update invalidates the stats

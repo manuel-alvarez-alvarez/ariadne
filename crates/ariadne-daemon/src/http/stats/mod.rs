@@ -2,13 +2,12 @@
 //! family, each narrowed by the same [`StatsQuery`].
 //!
 //! Each family answers from a file of its own, which owns its handler and its
-//! part of the API document. This file registers the six once.
+//! part of the API document. This file registers the five once.
 
 mod attention;
 mod models;
 mod spend;
 mod time;
-mod tools;
 mod work;
 
 use axum::Router;
@@ -22,7 +21,7 @@ use ariadne_store::StatsFilter;
 use super::AppState;
 use super::error::{ApiError, ApiResult};
 
-/// The six stats routes, in the order the screen shows the families.
+/// The five stats routes, in the order the screen shows the families.
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
         .route("/v1/stats/work", get(work::work))
@@ -30,17 +29,15 @@ pub(super) fn routes() -> Router<AppState> {
         .route("/v1/stats/spend", get(spend::spend))
         .route("/v1/stats/models", get(models::models))
         .route("/v1/stats/attention", get(attention::attention))
-        .route("/v1/stats/tools", get(tools::tools))
 }
 
-/// The six families' paths and schemas, merged into one document.
+/// The five families' paths and schemas, merged into one document.
 pub(super) fn openapi() -> utoipa::openapi::OpenApi {
     [
         time::TimeApi::openapi(),
         spend::SpendApi::openapi(),
         models::ModelsApi::openapi(),
         attention::AttentionApi::openapi(),
-        tools::ToolsApi::openapi(),
     ]
     .into_iter()
     .fold(

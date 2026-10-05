@@ -19,7 +19,6 @@ import { AttentionSection } from "@/components/stats/attention-section"
 import { ModelsSection } from "@/components/stats/models-section"
 import { SpendSection } from "@/components/stats/spend-section"
 import { TimeSection } from "@/components/stats/time-section"
-import { ToolsSection } from "@/components/stats/tools-section"
 import { WorkSection } from "@/components/stats/work-section"
 import {
   Select,
@@ -113,7 +112,6 @@ export function StatsPage() {
         <TimeSection filter={filter} />
         <SpendSection filter={filter} />
         <AttentionSection filter={filter} />
-        <ToolsSection filter={filter} />
       </div>
     </div>
   )

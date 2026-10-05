@@ -3,7 +3,7 @@
 /**
  * The Stats screen against a stubbed daemon.
  *
- * What is pinned: the screen draws the six families in order, each a section
+ * What is pinned: the screen draws the five families in order, each a section
  * under its own heading, asks each `GET /v1/stats/<family>` with the filters
  * in its URL, and keeps each answer under the key `qk` names, which is the
  * one the dispatcher invalidates. What each section draws is its own test's.
@@ -17,18 +17,17 @@ import { aRepository } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { StatsPage } from "./stats"
 
-/** The six families, in the order the screen shows them. */
-const FAMILIES = ["models", "work", "time", "spend", "attention", "tools"] as const
+/** The five families, in the order the screen shows them. */
+const FAMILIES = ["models", "work", "time", "spend", "attention"] as const
 
 /**
- * `tools` and `attention` each answer a shaped DTO rather than the bare `{}`
+ * `attention` answers a shaped DTO rather than the bare `{}`
  * the rest still do — an empty one holds nothing to show, the same as `{}`
  * does for them. Their sections read their own fields regardless of what
  * route this screen test is pinning, so their answer cannot be the empty
  * object either.
  */
 const EMPTY_BODIES: Record<string, unknown> = {
-  "/v1/stats/tools": { calls: 0, errors: 0, tools: 0, by_kind: [], top: [], other: {} },
   "/v1/stats/attention": {
     permissions: { total: 0, person_share: 0, by_decider: [] },
     flags: [],
@@ -57,7 +56,7 @@ beforeEach(() => {
 })
 
 describe("StatsPage", () => {
-  it("renders the six sections in order, under one heading style", async () => {
+  it("renders the five sections in order, under one heading style", async () => {
     renderScreen(<StatsPage />, { route: "/stats" })
 
     const headings = await screen.findAllByRole("heading", { level: 2 })
@@ -67,7 +66,6 @@ describe("StatsPage", () => {
       "Time",
       "Spend",
       "Attention",
-      "Tools",
     ])
     for (const heading of headings) {
       expect(heading.className).toBe("text-sm font-medium")
@@ -79,8 +77,8 @@ describe("StatsPage", () => {
       route: "/stats?since=7d&repo=01JREPO",
     })
 
-    await within(await screen.findByRole("region", { name: "Tools" })).findByText(
-      "No tool ran in this span.",
+    await within(await screen.findByRole("region", { name: "Attention" })).findByText(
+      "Nothing needed you in this span.",
     )
     const filter = { since: "7d", repo: "01JREPO" }
     for (const family of FAMILIES) {

@@ -276,10 +276,9 @@ struct Turn {
     available_commands: Option<AvailableCommands>,
 }
 
-/// An open tool call and the moment its ACP opening update arrived.
+/// An open tool call.
 struct OpenToolCall {
     call: Value,
-    started_at: Instant,
 }
 
 impl Turn {
@@ -1642,13 +1641,11 @@ impl RuntimeIncoming {
             Some("tool_call") => {
                 self.end_text().await;
                 let (id, call) = tool_call_of(&update);
-                self.turn.lock().await.tools.insert(
-                    id,
-                    OpenToolCall {
-                        call: call.clone(),
-                        started_at: Instant::now(),
-                    },
-                );
+                self.turn
+                    .lock()
+                    .await
+                    .tools
+                    .insert(id, OpenToolCall { call: call.clone() });
                 self.sink
                     .emit("pre_tool_use", tool_payload(session_id, &call))
                     .await;
@@ -1664,37 +1661,24 @@ impl RuntimeIncoming {
                         .entry(id.clone())
                         .or_insert_with(|| OpenToolCall {
                             call: json!({"toolCallId": id}),
-                            started_at: Instant::now(),
                         });
                     merge_tool_call(&mut call.call, &update);
                     match terminal {
-                        true => turn.tools.remove(&id).unwrap_or(OpenToolCall {
-                            call: Value::Null,
-                            started_at: Instant::now(),
-                        }),
+                        true => turn
+                            .tools
+                            .remove(&id)
+                            .unwrap_or(OpenToolCall { call: Value::Null }),
                         false => OpenToolCall {
                             call: call.call.clone(),
-                            started_at: call.started_at,
                         },
                     }
                 };
                 if terminal {
-                    let duration_ms = merged
-                        .started_at
-                        .elapsed()
-                        .as_millis()
-                        .min(u128::from(u64::MAX)) as u64;
                     let payload = completed_tool_payload(session_id, &merged.call);
                     let name = payload["tool_name"]
                         .as_str()
                         .unwrap_or_default()
                         .to_string();
-                    self.sink.record_stat_fact("tool_call", json!({
-                        "tool_name": tool_name_of(&merged.call),
-                        "kind": tool_call_kind(&merged.call),
-                        "duration_ms": duration_ms,
-                        "ok": merged.call.get("status").and_then(Value::as_str) != Some("failed"),
-                    }));
                     self.sink.emit("post_tool_use", payload).await;
                     report(&self.reports, TurnReport::ToolEnded(name));
                 } else {
@@ -2757,8 +2741,7 @@ fn terminal_tool_status(update: &Value) -> bool {
 
 /// The agent's own name for the tool: `/name`, `/_meta/claudeCode/toolName`,
 /// `/title`, `/toolCallId`, in order; `"ACP tool"` where the call names none.
-/// Shared by the `tool_call` fact and [`permission_signature`], so a tool
-/// reads under the same name in both.
+/// Used by [`permission_signature`] to name a tool consistently.
 fn tool_name_of(tool_call: &Value) -> String {
     [
         "/name",
@@ -2770,24 +2753,6 @@ fn tool_name_of(tool_call: &Value) -> String {
     .find_map(|pointer| tool_call.pointer(pointer).and_then(Value::as_str))
     .unwrap_or("ACP tool")
     .to_string()
-}
-
-/// The ACP kind of a tool call (023 rule 21): `read`, `edit`, `delete`,
-/// `move`, `search`, `execute`, `think`, `fetch` or `switch_mode`; `other`
-/// where the call names none, or a kind this fact does not track.
-fn tool_call_kind(call: &Value) -> &'static str {
-    match call.get("kind").and_then(Value::as_str) {
-        Some("read") => "read",
-        Some("edit") => "edit",
-        Some("delete") => "delete",
-        Some("move") => "move",
-        Some("search") => "search",
-        Some("execute") => "execute",
-        Some("think") => "think",
-        Some("fetch") => "fetch",
-        Some("switch_mode") => "switch_mode",
-        _ => "other",
-    }
 }
 
 /// The option that approves a permission request: the first the agent marks

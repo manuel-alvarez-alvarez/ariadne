@@ -1,11 +1,11 @@
 # Stats
 
 See what the work did. Stats count what happened as the work ran: each
-session that ended, each task that ended, each switch, review, tool call and
+session that ended, each task that ended, each switch, review and
 permission answer. The daemon writes one record of each such event to a
 ledger in its database, and every stat adds up those records.
 
-The stats come in six families, and each one answers one question:
+The stats come in five families, and each one answers one question:
 
 | Family | Question |
 | --- | --- |
@@ -14,7 +14,6 @@ The stats come in six families, and each one answers one question:
 | `spend` | What did it spend? |
 | `models` | Which model does the job? |
 | `attention` | How much did it need me? |
-| `tools` | What do the agents do? |
 
 The records outlive the work. A stat still counts a session after you delete
 the goal it belonged to.
@@ -40,7 +39,7 @@ ariadne stats time --since 7d
 ariadne stats spend --repo <repo-id> --format json
 ```
 
-The families are `work`, `time`, `spend`, `models`, `attention` and `tools`.
+The families are `work`, `time`, `spend`, `models` and `attention`.
 `--repo` takes a repository id or a unique prefix of one. Each family takes
 the table flags (`--no-trunc`, `-o`, `--columns`), and `--format json` prints
 what the daemon sent, whole. A family with nothing to show prints one
@@ -179,20 +178,3 @@ your mean wait, questions asked and stalled sessions. The charts break down
 permission answers by decider and attention flags by reason. In the CLI,
 `ariadne stats attention` prints those session figures followed by the two
 tables; `--format json` returns the full response.
-
-## Tools
-
-What do the agents do? Each ended tool call writes one fact, under the
-tool's own name — `Bash`, `Edit`, `Read`, an MCP tool's full name — and the
-kind of thing it did: `read`, `edit`, `delete`, `move`, `search`, `execute`,
-`think`, `fetch`, `switch_mode` or `other`.
-
-`ariadne stats tools` prints the total calls and errors, a table of the
-calls by kind, and a table of the tools with the most calls, the rest summed
-into one `other` row. `--limit` sets how many tools the table — and the
-desktop app's chart — show, 1 to 100, 10 by default. The Tools section of
-the desktop app draws the same two groupings as bar charts, ok and errors
-stacked, with the median and the p90 call duration in the tooltip.
-
-A tool call recorded before this existed has no kind of its own, and does
-not count.

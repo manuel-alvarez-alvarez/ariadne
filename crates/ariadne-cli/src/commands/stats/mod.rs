@@ -1,25 +1,22 @@
 //! `ariadne stats <family>` — what the work did, read off the daemon's stats
 //! ledger. Each family answers one question from a file of its own; this
-//! file registers the six and holds what they share.
+//! file registers the five and holds what they share.
 
 mod attention;
 mod models;
 mod spend;
 mod time;
-mod tools;
 mod work;
 
 use anyhow::Result;
-use clap::Subcommand;
-use serde::Serialize;
-
 use ariadne_api::stats::StatsQuery;
 use ariadne_client::Client;
+use clap::Subcommand;
 
 use super::resolve::{self, Kind};
-use crate::output::{Format, note, print, style, view};
+use crate::output::Format;
 
-/// The six families, in the order the screen shows them.
+/// The five families, in the order the screen shows them.
 #[derive(Subcommand)]
 pub(crate) enum StatsCommand {
     /// What got done
@@ -32,12 +29,6 @@ pub(crate) enum StatsCommand {
     Models(models::Args),
     /// How much it needed you
     Attention,
-    /// What the agents do
-    Tools {
-        /// How many of the top tools to list, 1 to 100
-        #[arg(long)]
-        limit: Option<u32>,
-    },
 }
 
 /// The filters every family takes, as the command line gave them.
@@ -66,16 +57,7 @@ pub(crate) async fn run(
         StatsCommand::Spend => spend::run(client, &query, format).await,
         StatsCommand::Models(args) => models::run(client, &query, format, args).await,
         StatsCommand::Attention => attention::run(client, &query, format).await,
-        StatsCommand::Tools { limit } => tools::run(client, &query, limit, format).await,
     }
-}
-
-/// Print a family: the DTO whole with `--format json`, and for a person,
-/// one muted sentence while the family holds nothing to show.
-fn print_family<T: Serialize>(format: Format, stats: &T, empty: &str) -> Result<()> {
-    print(format, stats, || {
-        note(&style::paint(view().color, style::META, empty));
-    })
 }
 
 #[cfg(test)]
@@ -132,7 +114,6 @@ mod tests {
             StatsCommand::Spend,
             StatsCommand::Models(models::Args::default()),
             StatsCommand::Attention,
-            StatsCommand::Tools { limit: None },
         ] {
             let filters = Filters {
                 since: Some("7d".into()),
@@ -150,7 +131,6 @@ mod tests {
                 "/v1/stats/spend?since=7d",
                 "/v1/stats/models?since=7d",
                 "/v1/stats/attention?since=7d",
-                "/v1/stats/tools?since=7d",
             ]
         );
     }

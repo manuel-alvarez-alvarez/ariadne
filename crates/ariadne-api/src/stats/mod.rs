@@ -5,7 +5,6 @@ mod attention;
 mod models;
 mod spend;
 mod time;
-mod tools;
 mod work;
 
 pub use attention::{
@@ -18,7 +17,6 @@ pub use spend::{
     BucketDto, ModelSpendDto, PerFinishedTaskDto, SpendBucketDto, SpendStatsDto, SpendTotalsDto,
 };
 pub use time::{LeadTimeDto, PersonWaitDto, StatusTimeDto, TimeStatsDto};
-pub use tools::{OtherToolsDto, ToolKindStatDto, ToolStatDto, ToolStatsDto, ToolsStatsQuery};
 pub use work::{WorkBucketDto, WorkStatsDto, WorkTotalsDto};
 
 use serde::{Deserialize, Serialize};

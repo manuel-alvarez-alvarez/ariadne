@@ -52,7 +52,6 @@ mod stats_attention;
 mod stats_models;
 mod stats_spend;
 mod stats_time;
-mod stats_tools;
 mod stats_work;
 mod stored_conversations;
 mod stored_conversations_opencode;
