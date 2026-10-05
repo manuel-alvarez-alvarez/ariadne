@@ -50,10 +50,36 @@ function trapTab(event: KeyboardEvent<HTMLDivElement>) {
 export function DockedPane({
   onClose,
   onKeyDown,
+  onFocusCapture,
   children,
   ...props
 }: ComponentProps<"div"> & { onClose: () => void }) {
   const titleId = useId()
+  const focused = useRef<{ pane: HTMLDivElement; control: Element } | null>(null)
+
+  useEffect(() => {
+    // React focus events include this pane's modal portals. Observe removals
+    // there too, since a dialog can close after its opener has disappeared.
+    const observer = new MutationObserver(() => {
+      const last = focused.current
+      if (
+        last?.pane.isConnected &&
+        !last.control.isConnected &&
+        document.activeElement === document.body
+      ) {
+        last.pane.focus()
+      }
+    })
+    const forgetOutsideFocus = (event: FocusEvent) => {
+      if (event.target !== focused.current?.control) focused.current = null
+    }
+    observer.observe(document.body, { childList: true, subtree: true })
+    document.addEventListener("focusin", forgetOutsideFocus)
+    return () => {
+      observer.disconnect()
+      document.removeEventListener("focusin", forgetOutsideFocus)
+    }
+  }, [])
   const savedWidth = useSettingsStore((state) => state.panelWidth)
   const setWidth = useSettingsStore((state) => state.setPanelWidth)
   const [viewport, setViewport] = useState(window.innerWidth)
@@ -105,6 +131,10 @@ export function DockedPane({
           onKeyDown?.(event)
         }}
         {...props}
+        onFocusCapture={(event) => {
+          focused.current = { pane: event.currentTarget, control: event.target }
+          onFocusCapture?.(event)
+        }}
       >
         <div className="-mb-2 flex shrink-0 justify-end">
           <Button

@@ -51,7 +51,14 @@ Out: the daemon endpoints themselves (012).
    it, or its own close control, closes the pane outright — never back to a
    goal a task replaced, even from a URL that names both. Closing preserves
    the existing history and, where an opener is still on the screen, focus
-   return. The header does not shrink, and the body scrolls within the
+   return. Replacing a panel keeps focus inside the new pane. An old panel
+   gives the first opener to its replacement. Closing the final pane returns
+   focus to that opener if it remains mounted.
+   If a focused control disappears, focus returns to the pane itself unless
+   another control already has focus. This includes controls inside the pane's
+   modal portals: cancelling a goal or task, retrying a task, and collapsing
+   the expanded console or diff. Open dialogs retain their own focus.
+   The header does not shrink, and the body scrolls within the
    remaining height, with one full-height child for the session view.
 3. Screens: the goals board (swimlanes plus an attention strip) has Active,
    All and Finished status segments. A status-menu icon holds a custom
@@ -576,6 +583,17 @@ Out: the daemon endpoints themselves (012).
 - Closing a task opened straight from the board returns focus to the card
   that opened it, same as any other panel
   (`ui/src/features/tasks/task-panel.test.tsx::closes to an empty pane and returns focus to the board card that opened it`).
+- Opening a goal from the board and then its task keeps focus inside the new pane
+  (`ui/src/components/pane-focus.test.tsx::keeps focus in the task pane after opening a goal from the board`).
+- Closing a replacement task or returning through its goal breadcrumb preserves the first board opener
+  (`ui/src/components/pane-focus.test.tsx::returns focus to the board opener after closing the replacement task`,
+  `::returns focus to the board opener after closing the replacement goal breadcrumb`).
+- Removing an action or closing an expanded view restores focus inside the pane
+  (`ui/src/components/pane-focus.test.tsx::keeps focus in the pane after confirming Cancel goal`,
+  `::keeps focus in the pane after confirming Cancel task`,
+  `::keeps focus in the pane after Retry task removes its button`,
+  `::keeps focus in the pane after collapsing the console`,
+  `::keeps focus in the pane after collapsing the diff`).
 - A pointer drag clamps and persists the pane width across a remount, and
   writes settings once, on release
   (`ui/src/components/panel-sheet.test.tsx::clamps a dragged pane width and restores it from settings on remount`,
