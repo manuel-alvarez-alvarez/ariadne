@@ -121,16 +121,9 @@ it("replaces a goal's own session view with the task it names, and Escape emptie
   )
 })
 
-it("keeps the board accessible and follows another lane title with a goal open", async () => {
+it("floats a goal over the board, and a click on its scrim closes the goal", async () => {
   const first = aGoal({ id: "g1", title: "First lane" })
   const second = aGoal({ id: "g2", title: "Second lane" })
-  daemonFetch.mockImplementation((input: Request | string | URL) => {
-    const url = new URL(
-      typeof input === "string" ? input : input instanceof URL ? input : input.url,
-    )
-    if (url.pathname === "/v1/goals/g2") return Promise.resolve(jsonResponse(second))
-    return new Promise(() => {})
-  })
   const { location } = renderScreen(
     <>
       <main>
@@ -142,14 +135,42 @@ it("keeps the board accessible and follows another lane title with a goal open",
       route: "/goals?goal=g1",
       seed: (client) => {
         client.setQueryData(qk.goals.detail(first.id), first)
+        client.setQueryData(qk.tasks.list({}), [])
+      },
+    },
+  )
+  const pane = screen.getByRole("region", { name: first.title })
+  // A floating pane, not a modal: the board stays in the tree behind it.
+  expect(screen.queryByRole("dialog")).toBeNull()
+  expect(screen.getByRole("main").contains(pane)).toBe(false)
+  const scrim = document.querySelector('[data-slot="docked-pane-scrim"]')
+  if (!scrim) throw new Error("no scrim over the board")
+  await userEvent.setup().click(scrim)
+  expect(location.url).toBe("/goals")
+  expect(document.querySelectorAll('[data-slot="docked-pane"]')).toHaveLength(0)
+})
+
+it("swaps the open goal for another goal the URL names", async () => {
+  const first = aGoal({ id: "g1", title: "First goal" })
+  const second = aGoal({ id: "g2", title: "Second goal" })
+  renderScreen(
+    <>
+      <Navigator />
+      <DetailPanels />
+    </>,
+    {
+      route: `${paths.goals()}?goal=g1`,
+      seed: (client) => {
+        client.setQueryData(qk.goals.detail(first.id), first)
         client.setQueryData(qk.goals.detail(second.id), second)
         client.setQueryData(qk.tasks.list({}), [])
       },
     },
   )
-  expect(screen.getByRole("main")).toBeDefined()
-  await userEvent.setup().click(screen.getByRole("link", { name: second.title }))
-  expect(location.url).toBe("/goals?goal=g2")
+  expect(screen.getByRole("region", { name: first.title })).toBeDefined()
+  await act(async () => {
+    go?.({ pathname: paths.goals(), search: "?goal=g2" })
+  })
   expect(await screen.findByRole("region", { name: second.title })).toBeDefined()
-  expect(screen.queryByRole("dialog")).toBeNull()
+  expect(document.querySelectorAll('[data-slot="docked-pane"]')).toHaveLength(1)
 })

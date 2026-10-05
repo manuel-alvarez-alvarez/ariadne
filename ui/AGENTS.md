@@ -256,18 +256,27 @@ redirects onto the board. The Stats screen is `src/routes/stats.tsx`, and
 each stat family is a section of it, `src/components/stats/<family>-section.tsx`,
 drawn through the shared `StatSection`, `StatTiles`, `StatTable`,
 `StatTimeChart` and `StatBarChart` beside it.
-Goals, tasks and sessions have no pages: their details occupy one **docked pane** driven by
+Goals, tasks and sessions have no pages: their details occupy one **floating pane** driven by
 search params (`?goal=` on the board, `?task=` over any screen, `?session=` for
 a session's own panel, `?tab=sessions&session=` for a session inside a goal's or
 a task's panel), which `src/components/detail-panels.tsx` reads. The old
 `#/goals/:goalId` and `#/tasks/:taskId` deep links survive as redirects onto the
 board with the panel open.
 
-The pane sits beside `<main>` in the shell's flex row. The board stays clickable
-and scrollable, with no scrim or focus trap. Below `md` the pane covers the
-screen at full width. Its left handle resizes it from 24rem to 60% of the
-window; the default is 36rem and the settings store remembers the width.
+The pane floats over the screen at the window's right edge, so `<main>` keeps
+its full width and layout behind it; the shell mounts `DetailPanels` outside
+its row. A scrim covers the screen, and a click on it closes the pane through
+the same `onClose` as the close button. Tab stays inside the pane while it is
+open. The pane slides in from the right and the scrim fades in; the global
+reduced-motion rule in `src/index.css` stops both. Below `md` the pane covers
+the screen at full width. `DockedPane` renders the close button
+(`aria-label="Close"`) above its children, as the pane's first tab stop, so a
+panel renders no close control of its own. The left handle resizes the pane
+from 24rem to 60% of the window, by pointer or keyboard. A drag keeps its
+width in component state and writes the settings store once, on release; a
+double-click resets the width to the 36rem default.
 `PanelSheet` owns close decisions and focus return, over `ui/docked-pane.tsx`.
+It opens a panel on its first control after the close button.
 The pane holds one panel at a time: a task opened from a goal replaces the
 goal's panel rather than stacking on it, carrying a breadcrumb back that
 reopens the goal in its place. Session drill-downs replace the body. Escape

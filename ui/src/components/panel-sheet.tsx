@@ -1,6 +1,7 @@
 /**
- * The one place a panel close is decided. The frame is a docked pane, while
- * the URL still owns its contents and the history entry a close unwinds.
+ * The one place a panel close is decided. The frame is a pane floating over
+ * the screen, while the URL still owns its contents and the history entry a
+ * close unwinds. Its close button, its scrim and Escape all close it here.
  * Escape belongs to this pane only when focus is inside it; a dialog opened
  * from it owns its own Escape, even though its portal bubbles through here.
  */
@@ -24,16 +25,18 @@ export function PanelSheet({
 
   useEffect(() => {
     opener.current ??= document.activeElement instanceof HTMLElement ? document.activeElement : null
+    // The close button leads the tab order, but a panel opens on its own
+    // first control: the close is one Shift+Tab or Escape away.
     const first = panel.current?.querySelector<HTMLElement>(
-      'button:not(:disabled), a[href], [role="tab"]',
+      'button:not(:disabled):not([data-slot="pane-close"]), a[href], [role="tab"]',
     )
     ;(first ?? panel.current)?.focus()
   }, [panel])
 
   useEffect(
     () => () => {
-      // The opener is on the screen behind the pane, which becomes clickable
-      // again on this same commit. Wait until React has removed this panel
+      // The opener is on the screen behind the pane's scrim, which goes away
+      // on this same commit. Wait until React has removed this panel
       // before focusing it.
       const target = opener.current
       queueMicrotask(() => {

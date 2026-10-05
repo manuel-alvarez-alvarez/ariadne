@@ -33,10 +33,16 @@ Out: the daemon endpoints themselves (012).
 2. The shell is a sidebar, ending in the daemon connection status, and a main
    area under one header bar — the screen's name as its only `h1`, and a
    screen's own actions at the header's end. Goal, task and session details
-   occupy one docked pane beside `<main>`. The URL selects its contents.
-   The screen stays accessible, clickable and scrollable, with no scrim or
-   focus trap. The left handle resizes the pane between 24rem and 60% of
-   the window; its default width is 36rem and settings preserve the choice.
+   occupy one pane that floats over the screen at its right edge. The URL
+   selects its contents. The screen keeps its full width and layout behind
+   the pane, under a scrim. A click on the scrim closes the pane, the same
+   as the close button, and Tab stays inside the pane while it is open. The
+   pane slides in from the right and the scrim fades in, unless the system
+   asks for reduced motion. The close button sits in the pane's header, as
+   its first tab stop. The left handle resizes the pane by pointer or
+   keyboard between 24rem and 60% of the window. A drag saves the width
+   once, on release, and a double-click resets it to the 36rem default;
+   settings preserve the choice.
    Below `md`, the pane covers the screen at full width. The pane holds one
    panel at a time: a task opened from a goal replaces the goal's panel
    rather than stacking on it, carrying a breadcrumb back that reopens the
@@ -500,9 +506,21 @@ Out: the daemon endpoints themselves (012).
     explains itself in one short sentence, shown on hover and on keyboard
     focus and wired as its accessible description (023).
 
-- Goal details leave the board accessible, and another lane title changes the
-  open pane (`ui/src/components/detail-panels.test.tsx::keeps the board accessible and follows another lane title with a goal open`,
+- Goal details float over the board without a modal dialog, and a click on
+  the scrim closes them
+  (`ui/src/components/detail-panels.test.tsx::floats a goal over the board, and a click on its scrim closes the goal`,
   `ui/src/features/goals/goal-panel.test.tsx::renders a goal without a modal dialog`).
+- Another `?goal=` swaps the open goal for that goal in the one pane
+  (`ui/src/components/detail-panels.test.tsx::swaps the open goal for another goal the URL names`).
+- An open goal leaves `<main>` alone in the shell's row, at its full width
+  (`ui/src/components/app-shell.test.tsx::keeps the screen at full width behind an open goal`).
+- A click on the scrim closes the pane through the same close as the close
+  button
+  (`ui/src/components/panel-sheet.test.tsx::closes the pane from a click on its scrim, as from its close button`).
+- The close button is the pane's first tab stop, and Tab from the last stop
+  stays in the pane
+  (`ui/src/components/panel-sheet.test.tsx::puts the close button first in the pane's tab order`,
+  `::keeps Tab inside the pane while it is open`).
 - A task opened from a goal replaces it, mounting only the task's panel, and
   closes outright on Escape rather than falling back to the goal — even from
   a URL that names both
@@ -515,8 +533,14 @@ Out: the daemon endpoints themselves (012).
 - Closing a task opened straight from the board returns focus to the card
   that opened it, same as any other panel
   (`ui/src/features/tasks/task-panel.test.tsx::closes to an empty pane and returns focus to the board card that opened it`).
-- Dragging clamps and persists the pane width across a remount
-  (`ui/src/components/panel-sheet.test.tsx::clamps a dragged pane width and restores it from settings on remount`).
+- A pointer drag clamps and persists the pane width across a remount, and
+  writes settings once, on release
+  (`ui/src/components/panel-sheet.test.tsx::clamps a dragged pane width and restores it from settings on remount`,
+  `::writes a dragged width to settings once, on release`).
+- A pane closed in mid-drag still saves the width dragged to
+  (`ui/src/components/panel-sheet.test.tsx::keeps the dragged width when the pane closes in mid-drag`).
+- A double-click of the handle resets the pane to 36rem
+  (`ui/src/components/panel-sheet.test.tsx::resets the pane to 36rem on a double-click of the handle`).
 - The session frame supplies the remaining height through its scrolling body
   (`ui/src/features/sessions/session-panel.test.tsx::gives the console view the remaining pane height`).
 - A console modal handles Escape without closing the surrounding pane

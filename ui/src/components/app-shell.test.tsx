@@ -207,3 +207,24 @@ it("replaces the wordmark with the mark alone in the rail, next to the status do
   await user.hover(status)
   expect(await screen.findByText(statusName ?? "")).not.toBeNull()
 })
+
+it("keeps the screen at full width behind an open goal", async () => {
+  startAt("/goals?goal=g1")
+  const router = createBrowserRouter([
+    {
+      path: "/",
+      element: <AppShell />,
+      children: [
+        { path: "goals", element: <div />, handle: { title: "Goals" } satisfies PageHandle },
+      ],
+    },
+  ])
+  renderScreen(<RouterProvider router={router} />, { route: null })
+
+  const pane = await screen.findByRole("region")
+  const main = screen.getByRole("main")
+  // jsdom lays nothing out, so the claim is held where layout comes from:
+  // `<main>` is alone in its row, and the pane floats outside it.
+  expect(main.parentElement?.children).toHaveLength(1)
+  expect(main.parentElement?.contains(pane)).toBe(false)
+})
