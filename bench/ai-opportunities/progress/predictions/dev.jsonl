@@ -1,0 +1,267 @@
+{"decision": "continue", "detail": "quiet 30s < nudge threshold 180s", "latency_ms": 0.009042210876941681, "policy": "baseline", "window_id": "progress-steady-dev-00"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.005207955837249756, "policy": "repetition", "window_id": "progress-steady-dev-00"}
+{"decision": "continue", "detail": "baseline stands: quiet 30s < nudge threshold 180s", "latency_ms": 0.004500150680541992, "policy": "combined_repetition", "window_id": "progress-steady-dev-00"}
+{"decision": "continue", "detail": "quiet 31s < nudge threshold 180s", "latency_ms": 0.00200001522898674, "policy": "baseline", "window_id": "progress-steady-dev-01"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.002250075340270996, "policy": "repetition", "window_id": "progress-steady-dev-01"}
+{"decision": "continue", "detail": "baseline stands: quiet 31s < nudge threshold 180s", "latency_ms": 0.0018337741494178772, "policy": "combined_repetition", "window_id": "progress-steady-dev-01"}
+{"decision": "continue", "detail": "quiet 32s < nudge threshold 180s", "latency_ms": 0.0013327226042747498, "policy": "baseline", "window_id": "progress-steady-dev-02"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.001166015863418579, "policy": "repetition", "window_id": "progress-steady-dev-02"}
+{"decision": "continue", "detail": "baseline stands: quiet 32s < nudge threshold 180s", "latency_ms": 0.001541338860988617, "policy": "combined_repetition", "window_id": "progress-steady-dev-02"}
+{"decision": "continue", "detail": "quiet 33s < nudge threshold 180s", "latency_ms": 0.0011669471859931946, "policy": "baseline", "window_id": "progress-steady-dev-03"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.0007906928658485413, "policy": "repetition", "window_id": "progress-steady-dev-03"}
+{"decision": "continue", "detail": "baseline stands: quiet 33s < nudge threshold 180s", "latency_ms": 0.0012498348951339722, "policy": "combined_repetition", "window_id": "progress-steady-dev-03"}
+{"decision": "continue", "detail": "quiet 34s < nudge threshold 180s", "latency_ms": 0.0011669471859931946, "policy": "baseline", "window_id": "progress-steady-dev-04"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.0007501803338527679, "policy": "repetition", "window_id": "progress-steady-dev-04"}
+{"decision": "continue", "detail": "baseline stands: quiet 34s < nudge threshold 180s", "latency_ms": 0.0011669471859931946, "policy": "combined_repetition", "window_id": "progress-steady-dev-04"}
+{"decision": "continue", "detail": "quiet 35s < nudge threshold 180s", "latency_ms": 0.001166015863418579, "policy": "baseline", "window_id": "progress-steady-dev-05"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.0006658956408500671, "policy": "repetition", "window_id": "progress-steady-dev-05"}
+{"decision": "continue", "detail": "baseline stands: quiet 35s < nudge threshold 180s", "latency_ms": 0.0012498348951339722, "policy": "combined_repetition", "window_id": "progress-steady-dev-05"}
+{"decision": "continue", "detail": "quiet 36s < nudge threshold 180s", "latency_ms": 0.001084059476852417, "policy": "baseline", "window_id": "progress-steady-dev-06"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.0006253831088542938, "policy": "repetition", "window_id": "progress-steady-dev-06"}
+{"decision": "continue", "detail": "baseline stands: quiet 36s < nudge threshold 180s", "latency_ms": 0.001125037670135498, "policy": "combined_repetition", "window_id": "progress-steady-dev-06"}
+{"decision": "continue", "detail": "quiet 37s < nudge threshold 180s", "latency_ms": 0.0010831281542778015, "policy": "baseline", "window_id": "progress-steady-dev-07"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.0006249174475669861, "policy": "repetition", "window_id": "progress-steady-dev-07"}
+{"decision": "continue", "detail": "baseline stands: quiet 37s < nudge threshold 180s", "latency_ms": 0.001125037670135498, "policy": "combined_repetition", "window_id": "progress-steady-dev-07"}
+{"decision": "continue", "detail": "quiet 38s < nudge threshold 180s", "latency_ms": 0.0010831281542778015, "policy": "baseline", "window_id": "progress-steady-dev-08"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.0006668269634246826, "policy": "repetition", "window_id": "progress-steady-dev-08"}
+{"decision": "continue", "detail": "baseline stands: quiet 38s < nudge threshold 180s", "latency_ms": 0.0012079253792762756, "policy": "combined_repetition", "window_id": "progress-steady-dev-08"}
+{"decision": "continue", "detail": "mid-turn: left to the thresholds behind the nudge (rule 11)", "latency_ms": 0.0012908130884170532, "policy": "baseline", "window_id": "progress-long-tool-dev-00"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0007087364792823792, "policy": "repetition", "window_id": "progress-long-tool-dev-00"}
+{"decision": "continue", "detail": "baseline stands: mid-turn: left to the thresholds behind the nudge (rule 11)", "latency_ms": 0.001375097781419754, "policy": "combined_repetition", "window_id": "progress-long-tool-dev-00"}
+{"decision": "continue", "detail": "mid-turn: left to the thresholds behind the nudge (rule 11)", "latency_ms": 0.001166015863418579, "policy": "baseline", "window_id": "progress-long-tool-dev-01"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0004172325134277344, "policy": "repetition", "window_id": "progress-long-tool-dev-01"}
+{"decision": "continue", "detail": "baseline stands: mid-turn: left to the thresholds behind the nudge (rule 11)", "latency_ms": 0.0010831281542778015, "policy": "combined_repetition", "window_id": "progress-long-tool-dev-01"}
+{"decision": "escalate_stalled", "detail": "quiet 720s >= flag threshold 600s", "latency_ms": 0.001458916813135147, "policy": "baseline", "window_id": "progress-long-tool-dev-02"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.00041583552956581116, "policy": "repetition", "window_id": "progress-long-tool-dev-02"}
+{"decision": "escalate_stalled", "detail": "baseline stands: quiet 720s >= flag threshold 600s", "latency_ms": 0.0015408731997013092, "policy": "combined_repetition", "window_id": "progress-long-tool-dev-02"}
+{"decision": "escalate_stalled", "detail": "quiet 1740s >= flag threshold 600s", "latency_ms": 0.0015003606677055359, "policy": "baseline", "window_id": "progress-long-tool-dev-03"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0003748573362827301, "policy": "repetition", "window_id": "progress-long-tool-dev-03"}
+{"decision": "escalate_stalled", "detail": "baseline stands: quiet 1740s >= flag threshold 600s", "latency_ms": 0.0012498348951339722, "policy": "combined_repetition", "window_id": "progress-long-tool-dev-03"}
+{"decision": "escalate_stalled", "detail": "quiet 2100s >= relaunch threshold 1800s", "latency_ms": 0.001416075974702835, "policy": "baseline", "window_id": "progress-long-tool-dev-04"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.00029103830456733704, "policy": "repetition", "window_id": "progress-long-tool-dev-04"}
+{"decision": "escalate_stalled", "detail": "baseline stands: quiet 2100s >= relaunch threshold 1800s", "latency_ms": 0.00125030055642128, "policy": "combined_repetition", "window_id": "progress-long-tool-dev-04"}
+{"decision": "continue", "detail": "quiet 25s < nudge threshold 180s", "latency_ms": 0.0011669471859931946, "policy": "baseline", "window_id": "progress-retry-dev-00"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.001416075974702835, "policy": "repetition", "window_id": "progress-retry-dev-00"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.001416075974702835, "policy": "combined_repetition", "window_id": "progress-retry-dev-00"}
+{"decision": "continue", "detail": "quiet 25s < nudge threshold 180s", "latency_ms": 0.0011669471859931946, "policy": "baseline", "window_id": "progress-retry-dev-01"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.001000240445137024, "policy": "repetition", "window_id": "progress-retry-dev-01"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.00125030055642128, "policy": "combined_repetition", "window_id": "progress-retry-dev-01"}
+{"decision": "continue", "detail": "quiet 25s < nudge threshold 180s", "latency_ms": 0.001041218638420105, "policy": "baseline", "window_id": "progress-retry-dev-02"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0007906928658485413, "policy": "repetition", "window_id": "progress-retry-dev-02"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0012079253792762756, "policy": "combined_repetition", "window_id": "progress-retry-dev-02"}
+{"decision": "continue", "detail": "quiet 25s < nudge threshold 180s", "latency_ms": 0.001084059476852417, "policy": "baseline", "window_id": "progress-retry-dev-03"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0007497146725654602, "policy": "repetition", "window_id": "progress-retry-dev-03"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.001166015863418579, "policy": "combined_repetition", "window_id": "progress-retry-dev-03"}
+{"decision": "continue", "detail": "quiet 25s < nudge threshold 180s", "latency_ms": 0.0011245720088481903, "policy": "baseline", "window_id": "progress-retry-dev-04"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0007078051567077637, "policy": "repetition", "window_id": "progress-retry-dev-04"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.001125037670135498, "policy": "combined_repetition", "window_id": "progress-retry-dev-04"}
+{"decision": "continue", "detail": "quiet 25s < nudge threshold 180s", "latency_ms": 0.001125037670135498, "policy": "baseline", "window_id": "progress-retry-dev-05"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0007906928658485413, "policy": "repetition", "window_id": "progress-retry-dev-05"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.001166015863418579, "policy": "combined_repetition", "window_id": "progress-retry-dev-05"}
+{"decision": "continue", "detail": "quiet 25s < nudge threshold 180s", "latency_ms": 0.0010826624929904938, "policy": "baseline", "window_id": "progress-retry-dev-06"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.000791158527135849, "policy": "repetition", "window_id": "progress-retry-dev-06"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.001125037670135498, "policy": "combined_repetition", "window_id": "progress-retry-dev-06"}
+{"decision": "continue", "detail": "quiet 80s < nudge threshold 180s", "latency_ms": 0.001125037670135498, "policy": "baseline", "window_id": "progress-testloop-freq-dev-00"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.0007920898497104645, "policy": "repetition", "window_id": "progress-testloop-freq-dev-00"}
+{"decision": "continue", "detail": "baseline stands: quiet 80s < nudge threshold 180s", "latency_ms": 0.0011669471859931946, "policy": "combined_repetition", "window_id": "progress-testloop-freq-dev-00"}
+{"decision": "continue", "detail": "quiet 80s < nudge threshold 180s", "latency_ms": 0.0011245720088481903, "policy": "baseline", "window_id": "progress-testloop-freq-dev-01"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.0007078051567077637, "policy": "repetition", "window_id": "progress-testloop-freq-dev-01"}
+{"decision": "continue", "detail": "baseline stands: quiet 80s < nudge threshold 180s", "latency_ms": 0.001084059476852417, "policy": "combined_repetition", "window_id": "progress-testloop-freq-dev-01"}
+{"decision": "continue", "detail": "quiet 80s < nudge threshold 180s", "latency_ms": 0.001000240445137024, "policy": "baseline", "window_id": "progress-testloop-freq-dev-02"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.0007082708179950714, "policy": "repetition", "window_id": "progress-testloop-freq-dev-02"}
+{"decision": "continue", "detail": "baseline stands: quiet 80s < nudge threshold 180s", "latency_ms": 0.0013331882655620575, "policy": "combined_repetition", "window_id": "progress-testloop-freq-dev-02"}
+{"decision": "continue", "detail": "quiet 80s < nudge threshold 180s", "latency_ms": 0.001125037670135498, "policy": "baseline", "window_id": "progress-testloop-freq-dev-03"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.0018747523427009583, "policy": "repetition", "window_id": "progress-testloop-freq-dev-03"}
+{"decision": "continue", "detail": "baseline stands: quiet 80s < nudge threshold 180s", "latency_ms": 0.0015408731997013092, "policy": "combined_repetition", "window_id": "progress-testloop-freq-dev-03"}
+{"decision": "continue", "detail": "quiet 80s < nudge threshold 180s", "latency_ms": 0.001125037670135498, "policy": "baseline", "window_id": "progress-testloop-freq-dev-04"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.0007920898497104645, "policy": "repetition", "window_id": "progress-testloop-freq-dev-04"}
+{"decision": "continue", "detail": "baseline stands: quiet 80s < nudge threshold 180s", "latency_ms": 0.0012498348951339722, "policy": "combined_repetition", "window_id": "progress-testloop-freq-dev-04"}
+{"decision": "continue", "detail": "quiet 80s < nudge threshold 180s", "latency_ms": 0.001125037670135498, "policy": "baseline", "window_id": "progress-testloop-freq-dev-05"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.0007078051567077637, "policy": "repetition", "window_id": "progress-testloop-freq-dev-05"}
+{"decision": "continue", "detail": "baseline stands: quiet 80s < nudge threshold 180s", "latency_ms": 0.0012079253792762756, "policy": "combined_repetition", "window_id": "progress-testloop-freq-dev-05"}
+{"decision": "continue", "detail": "quiet 80s < nudge threshold 180s", "latency_ms": 0.0010421499609947205, "policy": "baseline", "window_id": "progress-testloop-freq-dev-06"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.0006668269634246826, "policy": "repetition", "window_id": "progress-testloop-freq-dev-06"}
+{"decision": "continue", "detail": "baseline stands: quiet 80s < nudge threshold 180s", "latency_ms": 0.0012079253792762756, "policy": "combined_repetition", "window_id": "progress-testloop-freq-dev-06"}
+{"decision": "continue", "detail": "quiet 80s < nudge threshold 180s", "latency_ms": 0.001000240445137024, "policy": "baseline", "window_id": "progress-testloop-freq-dev-07"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.0006658956408500671, "policy": "repetition", "window_id": "progress-testloop-freq-dev-07"}
+{"decision": "continue", "detail": "baseline stands: quiet 80s < nudge threshold 180s", "latency_ms": 0.0012498348951339722, "policy": "combined_repetition", "window_id": "progress-testloop-freq-dev-07"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00016577541828155518, "policy": "baseline", "window_id": "progress-completed-dev-00"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0004996545612812042, "policy": "repetition", "window_id": "progress-completed-dev-00"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00029103830456733704, "policy": "combined_repetition", "window_id": "progress-completed-dev-00"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00012526288628578186, "policy": "baseline", "window_id": "progress-completed-dev-01"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.00033294782042503357, "policy": "repetition", "window_id": "progress-completed-dev-01"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00016577541828155518, "policy": "combined_repetition", "window_id": "progress-completed-dev-01"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 8.335337042808533e-05, "policy": "baseline", "window_id": "progress-completed-dev-02"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.00033294782042503357, "policy": "repetition", "window_id": "progress-completed-dev-02"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00016670674085617065, "policy": "combined_repetition", "window_id": "progress-completed-dev-02"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 8.381903171539307e-05, "policy": "baseline", "window_id": "progress-completed-dev-03"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0002919696271419525, "policy": "repetition", "window_id": "progress-completed-dev-03"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00016577541828155518, "policy": "combined_repetition", "window_id": "progress-completed-dev-03"}
+{"decision": "continue", "detail": "quiet 55s < nudge threshold 180s", "latency_ms": 0.0012079253792762756, "policy": "baseline", "window_id": "loop-identical-dev-00-s01"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.00037532299757003784, "policy": "repetition", "window_id": "loop-identical-dev-00-s01"}
+{"decision": "continue", "detail": "baseline stands: quiet 55s < nudge threshold 180s", "latency_ms": 0.0012079253792762756, "policy": "combined_repetition", "window_id": "loop-identical-dev-00-s01"}
+{"decision": "continue", "detail": "quiet 55s < nudge threshold 180s", "latency_ms": 0.0010831281542778015, "policy": "baseline", "window_id": "loop-identical-dev-00-s02"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0003748573362827301, "policy": "repetition", "window_id": "loop-identical-dev-00-s02"}
+{"decision": "continue", "detail": "baseline stands: quiet 55s < nudge threshold 180s", "latency_ms": 0.001166015863418579, "policy": "combined_repetition", "window_id": "loop-identical-dev-00-s02"}
+{"decision": "continue", "detail": "quiet 55s < nudge threshold 180s", "latency_ms": 0.0010421499609947205, "policy": "baseline", "window_id": "loop-identical-dev-00-s03"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0009159557521343231, "policy": "repetition", "window_id": "loop-identical-dev-00-s03"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0012079253792762756, "policy": "combined_repetition", "window_id": "loop-identical-dev-00-s03"}
+{"decision": "continue", "detail": "quiet 55s < nudge threshold 180s", "latency_ms": 0.0010416842997074127, "policy": "baseline", "window_id": "loop-identical-dev-00-s04"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.000791158527135849, "policy": "repetition", "window_id": "loop-identical-dev-00-s04"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0012079253792762756, "policy": "combined_repetition", "window_id": "loop-identical-dev-00-s04"}
+{"decision": "continue", "detail": "quiet 55s < nudge threshold 180s", "latency_ms": 0.0010826624929904938, "policy": "baseline", "window_id": "loop-identical-dev-00-s05"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.000791158527135849, "policy": "repetition", "window_id": "loop-identical-dev-00-s05"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0011669471859931946, "policy": "combined_repetition", "window_id": "loop-identical-dev-00-s05"}
+{"decision": "continue", "detail": "quiet 55s < nudge threshold 180s", "latency_ms": 0.0010831281542778015, "policy": "baseline", "window_id": "loop-identical-dev-01-s01"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0003343448042869568, "policy": "repetition", "window_id": "loop-identical-dev-01-s01"}
+{"decision": "continue", "detail": "baseline stands: quiet 55s < nudge threshold 180s", "latency_ms": 0.001125037670135498, "policy": "combined_repetition", "window_id": "loop-identical-dev-01-s01"}
+{"decision": "continue", "detail": "quiet 55s < nudge threshold 180s", "latency_ms": 0.0010826624929904938, "policy": "baseline", "window_id": "loop-identical-dev-01-s02"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.00033294782042503357, "policy": "repetition", "window_id": "loop-identical-dev-01-s02"}
+{"decision": "continue", "detail": "baseline stands: quiet 55s < nudge threshold 180s", "latency_ms": 0.001166015863418579, "policy": "combined_repetition", "window_id": "loop-identical-dev-01-s02"}
+{"decision": "continue", "detail": "quiet 55s < nudge threshold 180s", "latency_ms": 0.001041218638420105, "policy": "baseline", "window_id": "loop-identical-dev-01-s03"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.000791158527135849, "policy": "repetition", "window_id": "loop-identical-dev-01-s03"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0012922100722789764, "policy": "combined_repetition", "window_id": "loop-identical-dev-01-s03"}
+{"decision": "continue", "detail": "quiet 55s < nudge threshold 180s", "latency_ms": 0.0010831281542778015, "policy": "baseline", "window_id": "loop-identical-dev-01-s04"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0009159557521343231, "policy": "repetition", "window_id": "loop-identical-dev-01-s04"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0011669471859931946, "policy": "combined_repetition", "window_id": "loop-identical-dev-01-s04"}
+{"decision": "continue", "detail": "quiet 55s < nudge threshold 180s", "latency_ms": 0.0010831281542778015, "policy": "baseline", "window_id": "loop-identical-dev-01-s05"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0016670674085617065, "policy": "repetition", "window_id": "loop-identical-dev-01-s05"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0012498348951339722, "policy": "combined_repetition", "window_id": "loop-identical-dev-01-s05"}
+{"decision": "continue", "detail": "quiet 55s < nudge threshold 180s", "latency_ms": 0.0010407529771327972, "policy": "baseline", "window_id": "loop-identical-dev-02-s01"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.00033294782042503357, "policy": "repetition", "window_id": "loop-identical-dev-02-s01"}
+{"decision": "continue", "detail": "baseline stands: quiet 55s < nudge threshold 180s", "latency_ms": 0.0012088567018508911, "policy": "combined_repetition", "window_id": "loop-identical-dev-02-s01"}
+{"decision": "continue", "detail": "quiet 55s < nudge threshold 180s", "latency_ms": 0.001000240445137024, "policy": "baseline", "window_id": "loop-identical-dev-02-s02"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0003343448042869568, "policy": "repetition", "window_id": "loop-identical-dev-02-s02"}
+{"decision": "continue", "detail": "baseline stands: quiet 55s < nudge threshold 180s", "latency_ms": 0.001125037670135498, "policy": "combined_repetition", "window_id": "loop-identical-dev-02-s02"}
+{"decision": "continue", "detail": "quiet 55s < nudge threshold 180s", "latency_ms": 0.0011674128472805023, "policy": "baseline", "window_id": "loop-identical-dev-02-s03"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0007920898497104645, "policy": "repetition", "window_id": "loop-identical-dev-02-s03"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0012922100722789764, "policy": "combined_repetition", "window_id": "loop-identical-dev-02-s03"}
+{"decision": "continue", "detail": "quiet 55s < nudge threshold 180s", "latency_ms": 0.0019581057131290436, "policy": "baseline", "window_id": "loop-identical-dev-02-s04"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0009159557521343231, "policy": "repetition", "window_id": "loop-identical-dev-02-s04"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.00125030055642128, "policy": "combined_repetition", "window_id": "loop-identical-dev-02-s04"}
+{"decision": "continue", "detail": "quiet 55s < nudge threshold 180s", "latency_ms": 0.0010831281542778015, "policy": "baseline", "window_id": "loop-identical-dev-02-s05"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0007497146725654602, "policy": "repetition", "window_id": "loop-identical-dev-02-s05"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.001125037670135498, "policy": "combined_repetition", "window_id": "loop-identical-dev-02-s05"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_permission", "latency_ms": 0.0004172325134277344, "policy": "baseline", "window_id": "waiting-permission-dev-00"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_permission", "latency_ms": 0.0002919696271419525, "policy": "repetition", "window_id": "waiting-permission-dev-00"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: waiting_permission", "latency_ms": 0.0004577450454235077, "policy": "combined_repetition", "window_id": "waiting-permission-dev-00"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_permission", "latency_ms": 0.0002076849341392517, "policy": "baseline", "window_id": "waiting-permission-dev-01"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_permission", "latency_ms": 0.00020815059542655945, "policy": "repetition", "window_id": "waiting-permission-dev-01"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: waiting_permission", "latency_ms": 0.00029243528842926025, "policy": "combined_repetition", "window_id": "waiting-permission-dev-01"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_permission", "latency_ms": 0.00012526288628578186, "policy": "baseline", "window_id": "waiting-permission-dev-02"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_permission", "latency_ms": 0.00016624107956886292, "policy": "repetition", "window_id": "waiting-permission-dev-02"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: waiting_permission", "latency_ms": 0.0001671724021434784, "policy": "combined_repetition", "window_id": "waiting-permission-dev-02"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_permission", "latency_ms": 0.00012479722499847412, "policy": "baseline", "window_id": "waiting-permission-dev-03"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_permission", "latency_ms": 0.00012479722499847412, "policy": "repetition", "window_id": "waiting-permission-dev-03"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: waiting_permission", "latency_ms": 0.00016670674085617065, "policy": "combined_repetition", "window_id": "waiting-permission-dev-03"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_input", "latency_ms": 0.000250060111284256, "policy": "baseline", "window_id": "waiting-input-dev-00"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_input", "latency_ms": 0.00020815059542655945, "policy": "repetition", "window_id": "waiting-input-dev-00"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: waiting_input", "latency_ms": 0.000250060111284256, "policy": "combined_repetition", "window_id": "waiting-input-dev-00"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_input", "latency_ms": 0.000250060111284256, "policy": "baseline", "window_id": "waiting-input-dev-01"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_input", "latency_ms": 0.00012526288628578186, "policy": "repetition", "window_id": "waiting-input-dev-01"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: waiting_input", "latency_ms": 0.000250060111284256, "policy": "combined_repetition", "window_id": "waiting-input-dev-01"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_input", "latency_ms": 0.00012526288628578186, "policy": "baseline", "window_id": "waiting-input-dev-02"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_input", "latency_ms": 0.00012526288628578186, "policy": "repetition", "window_id": "waiting-input-dev-02"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: waiting_input", "latency_ms": 0.000250060111284256, "policy": "combined_repetition", "window_id": "waiting-input-dev-02"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_input", "latency_ms": 0.00012526288628578186, "policy": "baseline", "window_id": "waiting-input-dev-03"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_input", "latency_ms": 0.00012526288628578186, "policy": "repetition", "window_id": "waiting-input-dev-03"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: waiting_input", "latency_ms": 0.0001671724021434784, "policy": "combined_repetition", "window_id": "waiting-input-dev-03"}
+{"decision": "waiting_user", "detail": "idle planning orchestrator is waiting on the user, not silent (rule 31)", "latency_ms": 0.0004172325134277344, "policy": "baseline", "window_id": "waiting-planning-dev-00"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0004591420292854309, "policy": "repetition", "window_id": "waiting-planning-dev-00"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: idle planning orchestrator is waiting on the user, not silent (rule 31)", "latency_ms": 0.0004591420292854309, "policy": "combined_repetition", "window_id": "waiting-planning-dev-00"}
+{"decision": "waiting_user", "detail": "idle planning orchestrator is waiting on the user, not silent (rule 31)", "latency_ms": 0.00020815059542655945, "policy": "baseline", "window_id": "waiting-planning-dev-01"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0002919696271419525, "policy": "repetition", "window_id": "waiting-planning-dev-01"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: idle planning orchestrator is waiting on the user, not silent (rule 31)", "latency_ms": 0.0002076849341392517, "policy": "combined_repetition", "window_id": "waiting-planning-dev-01"}
+{"decision": "waiting_user", "detail": "idle planning orchestrator is waiting on the user, not silent (rule 31)", "latency_ms": 0.00012479722499847412, "policy": "baseline", "window_id": "waiting-planning-dev-02"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.000250060111284256, "policy": "repetition", "window_id": "waiting-planning-dev-02"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: idle planning orchestrator is waiting on the user, not silent (rule 31)", "latency_ms": 0.0001671724021434784, "policy": "combined_repetition", "window_id": "waiting-planning-dev-02"}
+{"decision": "waiting_user", "detail": "explicit wait guard: agent_error", "latency_ms": 0.00020908191800117493, "policy": "baseline", "window_id": "waiting-agent-error-dev-00"}
+{"decision": "waiting_user", "detail": "explicit wait guard: agent_error", "latency_ms": 0.00012526288628578186, "policy": "repetition", "window_id": "waiting-agent-error-dev-00"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: agent_error", "latency_ms": 0.000250060111284256, "policy": "combined_repetition", "window_id": "waiting-agent-error-dev-00"}
+{"decision": "waiting_user", "detail": "explicit wait guard: agent_error", "latency_ms": 0.0002076849341392517, "policy": "baseline", "window_id": "waiting-agent-error-dev-01"}
+{"decision": "waiting_user", "detail": "explicit wait guard: agent_error", "latency_ms": 0.00012479722499847412, "policy": "repetition", "window_id": "waiting-agent-error-dev-01"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: agent_error", "latency_ms": 0.0002076849341392517, "policy": "combined_repetition", "window_id": "waiting-agent-error-dev-01"}
+{"decision": "waiting_user", "detail": "explicit wait guard: agent_error", "latency_ms": 0.00012479722499847412, "policy": "baseline", "window_id": "waiting-agent-error-dev-02"}
+{"decision": "waiting_user", "detail": "explicit wait guard: agent_error", "latency_ms": 0.0001671724021434784, "policy": "repetition", "window_id": "waiting-agent-error-dev-02"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: agent_error", "latency_ms": 0.0001671724021434784, "policy": "combined_repetition", "window_id": "waiting-agent-error-dev-02"}
+{"decision": "waiting_user", "detail": "a flag already raised for the user is left alone (rule 18)", "latency_ms": 0.0013746321201324463, "policy": "baseline", "window_id": "waiting-user-flag-dev-00"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_user", "latency_ms": 0.0002919696271419525, "policy": "repetition", "window_id": "waiting-user-flag-dev-00"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: a flag already raised for the user is left alone (rule 18)", "latency_ms": 0.0011669471859931946, "policy": "combined_repetition", "window_id": "waiting-user-flag-dev-00"}
+{"decision": "waiting_user", "detail": "a flag already raised for the user is left alone (rule 18)", "latency_ms": 0.0009587965905666351, "policy": "baseline", "window_id": "waiting-user-flag-dev-01"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_user", "latency_ms": 0.00016670674085617065, "policy": "repetition", "window_id": "waiting-user-flag-dev-01"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: a flag already raised for the user is left alone (rule 18)", "latency_ms": 0.0010416842997074127, "policy": "combined_repetition", "window_id": "waiting-user-flag-dev-01"}
+{"decision": "waiting_user", "detail": "a flag already raised for the user is left alone (rule 18)", "latency_ms": 0.0008749775588512421, "policy": "baseline", "window_id": "waiting-user-flag-dev-02"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_user", "latency_ms": 0.00016577541828155518, "policy": "repetition", "window_id": "waiting-user-flag-dev-02"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: a flag already raised for the user is left alone (rule 18)", "latency_ms": 0.0009997747838497162, "policy": "combined_repetition", "window_id": "waiting-user-flag-dev-02"}
+{"decision": "continue", "detail": "no activity timestamp to measure quiet from", "latency_ms": 0.0005420297384262085, "policy": "baseline", "window_id": "insufficient-missing-ts-dev-00"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0004163011908531189, "policy": "repetition", "window_id": "insufficient-missing-ts-dev-00"}
+{"decision": "continue", "detail": "baseline stands: no activity timestamp to measure quiet from", "latency_ms": 0.0004591420292854309, "policy": "combined_repetition", "window_id": "insufficient-missing-ts-dev-00"}
+{"decision": "continue", "detail": "no activity timestamp to measure quiet from", "latency_ms": 0.00020815059542655945, "policy": "baseline", "window_id": "insufficient-missing-ts-dev-01"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.00033387914299964905, "policy": "repetition", "window_id": "insufficient-missing-ts-dev-01"}
+{"decision": "continue", "detail": "baseline stands: no activity timestamp to measure quiet from", "latency_ms": 0.0002919696271419525, "policy": "combined_repetition", "window_id": "insufficient-missing-ts-dev-01"}
+{"decision": "continue", "detail": "no activity timestamp to measure quiet from", "latency_ms": 0.00020908191800117493, "policy": "baseline", "window_id": "insufficient-missing-ts-dev-02"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.00033294782042503357, "policy": "repetition", "window_id": "insufficient-missing-ts-dev-02"}
+{"decision": "continue", "detail": "baseline stands: no activity timestamp to measure quiet from", "latency_ms": 0.0003334134817123413, "policy": "combined_repetition", "window_id": "insufficient-missing-ts-dev-02"}
+{"decision": "continue", "detail": "quiet 60s < nudge threshold 180s", "latency_ms": 0.0012917444109916687, "policy": "baseline", "window_id": "insufficient-truncated-dev-00"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0002919696271419525, "policy": "repetition", "window_id": "insufficient-truncated-dev-00"}
+{"decision": "continue", "detail": "baseline stands: quiet 60s < nudge threshold 180s", "latency_ms": 0.00125030055642128, "policy": "combined_repetition", "window_id": "insufficient-truncated-dev-00"}
+{"decision": "continue", "detail": "quiet 60s < nudge threshold 180s", "latency_ms": 0.001125037670135498, "policy": "baseline", "window_id": "insufficient-truncated-dev-01"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0002919696271419525, "policy": "repetition", "window_id": "insufficient-truncated-dev-01"}
+{"decision": "continue", "detail": "baseline stands: quiet 60s < nudge threshold 180s", "latency_ms": 0.0011245720088481903, "policy": "combined_repetition", "window_id": "insufficient-truncated-dev-01"}
+{"decision": "continue", "detail": "quiet 60s < nudge threshold 180s", "latency_ms": 0.001166015863418579, "policy": "baseline", "window_id": "insufficient-truncated-dev-02"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.00029103830456733704, "policy": "repetition", "window_id": "insufficient-truncated-dev-02"}
+{"decision": "continue", "detail": "baseline stands: quiet 60s < nudge threshold 180s", "latency_ms": 0.001125037670135498, "policy": "combined_repetition", "window_id": "insufficient-truncated-dev-02"}
+{"decision": "continue", "detail": "quiet 60s < nudge threshold 180s", "latency_ms": 0.0010831281542778015, "policy": "baseline", "window_id": "insufficient-gap-dev-00"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.00033294782042503357, "policy": "repetition", "window_id": "insufficient-gap-dev-00"}
+{"decision": "continue", "detail": "baseline stands: quiet 60s < nudge threshold 180s", "latency_ms": 0.001166015863418579, "policy": "combined_repetition", "window_id": "insufficient-gap-dev-00"}
+{"decision": "continue", "detail": "quiet 60s < nudge threshold 180s", "latency_ms": 0.0009997747838497162, "policy": "baseline", "window_id": "insufficient-gap-dev-01"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.00029103830456733704, "policy": "repetition", "window_id": "insufficient-gap-dev-01"}
+{"decision": "continue", "detail": "baseline stands: quiet 60s < nudge threshold 180s", "latency_ms": 0.001125037670135498, "policy": "combined_repetition", "window_id": "insufficient-gap-dev-01"}
+{"decision": "continue", "detail": "quiet 60s < nudge threshold 180s", "latency_ms": 0.0010407529771327972, "policy": "baseline", "window_id": "insufficient-gap-dev-02"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.00029103830456733704, "policy": "repetition", "window_id": "insufficient-gap-dev-02"}
+{"decision": "continue", "detail": "baseline stands: quiet 60s < nudge threshold 180s", "latency_ms": 0.001125037670135498, "policy": "combined_repetition", "window_id": "insufficient-gap-dev-02"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 0.0002076849341392517, "policy": "baseline", "window_id": "real-01m45meq-tail-dev"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0004577450454235077, "policy": "repetition", "window_id": "real-01m45meq-tail-dev"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.0002076849341392517, "policy": "combined_repetition", "window_id": "real-01m45meq-tail-dev"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00012479722499847412, "policy": "baseline", "window_id": "real-01m45mtm-tail-dev"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0003748573362827301, "policy": "repetition", "window_id": "real-01m45mtm-tail-dev"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00020815059542655945, "policy": "combined_repetition", "window_id": "real-01m45mtm-tail-dev"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00012479722499847412, "policy": "baseline", "window_id": "real-01m45mtm-tail-dev"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0004172325134277344, "policy": "repetition", "window_id": "real-01m45mtm-tail-dev"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.0001671724021434784, "policy": "combined_repetition", "window_id": "real-01m45mtm-tail-dev"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00012479722499847412, "policy": "baseline", "window_id": "real-01m45mtm-tail-dev"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.00037532299757003784, "policy": "repetition", "window_id": "real-01m45mtm-tail-dev"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00016624107956886292, "policy": "combined_repetition", "window_id": "real-01m45mtm-tail-dev"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00012526288628578186, "policy": "baseline", "window_id": "real-01m45n88-tail-dev"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.00045821070671081543, "policy": "repetition", "window_id": "real-01m45n88-tail-dev"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.0001671724021434784, "policy": "combined_repetition", "window_id": "real-01m45n88-tail-dev"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 8.381903171539307e-05, "policy": "baseline", "window_id": "real-01m45nxr-tail-dev"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0004577450454235077, "policy": "repetition", "window_id": "real-01m45nxr-tail-dev"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00016577541828155518, "policy": "combined_repetition", "window_id": "real-01m45nxr-tail-dev"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00012526288628578186, "policy": "baseline", "window_id": "real-01m45qf1-tail-dev"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0004172325134277344, "policy": "repetition", "window_id": "real-01m45qf1-tail-dev"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00020815059542655945, "policy": "combined_repetition", "window_id": "real-01m45qf1-tail-dev"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00012526288628578186, "policy": "baseline", "window_id": "real-01m45qnp-tail-dev"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0003748573362827301, "policy": "repetition", "window_id": "real-01m45qnp-tail-dev"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00016577541828155518, "policy": "combined_repetition", "window_id": "real-01m45qnp-tail-dev"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00012479722499847412, "policy": "baseline", "window_id": "real-01m45zdf-tail-dev"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.00045821070671081543, "policy": "repetition", "window_id": "real-01m45zdf-tail-dev"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.0001671724021434784, "policy": "combined_repetition", "window_id": "real-01m45zdf-tail-dev"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 8.335337042808533e-05, "policy": "baseline", "window_id": "real-01m46091-tail-dev"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.00033387914299964905, "policy": "repetition", "window_id": "real-01m46091-tail-dev"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.0012922100722789764, "policy": "combined_repetition", "window_id": "real-01m46091-tail-dev"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 8.381903171539307e-05, "policy": "baseline", "window_id": "real-01m460x9-tail-dev"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.00037532299757003784, "policy": "repetition", "window_id": "real-01m460x9-tail-dev"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00020815059542655945, "policy": "combined_repetition", "window_id": "real-01m460x9-tail-dev"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 8.381903171539307e-05, "policy": "baseline", "window_id": "real-01m461e8-tail-dev"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0003748573362827301, "policy": "repetition", "window_id": "real-01m461e8-tail-dev"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00012526288628578186, "policy": "combined_repetition", "window_id": "real-01m461e8-tail-dev"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00012526288628578186, "policy": "baseline", "window_id": "real-01m4674k-tail-dev"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.00033294782042503357, "policy": "repetition", "window_id": "real-01m4674k-tail-dev"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00016670674085617065, "policy": "combined_repetition", "window_id": "real-01m4674k-tail-dev"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 8.381903171539307e-05, "policy": "baseline", "window_id": "real-01m467h1-tail-dev"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0004172325134277344, "policy": "repetition", "window_id": "real-01m467h1-tail-dev"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.0002076849341392517, "policy": "combined_repetition", "window_id": "real-01m467h1-tail-dev"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00012479722499847412, "policy": "baseline", "window_id": "real-01m467h1-tail-dev"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0002919696271419525, "policy": "repetition", "window_id": "real-01m467h1-tail-dev"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00016624107956886292, "policy": "combined_repetition", "window_id": "real-01m467h1-tail-dev"}

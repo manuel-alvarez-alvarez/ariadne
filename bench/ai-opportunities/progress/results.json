@@ -1,0 +1,378 @@
+{
+  "area": "scheduler-attention-and-watchdogs",
+  "dataset": {
+    "family_count": 48,
+    "label_rules": "see bench_progress/synth.py (synthetic, label_source=by_construction) and bench_progress/real_export.py (real_sanitized, label_source=observed|inferred)",
+    "model_calls_per_family": {
+      "max": 9,
+      "mean": 2.9583333333333335,
+      "min": 1,
+      "note": "one advisory call per replayed window; a multi_snapshot loop family costs one call per snapshot, every other family costs one."
+    },
+    "splits": {
+      "dev": {
+        "labels": {
+          "insufficient_evidence": 9,
+          "repetitive_failure": 15,
+          "useful_progress": 48,
+          "waiting_user_input": 17
+        },
+        "n": 89,
+        "provenance": {
+          "real_sanitized": 15,
+          "synthetic": 74
+        }
+      },
+      "eval": {
+        "labels": {
+          "insufficient_evidence": 6,
+          "repetitive_failure": 10,
+          "useful_progress": 25,
+          "waiting_user_input": 12
+        },
+        "n": 53,
+        "provenance": {
+          "real_sanitized": 5,
+          "synthetic": 48
+        }
+      }
+    }
+  },
+  "limitations": [
+    "Synthetic windows dominate the dataset (122 of 142); real-sanitized windows (20) are a secondary, smaller check, reported separately in dataset.splits.",
+    "Real-sanitized labels are inferred post hoc from the same evidence a policy sees, not confirmed by a human reviewer against the original transcript - see label_source on each case and the ambiguous flag.",
+    "The baseline port evaluates one snapshot at a time; it does not model the one-nudge/one-flag-per-situation dedup quiet.rs keeps across scheduler passes, since that is a delivery concern, not a decision this bench grades.",
+    "Detection delay is only computed for the loop-identical-* families tagged multi_snapshot, where several decision points over time exist for the same loop.",
+    "combined_kev never softens a baseline escalation (policy_combine.py), so it inherits the baseline's own false escalations on long-running single tool calls even where Kev alone judged them correctly as progress - see kev vs combined_kev false_escalation_rate on eval.",
+    "A dataset of 142 windows (53 reserved for eval) is enough to compare policies, not enough to bound Kev's error rate tightly; treat the eval numbers as a pilot measurement, not a production SLO.",
+    "Real-sanitized windows are read from the daemon's live, continuously-growing ariadne.db; `generate.py --refresh-real` can pull different trailing events for the same real session id if that session kept reporting since the last refresh, which is why it is a separate, opt-in flag rather than the default. The 122 synthetic windows are fully deterministic and are what the default reproduction command guarantees byte-for-byte; the real-sanitized 20 are a best-effort, timestamped supplement, refreshed deliberately, not a frozen fixture."
+  ],
+  "metrics": {
+    "dev": {
+      "baseline": {
+        "coverage": 0.0,
+        "detection_delay_s": [
+          {
+            "detected_at_elapsed_s": null,
+            "family": "loop-identical-dev-00",
+            "policy": "baseline"
+          },
+          {
+            "detected_at_elapsed_s": null,
+            "family": "loop-identical-dev-01",
+            "policy": "baseline"
+          },
+          {
+            "detected_at_elapsed_s": null,
+            "family": "loop-identical-dev-02",
+            "policy": "baseline"
+          }
+        ],
+        "false_escalation_rate": 0.0625,
+        "false_escalations": 3,
+        "insufficient_evidence_escalation_rate": 0.0,
+        "insufficient_evidence_escalations": 0,
+        "mean_latency_ms": 0.0008482883652944244,
+        "missed_loop_rate": 1.0,
+        "missed_loops": 15,
+        "missed_user_question_rate": 0.0,
+        "missed_user_questions": 0,
+        "model_calls": 0,
+        "n": 89,
+        "p95_latency_ms": 0.001458916813135147,
+        "policy": "baseline"
+      },
+      "combined_repetition": {
+        "coverage": 0.6,
+        "detection_delay_s": [
+          {
+            "detected_at_elapsed_s": 165.0,
+            "family": "loop-identical-dev-00",
+            "policy": "combined_repetition"
+          },
+          {
+            "detected_at_elapsed_s": 165.0,
+            "family": "loop-identical-dev-01",
+            "policy": "combined_repetition"
+          },
+          {
+            "detected_at_elapsed_s": 165.0,
+            "family": "loop-identical-dev-02",
+            "policy": "combined_repetition"
+          }
+        ],
+        "false_escalation_rate": 0.20833333333333334,
+        "false_escalations": 10,
+        "insufficient_evidence_escalation_rate": 0.0,
+        "insufficient_evidence_escalations": 0,
+        "mean_latency_ms": 0.0008674432638655887,
+        "missed_loop_rate": 0.4,
+        "missed_loops": 6,
+        "missed_user_question_rate": 0.0,
+        "missed_user_questions": 0,
+        "model_calls": 0,
+        "n": 89,
+        "p95_latency_ms": 0.0015408731997013092,
+        "policy": "combined_repetition"
+      },
+      "repetition": {
+        "coverage": 0.6,
+        "detection_delay_s": [
+          {
+            "detected_at_elapsed_s": 165.0,
+            "family": "loop-identical-dev-00",
+            "policy": "repetition"
+          },
+          {
+            "detected_at_elapsed_s": 165.0,
+            "family": "loop-identical-dev-01",
+            "policy": "repetition"
+          },
+          {
+            "detected_at_elapsed_s": 165.0,
+            "family": "loop-identical-dev-02",
+            "policy": "repetition"
+          }
+        ],
+        "false_escalation_rate": 0.14583333333333334,
+        "false_escalations": 7,
+        "insufficient_evidence_escalation_rate": 0.0,
+        "insufficient_evidence_escalations": 0,
+        "mean_latency_ms": 0.0005865030074387454,
+        "missed_loop_rate": 0.4,
+        "missed_loops": 6,
+        "missed_user_question_rate": 0.0,
+        "missed_user_questions": 0,
+        "model_calls": 0,
+        "n": 89,
+        "p95_latency_ms": 0.001416075974702835,
+        "policy": "repetition"
+      }
+    },
+    "eval": {
+      "baseline": {
+        "coverage": 0.0,
+        "detection_delay_s": [
+          {
+            "detected_at_elapsed_s": null,
+            "family": "loop-identical-eval-00",
+            "policy": "baseline"
+          },
+          {
+            "detected_at_elapsed_s": null,
+            "family": "loop-identical-eval-01",
+            "policy": "baseline"
+          }
+        ],
+        "false_escalation_rate": 0.08,
+        "false_escalations": 2,
+        "insufficient_evidence_escalation_rate": 0.0,
+        "insufficient_evidence_escalations": 0,
+        "mean_latency_ms": 0.0012272547157305591,
+        "missed_loop_rate": 1.0,
+        "missed_loops": 10,
+        "missed_user_question_rate": 0.0,
+        "missed_user_questions": 0,
+        "model_calls": 0,
+        "n": 53,
+        "p95_latency_ms": 0.0019171275198459625,
+        "policy": "baseline"
+      },
+      "combined_kev": {
+        "coverage": 0.8,
+        "detection_delay_s": [
+          {
+            "detected_at_elapsed_s": 120.0,
+            "family": "loop-identical-eval-00",
+            "policy": "combined_kev"
+          },
+          {
+            "detected_at_elapsed_s": 120.0,
+            "family": "loop-identical-eval-01",
+            "policy": "combined_kev"
+          }
+        ],
+        "false_escalation_rate": 0.16,
+        "false_escalations": 4,
+        "insufficient_evidence_escalation_rate": 0.0,
+        "insufficient_evidence_escalations": 0,
+        "mean_latency_ms": 764.8731878572056,
+        "missed_loop_rate": 0.2,
+        "missed_loops": 2,
+        "missed_user_question_rate": 0.0,
+        "missed_user_questions": 0,
+        "model_calls": 53,
+        "n": 53,
+        "p95_latency_ms": 1910.959499888122,
+        "policy": "combined_kev"
+      },
+      "combined_repetition": {
+        "coverage": 0.6,
+        "detection_delay_s": [
+          {
+            "detected_at_elapsed_s": 165.0,
+            "family": "loop-identical-eval-00",
+            "policy": "combined_repetition"
+          },
+          {
+            "detected_at_elapsed_s": 165.0,
+            "family": "loop-identical-eval-01",
+            "policy": "combined_repetition"
+          }
+        ],
+        "false_escalation_rate": 0.24,
+        "false_escalations": 6,
+        "insufficient_evidence_escalation_rate": 0.0,
+        "insufficient_evidence_escalations": 0,
+        "mean_latency_ms": 0.0012309887920910457,
+        "missed_loop_rate": 0.4,
+        "missed_loops": 4,
+        "missed_user_question_rate": 0.0,
+        "missed_user_questions": 0,
+        "model_calls": 0,
+        "n": 53,
+        "p95_latency_ms": 0.00200001522898674,
+        "policy": "combined_repetition"
+      },
+      "kev": {
+        "coverage": 0.8,
+        "detection_delay_s": [
+          {
+            "detected_at_elapsed_s": 120.0,
+            "family": "loop-identical-eval-00",
+            "policy": "kev"
+          },
+          {
+            "detected_at_elapsed_s": 120.0,
+            "family": "loop-identical-eval-01",
+            "policy": "kev"
+          }
+        ],
+        "false_escalation_rate": 0.08,
+        "false_escalations": 2,
+        "insufficient_evidence_escalation_rate": 0.0,
+        "insufficient_evidence_escalations": 0,
+        "mean_latency_ms": 764.8731878572056,
+        "missed_loop_rate": 0.2,
+        "missed_loops": 2,
+        "missed_user_question_rate": 0.0,
+        "missed_user_questions": 0,
+        "model_calls": 53,
+        "n": 53,
+        "p95_latency_ms": 1910.959499888122,
+        "policy": "kev"
+      },
+      "repetition": {
+        "coverage": 0.6,
+        "detection_delay_s": [
+          {
+            "detected_at_elapsed_s": 165.0,
+            "family": "loop-identical-eval-00",
+            "policy": "repetition"
+          },
+          {
+            "detected_at_elapsed_s": 165.0,
+            "family": "loop-identical-eval-01",
+            "policy": "repetition"
+          }
+        ],
+        "false_escalation_rate": 0.16,
+        "false_escalations": 4,
+        "insufficient_evidence_escalation_rate": 0.0,
+        "insufficient_evidence_escalations": 0,
+        "mean_latency_ms": 0.0008719200092666554,
+        "missed_loop_rate": 0.4,
+        "missed_loops": 4,
+        "missed_user_question_rate": 0.0,
+        "missed_user_questions": 0,
+        "model_calls": 0,
+        "n": 53,
+        "p95_latency_ms": 0.00200001522898674,
+        "policy": "repetition"
+      }
+    }
+  },
+  "recommendation": "investigate further",
+  "run": {
+    "kev_inference": {
+      "environment": "~/.ariadne/ai-permissions/venv/bin/python3 (the interpreter the orchestrator confirmed already carries kev pinned to the required revision, reused read-only), HF_HOME=~/.ariadne/ai-opportunities/hf (the shared experimental cache, not the production ai-permissions one), device=mps (Apple Silicon), torch 2.8.0, transformers 5.19.0, peft 0.21.2; not necessarily Ariadne's production inference environment - see limitations.",
+      "invocation": "python3 bench_progress/kev_runner.py --prompt prompts/v2.json --input cases/eval.jsonl --output predictions/kev_raw_eval.jsonl --stats predictions/kev_stats_eval.json --policy-name kev",
+      "kev_package_revision": "f1535963cea021439370c23127bc970b6788e730",
+      "lock": "/tmp/ariadne-ai-01m48gt1v7v045wtc1kaw0fnas.lock",
+      "measured_runs": {
+        "prompt_v1_dev_pilot": {
+          "attn": "sdpa",
+          "backend": "auto",
+          "cold_start_ms": 20194.645708892494,
+          "device": "mps",
+          "dtype": "torch.bfloat16",
+          "first_call_latency_ms": 4284.11537501961,
+          "malformed_answers": 0,
+          "n_cases": 89,
+          "peak_rss_mb": 7717.046875,
+          "run": "jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101",
+          "timeouts": 0,
+          "warm_p50_latency_ms": 426.0503747500479,
+          "warm_p95_latency_ms": 1440.4960414394736
+        },
+        "prompt_v2_dev_pilot": {
+          "attn": "sdpa",
+          "backend": "auto",
+          "cold_start_ms": 50080.47720789909,
+          "device": "mps",
+          "dtype": "torch.bfloat16",
+          "first_call_latency_ms": 1242.4192503094673,
+          "malformed_answers": 0,
+          "n_cases": 89,
+          "peak_rss_mb": 10110.953125,
+          "run": "jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101",
+          "timeouts": 0,
+          "warm_p50_latency_ms": 459.9527921527624,
+          "warm_p95_latency_ms": 1532.3113747872412
+        },
+        "prompt_v2_eval_selected": {
+          "attn": "sdpa",
+          "backend": "auto",
+          "cold_start_ms": 36094.00066593662,
+          "device": "mps",
+          "dtype": "torch.bfloat16",
+          "first_call_latency_ms": 1459.7616670653224,
+          "malformed_answers": 0,
+          "n_cases": 53,
+          "peak_rss_mb": 12494.46875,
+          "run": "jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101",
+          "timeouts": 0,
+          "warm_p50_latency_ms": 584.7237077541649,
+          "warm_p95_latency_ms": 1910.959499888122
+        }
+      },
+      "run": "jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101"
+    },
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "prompt_selection": {
+      "candidates": [
+        "prompts/v1.json",
+        "prompts/v2.json"
+      ],
+      "dev_accuracy": {
+        "v1": 0.7415730337078652,
+        "v2": 0.7528089887640449
+      },
+      "eval_accuracy_selected_design": 0.7924528301886793,
+      "reason": "higher dev accuracy overall (0.753 vs 0.742), driven by insufficient_evidence (9/9 vs 0/9) and waiting_user_input (11/17 vs 8/17) recall; selected before touching eval, then run once on eval (0.792 accuracy there) per the freeze rule. See bench_progress/score_kev_raw.py's output (predictions/kev_v1_raw_dev.jsonl, kev_v2_raw_dev.jsonl, kev_raw_eval.jsonl) for the full confusion matrices.",
+      "selected": "prompts/v2.json"
+    },
+    "python": "3.14.6",
+    "reproduce_dataset": "python3 -m bench_progress.generate",
+    "reproduce_metrics": "python3 -m bench_progress.build_results > results.json",
+    "reproduce_predictions": "python3 -m bench_progress.replay --split both [--kev-raw predictions/kev_raw_eval.jsonl --kev-policy-name kev]",
+    "source_commit": "ecaf8e52f1e0da85ebdb3cf7ef6efde4f36762f1"
+  },
+  "variants": {
+    "baseline": "the current quiet watchdog, ported from scheduler/quiet.rs (spec 009)",
+    "combined_kev": "the baseline, with Kev allowed to add escalate_unproductive the same way",
+    "combined_repetition": "the baseline, with the repetition rule allowed to add escalate_unproductive where the baseline says continue/nudge (policy_combine.py)",
+    "kev": "jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101, choice over the four labels",
+    "repetition": "a simple rule: escalate when one tool name repeats >= 3 times in the last 6 tool calls"
+  }
+}
