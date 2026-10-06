@@ -1,0 +1,322 @@
+{
+  "area": "agent_failure_diagnosis",
+  "run": {
+    "package_revision": "{\"url\": \"https://github.com/jaredpalmer/kev\", \"vcs_info\": {\"commit_id\": \"f1535963cea021439370c23127bc970b6788e730\", \"requested_revision\": \"f1535963cea021439370c23127bc970b6788e730\", \"vcs\": \"git\"}}",
+    "checkpoint": "jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101",
+    "device": "mps",
+    "precision": "default checkpoint settings; backend=auto",
+    "source_commit": "75386a4314e133c0367c77e4aaf11f6b5c795053",
+    "isolated_hf_home": "/Users/malvarez/.ariadne/ai-opportunities/hf",
+    "cold_start_ms": 445275.3907502629,
+    "warm_latency_ms": {
+      "count": 125,
+      "p50": 172.7164159528911,
+      "p95": 190.3134579770267
+    },
+    "malformed_answers": 0,
+    "peak_memory_method": "resource.getrusage(RUSAGE_SELF).ru_maxrss; macOS reports bytes and Linux reports KiB",
+    "peak_memory_bytes": 10257727488,
+    "commands": [
+      "python3 make_cases.py",
+      "HF_HOME=/Users/malvarez/.ariadne/ai-opportunities/hf python3 lock_run.py /Users/malvarez/.ariadne/ai-permissions/venv/bin/python3 experiment.py measure",
+      "/Users/malvarez/.ariadne/ai-permissions/venv/bin/python3 experiment.py recompute"
+    ]
+  },
+  "dataset": {
+    "split_sizes": {
+      "dev": 80,
+      "eval": 45
+    },
+    "provenance": {
+      "synthetic": 125
+    },
+    "label_rules": "Labels use the case evidence and rationale before model scoring."
+  },
+  "variants": {
+    "baseline": "Current structured fields plus configured default substring patterns.",
+    "kev": "Kev-4B diagnosis choice question.",
+    "rules_first_kev": "Protocol and explicit rules first, then Kev; use the current baseline only after no Kev answer."
+  },
+  "metrics": {
+    "dev": {
+      "baseline": {
+        "count": 80,
+        "exhaustion_precision": 0.25,
+        "exhaustion_recall": 0.3333333333333333,
+        "wrong_switch_recommendations": 15,
+        "missed_exhaustion": 10,
+        "abstention_coverage": 0.75,
+        "class_confusion": {
+          "exhausted": {
+            "exhausted": 5,
+            "temporary": 0,
+            "auth_config": 0,
+            "task_error": 0,
+            "insufficient": 10
+          },
+          "temporary": {
+            "exhausted": 0,
+            "temporary": 0,
+            "auth_config": 0,
+            "task_error": 0,
+            "insufficient": 15
+          },
+          "auth_config": {
+            "exhausted": 0,
+            "temporary": 0,
+            "auth_config": 0,
+            "task_error": 0,
+            "insufficient": 15
+          },
+          "task_error": {
+            "exhausted": 5,
+            "temporary": 0,
+            "auth_config": 0,
+            "task_error": 0,
+            "insufficient": 15
+          },
+          "insufficient": {
+            "exhausted": 10,
+            "temporary": 0,
+            "auth_config": 0,
+            "task_error": 0,
+            "insufficient": 5
+          }
+        }
+      },
+      "kev": {
+        "count": 80,
+        "exhaustion_precision": 0.75,
+        "exhaustion_recall": 1.0,
+        "wrong_switch_recommendations": 5,
+        "missed_exhaustion": 0,
+        "abstention_coverage": 0.25,
+        "class_confusion": {
+          "exhausted": {
+            "exhausted": 15,
+            "temporary": 0,
+            "auth_config": 0,
+            "task_error": 0,
+            "insufficient": 0
+          },
+          "temporary": {
+            "exhausted": 0,
+            "temporary": 10,
+            "auth_config": 0,
+            "task_error": 0,
+            "insufficient": 5
+          },
+          "auth_config": {
+            "exhausted": 0,
+            "temporary": 0,
+            "auth_config": 15,
+            "task_error": 0,
+            "insufficient": 0
+          },
+          "task_error": {
+            "exhausted": 0,
+            "temporary": 0,
+            "auth_config": 0,
+            "task_error": 15,
+            "insufficient": 5
+          },
+          "insufficient": {
+            "exhausted": 5,
+            "temporary": 0,
+            "auth_config": 0,
+            "task_error": 0,
+            "insufficient": 10
+          }
+        }
+      },
+      "rules_first_kev": {
+        "count": 80,
+        "exhaustion_precision": 0.75,
+        "exhaustion_recall": 1.0,
+        "wrong_switch_recommendations": 5,
+        "missed_exhaustion": 0,
+        "abstention_coverage": 0.1875,
+        "class_confusion": {
+          "exhausted": {
+            "exhausted": 15,
+            "temporary": 0,
+            "auth_config": 0,
+            "task_error": 0,
+            "insufficient": 0
+          },
+          "temporary": {
+            "exhausted": 0,
+            "temporary": 15,
+            "auth_config": 0,
+            "task_error": 0,
+            "insufficient": 0
+          },
+          "auth_config": {
+            "exhausted": 0,
+            "temporary": 0,
+            "auth_config": 15,
+            "task_error": 0,
+            "insufficient": 0
+          },
+          "task_error": {
+            "exhausted": 0,
+            "temporary": 0,
+            "auth_config": 0,
+            "task_error": 15,
+            "insufficient": 5
+          },
+          "insufficient": {
+            "exhausted": 5,
+            "temporary": 0,
+            "auth_config": 0,
+            "task_error": 0,
+            "insufficient": 10
+          }
+        }
+      }
+    },
+    "eval": {
+      "baseline": {
+        "count": 45,
+        "exhaustion_precision": 0.6666666666666666,
+        "exhaustion_recall": 1.0,
+        "wrong_switch_recommendations": 5,
+        "missed_exhaustion": 0,
+        "abstention_coverage": 0.6666666666666666,
+        "class_confusion": {
+          "exhausted": {
+            "exhausted": 10,
+            "temporary": 0,
+            "auth_config": 0,
+            "task_error": 0,
+            "insufficient": 0
+          },
+          "temporary": {
+            "exhausted": 0,
+            "temporary": 0,
+            "auth_config": 0,
+            "task_error": 0,
+            "insufficient": 10
+          },
+          "auth_config": {
+            "exhausted": 0,
+            "temporary": 0,
+            "auth_config": 0,
+            "task_error": 0,
+            "insufficient": 5
+          },
+          "task_error": {
+            "exhausted": 5,
+            "temporary": 0,
+            "auth_config": 0,
+            "task_error": 0,
+            "insufficient": 5
+          },
+          "insufficient": {
+            "exhausted": 0,
+            "temporary": 0,
+            "auth_config": 0,
+            "task_error": 0,
+            "insufficient": 10
+          }
+        }
+      },
+      "kev": {
+        "count": 45,
+        "exhaustion_precision": 1.0,
+        "exhaustion_recall": 1.0,
+        "wrong_switch_recommendations": 0,
+        "missed_exhaustion": 0,
+        "abstention_coverage": 0.2222222222222222,
+        "class_confusion": {
+          "exhausted": {
+            "exhausted": 10,
+            "temporary": 0,
+            "auth_config": 0,
+            "task_error": 0,
+            "insufficient": 0
+          },
+          "temporary": {
+            "exhausted": 0,
+            "temporary": 10,
+            "auth_config": 0,
+            "task_error": 0,
+            "insufficient": 0
+          },
+          "auth_config": {
+            "exhausted": 0,
+            "temporary": 0,
+            "auth_config": 5,
+            "task_error": 0,
+            "insufficient": 0
+          },
+          "task_error": {
+            "exhausted": 0,
+            "temporary": 0,
+            "auth_config": 0,
+            "task_error": 10,
+            "insufficient": 0
+          },
+          "insufficient": {
+            "exhausted": 0,
+            "temporary": 0,
+            "auth_config": 0,
+            "task_error": 0,
+            "insufficient": 10
+          }
+        }
+      },
+      "rules_first_kev": {
+        "count": 45,
+        "exhaustion_precision": 1.0,
+        "exhaustion_recall": 1.0,
+        "wrong_switch_recommendations": 0,
+        "missed_exhaustion": 0,
+        "abstention_coverage": 0.2222222222222222,
+        "class_confusion": {
+          "exhausted": {
+            "exhausted": 10,
+            "temporary": 0,
+            "auth_config": 0,
+            "task_error": 0,
+            "insufficient": 0
+          },
+          "temporary": {
+            "exhausted": 0,
+            "temporary": 10,
+            "auth_config": 0,
+            "task_error": 0,
+            "insufficient": 0
+          },
+          "auth_config": {
+            "exhausted": 0,
+            "temporary": 0,
+            "auth_config": 5,
+            "task_error": 0,
+            "insufficient": 0
+          },
+          "task_error": {
+            "exhausted": 0,
+            "temporary": 0,
+            "auth_config": 0,
+            "task_error": 10,
+            "insufficient": 0
+          },
+          "insufficient": {
+            "exhausted": 0,
+            "temporary": 0,
+            "auth_config": 0,
+            "task_error": 0,
+            "insufficient": 10
+          }
+        }
+      }
+    }
+  },
+  "limitations": [
+    "All committed cases are synthetic; no private transcript was available.",
+    "This measurement does not execute proposed recoveries.",
+    "Results apply only to this local package, checkpoint, device, and case set."
+  ],
+  "recommendation": "investigate_further"
+}
