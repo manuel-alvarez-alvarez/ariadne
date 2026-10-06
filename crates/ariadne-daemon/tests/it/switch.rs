@@ -15,7 +15,7 @@ use serde_json::json;
 use ariadne_api::sessions::SessionDto;
 use ariadne_core::{GoalStatus, PromptKind, Seat, SessionStatus};
 use ariadne_daemon::agents::prompts;
-use ariadne_store::{AgentPin, AgentSession};
+use ariadne_store::{AgentPin, AgentSession, NewAgentEvent};
 
 use common::acp::{pid_is_alive, registry_home, script, stub_acp_agent};
 use common::{Harness, TIMEOUT, eventually, harness, post_json, put_json, sh};
@@ -310,6 +310,42 @@ async fn a_switched_author_starts_a_new_session_briefed_with_the_handoff() {
 
     let author = h.store.get_task_agent(&cast.author.id).await.unwrap();
     assert_eq!(author.model, TO);
+}
+
+#[tokio::test]
+async fn a_switched_author_receives_an_older_user_correction_before_recent_noise() {
+    let h = harness().second_agent().await;
+    h.git_repo("repo");
+    let cast = h.cast_pinned(FROM, 1).await;
+    let old = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    first_turn_done(&h, &old).await;
+    h.store
+        .create_event(NewAgentEvent {
+            session_id: Some(old.id.clone()),
+            task_id: old.task_id.clone(),
+            kind: "user_prompt_submit".into(),
+            payload: json!({"text": "Correction: preserve the release blocker", "source": "console"}),
+        })
+        .await
+        .unwrap();
+    h.store
+        .create_event(NewAgentEvent {
+            session_id: Some(old.id.clone()),
+            task_id: old.task_id.clone(),
+            kind: "agent_message".into(),
+            payload: json!({"text": "recent routine output ".repeat(13_000)}),
+        })
+        .await
+        .unwrap();
+
+    let new = switch(&h, &old, TO).await;
+    let prompt = first_prompt(&h, &new.id);
+
+    assert!(
+        prompt.contains("Correction: preserve the release blocker"),
+        "{prompt}"
+    );
+    assert!(!prompt.contains("recent routine output"), "{prompt}");
 }
 
 /// A reviewer switches the same way: a new row on its seat, the briefing of
