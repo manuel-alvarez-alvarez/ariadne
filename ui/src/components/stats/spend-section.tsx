@@ -87,6 +87,7 @@ export function SpendSection({ filter }: { filter: StatsFilter }) {
               caption="Tokens spent over time"
               valueFormatter={formatTokens}
               tooltipExtra={(row) => <p>Cached: {cachedShare(row)}</p>}
+              bucket={data.bucket}
             />
           </div>
         )

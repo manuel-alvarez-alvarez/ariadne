@@ -7,7 +7,7 @@
  * viewport — the Stats screen's second scrollbar.
  */
 
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import { expect, it } from "vitest"
 
 import type { ChartConfig } from "@/components/ui/chart"
@@ -29,4 +29,20 @@ it("gives the sr-only table a positioned ancestor", () => {
 
   const table = screen.getByRole("table", { hidden: true })
   expect(table.closest(".relative")).not.toBeNull()
+})
+
+it("labels an hour bucket as a time, with the date added, not a bare date", () => {
+  render(
+    <StatTimeChart
+      data={[{ bucket: "2026-10-06T14:00:00Z", count: 3 }]}
+      config={CONFIG}
+      keys={["count"]}
+      caption="Stub chart"
+      bucket="hour"
+    />,
+  )
+
+  const table = screen.getByRole("table", { hidden: true })
+  expect(within(table).getByText("14:00 · Oct 6")).toBeDefined()
+  expect(within(table).queryByText("Oct 6")).toBeNull()
 })

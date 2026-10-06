@@ -3588,8 +3588,9 @@
       },
       "BucketDto": {
         "type": "string",
-        "description": "The step a time axis is drawn at: a bar a day over a short span, a bar a\nweek over a long one.",
+        "description": "The step a time axis is drawn at: a bar an hour over a very short span, a\nbar a day over a short one, a bar a week over a long one.",
         "enum": [
+          "hour",
           "day",
           "week"
         ]
@@ -6859,7 +6860,7 @@
         "properties": {
           "bucket": {
             "type": "string",
-            "description": "`\"day\"` or `\"week\"`: the bucket every [`WorkBucketDto::start`] falls\non.",
+            "description": "`\"hour\"`, `\"day\"` or `\"week\"`: the bucket every\n[`WorkBucketDto::start`] falls on.",
             "default": ""
           },
           "buckets": {

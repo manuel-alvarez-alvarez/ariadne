@@ -1,7 +1,7 @@
 /**
- * One chart over time of the Stats screen: a bar per bucket — a day, or a
- * week from its Monday, as the daemon bucketed the span — with every key the
- * caller names stacked into it, on a date axis.
+ * One chart over time of the Stats screen: a bar per bucket — an hour, a
+ * day, or a week from its Monday, as the daemon bucketed the span — with
+ * every key the caller names stacked into it, on a time axis.
  *
  * Every key's colour comes from `config`, built by the caller off
  * {@link import("./status-colors").STATUS_COLORS}, so the same meaning reads
@@ -28,13 +28,38 @@ export const CHART_HEIGHT_PX = 160
 /** The thickest a bar draws, however much room a grown chart gives it. */
 export const MAX_BAR_PX = 32
 
-/** The RFC 3339 start of a bucket as its axis label: `Sep 28`, read in UTC. */
-function bucketLabel(start: string): string {
+/** The step a chart's own buckets are drawn at — `"hour"`, `"day"` or
+ * `"week"`, from the family's own DTO. */
+export type BucketStep = "hour" | "day" | "week"
+
+/** `start`'s time of day, UTC, as `14:00`. */
+function hourLabel(start: string): string {
+  const date = new Date(start)
+  const hh = date.getUTCHours().toString().padStart(2, "0")
+  const mm = date.getUTCMinutes().toString().padStart(2, "0")
+  return `${hh}:${mm}`
+}
+
+/** `start`'s calendar date, UTC, as `Sep 28`. */
+function dateLabel(start: string): string {
   return new Date(start).toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
     timeZone: "UTC",
   })
+}
+
+/** The RFC 3339 start of a bucket as its axis label: a time (`14:00`) for an
+ * hour bucket, a date (`Sep 28`) otherwise, both read in UTC. */
+function bucketLabel(start: string, bucket: BucketStep): string {
+  return bucket === "hour" ? hourLabel(start) : dateLabel(start)
+}
+
+/** The same, with the date added beside an hour bucket's time — the axis
+ * already spaces hours across a day, but the tooltip and the `sr-only`
+ * table need the day an hour belongs to on their own. */
+function fullBucketLabel(start: string, bucket: BucketStep): string {
+  return bucket === "hour" ? `${hourLabel(start)} · ${dateLabel(start)}` : dateLabel(start)
 }
 
 export function StatTimeChart<T extends { bucket: string }>({
@@ -46,6 +71,7 @@ export function StatTimeChart<T extends { bucket: string }>({
   legendExtra = [],
   tooltipExtra,
   valueFormatter = String,
+  bucket = "day",
 }: {
   /** One row per bucket, oldest first, `bucket` its RFC 3339 start. */
   data: T[]
@@ -69,6 +95,9 @@ export function StatTimeChart<T extends { bucket: string }>({
   /** How a stacked value reads on the axis and in the tooltip: raw by
    * default, compact (`1.2M`) where the caller's values are tokens. */
   valueFormatter?: (value: number) => string
+  /** The step `data`'s own buckets are drawn at: `"day"` where the caller
+   * does not say. */
+  bucket?: BucketStep
 }) {
   return (
     <div className="flex flex-1 flex-col gap-1">
@@ -85,7 +114,7 @@ export function StatTimeChart<T extends { bucket: string }>({
             <CartesianGrid vertical={false} stroke="var(--color-border)" strokeOpacity={0.5} />
             <XAxis
               dataKey="bucket"
-              tickFormatter={bucketLabel}
+              tickFormatter={(start: string) => bucketLabel(start, bucket)}
               axisLine={false}
               tickLine={false}
               className="text-xs"
@@ -103,7 +132,7 @@ export function StatTimeChart<T extends { bucket: string }>({
                 const row = payload?.[0]?.payload as T | undefined
                 return active && row ? (
                   <div className="flex flex-col gap-1 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
-                    <p className="font-medium">{bucketLabel(row.bucket)}</p>
+                    <p className="font-medium">{fullBucketLabel(row.bucket, bucket)}</p>
                     {[...keys, ...extra].map((key) => (
                       <p key={key}>
                         {config[key]?.label ?? key}: {valueFormatter(Number(row[key]))}
@@ -139,7 +168,7 @@ export function StatTimeChart<T extends { bucket: string }>({
           <tbody>
             {data.map((row) => (
               <tr key={row.bucket}>
-                <td>{bucketLabel(row.bucket)}</td>
+                <td>{fullBucketLabel(row.bucket, bucket)}</td>
                 {[...keys, ...extra].map((key) => (
                   <td key={key}>{valueFormatter(Number(row[key]))}</td>
                 ))}

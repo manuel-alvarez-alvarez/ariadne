@@ -8,8 +8,8 @@ use utoipa::ToSchema;
 #[serde(default)]
 pub struct WorkStatsDto {
     pub totals: WorkTotalsDto,
-    /// `"day"` or `"week"`: the bucket every [`WorkBucketDto::start`] falls
-    /// on.
+    /// `"hour"`, `"day"` or `"week"`: the bucket every
+    /// [`WorkBucketDto::start`] falls on.
     pub bucket: String,
     /// One row per bucket from the first fact to the last, zeros included.
     pub buckets: Vec<WorkBucketDto>,

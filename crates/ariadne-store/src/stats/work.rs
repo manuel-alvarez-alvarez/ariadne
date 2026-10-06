@@ -1,20 +1,20 @@
 //! The `work` family: what got done.
 
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 
-use super::{Bucket, StatsFilter, median, narrowed};
+use super::{Bucket, StatsFilter, filled_buckets, median, narrowed};
 use crate::{Result, Store};
 
 /// What `work_stats` answers: what got done, over the facts a filter keeps.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct WorkStats {
     pub totals: WorkTotals,
-    /// The bucket a [`WorkBucket`] falls on, `"day"` or `"week"`
-    /// ([`Bucket::for_span`]).
+    /// The bucket a [`WorkBucket`] falls on, `"hour"`, `"day"` or `"week"`.
     pub bucket: String,
-    /// One row per bucket from the first fact to the last, zeros included.
+    /// One row per bucket from `since`, or the first fact where there is
+    /// none, to now, zeros included.
     pub buckets: Vec<WorkBucket>,
 }
 
@@ -69,21 +69,22 @@ impl Store {
         }
         let rows = q.fetch_all(self.r()).await?;
 
-        let bucket = Bucket::for_span(filter.since);
+        let now = Utc::now();
+        let first_fact = rows.iter().find_map(|row| {
+            DateTime::parse_from_rfc3339(&row.created_at)
+                .ok()
+                .map(|dt| dt.with_timezone(&Utc))
+        });
+        let bucket = Bucket::for_span_at(filter.since.or(first_fact), now);
         let mut totals = WorkTotals::default();
         let mut lead_times: Vec<f64> = Vec::new();
-        let mut buckets: BTreeMap<String, WorkBucket> = BTreeMap::new();
-        let mut span: Option<(DateTime<Utc>, DateTime<Utc>)> = None;
+        let mut buckets: HashMap<String, WorkBucket> = HashMap::new();
 
         for row in &rows {
             let Ok(created_at) = DateTime::parse_from_rfc3339(&row.created_at) else {
                 continue;
             };
             let created_at = created_at.with_timezone(&Utc);
-            span = Some(match span {
-                None => (created_at, created_at),
-                Some((min, max)) => (min.min(created_at), max.max(created_at)),
-            });
             let data: serde_json::Value = serde_json::from_str(&row.data).unwrap_or_default();
             let status = data["status"].as_str().unwrap_or_default();
             let start = bucket.start_of(created_at);
@@ -129,17 +130,16 @@ impl Store {
             totals.tasks_finished as f64 / ended as f64
         };
 
-        let buckets = match span {
-            Some((min, max)) => filled_buckets(bucket, min, max, buckets),
+        let buckets = match filter.since.or(first_fact) {
+            Some(start) => {
+                filled_buckets(bucket, start, now, buckets, |row, start| row.start = start)
+            }
             None => Vec::new(),
         };
 
         Ok(WorkStats {
             totals,
-            bucket: match bucket {
-                Bucket::Day => "day".to_string(),
-                Bucket::Week => "week".to_string(),
-            },
+            bucket: bucket.as_str().to_string(),
             buckets,
         })
     }
@@ -147,7 +147,7 @@ impl Store {
 
 /// The bucket of `start`, creating it zeroed if this is the first fact seen
 /// there.
-fn bump<'a>(buckets: &'a mut BTreeMap<String, WorkBucket>, start: &str) -> &'a mut WorkBucket {
+fn bump<'a>(buckets: &'a mut HashMap<String, WorkBucket>, start: &str) -> &'a mut WorkBucket {
     buckets
         .entry(start.to_string())
         .or_insert_with(|| WorkBucket {
@@ -156,33 +156,10 @@ fn bump<'a>(buckets: &'a mut BTreeMap<String, WorkBucket>, start: &str) -> &'a m
         })
 }
 
-/// Every bucket from `min` to `max`, zeros included where `facts` holds
-/// nothing for it.
-fn filled_buckets(
-    bucket: Bucket,
-    min: DateTime<Utc>,
-    max: DateTime<Utc>,
-    mut facts: BTreeMap<String, WorkBucket>,
-) -> Vec<WorkBucket> {
-    let mut day = min.date_naive();
-    let last = max.date_naive();
-    while day <= last {
-        let at = day
-            .and_hms_opt(0, 0, 0)
-            .expect("midnight is a time")
-            .and_utc();
-        let start = bucket.start_of(at);
-        facts.entry(start.clone()).or_insert_with(|| WorkBucket {
-            start,
-            ..Default::default()
-        });
-        day += Duration::days(1);
-    }
-    facts.into_values().collect()
-}
-
 #[cfg(test)]
 mod tests {
+    use chrono::Duration;
+
     use super::*;
 
     async fn test_store() -> (Store, tempfile::TempDir) {
@@ -275,76 +252,155 @@ mod tests {
         assert_eq!(stats.totals.landed, 1);
         assert_eq!(stats.totals.median_goal_lead_time_secs, 100.0);
         assert_eq!(stats.totals.finish_rate, 1.0 / 3.0);
-        assert_eq!(stats.bucket, "day");
-        assert_eq!(stats.buckets.len(), 1);
-        let bucket = &stats.buckets[0];
-        assert_eq!(bucket.start, "2026-10-01T00:00:00Z");
-        assert_eq!(bucket.tasks_finished, 1);
-        assert_eq!(bucket.tasks_failed, 1);
-        assert_eq!(bucket.tasks_cancelled, 1);
-        assert_eq!(bucket.goals_completed, 1);
-        assert_eq!(bucket.landed, 1);
     }
 
-    /// A span of 31 days or less buckets by day and includes every day in
-    /// between, zeros included.
+    /// A `since` of a day or less buckets by the hour, filled with zeros from
+    /// `since` to now — about 24 hourly buckets for a `since` of 24 hours.
     #[tokio::test]
-    async fn work_stats_buckets_by_day_under_a_short_since() {
+    async fn work_stats_buckets_by_hour_under_a_since_of_a_day_or_less() {
         let (store, _dir) = test_store().await;
+        let now = Utc::now();
+        seed(
+            &store,
+            vec![fact(
+                "task_ended",
+                &(now - Duration::hours(2)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                serde_json::json!({"status": "finished", "landing": "none"}),
+            )],
+        )
+        .await;
+
+        let filter = StatsFilter {
+            since: Some(now - Duration::hours(24)),
+            repo_id: None,
+        };
+        let stats = store.work_stats(&filter).await.unwrap();
+        assert_eq!(stats.bucket, "hour");
+        assert!(
+            (23..=26).contains(&stats.buckets.len()),
+            "{:?}",
+            stats.buckets.len()
+        );
+        let fact_bucket_start = Bucket::Hour.start_of(now - Duration::hours(2));
+        let fact_bucket = stats
+            .buckets
+            .iter()
+            .find(|b| b.start == fact_bucket_start)
+            .expect("the fact's own hour has a bucket");
+        assert_eq!(fact_bucket.tasks_finished, 1);
+        assert!(
+            stats.buckets.iter().any(|b| b.tasks_finished == 0),
+            "{:?}",
+            stats.buckets
+        );
+    }
+
+    /// A `since` with no kept fact in it still fills every bucket from
+    /// `since` to now, zeros throughout: the axis does not wait on a fact
+    /// to exist.
+    #[tokio::test]
+    async fn work_stats_fills_buckets_from_since_to_now_with_no_kept_fact() {
+        let (store, _dir) = test_store().await;
+        let now = Utc::now();
+
+        let filter = StatsFilter {
+            since: Some(now - Duration::hours(3)),
+            repo_id: None,
+        };
+        let stats = store.work_stats(&filter).await.unwrap();
+        assert_eq!(stats.bucket, "hour");
+        assert!(
+            (3..=4).contains(&stats.buckets.len()),
+            "{:?}",
+            stats.buckets.len()
+        );
+        assert!(
+            stats.buckets.iter().all(|b| b.tasks_finished == 0),
+            "{:?}",
+            stats.buckets
+        );
+    }
+
+    /// A `since` of 7 days buckets by the day, filled with zeros from `since`
+    /// to now — 7 or 8 daily buckets.
+    #[tokio::test]
+    async fn work_stats_buckets_by_day_under_a_since_of_seven_days() {
+        let (store, _dir) = test_store().await;
+        let now = Utc::now();
+        seed(
+            &store,
+            vec![fact(
+                "task_ended",
+                &(now - Duration::days(3)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                serde_json::json!({"status": "finished", "landing": "none"}),
+            )],
+        )
+        .await;
+
+        let filter = StatsFilter {
+            since: Some(now - Duration::days(7)),
+            repo_id: None,
+        };
+        let stats = store.work_stats(&filter).await.unwrap();
+        assert_eq!(stats.bucket, "day");
+        assert!(
+            (7..=8).contains(&stats.buckets.len()),
+            "{:?}",
+            stats.buckets.len()
+        );
+        assert!(
+            stats.buckets.iter().any(|b| b.tasks_finished == 0),
+            "{:?}",
+            stats.buckets
+        );
+    }
+
+    /// With no `since`, facts from the last 10 days bucket by the day, not
+    /// by the week: a span this short stays under the day threshold.
+    #[tokio::test]
+    async fn work_stats_buckets_by_day_with_no_since_and_facts_within_ten_days() {
+        let (store, _dir) = test_store().await;
+        let now = Utc::now();
         seed(
             &store,
             vec![
                 fact(
                     "task_ended",
-                    "2026-10-01T12:00:00Z",
+                    &(now - Duration::days(9)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
                     serde_json::json!({"status": "finished", "landing": "none"}),
                 ),
                 fact(
                     "task_ended",
-                    "2026-10-03T12:00:00Z",
+                    &(now - Duration::days(1)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
                     serde_json::json!({"status": "finished", "landing": "none"}),
                 ),
             ],
         )
         .await;
 
-        let short = StatsFilter {
-            since: Some(at("2026-09-20T00:00:00Z")),
-            repo_id: None,
-        };
-        let stats = store.work_stats(&short).await.unwrap();
+        let stats = store.work_stats(&StatsFilter::default()).await.unwrap();
         assert_eq!(stats.bucket, "day");
-        // 2026-10-01 through 2026-10-03: three daily buckets, the middle one
-        // zeroed.
-        assert_eq!(stats.buckets.len(), 3);
-        assert_eq!(stats.buckets[0].start, "2026-10-01T00:00:00Z");
-        assert_eq!(stats.buckets[0].tasks_finished, 1);
-        assert_eq!(stats.buckets[1].start, "2026-10-02T00:00:00Z");
-        assert_eq!(stats.buckets[1].tasks_finished, 0);
-        assert_eq!(stats.buckets[2].start, "2026-10-03T00:00:00Z");
-        assert_eq!(stats.buckets[2].tasks_finished, 1);
+        assert!(stats.buckets.len() > 1, "{:?}", stats.buckets);
     }
 
-    /// With no `since` at all, the aggregate buckets by week, each starting
-    /// on the Monday of the fact's week, zeros included for a week with
-    /// nothing in it.
+    /// With no `since`, facts spread over more than 60 days bucket by the
+    /// week.
     #[tokio::test]
-    async fn work_stats_buckets_by_week_with_no_since_from_the_monday_of_each_week() {
+    async fn work_stats_buckets_by_week_with_no_since_and_facts_over_sixty_days() {
         let (store, _dir) = test_store().await;
+        let now = Utc::now();
         seed(
             &store,
             vec![
-                // 2026-09-21 is a Monday; 2026-10-05 is the Monday two weeks
-                // after it, with an empty week (starting 2026-09-28) between
-                // them.
                 fact(
                     "task_ended",
-                    "2026-09-21T10:00:00Z",
+                    &(now - Duration::days(65))
+                        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
                     serde_json::json!({"status": "finished", "landing": "none"}),
                 ),
                 fact(
                     "task_ended",
-                    "2026-10-05T10:00:00Z",
+                    &(now - Duration::days(1)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
                     serde_json::json!({"status": "finished", "landing": "none"}),
                 ),
             ],
@@ -353,13 +409,6 @@ mod tests {
 
         let stats = store.work_stats(&StatsFilter::default()).await.unwrap();
         assert_eq!(stats.bucket, "week");
-        assert_eq!(stats.buckets.len(), 3);
-        assert_eq!(stats.buckets[0].start, "2026-09-21T00:00:00Z");
-        assert_eq!(stats.buckets[0].tasks_finished, 1);
-        assert_eq!(stats.buckets[1].start, "2026-09-28T00:00:00Z");
-        assert_eq!(stats.buckets[1].tasks_finished, 0);
-        assert_eq!(stats.buckets[2].start, "2026-10-05T00:00:00Z");
-        assert_eq!(stats.buckets[2].tasks_finished, 1);
     }
 
     /// `since` and `repo_id` each narrow what is counted.

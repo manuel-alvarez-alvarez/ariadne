@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 
-use ariadne_api::stats::{ModelSpendDto, SpendBucketDto, SpendStatsDto, StatsQuery};
+use ariadne_api::stats::{BucketDto, ModelSpendDto, SpendBucketDto, SpendStatsDto, StatsQuery};
 use ariadne_api::usage::TokenUsageDto;
 use ariadne_client::Client;
 
@@ -68,7 +68,7 @@ fn render(stats: &SpendStatsDto) -> Result<Vec<String>> {
     lines.push(String::new());
     lines.push(render_table(
         BUCKET_COLUMNS,
-        &bucket_rows(&stats.buckets),
+        &bucket_rows(stats.bucket, &stats.buckets),
         view(),
     )?);
     Ok(lines)
@@ -112,12 +112,12 @@ fn model_rows(models: &[ModelSpendDto]) -> Vec<Vec<String>> {
         .collect()
 }
 
-fn bucket_rows(buckets: &[SpendBucketDto]) -> Vec<Vec<String>> {
+fn bucket_rows(bucket: BucketDto, buckets: &[SpendBucketDto]) -> Vec<Vec<String>> {
     buckets
         .iter()
         .map(|b| {
             vec![
-                bucket_date(&b.start),
+                bucket_date(bucket, &b.start),
                 tokens(b.input_tokens),
                 tokens(b.cached_input_tokens),
                 tokens(b.output_tokens),
@@ -126,10 +126,16 @@ fn bucket_rows(buckets: &[SpendBucketDto]) -> Vec<Vec<String>> {
         .collect()
 }
 
-/// The date an RFC 3339 bucket start falls on, UTC: a table has no room for
-/// the time of a moment that is always midnight.
-fn bucket_date(rfc3339: &str) -> String {
-    rfc3339.split('T').next().unwrap_or(rfc3339).to_string()
+/// The date an RFC 3339 bucket start falls on, UTC, with the hour added for
+/// an hour bucket: a day or a week bucket has no room for the time of a
+/// moment that is always midnight.
+fn bucket_date(bucket: BucketDto, rfc3339: &str) -> String {
+    match bucket {
+        BucketDto::Hour => rfc3339.get(0..16).unwrap_or(rfc3339).replacen('T', " ", 1),
+        BucketDto::Day | BucketDto::Week => {
+            rfc3339.split('T').next().unwrap_or(rfc3339).to_string()
+        }
+    }
 }
 
 /// A share as a table cell, to one decimal place: `89.1%`.
@@ -141,7 +147,7 @@ fn percent(share: f64) -> String {
 mod tests {
     use super::*;
 
-    use ariadne_api::stats::{BucketDto, PerFinishedTaskDto, SpendTotalsDto};
+    use ariadne_api::stats::{PerFinishedTaskDto, SpendTotalsDto};
 
     fn stats() -> SpendStatsDto {
         SpendStatsDto {
@@ -209,5 +215,23 @@ mod tests {
     fn a_family_with_no_ended_session_is_empty() {
         assert!(is_empty(&SpendStatsDto::default()));
         assert!(!is_empty(&stats()));
+    }
+
+    /// An hour bucket's date carries its time of day too, where a day or a
+    /// week bucket carries the bare date.
+    #[test]
+    fn bucket_date_carries_the_time_of_day_for_an_hour_bucket() {
+        assert_eq!(
+            bucket_date(BucketDto::Hour, "2026-10-01T14:00:00Z"),
+            "2026-10-01 14:00"
+        );
+        assert_eq!(
+            bucket_date(BucketDto::Day, "2026-10-01T14:00:00Z"),
+            "2026-10-01"
+        );
+        assert_eq!(
+            bucket_date(BucketDto::Week, "2026-10-01T14:00:00Z"),
+            "2026-10-01"
+        );
     }
 }

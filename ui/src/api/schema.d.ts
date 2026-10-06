@@ -1495,11 +1495,11 @@ export interface components {
             version?: string | null;
         };
         /**
-         * @description The step a time axis is drawn at: a bar a day over a short span, a bar a
-         *     week over a long one.
+         * @description The step a time axis is drawn at: a bar an hour over a very short span, a
+         *     bar a day over a short one, a bar a week over a long one.
          * @enum {string}
          */
-        BucketDto: "day" | "week";
+        BucketDto: "hour" | "day" | "week";
         /**
          * @description Body of `POST /v1/goals/{id}/complete`: the orchestrator says the goal is
          *     done. Its call, not the user's, and it carries nothing — every task being
@@ -2973,8 +2973,8 @@ export interface components {
         /** @description Response of `GET /v1/stats/work`: what got done? */
         WorkStatsDto: {
             /**
-             * @description `"day"` or `"week"`: the bucket every [`WorkBucketDto::start`] falls
-             *     on.
+             * @description `"hour"`, `"day"` or `"week"`: the bucket every
+             *     [`WorkBucketDto::start`] falls on.
              * @default
              */
             bucket: string;

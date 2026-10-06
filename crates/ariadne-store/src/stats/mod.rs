@@ -22,8 +22,10 @@ pub use spend::{ModelSpend, PerFinishedTask, SpendBucket, SpendStats, SpendTotal
 pub use time::{LeadTime, PersonWait, StatusTime, TimeStats};
 pub use work::WorkStats;
 
+use std::collections::HashMap;
+
 use ariadne_core::id::new_id;
-use chrono::{DateTime, Datelike, Duration, SecondsFormat, Utc};
+use chrono::{DateTime, Datelike, Duration, NaiveTime, SecondsFormat, Timelike, Utc};
 
 use crate::{Result, Store, StoreError, now};
 
@@ -230,46 +232,109 @@ fn narrowed(filter: &StatsFilter) -> (String, Vec<String>) {
     (sql, binds)
 }
 
-/// The step of a time axis: one bar per day over a short span, one per week
-/// over a long one.
+/// The step of a time axis: one bar per hour over a very short span, one per
+/// day over a short one, one per week over a long one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Bucket {
+    Hour,
     Day,
     Week,
 }
 
 impl Bucket {
+    /// The longest span drawn an hour at a time.
+    const HOURLY_SPAN_DAYS: i64 = 2;
     /// The longest span drawn a day at a time.
     const DAILY_SPAN_DAYS: i64 = 31;
 
-    /// The bucket of a span that starts at `since`: `Day` where `since` is 31
-    /// days or less back from now, `Week` where it is further back or absent.
-    fn for_span(since: Option<DateTime<Utc>>) -> Bucket {
-        Self::for_span_at(since, Utc::now())
-    }
-
-    /// [`Bucket::for_span`], read against `now`.
-    fn for_span_at(since: Option<DateTime<Utc>>, now: DateTime<Utc>) -> Bucket {
-        match since {
-            Some(since) if now - since <= Duration::days(Self::DAILY_SPAN_DAYS) => Bucket::Day,
+    /// The bucket of a span that starts at `start` and runs to `now`: `Hour`
+    /// where `start` is 2 days or less back, `Day` where it is 31 days or
+    /// less back, `Week` where it is further back or absent.
+    fn for_span_at(start: Option<DateTime<Utc>>, now: DateTime<Utc>) -> Bucket {
+        match start {
+            Some(start) if now - start <= Duration::days(Self::HOURLY_SPAN_DAYS) => Bucket::Hour,
+            Some(start) if now - start <= Duration::days(Self::DAILY_SPAN_DAYS) => Bucket::Day,
             _ => Bucket::Week,
         }
     }
 
-    /// The RFC 3339 start of the bucket `created_at` falls in: midnight UTC
-    /// of its day, or of the Monday of its week.
-    fn start_of(self, created_at: DateTime<Utc>) -> String {
+    /// `created_at`, as the moment its bucket starts: the top of its hour,
+    /// midnight UTC of its day, or of the Monday of its week.
+    fn moment_start_of(self, created_at: DateTime<Utc>) -> DateTime<Utc> {
         let day = created_at.date_naive();
-        let start = match self {
-            Bucket::Day => day,
+        let date = match self {
+            Bucket::Hour | Bucket::Day => day,
             Bucket::Week => day - Duration::days(day.weekday().num_days_from_monday().into()),
         };
-        start
-            .and_hms_opt(0, 0, 0)
-            .expect("midnight is a time")
-            .and_utc()
+        let time = match self {
+            Bucket::Hour => NaiveTime::from_hms_opt(created_at.hour(), 0, 0)
+                .expect("the hour of a moment is a valid hour"),
+            Bucket::Day | Bucket::Week => {
+                NaiveTime::from_hms_opt(0, 0, 0).expect("midnight is a time")
+            }
+        };
+        date.and_time(time).and_utc()
+    }
+
+    /// The RFC 3339 start of the bucket `created_at` falls in.
+    fn start_of(self, created_at: DateTime<Utc>) -> String {
+        self.moment_start_of(created_at)
             .to_rfc3339_opts(SecondsFormat::Secs, true)
     }
+
+    /// The step from one bucket's start to the next.
+    fn step(self) -> Duration {
+        match self {
+            Bucket::Hour => Duration::hours(1),
+            Bucket::Day => Duration::days(1),
+            Bucket::Week => Duration::weeks(1),
+        }
+    }
+
+    /// `"hour"`, `"day"` or `"week"`, as `WorkStats::bucket` reads it.
+    fn as_str(self) -> &'static str {
+        match self {
+            Bucket::Hour => "hour",
+            Bucket::Day => "day",
+            Bucket::Week => "week",
+        }
+    }
+}
+
+/// Every bucket's RFC 3339 start from the one `start` falls in to the one
+/// `end` falls in, in order.
+fn bucket_starts(bucket: Bucket, start: DateTime<Utc>, end: DateTime<Utc>) -> Vec<String> {
+    let mut cursor = bucket.moment_start_of(start);
+    let end = bucket.moment_start_of(end);
+    let step = bucket.step();
+    let mut starts = Vec::new();
+    while cursor <= end {
+        starts.push(cursor.to_rfc3339_opts(SecondsFormat::Secs, true));
+        cursor += step;
+    }
+    starts
+}
+
+/// Every bucket from the one `start` falls in to the one `end` falls in,
+/// zeros included where `facts` holds nothing for it: the time axis
+/// `work_stats` and `spend_stats` each zero-fill their own bucket rows onto.
+/// `set_start` writes a fresh or a kept row's `start` field to the bucket's
+/// own, since a zeroed row begins with none.
+fn filled_buckets<T: Default>(
+    bucket: Bucket,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+    mut facts: HashMap<String, T>,
+    set_start: impl Fn(&mut T, String),
+) -> Vec<T> {
+    bucket_starts(bucket, start, end)
+        .into_iter()
+        .map(|start| {
+            let mut row = facts.remove(&start).unwrap_or_default();
+            set_start(&mut row, start);
+            row
+        })
+        .collect()
 }
 
 /// The median of `values`: the middle one, or the mean of the two middle
@@ -310,28 +375,61 @@ mod tests {
             .with_timezone(&Utc)
     }
 
-    /// A span of 31 days or less is drawn by the day; a longer one, or all
-    /// time, by the week.
+    /// A span of 2 days or less is drawn by the hour, one of 31 days or less
+    /// by the day, and a longer one, or none at all, by the week.
     #[test]
-    fn a_short_span_is_bucketed_by_day_and_a_long_one_by_week() {
+    fn a_short_span_is_bucketed_by_hour_a_medium_one_by_day_and_a_long_one_by_week() {
         let now = at("2026-10-04T12:00:00Z");
-        let back = |days| Some(now - Duration::days(days));
-        assert_eq!(Bucket::for_span_at(back(1), now), Bucket::Day);
-        assert_eq!(Bucket::for_span_at(back(31), now), Bucket::Day);
-        assert_eq!(Bucket::for_span_at(back(32), now), Bucket::Week);
+        let back_hours = |hours| Some(now - Duration::hours(hours));
+        let back_days = |days| Some(now - Duration::days(days));
+        assert_eq!(Bucket::for_span_at(back_hours(1), now), Bucket::Hour);
+        assert_eq!(Bucket::for_span_at(back_days(2), now), Bucket::Hour);
+        assert_eq!(Bucket::for_span_at(back_hours(49), now), Bucket::Day);
+        assert_eq!(Bucket::for_span_at(back_days(31), now), Bucket::Day);
+        assert_eq!(Bucket::for_span_at(back_days(32), now), Bucket::Week);
         assert_eq!(Bucket::for_span_at(None, now), Bucket::Week);
     }
 
-    /// A fact falls in the day it was written, or in the week that starts on
-    /// the Monday before it, both at midnight UTC.
+    /// A fact falls in the hour it was written, in its day, or in the week
+    /// that starts on the Monday before it, each at its own top: the hour,
+    /// midnight UTC, or midnight UTC of that Monday.
     #[test]
-    fn a_fact_falls_in_its_day_or_its_week_from_monday() {
+    fn a_fact_falls_in_its_hour_its_day_or_its_week_from_monday() {
         // 2026-10-04 is a Sunday; its week starts on Monday 2026-09-28.
         let sunday = at("2026-10-04T23:59:59Z");
+        assert_eq!(Bucket::Hour.start_of(sunday), "2026-10-04T23:00:00Z");
         assert_eq!(Bucket::Day.start_of(sunday), "2026-10-04T00:00:00Z");
         assert_eq!(Bucket::Week.start_of(sunday), "2026-09-28T00:00:00Z");
         let monday = at("2026-09-28T00:00:00Z");
         assert_eq!(Bucket::Week.start_of(monday), "2026-09-28T00:00:00Z");
+    }
+
+    /// The axis runs from the bucket `start` falls in to the one `end` falls
+    /// in, a bucket a step apart, inclusive of both ends.
+    #[test]
+    fn bucket_starts_runs_from_the_first_bucket_to_the_last_inclusive() {
+        let start = at("2026-10-04T10:30:00Z");
+        let end = at("2026-10-04T12:05:00Z");
+        assert_eq!(
+            bucket_starts(Bucket::Hour, start, end),
+            [
+                "2026-10-04T10:00:00Z",
+                "2026-10-04T11:00:00Z",
+                "2026-10-04T12:00:00Z",
+            ]
+        );
+    }
+
+    /// Every bucket of the axis is in the answer, a kept fact's own row
+    /// carried through and a missing one zeroed with its own start.
+    #[test]
+    fn filled_buckets_zero_fills_every_bucket_the_facts_do_not_reach() {
+        let start = at("2026-10-04T10:00:00Z");
+        let end = at("2026-10-04T12:00:00Z");
+        let mut facts = HashMap::new();
+        facts.insert("2026-10-04T11:00:00Z".to_string(), 7u32);
+        let filled = filled_buckets(Bucket::Hour, start, end, facts, |_, _| {});
+        assert_eq!(filled, [0, 7, 0]);
     }
 
     /// `since` and `repo_id` each add a clause, and their values go in as

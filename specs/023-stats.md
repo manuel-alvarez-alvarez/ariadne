@@ -1,7 +1,7 @@
 ---
 id: stats
 status: current
-updated: 2026-10-05
+updated: 2026-10-06
 areas: [api, store, daemon, cli, ui]
 commits: []
 tests:
@@ -24,6 +24,7 @@ tests:
   - ui/src/components/stats/work-section.test.tsx
   - ui/src/components/stats/time-section.test.tsx
   - ui/src/components/stats/spend-section.test.tsx
+  - ui/src/components/stats/stat-time-chart.test.tsx
   - ui/src/components/stats/models-section.test.tsx
   - ui/src/components/stats/attention-section.test.tsx
   - ui/src/components/stats/status-colors.test.ts
@@ -240,11 +241,15 @@ decided, not a change to how they decide it.
     holds what they share.
 31. A median averages the two middle values of an even count, and a p90 is
     the nearest-rank value. Both are 0 over no values.
-32. A family that draws a time axis buckets its facts by day where `since`
-    is 31 days or less back from now, and by week where it is further back
-    or absent (`Bucket::for_span`). A fact falls in the bucket that starts at
-    midnight UTC of its day, or of the Monday of its week
-    (`Bucket::start_of`), written as an RFC 3339 moment.
+32. A family that draws a time axis buckets its facts over the span `since`
+    to now where the filter gives one, or the first kept fact to now where
+    it does not: by the hour where that span is 2 days or less, by the day
+    where it is 31 days or less, and by the week where it is longer
+    (`Bucket::for_span`). A fact falls in the bucket that starts at the top
+    of its hour, at midnight UTC of its day, or at midnight UTC of the
+    Monday of its week (`Bucket::start_of`), written as an RFC 3339 moment.
+    The family's own buckets run that whole span, zeros included for a
+    bucket with no fact in it.
 33. `ariadne stats [work|time|spend|models|attention] [--since
     <duration|date>] [--repo <id>]` prints a family. `ariadne stats` alone
     prints `work`. `--repo` takes an id or a unique prefix of one (014).
@@ -272,8 +277,10 @@ decided, not a change to how they decide it.
     The other shared pieces are `StatTiles` and `StatTile` (a label, a value
     and an optional hint), `StatTable` (a compact comparison table, numbers
     right-aligned, columns given by the caller), `StatTimeChart` (stacked
-    bars per bucket on a date axis) and `StatBarChart` (a horizontal bar per
-    row). Every chart keeps an `sr-only` table of the same numbers under it,
+    bars per bucket on a time axis, an hour bucket labelled as a time and
+    any other as a date, the date added beside an hour's own tooltip and
+    `sr-only` row) and `StatBarChart` (a horizontal bar per row). Every
+    chart keeps an `sr-only` table of the same numbers under it,
     for a screen reader and for a test, in a `relative` wrapper: `sr-only` is
     `position: absolute`, and with no ancestor positioned the table would lay
     out against the document and draw a second scrollbar. A colour carries
@@ -325,14 +332,16 @@ changes landed, over time.
     `tasks_failed`, `tasks_cancelled`, `finish_rate` (`tasks_finished` over
     the three, 0 where there are none) and `landed` (`task_ended` facts
     `finished` whose `landing` is `merge` or `pull_request`). `bucket` is
-    `Bucket::for_span(since)` (rule 32); `buckets` is one row per bucket from
-    the first fact to the last, zeros included, each with `start`,
-    `tasks_finished`, `tasks_failed`, `tasks_cancelled`, `goals_completed`
-    and `landed`. `since` and `repo_id` narrow every count, as rule 12 says.
+    `Bucket::for_span` of the span rule 32 names (`"hour"`, `"day"` or
+    `"week"`); `buckets` is one row per bucket of that whole span, zeros
+    included, each with `start`, `tasks_finished`, `tasks_failed`,
+    `tasks_cancelled`, `goals_completed` and `landed`. `since` and
+    `repo_id` narrow every count, as rule 12 says.
 40. `GET /v1/stats/work` answers `WorkStatsDto`, `work_stats`'s own shape.
     `ariadne stats work` prints the totals as `label: value` lines, then a
-    table of the buckets, `FROM`, `FINISHED`, `FAILED`, `CANCELLED`, `GOALS`
-    and `LANDED`; `--format json` prints the DTO whole. `WorkSection` draws
+    table of the buckets, `FROM` (the hour too where the bucket is an hour),
+    `FINISHED`, `FAILED`, `CANCELLED`, `GOALS` and `LANDED`; `--format json`
+    prints the DTO whole. `WorkSection` draws
     `StatTiles` of tasks finished, goals completed, changes landed, finish
     rate and median goal lead time, and one `StatTimeChart` of tasks per
     bucket, stacked `finished`, `failed` and `cancelled` on `STATUS_COLORS`,
@@ -374,10 +383,9 @@ nothing here converts one.
     `finished`, divided by how many such tasks there are — `tasks`,
     `input_tokens` and `output_tokens`. 0 for all three where no task
     finished.
-41. `bucket` is `Bucket::for_span` (rule 32) of the filter's own `since`.
-    `buckets` is one row per bucket from the one the first kept fact falls in
-    to the one the last falls in, zeros where a bucket between them holds no
-    fact, each with `start`, `input_tokens`, `cached_input_tokens` and
+41. `bucket` is `Bucket::for_span` of the span rule 32 names. `buckets` is
+    one row per bucket of that whole span, zeros where a bucket in it holds
+    no fact, each with `start`, `input_tokens`, `cached_input_tokens` and
     `output_tokens`.
 42. `by_model` is one row per model named by a kept fact, every seat pooled
     into it, with `input_tokens`, `cached_input_tokens`, `output_tokens` and
@@ -387,8 +395,8 @@ nothing here converts one.
 44. `ariadne stats spend` prints the totals and the per-task figures as
     `label: value` lines, then a table of `by_model` (`MODEL`, `TOKENS` — the
     usage cell every table prints — `SHARE`), then a table of `buckets`
-    (`FROM`, `INPUT`, `CACHED`, `OUTPUT`). `--format json` prints the DTO
-    whole.
+    (`FROM` — the hour too where the bucket is an hour — `INPUT`, `CACHED`,
+    `OUTPUT`). `--format json` prints the DTO whole.
 45. `SpendSection` draws four tiles with `StatTiles`: input tokens, cache
     share, output tokens, and tokens per finished task (`input_tokens +
     output_tokens` of `per_finished_task`, hinted with the task count). Under
@@ -535,10 +543,16 @@ alongside the family's other totals, and the Stats screen's key figures (rule
   nearest-rank value
   (`stats/mod.rs::tests::the_median_averages_the_two_middle_values`,
   `::the_p90_is_the_nearest_rank_value`).
-- A span of 31 days or less buckets by day, a longer one by week, and a fact
-  falls in its day or in its week from Monday
-  (`stats/mod.rs::tests::a_short_span_is_bucketed_by_day_and_a_long_one_by_week`,
-  `::a_fact_falls_in_its_day_or_its_week_from_monday`).
+- A span of 2 days or less buckets by the hour, one of 31 days or less by
+  the day, and a longer one by the week, and a fact falls in its hour, its
+  day, or in its week from Monday
+  (`stats/mod.rs::tests::a_short_span_is_bucketed_by_hour_a_medium_one_by_day_and_a_long_one_by_week`,
+  `::a_fact_falls_in_its_hour_its_day_or_its_week_from_monday`).
+- The axis runs bucket by bucket from the one `start` falls in to the one
+  `end` falls in, and `filled_buckets` zero-fills every one of it a fact
+  does not reach
+  (`stats/mod.rs::tests::bucket_starts_runs_from_the_first_bucket_to_the_last_inclusive`,
+  `::filled_buckets_zero_fills_every_bucket_the_facts_do_not_reach`).
 - Each `GET /v1/stats/<family>` answers 200 with its DTO, and is in the API
   document under the `stats` tag
   (`stats_<family>.rs::the_<family>_stat_answers_and_is_in_the_api_document`,
@@ -587,6 +601,10 @@ alongside the family's other totals, and the Stats screen's key figures (rule
   (`stat-chart-legend.test.tsx` "explains an entry with an explanation, on
   hover", "renders an entry with no explanation plainly, with no trigger to
   open").
+- `StatTimeChart` labels an hour bucket as a time, with the date added
+  rather than dropped
+  (`stat-time-chart.test.tsx` "labels an hour bucket as a time, with the
+  date added, not a bare date").
 - Every key figure, and every tile, column and chart series of the Work,
   Time, Spend, Attention and Models sections, explains itself on hover
   (`stats.test.tsx` "explains every key figure, on hover";
@@ -603,17 +621,26 @@ alongside the family's other totals, and the Stats screen's key figures (rule
   (`stats_work.rs::a_completed_goal_writes_one_goal_ended_fact`,
   `::a_cancelled_goal_writes_one_goal_ended_fact`).
 - `work_stats` counts tasks finished, failed and cancelled, goals completed
-  and changes landed, buckets them by day under a short `since` and by week
-  with none, zeros included, and honours `since` and `repo_id`
+  and changes landed, and honours `since` and `repo_id`
   (`stats/work.rs::tests::work_stats_counts_tasks_finished_failed_cancelled_and_goals_and_landed`,
-  `::work_stats_buckets_by_day_under_a_short_since_and_by_week_with_none`,
   `::work_stats_honours_since_and_repo_id`).
+- A `since` of a day or less buckets by the hour and a `since` of 7 days by
+  the day, each filled with zeros from `since` to now even where no fact
+  falls in it; with no `since`, facts within the last 10 days bucket by the
+  day and facts over 60 days by the week
+  (`stats/work.rs::tests::work_stats_buckets_by_hour_under_a_since_of_a_day_or_less`,
+  `::work_stats_buckets_by_day_under_a_since_of_seven_days`,
+  `::work_stats_fills_buckets_from_since_to_now_with_no_kept_fact`,
+  `::work_stats_buckets_by_day_with_no_since_and_facts_within_ten_days`,
+  `::work_stats_buckets_by_week_with_no_since_and_facts_over_sixty_days`).
 - `GET /v1/stats/work` answers the totals and the buckets
   (`stats_work.rs::the_work_stat_answers_the_totals_and_the_buckets`).
 - `ariadne stats work --format json` prints the DTO, and the table prints the
-  totals and a row per bucket
+  totals and a row per bucket, an hour bucket's row showing the time of day
+  beside its date
   (`commands/stats/work.rs::tests::the_totals_print_as_label_value_lines_in_field_order`,
-  `::a_bucket_row_carries_every_count_in_column_order`).
+  `::a_bucket_row_carries_every_count_in_column_order`,
+  `::a_bucket_row_shows_the_time_of_day_for_an_hour_bucket`).
 - `WorkSection` draws the tiles and the chart from a mocked response under
   `qk.stats.work`, and says its empty sentence where there is nothing to show
   (`work-section.test.tsx` "asks for its family with the filter, and says its
@@ -643,10 +670,17 @@ alongside the family's other totals, and the Stats screen's key figures (rule
   (`spend.rs::tests::models_are_pooled_across_seats_and_ranked_heaviest_first`),
   divide by finished tasks
   (`spend.rs::tests::per_finished_task_averages_the_tokens_of_tasks_that_finished`),
-  bucket from the first fact to the last with zeros between
-  (`spend.rs::tests::buckets_run_from_the_first_fact_to_the_last_with_zeros_between`),
   and honour `since` and `repo_id`
   (`spend.rs::tests::since_and_repo_id_narrow_every_fact`).
+- A `since` of a day or less buckets by the hour and a `since` of 7 days by
+  the day, each filled with zeros from `since` to now even where no fact
+  falls in it; with no `since`, facts within the last 10 days bucket by the
+  day and facts over 60 days by the week
+  (`spend.rs::tests::spend_stats_buckets_by_hour_under_a_since_of_a_day_or_less`,
+  `::spend_stats_buckets_by_day_under_a_since_of_seven_days`,
+  `::spend_stats_fills_buckets_from_since_to_now_with_no_kept_fact`,
+  `::spend_stats_buckets_by_day_with_no_since_and_facts_within_ten_days`,
+  `::spend_stats_buckets_by_week_with_no_since_and_facts_over_sixty_days`).
 - `GET /v1/stats/spend` answers the totals, the buckets and the models for an
   ended session
   (`stats_spend.rs::the_spend_stat_answers_the_totals_the_buckets_and_the_models_for_an_ended_session`).
@@ -655,6 +689,8 @@ alongside the family's other totals, and the Stats screen's key figures (rule
   (`commands/stats/spend.rs::tests::the_totals_and_the_per_task_figures_print_as_label_value_lines`),
   then a model row and a bucket row
   (`commands/stats/spend.rs::tests::the_table_prints_a_model_row_and_a_bucket_row`),
+  an hour bucket's date carrying its time of day too
+  (`commands/stats/spend.rs::tests::bucket_date_carries_the_time_of_day_for_an_hour_bucket`),
   and a family with no ended session is empty
   (`commands/stats/spend.rs::tests::a_family_with_no_ended_session_is_empty`).
 - `SpendSection` draws the tiles and the time chart from a mocked response,

@@ -38,11 +38,12 @@ pub struct PerFinishedTaskDto {
     pub output_tokens: f64,
 }
 
-/// The step a time axis is drawn at: a bar a day over a short span, a bar a
-/// week over a long one.
+/// The step a time axis is drawn at: a bar an hour over a very short span, a
+/// bar a day over a short one, a bar a week over a long one.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BucketDto {
+    Hour,
     Day,
     #[default]
     Week,

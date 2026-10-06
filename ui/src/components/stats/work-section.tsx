@@ -11,7 +11,13 @@ import { formatDuration } from "@/lib/format"
 import { WORK_CONFIG } from "./chart-configs"
 import { StatSection } from "./stat-section"
 import { StatTile, StatTiles } from "./stat-tiles"
-import { StatTimeChart } from "./stat-time-chart"
+import { type BucketStep, StatTimeChart } from "./stat-time-chart"
+
+/** `WorkStatsDto.bucket` is a bare `string`; narrow it to the step
+ * `StatTimeChart` draws, falling back to `"day"` for anything else. */
+function bucketStep(bucket: string): BucketStep {
+  return bucket === "hour" || bucket === "week" ? bucket : "day"
+}
 
 /** `GET /v1/stats/work`, narrowed by the screen's filter. */
 export function workStatsQueryOptions(filter: StatsFilter) {
@@ -100,6 +106,7 @@ export function WorkSection({ filter }: { filter: StatsFilter }) {
             keys={["tasks_finished", "tasks_failed", "tasks_cancelled"]}
             extra={["goals_completed", "landed"]}
             caption="Tasks per bucket, by how they ended"
+            bucket={bucketStep(data.bucket)}
           />
         </div>
       )}

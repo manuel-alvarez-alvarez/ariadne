@@ -61,6 +61,7 @@ fn per_finished_task_dto(per_task: PerFinishedTask) -> PerFinishedTaskDto {
 
 fn bucket_dto(bucket: Bucket) -> BucketDto {
     match bucket {
+        Bucket::Hour => BucketDto::Hour,
         Bucket::Day => BucketDto::Day,
         Bucket::Week => BucketDto::Week,
     }

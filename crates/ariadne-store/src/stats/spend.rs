@@ -3,9 +3,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use chrono::{DateTime, Duration, SecondsFormat, Utc};
+use chrono::{DateTime, Utc};
 
-use super::{Bucket, StatsFilter, narrowed};
+use super::{Bucket, StatsFilter, filled_buckets, narrowed};
 use crate::{Result, Store};
 
 /// What the `spend` family answers: what did it spend?
@@ -13,10 +13,11 @@ use crate::{Result, Store};
 pub struct SpendStats {
     pub totals: SpendTotals,
     pub per_finished_task: PerFinishedTask,
-    /// The step every bucket below is drawn at, from [`Bucket::for_span`] of
-    /// the filter's own `since`.
+    /// The step every bucket below is drawn at: `since` to now where there is
+    /// one, the first kept fact to now otherwise.
     pub bucket: Bucket,
-    /// One row per bucket from the first fact to the last, zeros included.
+    /// One row per bucket from `since`, or the first fact where there is
+    /// none, to now, zeros included.
     pub buckets: Vec<SpendBucket>,
     /// One row per model, every seat pooled, heaviest first.
     pub by_model: Vec<ModelSpend>,
@@ -43,7 +44,7 @@ pub struct PerFinishedTask {
 }
 
 /// What was spent in one bucket of the time axis.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct SpendBucket {
     /// The RFC 3339 start of the bucket.
     pub start: String,
@@ -78,13 +79,15 @@ impl Store {
     pub async fn spend_stats(&self, filter: &StatsFilter) -> Result<SpendStats> {
         let sessions = self.session_spends(filter).await?;
         let finished_tasks = self.finished_task_ids(filter).await?;
-        let bucket = Bucket::for_span(filter.since);
+        let now = Utc::now();
+        let first_fact = sessions.first().map(|s| s.created_at);
+        let bucket = Bucket::for_span_at(filter.since.or(first_fact), now);
 
         Ok(SpendStats {
             totals: totals_of(&sessions),
             per_finished_task: per_finished_task_of(&sessions, &finished_tasks),
             bucket,
-            buckets: buckets_of(&sessions, bucket),
+            buckets: buckets_of(&sessions, bucket, filter.since, now),
             by_model: by_model_of(&sessions),
         })
     }
@@ -192,42 +195,38 @@ fn per_finished_task_of(sessions: &[SessionSpend], finished: &HashSet<String>) -
     }
 }
 
-/// One row per bucket from the first fact to the last, zeros included. Empty
-/// where there are no facts to draw an axis between.
-fn buckets_of(sessions: &[SessionSpend], bucket: Bucket) -> Vec<SpendBucket> {
-    let (Some(first), Some(last)) = (sessions.first(), sessions.last()) else {
+/// One row per bucket from `since`, or the first fact where there is none,
+/// to `now`, zeros included. Empty where there is neither a `since` nor a
+/// fact to draw an axis from.
+fn buckets_of(
+    sessions: &[SessionSpend],
+    bucket: Bucket,
+    since: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> Vec<SpendBucket> {
+    let Some(start) = since.or_else(|| sessions.first().map(|s| s.created_at)) else {
         return Vec::new();
     };
-    let mut totals: HashMap<String, (u64, u64, u64)> = HashMap::new();
+    let mut buckets: HashMap<String, SpendBucket> = HashMap::new();
     for session in sessions {
-        let entry = totals
-            .entry(bucket.start_of(session.created_at))
-            .or_default();
-        entry.0 += session.input_tokens;
-        entry.1 += session.cached_input_tokens;
-        entry.2 += session.output_tokens;
+        let entry = bump(&mut buckets, &bucket.start_of(session.created_at));
+        entry.input_tokens += session.input_tokens;
+        entry.cached_input_tokens += session.cached_input_tokens;
+        entry.output_tokens += session.output_tokens;
     }
 
-    let step = match bucket {
-        Bucket::Day => Duration::days(1),
-        Bucket::Week => Duration::weeks(1),
-    };
-    let mut cursor = parse_rfc3339(&bucket.start_of(first.created_at));
-    let end = parse_rfc3339(&bucket.start_of(last.created_at));
-    let mut buckets = Vec::new();
-    while cursor <= end {
-        let start = cursor.to_rfc3339_opts(SecondsFormat::Secs, true);
-        let (input_tokens, cached_input_tokens, output_tokens) =
-            totals.get(&start).copied().unwrap_or_default();
-        buckets.push(SpendBucket {
-            start,
-            input_tokens,
-            cached_input_tokens,
-            output_tokens,
-        });
-        cursor += step;
-    }
+    filled_buckets(bucket, start, now, buckets, |row, start| row.start = start)
+}
+
+/// The bucket of `start`, creating it zeroed if this is the first fact seen
+/// there.
+fn bump<'a>(buckets: &'a mut HashMap<String, SpendBucket>, start: &str) -> &'a mut SpendBucket {
     buckets
+        .entry(start.to_string())
+        .or_insert_with(|| SpendBucket {
+            start: start.to_string(),
+            ..Default::default()
+        })
 }
 
 /// One row per model, every seat pooled, heaviest (input plus output) first.
@@ -269,6 +268,8 @@ fn by_model_of(sessions: &[SessionSpend]) -> Vec<ModelSpend> {
 
 #[cfg(test)]
 mod tests {
+    use chrono::{Duration, SecondsFormat};
+
     use super::*;
 
     use crate::stats::NewStatFact;
@@ -504,42 +505,122 @@ mod tests {
         assert!((per_task.output_tokens - 60.0).abs() < 1e-9, "{per_task:?}");
     }
 
-    /// A short `since` buckets by day and a long or absent one by week, and
-    /// every bucket between the first fact and the last is in the answer,
-    /// zeros where nothing landed in it.
+    /// A `since` of a day or less buckets by the hour, filled with zeros from
+    /// `since` to now — about 24 hourly buckets for a `since` of 24 hours.
     #[tokio::test]
-    async fn buckets_run_from_the_first_fact_to_the_last_with_zeros_between() {
+    async fn spend_stats_buckets_by_hour_under_a_since_of_a_day_or_less() {
         let (store, dir) = store().await;
-        ended(&store, "day1", "01REPO", None, "stub:a", run(100, 0, 0)).await;
-        ended(&store, "day3", "01REPO", None, "stub:a", run(300, 0, 0)).await;
-        backdate(dir.path(), "day1", at("2026-10-01T10:00:00Z")).await;
-        backdate(dir.path(), "day3", at("2026-10-03T10:00:00Z")).await;
+        let now = Utc::now();
+        ended(&store, "recent", "01REPO", None, "stub:a", run(100, 0, 0)).await;
+        backdate(dir.path(), "recent", now - Duration::hours(2)).await;
 
-        let short = StatsFilter {
-            since: Some(at("2026-09-25T00:00:00Z")),
+        let filter = StatsFilter {
+            since: Some(now - Duration::hours(24)),
             repo_id: None,
         };
-        let stats = store.spend_stats(&short).await.unwrap();
-        assert_eq!(stats.bucket, Bucket::Day);
-        assert_eq!(
-            stats
-                .buckets
-                .iter()
-                .map(|b| (b.start.as_str(), b.input_tokens))
-                .collect::<Vec<_>>(),
-            [
-                ("2026-10-01T00:00:00Z", 100),
-                ("2026-10-02T00:00:00Z", 0),
-                ("2026-10-03T00:00:00Z", 300),
-            ]
+        let stats = store.spend_stats(&filter).await.unwrap();
+        assert_eq!(stats.bucket, Bucket::Hour);
+        assert!(
+            (23..=26).contains(&stats.buckets.len()),
+            "{:?}",
+            stats.buckets.len()
         );
+        let fact_bucket_start = Bucket::Hour.start_of(now - Duration::hours(2));
+        let fact_bucket = stats
+            .buckets
+            .iter()
+            .find(|b| b.start == fact_bucket_start)
+            .expect("the fact's own hour has a bucket");
+        assert_eq!(fact_bucket.input_tokens, 100);
+        assert!(
+            stats.buckets.iter().any(|b| b.input_tokens == 0),
+            "{:?}",
+            stats.buckets
+        );
+    }
 
-        let all_time = StatsFilter::default();
-        let stats = store.spend_stats(&all_time).await.unwrap();
+    /// A `since` with no kept fact in it still fills every bucket from
+    /// `since` to now, zeros throughout: the axis does not wait on a fact
+    /// to exist.
+    #[tokio::test]
+    async fn spend_stats_fills_buckets_from_since_to_now_with_no_kept_fact() {
+        let (store, _dir) = store().await;
+        let now = Utc::now();
+
+        let filter = StatsFilter {
+            since: Some(now - Duration::hours(3)),
+            repo_id: None,
+        };
+        let stats = store.spend_stats(&filter).await.unwrap();
+        assert_eq!(stats.bucket, Bucket::Hour);
+        assert!(
+            (3..=4).contains(&stats.buckets.len()),
+            "{:?}",
+            stats.buckets.len()
+        );
+        assert!(
+            stats.buckets.iter().all(|b| b.input_tokens == 0),
+            "{:?}",
+            stats.buckets
+        );
+    }
+
+    /// A `since` of 7 days buckets by the day, filled with zeros from `since`
+    /// to now — 7 or 8 daily buckets.
+    #[tokio::test]
+    async fn spend_stats_buckets_by_day_under_a_since_of_seven_days() {
+        let (store, dir) = store().await;
+        let now = Utc::now();
+        ended(&store, "recent", "01REPO", None, "stub:a", run(100, 0, 0)).await;
+        backdate(dir.path(), "recent", now - Duration::days(3)).await;
+
+        let filter = StatsFilter {
+            since: Some(now - Duration::days(7)),
+            repo_id: None,
+        };
+        let stats = store.spend_stats(&filter).await.unwrap();
+        assert_eq!(stats.bucket, Bucket::Day);
+        assert!(
+            (7..=8).contains(&stats.buckets.len()),
+            "{:?}",
+            stats.buckets.len()
+        );
+        assert!(
+            stats.buckets.iter().any(|b| b.input_tokens == 0),
+            "{:?}",
+            stats.buckets
+        );
+    }
+
+    /// With no `since`, facts from the last 10 days bucket by the day, not
+    /// by the week: a span this short stays under the day threshold.
+    #[tokio::test]
+    async fn spend_stats_buckets_by_day_with_no_since_and_facts_within_ten_days() {
+        let (store, dir) = store().await;
+        let now = Utc::now();
+        ended(&store, "early", "01REPO", None, "stub:a", run(100, 0, 0)).await;
+        ended(&store, "late", "01REPO", None, "stub:a", run(300, 0, 0)).await;
+        backdate(dir.path(), "early", now - Duration::days(9)).await;
+        backdate(dir.path(), "late", now - Duration::days(1)).await;
+
+        let stats = store.spend_stats(&StatsFilter::default()).await.unwrap();
+        assert_eq!(stats.bucket, Bucket::Day);
+        assert!(stats.buckets.len() > 1, "{:?}", stats.buckets);
+    }
+
+    /// With no `since`, facts spread over more than 60 days bucket by the
+    /// week.
+    #[tokio::test]
+    async fn spend_stats_buckets_by_week_with_no_since_and_facts_over_sixty_days() {
+        let (store, dir) = store().await;
+        let now = Utc::now();
+        ended(&store, "early", "01REPO", None, "stub:a", run(100, 0, 0)).await;
+        ended(&store, "late", "01REPO", None, "stub:a", run(300, 0, 0)).await;
+        backdate(dir.path(), "early", now - Duration::days(65)).await;
+        backdate(dir.path(), "late", now - Duration::days(1)).await;
+
+        let stats = store.spend_stats(&StatsFilter::default()).await.unwrap();
         assert_eq!(stats.bucket, Bucket::Week);
-        assert_eq!(stats.buckets.len(), 1, "{:?}", stats.buckets);
-        assert_eq!(stats.buckets[0].start, "2026-09-28T00:00:00Z");
-        assert_eq!(stats.buckets[0].input_tokens, 400);
     }
 
     /// `since` and `repo_id` each narrow every fact the aggregate reads: a

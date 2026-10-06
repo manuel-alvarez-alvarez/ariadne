@@ -45,7 +45,11 @@ fn rendered(stats: &WorkStatsDto) -> Option<String> {
         return None;
     }
     let totals = kv_block(&totals_kv(&stats.totals), view());
-    let rows: Vec<Vec<String>> = stats.buckets.iter().map(bucket_row).collect();
+    let rows: Vec<Vec<String>> = stats
+        .buckets
+        .iter()
+        .map(|b| bucket_row(&stats.bucket, b))
+        .collect();
     let table = render_table(BUCKETS, &rows, view()).unwrap_or_default();
     Some(format!("{totals}\n\n{table}"))
 }
@@ -74,9 +78,9 @@ fn percent(fraction: f64) -> String {
 }
 
 /// One row of the buckets table, in [`BUCKETS`]'s column order.
-fn bucket_row(bucket: &WorkBucketDto) -> Vec<String> {
+fn bucket_row(kind: &str, bucket: &WorkBucketDto) -> Vec<String> {
     vec![
-        bucket_date(&bucket.start),
+        bucket_date(kind, &bucket.start),
         bucket.tasks_finished.to_string(),
         bucket.tasks_failed.to_string(),
         bucket.tasks_cancelled.to_string(),
@@ -85,14 +89,16 @@ fn bucket_row(bucket: &WorkBucketDto) -> Vec<String> {
     ]
 }
 
-/// A bucket's RFC 3339 start as a table reads a date: local, day precision.
-fn bucket_date(start: &str) -> String {
+/// A bucket's RFC 3339 start as a table reads it, local: day precision for a
+/// day or a week bucket, with the hour added for an hour bucket.
+fn bucket_date(kind: &str, start: &str) -> String {
+    let format = if kind == "hour" {
+        "%Y-%m-%d %H:%M"
+    } else {
+        "%Y-%m-%d"
+    };
     chrono::DateTime::parse_from_rfc3339(start)
-        .map(|t| {
-            t.with_timezone(&chrono::Local)
-                .format("%Y-%m-%d")
-                .to_string()
-        })
+        .map(|t| t.with_timezone(&chrono::Local).format(format).to_string())
         .unwrap_or_else(|_| start.to_string())
 }
 
@@ -170,12 +176,30 @@ mod tests {
             goals_completed: 1,
             landed: 2,
         };
-        let row = bucket_row(&bucket);
+        let row = bucket_row("day", &bucket);
         assert_eq!(row[1..], ["3", "1", "0", "1", "2"]);
         assert!(
             row[0].starts_with("2026-09-2") || row[0].starts_with("2026-09-28"),
             "{row:?}"
         );
+    }
+
+    /// An hour bucket's row shows the time of day beside its date, where a
+    /// day or a week bucket shows the date alone.
+    #[test]
+    fn a_bucket_row_shows_the_time_of_day_for_an_hour_bucket() {
+        let bucket = WorkBucketDto {
+            start: "2026-09-28T14:00:00Z".into(),
+            ..Default::default()
+        };
+        let row = bucket_row("hour", &bucket);
+        let expected = chrono::DateTime::parse_from_rfc3339("2026-09-28T14:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M")
+            .to_string();
+        assert_eq!(row[0], expected);
+        assert_ne!(row[0], bucket_date("day", &bucket.start), "{row:?}");
     }
 
     /// A span with no bucket at all renders nothing: `render` prints the one
@@ -208,7 +232,7 @@ mod tests {
         let expected_table = render_table(
             BUCKETS,
             &[vec![
-                bucket_date("2026-09-28T00:00:00Z"),
+                bucket_date("day", "2026-09-28T00:00:00Z"),
                 "3".into(),
                 "1".into(),
                 "0".into(),
