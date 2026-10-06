@@ -3,8 +3,10 @@
 use crate::common;
 
 use ariadne_api::stats::ModelStatsDto;
+use ariadne_core::{Seat, TaskStatus};
+use axum::http::StatusCode;
 
-use common::harness;
+use common::{as_session, harness};
 
 /// `GET /v1/stats/models` answers 200 with the family's DTO, and the route is
 /// in the API document under the `stats` tag.
@@ -82,7 +84,7 @@ async fn each_model_and_seat_answers_its_figures_under_both_filters() {
             "judge",
             "reviewer",
             "one",
-            json!({"verdict": "changes_requested", "author_model": "writer"}),
+            json!({"verdict": "request_changes", "author_model": "writer"}),
         ),
         fact(
             "verdict",
@@ -154,4 +156,47 @@ async fn each_model_and_seat_answers_its_figures_under_both_filters() {
     assert_eq!(json["items"][1]["rounds_per_task"], Value::Null);
     let excluded: ModelStatsDto = h.get("/v1/stats/models?repo=elsewhere").await;
     assert!(excluded.items.is_empty());
+}
+
+/// A reviewer's real `request_changes` verdict, sent through the messages
+/// API as the daemon records it, counts in `changes_per_task`.
+#[tokio::test]
+async fn a_real_request_changes_verdict_lifts_the_reviewers_changes_per_task() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    let author = h
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
+        .await;
+    let reviewer = h
+        .session(
+            &cast.goal,
+            Some(&cast.task),
+            Seat::Reviewer,
+            &cast.reviewer.id,
+        )
+        .await;
+    h.advance(&cast.task, TaskStatus::UnderReview).await;
+    let uri = format!("/v1/tasks/{}/messages", cast.task.id);
+    let review = as_session(
+        &uri,
+        &author.id,
+        serde_json::json!({"kind": "review_request", "to_actor": "reviewer",
+            "to_agent_id": cast.reviewer.id, "body": "review"}),
+    );
+    let _: ariadne_api::messages::MessageDto = h.json(review, StatusCode::CREATED).await;
+    let verdict = as_session(
+        &uri,
+        &reviewer.id,
+        serde_json::json!({"kind": "request_changes", "to_actor": "author",
+            "to_agent_id": cast.author.id, "body": "revise"}),
+    );
+    let _: ariadne_api::messages::MessageDto = h.json(verdict, StatusCode::CREATED).await;
+
+    let stats: ModelStatsDto = h.get("/v1/stats/models").await;
+    let reviewer_row = stats
+        .items
+        .iter()
+        .find(|r| r.seat.as_deref() == Some("reviewer"))
+        .unwrap();
+    assert!(reviewer_row.changes_per_task.unwrap() > 0.0);
 }

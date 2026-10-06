@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use ariadne_core::MessageKind;
 use serde_json::Value;
 use sqlx::Row;
 
@@ -143,7 +144,9 @@ impl Store {
                     totals.rounds += number("review_requests") as f64;
                 }
                 "verdict" => {
-                    totals.changes += u64::from(data["verdict"] == "changes_requested");
+                    totals.changes += u64::from(
+                        data["verdict"].as_str() == Some(MessageKind::RequestChanges.as_str()),
+                    );
                     totals.reviewed_tasks.extend(task);
                 }
                 _ => {}
@@ -359,11 +362,11 @@ mod tests {
     async fn changes_per_task_divides_changes_requested_by_the_tasks_reviewed_for_reviewers_only() {
         let (_dir, store) = store().await;
         for (model, task, verdict) in [
-            ("judge", "t1", "changes_requested"),
-            ("judge", "t1", "changes_requested"),
+            ("judge", "t1", "request_changes"),
+            ("judge", "t1", "request_changes"),
             ("judge", "t1", "approve"),
             ("judge", "t2", "approve"),
-            ("judge", "t3", "changes_requested"),
+            ("judge", "t3", "request_changes"),
             ("judge", "t4", "approve"),
             ("other", "t1", "approve"),
         ] {
@@ -438,7 +441,7 @@ mod tests {
                     }),
                     task: Some("old"),
                     data: json!({"status": "finished", "review_requests": 9, "input_tokens": 900,
-                        "verdict": "changes_requested"}),
+                        "verdict": "request_changes"}),
                     ..Fact::default()
                 },
             )

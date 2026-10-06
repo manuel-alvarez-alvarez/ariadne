@@ -430,7 +430,7 @@ Cached tokens are already part of input and are never added again.
 `rounds_per_task` is null except for authors.
 For an author it is the mean `review_requests` over this model's `task_ended` facts with status `finished`.
 `changes_per_task` is null except for reviewers.
-For a reviewer it divides this model's `verdict` facts with verdict `changes_requested`
+For a reviewer it divides this model's `verdict` facts with verdict `request_changes`
 by the distinct tasks this model gave a verdict on.
 Each of the two is zero without a denominator.
 
@@ -707,6 +707,9 @@ alongside the family's other totals, and the Stats screen's key figures (rule
   (`stats/models.rs::tests::rounds_per_task_is_the_mean_review_requests_of_finished_tasks_for_authors_only`).
 - Changes per task divides changes requested by the tasks reviewed, for reviewers only
   (`stats/models.rs::tests::changes_per_task_divides_changes_requested_by_the_tasks_reviewed_for_reviewers_only`).
+- A real `request_changes` verdict sent through the API lifts the reviewer's changes per task
+  above zero
+  (`stats_models.rs::a_real_request_changes_verdict_lifts_the_reviewers_changes_per_task`).
 - Both review figures are zero without a denominator
   (`stats/models.rs::tests::the_review_figures_are_zero_without_a_denominator`).
 - Every fact obeys both filters, including the exact time boundary
