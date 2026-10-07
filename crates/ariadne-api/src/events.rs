@@ -118,3 +118,71 @@ pub struct EventListQuery {
     /// `asc`).
     pub order: Option<EventOrder>,
 }
+
+/// The phrase each `session.diagnosis` category reads as, beside the
+/// original failure it never replaces (024). `None` for a category this
+/// build does not recognise, read back by its raw spelling instead of
+/// invented words.
+fn diagnosis_label(category: &str) -> Option<&'static str> {
+    Some(match category {
+        "exhausted" => "quota exhaustion",
+        "temporary" => "a temporary failure",
+        "auth_config" => "an authentication or configuration problem",
+        "task_error" => "a task failure",
+        "insufficient" => "insufficient evidence",
+        _ => return None,
+    })
+}
+
+/// The advisory note a `session.diagnosis` event's payload reads as:
+/// `AI suggests: quota exhaustion (72%)`, or without a percent where the
+/// category's own probability did not validate. `None` where the payload
+/// carries no category at all.
+pub fn diagnosis_note(payload: &serde_json::Value) -> Option<String> {
+    let category = payload.get("category")?.as_str()?;
+    let label = diagnosis_label(category).unwrap_or(category);
+    let percent = payload
+        .get("probabilities")
+        .and_then(|probabilities| probabilities.get(category))
+        .and_then(serde_json::Value::as_f64)
+        .map(|probability| (probability * 100.0).round() as i64);
+    Some(match percent {
+        Some(percent) => format!("AI suggests: {label} ({percent}%)"),
+        None => format!("AI suggests: {label}"),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::diagnosis_note;
+    use serde_json::json;
+
+    /// A known category with a validated probability reads as its phrase
+    /// and its whole percent.
+    #[test]
+    fn a_known_category_with_a_probability_reads_its_phrase_and_percent() {
+        assert_eq!(
+            diagnosis_note(&json!({
+                "category": "exhausted",
+                "probabilities": {"exhausted": 0.7231, "temporary": 0.1},
+            })),
+            Some("AI suggests: quota exhaustion (72%)".to_string())
+        );
+    }
+
+    /// A category with no probabilities at all still reads its phrase,
+    /// without a percent.
+    #[test]
+    fn a_category_without_probabilities_reads_its_phrase_alone() {
+        assert_eq!(
+            diagnosis_note(&json!({"category": "insufficient"})),
+            Some("AI suggests: insufficient evidence".to_string())
+        );
+    }
+
+    /// A payload with no category at all has no note.
+    #[test]
+    fn a_payload_without_a_category_has_no_note() {
+        assert_eq!(diagnosis_note(&json!({})), None);
+    }
+}

@@ -36,3 +36,16 @@ when an event says it has changed. `ariadne daemon logs` reads the daemon's own
 ring buffer, so it works under launchd and systemd — where nothing writes
 `~/.ariadne/ariadned.log` — and honours `--endpoint`; the file is the fallback
 for a daemon that is not answering.
+
+With `ai_failure_diagnosis` on (see [Configuration](configuration.md)), a
+failed session may later carry a `session.diagnosis` event too: an advisory
+reading of the error beside it — quota exhaustion, a temporary failure, an
+authentication or configuration problem, a task failure, or insufficient
+evidence — from the local model `ai` permission mode already uses (022). It
+appears in `ariadne events`, in `ariadne session logs` and `ariadne task
+logs` as a line under the `ERROR` block it is about, and in the desktop
+app's session activity, however much later it arrives and however the
+session has ended by then. It never changes what the error itself says, and
+never decides whether a session retries or switches models: the model may
+disagree with the daemon's own exhaustion check, and that disagreement is
+never acted on (021, 024).

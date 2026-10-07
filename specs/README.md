@@ -33,6 +33,7 @@ test that proves it.
 | 021 | [ACP runtime](021-acp-runtime.md) | the daemon-owned ACP agent: child process, protocol, events, kill |
 | 022 | [The `ai` permission mode](022-ai-permission-mode.md) | the fourth mode, the AI permission model's settings and prompts, the Python check and the install |
 | 023 | [Stats](023-stats.md) | the stats ledger, its facts, the stat families, and the route, command and screen over them |
+| 024 | [Advisory failure diagnosis](024-advisory-failure-diagnosis.md) | the optional local classifier beside a failed session's error, and why it never changes recovery |
 
 ## Writing one
 

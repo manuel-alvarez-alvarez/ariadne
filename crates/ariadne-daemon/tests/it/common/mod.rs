@@ -101,6 +101,9 @@ pub(crate) struct Harness {
     /// for every clock a test moves, and thirty tests doing that at once run a
     /// machine out of them.
     db: sqlx::SqlitePool,
+    /// The same instance the harness's own launcher drives its ACP runtime
+    /// with (024), for a test about its shutdown.
+    pub failure_diagnosis: ariadne_daemon::failure_diagnosis::FailureDiagnosis,
 }
 
 /// One row of the stats ledger, as [`Harness::facts`] reads it.
@@ -370,6 +373,12 @@ impl HarnessBuilder {
         );
         ai_permissions.ensure_device().await;
         let exhausted_patterns = config.exhausted_patterns.clone();
+        let failure_diagnosis = ariadne_daemon::failure_diagnosis::FailureDiagnosis::new(
+            config.ai_failure_diagnosis,
+            ai_permissions.clone(),
+            store.clone(),
+            self.timeouts.failure_diagnosis_decision,
+        );
         let launcher = Arc::new(Launcher {
             cfg: Arc::new(config),
             store: store.clone(),
@@ -380,7 +389,8 @@ impl HarnessBuilder {
                 transcript_homes(dir.path()),
             )
             .with_exhausted_patterns(exhausted_patterns)
-            .with_ai_permissions(ai_permissions.clone()),
+            .with_ai_permissions(ai_permissions.clone())
+            .with_failure_diagnosis(failure_diagnosis.clone()),
             registry: agent_registry.clone(),
             branches: BranchWatchers::new(bus.clone()),
         });
@@ -421,6 +431,7 @@ impl HarnessBuilder {
             dir,
             timeouts: self.timeouts,
             db,
+            failure_diagnosis,
         };
         // A probe under full-suite load can run out its timeout: probe again
         // until the stub is accepted, so no test reads a timed-out snapshot.

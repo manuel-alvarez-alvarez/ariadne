@@ -131,6 +131,9 @@ pub(crate) fn summarize(kind: &str, payload: &serde_json::Value) -> String {
     if kind == "permission.replied" {
         return finish(&permission_reply_summary(payload));
     }
+    if kind == "session.diagnosis" {
+        return finish(&diagnosis_summary(payload));
+    }
     let text = tool_call_summary(payload)
         .or_else(|| {
             (kind == "post_tool_use")
@@ -175,6 +178,13 @@ fn permission_reply_summary(payload: &serde_json::Value) -> String {
         Some(note) => format!("{answer} — {note}"),
         None => answer,
     }
+}
+
+/// A `session.diagnosis` event's one line: the same advisory note the
+/// console and the desktop app show beside the original failure (024), or
+/// `…` for a payload nothing here can read.
+fn diagnosis_summary(payload: &serde_json::Value) -> String {
+    ariadne_api::events::diagnosis_note(payload).unwrap_or_else(|| "…".to_string())
 }
 
 /// A payload's field, where it holds a non-empty string.
@@ -330,6 +340,30 @@ mod tests {
         // daemon neither asks for nor advertises (007, rule 17).
         assert!(status_for_event("compaction_update").is_none());
         assert!(attention_for_event("compaction_update", &json!({})).is_none());
+    }
+
+    /// A `session.diagnosis` is an advisory, read well after the session's
+    /// own lifecycle: it moves neither the status nor the attention flag,
+    /// whatever its category (024).
+    #[test]
+    fn a_diagnosis_event_moves_neither_status_nor_attention() {
+        let payload = json!({"error_event_id": "01EV", "category": "exhausted"});
+        assert_eq!(status_for_event("session.diagnosis"), None);
+        assert_eq!(attention_for_event("session.diagnosis", &payload), None);
+    }
+
+    /// The summary a `session.diagnosis` event reads as is the same advisory
+    /// note the console and the desktop app show.
+    #[test]
+    fn a_diagnosis_events_summary_is_its_advisory_note() {
+        let payload = json!({
+            "category": "exhausted",
+            "probabilities": {"exhausted": 0.72},
+        });
+        assert_eq!(
+            summarize("session.diagnosis", &payload),
+            "AI suggests: quota exhaustion (72%)"
+        );
     }
 
     /// The lifecycle events, and nothing about them raises attention.

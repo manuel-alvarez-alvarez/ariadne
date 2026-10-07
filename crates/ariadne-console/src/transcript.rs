@@ -104,6 +104,11 @@ impl FromStr for Since {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ItemMeta {
+    /// The id of the event this block opened on — empty for a block the
+    /// console synthesizes locally rather than folding from a stored event
+    /// (a typed prompt shown before its round trip, a send that failed).
+    /// What a late `session.diagnosis` correlates against (024).
+    pub id: String,
     pub created_at: String,
     pub kinds: Vec<String>,
     /// The id of the whole the daemon stored at the end of the turn, once it
@@ -116,6 +121,7 @@ pub struct ItemMeta {
 impl ItemMeta {
     pub fn from_event(event: &AgentEventDto) -> Self {
         Self {
+            id: event.id.clone(),
             created_at: event.created_at.clone(),
             kinds: vec![event.kind.clone()],
             closed_by: None,
@@ -281,6 +287,11 @@ pub enum TranscriptItem {
     Error {
         meta: ItemMeta,
         text: String,
+        /// A late, optional advisory on this failure's likely category
+        /// (024), labeled as the model's own suggestion: `AI suggests:
+        /// quota exhaustion (72%)`. The original `text` is never rewritten
+        /// to carry it.
+        ai_note: Option<String>,
     },
     Raw {
         meta: ItemMeta,
@@ -364,6 +375,7 @@ impl From<&AgentEventDto> for TranscriptItem {
             "session.error" => Self::Error {
                 meta,
                 text: error_text(event),
+                ai_note: None,
             },
             "session_start" => Self::SystemNote {
                 meta,
@@ -445,6 +457,22 @@ pub fn fold_into(items: &mut Vec<TranscriptItem>, event: &AgentEventDto) {
     {
         *answer = Some(permission_answer(&event.payload, options));
         meta.kinds.push(event.kind.clone());
+        return;
+    }
+    // An advisory diagnosis (024) carries no block of its own: it reads
+    // onto the `Error` block of the failure it names by id, however much
+    // later it arrives, and onto nothing where that block has already
+    // scrolled out of this snapshot.
+    if event.kind == "session.diagnosis" {
+        if let Some(error_event_id) = string_at(&event.payload, "/error_event_id")
+            && let Some(TranscriptItem::Error { meta, ai_note, .. }) = items
+                .iter_mut()
+                .rev()
+                .find(|item| matches!(item, TranscriptItem::Error { meta, .. } if meta.id == error_event_id))
+        {
+            *ai_note = ariadne_api::events::diagnosis_note(&event.payload);
+            meta.kinds.push(event.kind.clone());
+        }
         return;
     }
 
@@ -894,5 +922,97 @@ mod tests {
         let items = fold(&events);
 
         assert_eq!(items.len(), 2, "an ended call is not open for another post");
+    }
+
+    /// A late diagnosis (024) attaches to the error it names, as an
+    /// `ai_note` beside the original text — never replacing it, and never a
+    /// block of its own.
+    #[test]
+    fn a_late_diagnosis_attaches_to_the_error_it_names() {
+        let events = [
+            event(
+                "err-1",
+                "session.error",
+                json!({"error": {"data": {"message": "rate limited"}}}),
+            ),
+            event(
+                "diag-1",
+                "session.diagnosis",
+                json!({"error_event_id": "err-1", "category": "exhausted",
+                       "probabilities": {"exhausted": 0.9}}),
+            ),
+        ];
+
+        let items = fold(&events);
+
+        assert_eq!(items.len(), 1, "the diagnosis opens no block of its own");
+        let TranscriptItem::Error { text, ai_note, .. } = &items[0] else {
+            panic!("{items:?}");
+        };
+        assert_eq!(text, "rate limited");
+        assert_eq!(
+            ai_note.as_deref(),
+            Some("AI suggests: quota exhaustion (90%)")
+        );
+    }
+
+    /// Two errors, each later diagnosed: the right note lands on the right
+    /// one, by id, whichever order the diagnoses arrive in.
+    #[test]
+    fn duplicate_errors_each_keep_their_own_diagnosis() {
+        let events = [
+            event(
+                "err-1",
+                "session.error",
+                json!({"error": {"message": "first"}}),
+            ),
+            event(
+                "err-2",
+                "session.error",
+                json!({"error": {"message": "second"}}),
+            ),
+            event(
+                "diag-2",
+                "session.diagnosis",
+                json!({"error_event_id": "err-2", "category": "task_error"}),
+            ),
+            event(
+                "diag-1",
+                "session.diagnosis",
+                json!({"error_event_id": "err-1", "category": "temporary"}),
+            ),
+        ];
+
+        let items = fold(&events);
+
+        assert_eq!(items.len(), 2);
+        let notes: Vec<Option<&str>> = items
+            .iter()
+            .map(|item| match item {
+                TranscriptItem::Error { ai_note, .. } => ai_note.as_deref(),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            notes,
+            [
+                Some("AI suggests: a temporary failure"),
+                Some("AI suggests: a task failure")
+            ]
+        );
+    }
+
+    /// A diagnosis that names no error already in this snapshot — the
+    /// block it is about has scrolled out, or it never arrived — attaches
+    /// to nothing, and opens no block of its own either.
+    #[test]
+    fn a_diagnosis_with_no_matching_error_in_the_snapshot_attaches_to_nothing() {
+        let events = [event(
+            "diag-1",
+            "session.diagnosis",
+            json!({"error_event_id": "unknown", "category": "exhausted"}),
+        )];
+
+        assert_eq!(fold(&events), []);
     }
 }

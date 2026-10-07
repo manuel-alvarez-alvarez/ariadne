@@ -173,6 +173,29 @@ function isFoldedRow(row: AgentEventDto | FoldedRow): row is FoldedRow {
   return "count" in row
 }
 
+/** The `error_event_id` a `session.diagnosis` payload names, where it is a string. */
+function errorEventIdOf(payload: unknown): string | undefined {
+  if (typeof payload !== "object" || payload === null) return undefined
+  const value = (payload as Record<string, unknown>).error_event_id
+  return typeof value === "string" ? value : undefined
+}
+
+/**
+ * Every `session.diagnosis` event's note, by the id of the `session.error`
+ * it is about — read off `data` whole, so a late diagnosis still attaches
+ * to its error whatever else has happened since (024): the session ending,
+ * a resume, a later launch's own failure.
+ */
+function diagnosisNotes(events: AgentEventDto[]): Map<string, string> {
+  const notes = new Map<string, string>()
+  for (const event of events) {
+    if (event.kind !== "session.diagnosis") continue
+    const errorEventId = errorEventIdOf(event.payload)
+    if (errorEventId) notes.set(errorEventId, event.summary)
+  }
+  return notes
+}
+
 export function SessionActivity({ sessionId }: { sessionId: string }) {
   // Survives refetches, reset when the screen moves to another session.
   const tail = useRef<Tail>({ sessionId, cursor: undefined, events: [] })
@@ -227,7 +250,12 @@ export function SessionActivity({ sessionId }: { sessionId: string }) {
     )
   }
 
-  const folded = foldEvents([...data].reverse())
+  // A diagnosis (024) carries no row of its own: it reads as a note on the
+  // `session.error` it names, by id, so it never drifts apart from that
+  // error — not into its own row, and not behind a later event.
+  const notes = diagnosisNotes(data)
+  const visible = data.filter((event) => event.kind !== "session.diagnosis")
+  const folded = foldEvents([...visible].reverse())
 
   return (
     <ol className="divide-y">
@@ -235,14 +263,14 @@ export function SessionActivity({ sessionId }: { sessionId: string }) {
         isFoldedRow(row) ? (
           <FoldedActivityRow key={`folded-${row.events[0]?.id}`} row={row} />
         ) : (
-          <ActivityRow key={row.id} event={row} />
+          <ActivityRow key={row.id} event={row} note={notes.get(row.id)} />
         ),
       )}
     </ol>
   )
 }
 
-function ActivityRow({ event }: { event: AgentEventDto }) {
+function ActivityRow({ event, note }: { event: AgentEventDto; note?: string }) {
   const [open, setOpen] = useState(false)
   const summary = deriveSummary(event)
 
@@ -277,6 +305,9 @@ function ActivityRow({ event }: { event: AgentEventDto }) {
           className="shrink-0 text-xs text-muted-foreground tabular-nums"
         />
       </button>
+      {note ? (
+        <p className="ml-5 truncate font-mono text-xs text-muted-foreground">{note}</p>
+      ) : null}
       {open ? (
         // Focusable and named, so the payload scrolls under the arrow keys and
         // announces what it is when focus lands in it.
