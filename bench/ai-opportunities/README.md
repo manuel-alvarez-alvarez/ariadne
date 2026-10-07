@@ -150,13 +150,28 @@ question.
 
 The user selected optional advisory failure diagnosis and deterministic
 handoff ranking with: “Continue with your recomendation”. The orchestrator
-created these implementation tasks:
+explicitly released this checkpoint after both implementation tasks existed.
+The checkpoint report was reviewed and landed at
+`6308f506cc88a06c4c322c6d4c247aedb52b7c99`.
 
 - `01m49pr97j46eazg2zjhmd6x11` — Show optional AI failure diagnoses without
   changing recovery.
 - `01m49pshxt2eaebnr9gwbnm832` — Preserve important session history with
   deterministic handoff ranking.
 
-Progress detection remains in evaluation. These selected scopes are
-implementation work in progress. The measured findings above describe only
-their experiments; they do not claim that either implementation has landed.
+Both selected tasks finished and landed:
+
+- Failure diagnosis finished at
+  `3c67ca5255f683188f53c8ad15702bda7354f65f`. It adds an optional AI
+  diagnosis beside the original session error. The diagnosis does not change
+  recovery or lifecycle behavior.
+- Handoff ranking finished at
+  `e6f22f58588190a05c1fb93903923221a1b90aaa`. It uses deterministic rules
+  to select important history within the existing character budget, while
+  preserving source order and recency fallback.
+
+Progress detection remains an investigation result and was not selected for
+production implementation. The measured findings above describe experiments,
+not implementation accuracy. The failure diagnosis pilot used synthetic
+cases, and the handoff pilot used synthetic histories; neither establishes
+performance on real production data.
