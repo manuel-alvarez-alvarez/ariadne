@@ -67,6 +67,11 @@ pub struct FileConfig {
     pub auto_switch: Option<bool>,
     /// Case-insensitive message fragments that identify exhausted prompts.
     pub exhausted_patterns: Option<Vec<String>>,
+    /// Classify a failed ACP session's error with the AI permission model's
+    /// local Kev service, as an advisory `session.diagnosis` event beside
+    /// it (024). Off by default, and never changes what `auto_switch` and
+    /// `exhausted_patterns` decide.
+    pub ai_failure_diagnosis: Option<bool>,
     /// ACP registry index URL, fetched only on an explicit refresh.
     pub acp_registry_url: Option<String>,
     /// The Python 3.12 or 3.13 interpreter the model's install runs on

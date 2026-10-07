@@ -556,11 +556,13 @@ impl Console {
         }
         self.items.push(TranscriptItem::Error {
             meta: transcript::ItemMeta {
+                id: String::new(),
                 created_at: chrono::Utc::now().to_rfc3339(),
                 kinds: vec!["session.error".into()],
                 closed_by: None,
             },
             text: text.to_string(),
+            ai_note: None,
         });
         self.set_turn(Turn::Idle, Instant::now());
     }
@@ -722,6 +724,7 @@ impl Console {
         self.pending.push_back(self.items.len());
         self.items.push(TranscriptItem::UserPrompt {
             meta: transcript::ItemMeta {
+                id: String::new(),
                 created_at: chrono::Utc::now().to_rfc3339(),
                 kinds: vec!["user_prompt_submit".into()],
                 closed_by: None,

@@ -35,6 +35,11 @@ exhausted_patterns = [             # patterns that match exhausted-model errors;
   "^.*Your.*quota.*exceeded.*$",   # replaces the shipped list if set; each
   "^.*rate.*limit.*exceeded.*$",   # pattern is a regex matched against the
 ]                                  # error message returned by the model
+ai_failure_diagnosis = true        # ask the AI permission model's local Kev
+                                    # service for an advisory opinion on a
+                                    # failed session's error (default false).
+                                    # Never changes auto_switch or
+                                    # exhausted_patterns; see Failure diagnosis.
 
 [[acp_agents]]                     # an agent of your own, or one the registry
 id = "my-agent"                    # names under another command
@@ -75,6 +80,15 @@ package and PyTorch go into `~/.ariadne/ai-permissions/venv`.
 its VRAM, when one is not on the daemon's own `PATH` under that name. Neither
 key turns the model on — [Permission modes](permissions.md) does that, and
 chooses its flavour and device.
+
+`ai_failure_diagnosis` reuses that same model, once it is on and ready, to
+read a failed session's error and suggest which of five categories it falls
+into — quota exhaustion, a temporary failure, an authentication or
+configuration problem, a task failure, or insufficient evidence. It is
+advisory only: on or off, it never changes whether a session retries,
+switches models, or needs you, which stays exactly what `auto_switch` and
+`exhausted_patterns` above decide. See [Following what happens](following-events.md)
+for where the result shows up.
 
 `ariadned --check-config` reads that file and exits: a key the daemon would
 refuse is named where it stands, without starting anything or touching the

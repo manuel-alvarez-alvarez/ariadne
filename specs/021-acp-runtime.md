@@ -54,8 +54,10 @@ delivery, liveness, and the kill.
 
 Out: the registry, discovery, and what a launch is made of (007), which model
 is pinned (011), what the session is briefed with (006), the console a person
-reads and types into (008), and the sweep that retires a row whose agent is
-gone (009).
+reads and types into (008), the sweep that retires a row whose agent is gone
+(009), and the optional advisory diagnosis a `session.error` may later carry
+beside it, which reads what this spec's rule 14 already decided and never
+changes it (024).
 
 Discovery closes each catalog session when the agent advertises `session/close`.
 For `opencode-acp`, it then runs the registry entry's program as

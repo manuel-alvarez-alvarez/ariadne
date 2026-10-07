@@ -129,13 +129,20 @@ async fn main() -> Result<()> {
         ariadne_daemon::timeouts::Timeouts::default(),
     );
     ai_permissions.ensure_device().await;
+    let failure_diagnosis = ariadne_daemon::failure_diagnosis::FailureDiagnosis::new(
+        config.ai_failure_diagnosis,
+        ai_permissions.clone(),
+        store.clone(),
+        ariadne_daemon::timeouts::Timeouts::default().failure_diagnosis_decision,
+    );
     let launcher = std::sync::Arc::new(ariadne_daemon::launcher::Launcher {
         cfg: config.clone(),
         store: store.clone(),
         git: ariadne_daemon::gitwt::GitManager,
         acp: ariadne_daemon::acp::AcpRuntime::new(store.clone())
             .with_exhausted_patterns(config.exhausted_patterns.clone())
-            .with_ai_permissions(ai_permissions.clone()),
+            .with_ai_permissions(ai_permissions.clone())
+            .with_failure_diagnosis(failure_diagnosis.clone()),
         registry: agent_registry.clone(),
         branches: ariadne_daemon::branch::BranchWatchers::new(events.clone()),
     });
@@ -194,6 +201,7 @@ async fn main() -> Result<()> {
     };
 
     // Best-effort cleanup of runtime files.
+    failure_diagnosis.shutdown().await;
     ai_permissions_shutdown.shutdown().await;
     let _ = std::fs::remove_file(&config.socket_path);
     let _ = std::fs::remove_file(&config.pid_file);

@@ -31,6 +31,9 @@ pub struct Config {
     pub prevent_sleep: bool,
     pub auto_switch: bool,
     pub exhausted_patterns: Vec<String>,
+    /// Classify a failed ACP session's error with the AI permission model's
+    /// local Kev service, as an advisory `session.diagnosis` event (024).
+    pub ai_failure_diagnosis: bool,
     /// User-defined ACP agent commands appended to the built-in registry.
     pub acp_agents: Vec<AcpAgentConfig>,
     /// ACP registry index URL, fetched only on an explicit refresh.
@@ -104,6 +107,7 @@ impl Config {
             exhausted_patterns: file
                 .exhausted_patterns
                 .unwrap_or_else(default_exhausted_patterns),
+            ai_failure_diagnosis: file.ai_failure_diagnosis.unwrap_or(false),
             acp_agents: file.acp_agents,
             acp_registry_url: file.acp_registry_url.unwrap_or_else(|| {
                 "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json".into()
@@ -183,6 +187,7 @@ mod tests {
         assert!(config.prevent_sleep);
         assert!(config.auto_switch);
         assert_eq!(config.exhausted_patterns, default_exhausted_patterns());
+        assert!(!config.ai_failure_diagnosis);
         assert_eq!(
             config.acp_registry_url,
             "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json"
@@ -197,6 +202,24 @@ mod tests {
         let config = Config::load(Some(dir.path().join("home"))).unwrap();
         assert!(!config.auto_switch);
         assert_eq!(config.exhausted_patterns, ["credits gone"]);
+    }
+
+    /// The advisory diagnosis is off unless the file turns it on, and never
+    /// moves `auto_switch` or the exhausted patterns.
+    #[test]
+    fn ai_failure_diagnosis_is_read_and_off_by_default() {
+        let dir = home_with("");
+        assert!(
+            !Config::load(Some(dir.path().join("home")))
+                .unwrap()
+                .ai_failure_diagnosis
+        );
+
+        let dir = home_with("ai_failure_diagnosis = true\n");
+        let config = Config::load(Some(dir.path().join("home"))).unwrap();
+        assert!(config.ai_failure_diagnosis);
+        assert!(config.auto_switch);
+        assert_eq!(config.exhausted_patterns, default_exhausted_patterns());
     }
 
     /// The AI permission model's Python and `nvidia-smi` keys are read; the

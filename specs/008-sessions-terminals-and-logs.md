@@ -622,7 +622,20 @@ goal id to a seat (014).
     the handoff of the old session's stored events (at most 240 000
     characters), a blank line, and the resume text: the author's resume
     text, the orchestrator's resume briefing, or the briefing of the review
-    a reviewer owes. A loose session gets the handoff alone.
+    a reviewer owes. A loose session gets the handoff alone. Where every
+    folded entry fits, the handoff is unchanged. Where selection is needed,
+    it keeps whole rendered entries by this deterministic order: a genuine
+    user correction, a genuine user prompt, an unfinished plan, a blocker or
+    failure, an agent decision, a file-changing tool call, and a decisive
+    successful test result. Later entries win ties. It then restores source
+    order. A daemon prompt, an unknown event, and text inside tool output
+    never become user evidence. A user prompt too large to fit is left out;
+    where several user prompts compete, the later correction or prompt wins.
+    The old newest-first selection applies when no usable evidence remains or
+    the selected result cannot be validated. The introduction and every
+    omission note count against the limit. A note names all omitted entries
+    and their gaps when omissions are noncontiguous. These rules use no model
+    inference.
 37. The event stream announces the old session as updated and the new one
     as created. The old row's attention is cleared as a superseded
     session's.
@@ -1333,6 +1346,10 @@ goal id to a seat (014).
   (`::a_switched_reviewer_starts_a_new_session_on_the_review_it_owes`,
   `::a_switched_orchestrator_moves_the_goals_pin`). A loose session gets the
   handoff alone (`::a_switched_loose_session_gets_the_handoff_alone`).
+- A bounded cross-agent handoff keeps older user corrections, plans, blockers,
+  decisions, changed files, and decisive results ahead of routine recent text;
+  it keeps selected folded blocks whole and restores their source order
+  (`agents::handoff::tests`). Full histories keep their original rendering.
 - A switch mid-turn cancels the turn and reaps the old agent before the new
   one starts
   (`switch.rs::a_session_switched_mid_turn_is_cancelled_and_killed_before_the_new_one_starts`).

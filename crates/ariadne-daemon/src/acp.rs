@@ -163,6 +163,7 @@ struct Inner {
     consoles: Mutex<HashMap<String, broadcast::Sender<AgentEventDto>>>,
     ai_permissions: Option<AiPermissions>,
     exhausted_patterns: Vec<String>,
+    failure_diagnosis: Option<crate::failure_diagnosis::FailureDiagnosis>,
 }
 
 /// The branch one session works on, shared between the runtime and the
@@ -456,6 +457,7 @@ impl AcpRuntime {
                 consoles: Mutex::new(HashMap::new()),
                 ai_permissions: None,
                 exhausted_patterns: crate::config::default_exhausted_patterns(),
+                failure_diagnosis: None,
             }),
         }
     }
@@ -497,6 +499,18 @@ impl AcpRuntime {
         Arc::get_mut(&mut self.inner)
             .expect("a new ACP runtime has one owner")
             .ai_permissions = Some(ai_permissions);
+        self
+    }
+
+    /// Give this runtime the daemon's optional failure classifier (024)
+    /// before it is shared.
+    pub fn with_failure_diagnosis(
+        mut self,
+        failure_diagnosis: crate::failure_diagnosis::FailureDiagnosis,
+    ) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("a new ACP runtime has one owner")
+            .failure_diagnosis = Some(failure_diagnosis);
         self
     }
 
@@ -1222,14 +1236,29 @@ impl AcpRuntime {
                 reported["exhausted"] = json!(true);
                 reported["exhausted_reason"] = json!(reason);
             }
-            sink.emit(
-                "session.error",
-                json!({
-                    "session_id": sink.agent_session_id(&launch.config),
-                    "error": reported,
-                }),
-            )
-            .await;
+            let error_event_id = sink
+                .emit(
+                    "session.error",
+                    json!({
+                        "session_id": sink.agent_session_id(&launch.config),
+                        "error": reported,
+                    }),
+                )
+                .await;
+            // The advisory diagnosis is considered only once the session's
+            // own error is recorded and published (024): it never holds
+            // this up, and runs as its own bounded task from here on.
+            if let Some(failure_diagnosis) = &self.inner.failure_diagnosis {
+                failure_diagnosis
+                    .consider(
+                        launch.session_id.clone(),
+                        launch.launch_id.clone(),
+                        error_event_id,
+                        message,
+                        protocol.and_then(|error| error.data.clone()),
+                    )
+                    .await;
+            }
         }
         turn.lock().await.available_commands = None;
         sink.emit(
@@ -1422,21 +1451,29 @@ impl EventSink {
     }
 
     /// Event reporting is fail-safe: an event that cannot be recorded costs
-    /// the record, never the agent.
-    async fn emit(&self, kind: &str, payload: Value) {
+    /// the record, never the agent. Returns the id it was stored under,
+    /// where it was stored at all — `None` on a store failure, and for the
+    /// one case nothing is stored (the end of a launch this session has
+    /// moved past) — for a caller that needs to correlate something with
+    /// it (`crate::failure_diagnosis`, with a `session.error`).
+    async fn emit(&self, kind: &str, payload: Value) -> Option<String> {
         let request = IngestEventRequest {
             session_id: self.session_id.clone(),
             launch: Some(self.launch_id.clone()),
             kind: kind.to_string(),
             payload,
         };
-        if let Err(e) = ingest_event(&self.runtime.inner.store, &request).await {
-            tracing::warn!(session = %self.session_id, kind, error = %e, "recording an ACP event failed");
-            return;
-        }
+        let event = match ingest_event(&self.runtime.inner.store, &request).await {
+            Ok(event) => event,
+            Err(e) => {
+                tracing::warn!(session = %self.session_id, kind, error = %e, "recording an ACP event failed");
+                return None;
+            }
+        };
         if let Some(tx) = self.runtime.inner.scheduler.get() {
             let _ = tx.send(SchedEvent::SessionEvent(self.session_id.clone()));
         }
+        event.map(|event| event.id)
     }
 
     /// Keep the session's newest context window report. The report is live
@@ -1777,14 +1814,21 @@ impl RuntimeIncoming {
             );
             match self.sink.runtime.inner.ai_permissions.as_ref() {
                 Some(ai_permissions) => match ai_permissions.live_once_started().await {
-                    Some(live) => Some(
-                        decide(
-                            &live,
-                            &prepared,
-                            self.sink.runtime.inner.timeouts.ai_permissions_decision,
+                    Some(live) => {
+                        // A permission decision blocks the agent's turn; an
+                        // advisory diagnosis blocks nothing. Abort one
+                        // reaching this same model first, so it never makes
+                        // this decision wait behind it (024).
+                        ai_permissions.preempt_diagnosis();
+                        Some(
+                            decide(
+                                &live,
+                                &prepared,
+                                self.sink.runtime.inner.timeouts.ai_permissions_decision,
+                            )
+                            .await,
                         )
-                        .await,
-                    ),
+                    }
                     None => {
                         tracing::warn!(
                             "AI permission model is unavailable for a permission decision"

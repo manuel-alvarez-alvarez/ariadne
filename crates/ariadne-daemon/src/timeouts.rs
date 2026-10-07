@@ -32,6 +32,11 @@ pub struct Timeouts {
     pub ai_permissions_serve_restart: Duration,
     /// How long one permission decision may take at the model's local HTTP seam.
     pub ai_permissions_decision: Duration,
+    /// How long one advisory failure-diagnosis request may take at the AI
+    /// permission model's local HTTP seam (024). The request is bounded by
+    /// this alone: nothing an ACP driver or the scheduler waits for ever
+    /// waits on it.
+    pub failure_diagnosis_decision: Duration,
     /// How often a running turn's transcript is read again for what the
     /// launch has spent, so a long turn's figure moves before it ends.
     pub transcript_poll: Duration,
@@ -76,6 +81,7 @@ impl Default for Timeouts {
             ai_permissions_serve_start: Duration::from_secs(120),
             ai_permissions_serve_restart: Duration::from_secs(1),
             ai_permissions_decision: Duration::from_secs(5),
+            failure_diagnosis_decision: Duration::from_secs(5),
             transcript_poll: Duration::from_secs(15),
             session_wake: Duration::from_millis(250),
             full_reconcile: Duration::from_secs(5),

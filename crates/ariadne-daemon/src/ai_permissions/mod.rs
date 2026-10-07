@@ -20,7 +20,7 @@ mod server;
 
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use tokio::sync::{mpsc, watch};
 
@@ -78,6 +78,11 @@ pub struct AiPermissions {
     installing: Arc<AtomicBool>,
     timeouts: Timeouts,
     server_tx: mpsc::UnboundedSender<server::Command>,
+    /// The one advisory failure-diagnosis request now reaching this model,
+    /// if any (024, `crate::failure_diagnosis`). A permission decision
+    /// aborts it before it asks the same model itself, so a diagnosis never
+    /// delays a decision an agent's turn is blocked on.
+    diagnosis_request: Arc<Mutex<Option<tokio::task::AbortHandle>>>,
 }
 
 impl AiPermissions {
@@ -100,6 +105,7 @@ impl AiPermissions {
             installing: Arc::default(),
             timeouts,
             server_tx,
+            diagnosis_request: Arc::default(),
         };
         server::start(ai_permissions.clone(), server_rx);
         ai_permissions
@@ -308,6 +314,43 @@ impl AiPermissions {
     /// The maximum time one model scoring request may take.
     pub(crate) fn decision_timeout(&self) -> std::time::Duration {
         self.timeouts.ai_permissions_decision
+    }
+
+    /// Hand over the advisory diagnosis request now reaching this model, so
+    /// a permission decision about to ask it too can abort it first
+    /// (`preempt_diagnosis`). Replaces whatever was registered before —
+    /// ending that one is not this call's business, since at most one
+    /// diagnosis ever runs at a time.
+    pub(crate) fn register_diagnosis_request(&self, handle: tokio::task::AbortHandle) {
+        *self
+            .diagnosis_request
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(handle);
+    }
+
+    /// Forget a diagnosis request that ended on its own, so a decision that
+    /// preempts later never aborts an unrelated task that happens to reuse
+    /// the slot.
+    pub(crate) fn clear_diagnosis_request(&self) {
+        *self
+            .diagnosis_request
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    }
+
+    /// Abort a diagnosis request reaching this model right now, so a
+    /// permission decision needing the same model never waits behind it —
+    /// the one answer a running agent turn is blocked on. A no-op where
+    /// none is in flight, or where it already ended on its own.
+    pub(crate) fn preempt_diagnosis(&self) {
+        if let Some(handle) = self
+            .diagnosis_request
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+        {
+            handle.abort();
+        }
     }
 
     /// Publish the status as it now stands, whatever moved it.

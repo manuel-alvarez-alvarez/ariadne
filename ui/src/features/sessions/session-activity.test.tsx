@@ -114,6 +114,40 @@ it("derives a summary from tool name and first argument when daemon sends empty"
   expect(await screen.findByText("Read /tmp/x.png")).toBeDefined()
 })
 
+it("attaches a late diagnosis to its original error and keeps both once the session has ended", async () => {
+  const errorEvent = anAgentEvent({
+    id: "01JEVENTERROR0000000000001",
+    kind: "session.error",
+    summary: "the agent process crashed",
+    payload: { error: { message: "the agent process crashed" } },
+  })
+  const sessionEndEvent = anAgentEvent({
+    id: "01JEVENTEND00000000000002",
+    kind: "session_end",
+    summary: "…",
+    payload: {},
+  })
+  // Arrives after the session has already ended — later in the list than
+  // both events above — and still names the error by id.
+  const diagnosisEvent = anAgentEvent({
+    id: "01JEVENTDIAG0000000000003",
+    kind: "session.diagnosis",
+    summary: "AI suggests: quota exhaustion (81%)",
+    payload: { error_event_id: errorEvent.id, category: "exhausted" },
+  })
+
+  daemonFetch.mockImplementation(async () =>
+    jsonResponse([errorEvent, sessionEndEvent, diagnosisEvent]),
+  )
+
+  renderActivity()
+
+  expect(await screen.findByText(errorEvent.summary)).toBeDefined()
+  expect(await screen.findByText(diagnosisEvent.summary)).toBeDefined()
+  // Never its own row: only the error's and the session end's.
+  expect(screen.queryByText("AI diagnosis")).toBeNull()
+})
+
 it("folds seven consecutive Read calls to one row with ×7", async () => {
   const user = userEvent.setup()
   const readEvents = Array.from({ length: 7 }, (_, i) =>

@@ -1,0 +1,11 @@
+{
+  "name": "v1",
+  "description": "One plain question, the four labels named once each, no worked examples.",
+  "instructions": "A coding agent's session is shown as its state and its recent events, ending at a decision point. Classify what is happening at that point, from the evidence alone: useful_progress if the agent is doing or has done real work toward its task, even slowly, with long tool calls, retries after a real fix, or a finished task; repetitive_failure if the same action is being repeated without any change that would fix it, a loop with no new information; waiting_user_input if the agent is correctly idle because a person must answer a question, grant a permission, or read something only a person can act on; insufficient_evidence if the window is too short, has a gap, or otherwise does not show enough to tell.",
+  "criteria": {
+    "useful_progress": "the agent is making or has made real progress: distinct steps, a passing test after a fix, a long but single operation still running, or a task already finished",
+    "repetitive_failure": "the same call or the same failure repeats with nothing between the repeats that would change the outcome",
+    "waiting_user_input": "the session is correctly idle on a person: a permission question, an asked question, or something only a person can act on",
+    "insufficient_evidence": "the window given does not show enough to decide: too few events, a gap, or a transcript that was cut off"
+  }
+}

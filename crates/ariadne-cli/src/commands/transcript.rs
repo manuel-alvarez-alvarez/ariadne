@@ -98,8 +98,21 @@ pub(crate) mod render {
             TranscriptItem::SystemNote { meta, text } => {
                 text_block(meta, "SYSTEM", DIM, text, DIM, width, color)
             }
-            TranscriptItem::Error { meta, text } => {
-                text_block(meta, "ERROR", ERROR, text, ERROR, width, color)
+            TranscriptItem::Error {
+                meta,
+                text,
+                ai_note,
+            } => {
+                let mut out = text_block(meta, "ERROR", ERROR, text, ERROR, width, color);
+                if let Some(note) = ai_note {
+                    // Drop one of `text_block`'s two trailing newlines, so the
+                    // note sits right under the error rather than after a
+                    // blank line, and the block still ends in exactly one.
+                    out.pop();
+                    out.push_str(&style::paint(color, DIM, &format!("  {note}")));
+                    out.push_str("\n\n");
+                }
+                out
             }
             TranscriptItem::Raw {
                 meta,
