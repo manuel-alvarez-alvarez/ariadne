@@ -341,14 +341,17 @@ Read them with `list_tasks`. Retry, cancel or rewrite. Call `complete_goal` when
 /// runtime hands the message to the agent as a prompt, so it reaches the agent
 /// as a turn rather than as something it has to go and look for.
 ///
-/// The sender is named by its seat and its skills, which is the only thing
-/// about a generic agent that means anything to the reader. It carries no id:
-/// an answer is a message to that sender like any other, and nothing threads.
-const INCOMING_MESSAGE: &str = r#"Message from your {from}:
+/// The sender is named by its seat, its agent id, the task it is of and its
+/// skills — a goal with several tasks staffed on the same skills would
+/// otherwise leave the reader unable to tell two senders apart, or know
+/// which one to answer. A message with no task, such as the orchestrator's,
+/// is named by its seat alone, and carries no instruction to answer an id
+/// nobody named.
+const INCOMING_MESSAGE: &str = r#"Message from {from}:
 
 {body}
 
-Answer it where it asks you something. Add nothing else. Go on with your work."#;
+Answer it where it asks you something. Add nothing else. Go on with your work.{answer_hint}"#;
 
 /// Initial briefing of an author session: the task, and the values its
 /// commands act on.

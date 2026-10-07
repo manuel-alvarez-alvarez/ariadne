@@ -44,7 +44,8 @@ which is not yet built.
      was staffed with (017) — for the orchestrator, the one skill its seat
      fixes by name;
    - the **lifecycle briefing**, which carries the values of one goal, task or
-     task and whatever is only true of this moment;
+     task and whatever is only true of this moment, such as who sent a
+     relayed message, the task it names and where to answer it (018);
    - the **landing briefing**, which carries the procedure that ends a task,
      one per ending (005).
 2. The system prompt is the code's, one text per seat. Nothing an agent runs

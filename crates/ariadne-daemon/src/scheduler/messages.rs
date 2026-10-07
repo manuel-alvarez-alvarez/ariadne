@@ -104,9 +104,17 @@ impl super::Scheduler {
                 debug!(message = %message.id, "nothing live to deliver the message to yet");
                 continue;
             };
-            let from = self.sender_name(&message).await;
+            let seat = message.from_actor().map_or("agent", |actor| actor.as_str());
+            let task_title = self.sender_task_title(&message).await;
+            let skills = self.sender_skills(&message).await;
             let template = prompts::template_for(PromptKind::IncomingMessage);
-            let text = prompts::incoming_message_briefing(template, &message, &from);
+            let text = prompts::incoming_message_briefing(
+                template,
+                &message,
+                seat,
+                task_title.as_deref(),
+                &skills,
+            );
             info!(
                 message = %message.id,
                 session = %session.id,
@@ -150,31 +158,29 @@ impl super::Scheduler {
         })
     }
 
-    /// How the sender is named to the agent that reads it.
-    ///
-    /// An agent has no name of its own, so it is named by its seat and the
-    /// skills it works with — "reviewer (code-review)" — which is the only
-    /// thing about it that means anything to the reader. The orchestrator and
-    /// the user are named by what they are.
-    async fn sender_name(&self, message: &Message) -> String {
-        let seat = message
-            .from_actor()
-            .map_or("agent", |actor| actor.as_str())
-            .to_string();
-        let Some(agent_id) = &message.from_agent_id else {
-            return seat;
+    /// The title of the task the sender's agent is staffed on, for the
+    /// briefing to name: None where there is none to name, because the
+    /// sender carries no agent id or no task.
+    async fn sender_task_title(&self, message: &Message) -> Option<String> {
+        let (Some(_), Some(task_id)) = (&message.from_agent_id, &message.task_id) else {
+            return None;
         };
-        let skills = self.store.agent_skills(agent_id).await.unwrap_or_default();
-        match skills.is_empty() {
-            true => format!("{seat} {agent_id}"),
-            false => format!(
-                "{seat} ({})",
-                skills
-                    .iter()
-                    .map(|s| s.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        }
+        self.store.get_task(task_id).await.ok().map(|t| t.title)
+    }
+
+    /// The skills of the sender's agent, in the order they reach it, for the
+    /// briefing to name: none for a message with no agent of its own, such
+    /// as the orchestrator's or the user's.
+    async fn sender_skills(&self, message: &Message) -> Vec<String> {
+        let Some(agent_id) = &message.from_agent_id else {
+            return Vec::new();
+        };
+        self.store
+            .agent_skills(agent_id)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|s| s.name)
+            .collect()
     }
 }
