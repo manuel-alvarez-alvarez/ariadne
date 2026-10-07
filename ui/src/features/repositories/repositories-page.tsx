@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button"
 import { TableCell, TableRow } from "@/components/ui/table"
 
 import { DeleteRepositoryDialog } from "./delete-repository-dialog"
+import { forgeKindLabel, forgeRepositoryLabel } from "./forge"
 import { NoRepositories as SharedNoRepositories } from "./no-repositories"
 import { permissionModeLabel } from "./permission-modes"
 import { repositoriesQueryOptions } from "./queries"
@@ -33,6 +34,7 @@ const COLUMNS = [
   { header: "Path" },
   { header: "Base branch" },
   { header: "Permissions" },
+  { header: "Forge" },
   // Wide enough to be a sentence rather than a word per line: what made the
   // rows of this table 130px tall was a description with nothing to wrap in.
   { header: "Description", className: "min-w-48" },
@@ -68,7 +70,7 @@ export function RepositoriesPage() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Repositories"
-        description="The git checkouts goals are created against. Each one is a path, the branch task worktrees are cut from, how its agents' permission requests are answered, and what it is for."
+        description="The git checkouts goals are created against. Each one is a path, the branch task worktrees are cut from, how its agents' permission requests are answered, the forge its remote is on, and what it is for."
         actions={
           <Button onClick={openCreate}>
             <PlusIcon />
@@ -129,6 +131,21 @@ function RepositoryRow({
         <CopyableId value={repository.base_branch} label="base branch" truncate="middle" />
       </TableCell>
       <TableCell className="text-xs">{permissionModeLabel(repository.permission_mode)}</TableCell>
+      <TableCell className="text-xs">
+        {repository.forge ? (
+          <span title={forgeRepositoryLabel(repository.forge)}>
+            {forgeKindLabel(repository.forge.kind)}{" "}
+            <span className="font-mono">
+              {repository.forge.owner}/{repository.forge.name}
+            </span>{" "}
+            <span className={repository.forge.enabled ? "" : "text-muted-foreground"}>
+              {repository.forge.enabled ? "on" : "off"}
+            </span>
+          </span>
+        ) : (
+          <span className="text-muted-foreground">none</span>
+        )}
+      </TableCell>
       <TableCell className="min-w-48 whitespace-normal text-muted-foreground">
         {repository.description ?? <span className="italic">no description</span>}
       </TableCell>

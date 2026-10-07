@@ -16,6 +16,7 @@ pub mod bus;
 pub mod checkpoint;
 pub mod config;
 pub mod failure_diagnosis;
+pub mod forge;
 pub mod gitwt;
 pub mod http;
 pub mod launcher;

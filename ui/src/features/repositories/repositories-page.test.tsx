@@ -23,7 +23,7 @@ import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it } from "vitest"
 
 import type { RepositoryDto } from "@/api"
-import { aRepository } from "@/test/fixtures"
+import { aForge, aRepository } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { RepositoriesPage } from "./repositories-page"
 
@@ -85,6 +85,23 @@ describe("RepositoriesPage", () => {
     expect(screen.getByText("Auto")).toBeDefined()
     expect(screen.getByText("Learn")).toBeDefined()
     expect(screen.queryByText("2 repositories")).toBeNull()
+  })
+
+  it("shows the forge each remote is on, and whether it is enabled", async () => {
+    stubDaemon([
+      { ...ARIADNE, forge: aForge({ enabled: true, login: "octocat" }) },
+      { ...SANDBOX, forge: aForge({ kind: "gitlab", host: "gitlab.com", name: "sandbox" }) },
+      aRepository({ id: "01JREPO00000000000000LOC", path: "/home/me/dev/local" }),
+    ])
+    renderScreen(<RepositoriesPage />)
+
+    expect(await screen.findByRole("columnheader", { name: "Forge" })).toBeDefined()
+    const enabled = (await screen.findByTitle("github.com/acme/widgets")).closest("td")
+    expect(enabled?.textContent).toBe("GitHub acme/widgets on")
+    const off = screen.getByTitle("gitlab.com/acme/sandbox").closest("td")
+    expect(off?.textContent).toBe("GitLab acme/sandbox off")
+    const none = (await screen.findByTitle("/home/me/dev/local")).closest("tr")
+    expect(none?.textContent).toContain("none")
   })
 
   it("says nothing about how work ends, which is the task's own", async () => {

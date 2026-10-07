@@ -3,7 +3,7 @@
 //! A repository is a checkout and a base branch. It also supplies the landing
 //! that a new goal uses where its request does not name one.
 
-use ariadne_core::{Landing, PermissionMode};
+use ariadne_core::{ForgeKind, Landing, PermissionMode};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -19,8 +19,51 @@ pub struct RepositoryDto {
     pub permission_mode: PermissionMode,
     /// The landing a new goal uses where its request leaves landing out.
     pub default_landing: Landing,
+    /// The forge its remote is on, or null where the checkout has no usable
+    /// remote (025).
+    pub forge: Option<ForgeDto>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// The forge a repository's remote is on, and whether Ariadne works with it.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ForgeDto {
+    pub kind: ForgeKind,
+    /// Lower-cased, like `owner` and `name`.
+    #[schema(example = "github.com")]
+    pub host: String,
+    pub owner: String,
+    pub name: String,
+    /// The remote it was read off, `origin` where there is one.
+    pub remote: String,
+    pub enabled: bool,
+    /// The account the forge CLI is signed in as, stored on enable.
+    pub login: Option<String>,
+    /// The pin of the session that watches a published request; null starts
+    /// none.
+    pub babysit_model: Option<String>,
+    pub babysit_effort: Option<String>,
+    /// The pin of the session that reviews a request; null starts none.
+    pub review_model: Option<String>,
+    pub review_effort: Option<String>,
+}
+
+/// A change to the forge integration; absent fields stay unchanged. A model
+/// written empty clears that role's pin and its effort.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ForgeUpdate {
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub babysit_model: Option<String>,
+    #[serde(default)]
+    pub babysit_effort: Option<String>,
+    #[serde(default)]
+    pub review_model: Option<String>,
+    #[serde(default)]
+    pub review_effort: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -38,6 +81,9 @@ pub struct CreateRepositoryRequest {
     /// Omit for `merge`.
     #[serde(default)]
     pub default_landing: Option<Landing>,
+    /// The forge integration to set up once the remote is detected.
+    #[serde(default)]
+    pub forge: Option<ForgeUpdate>,
 }
 
 /// Partial update; absent fields stay unchanged.
@@ -54,4 +100,7 @@ pub struct UpdateRepositoryRequest {
     /// Absent = unchanged.
     #[serde(default)]
     pub default_landing: Option<Landing>,
+    /// Absent = unchanged.
+    #[serde(default)]
+    pub forge: Option<ForgeUpdate>,
 }

@@ -27,6 +27,7 @@ mod doctor;
 mod events;
 mod failure_diagnosis;
 mod final_tasks;
+mod forge_integration;
 mod goal_completion;
 mod goal_delete;
 mod goal_repositories;

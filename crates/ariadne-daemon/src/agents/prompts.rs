@@ -332,6 +332,7 @@ mod tests {
             updated_at: "2026-01-01T00:00:00Z".into(),
             permission_mode: "auto".into(),
             default_landing: "merge".into(),
+            forge: None,
         }
     }
 

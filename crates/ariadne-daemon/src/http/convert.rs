@@ -11,7 +11,7 @@ use ariadne_api::messages::MessageDto;
 use ariadne_api::permissions::{
     LearnedPermissionDto, LearnedPermissionLevel, LearnedPermissionScope, LearnedPermissionTarget,
 };
-use ariadne_api::repositories::RepositoryDto;
+use ariadne_api::repositories::{ForgeDto, RepositoryDto};
 use ariadne_api::sessions::{OutsideSessionDto, SessionDto, SessionEntryDto, SessionKind};
 use ariadne_api::skills::{SkillDto, SkillSeat};
 use ariadne_api::tasks::{
@@ -62,7 +62,14 @@ dto! {
 pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
         permission_mode: r.permission_mode(),
         default_landing: r.default_landing(),
+        forge: r.forge.map(forge_dto),
         .. id, path, base_branch, description, created_at, updated_at
+    }
+
+    fn forge_dto(f: store::ForgeIntegration) -> ForgeDto {
+        kind: f.kind(),
+        .. host, owner, name, remote, enabled, login, babysit_model, babysit_effort,
+           review_model, review_effort
     }
 
     /// `repos` are the goal's repositories and `usage` its rollup, both of

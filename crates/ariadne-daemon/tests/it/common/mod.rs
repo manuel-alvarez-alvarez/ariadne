@@ -12,6 +12,7 @@
 //!
 
 pub(crate) mod acp;
+pub(crate) mod forge;
 
 use std::future::IntoFuture;
 use std::path::{Path, PathBuf};
@@ -144,6 +145,8 @@ pub(crate) struct HarnessBuilder {
     ai_permissions_hardware: Option<HardwareOverride>,
     python_bin: Option<String>,
     nvidia_smi_bin: Option<String>,
+    gh_bin: Option<String>,
+    glab_bin: Option<String>,
 }
 
 /// The pin the fixtures staff an agent on: a model of the registry agent the
@@ -181,6 +184,8 @@ pub(crate) fn harness() -> HarnessBuilder {
         ai_permissions_hardware: None,
         python_bin: None,
         nvidia_smi_bin: None,
+        gh_bin: None,
+        glab_bin: None,
     }
 }
 
@@ -303,6 +308,14 @@ impl HarnessBuilder {
         self
     }
 
+    /// Run `stub` as `gh` and `glab` rather than whatever the machine
+    /// running the tests has (025).
+    pub(crate) fn forge_cli(mut self, stub: &forge::StubForgeCli) -> Self {
+        self.gh_bin = Some(stub.gh.clone());
+        self.glab_bin = Some(stub.glab.clone());
+        self
+    }
+
     async fn build(self) -> Harness {
         raise_open_file_limit();
         let dir = tempfile::tempdir().unwrap();
@@ -348,6 +361,12 @@ impl HarnessBuilder {
         }
         if let Some(nvidia_smi_bin) = self.nvidia_smi_bin {
             config.nvidia_smi_bin = Some(nvidia_smi_bin);
+        }
+        if let Some(gh_bin) = self.gh_bin {
+            config.gh_bin = Some(gh_bin);
+        }
+        if let Some(glab_bin) = self.glab_bin {
+            config.glab_bin = Some(glab_bin);
         }
         let agent_registry = ariadne_daemon::acp_discovery::AgentRegistry::test_registry(
             &config.acp_agents,

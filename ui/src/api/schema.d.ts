@@ -1559,6 +1559,7 @@ export interface components {
             base_branch?: string | null;
             default_landing?: null | components["schemas"]["Landing"];
             description?: string | null;
+            forge?: null | components["schemas"]["ForgeUpdate"];
             /**
              * @description Absolute path of an existing git work tree.
              * @example /home/me/dev/ariadne
@@ -1781,6 +1782,47 @@ export interface components {
         FlavourOptionsDto: {
             devices: components["schemas"]["DeviceOptionDto"][];
             flavour: components["schemas"]["Flavour"];
+        };
+        /** @description The forge a repository's remote is on, and whether Ariadne works with it. */
+        ForgeDto: {
+            babysit_effort?: string | null;
+            /**
+             * @description The pin of the session that watches a published request; null starts
+             *     none.
+             */
+            babysit_model?: string | null;
+            enabled: boolean;
+            /**
+             * @description Lower-cased, like `owner` and `name`.
+             * @example github.com
+             */
+            host: string;
+            kind: components["schemas"]["ForgeKind"];
+            /** @description The account the forge CLI is signed in as, stored on enable. */
+            login?: string | null;
+            name: string;
+            owner: string;
+            /** @description The remote it was read off, `origin` where there is one. */
+            remote: string;
+            review_effort?: string | null;
+            /** @description The pin of the session that reviews a request; null starts none. */
+            review_model?: string | null;
+        };
+        /**
+         * @description The forge a repository's remote is on (025): which CLI speaks to it.
+         * @enum {string}
+         */
+        ForgeKind: "github" | "gitlab";
+        /**
+         * @description A change to the forge integration; absent fields stay unchanged. A model
+         *     written empty clears that role's pin and its effort.
+         */
+        ForgeUpdate: {
+            babysit_effort?: string | null;
+            babysit_model?: string | null;
+            enabled?: boolean | null;
+            review_effort?: string | null;
+            review_model?: string | null;
         };
         GoalDto: {
             created_at: string;
@@ -2279,6 +2321,7 @@ export interface components {
             /** @description The landing a new goal uses where its request leaves landing out. */
             default_landing: components["schemas"]["Landing"];
             description?: string | null;
+            forge?: null | components["schemas"]["ForgeDto"];
             id: string;
             /** @description Absolute path of the checkout. */
             path: string;
@@ -2904,6 +2947,7 @@ export interface components {
             default_landing?: null | components["schemas"]["Landing"];
             /** @description New description, or empty to clear it. Absent = unchanged. */
             description?: string | null;
+            forge?: null | components["schemas"]["ForgeUpdate"];
             path?: string | null;
             permission_mode?: null | components["schemas"]["PermissionMode"];
         };
@@ -4061,14 +4105,14 @@ export interface operations {
                     "application/json": components["schemas"]["RepositoryDto"];
                 };
             };
-            /** @description not an absolute path, not a git work tree, or an unknown branch */
+            /** @description not an absolute path, not a git work tree, an unknown branch, or a forge pin that is no catalog model */
             400: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description this path and base branch are already registered, or `ai` was asked for while the AI permission model is off */
+            /** @description this path and base branch are already registered, `ai` was asked for while the AI permission model is off, or the forge integration cannot be enabled */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -4129,7 +4173,7 @@ export interface operations {
                     "application/json": components["schemas"]["RepositoryDto"];
                 };
             };
-            /** @description not an absolute path, not a git work tree, or an unknown branch */
+            /** @description not an absolute path, not a git work tree, an unknown branch, or a forge pin that is no catalog model */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -4142,7 +4186,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description this path and base branch are already registered, or `ai` was asked for while the AI permission model is off */
+            /** @description this path and base branch are already registered, `ai` was asked for while the AI permission model is off, or the forge integration cannot be enabled */
             409: {
                 headers: {
                     [name: string]: unknown;

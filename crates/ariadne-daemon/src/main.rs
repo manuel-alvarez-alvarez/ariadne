@@ -51,6 +51,10 @@ unknown key stops the daemon rather than being ignored):
                            installs into (default: python3.13, python3.12, then python3 on this daemon's PATH)
   nvidia_smi_bin           the `nvidia-smi` the AI permission model's hardware
                            probe runs to find a GPU (default: nvidia-smi on this daemon's PATH)
+  gh_bin                   the `gh` the GitHub integration runs (default: gh on
+                           this daemon's PATH)
+  glab_bin                 the `glab` the GitLab integration runs (default: glab
+                           on this daemon's PATH)
   [[acp_agents]]           add an ACP command with a stable `id` and `command` array
 
   ariadned --check-config reads that file and exits.\
@@ -151,6 +155,12 @@ async fn main() -> Result<()> {
     if let Err(e) = launcher.watch_task_branches().await {
         warn!(error = %e, "cannot follow the branches of the tasks already in flight");
     }
+    // A remote that changed while no daemon ran is read once, off the request
+    // path: a forge CLI asked about an unknown host may take its time (025).
+    tokio::spawn({
+        let (store, config) = (store.clone(), config.clone());
+        async move { ariadne_daemon::forge::detect_all(&store, &config).await }
+    });
 
     ariadne_daemon::checkpoint::start(
         store.clone(),

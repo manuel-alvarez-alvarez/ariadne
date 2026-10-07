@@ -1,7 +1,7 @@
 ---
 id: repositories-branches-and-worktrees
 status: current
-updated: 2026-09-26
+updated: 2026-10-07
 areas: [store, daemon]
 commits: [b6c6b9d2, 2bca45a6, 305ee064, 481a405d, a69b953f, 87fa62cf, a4d7da95]
 tests:
@@ -25,8 +25,9 @@ In: registering a repository, its base branch, description, permission mode
 and default landing, task branch naming, the worktree per seat, worktree cleanup,
 and the watch on a task branch's head.
 
-Out: how a task ends in it (005), and what an
-agent is briefed with in its worktree (006).
+Out: how a task ends in it (005), what an
+agent is briefed with in its worktree (006), and the forge its remote is on
+and the integration with it (025).
 
 ## Behavior
 

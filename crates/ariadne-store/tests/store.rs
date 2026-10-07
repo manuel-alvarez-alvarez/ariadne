@@ -4646,3 +4646,112 @@ async fn remaining_stats_reads_ignore_legacy_tool_call_facts() {
     store.model_stats(&filter).await.unwrap();
     store.attention_stats(&filter).await.unwrap();
 }
+
+/// A forge row as a detection writes it: `acme/widgets` on github.com, not
+/// enabled.
+fn widgets(repository_id: &str) -> SetForgeIntegration {
+    SetForgeIntegration {
+        repository_id: repository_id.into(),
+        kind: ariadne_core::ForgeKind::Github,
+        host: "GitHub.com".into(),
+        owner: "Acme".into(),
+        name: "Widgets".into(),
+        remote: "origin".into(),
+        enabled: false,
+        login: None,
+        babysit_model: None,
+        babysit_effort: None,
+        review_model: None,
+        review_effort: None,
+    }
+}
+
+/// The forge row is read with its repository, lower-cased, in every list a
+/// repository is read through, and goes with the repository.
+#[tokio::test]
+async fn a_forge_integration_is_read_with_its_repository_and_goes_with_it() {
+    let (store, _dir) = test_store().await;
+    let repo = seed_repository(&store).await;
+    assert!(store.forge_integration(&repo.id).await.unwrap().is_none());
+
+    let written = store
+        .set_forge_integration(widgets(&repo.id))
+        .await
+        .unwrap();
+    let forge = written.forge.expect("the write answers the row");
+    assert_eq!(forge.kind(), ariadne_core::ForgeKind::Github);
+    assert_eq!(
+        (
+            forge.host.as_str(),
+            forge.owner.as_str(),
+            forge.name.as_str()
+        ),
+        ("github.com", "acme", "widgets")
+    );
+    assert_eq!(
+        store.get_repository(&repo.id).await.unwrap().forge,
+        Some(forge.clone())
+    );
+    assert_eq!(
+        store.list_repositories().await.unwrap()[0].forge,
+        Some(forge)
+    );
+    assert!(store.enabled_forge_integrations().await.unwrap().is_empty());
+
+    store.delete_repository(&repo.id).await.unwrap();
+    assert!(store.forge_integration(&repo.id).await.unwrap().is_none());
+}
+
+/// One forge repository is enabled on one repository row at a time; the
+/// refusal names the row that holds it.
+#[tokio::test]
+async fn one_forge_repository_is_enabled_on_one_row() {
+    let (store, _dir) = test_store().await;
+    let (first, second) = (seed_repository(&store).await, seed_repository(&store).await);
+    let enabled = |id: &str| SetForgeIntegration {
+        enabled: true,
+        login: Some("octocat".into()),
+        ..widgets(id)
+    };
+    store
+        .set_forge_integration(enabled(&first.id))
+        .await
+        .unwrap();
+    store
+        .set_forge_integration(widgets(&second.id))
+        .await
+        .unwrap();
+
+    let refused = store
+        .set_forge_integration(enabled(&second.id))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&refused, StoreError::Conflict(m) if m.contains(&first.id)),
+        "{refused}"
+    );
+    assert!(
+        store
+            .forge_enabled_elsewhere(&second.id, "github.com", "acme", "widgets")
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .forge_enabled_elsewhere(&first.id, "github.com", "acme", "widgets")
+            .await
+            .is_ok()
+    );
+
+    store
+        .set_forge_integration(widgets(&first.id))
+        .await
+        .unwrap();
+    store
+        .set_forge_integration(enabled(&second.id))
+        .await
+        .unwrap();
+    let rows = store.enabled_forge_integrations().await.unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].repository_id, second.id);
+}

@@ -277,9 +277,14 @@ impl Store {
         .bind(goal_id)
         .fetch_all(self.r())
         .await?;
-        rows.iter()
+        let (mut repositories, branches): (Vec<Repository>, Vec<Option<String>>) = rows
+            .iter()
             .map(|row| Ok((Repository::from_row(row)?, row.try_get("goal_branch")?)))
-            .collect()
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .unzip();
+        self.attach_forges(&mut repositories).await?;
+        Ok(repositories.into_iter().zip(branches).collect())
     }
 }
 

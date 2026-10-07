@@ -5,8 +5,8 @@
 use std::str::FromStr;
 
 use ariadne_core::{
-    Actor, AttentionReason, GoalStatus, Landing, MessageKind, PermissionMode, Seat, SessionStatus,
-    TaskStatus,
+    Actor, AttentionReason, ForgeKind, GoalStatus, Landing, MessageKind, PermissionMode, Seat,
+    SessionStatus, TaskStatus,
 };
 
 use crate::defaults::{
@@ -46,6 +46,7 @@ enum_columns! {
     Goal { status: GoalStatus }
     Task { status: TaskStatus }
     TaskAgent { seat: Seat }
+    ForgeIntegration { kind: ForgeKind }
     AgentSession {
         seat: [Seat],
         status: SessionStatus,
@@ -260,6 +261,36 @@ pub struct Repository {
     /// [`Repository::permission_mode`].
     pub permission_mode: String,
     pub default_landing: String,
+    /// The forge its remote is on, where it has a usable one (025). Not a
+    /// column: every read of a repository through the store fills it.
+    #[sqlx(skip)]
+    pub forge: Option<ForgeIntegration>,
+}
+
+/// The forge a repository's remote is on, and whether Ariadne works with it
+/// (025). `host`, `owner` and `name` are lower-cased.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct ForgeIntegration {
+    pub repository_id: String,
+    /// As [`ForgeKind`] spells it. Read through [`ForgeIntegration::kind`].
+    pub kind: String,
+    pub host: String,
+    pub owner: String,
+    pub name: String,
+    /// The name of the remote it was read off, `origin` where there is one.
+    pub remote: String,
+    pub enabled: bool,
+    /// The account the forge CLI is signed in as, stored on enable.
+    pub login: Option<String>,
+    /// The pin of the session that watches a published request. None starts
+    /// no such session.
+    pub babysit_model: Option<String>,
+    pub babysit_effort: Option<String>,
+    /// The pin of the session that reviews a request. None starts none.
+    pub review_model: Option<String>,
+    pub review_effort: Option<String>,
+    pub detected_at: String,
+    pub updated_at: String,
 }
 
 impl Repository {

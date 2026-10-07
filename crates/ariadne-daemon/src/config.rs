@@ -44,6 +44,12 @@ pub struct Config {
     /// The `nvidia-smi` the hardware probe runs (022, flavours and devices).
     /// `None` looks up `nvidia-smi` on the daemon's PATH.
     pub nvidia_smi_bin: Option<String>,
+    /// The `gh` the GitHub integration runs (025). `None` looks up `gh` on
+    /// the daemon's PATH.
+    pub gh_bin: Option<String>,
+    /// The `glab` the GitLab integration runs (025). `None` looks up `glab`
+    /// on the daemon's PATH.
+    pub glab_bin: Option<String>,
     /// A command that stands in for the whole model install — the venv, pip
     /// and the weights — so the suite proves the install's states without
     /// downloading two gigabytes. Set by the test harness alone: it is not a
@@ -114,6 +120,8 @@ impl Config {
             }),
             python_bin: file.python_bin,
             nvidia_smi_bin: file.nvidia_smi_bin,
+            gh_bin: file.gh_bin,
+            glab_bin: file.glab_bin,
             ai_permissions_installer: None,
             ai_permissions_serve_command: None,
             ai_permissions_endpoint: None,
@@ -194,6 +202,17 @@ mod tests {
         );
         assert_eq!(config.python_bin, None);
         assert_eq!(config.nvidia_smi_bin, None);
+        assert_eq!(config.gh_bin, None);
+        assert_eq!(config.glab_bin, None);
+    }
+
+    /// The forge CLIs are keys a user may set, each a path or a bare name.
+    #[test]
+    fn the_forge_cli_keys_are_read() {
+        let dir = home_with("gh_bin = \"/opt/bin/gh\"\nglab_bin = \"glab-17\"\n");
+        let config = Config::load(Some(dir.path().join("home"))).unwrap();
+        assert_eq!(config.gh_bin.as_deref(), Some("/opt/bin/gh"));
+        assert_eq!(config.glab_bin.as_deref(), Some("glab-17"));
     }
 
     #[test]

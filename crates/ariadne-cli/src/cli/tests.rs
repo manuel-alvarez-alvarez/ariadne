@@ -1075,6 +1075,7 @@ fn a_repository_sets_the_default_landing_for_new_goals() {
                 description,
                 permission_mode,
                 default_landing,
+                ..
             },
     } = parse(&[
         "ariadne",

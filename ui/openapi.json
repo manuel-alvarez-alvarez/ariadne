@@ -1269,10 +1269,10 @@
             }
           },
           "400": {
-            "description": "not an absolute path, not a git work tree, or an unknown branch"
+            "description": "not an absolute path, not a git work tree, an unknown branch, or a forge pin that is no catalog model"
           },
           "409": {
-            "description": "this path and base branch are already registered, or `ai` was asked for while the AI permission model is off"
+            "description": "this path and base branch are already registered, `ai` was asked for while the AI permission model is off, or the forge integration cannot be enabled"
           }
         }
       }
@@ -1350,13 +1350,13 @@
             }
           },
           "400": {
-            "description": "not an absolute path, not a git work tree, or an unknown branch"
+            "description": "not an absolute path, not a git work tree, an unknown branch, or a forge pin that is no catalog model"
           },
           "404": {
             "description": ""
           },
           "409": {
-            "description": "this path and base branch are already registered, or `ai` was asked for while the AI permission model is off"
+            "description": "this path and base branch are already registered, `ai` was asked for while the AI permission model is off, or the forge integration cannot be enabled"
           }
         }
       },
@@ -3696,6 +3696,17 @@
               "null"
             ]
           },
+          "forge": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ForgeUpdate",
+                "description": "The forge integration to set up once the remote is detected."
+              }
+            ]
+          },
           "path": {
             "type": "string",
             "description": "Absolute path of an existing git work tree.",
@@ -4324,6 +4335,119 @@
             "$ref": "#/components/schemas/Flavour"
           }
         }
+      },
+      "ForgeDto": {
+        "type": "object",
+        "description": "The forge a repository's remote is on, and whether Ariadne works with it.",
+        "required": [
+          "kind",
+          "host",
+          "owner",
+          "name",
+          "remote",
+          "enabled"
+        ],
+        "properties": {
+          "babysit_effort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "babysit_model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The pin of the session that watches a published request; null starts\nnone."
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "host": {
+            "type": "string",
+            "description": "Lower-cased, like `owner` and `name`.",
+            "example": "github.com"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ForgeKind"
+          },
+          "login": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The account the forge CLI is signed in as, stored on enable."
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "remote": {
+            "type": "string",
+            "description": "The remote it was read off, `origin` where there is one."
+          },
+          "review_effort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "review_model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The pin of the session that reviews a request; null starts none."
+          }
+        }
+      },
+      "ForgeKind": {
+        "type": "string",
+        "description": "The forge a repository's remote is on (025): which CLI speaks to it.",
+        "enum": [
+          "github",
+          "gitlab"
+        ]
+      },
+      "ForgeUpdate": {
+        "type": "object",
+        "description": "A change to the forge integration; absent fields stay unchanged. A model\nwritten empty clears that role's pin and its effort.",
+        "properties": {
+          "babysit_effort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "babysit_model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "review_effort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "review_model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
       },
       "GoalDto": {
         "type": "object",
@@ -5360,6 +5484,17 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "forge": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ForgeDto",
+                "description": "The forge its remote is on, or null where the checkout has no usable\nremote (025)."
+              }
             ]
           },
           "id": {
@@ -6714,6 +6849,17 @@
               "null"
             ],
             "description": "New description, or empty to clear it. Absent = unchanged."
+          },
+          "forge": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ForgeUpdate",
+                "description": "Absent = unchanged."
+              }
+            ]
           },
           "path": {
             "type": [

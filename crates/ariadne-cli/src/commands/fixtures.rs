@@ -130,6 +130,7 @@ pub(crate) fn repository(id: &str, path: &str, base_branch: &str) -> RepositoryD
         description: None,
         permission_mode: PermissionMode::Auto,
         default_landing: Landing::Merge,
+        forge: None,
         created_at: NOW.into(),
         updated_at: NOW.into(),
     }

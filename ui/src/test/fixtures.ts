@@ -18,6 +18,7 @@ import type {
   AiPermissionsStatusDto,
   components,
   EffortDto,
+  ForgeDto,
   GoalDto,
   LearnedPermissionDto,
   ModelDto,
@@ -238,8 +239,26 @@ export function aRepository(overrides: Partial<RepositoryDto> = {}): RepositoryD
     description: "The orchestrator itself.",
     permission_mode: "auto",
     default_landing: "merge",
+    forge: null,
     created_at: STAMP,
     updated_at: STAMP,
+    ...overrides,
+  }
+}
+
+export function aForge(overrides: Partial<ForgeDto> = {}): ForgeDto {
+  return {
+    kind: "github",
+    host: "github.com",
+    owner: "acme",
+    name: "widgets",
+    remote: "origin",
+    enabled: false,
+    login: null,
+    babysit_model: null,
+    babysit_effort: null,
+    review_model: null,
+    review_effort: null,
     ...overrides,
   }
 }
