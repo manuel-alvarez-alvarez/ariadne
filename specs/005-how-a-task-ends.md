@@ -115,9 +115,14 @@ and `finished` (001).
    resumes the author while the request still reads ready raises
    `waiting_user` again, the same way one that merely published it once did
    (009).
-10. `feature_branch` ends in a final task per repository: the one task that
-    depends directly on every other task of that repository. Two such tasks
-    would depend on each other, so at most one matches. It needs no reviewer.
+10. `feature_branch` ends in a final task per repository: the one live task
+    that depends directly on every other live task of that repository. Two
+    such tasks would depend on each other, so at most one matches. It needs
+    no reviewer. A cancelled task counts nowhere in that match: not as the
+    task itself, not among the dependencies it carries, and not among the
+    other tasks it must depend on. Cancelled is terminal and never retried,
+    so counting one anywhere there would block every repository's final task
+    from matching again.
     `finalize_plan` refuses a `feature_branch` plan unless every repository
     of the goal has a final task, and the error names the repository. A task
     created while the goal is active joins the `depends_on` of the final task
@@ -177,6 +182,15 @@ and `finished` (001).
 - A `feature_branch` plan with no final task in a repository is refused, and
   the error names the repository
   (`final_tasks.rs::a_feature_branch_plan_with_no_final_task_is_refused`).
+- A cancelled task counts nowhere in the final task match: a cancelled task
+  the final task never depended on does not stop a plan from finalizing, and
+  the final task still starts once the live task it depends on is finished
+  (`final_tasks.rs::a_cancelled_task_does_not_block_finalize_or_the_final_task_starting`,
+  `store.rs::final_task_ignores_a_cancelled_sibling`). A candidate's own
+  dependency on a cancelled task is excluded the same way
+  (`store.rs::final_task_ignores_a_cancelled_dependency`), and a cancelled
+  task is never the match itself, even where the count would otherwise agree
+  (`store.rs::final_task_is_never_a_cancelled_candidate`).
 - A task created after the plan is finalized joins the final task's
   `depends_on`
   (`final_tasks.rs::a_task_created_after_finalize_joins_the_final_task`).
