@@ -68,4 +68,5 @@ mod unreviewed_tasks;
 
 mod pull_requests;
 
+mod tunnel;
 mod webhooks;

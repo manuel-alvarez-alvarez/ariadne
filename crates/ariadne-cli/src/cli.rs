@@ -364,6 +364,11 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: RepoCommand,
     },
+    /// Show and switch the webhook tunnel of the forge integrations (027)
+    Forge {
+        #[command(subcommand)]
+        command: crate::commands::forge::ForgeCommand,
+    },
     /// List open issues from an enabled repository forge
     Issue {
         #[command(subcommand)]

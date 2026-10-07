@@ -29,6 +29,7 @@ import { NoRepositories as SharedNoRepositories } from "./no-repositories"
 import { permissionModeLabel } from "./permission-modes"
 import { repositoriesQueryOptions } from "./queries"
 import { RepositoryFormDialog } from "./repository-form-dialog"
+import { TunnelSwitch } from "./tunnel-switch"
 import { WebhookStatus } from "./webhook-status"
 
 const COLUMNS = [
@@ -74,10 +75,13 @@ export function RepositoriesPage() {
         title="Repositories"
         description="The git checkouts goals are created against. Each one is a path, the branch task worktrees are cut from, how its agents' permission requests are answered, the forge its remote is on, and what it is for."
         actions={
-          <Button onClick={openCreate}>
-            <PlusIcon />
-            Register repository
-          </Button>
+          <>
+            <TunnelSwitch />
+            <Button onClick={openCreate}>
+              <PlusIcon />
+              Register repository
+            </Button>
+          </>
         }
       />
 

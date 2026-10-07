@@ -5041,3 +5041,70 @@ async fn webhook_migration_preserves_existing_integrations_and_a_recoverable_bac
     );
     assert_eq!(recovered.list_repositories().await.unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn forge_settings_migration_turns_the_tunnel_on_and_keeps_the_first_subdomain() {
+    let dir = tempfile::tempdir().unwrap();
+    let old_migrations = dir.path().join("migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations")).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_name().to_string_lossy().as_ref() < "0009" {
+            std::fs::copy(entry.path(), old_migrations.join(entry.file_name())).unwrap();
+        }
+    }
+    let path = dir.path().join("old.db");
+    let db = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations.as_path())
+        .await
+        .unwrap()
+        .run(&db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO repositories (id,path,base_branch,created_at,updated_at) VALUES ('old-repo','/work/widgets','main','2026-10-01','2026-10-01')").execute(&db).await.unwrap();
+    sqlx::query("INSERT INTO forge_integrations (repository_id,kind,host,owner,name,remote,enabled,login,detected_at,updated_at,webhook_state) VALUES ('old-repo','github','github.com','acme','widgets','origin',1,'me','2026-10-01','2026-10-01','live')").execute(&db).await.unwrap();
+    db.close().await;
+
+    let upgraded = Store::open(&path).await.unwrap();
+    let settings = upgraded.forge_settings().await.unwrap();
+    assert!(settings.tunnel_enabled);
+    assert_eq!(settings.tunnel_subdomain, None);
+    let forge = upgraded
+        .get_repository("old-repo")
+        .await
+        .unwrap()
+        .forge
+        .unwrap();
+    assert_eq!(forge.webhook_state, "live");
+
+    assert!(
+        !upgraded
+            .set_tunnel_enabled(false)
+            .await
+            .unwrap()
+            .tunnel_enabled
+    );
+    let kept = upgraded
+        .keep_tunnel_subdomain("amber-104233")
+        .await
+        .unwrap();
+    assert_eq!(kept.tunnel_subdomain.as_deref(), Some("amber-104233"));
+    let again = upgraded
+        .keep_tunnel_subdomain("other-000001")
+        .await
+        .unwrap();
+    assert_eq!(again.tunnel_subdomain.as_deref(), Some("amber-104233"));
+    upgraded.close().await;
+
+    let reopened = Store::open(&path).await.unwrap();
+    let settings = reopened.forge_settings().await.unwrap();
+    assert!(!settings.tunnel_enabled);
+    assert_eq!(settings.tunnel_subdomain.as_deref(), Some("amber-104233"));
+}

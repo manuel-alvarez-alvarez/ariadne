@@ -1,6 +1,7 @@
 //! Reconcile one integration against the public URL before its poll worker starts.
 use super::{Cli, ForgeClient};
 use crate::config::Config;
+use crate::webhooks::Public;
 use ariadne_store::{ForgeIntegration, Store};
 
 pub(crate) const GITHUB_EVENTS: &[&str] = &[
@@ -103,10 +104,10 @@ pub(crate) async fn reconcile(
     store: &Store,
     cfg: &Config,
     mut row: ForgeIntegration,
-    public: Option<&str>,
+    public: &Public,
 ) -> Result<ForgeIntegration, String> {
     let client = ForgeClient::for_repository(cfg, &row);
-    let desired = public.filter(|_| row.enabled).map(|url| {
+    let desired = public.url.as_deref().filter(|_| row.enabled).map(|url| {
         format!(
             "{}/webhooks/{}/{}",
             url.trim_end_matches('/'),
@@ -157,6 +158,7 @@ pub(crate) async fn reconcile(
         if row.enabled {
             // Keep the registered ID for a later URL, but expose no current public address.
             row.webhook_url = None;
+            row.webhook_error = public.why.clone();
         } else if let Some(id) = row.webhook_id {
             match client.delete_hook(&row, id).await {
                 Ok(()) => {

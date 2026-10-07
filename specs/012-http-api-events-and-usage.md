@@ -297,6 +297,15 @@ and the ACP runtime that reports the agent events (021).
 These events have no goal or task routing scope, even when the request records an origin task.
 See [026](026-pull-requests.md) for identity, routes, and event tests.
 
+## Forge settings events (027)
+
+| Event | Payload |
+| --- | --- |
+| `forge_settings_updated` | The complete `ForgeTunnelDto`: the tunnel switch, its state, URL, bound listener address, `since` and `error`. |
+
+The daemon publishes it on each switch write and each tunnel state change. It has no goal or task routing scope.
+See [027](027-webhooks-and-tunnel.md) for the tunnel rules and the event test.
+
 ## Acceptance criteria
 
 - Each `GET /v1/stats/<family>` answers its DTO and is in the OpenAPI

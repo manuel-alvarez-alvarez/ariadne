@@ -116,6 +116,7 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         Command::Skill { command } => commands::skill::run(&client, command, format).await,
         Command::Pr { command } => commands::pr::run(&client, command, format).await,
         Command::Repo { command } => commands::repo::run(&client, command, format).await,
+        Command::Forge { command } => commands::forge::run(&client, command, format).await,
         Command::Issue { command } => commands::issue::run(&client, command, format).await,
         Command::Permissions { command } => {
             commands::permissions::run(&client, command, format).await

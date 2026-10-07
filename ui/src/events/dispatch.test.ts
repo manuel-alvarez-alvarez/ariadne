@@ -284,6 +284,26 @@ describe("ai permissions events", () => {
   })
 })
 
+describe("forge settings events", () => {
+  it("replaces the cached tunnel whole, so a screen that read up reads off", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const up = {
+      enabled: true,
+      state: "up" as const,
+      url: "https://amber-104233.loca.lt",
+      listen: "127.0.0.1:49152",
+      since: "2026-10-08T10:00:00.000Z",
+      error: null,
+    }
+    queryClient.setQueryData(qk.forge.tunnel(), up)
+    const off = { ...up, enabled: false, state: "off" as const, url: null }
+
+    dispatch(queryClient, { event: "forge_settings_updated", data: off })
+
+    expect(queryClient.getQueryData(qk.forge.tunnel())).toEqual(off)
+  })
+})
+
 describe("learned permission events", () => {
   const learned = aLearnedPermission({
     repository_id: REPOSITORY.id,

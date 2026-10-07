@@ -26,6 +26,8 @@ tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["ws"] }
 # Download the ACP registry index over HTTPS on an explicit refresh.
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+# The webhook tunnel client (027). MIT. rustls, not the platform TLS.
+localtunnel-client = { version = "0.1.8", default-features = false, features = ["rustls-tls"] }
 # The WebSocket client the daemon tests connect to that console with.
 tokio-tungstenite = "0.29"
 # A terminal emulator for the tests: what the console's bytes draw, read

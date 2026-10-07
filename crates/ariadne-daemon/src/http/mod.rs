@@ -10,6 +10,7 @@ pub(crate) mod convert;
 mod doctor;
 mod error;
 pub(crate) mod events;
+mod forge;
 mod goals;
 mod issues;
 mod landing;
@@ -76,6 +77,8 @@ pub struct AppState {
     pub outside_sessions: OutsideSessions,
     /// the model's settings, its Python check and its install (022).
     pub ai_permissions: AiPermissions,
+    /// The webhook tunnel and its switch (027).
+    pub tunnel: crate::forge::tunnel::Tunnel,
 }
 
 impl AppState {
@@ -126,6 +129,7 @@ impl AppState {
         skills::reset_document,
         repositories::create, repositories::list, repositories::get,
         repositories::update, repositories::delete,
+        forge::get_tunnel, forge::set_tunnel,
         issues::list, issues::get,
         pull_requests::list, pull_requests::get, pull_requests::add, pull_requests::delete, pull_requests::refresh, pull_requests::search,
         permissions::get, permissions::update, permissions::refresh,
@@ -226,6 +230,10 @@ pub fn router(state: AppState) -> Router {
             get(repositories::get)
                 .put(repositories::update)
                 .delete(repositories::delete),
+        )
+        .route(
+            "/v1/forge/tunnel",
+            get(forge::get_tunnel).put(forge::set_tunnel),
         )
         .route("/v1/repositories/{id}/issues", get(issues::list))
         .route("/v1/repositories/{id}/issues/{number}", get(issues::get))

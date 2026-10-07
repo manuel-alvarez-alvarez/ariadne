@@ -183,6 +183,16 @@ pub struct AcpRegistryIndex {
     pub fetched_at: String,
 }
 
+/// The one forge settings row (027).
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
+pub struct ForgeSettings {
+    /// Whether the daemon opens a tunnel to the webhook listener.
+    pub tunnel_enabled: bool,
+    /// The subdomain the tunnel asks for; None until the first tunnel.
+    pub tunnel_subdomain: Option<String>,
+    pub updated_at: String,
+}
+
 /// The one AI permission settings row, and the state of the install behind it (022).
 ///
 /// The spelling of `state` is the wire's own (`ariadne_api::permissions`).

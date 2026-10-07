@@ -50,6 +50,10 @@ pub struct FileConfig {
     pub tcp_listen: Option<SocketAddr>,
     pub webhook_listen: Option<SocketAddr>,
     pub webhook_public_url: Option<String>,
+    /// The localtunnel server the webhook tunnel registers with.
+    pub tunnel_host: Option<String>,
+    /// The subdomain the tunnel asks for, over the stored one.
+    pub tunnel_subdomain: Option<String>,
     /// tracing filter, e.g. "info,ariadne_daemon=debug"
     pub log_filter: Option<String>,
     /// Path to the `ariadne` CLI used for MCP (default: sibling of

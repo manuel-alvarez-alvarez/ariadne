@@ -22,7 +22,7 @@ import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it } from "vitest"
 
-import type { RepositoryDto } from "@/api"
+import type { ForgeTunnelDto, RepositoryDto } from "@/api"
 import { aForge, aRepository } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { RepositoriesPage } from "./repositories-page"
@@ -44,10 +44,38 @@ const SANDBOX: RepositoryDto = aRepository({
 /** `DELETE /v1/repositories/{id}` answers this instead of 204, when set. */
 let deleteFailure: { status: number; code: string; message: string } | null = null
 
+/** What `GET /v1/forge/tunnel` answers; a `PUT` moves its switch. */
+let tunnel: ForgeTunnelDto
+
+/** The bodies of every `PUT /v1/forge/tunnel`. */
+let tunnelWrites: unknown[] = []
+
+function aTunnel(overrides: Partial<ForgeTunnelDto> = {}): ForgeTunnelDto {
+  return {
+    enabled: true,
+    state: "up",
+    url: "https://amber-104233.loca.lt",
+    listen: "127.0.0.1:49152",
+    since: "2026-10-08T10:00:00.000Z",
+    error: null,
+    ...overrides,
+  }
+}
+
 function stubDaemon(repositories: RepositoryDto[]) {
   deleteFailure = null
+  tunnel = aTunnel()
+  tunnelWrites = []
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(String(input), init)
+    if (new URL(request.url).pathname === "/v1/forge/tunnel") {
+      if (request.method === "PUT") {
+        const body = (await request.json()) as { enabled: boolean }
+        tunnelWrites.push(body)
+        tunnel = body.enabled ? aTunnel() : aTunnel({ enabled: false, state: "off", url: null })
+      }
+      return jsonResponse(tunnel)
+    }
     if (request.method === "DELETE") {
       if (!deleteFailure) return new Response(null, { status: 204 })
       const { status, code, message } = deleteFailure
@@ -106,6 +134,25 @@ describe("RepositoriesPage", () => {
     expect(screen.getByText("https://hooks.example/webhooks/github/repo")).toBeDefined()
     expect(screen.getByText("HTTP 403: needs admin rights")).toBeDefined()
     expect(screen.getByText("2026-10-07T10:00:00Z")).toBeDefined()
+  })
+
+  it("shows the tunnel state, and its switch turns the tunnel off and on", async () => {
+    const user = userEvent.setup()
+    renderScreen(<RepositoriesPage />)
+
+    expect(await screen.findByText("Tunnel up")).toBeDefined()
+    const toggle = screen.getByRole("switch", { name: "Webhook tunnel" })
+    expect(toggle.getAttribute("aria-checked")).toBe("true")
+
+    await user.click(toggle)
+    expect(await screen.findByText("Tunnel off")).toBeDefined()
+    expect(
+      screen.getByRole("switch", { name: "Webhook tunnel" }).getAttribute("aria-checked"),
+    ).toBe("false")
+
+    await user.click(screen.getByRole("switch", { name: "Webhook tunnel" }))
+    expect(await screen.findByText("Tunnel up")).toBeDefined()
+    expect(tunnelWrites).toEqual([{ enabled: false }, { enabled: true }])
   })
 
   it("shows the forge each remote is on, and whether it is enabled", async () => {

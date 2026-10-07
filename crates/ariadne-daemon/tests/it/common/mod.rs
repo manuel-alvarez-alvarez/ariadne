@@ -423,7 +423,16 @@ impl HarnessBuilder {
             &bus,
             self.timeouts.forge_poll,
         );
+        // Started by a test that binds a listener: a harness opens no tunnel.
+        let tunnel = ariadne_daemon::forge::tunnel::Tunnel::new(
+            store.clone(),
+            launcher.cfg.clone(),
+            bus.clone(),
+            &forge_poll,
+            self.timeouts,
+        );
         let state = AppState {
+            tunnel,
             forge_poll,
             store: store.clone(),
             started_at: Instant::now(),

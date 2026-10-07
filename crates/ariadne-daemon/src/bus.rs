@@ -141,6 +141,13 @@ impl EventBus {
         self.publish(unscoped(DomainEvent::AiPermissionsUpdated(status)));
     }
 
+    /// Publish the forge settings and the tunnel state (027). Like the AI
+    /// permission status, only the daemon can build it: the tunnel state is
+    /// no store row.
+    pub fn forge_settings_updated(&self, tunnel: ariadne_api::repositories::ForgeTunnelDto) {
+        self.publish(unscoped(DomainEvent::ForgeSettingsUpdated(tunnel)));
+    }
+
     /// Answers once the pump has published every change it had been handed
     /// when this was called.
     ///

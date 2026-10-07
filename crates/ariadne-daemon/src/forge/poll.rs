@@ -1,6 +1,6 @@
 //! Timer fallback and explicit repository wakes. Each repository has one worker.
 use super::{ForgeClient, pulls};
-use crate::{bus::EventBus, config::Config};
+use crate::{bus::EventBus, config::Config, webhooks::Public};
 use ariadne_api::stream::DomainEvent;
 use ariadne_store::{ForgeIntegration, PullRequest, PullRequestFilter, Store};
 use std::{
@@ -29,7 +29,7 @@ pub struct ForgePoll {
 }
 struct Worker {
     identity: (String, String, String, String),
-    public_url: Option<String>,
+    public_url: Public,
     wake: Arc<Notify>,
     mode: watch::Sender<Mode>,
     task: tokio::task::JoinHandle<()>,
@@ -124,7 +124,7 @@ async fn reconcile(
     cfg: &Arc<Config>,
     every: Duration,
     workers: &mut HashMap<String, Worker>,
-    public_url: &Option<String>,
+    public_url: &Public,
 ) {
     match store.list_repositories().await {
         Ok(repositories) => {
@@ -144,7 +144,7 @@ async fn sync(
     every: Duration,
     workers: &mut HashMap<String, Worker>,
     id: &str,
-    public_url: &Option<String>,
+    public_url: &Public,
 ) {
     let row = match store.forge_integration(id).await {
         Ok(row) => row,
@@ -161,7 +161,7 @@ async fn sync(
         }
         if let Some(row) = row
             && row.webhook_id.is_some()
-            && let Err(error) = super::hooks::reconcile(store, cfg, row, None).await
+            && let Err(error) = super::hooks::reconcile(store, cfg, row, &Public::default()).await
         {
             warn!(%error, repository = id, "cannot remove forge hook");
         }
@@ -192,7 +192,7 @@ async fn sync(
     );
     let reconcile_hook = workers.get(id).is_none_or(|w| &w.public_url != public_url);
     if reconcile_hook {
-        match super::hooks::reconcile(store, cfg, row, public_url.as_deref()).await {
+        match super::hooks::reconcile(store, cfg, row, public_url).await {
             Ok(current) => row = current,
             Err(error) => {
                 warn!(%error, repository = id, "cannot reconcile forge hook");

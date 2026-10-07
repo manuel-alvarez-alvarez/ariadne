@@ -13,8 +13,9 @@
  * Screens therefore need no event handling of their own: read with the keys in
  * `src/api/query-keys.ts` and the cache stays live.
  *
- * `ai_permissions_updated` is the one event with no list beside its detail:
- * there is one settings row, so the whole cache it moves is `setQueryData`.
+ * `ai_permissions_updated` and `forge_settings_updated` have no list beside
+ * their detail: each is one settings row, so the whole cache each moves is
+ * `setQueryData`.
  *
  * Anything that arrives while the stream is down is lost — the daemon has no
  * replay. `invalidateEverything` is the recovery path and runs on every
@@ -164,6 +165,11 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
     case "learned_permission_deleted": {
       queryClient.removeQueries({ queryKey: qk.learnedPermissions.detail(event.data.id) })
       void queryClient.invalidateQueries({ queryKey: qk.learnedPermissions.lists() })
+      break
+    }
+    case "forge_settings_updated": {
+      // One row, no list: the tunnel the repositories screen reads.
+      queryClient.setQueryData(qk.forge.tunnel(), event.data)
       break
     }
     default: {

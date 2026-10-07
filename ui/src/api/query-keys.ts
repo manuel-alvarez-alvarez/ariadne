@@ -167,6 +167,13 @@ export const qk = {
     ai: () => ["permissions", "detail", "ai"] as const,
   },
   /**
+   * The webhook tunnel's switch and state (`GET /v1/forge/tunnel`). One row,
+   * so a detail key and no list.
+   */
+  forge: {
+    tunnel: () => ["forge", "detail", "tunnel"] as const,
+  },
+  /**
    * The aggregates of the stats ledger (`GET /v1/stats/<family>`), one list
    * per family under one group: every family moves when a task or a session
    * does, so the dispatcher invalidates `all()`.

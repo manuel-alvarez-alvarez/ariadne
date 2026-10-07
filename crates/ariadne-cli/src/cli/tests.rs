@@ -155,6 +155,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("goal inspect", true),
     ("goal ls", true),
     ("goal rm", true),
+    ("forge tunnel", true),
     ("issue ls", true),
     ("mcp serve", false),
     ("models disable", true),

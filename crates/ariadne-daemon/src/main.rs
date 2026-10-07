@@ -38,7 +38,12 @@ unknown key stops the daemon rather than being ignored):
   tcp_listen               extra TCP listener for web/desktop UIs, e.g.
                            \"127.0.0.1:7676\" (default: unix socket only)
   webhook_listen           signed webhook listener (default: 127.0.0.1:0)
-  webhook_public_url       public URL forwarded to the webhook listener
+  webhook_public_url       public URL forwarded to the webhook listener; set, it
+                           opens no tunnel
+  tunnel_host              the localtunnel server the webhook tunnel registers
+                           with (default: https://localtunnel.me)
+  tunnel_subdomain         the subdomain the tunnel asks for (default: the
+                           stored one, else a random one kept on first use)
   log_filter               tracing filter when RUST_LOG says nothing (default: info)
   cli_bin                  the `ariadne` every session's MCP server is launched
                            with (default: the one beside this binary)
@@ -179,6 +184,14 @@ async fn main() -> Result<()> {
             .await
             .context("binding webhook listener")?;
     info!(address = %webhook_listen.address(), "webhook ingress ready");
+    let tunnel = ariadne_daemon::forge::tunnel::Tunnel::new(
+        store.clone(),
+        config.clone(),
+        events.clone(),
+        &forge_poll,
+        ariadne_daemon::timeouts::Timeouts::default(),
+    );
+    tunnel.start(&webhook_listen);
     let sched_tx = ariadne_daemon::scheduler::start(
         store.clone(),
         launcher.clone(),
@@ -201,10 +214,19 @@ async fn main() -> Result<()> {
         agent_registry,
         outside_sessions,
         ai_permissions,
+        tunnel: tunnel.clone(),
     };
     let ai_permissions_shutdown = state.ai_permissions.clone();
     let app = http::router(state);
 
+    // The public ingress stops when shutdown starts: an open event stream
+    // can hold the HTTP drain below for as long as its client stays.
+    tokio::spawn(async move {
+        shutdown_signal().await;
+        tunnel.shutdown().await;
+        drop(webhook_listen);
+        info!("webhook ingress stopped");
+    });
     let shutdown = shutdown_signal();
     let result = match config.tcp_listen {
         Some(addr) => {
@@ -224,7 +246,6 @@ async fn main() -> Result<()> {
         }
     };
 
-    drop(webhook_listen);
     // Best-effort cleanup of runtime files.
     failure_diagnosis.shutdown().await;
     ai_permissions_shutdown.shutdown().await;

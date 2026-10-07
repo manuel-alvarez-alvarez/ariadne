@@ -35,6 +35,44 @@ pub struct WebhookDto {
     pub last_delivery_at: Option<String>,
 }
 
+/// Where the webhook tunnel stands (027).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TunnelState {
+    /// The tunnel is open, and its URL is the hooks' URL.
+    Up,
+    /// The tunnel should run and does not: the fetch runs on its timer.
+    Down,
+    /// No tunnel runs: the switch is off, `webhook_public_url` is set, or no
+    /// integration is enabled.
+    Off,
+}
+
+/// The forge settings and the tunnel state, as `GET /v1/forge/tunnel` and
+/// `forge_settings_updated` carry them (027).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ForgeTunnelDto {
+    /// The switch: whether the daemon opens a tunnel.
+    pub enabled: bool,
+    pub state: TunnelState,
+    /// The public URL while the tunnel is up.
+    pub url: Option<String>,
+    /// The bound webhook listener address the tunnel forwards to.
+    #[schema(example = "127.0.0.1:49152")]
+    pub listen: Option<String>,
+    /// When the tunnel entered its state.
+    pub since: String,
+    /// Why the last attempt failed, while the tunnel is down.
+    pub error: Option<String>,
+}
+
+/// `PUT /v1/forge/tunnel`: turn the tunnel on or off.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetTunnelRequest {
+    pub enabled: bool,
+}
+
 /// The forge a repository's remote is on, and whether Ariadne works with it.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ForgeDto {

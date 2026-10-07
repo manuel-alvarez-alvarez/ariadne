@@ -110,7 +110,7 @@ write a key literal. Every key is `[entity, "list" | "detail", ...]`:
 ["repositories", "list", filters]   ["repositories", "detail", id]
 ["agents",       "list", {}]        ["models",   "list", {}]
 ["agent-events", "list", filters]
-["permissions",  "detail", "ai"]
+["permissions",  "detail", "ai"]  ["forge",    "detail", "tunnel"]
 ["learned-permissions", "list", filters] ["learned-permissions", "detail", id]
 ["stats",        "list", family, filter]
 ```
@@ -120,8 +120,9 @@ write a key literal. Every key is `[entity, "list" | "detail", ...]`:
 read through `qk.stats.<family>(filter)`: a task or a session that moves can
 be a fact of any family, so the dispatcher invalidates `qk.stats.all()` whole.
 
-`permissions.ai()` is the one key with no list beside it: there is one AI
-permission model settings row, `GET /v1/permissions/ai`, not a collection.
+`permissions.ai()` and `forge.tunnel()` are the keys with no list beside
+them: each is one settings row (`GET /v1/permissions/ai`,
+`GET /v1/forge/tunnel`), not a collection.
 
 The outside-sessions list is the one key with no detail beside it, and the one
 list the daemon pages: its cursor stays out of the key, because the pages of
@@ -169,6 +170,7 @@ the query cache and it stays live.
 | `repository_updated` | the same, plus every goal key — goals carry their repositories inline |
 | `repository_deleted` | remove `repositories.detail`, invalidate `repositories.lists` |
 | `ai_permissions_updated` | patch `permissions.ai()` whole — the one settings row, no list beside it |
+| `forge_settings_updated` | patch `forge.tunnel()` whole — the tunnel switch and state, no list beside it |
 | `learned_permission_created`, `learned_permission_updated` | patch `learnedPermissions.detail`, invalidate `learnedPermissions.lists` |
 | `learned_permission_deleted` | remove `learnedPermissions.detail`, invalidate `learnedPermissions.lists` |
 

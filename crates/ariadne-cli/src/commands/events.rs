@@ -411,6 +411,14 @@ fn domain_line(event: &DomainEvent) -> Line {
             session: None,
             status: Some(l.state.as_str().to_string()),
         },
+        DomainEvent::ForgeSettingsUpdated(t) => Line {
+            at: t.since.clone(),
+            kind,
+            subject: "forge tunnel".to_string(),
+            detail: super::forge::label(t),
+            session: None,
+            status: None,
+        },
         DomainEvent::LearnedPermissionCreated(p)
         | DomainEvent::LearnedPermissionUpdated(p)
         | DomainEvent::LearnedPermissionDeleted(p) => Line {

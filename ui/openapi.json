@@ -312,6 +312,56 @@
         }
       }
     },
+    "/v1/forge/tunnel": {
+      "get": {
+        "tags": [
+          "repositories"
+        ],
+        "summary": "The tunnel switch, the tunnel state and the bound listener address.",
+        "operationId": "get_tunnel",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForgeTunnelDto"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "repositories"
+        ],
+        "summary": "Turn the tunnel on or off. Off closes it, and every integration fetches on\nits timer; the hooks stay registered.",
+        "operationId": "set_tunnel",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetTunnelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForgeTunnelDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/goals": {
       "get": {
         "tags": [
@@ -4673,6 +4723,26 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "The forge settings or the tunnel state moved (027).",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/ForgeTunnelDto",
+                "description": "The forge settings or the tunnel state moved (027)."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "forge_settings_updated"
+                ]
+              }
+            }
           }
         ],
         "description": "One domain event. Serialized as `{\"event\": \"<kind>\", \"data\": <payload>}`;\non the SSE wire the kind becomes the `event:` field and the payload alone\nthe `data:` field."
@@ -4823,6 +4893,50 @@
           "github",
           "gitlab"
         ]
+      },
+      "ForgeTunnelDto": {
+        "type": "object",
+        "description": "The forge settings and the tunnel state, as `GET /v1/forge/tunnel` and\n`forge_settings_updated` carry them (027).",
+        "required": [
+          "enabled",
+          "state",
+          "since"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "The switch: whether the daemon opens a tunnel."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the last attempt failed, while the tunnel is down."
+          },
+          "listen": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The bound webhook listener address the tunnel forwards to.",
+            "example": "127.0.0.1:49152"
+          },
+          "since": {
+            "type": "string",
+            "description": "When the tunnel entered its state."
+          },
+          "state": {
+            "$ref": "#/components/schemas/TunnelState"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The public URL while the tunnel is up."
+          }
+        }
       },
       "ForgeUpdate": {
         "type": "object",
@@ -6583,6 +6697,19 @@
           }
         }
       },
+      "SetTunnelRequest": {
+        "type": "object",
+        "description": "`PUT /v1/forge/tunnel`: turn the tunnel on or off.",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
       "SkillDto": {
         "type": "object",
         "required": [
@@ -7338,6 +7465,15 @@
           }
         },
         "additionalProperties": false
+      },
+      "TunnelState": {
+        "type": "string",
+        "description": "Where the webhook tunnel stands (027).",
+        "enum": [
+          "up",
+          "down",
+          "off"
+        ]
       },
       "UpdateAgentConfigRequest": {
         "type": "object",

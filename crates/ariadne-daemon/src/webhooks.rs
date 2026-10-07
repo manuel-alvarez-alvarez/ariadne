@@ -16,15 +16,30 @@ use tokio::{net::TcpListener, sync::watch};
 
 /// The tunnel writes the current URL, or None when public ingress is unavailable.
 #[derive(Clone)]
-pub struct WebhookUrl(watch::Sender<Option<String>>);
+pub struct WebhookUrl(watch::Sender<Public>);
+/// The public URL, or why there is none: the reason becomes each hook's error.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Public {
+    pub(crate) url: Option<String>,
+    pub(crate) why: Option<String>,
+}
 impl WebhookUrl {
     pub(crate) fn new(url: Option<String>) -> Self {
-        Self(watch::channel(url).0)
+        Self(watch::channel(Public { url, why: None }).0)
     }
     pub fn set(&self, url: Option<String>) {
-        self.0.send_replace(url);
+        self.0.send_replace(Public { url, why: None });
     }
-    pub(crate) fn subscribe(&self) -> watch::Receiver<Option<String>> {
+    /// Withdraw the URL and name the reason, once per change.
+    pub(crate) fn withdraw(&self, why: Option<String>) {
+        let next = Public { url: None, why };
+        self.0.send_if_modified(|current| {
+            let changed = *current != next;
+            *current = next.clone();
+            changed
+        });
+    }
+    pub(crate) fn subscribe(&self) -> watch::Receiver<Public> {
         self.0.subscribe()
     }
 }

@@ -4,7 +4,8 @@ use anyhow::Result;
 use clap::Subcommand;
 
 use ariadne_api::repositories::{
-    CreateRepositoryRequest, ForgeDto, ForgeUpdate, RepositoryDto, UpdateRepositoryRequest,
+    CreateRepositoryRequest, ForgeDto, ForgeTunnelDto, ForgeUpdate, RepositoryDto,
+    UpdateRepositoryRequest,
 };
 use ariadne_client::Client;
 use ariadne_core::{Landing, PermissionMode};
@@ -199,7 +200,12 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
         RepoCommand::Inspect { id } => {
             let id = resolve::id(client, Kind::Repo, &id).await?;
             let r: RepositoryDto = client.get_json(&repo_path(&id)).await?;
-            print(format, &r, || print_kv(&inspect_rows(&r)))?;
+            // An older daemon has no tunnel: the line then reads as a dash.
+            let tunnel: Option<ForgeTunnelDto> = match r.forge {
+                Some(_) => client.get_json("/v1/forge/tunnel").await.ok(),
+                None => None,
+            };
+            print(format, &r, || print_kv(&inspect_rows(&r, tunnel.as_ref())))?;
         }
         RepoCommand::Update {
             id,
@@ -287,7 +293,7 @@ fn role_pin(model: Option<&str>, effort: Option<&str>) -> String {
 }
 
 /// What `repo inspect` prints, the forge block included.
-fn inspect_rows(r: &RepositoryDto) -> Vec<(&'static str, Kv)> {
+fn inspect_rows(r: &RepositoryDto, tunnel: Option<&ForgeTunnelDto>) -> Vec<(&'static str, Kv)> {
     let mut rows = vec![
         ("id", Kv::id(r.id.clone())),
         ("path", r.path.clone().into()),
@@ -329,6 +335,12 @@ fn inspect_rows(r: &RepositoryDto) -> Vec<(&'static str, Kv)> {
                     .last_delivery_at
                     .clone()
                     .unwrap_or_else(|| "-".into())
+                    .into(),
+            ),
+            (
+                "tunnel",
+                tunnel
+                    .map_or_else(|| "-".into(), super::forge::label)
                     .into(),
             ),
             (
@@ -497,7 +509,24 @@ mod tests {
             forge: Some(forge(true, Some("octocat"))),
             ..fixtures::repository("01A", "/repos/widgets", "main")
         };
-        let block = crate::output::kv_block(&inspect_rows(&r), &crate::output::View::plain());
+        let tunnel = ForgeTunnelDto {
+            enabled: true,
+            state: ariadne_api::repositories::TunnelState::Down,
+            url: None,
+            listen: Some("127.0.0.1:49152".into()),
+            since: "2026-10-08T10:00:00.000Z".into(),
+            error: Some("connection refused".into()),
+        };
+        let block = crate::output::kv_block(
+            &inspect_rows(&r, Some(&tunnel)),
+            &crate::output::View::plain(),
+        );
+        assert!(
+            block
+                .lines()
+                .any(|l| l.starts_with("tunnel") && l.trim_end().ends_with("down")),
+            "the tunnel line follows the webhook block: {block}"
+        );
         assert!(block.contains("github acme/widgets on"), "{block}");
         assert!(block.contains("origin (github.com)"), "{block}");
         assert!(block.contains("octocat"), "{block}");
@@ -520,7 +549,8 @@ mod tests {
         );
 
         let none = fixtures::repository("01B", "/repos/local", "main");
-        let block = crate::output::kv_block(&inspect_rows(&none), &crate::output::View::plain());
+        let block =
+            crate::output::kv_block(&inspect_rows(&none, None), &crate::output::View::plain());
         assert!(
             block
                 .lines()

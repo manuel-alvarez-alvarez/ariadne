@@ -11,6 +11,7 @@ pub(crate) mod events;
 #[cfg(test)]
 pub(crate) mod fixtures;
 pub(crate) mod follow;
+pub(crate) mod forge;
 pub(crate) mod goal;
 pub(crate) mod issue;
 pub(crate) mod mcp;

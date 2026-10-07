@@ -167,6 +167,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/forge/tunnel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The tunnel switch, the tunnel state and the bound listener address. */
+        get: operations["repositories_get_tunnel"];
+        /**
+         * Turn the tunnel on or off. Off closes it, and every integration fetches on
+         *     its timer; the hooks stay registered.
+         */
+        put: operations["repositories_set_tunnel"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/goals": {
         parameters: {
             query?: never;
@@ -1844,6 +1865,11 @@ export interface components {
             data: components["schemas"]["LearnedPermissionDto"];
             /** @enum {string} */
             event: "learned_permission_deleted";
+        } | {
+            /** @description The forge settings or the tunnel state moved (027). */
+            data: components["schemas"]["ForgeTunnelDto"];
+            /** @enum {string} */
+            event: "forge_settings_updated";
         };
         /**
          * @description One reasoning effort an entry can be run at: the name it is passed by, and
@@ -1916,6 +1942,26 @@ export interface components {
          * @enum {string}
          */
         ForgeKind: "github" | "gitlab";
+        /**
+         * @description The forge settings and the tunnel state, as `GET /v1/forge/tunnel` and
+         *     `forge_settings_updated` carry them (027).
+         */
+        ForgeTunnelDto: {
+            /** @description The switch: whether the daemon opens a tunnel. */
+            enabled: boolean;
+            /** @description Why the last attempt failed, while the tunnel is down. */
+            error?: string | null;
+            /**
+             * @description The bound webhook listener address the tunnel forwards to.
+             * @example 127.0.0.1:49152
+             */
+            listen?: string | null;
+            /** @description When the tunnel entered its state. */
+            since: string;
+            state: components["schemas"]["TunnelState"];
+            /** @description The public URL while the tunnel is up. */
+            url?: string | null;
+        };
         /**
          * @description A change to the forge integration; absent fields stay unchanged. A model
          *     written empty clears that role's pin and its effort.
@@ -2679,6 +2725,10 @@ export interface components {
             id: string;
             rank?: null | components["schemas"]["ModelRank"];
         };
+        /** @description `PUT /v1/forge/tunnel`: turn the tunnel on or off. */
+        SetTunnelRequest: {
+            enabled: boolean;
+        };
         SkillDto: {
             /**
              * @description Whether Ariadne ships this skill. A built-in is reset rather than
@@ -3060,6 +3110,11 @@ export interface components {
             reason?: string | null;
             to: components["schemas"]["TaskStatus"];
         };
+        /**
+         * @description Where the webhook tunnel stands (027).
+         * @enum {string}
+         */
+        TunnelState: "up" | "down" | "off";
         /** @description Body of `PUT /v1/agents/{id}`: the whole new flag list, empty included. */
         UpdateAgentConfigRequest: {
             extra_flags: string[];
@@ -3447,6 +3502,48 @@ export interface operations {
                 };
                 content: {
                     "text/event-stream": components["schemas"]["DomainEvent"];
+                };
+            };
+        };
+    };
+    repositories_get_tunnel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForgeTunnelDto"];
+                };
+            };
+        };
+    };
+    repositories_set_tunnel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetTunnelRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForgeTunnelDto"];
                 };
             };
         };

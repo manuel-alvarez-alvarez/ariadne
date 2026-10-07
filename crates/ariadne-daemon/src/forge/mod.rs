@@ -11,6 +11,7 @@ pub mod gitlab;
 pub mod hooks;
 pub mod poll;
 pub mod pulls;
+pub mod tunnel;
 
 use std::path::{Path, PathBuf};
 use std::process::Output;

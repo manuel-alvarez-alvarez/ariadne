@@ -115,6 +115,8 @@ pub enum DomainEvent {
     LearnedPermissionCreated(LearnedPermissionDto),
     LearnedPermissionUpdated(LearnedPermissionDto),
     LearnedPermissionDeleted(LearnedPermissionDto),
+    /// The forge settings or the tunnel state moved (027).
+    ForgeSettingsUpdated(crate::repositories::ForgeTunnelDto),
 }
 
 impl DomainEvent {
@@ -144,6 +146,7 @@ impl DomainEvent {
             Self::LearnedPermissionCreated(_) => "learned_permission_created",
             Self::LearnedPermissionUpdated(_) => "learned_permission_updated",
             Self::LearnedPermissionDeleted(_) => "learned_permission_deleted",
+            Self::ForgeSettingsUpdated(_) => "forge_settings_updated",
         }
     }
 
@@ -173,6 +176,7 @@ impl DomainEvent {
             Self::LearnedPermissionCreated(l)
             | Self::LearnedPermissionUpdated(l)
             | Self::LearnedPermissionDeleted(l) => json(l),
+            Self::ForgeSettingsUpdated(t) => json(t),
         }
     }
 }

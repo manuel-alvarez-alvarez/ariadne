@@ -1,7 +1,40 @@
 //! Additive hook metadata. Secrets never enter a public DTO.
-use crate::{Change, ForgeIntegration, Result, Store, now};
+use crate::{Change, ForgeIntegration, ForgeSettings, Result, Store, not_found, now};
 
 impl Store {
+    /// The forge settings row. The migration seeds it, so every database has one.
+    pub async fn forge_settings(&self) -> Result<ForgeSettings> {
+        sqlx::query_as(
+            "SELECT tunnel_enabled, tunnel_subdomain, updated_at FROM forge_settings WHERE id = 1",
+        )
+        .fetch_optional(self.r())
+        .await?
+        .ok_or_else(|| not_found("forge settings", "1"))
+    }
+
+    /// Turn the tunnel on or off, and answer the row as it now stands.
+    pub async fn set_tunnel_enabled(&self, enabled: bool) -> Result<ForgeSettings> {
+        sqlx::query("UPDATE forge_settings SET tunnel_enabled = ?, updated_at = ? WHERE id = 1")
+            .bind(enabled)
+            .bind(now())
+            .execute(self.w())
+            .await?;
+        self.forge_settings().await
+    }
+
+    /// Keep the subdomain the first tunnel picked. A stored one stays.
+    pub async fn keep_tunnel_subdomain(&self, subdomain: &str) -> Result<ForgeSettings> {
+        sqlx::query(
+            "UPDATE forge_settings SET tunnel_subdomain = ?, updated_at = ?
+             WHERE id = 1 AND tunnel_subdomain IS NULL",
+        )
+        .bind(subdomain)
+        .bind(now())
+        .execute(self.w())
+        .await?;
+        self.forge_settings().await
+    }
+
     /// Write hook fields only if the integration still names the same enabled state and forge.
     /// A delivery timestamp has its own write, so reconciliation never overwrites it.
     pub async fn set_webhook(&self, row: &ForgeIntegration) -> Result<bool> {
