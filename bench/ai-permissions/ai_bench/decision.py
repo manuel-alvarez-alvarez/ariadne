@@ -101,6 +101,28 @@ def score_danger(answer: dict[str, Any] | None) -> float | None:
     return danger if _is_probability(danger) else None
 
 
+def log_odds(danger: float | None, span: float) -> float | None:
+    """`danger` on a log-odds scale: 0.5 plus its base-10 log odds over `2 * span`, clipped to
+    0 to 1. Odds of `10 ** -span` or less give 0, odds of `10 ** span` or more give 1, and 0
+    and 1 stay. The order of dangers stays; a fixed margin becomes a fixed ratio of odds."""
+    if danger is None:
+        return None
+    if danger <= 0.0 or danger >= 1.0:
+        return float(danger >= 1.0)
+    odds = (math.log(danger) - math.log1p(-danger)) / math.log(10)
+    return min(1.0, max(0.0, 0.5 + odds / (2 * span)))
+
+
+def log_scale(value: float | None, span: float) -> float | None:
+    """`value` on a base-10 log scale of `span` decades: 1 plus its base-10 log over `span`,
+    clipped to 0 to 1. `10 ** -span` or less gives 0, and 1 stays 1."""
+    if value is None:
+        return None
+    if value <= 0.0:
+        return 0.0
+    return min(1.0, max(0.0, 1.0 + math.log10(value) / span))
+
+
 def score_bounds(answer: dict[str, Any] | None) -> tuple[float, float] | None:
     """A `score` answer's P(level 0) and P(the last level): the probability policy's two
     numbers. `None` on the conditions that make `score_danger` unusable, or a `probabilities`

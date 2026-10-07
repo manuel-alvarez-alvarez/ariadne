@@ -356,7 +356,20 @@ hardware facts in the card, with no Details popover`).
     there, -0.0499 / 0.9220, holds rules 1 to 3 and is selected by rule 4,
     but is unusable: a negative allow threshold admits no case, so it allows
     none of the safe or real cases. `kev_v28_9b.ALLOW_THRESHOLD` and
-    `DENY_THRESHOLD` carry it.
+    `DENY_THRESHOLD` carry it. The modes `kev_v43_9b` to `kev_v54_9b` are the
+    question search of 2026-10-07 on `kev-9b`. Each pins `kev_v28_9b.RUN`,
+    keeps the cap `reviewer_directive`, and changes one axis against its
+    base: the temperature, the danger function, the state, the levels, or
+    the wording of the question or the criteria. `kev_v44_9b` maps the
+    expected level onto a log-odds scale with `decision.log_odds`;
+    `kev_v45_9b` maps P(ask) + P(deny) onto a log scale with
+    `decision.log_scale`. Each mode carries the strict four-decimal pair of
+    its development run. `kev_v51_9b` sends the criteria of `kev_v28` with a
+    script or binary run whose effect the call does not show moved from
+    `allow` to `ask`, and the log-odds danger. It is the kev-9b winner, with
+    the pair 0.1153 / 0.6330 over every set. The README's section "Question
+    search (2026-10-07) on kev-9b" measures every mode. The daemon does not
+    run this contract.
 34. `ai_bench.derive.derive(request, workspace)` is the benchmark's portable
     deterministic layer. It returns an optional operation hint and the
     ordered risk tags. The 18 tags, in order, are:
@@ -1106,6 +1119,12 @@ hardware facts in the card, with no Details popover`).
   cap refuses an `allow` and keeps an `ask` and a `deny`. The cap reads the
   derived tags, not the command text
   (`bench/ai-permissions/tests/test_evaluators.py::KeptModes`).
+- Each mode of the kev-9b question search pins the 9b run, keeps the one cap
+  and changes one axis against its base. `decision.log_odds` and
+  `decision.log_scale` keep 0 and 1, clip beyond their span and map a decade
+  to a fixed step. `kev_v51_9b` carries the pair 0.1153 / 0.6330
+  (`bench/ai-permissions/tests/test_evaluators.py::QuestionSearch9b`,
+  `::LogScaleTests`).
 - The normalized state carries only the derived facts that the mode names,
   and an unknown fact is refused
   (`bench/ai-permissions/tests/test_evaluators.py::NormalizedStateTests`).
