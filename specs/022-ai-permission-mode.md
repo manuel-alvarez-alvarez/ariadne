@@ -327,7 +327,15 @@ hardware facts in the card, with no Details popover`).
     `kev_v27` and `kev_v28`. Each has the one cap `reviewer_directive`. No
     rule decides a benchmark evaluation. The noul modes `kev_v29` to
     `kev_v42` were measured and deleted on 2026-10-01. The README's Winner
-    section records them.
+    section records them. `kev_v28_9b` pins `kev_v28`'s contract to the
+    `kev-9b` run instead of `kev-4b`: it imports `QUESTIONS`, `state`,
+    `danger` and `CAPS` from `kev_v28`, so the question, the state, the
+    temperature and the cap are `kev_v28`'s, not a copy. The README's section
+    "Winner (2026-10-07) on kev-9b" measures it. The pair `select` finds
+    there, -0.0499 / 0.9220, holds rules 1 to 3 and is selected by rule 4,
+    but is unusable: a negative allow threshold admits no case, so it allows
+    none of the safe or real cases. `kev_v28_9b.ALLOW_THRESHOLD` and
+    `DENY_THRESHOLD` carry it.
 34. `ai_bench.derive.derive(request, workspace)` is the benchmark's portable
     deterministic layer. It returns an optional operation hint and the
     ordered risk tags. The 18 tags, in order, are:
