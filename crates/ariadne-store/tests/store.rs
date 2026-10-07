@@ -3175,6 +3175,66 @@ async fn a_database_that_only_ran_the_squashed_migration_upgrades_in_place() {
     assert!(store.get_task(&task.id).await.unwrap().pr_ready());
 }
 
+/// A database from before `thresholds_hand_set` (it ran `0001` and `0002`)
+/// with the threshold pair at `allow` and `deny`, opened on this release.
+async fn upgraded_with_thresholds(allow: f64, deny: f64) -> (Store, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let old_migrations = dir.path().join("old_migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    for name in ["0001_init.sql", "0002_task_pr_ready.sql"] {
+        let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("migrations")
+            .join(name);
+        std::fs::copy(source, old_migrations.join(name)).unwrap();
+    }
+    let path = dir.path().join("old.db");
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}?mode=rwc", path.display()))
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations)
+        .await
+        .unwrap()
+        .run(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE ai_permission_settings SET allow_threshold = ?, deny_threshold = ?, \
+         flavour = '9b' WHERE id = 1",
+    )
+    .bind(allow)
+    .bind(deny)
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+    let store = Store::open(&path).await.unwrap();
+    (store, dir)
+}
+
+/// The migration that adds `thresholds_hand_set` reads a row still at the
+/// seeded pair 0.0201 / 0.6321 as a default pair, which then follows the
+/// flavour, and keeps it as it was.
+#[tokio::test]
+async fn an_upgrade_marks_the_seeded_threshold_pair_as_the_default() {
+    let (store, _dir) = upgraded_with_thresholds(0.0201, 0.6321).await;
+
+    let row = store.ai_permission_settings().await.unwrap();
+    assert!(!row.thresholds_hand_set);
+    assert_eq!((row.allow_threshold, row.deny_threshold), (0.0201, 0.6321));
+    assert_eq!(row.flavour, "9b");
+}
+
+/// The same migration reads any other pair as one the user set by hand, and
+/// keeps it.
+#[tokio::test]
+async fn an_upgrade_marks_any_other_threshold_pair_as_hand_set() {
+    let (store, _dir) = upgraded_with_thresholds(0.2, 0.6321).await;
+
+    let row = store.ai_permission_settings().await.unwrap();
+    assert!(row.thresholds_hand_set);
+    assert_eq!((row.allow_threshold, row.deny_threshold), (0.2, 0.6321));
+}
+
 // -- token usage ------------------------------------------------------------
 
 fn usage(input_tokens: u64, cached_input_tokens: u64, output_tokens: u64) -> TokenUsage {
@@ -4050,6 +4110,10 @@ async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
     assert!(!defaults.enabled);
     assert_eq!(defaults.allow_threshold, 0.0201);
     assert_eq!(defaults.deny_threshold, 0.6321);
+    assert!(
+        !defaults.thresholds_hand_set,
+        "a fresh pair follows the flavour"
+    );
     assert_eq!(defaults.flavour, "4b");
     assert_eq!(defaults.device, None);
     assert_eq!(defaults.state, "disabled");
@@ -4081,7 +4145,20 @@ async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
     assert!(chosen.enabled);
     assert_eq!(chosen.allow_threshold, 0.2);
     assert_eq!(chosen.deny_threshold, 0.8);
+    assert!(
+        !chosen.thresholds_hand_set,
+        "the flag moves only when written"
+    );
     assert_eq!(chosen.flavour, "9b");
+    let hand_set = store
+        .update_ai_permission_settings(AiPermissionSettingsUpdate {
+            thresholds_hand_set: Some(true),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(hand_set.thresholds_hand_set);
+    assert_eq!(hand_set.allow_threshold, 0.2);
     assert_eq!(chosen.state, "disabled", "a choice is not an install");
 
     // What the installer found, written without touching what the user chose.
@@ -4168,6 +4245,7 @@ async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
     assert_eq!(kept.state, "ready");
     assert_eq!(kept.allow_threshold, 0.2);
     assert_eq!(kept.deny_threshold, 0.8);
+    assert!(kept.thresholds_hand_set);
     assert_eq!(kept.installed_release.as_deref(), Some("v0.1.4"));
 }
 

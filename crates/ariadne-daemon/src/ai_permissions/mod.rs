@@ -28,7 +28,7 @@ use ariadne_api::permissions::{
     AiPermissionsState, AiPermissionsStatusDto, Device, DeviceOptionDto, Flavour,
     FlavourOptionsDto, GpuDto, HardwareDto,
 };
-use ariadne_store::{AiPermissionSettingsUpdate, Store};
+use ariadne_store::{AiPermissionSettings, AiPermissionSettingsUpdate, Store};
 
 use hardware::HardwareOverride;
 
@@ -123,10 +123,12 @@ impl AiPermissions {
             Err(error) => {
                 tracing::warn!(error = %error, "reading the AI permission settings failed");
                 let (flavour, device) = effective_pair(&hardware, Flavour::Kev4B, None);
+                let (allow_threshold, deny_threshold) = default_thresholds(flavour);
                 return AiPermissionsStatusDto {
                     enabled: false,
-                    allow_threshold: DEFAULT_ALLOW_THRESHOLD,
-                    deny_threshold: DEFAULT_DENY_THRESHOLD,
+                    allow_threshold,
+                    deny_threshold,
+                    thresholds_default: true,
                     flavour,
                     device,
                     hardware: hardware_dto(&hardware),
@@ -145,10 +147,12 @@ impl AiPermissions {
         let stored_flavour = Flavour::parse(&row.flavour).unwrap_or(Flavour::Kev4B);
         let stored_device = row.device.as_deref().and_then(Device::parse);
         let (flavour, device) = effective_pair(&hardware, stored_flavour, stored_device);
+        let (allow_threshold, deny_threshold) = thresholds(&row, flavour);
         AiPermissionsStatusDto {
             enabled: row.enabled,
-            allow_threshold: row.allow_threshold,
-            deny_threshold: row.deny_threshold,
+            allow_threshold,
+            deny_threshold,
+            thresholds_default: !row.thresholds_hand_set,
             flavour,
             device,
             hardware: hardware_dto(&hardware),
@@ -288,10 +292,20 @@ impl AiPermissions {
     pub async fn live(&self) -> Option<AiPermissionsLive> {
         let endpoint = self.endpoint()?;
         let row = self.store.ai_permission_settings().await.ok()?;
-        row.enabled.then_some(AiPermissionsLive {
+        if !row.enabled {
+            return None;
+        }
+        // A stored device pairs with the stored flavour (`effective_pair`), so
+        // only a row without one probes the hardware for the flavour it runs.
+        let flavour = match row.device {
+            Some(_) => Flavour::parse(&row.flavour).unwrap_or(Flavour::Kev4B),
+            None => self.chosen().await.0,
+        };
+        let (allow_threshold, deny_threshold) = thresholds(&row, flavour);
+        Some(AiPermissionsLive {
             endpoint,
-            allow_threshold: row.allow_threshold,
-            deny_threshold: row.deny_threshold,
+            allow_threshold,
+            deny_threshold,
         })
     }
 
@@ -414,9 +428,27 @@ fn flavours_dto(hardware: &hardware::Hardware) -> Vec<FlavourOptionsDto> {
         .collect()
 }
 
-/// The thresholds a daemon that cannot read its settings reports.
-pub(crate) const DEFAULT_ALLOW_THRESHOLD: f64 = 0.0201;
-pub(crate) const DEFAULT_DENY_THRESHOLD: f64 = 0.6321;
+/// The allow and deny thresholds of a flavour whose pair nobody set by hand
+/// (022, rule 24). The benchmark selects each pair on that flavour's run.
+pub(crate) fn default_thresholds(flavour: Flavour) -> (f64, f64) {
+    match flavour {
+        // The benchmark's kev-9b pair, -0.0499 / 0.9220, allows nothing: an
+        // allow threshold under zero admits no case. 9b takes the 4b pair.
+        Flavour::Kev9B => (0.0201, 0.6321),
+        Flavour::Kev4B => (0.0201, 0.6321),
+        // The benchmark did not measure 0.8b or 27b; they take the 4b pair.
+        Flavour::Kev08B | Flavour::Kev27B => (0.0201, 0.6321),
+    }
+}
+
+/// The pair in force: the one stored where the user set it by hand, else the
+/// default of `flavour`, the flavour the model runs.
+fn thresholds(row: &AiPermissionSettings, flavour: Flavour) -> (f64, f64) {
+    match row.thresholds_hand_set {
+        true => (row.allow_threshold, row.deny_threshold),
+        false => default_thresholds(flavour),
+    }
+}
 
 /// The state a stored spelling names. One nothing here knows reads as
 /// `failed`: a state that cannot be read is not one to answer requests on.

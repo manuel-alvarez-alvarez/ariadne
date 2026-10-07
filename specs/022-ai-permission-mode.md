@@ -1,7 +1,7 @@
 ---
 id: ai-permission-mode
 status: current
-updated: 2026-10-03
+updated: 2026-10-07
 areas: [core, api, store, daemon, ui]
 commits: []
 tests:
@@ -60,10 +60,17 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 2. The model is the daemon's, not a repository's: one settings row
    (`ai_permission_settings`), one install, one server. A repository chooses
    `ai`; this says whether there is a model to answer with.
-3. The settings are `enabled`, `allow_threshold`, `deny_threshold`, `flavour`
-   and `device`. The decision prompts are built in.
+3. The settings are `enabled`, `allow_threshold`, `deny_threshold`,
+   `thresholds_hand_set`, `flavour` and `device`. The decision prompts are
+   built in.
    `allow_threshold` is the highest danger that is allowed, 0 to 1.
-   `deny_threshold` is the lowest danger that is denied, 0 to 1. `flavour` and
+   `deny_threshold` is the lowest danger that is denied, 0 to 1.
+   `thresholds_hand_set` says whether the user set the pair by hand. The pair
+   in force is the stored pair where it is hand-set, else the default pair of
+   the chosen flavour (rule 24). The chosen flavour is the one `status`
+   reports (rule 44). A pair that is not hand-set thus follows every flavour
+   change, and a hand-set pair stays. `status`, the decisions and the test
+   request all use the pair in force. `flavour` and
    `device` choose which Kev runs and where (Flavours and devices, below).
    There is no scheduled refresh; refresh is manual only (rule 12).
 4. The state of the install is `disabled`, `installing`, `ready` or `failed`,
@@ -122,6 +129,12 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     `installing` again, and the install's end is the state it settles on.
     A new flavour or device on a model that is on starts an install at once
     (rule 47).
+    A request that sends either threshold stores both halves of the pair in
+    force after the update and marks the pair hand-set. A threshold not sent
+    keeps its value in force before the update, which can be a flavour
+    default. `default_thresholds: true` marks the pair not hand-set, so the
+    default of the chosen flavour is in force again. Sent with either
+    threshold, it is refused with 422 `invalid_request` and writes nothing.
     That `installing` is guarded the same way: a turn-off that lands after
     the write that turned the model on and before it keeps its `disabled`, so
     no order of the two requests leaves a model that is off at `installing`.
@@ -222,8 +235,16 @@ hardware facts in the card, with no Details popover`).
     `AI_PERMISSIONS_HOME`, `AI_PERMISSIONS_RUN` (the run of the chosen
     flavour), `AI_PERMISSIONS_KEV_COMMIT`, `AI_PERMISSIONS_FLAVOUR` and
     `AI_PERMISSIONS_DEVICE`.
-24. The default allow threshold is 0.0201. The default deny threshold is
-    0.6321.
+24. Each flavour has a default threshold pair, built into the daemon
+    (`ai_permissions::default_thresholds`); the daemon reads no benchmark file
+    at run time. `4b` defaults to allow 0.0201 and deny 0.6321, the pair the
+    benchmark selected on kev-4b. `9b` takes the same pair: the kev-9b pair
+    the benchmark selected, -0.0499 / 0.9220, has an allow threshold under
+    zero, so it allows no case (rule 33). The benchmark did
+    not measure `0.8b` or `27b`; they take the `4b` pair. The schema seeds
+    the row with 0.0201 / 0.6321 and `thresholds_hand_set = 0`. The
+    migration that adds `thresholds_hand_set` (`0003`) marks an existing row
+    not hand-set where its pair is 0.0201 / 0.6321, and hand-set otherwise.
 
 ## Decisions
 
@@ -627,9 +648,16 @@ hardware facts in the card, with no Details popover`).
     paired with the stored flavour; a `NULL` stored device takes
     `best_device` of the stored flavour where one runs it, else the flavour
     and device a fresh row would settle on (rule 42).
+    It also carries `thresholds_default`, true where the pair is not
+    hand-set, and `UpdateAiPermissionsRequest` carries `default_thresholds`
+    (rule 11).
 45. `ariadne permissions ai set --flavour <0.8b|4b|9b|27b> --device
     <mlx|cuda|cpu>` sends what it is given; the daemon refuses a bad value
-    locally, in the same words. `ariadne permissions ai show` prints the
+    locally, in the same words. `ariadne permissions ai set
+    --default-thresholds` sends `default_thresholds: true` alone; clap
+    refuses it with `--allow-threshold` or `--deny-threshold`. `ariadne
+    permissions ai show` prints the pair in force, a `thresholds` line of
+    `flavour default` or `set by hand`, the
     flavour, the device, the hardware, and a table of every flavour and
     device with `can run`, the reason and the slow note. `ariadne doctor`'s
     `ready` line names the flavour and device, e.g. `ready kev-4b on mlx`.
@@ -727,13 +755,36 @@ hardware facts in the card, with no Details popover`).
     Enter`,
     `::toasts the daemon's own message on a refusal, and puts the value
     back`).
+51. Above the range control, the desktop app says `The default pair of
+    <flavour>` where `thresholds_default` is true, and `Set by hand; a
+    flavour change keeps it` where it is false. A hand-set pair has a **Use
+    the flavour default** button that sends `default_thresholds: true` alone
+    (`ui/src/features/permissions/permissions-page.test.tsx::sends
+    default_thresholds alone from the reset button of a hand-set pair`,
+    `::names the flavour default and offers no reset while the pair is the
+    default`).
 
 ## Acceptance criteria
 
-- A fresh daemon is off, at allow threshold 0.0201 and deny threshold 0.6321,
-  and reports
-  the interpreter it probed
+- A fresh daemon is off, on `4b` at its default pair, allow threshold 0.0201
+  and deny threshold 0.6321, reports the pair as the flavour default, and
+  reports the interpreter it probed
   (`ai_permissions.rs::the_settings_start_at_the_defaults_with_the_interpreter_probed`).
+- A fresh daemon switched to `9b` reports the `9b` default pair as the flavour
+  default (`ai_permissions.rs::a_fresh_daemon_on_9b_reports_the_9b_default_pair`).
+- A default pair follows each flavour change, a threshold sent marks the pair
+  hand-set, and a hand-set pair survives a flavour change
+  (`ai_permissions.rs::a_hand_set_pair_survives_a_flavour_change_and_a_default_pair_follows_it`).
+- `default_thresholds` returns a hand-set pair to the default of the chosen
+  flavour, which then follows the flavour again; sent with a threshold, it is
+  refused with 422 and writes nothing
+  (`ai_permissions.rs::default_thresholds_returns_a_hand_set_pair_to_the_flavour_default`),
+  and a decision then holds the flavour default
+  (`ai_permissions.rs::the_endpoint_is_the_configured_one_and_live_needs_the_model_on`).
+- The `0003` migration marks a row at 0.0201 / 0.6321 not hand-set, so on
+  `9b` it reports the `9b` pair, and marks any other pair hand-set and keeps it
+  (`store.rs::an_upgrade_marks_the_seeded_threshold_pair_as_the_default`,
+  `store.rs::an_upgrade_marks_any_other_threshold_pair_as_hand_set`).
 - A test request sends the shared normalized state for its workspace and returns
   its label, danger, thresholds and four decision facts without an event; an off model refuses it and an enabled model
   with no live endpoint reports `unavailable`
@@ -805,18 +856,20 @@ hardware facts in the card, with no Details popover`).
   exits with the server's status when the server exits on its own
   (`ai_permissions/server.rs::tests::the_server_dies_when_the_daemon_end_of_its_pipe_closes`,
   `::the_guard_exits_with_the_server_status`).
-- The four paths, both threshold fields in both schemas, the flavour and
+- The four paths, both threshold fields in both schemas, `thresholds_default`
+  and `default_thresholds`, the flavour and
   device shapes, test workspace and locations, four test response fields, the doctor's
   `python` and the event kind are in the OpenAPI document
   (`ai_permissions.rs::the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document`),
   and the doctor reports the interpreter apart from the tools
   (`::the_doctor_reports_the_interpreter_the_model_needs`).
 - The old route answers 404 (`ai_permissions.rs::the_old_route_answers_404`).
-- The settings are one row taking partial writes of both thresholds and
-  they survive a store reopen
+- The settings are one row taking partial writes of both thresholds and of
+  `thresholds_hand_set`, and they survive a store reopen
   (`store.rs::the_ai_permission_settings_are_one_row_that_takes_partial_writes`).
-- A fresh database seeds the default threshold pair
-  (`store.rs::a_fresh_database_seeds_the_ai_permission_defaults`).
+- A fresh database seeds the default threshold pair, not hand-set
+  (`store.rs::a_fresh_database_seeds_the_ai_permission_defaults`,
+  `store.rs::the_ai_permission_settings_are_one_row_that_takes_partial_writes`).
 - `python_bin` and `nvidia_smi_bin` are read from `config.toml`, and
   `ai_permissions_release_url` and `ai_permissions_hardware` are refused,
   and the test seams are not keys of it
@@ -909,6 +962,11 @@ hardware facts in the card, with no Details popover`).
   every field, the hardware and the flavour and device table
   (`commands/permissions.rs::tests::set_thresholds_sends_both_fields_and_nothing_else`,
   `::show_omits_the_built_in_configuration`, `::flavour_rows_lists_every_flavour_and_device`).
+- `set --default-thresholds` sends `default_thresholds: true` alone, clap
+  refuses it beside a threshold flag, and `show` names a flavour default
+  (`commands/permissions.rs::tests::set_default_thresholds_sends_the_flag_alone`,
+  `::show_names_a_default_pair`, `cli/tests.rs::every_permissions_verb_parses`,
+  `cli/tests.rs::permissions_set_refuses_a_bad_threshold_flavour_or_device_locally`).
 - `set --flavour` alone, and `--flavour` with `--device`, send only the
   fields given, and the daemon's `flavour_unsupported` message survives whole
   (`commands/permissions.rs::tests::set_flavour_sends_the_flavour_alone`,

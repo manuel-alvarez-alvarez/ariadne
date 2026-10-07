@@ -2827,8 +2827,8 @@
         "tags": [
           "tasks"
         ],
-        "summary": "Record the pull or merge request the author opened for a task.",
-        "description": "The URL travels as a tool call, so a published task is either one the UI\nand the CLI can point at or one that was never reported.\n\nAnd this is the moment the task becomes the user's: a request nobody can\nmerge but a human is exactly what `waiting_user` says, so it goes up here,\non the session that opened it — the console they answer in, and the one place\nthe request can be traced back to. It used to be raised by the message the\nlanding briefing told the author to write, and a published task with\nnothing on the strip is one nobody knows to go and merge.\n\nIt stays up until the user acts: an agent's own events never take\n`waiting_user` down (`clear_agent_attention`), and the author polling its\nrequest is exactly such an agent. `Scheduler::keep_waiting_user` puts it\nback on whatever comes up when that author is restarted, which is what\nmakes the two halves one flag rather than two.",
+        "summary": "Record the pull or merge request the author opened for a task, and\nwhether it currently reads ready to merge.",
+        "description": "The URL travels as a tool call, so a published task is either one the UI\nand the CLI can point at or one that was never reported. Publication\nalone is not readiness: a request nobody can merge yet is not a human's\nto act on, so `ready` is what the pull-request skill reports once its own\npoll of the forge finds every required approval and check green.\n\nThis is the moment the task becomes the user's: a request ready to merge\nbut a human is exactly what `waiting_user` says, so it goes up here, on\nthe session that reported it — the console they answer in, and the one\nplace the request can be traced back to. It is raised only on the\ntransition into ready, so a poll that finds nothing changed raises\nnothing twice, and it comes back down the moment a later poll reports\n`ready: false` — a new change or a failed check that undid an earlier\nready read.\n\nOnce raised that way it stays up until the user acts: an agent's own\nevents never take `waiting_user` down (`clear_agent_attention`), and the\nauthor polling its request is exactly such an agent.\n`Scheduler::keep_waiting_user` puts it back on whatever comes up when\nthat author is restarted while the request still reads ready, which is\nwhat makes the two halves one flag rather than two.",
         "operationId": "record_pull_request",
         "parameters": [
           {
@@ -3330,6 +3330,7 @@
           "enabled",
           "allow_threshold",
           "deny_threshold",
+          "thresholds_default",
           "flavour",
           "device",
           "hardware",
@@ -3415,6 +3416,10 @@
           },
           "state": {
             "$ref": "#/components/schemas/AiPermissionsState"
+          },
+          "thresholds_default": {
+            "type": "boolean",
+            "description": "Whether the pair above is the default of the chosen flavour. `false`\nwhere the user set it by hand; a flavour change then keeps it."
           },
           "weights_present": {
             "type": "boolean",
@@ -5318,6 +5323,10 @@
           "url"
         ],
         "properties": {
+          "ready": {
+            "type": "boolean",
+            "description": "Whether every required approval and check last read green. Defaults\nto false, which records the URL without announcing it to the user."
+          },
           "url": {
             "type": "string",
             "description": "The request's URL, e.g. `https://github.com/owner/repo/pull/12`."
@@ -6620,6 +6629,10 @@
             ],
             "format": "double",
             "description": "Danger at or below this value is allowed. Values outside 0 to 1 are refused."
+          },
+          "default_thresholds": {
+            "type": "boolean",
+            "description": "`true` drops a pair set by hand and goes back to the default pair of\nthe chosen flavour. Refused alongside either threshold."
           },
           "deny_threshold": {
             "type": [

@@ -229,6 +229,7 @@ async fn a_test_request_scores_the_same_model_state_without_publishing_or_learni
             enabled: Some(true),
             allow_threshold: Some(0.13),
             deny_threshold: Some(0.53),
+            thresholds_hand_set: Some(true),
             ..Default::default()
         })
         .await

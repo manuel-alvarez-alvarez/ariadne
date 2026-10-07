@@ -284,6 +284,7 @@ export function anAiPermissionsStatus(
     enabled: false,
     allow_threshold: 0.2,
     deny_threshold: 0.8,
+    thresholds_default: false,
     flavour: "4b",
     device: "mlx",
     hardware: {

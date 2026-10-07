@@ -1114,22 +1114,29 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Record the pull or merge request the author opened for a task.
+         * Record the pull or merge request the author opened for a task, and
+         *     whether it currently reads ready to merge.
          * @description The URL travels as a tool call, so a published task is either one the UI
-         *     and the CLI can point at or one that was never reported.
+         *     and the CLI can point at or one that was never reported. Publication
+         *     alone is not readiness: a request nobody can merge yet is not a human's
+         *     to act on, so `ready` is what the pull-request skill reports once its own
+         *     poll of the forge finds every required approval and check green.
          *
-         *     And this is the moment the task becomes the user's: a request nobody can
-         *     merge but a human is exactly what `waiting_user` says, so it goes up here,
-         *     on the session that opened it — the console they answer in, and the one place
-         *     the request can be traced back to. It used to be raised by the message the
-         *     landing briefing told the author to write, and a published task with
-         *     nothing on the strip is one nobody knows to go and merge.
+         *     This is the moment the task becomes the user's: a request ready to merge
+         *     but a human is exactly what `waiting_user` says, so it goes up here, on
+         *     the session that reported it — the console they answer in, and the one
+         *     place the request can be traced back to. It is raised only on the
+         *     transition into ready, so a poll that finds nothing changed raises
+         *     nothing twice, and it comes back down the moment a later poll reports
+         *     `ready: false` — a new change or a failed check that undid an earlier
+         *     ready read.
          *
-         *     It stays up until the user acts: an agent's own events never take
-         *     `waiting_user` down (`clear_agent_attention`), and the author polling its
-         *     request is exactly such an agent. `Scheduler::keep_waiting_user` puts it
-         *     back on whatever comes up when that author is restarted, which is what
-         *     makes the two halves one flag rather than two.
+         *     Once raised that way it stays up until the user acts: an agent's own
+         *     events never take `waiting_user` down (`clear_agent_attention`), and the
+         *     author polling its request is exactly such an agent.
+         *     `Scheduler::keep_waiting_user` puts it back on whatever comes up when
+         *     that author is restarted while the request still reads ready, which is
+         *     what makes the two halves one flag rather than two.
          */
         post: operations["tasks_record_pull_request"];
         delete?: never;
@@ -1392,6 +1399,11 @@ export interface components {
             latest_release?: string | null;
             python: components["schemas"]["PythonDto"];
             state: components["schemas"]["AiPermissionsState"];
+            /**
+             * @description Whether the pair above is the default of the chosen flavour. `false`
+             *     where the user set it by hand; a flavour change then keeps it.
+             */
+            thresholds_default: boolean;
             /** @description Whether the checkpoints of the last good install are on disk. */
             weights_present: boolean;
         };
@@ -2253,6 +2265,11 @@ export interface components {
          *     and recorded on the task.
          */
         RecordPullRequestRequest: {
+            /**
+             * @description Whether every required approval and check last read green. Defaults
+             *     to false, which records the URL without announcing it to the user.
+             */
+            ready?: boolean;
             /** @description The request's URL, e.g. `https://github.com/owner/repo/pull/12`. */
             url: string;
         };
@@ -2862,6 +2879,11 @@ export interface components {
              * @description Danger at or below this value is allowed. Values outside 0 to 1 are refused.
              */
             allow_threshold?: number | null;
+            /**
+             * @description `true` drops a pair set by hand and goes back to the default pair of
+             *     the chosen flavour. Refused alongside either threshold.
+             */
+            default_thresholds?: boolean;
             /**
              * Format: double
              * @description Danger at or above this value is denied. Values outside 0 to 1 are refused.

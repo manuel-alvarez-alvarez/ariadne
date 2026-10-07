@@ -316,15 +316,37 @@ Two more settings:
 ariadne permissions ai set --allow-threshold 0.2 --deny-threshold 0.8
 ```
 
-The allow threshold defaults to `0.0201`, and the deny threshold defaults to
-`0.6321`. Both take values from 0 to 1, and the allow threshold must stay below
-the deny threshold. A fresh database uses this pair.
-Lower the allow threshold to ask about more requests.
-Lower the deny threshold to reject more dangerous requests without asking.
+Each flavour has its own default pair, and a pair you never set follows the
+flavour you choose:
+
+| Flavour | Allow threshold | Deny threshold |
+| --- | --- | --- |
+| `0.8b` | `0.0201` | `0.6321` (not measured; the `4b` pair) |
+| `4b` | `0.0201` | `0.6321` |
+| `9b` | `0.0201` | `0.6321` (the `4b` pair; the measured `9b` pair allows nothing) |
+| `27b` | `0.0201` | `0.6321` (not measured; the `4b` pair) |
+
+Both take values from 0 to 1, and the allow threshold must stay below the deny
+threshold. Lower the allow threshold to ask about more requests. Lower the
+deny threshold to reject more dangerous requests without asking.
+
 Set either or both with `ariadne permissions ai set --allow-threshold <value>
---deny-threshold <value>`. Refresh is manual only: `ariadne permissions ai
-refresh` reinstalls the same pinned package, adapter and base to repair them,
-and nothing runs it on a schedule.
+--deny-threshold <value>`. A threshold you set marks the whole pair as set by
+hand. A hand-set pair stays when you change the flavour. To go back to the
+default pair of the chosen flavour, run:
+
+```sh
+ariadne permissions ai set --default-thresholds
+```
+
+`ariadne permissions ai show` prints the pair in force, and its `thresholds`
+line says `flavour default` or `set by hand`. A database from before this
+choice existed reads a pair of `0.0201` / `0.6321` as the default, and any
+other pair as set by hand.
+
+Refresh is manual only: `ariadne permissions ai refresh` reinstalls the same
+pinned package, adapter and base to repair them, and nothing runs it on a
+schedule.
 
 The [AI permission benchmark](../bench/ai-permissions/README.md) selected
 Kev-4B with the three-level score question, temperature 0.6, derived risk
@@ -370,7 +392,9 @@ permission mode among four.
 In the desktop app, the **Permissions** screen holds the same settings, in one
 card: a switch for `enabled` — disabled, with the Python version it found (or
 that it found none), while there is no Python 3.12 or 3.13 to install into —
-and number fields for the allow and deny thresholds. A Refresh button reruns the install,
+and number fields for the allow and deny thresholds. Above the thresholds, a
+line says whether the pair is the default of the flavour or set by hand, and a
+hand-set pair has a **Use the flavour default** button. A Refresh button reruns the install,
 disabled while the model is off or already installing. Below them, a fact
 list shows the state, the installed and latest release, whether the
 checkpoints are on disk, the endpoint, and when the install last ended well;

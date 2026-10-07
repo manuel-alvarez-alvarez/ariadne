@@ -243,6 +243,23 @@ export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
 
       <div className="flex flex-col gap-2">
         <SectionHeading>Thresholds</SectionHeading>
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span>
+            {status.thresholds_default
+              ? `The default pair of ${status.flavour}`
+              : "Set by hand; a flavour change keeps it"}
+          </span>
+          {!status.thresholds_default ? (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={update.isPending}
+              onClick={() => send({ default_thresholds: true }, "Could not reset the thresholds")}
+            >
+              Use the flavour default
+            </Button>
+          ) : null}
+        </div>
         <ThresholdRange
           allowThreshold={status.allow_threshold}
           denyThreshold={status.deny_threshold}

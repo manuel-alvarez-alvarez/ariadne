@@ -13,6 +13,7 @@ pub struct AiPermissionSettingsUpdate {
     pub enabled: Option<bool>,
     pub allow_threshold: Option<f64>,
     pub deny_threshold: Option<f64>,
+    pub thresholds_hand_set: Option<bool>,
     /// `0.8b`, `4b`, `9b` or `27b`.
     pub flavour: Option<String>,
     /// `mlx`, `cuda` or `cpu`.
@@ -31,7 +32,8 @@ pub struct AiPermissionSettingsUpdate {
     pub last_error: Option<Option<String>>,
 }
 
-const COLUMNS: &str = "enabled, allow_threshold, deny_threshold, flavour, device, state, \
+const COLUMNS: &str = "enabled, allow_threshold, deny_threshold, thresholds_hand_set, \
+                       flavour, device, state, \
                        installed_release, latest_release, weights_present, \
                        last_refresh_at, last_error, updated_at";
 
@@ -61,6 +63,9 @@ impl Store {
         }
         if update.deny_threshold.is_some() {
             sets.push("deny_threshold = ?");
+        }
+        if update.thresholds_hand_set.is_some() {
+            sets.push("thresholds_hand_set = ?");
         }
         if update.flavour.is_some() {
             sets.push("flavour = ?");
@@ -103,6 +108,9 @@ impl Store {
         }
         if let Some(threshold) = update.deny_threshold {
             query = query.bind(threshold);
+        }
+        if let Some(hand_set) = update.thresholds_hand_set {
+            query = query.bind(hand_set);
         }
         if let Some(flavour) = update.flavour {
             query = query.bind(flavour);

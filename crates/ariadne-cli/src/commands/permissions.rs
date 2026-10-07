@@ -65,16 +65,19 @@ pub(crate) enum AiPermissionsCommand {
     },
     /// Change the decision thresholds, or the flavour and device
     #[command(group = clap::ArgGroup::new("ai-set")
-        .args(["allow_threshold", "deny_threshold", "flavour", "device"])
+        .args(["allow_threshold", "deny_threshold", "default_thresholds", "flavour", "device"])
         .required(true)
         .multiple(true))]
     Set {
-        /// Allow danger at or below this value, 0 to 1 (default 0.0531)
+        /// Allow danger at or below this value, 0 to 1 (default: the flavour's pair)
         #[arg(long, value_parser = parse_threshold)]
         allow_threshold: Option<f64>,
-        /// Deny danger at or above this value, 0 to 1 (default 0.6522)
+        /// Deny danger at or above this value, 0 to 1 (default: the flavour's pair)
         #[arg(long, value_parser = parse_threshold)]
         deny_threshold: Option<f64>,
+        /// Go back to the default threshold pair of the chosen flavour
+        #[arg(long, conflicts_with_all = ["allow_threshold", "deny_threshold"])]
+        default_thresholds: bool,
         /// The Kev flavour to run: 0.8b, 4b, 9b or 27b
         #[arg(long, value_parser = parse_flavour)]
         flavour: Option<Flavour>,
@@ -261,6 +264,7 @@ async fn run_ai(client: &Client, cmd: AiPermissionsCommand, format: Format) -> R
         AiPermissionsCommand::Set {
             allow_threshold,
             deny_threshold,
+            default_thresholds,
             flavour,
             device,
         } => {
@@ -269,6 +273,7 @@ async fn run_ai(client: &Client, cmd: AiPermissionsCommand, format: Format) -> R
                     enabled: None,
                     allow_threshold,
                     deny_threshold,
+                    default_thresholds,
                     flavour,
                     device,
                 })
@@ -466,6 +471,14 @@ fn fields(status: &AiPermissionsStatusDto) -> Vec<(&'static str, Kv)> {
         ("python", python_field(&status.python).into()),
         ("allow threshold", status.allow_threshold.to_string().into()),
         ("deny threshold", status.deny_threshold.to_string().into()),
+        (
+            "thresholds",
+            match status.thresholds_default {
+                true => "flavour default",
+                false => "set by hand",
+            }
+            .into(),
+        ),
         ("flavour", status.flavour.as_str().into()),
         ("device", status.device.as_str().into()),
         ("hardware", hardware_field(&status.hardware).into()),
@@ -552,6 +565,7 @@ mod tests {
             enabled: true,
             allow_threshold: 0.2,
             deny_threshold: 0.8,
+            thresholds_default: false,
             flavour: Flavour::Kev4B,
             device: Device::Mlx,
             hardware: ariadne_api::permissions::HardwareDto {
@@ -895,7 +909,7 @@ mod tests {
         };
         assert_eq!(
             crate::output::kv_block(&fields(&status), &crate::output::View::plain()),
-            "enabled            yes\nstate              ● ready\npython             3.12.1 at /usr/bin/python3\nallow threshold    0.2\ndeny threshold     0.8\nflavour            4b\ndevice             mlx\nhardware           macos aarch64, 64 GB RAM, no GPU\ninstalled release  v0.1.4\nlatest release     v0.1.4\nweights            yes\nendpoint           http://127.0.0.1:8900\nlast refresh       never\nlast error         -"
+            "enabled            yes\nstate              ● ready\npython             3.12.1 at /usr/bin/python3\nallow threshold    0.2\ndeny threshold     0.8\nthresholds         set by hand\nflavour            4b\ndevice             mlx\nhardware           macos aarch64, 64 GB RAM, no GPU\ninstalled release  v0.1.4\nlatest release     v0.1.4\nweights            yes\nendpoint           http://127.0.0.1:8900\nlast refresh       never\nlast error         -"
         );
     }
 
@@ -1024,6 +1038,7 @@ mod tests {
             PermissionsCommand::Ai(AiPermissionsCommand::Set {
                 allow_threshold: None,
                 deny_threshold: None,
+                default_thresholds: false,
                 flavour: Some(Flavour::Kev9B),
                 device: None,
             }),
@@ -1046,6 +1061,7 @@ mod tests {
             PermissionsCommand::Ai(AiPermissionsCommand::Set {
                 allow_threshold: None,
                 deny_threshold: None,
+                default_thresholds: false,
                 flavour: Some(Flavour::Kev08B),
                 device: Some(Device::Cpu),
             }),
@@ -1081,6 +1097,7 @@ mod tests {
             PermissionsCommand::Ai(AiPermissionsCommand::Set {
                 allow_threshold: None,
                 deny_threshold: None,
+                default_thresholds: false,
                 flavour: Some(Flavour::Kev9B),
                 device: Some(Device::Cuda),
             }),
@@ -1106,6 +1123,7 @@ mod tests {
             PermissionsCommand::Ai(AiPermissionsCommand::Set {
                 allow_threshold: Some(0.2),
                 deny_threshold: Some(0.8),
+                default_thresholds: false,
                 flavour: None,
                 device: None,
             }),
@@ -1118,6 +1136,44 @@ mod tests {
         assert_eq!(
             seen.lock().unwrap()[0],
             json!({"allow_threshold": 0.2, "deny_threshold": 0.8})
+        );
+    }
+
+    /// `set --default-thresholds` sends `{"default_thresholds": true}` and
+    /// nothing else.
+    #[tokio::test]
+    async fn set_default_thresholds_sends_the_flag_alone() {
+        let (client, server, seen) = capturing_put().await;
+
+        run(
+            &client,
+            PermissionsCommand::Ai(AiPermissionsCommand::Set {
+                allow_threshold: None,
+                deny_threshold: None,
+                default_thresholds: true,
+                flavour: None,
+                device: None,
+            }),
+            Format::Json,
+        )
+        .await
+        .unwrap();
+        server.abort();
+
+        assert_eq!(seen.lock().unwrap()[0], json!({"default_thresholds": true}));
+    }
+
+    /// `show` names a flavour default as such.
+    #[test]
+    fn show_names_a_default_pair() {
+        let status = AiPermissionsStatusDto {
+            thresholds_default: true,
+            ..status(AiPermissionsState::Ready)
+        };
+        let shown = crate::output::kv_block(&fields(&status), &crate::output::View::plain());
+        assert!(
+            shown.contains("thresholds         flavour default"),
+            "{shown}"
         );
     }
 
@@ -1142,6 +1198,7 @@ mod tests {
             PermissionsCommand::Ai(AiPermissionsCommand::Set {
                 allow_threshold: Some(0.8),
                 deny_threshold: Some(0.8),
+                default_thresholds: false,
                 flavour: None,
                 device: None,
             }),

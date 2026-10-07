@@ -295,6 +295,9 @@ pub struct AiPermissionsStatusDto {
     /// Danger at or above this value is denied, 0 to 1.
     #[schema(example = 0.6321)]
     pub deny_threshold: f64,
+    /// Whether the pair above is the default of the chosen flavour. `false`
+    /// where the user set it by hand; a flavour change then keeps it.
+    pub thresholds_default: bool,
     /// The Kev flavour chosen, `4b` by default where the machine can run it.
     pub flavour: Flavour,
     /// The device the flavour runs on: the best one the machine could run it
@@ -331,6 +334,10 @@ pub struct UpdateAiPermissionsRequest {
     pub allow_threshold: Option<f64>,
     /// Danger at or above this value is denied. Values outside 0 to 1 are refused.
     pub deny_threshold: Option<f64>,
+    /// `true` drops a pair set by hand and goes back to the default pair of
+    /// the chosen flavour. Refused alongside either threshold.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub default_thresholds: bool,
     /// A flavour with no device picks the best device that runs it.
     pub flavour: Option<Flavour>,
     /// A device with no flavour keeps the stored flavour.

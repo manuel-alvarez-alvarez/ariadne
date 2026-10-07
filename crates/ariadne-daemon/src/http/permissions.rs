@@ -131,6 +131,13 @@ pub(super) async fn update(
         }
     }
 
+    let setting_thresholds = req.allow_threshold.is_some() || req.deny_threshold.is_some();
+    if req.default_thresholds && setting_thresholds {
+        return Err(invalid(
+            "default thresholds cannot be sent with a threshold".to_string(),
+        ));
+    }
+
     let before = state.ai_permissions.status().await;
     let allow_threshold = req.allow_threshold.unwrap_or(before.allow_threshold);
     let deny_threshold = req.deny_threshold.unwrap_or(before.deny_threshold);
@@ -186,8 +193,16 @@ pub(super) async fn update(
 
     let update = AiPermissionSettingsUpdate {
         enabled: req.enabled,
-        allow_threshold: req.allow_threshold,
-        deny_threshold: req.deny_threshold,
+        // A threshold sent marks the whole pair hand-set, so both halves are
+        // stored: the one not sent is the one in force before, which may be
+        // a flavour default the row never held.
+        allow_threshold: setting_thresholds.then_some(allow_threshold),
+        deny_threshold: setting_thresholds.then_some(deny_threshold),
+        thresholds_hand_set: match (setting_thresholds, req.default_thresholds) {
+            (true, _) => Some(true),
+            (false, true) => Some(false),
+            (false, false) => None,
+        },
         flavour: chosen.map(|(flavour, _)| flavour.as_str().to_string()),
         device: chosen.map(|(_, device)| device.as_str().to_string()),
         // Turning the model off leaves the files where they are and says so;

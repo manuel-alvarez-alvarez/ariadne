@@ -192,6 +192,9 @@ pub struct AiPermissionSettings {
     pub allow_threshold: f64,
     /// Danger at or above this value is denied, 0 to 1.
     pub deny_threshold: f64,
+    /// Whether the user set the pair above by hand. Where not, the pair in
+    /// force is the default of the chosen flavour, and the stored one is unread.
+    pub thresholds_hand_set: bool,
     /// `0.8b`, `4b`, `9b` or `27b`.
     pub flavour: String,
     /// `mlx`, `cuda` or `cpu`. `None` until the daemon fills it at startup.

@@ -1485,6 +1485,7 @@ fn every_permissions_verb_parses() {
             PermissionsCommand::Ai(AiPermissionsCommand::Set {
                 allow_threshold,
                 deny_threshold,
+                default_thresholds,
                 flavour,
                 device,
             }),
@@ -1510,6 +1511,25 @@ fn every_permissions_verb_parses() {
     assert_eq!(deny_threshold, Some(0.8));
     assert_eq!(flavour, Some(ariadne_api::permissions::Flavour::Kev9B));
     assert_eq!(device, Some(ariadne_api::permissions::Device::Cuda));
+    assert!(!default_thresholds);
+
+    let Command::Permissions {
+        command:
+            PermissionsCommand::Ai(AiPermissionsCommand::Set {
+                default_thresholds, ..
+            }),
+    } = parse(&[
+        "ariadne",
+        "permissions",
+        "ai",
+        "set",
+        "--default-thresholds",
+    ])
+    .command
+    else {
+        panic!("permissions ai set --default-thresholds");
+    };
+    assert!(default_thresholds);
 
     let Command::Permissions {
         command: PermissionsCommand::Ai(AiPermissionsCommand::Set { flavour, .. }),
@@ -1696,8 +1716,23 @@ fn permissions_set_refuses_a_bad_threshold_flavour_or_device_locally() {
         panic!("help ends parsing");
     };
     let help = help.to_string();
-    assert!(help.contains("default 0.0531"), "{help}");
-    assert!(help.contains("default 0.6522"), "{help}");
+    assert!(help.contains("default: the flavour's pair"), "{help}");
+    assert!(help.contains("--default-thresholds"), "{help}");
+
+    for flag in ["--allow-threshold", "--deny-threshold"] {
+        let Err(err) = try_parse(&[
+            "ariadne",
+            "permissions",
+            "ai",
+            "set",
+            "--default-thresholds",
+            flag,
+            "0.2",
+        ]) else {
+            panic!("--default-thresholds goes alone with {flag}");
+        };
+        assert!(err.to_string().contains("cannot be used with"), "{err}");
+    }
 
     for flag in ["--allow-threshold", "--deny-threshold"] {
         let Err(err) = try_parse(&["ariadne", "permissions", "ai", "set", flag, "1.5"]) else {

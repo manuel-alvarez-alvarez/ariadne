@@ -275,6 +275,24 @@ it("sends the deny threshold typed, once the field is left", async () => {
   await waitFor(() => expect(lastWrite()?.body).toEqual({ deny_threshold: 0.9 }))
 })
 
+it("sends default_thresholds alone from the reset button of a hand-set pair", async () => {
+  const user = userEvent.setup()
+  renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
+
+  expect(await screen.findByText("Set by hand; a flavour change keeps it")).toBeDefined()
+  await user.click(screen.getByRole("button", { name: "Use the flavour default" }))
+
+  await waitFor(() => expect(lastWrite()?.body).toEqual({ default_thresholds: true }))
+})
+
+it("names the flavour default and offers no reset while the pair is the default", async () => {
+  current = anAiPermissionsStatus({ thresholds_default: true, flavour: "9b" })
+  renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
+
+  expect(await screen.findByText("The default pair of 9b")).toBeDefined()
+  expect(screen.queryByRole("button", { name: "Use the flavour default" })).toBeNull()
+})
+
 it("toasts the daemon's own message on a refused threshold, and puts the value back", async () => {
   stubDaemon({
     status: 422,

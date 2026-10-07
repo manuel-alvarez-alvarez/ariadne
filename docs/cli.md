@@ -468,15 +468,19 @@ what each setting does.
 ariadne permissions ai show                    # settings, hardware, flavours and devices
 ariadne permissions ai enable --wait            # turn it on and wait for the install
 ariadne permissions ai set --allow-threshold 0.2 --deny-threshold 0.8
+ariadne permissions ai set --default-thresholds # back to the flavour's pair
 ariadne permissions ai set --flavour 9b --device cuda  # only a combination the machine can run
 ariadne permissions ai refresh --wait           # install again, on the settings as they stand
 ariadne permissions ai disable                  # keeps the files
 ```
 
-The allow threshold defaults to `0.0531`, and the deny threshold defaults to
-`0.6522`. Each must be from 0 to 1, and the allow threshold must be lower than
-the deny threshold. The daemon refuses an invalid pair without changing either
-setting.
+Each flavour has a default threshold pair, and a pair you never set follows
+the flavour ([Permission modes](permissions.md#the-ai-permission-model) lists
+them). Each threshold must be from 0 to 1, and the allow threshold must be
+lower than the deny threshold. The daemon refuses an invalid pair without
+changing either setting. A threshold you set keeps the pair across a flavour
+change; `--default-thresholds` goes back to the flavour's pair and cannot be
+given with a threshold.
 
 `enable` and `refresh` answer at once with `installing`; `--wait` blocks
 until the install leaves that state and exits 1 with the reason on a

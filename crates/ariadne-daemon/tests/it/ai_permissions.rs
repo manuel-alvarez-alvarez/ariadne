@@ -34,6 +34,13 @@ const PIN: &str = "kev@f1535963 jaredpalmer/kev-4b@139fdd94 on mlx";
 const RUN: &str = "jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101";
 const KEV_COMMIT: &str = "f1535963cea021439370c23127bc970b6788e730";
 
+/// The default threshold pair of `4b`, which the benchmark selected on kev-4b
+/// (022, rule 24). `0.8b` and `27b` take it too.
+const PAIR_4B: (f64, f64) = (0.0201, 0.6321);
+/// The default threshold pair of `9b`: the 4b pair, since the benchmark's
+/// kev-9b pair allows nothing.
+const PAIR_9B: (f64, f64) = (0.0201, 0.6321);
+
 // -- the stubs ---------------------------------------------------------------
 
 /// An interpreter that prints `version` and nothing else, the way `python3
@@ -132,8 +139,9 @@ async fn the_settings_start_at_the_defaults_with_the_interpreter_probed() {
 
     let status = status(&h).await;
     assert!(!status.enabled);
-    assert_eq!(status.allow_threshold, 0.0201);
-    assert_eq!(status.deny_threshold, 0.6321);
+    assert_eq!(status.flavour.as_str(), "4b");
+    assert_eq!((status.allow_threshold, status.deny_threshold), PAIR_4B);
+    assert!(status.thresholds_default);
     assert_eq!(status.state, AiPermissionsState::Disabled);
     assert_eq!(status.installed_release, None);
     assert_eq!(status.latest_release, None);
@@ -309,6 +317,98 @@ async fn the_settings_are_validated_and_survive_a_daemon_restart() {
     let kept = ai_permissions.status().await;
     assert_eq!(kept.allow_threshold, 0.2);
     assert_eq!(kept.deny_threshold, 0.8);
+}
+
+fn pair(status: &AiPermissionsStatusDto) -> (f64, f64) {
+    (status.allow_threshold, status.deny_threshold)
+}
+
+/// A fresh daemon switched to `9b` reports the default pair of `9b`, not the
+/// pair the row was seeded with.
+#[tokio::test]
+async fn a_fresh_daemon_on_9b_reports_the_9b_default_pair() {
+    let h = with_ai_permissions("3.13.1").await;
+
+    let on_9b: AiPermissionsStatusDto = h
+        .json(update(json!({"flavour": "9b"})), StatusCode::OK)
+        .await;
+
+    assert_eq!(on_9b.flavour.as_str(), "9b");
+    assert_eq!(pair(&on_9b), PAIR_9B);
+    assert!(on_9b.thresholds_default);
+}
+
+/// A pair nobody set by hand follows each flavour change to that flavour's
+/// default. A threshold sent marks the pair hand-set, and a later flavour
+/// change keeps it.
+#[tokio::test]
+async fn a_hand_set_pair_survives_a_flavour_change_and_a_default_pair_follows_it() {
+    let h = with_ai_permissions("3.13.1").await;
+    let on_9b: AiPermissionsStatusDto = h
+        .json(update(json!({"flavour": "9b"})), StatusCode::OK)
+        .await;
+    assert_eq!(pair(&on_9b), PAIR_9B);
+
+    let on_4b: AiPermissionsStatusDto = h
+        .json(update(json!({"flavour": "4b"})), StatusCode::OK)
+        .await;
+    assert_eq!(pair(&on_4b), PAIR_4B, "a default pair follows the flavour");
+    assert!(on_4b.thresholds_default);
+
+    let hand_set: AiPermissionsStatusDto = h
+        .json(update(json!({"allow_threshold": 0.2})), StatusCode::OK)
+        .await;
+    assert_eq!(pair(&hand_set), (0.2, PAIR_4B.1));
+    assert!(!hand_set.thresholds_default);
+
+    let switched: AiPermissionsStatusDto = h
+        .json(update(json!({"flavour": "9b"})), StatusCode::OK)
+        .await;
+    assert_eq!(switched.flavour.as_str(), "9b");
+    assert_eq!(pair(&switched), (0.2, PAIR_4B.1), "a hand-set pair stays");
+    assert!(!switched.thresholds_default);
+}
+
+/// `default_thresholds` drops a hand-set pair and goes back to the default
+/// of the chosen flavour. Sent with a threshold, it is refused and writes
+/// nothing.
+#[tokio::test]
+async fn default_thresholds_returns_a_hand_set_pair_to_the_flavour_default() {
+    let h = with_ai_permissions("3.13.1").await;
+    let _: AiPermissionsStatusDto = h
+        .json(
+            update(json!({"flavour": "9b", "allow_threshold": 0.2, "deny_threshold": 0.8})),
+            StatusCode::OK,
+        )
+        .await;
+
+    let refused: ErrorBody = h
+        .json(
+            update(json!({"default_thresholds": true, "allow_threshold": 0.3})),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    assert_eq!(refused.error.code, "invalid_request");
+    assert_eq!(
+        pair(&status(&h).await),
+        (0.2, 0.8),
+        "a refusal wrote nothing"
+    );
+
+    let reset: AiPermissionsStatusDto = h
+        .json(update(json!({"default_thresholds": true})), StatusCode::OK)
+        .await;
+    assert_eq!(pair(&reset), PAIR_9B);
+    assert!(reset.thresholds_default);
+
+    let on_4b: AiPermissionsStatusDto = h
+        .json(update(json!({"flavour": "4b"})), StatusCode::OK)
+        .await;
+    assert_eq!(
+        pair(&on_4b),
+        PAIR_4B,
+        "the reset pair follows the flavour again"
+    );
 }
 
 /// The old name of the settings is gone from the wire: nothing answers at the
@@ -623,6 +723,15 @@ async fn the_endpoint_is_the_configured_one_and_live_needs_the_model_on() {
     assert_eq!(live.endpoint, "http://127.0.0.1:9001");
     assert_eq!(live.allow_threshold, 0.2);
     assert_eq!(live.deny_threshold, 0.8);
+    let _: AiPermissionsStatusDto = h
+        .json(update(json!({"default_thresholds": true})), StatusCode::OK)
+        .await;
+    let live = h.state.ai_permissions.live().await.expect("still served");
+    assert_eq!(
+        (live.allow_threshold, live.deny_threshold),
+        PAIR_4B,
+        "a decision holds the flavour default once the pair is reset"
+    );
     assert_eq!(
         status(&h).await.endpoint.as_deref(),
         Some("http://127.0.0.1:9001"),
@@ -677,13 +786,19 @@ async fn the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document() {
     ] {
         assert!(schemas[name].is_object(), "{name} is not in the document");
     }
-    for field in ["flavour", "device", "hardware", "flavours"] {
+    for field in [
+        "flavour",
+        "device",
+        "hardware",
+        "flavours",
+        "thresholds_default",
+    ] {
         assert!(
             schemas["AiPermissionsStatusDto"]["properties"][field].is_object(),
             "{field} is absent from the status schema"
         );
     }
-    for field in ["flavour", "device"] {
+    for field in ["flavour", "device", "default_thresholds"] {
         assert!(
             schemas["UpdateAiPermissionsRequest"]["properties"][field].is_object(),
             "{field} is absent from the update schema"

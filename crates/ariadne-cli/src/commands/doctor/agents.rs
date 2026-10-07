@@ -334,6 +334,7 @@ mod tests {
             enabled: true,
             allow_threshold: 0.2,
             deny_threshold: 0.8,
+            thresholds_default: false,
             flavour: ariadne_api::permissions::Flavour::Kev4B,
             device: ariadne_api::permissions::Device::Mlx,
             hardware: ariadne_api::permissions::HardwareDto {

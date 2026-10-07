@@ -665,6 +665,9 @@ fn ai_permissions_update_body(req: &UpdateAiPermissionsRequest) -> serde_json::V
     if let Some(threshold) = req.deny_threshold {
         body.insert("deny_threshold".into(), threshold.into());
     }
+    if req.default_thresholds {
+        body.insert("default_thresholds".into(), true.into());
+    }
     if let Some(flavour) = req.flavour {
         body.insert(
             "flavour".into(),
@@ -882,6 +885,13 @@ mod tests {
                 ..Default::default()
             }),
             serde_json::json!({"allow_threshold": 0.2, "deny_threshold": 0.8})
+        );
+        assert_eq!(
+            ai_permissions_update_body(&UpdateAiPermissionsRequest {
+                default_thresholds: true,
+                ..Default::default()
+            }),
+            serde_json::json!({"default_thresholds": true})
         );
         assert_eq!(
             ai_permissions_update_body(&UpdateAiPermissionsRequest {
