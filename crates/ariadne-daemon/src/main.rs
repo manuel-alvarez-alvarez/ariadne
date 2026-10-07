@@ -166,6 +166,12 @@ async fn main() -> Result<()> {
         store.clone(),
         ariadne_daemon::timeouts::Timeouts::default().checkpoint,
     );
+    let forge_poll = ariadne_daemon::forge::poll::start(
+        store.clone(),
+        config.clone(),
+        &events,
+        ariadne_daemon::timeouts::Timeouts::default().forge_poll,
+    );
     let sched_tx = ariadne_daemon::scheduler::start(
         store.clone(),
         launcher.clone(),
@@ -177,6 +183,7 @@ async fn main() -> Result<()> {
     // than asking every agent itself.
     outside_sessions.warm(&agent_registry).await;
     let state = AppState {
+        forge_poll,
         store,
         started_at: Instant::now(),
         started_at_utc: chrono::Utc::now(),

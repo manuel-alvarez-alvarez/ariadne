@@ -417,7 +417,14 @@ impl HarnessBuilder {
             .scheduler
             .then(|| scheduler::start(store.clone(), launcher.clone(), false, self.timeouts));
         let logs = self.logs.unwrap_or_default();
+        let forge_poll = ariadne_daemon::forge::poll::start(
+            store.clone(),
+            launcher.cfg.clone(),
+            &bus,
+            self.timeouts.forge_poll,
+        );
         let state = AppState {
+            forge_poll,
             store: store.clone(),
             started_at: Instant::now(),
             started_at_utc: chrono::Utc::now(),

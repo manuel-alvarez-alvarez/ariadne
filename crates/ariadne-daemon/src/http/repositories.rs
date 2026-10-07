@@ -57,6 +57,7 @@ pub(super) async fn create(
             row,
         )
         .await?;
+    state.forge_poll.changed(&repository.id).await;
     Ok((StatusCode::CREATED, Json(repository_dto(repository))))
 }
 
@@ -139,6 +140,8 @@ pub(super) async fn update(
             write,
         )
         .await?;
+    state.store.close_disabled_pull_requests(&id).await?;
+    state.forge_poll.changed(&id).await;
     Ok(Json(repository_dto(repository)))
 }
 

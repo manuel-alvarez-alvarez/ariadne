@@ -82,6 +82,9 @@ pub struct ResyncDto {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "event", content = "data", rename_all = "snake_case")]
 pub enum DomainEvent {
+    PullRequestCreated(crate::pull_requests::PullRequestDto),
+    PullRequestUpdated(crate::pull_requests::PullRequestDto),
+    PullRequestDeleted(crate::pull_requests::PullRequestDto),
     GoalCreated(GoalDto),
     /// Covers status changes: finalize, cancel, completion.
     GoalUpdated(GoalDto),
@@ -118,6 +121,9 @@ impl DomainEvent {
     /// SSE `event:` name.
     pub fn kind(&self) -> &'static str {
         match self {
+            Self::PullRequestCreated(_) => "pull_request_created",
+            Self::PullRequestUpdated(_) => "pull_request_updated",
+            Self::PullRequestDeleted(_) => "pull_request_deleted",
             Self::GoalCreated(_) => "goal_created",
             Self::GoalUpdated(_) => "goal_updated",
             Self::GoalDeleted(_) => "goal_deleted",
@@ -148,6 +154,9 @@ impl DomainEvent {
             serde_json::to_value(value).unwrap_or(serde_json::Value::Null)
         }
         match self {
+            Self::PullRequestCreated(p)
+            | Self::PullRequestUpdated(p)
+            | Self::PullRequestDeleted(p) => json(p),
             Self::GoalCreated(g) | Self::GoalUpdated(g) => json(g),
             Self::GoalDeleted(d) => json(d),
             Self::TaskCreated(t) => json(t),

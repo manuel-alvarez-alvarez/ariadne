@@ -157,3 +157,18 @@ describe("usePanelSessionNavigation", () => {
     expect(params.has("session")).toBe(false)
   })
 })
+
+describe("pull request panel navigation", () => {
+  it("replaces the request panel with a task or session and keeps list filters", () => {
+    const current = new URLSearchParams("pr=p1&repo=r1&role=author")
+    for (const target of [
+      taskPanelTo(current, "t1"),
+      sessionPanelFrom(paths.pullRequests(), current, "s1"),
+    ]) {
+      const params = new URLSearchParams(target.search)
+      expect(params.has("pr")).toBe(false)
+      expect(params.get("repo")).toBe("r1")
+      expect(params.get("role")).toBe("author")
+    }
+  })
+})

@@ -336,6 +336,15 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
         Change::SkillCreated(skill) => unscoped(DomainEvent::SkillCreated(skill_dto(skill))),
         Change::SkillUpdated(skill) => unscoped(DomainEvent::SkillUpdated(skill_dto(skill))),
         Change::SkillDeleted(name) => unscoped(DomainEvent::SkillDeleted(DeletedDto { id: name })),
+        Change::PullRequestCreated(row) => unscoped(DomainEvent::PullRequestCreated(
+            crate::http::convert::pull_request_dto(row),
+        )),
+        Change::PullRequestUpdated(row) => unscoped(DomainEvent::PullRequestUpdated(
+            crate::http::convert::pull_request_dto(row),
+        )),
+        Change::PullRequestDeleted(row) => unscoped(DomainEvent::PullRequestDeleted(
+            crate::http::convert::pull_request_dto(row),
+        )),
         Change::RepositoryCreated(repo) => {
             unscoped(DomainEvent::RepositoryCreated(repository_dto(repo)))
         }

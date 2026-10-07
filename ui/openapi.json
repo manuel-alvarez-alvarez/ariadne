@@ -1218,6 +1218,198 @@
         }
       }
     },
+    "/v1/pull-requests": {
+      "get": {
+        "tags": [
+          "pull-requests"
+        ],
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "role",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "Open by default; `all` includes closed and merged requests.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PullRequestDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "pull-requests"
+        ],
+        "operationId": "add",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddPullRequestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullRequestDto"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullRequestDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/pull-requests/refresh": {
+      "post": {
+        "tags": [
+          "pull-requests"
+        ],
+        "operationId": "refresh",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/pull-requests/{id}": {
+      "get": {
+        "tags": [
+          "pull-requests"
+        ],
+        "operationId": "get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullRequestDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "pull-requests"
+        ],
+        "operationId": "delete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/repositories": {
       "get": {
         "tags": [
@@ -1467,6 +1659,50 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/IssueDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/repositories/{id}/pull-requests/search": {
+      "get": {
+        "tags": [
+          "pull-requests"
+        ],
+        "operationId": "search",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PullRequestMatchDto"
+                  }
                 }
               }
             }
@@ -3224,6 +3460,31 @@
           "user"
         ]
       },
+      "AddPullRequestRequest": {
+        "type": "object",
+        "properties": {
+          "number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "repository_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "AgentAssignment": {
         "type": "object",
         "description": "One agent to staff on a task: where it sits, the skills it loads, and what\nit is to run on.\n\nThe model is written `<agent>:<model>`: the id of an agent in the ACP\nregistry, and after the `:` one model of it. Both halves are required — a\nmodel is required, and no agent default stands in for one — and a string\nnaming no registry agent is refused: nothing here derives one from the\nother.",
@@ -3983,6 +4244,60 @@
       },
       "DomainEvent": {
         "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/PullRequestDto"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "pull_request_created"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/PullRequestDto"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "pull_request_updated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/PullRequestDto"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "pull_request_deleted"
+                ]
+              }
+            }
+          },
           {
             "type": "object",
             "required": [
@@ -5574,6 +5889,143 @@
           }
         },
         "additionalProperties": false
+      },
+      "PullRequestDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "repository_id",
+          "number",
+          "url",
+          "title",
+          "author_login",
+          "tracked_by",
+          "state",
+          "draft",
+          "head_branch",
+          "head_sha",
+          "base_branch",
+          "checks",
+          "review_decision",
+          "unanswered_comments",
+          "opened_at",
+          "role",
+          "ready",
+          "last_seen_at",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "author_login": {
+            "type": "string"
+          },
+          "base_branch": {
+            "type": "string"
+          },
+          "checks": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "draft": {
+            "type": "boolean"
+          },
+          "head_branch": {
+            "type": "string"
+          },
+          "head_repo": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "head_sha": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_seen_at": {
+            "type": "string"
+          },
+          "number": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "opened_at": {
+            "type": "string"
+          },
+          "origin_task_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ready": {
+            "type": "boolean"
+          },
+          "repository_id": {
+            "type": "string"
+          },
+          "review_decision": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "tracked_by": {
+            "type": "string"
+          },
+          "unanswered_comments": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "PullRequestMatchDto": {
+        "type": "object",
+        "required": [
+          "number",
+          "url",
+          "title",
+          "author_login",
+          "role",
+          "tracked"
+        ],
+        "properties": {
+          "author_login": {
+            "type": "string"
+          },
+          "number": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "role": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "tracked": {
+            "type": "boolean"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
       },
       "PythonDto": {
         "type": "object",
@@ -7273,6 +7725,10 @@
     {
       "name": "goals",
       "description": "Goals and their plans"
+    },
+    {
+      "name": "pull-requests",
+      "description": "The tracked pull request ledger"
     },
     {
       "name": "issues",

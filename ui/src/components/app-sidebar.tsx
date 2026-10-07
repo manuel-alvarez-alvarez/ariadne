@@ -50,6 +50,7 @@ import { paths } from "@/routes/paths"
  */
 const NAV_ITEMS: { to: string; label: string; icon: LucideIcon; counts?: boolean }[] = [
   { to: paths.goals(), label: "Goals", icon: TargetIcon, counts: true },
+  { to: paths.pullRequests(), label: "Pull requests", icon: ListTodoIcon },
   { to: paths.issues(), label: "Issues", icon: ListTodoIcon },
   { to: paths.sessions(), label: "Sessions", icon: RadioTowerIcon },
   { to: paths.skills(), label: "Skills", icon: CpuIcon },

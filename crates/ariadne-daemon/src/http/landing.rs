@@ -171,7 +171,8 @@ pub(super) async fn open_pull_request(
         )));
     }
     // One request per task: a second call answers the same URL.
-    if task.pr_url.is_some() {
+    if let Some(url) = task.pr_url.as_deref() {
+        record_opened_pull_request(&state, &task, url).await?;
         return Ok(Json(task_dto_of(&state.store, task).await?));
     }
 
@@ -218,8 +219,43 @@ pub(super) async fn open_pull_request(
         .map_err(unresolved)?;
 
     state.store.set_task_pull_request(&id, &url).await?;
+    record_opened_pull_request(&state, &task, &url).await?;
     let task = state.store.get_task(&id).await?;
     Ok(Json(task_dto_of(&state.store, task).await?))
+}
+
+async fn record_opened_pull_request(state: &AppState, task: &Task, url: &str) -> ApiResult<()> {
+    let Some(forge) = state
+        .store
+        .forge_integration(&task.repo_id)
+        .await?
+        .filter(|f| f.enabled)
+    else {
+        return Ok(());
+    };
+    let reference = crate::forge::PullRequestRef::parse(url, &forge)
+        .ok_or_else(|| ApiError::conflict("the pull request URL does not match the repository"))?;
+    let slug = format!("{}/{}/{}", forge.host, forge.owner, forge.name);
+    let pull = ForgeClient::for_repository(&state.launcher.cfg, &forge)
+        .pull_request(&slug, reference.number)
+        .await
+        .map_err(unresolved)?;
+    if pull.number != reference.number {
+        return Err(ApiError::conflict(
+            "the forge returned another request number",
+        ));
+    }
+    crate::forge::pulls::record(
+        &state.store,
+        &forge,
+        pull,
+        "forge",
+        Some(task.id.clone()),
+        None,
+    )
+    .await
+    .map_err(unresolved)?;
+    Ok(())
 }
 
 /// The messages of a task: what its agents have said to each other.

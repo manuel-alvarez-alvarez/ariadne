@@ -1,6 +1,7 @@
 //! GitHub, through `gh`.
 
 mod open;
+mod pulls;
 
 use super::Cli;
 mod issues;

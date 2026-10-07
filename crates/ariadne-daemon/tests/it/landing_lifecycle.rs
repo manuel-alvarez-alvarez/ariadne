@@ -507,6 +507,14 @@ async fn a_revision_of_a_published_request_goes_back_to_the_reviewers() {
         )
         .await;
     assert_eq!(published.pr_url.as_deref(), Some(URL));
+    assert!(
+        h.store
+            .list_pull_requests(ariadne_store::PullRequestFilter::default())
+            .await
+            .unwrap()
+            .is_empty(),
+        "an off integration records only the task URL"
+    );
 
     let reviewer_session = h
         .session(&cast.goal, Some(&task), Seat::Reviewer, &cast.reviewer.id)

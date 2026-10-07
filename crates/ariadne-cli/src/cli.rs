@@ -343,6 +343,16 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: SkillCommand,
     },
+    /// Track pull requests
+    ///
+    /// Follow your authored requests, requested reviews, and requests added by hand.
+    #[command(
+        after_help = "Examples:\n  ariadne pr ls --watch\n  ariadne pr add https://github.com/owner/repo/pull/42\n  ariadne pr refresh"
+    )]
+    Pr {
+        #[command(subcommand)]
+        command: crate::commands::pr::PrCommand,
+    },
     /// Manage repositories
     ///
     /// The checkouts goals may work in. A repository is registered once —
@@ -521,6 +531,8 @@ const NO_FORMAT: &[&[&str]] = &[
 /// global so `ariadne -o wide task ls` works; that is also what would
 /// otherwise advertise `--columns` on `task cancel`.
 const LISTINGS: &[&str] = &[
+    "pr ls",
+    "pr search",
     "agent ls",
     "agent refresh",
     "attention",
@@ -586,7 +598,7 @@ const PAGED: &[&str] = &["session logs", "task diff", "task logs", "task message
 /// with on every other command. Test-only: nothing at runtime hides the flag
 /// on the caller's behalf, so nothing at runtime needs the list.
 #[cfg(test)]
-const WATCHED: &[&str] = &["attention", "goal ls", "session ls", "task ls"];
+const WATCHED: &[&str] = &["attention", "goal ls", "session ls", "task ls", "pr ls"];
 
 /// The clap command, with each global flag hidden wherever it does nothing.
 ///

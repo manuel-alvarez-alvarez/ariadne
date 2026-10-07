@@ -26,6 +26,9 @@ import { parsePayload, ReconnectingEventStream } from "./reconnecting-stream"
  * until it is listed (and handled in `dispatch.ts`).
  */
 const DOMAIN_EVENT_KINDS_PRESENT: Record<DomainEventKind, true> = {
+  pull_request_created: true,
+  pull_request_updated: true,
+  pull_request_deleted: true,
   goal_created: true,
   goal_updated: true,
   goal_deleted: true,

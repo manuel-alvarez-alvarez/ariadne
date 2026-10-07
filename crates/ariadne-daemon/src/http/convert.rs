@@ -430,3 +430,34 @@ async fn goal_usage(store: &Store, goal_id: &str) -> Result<GoalUsageDto, StoreE
         reviewers: of(Seat::Reviewer),
     })
 }
+
+/// The complete ledger row, shared by REST and events.
+pub(crate) fn pull_request_dto(
+    row: ariadne_store::PullRequest,
+) -> ariadne_api::pull_requests::PullRequestDto {
+    ariadne_api::pull_requests::PullRequestDto {
+        id: row.id,
+        repository_id: row.repository_id,
+        number: row.number,
+        url: row.url,
+        title: row.title,
+        author_login: row.author_login,
+        tracked_by: row.tracked_by,
+        state: row.state,
+        draft: row.draft,
+        head_branch: row.head_branch,
+        head_sha: row.head_sha,
+        head_repo: row.head_repo,
+        base_branch: row.base_branch,
+        checks: row.checks,
+        review_decision: row.review_decision,
+        unanswered_comments: row.unanswered_comments,
+        origin_task_id: row.origin_task_id,
+        opened_at: row.opened_at,
+        role: row.role,
+        ready: row.ready,
+        last_seen_at: row.last_seen_at,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    }
+}

@@ -33,6 +33,7 @@
  * terminal/activity strip, which is inside it like any other.
  */
 const PANEL_PARAMS = {
+  pr: ["pr"],
   goal: ["goal", "task", "tab", "session"],
   task: ["task", "goal", "tab", "session"],
   session: ["session", "tab"],

@@ -332,6 +332,16 @@ fn agent_line(e: &AgentEventSummaryDto) -> Line {
 fn domain_line(event: &DomainEvent) -> Line {
     let kind = event.kind().to_string();
     match event {
+        DomainEvent::PullRequestCreated(p)
+        | DomainEvent::PullRequestUpdated(p)
+        | DomainEvent::PullRequestDeleted(p) => Line {
+            at: p.updated_at.clone(),
+            kind,
+            subject: p.id.clone(),
+            detail: titled(&p.title, &p.state),
+            session: None,
+            status: Some(p.state.clone()),
+        },
         DomainEvent::GoalCreated(g) | DomainEvent::GoalUpdated(g) => Line {
             at: g.updated_at.clone(),
             kind,

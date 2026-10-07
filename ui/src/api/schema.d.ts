@@ -554,6 +554,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/pull-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["pull-requests_list"];
+        put?: never;
+        post: operations["pull-requests_add"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pull-requests/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["pull-requests_refresh"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pull-requests/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["pull-requests_get"];
+        put?: never;
+        post?: never;
+        delete: operations["pull-requests_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/repositories": {
         parameters: {
             query?: never;
@@ -615,6 +663,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["issues_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/repositories/{id}/pull-requests/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["pull-requests_search"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1267,6 +1331,12 @@ export interface components {
          * @enum {string}
          */
         Actor: "orchestrator" | "author" | "reviewer" | "daemon" | "user";
+        AddPullRequestRequest: {
+            /** Format: int64 */
+            number?: number | null;
+            repository_id?: string | null;
+            url?: string | null;
+        };
         /**
          * @description One agent to staff on a task: where it sits, the skills it loads, and what
          *     it is to run on.
@@ -1669,6 +1739,18 @@ export interface components {
          *     the `data:` field.
          */
         DomainEvent: {
+            data: components["schemas"]["PullRequestDto"];
+            /** @enum {string} */
+            event: "pull_request_created";
+        } | {
+            data: components["schemas"]["PullRequestDto"];
+            /** @enum {string} */
+            event: "pull_request_updated";
+        } | {
+            data: components["schemas"]["PullRequestDto"];
+            /** @enum {string} */
+            event: "pull_request_deleted";
+        } | {
             data: components["schemas"]["GoalDto"];
             /** @enum {string} */
             event: "goal_created";
@@ -2329,6 +2411,42 @@ export interface components {
         PickWinnerRequest: {
             /** @description Id of the author picked, one of the task's authors. */
             author_agent_id: string;
+        };
+        PullRequestDto: {
+            author_login: string;
+            base_branch: string;
+            checks: string;
+            created_at: string;
+            draft: boolean;
+            head_branch: string;
+            head_repo?: string | null;
+            head_sha: string;
+            id: string;
+            last_seen_at: string;
+            /** Format: int64 */
+            number: number;
+            opened_at: string;
+            origin_task_id?: string | null;
+            ready: boolean;
+            repository_id: string;
+            review_decision: string;
+            role: string;
+            state: string;
+            title: string;
+            tracked_by: string;
+            /** Format: int64 */
+            unanswered_comments: number;
+            updated_at: string;
+            url: string;
+        };
+        PullRequestMatchDto: {
+            author_login: string;
+            /** Format: int64 */
+            number: number;
+            role: string;
+            title: string;
+            tracked: boolean;
+            url: string;
         };
         /** @description The Python interpreter the daemon found, as it answered `--version`. */
         PythonDto: {
@@ -4095,6 +4213,156 @@ export interface operations {
             };
         };
     };
+    "pull-requests_list": {
+        parameters: {
+            query?: {
+                repo?: string | null;
+                role?: string | null;
+                /** @description Open by default; `all` includes closed and merged requests. */
+                state?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestDto"][];
+                };
+            };
+        };
+    };
+    "pull-requests_add": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddPullRequestRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestDto"];
+                };
+            };
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_refresh": {
+        parameters: {
+            query?: {
+                repo?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_get": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     repositories_list: {
         parameters: {
             query?: never;
@@ -4299,6 +4567,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IssueDto"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_search": {
+        parameters: {
+            query?: {
+                q?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestMatchDto"][];
                 };
             };
             409: {

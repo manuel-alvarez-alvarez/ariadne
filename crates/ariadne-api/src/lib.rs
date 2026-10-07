@@ -13,6 +13,7 @@ pub mod logs;
 pub mod messages;
 pub mod models;
 pub mod permissions;
+pub mod pull_requests;
 pub mod repositories;
 pub mod sessions;
 pub mod skills;

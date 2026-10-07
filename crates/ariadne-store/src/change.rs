@@ -13,6 +13,9 @@ use crate::{
 /// A committed write, carrying the row as it now stands.
 #[derive(Debug, Clone)]
 pub enum Change {
+    PullRequestCreated(crate::PullRequest),
+    PullRequestUpdated(crate::PullRequest),
+    PullRequestDeleted(crate::PullRequest),
     GoalCreated(Goal),
     GoalUpdated(Goal),
     GoalDeleted(String),

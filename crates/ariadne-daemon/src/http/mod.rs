@@ -16,6 +16,7 @@ mod landing;
 mod logs;
 mod permissions;
 mod pins;
+mod pull_requests;
 mod repositories;
 mod sessions;
 mod skills;
@@ -54,6 +55,7 @@ use crate::scheduler::SchedEvent;
 /// Shared handler state.
 #[derive(Clone)]
 pub struct AppState {
+    pub forge_poll: crate::forge::poll::ForgePoll,
     pub store: Store,
     /// Monotonic, so uptime is immune to the clock being set.
     pub started_at: Instant,
@@ -125,6 +127,7 @@ impl AppState {
         repositories::create, repositories::list, repositories::get,
         repositories::update, repositories::delete,
         issues::list, issues::get,
+        pull_requests::list, pull_requests::get, pull_requests::add, pull_requests::delete, pull_requests::refresh, pull_requests::search,
         permissions::get, permissions::update, permissions::refresh,
         permissions::list_learned, permissions::get_learned, permissions::delete_learned,
         permissions::update_learned,
@@ -161,6 +164,7 @@ impl AppState {
         (name = "repositories", description = "Git repositories registered with the daemon"),
         (name = "permissions", description = "The AI permission model: the local model the `ai` permission mode answers with"),
         (name = "goals", description = "Goals and their plans"),
+        (name = "pull-requests", description = "The tracked pull request ledger"),
         (name = "issues", description = "Open issues read from enabled forges"),
         (name = "tasks", description = "Tasks, transitions, and what their agents say"),
         (name = "sessions", description = "Agent sessions, and the console each one is driven through"),
@@ -181,6 +185,19 @@ fn api_doc() -> utoipa::openapi::OpenApi {
 /// Build the daemon router.
 pub fn router(state: AppState) -> Router {
     Router::new()
+        .route(
+            "/v1/pull-requests",
+            get(pull_requests::list).post(pull_requests::add),
+        )
+        .route("/v1/pull-requests/refresh", post(pull_requests::refresh))
+        .route(
+            "/v1/pull-requests/{id}",
+            get(pull_requests::get).delete(pull_requests::delete),
+        )
+        .route(
+            "/v1/repositories/{id}/pull-requests/search",
+            get(pull_requests::search),
+        )
         .route("/v1/health", get(health))
         .route("/v1/version", get(version))
         .route("/v1/doctor", get(doctor::report))

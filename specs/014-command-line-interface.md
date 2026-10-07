@@ -46,7 +46,7 @@ same binary also serves (013).
 
 1. Every user-facing action exists both here and in the desktop app.
 2. The tree is one verb per action, grouped by entity — `daemon`, `agent`,
-   `models`, `skill`, `repo`, `permissions`, `goal`, `task`, `session`,
+   `models`, `skill`, `repo`, `pr` (026), `permissions`, `goal`, `task`, `session`,
    `events`, `attention`, `attach`, `stats`, `doctor`, `completions`,
    plus the one hidden command the agents use (`mcp serve`). Nothing in the tree launches
    an agent or reports on one's behalf: the daemon's ACP runtime does both

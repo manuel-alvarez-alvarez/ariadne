@@ -9,6 +9,8 @@ use std::time::Duration;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Timeouts {
+    /// Fallback interval for repositories without a working webhook.
+    pub forge_poll: Duration,
     /// How long a killed agent's running turn has to end once it is
     /// cancelled.
     ///
@@ -85,6 +87,7 @@ impl Default for Timeouts {
             transcript_poll: Duration::from_secs(15),
             session_wake: Duration::from_millis(250),
             full_reconcile: Duration::from_secs(5),
+            forge_poll: Duration::from_secs(60),
             checkpoint: Duration::from_secs(30),
         }
     }

@@ -285,6 +285,17 @@ and the ACP runtime that reports the agent events (021).
     reads the stats ledger only, and counts no cost: the tokens are the ones
     rule 15 keeps.
 
+## Pull request events (026)
+
+| Event | Payload |
+| --- | --- |
+| `pull_request_created` | The complete `PullRequestDto` after its first insertion. |
+| `pull_request_updated` | The complete `PullRequestDto` after an update. |
+| `pull_request_deleted` | The complete `PullRequestDto` removed from the ledger. |
+
+These events have no goal or task routing scope, even when the request records an origin task.
+See [026](026-pull-requests.md) for identity, routes, and event tests.
+
 ## Acceptance criteria
 
 - Each `GET /v1/stats/<family>` answers its DTO and is in the OpenAPI

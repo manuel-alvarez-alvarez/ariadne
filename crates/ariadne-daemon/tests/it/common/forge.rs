@@ -23,6 +23,7 @@ pub(crate) struct StubForgeCli {
     pub glab: String,
     script_file: PathBuf,
     log: PathBuf,
+    finished: PathBuf,
     _dir: tempfile::TempDir,
 }
 
@@ -48,6 +49,13 @@ impl StubForgeCli {
                 }
             })
             .collect()
+    }
+
+    /// Number of calls whose scripted answer has been written.
+    pub(crate) fn completed(&self) -> usize {
+        std::fs::read_to_string(&self.finished)
+            .map(|s| s.lines().count())
+            .unwrap_or(0)
     }
 
     /// Answer from `script` from now on.
@@ -77,6 +85,7 @@ pub(crate) fn stub_forge_cli(script: Value) -> StubForgeCli {
         gh: link("gh"),
         glab: link("glab"),
         log: dir.path().join("forge-calls.jsonl"),
+        finished: dir.path().join("forge-finished.jsonl"),
         script_file,
         _dir: dir,
     }
@@ -109,6 +118,8 @@ for entry in script:
             time.sleep(0.02)
         sys.stdout.write(entry.get("stdout", ""))
         sys.stderr.write(entry.get("stderr", ""))
+        with open(os.path.join(dir, "forge-finished.jsonl"), "a") as f:
+            f.write(json.dumps({"program": program, "args": args}) + "\n")
         sys.exit(entry.get("exit", 0))
 sys.stderr.write("stub %s: no entry for %s\n" % (program, " ".join(args)))
 sys.exit(1)

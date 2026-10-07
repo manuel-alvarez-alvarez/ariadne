@@ -4805,3 +4805,174 @@ async fn one_forge_repository_is_enabled_on_one_row() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].repository_id, second.id);
 }
+
+#[tokio::test]
+async fn pull_requests_keep_identity_user_tracking_and_detail_fields() {
+    let (store, dir) = test_store().await;
+    let repo = store
+        .create_repository(NewRepository {
+            path: "/tmp/pull-requests".into(),
+            base_branch: "main".into(),
+            description: None,
+            permission_mode: None,
+            default_landing: None,
+        })
+        .await
+        .unwrap();
+    store
+        .set_forge_integration(SetForgeIntegration {
+            repository_id: repo.id.clone(),
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+            babysit_model: None,
+            babysit_effort: None,
+            review_model: None,
+            review_effort: None,
+        })
+        .await
+        .unwrap();
+    let mut changes = store.watch_changes().unwrap();
+    let mut new = NewPullRequest {
+        existing_id: None,
+        repository_id: repo.id.clone(),
+        number: 42,
+        url: "https://github.com/acme/widgets/pull/42".into(),
+        title: "Fix the bug".into(),
+        author_login: "me".into(),
+        tracked_by: "forge".into(),
+        state: "open".into(),
+        draft: false,
+        head_branch: "fix".into(),
+        head_sha: "abc".into(),
+        head_repo: None,
+        base_branch: "main".into(),
+        checks: "pending".into(),
+        review_decision: "none".into(),
+        origin_task_id: None,
+        opened_at: "2026-10-01T00:00:00Z".into(),
+    };
+    let (first, created) = store.upsert_pull_request(new.clone()).await.unwrap();
+    assert!(created);
+    assert_eq!(first.role, "author");
+    assert!(matches!(
+        changes.recv().await.unwrap(),
+        Change::PullRequestCreated(_)
+    ));
+    assert!(matches!(
+        store.delete_pull_request(&first.id).await,
+        Err(StoreError::Conflict(_))
+    ));
+    new.tracked_by = "user".into();
+    let (second, created) = store.upsert_pull_request(new.clone()).await.unwrap();
+    assert!(!created);
+    assert_eq!(first.id, second.id);
+    assert!(matches!(
+        changes.recv().await.unwrap(),
+        Change::PullRequestUpdated(_)
+    ));
+    let db = sqlx::SqlitePool::connect(&format!(
+        "sqlite://{}",
+        dir.path().join("test.db").display()
+    ))
+    .await
+    .unwrap();
+    sqlx::query("UPDATE pull_requests SET unanswered_comments = 3, ready = 1 WHERE id = ?")
+        .bind(&first.id)
+        .execute(&db)
+        .await
+        .unwrap();
+    db.close().await;
+    new.tracked_by = "forge".into();
+    let (third, _) = store.upsert_pull_request(new).await.unwrap();
+    assert_eq!(third.tracked_by, "user");
+    assert_eq!(third.unanswered_comments, 3);
+    assert!(third.ready);
+    assert_eq!(third.created_at, first.created_at);
+    assert!(matches!(
+        changes.recv().await.unwrap(),
+        Change::PullRequestUpdated(_)
+    ));
+    assert_eq!(
+        store
+            .list_pull_requests(PullRequestFilter::default())
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    store.delete_pull_request(&first.id).await.unwrap();
+    assert!(matches!(
+        changes.recv().await.unwrap(),
+        Change::PullRequestDeleted(_)
+    ));
+    assert!(
+        store
+            .list_pull_requests(PullRequestFilter::default())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn pull_request_migration_preserves_existing_rows_and_a_recoverable_backup() {
+    let dir = tempfile::tempdir().unwrap();
+    let old_migrations = dir.path().join("migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations")).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_name().to_string_lossy().as_ref() < "0007" {
+            std::fs::copy(entry.path(), old_migrations.join(entry.file_name())).unwrap();
+        }
+    }
+    let path = dir.path().join("old.db");
+    let db = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations.as_path())
+        .await
+        .unwrap()
+        .run(&db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO repositories (id,path,base_branch,created_at,updated_at) VALUES ('old-repo','/work/widgets','main','2026-10-01','2026-10-01')").execute(&db).await.unwrap();
+    let backup = dir.path().join("backup.db");
+    sqlx::query("VACUUM INTO ?")
+        .bind(backup.to_str().unwrap())
+        .execute(&db)
+        .await
+        .unwrap();
+    db.close().await;
+    let upgraded = Store::open(&path).await.unwrap();
+    let row = upgraded.get_repository("old-repo").await.unwrap();
+    assert_eq!(row.path, "/work/widgets");
+    assert_eq!(row.base_branch, "main");
+    assert!(
+        upgraded
+            .list_pull_requests(PullRequestFilter::default())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    upgraded.close().await;
+    let recovered = Store::open(&backup).await.unwrap();
+    assert_eq!(
+        recovered
+            .get_repository("old-repo")
+            .await
+            .unwrap()
+            .created_at,
+        "2026-10-01"
+    );
+    assert_eq!(recovered.list_repositories().await.unwrap().len(), 1);
+}

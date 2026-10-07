@@ -8,6 +8,8 @@
 
 pub mod github;
 pub mod gitlab;
+pub mod poll;
+pub mod pulls;
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -78,6 +80,43 @@ impl Remote {
             host: host.to_lowercase(),
             owner: owner.to_lowercase(),
             name: name.to_lowercase(),
+        })
+    }
+}
+
+/// The only identity of a pull request: its registered repository and number.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PullRequestRef {
+    pub repository_id: String,
+    pub number: i64,
+}
+
+impl PullRequestRef {
+    pub fn parse(url: &str, integration: &ForgeIntegration) -> Option<Self> {
+        let url = reqwest::Url::parse(url).ok()?;
+        if !matches!(url.scheme(), "http" | "https")
+            || !url.host_str()?.eq_ignore_ascii_case(&integration.host)
+        {
+            return None;
+        }
+        let path = url.path().trim_end_matches('/');
+        let (repository, number) = match integration.kind() {
+            ForgeKind::Github => path.rsplit_once("/pull/")?,
+            ForgeKind::Gitlab => {
+                let (repository, number) = path.rsplit_once("/merge_requests/")?;
+                (repository.strip_suffix("/-").unwrap_or(repository), number)
+            }
+        };
+        if !repository.eq_ignore_ascii_case(&format!("/{}/{}", integration.owner, integration.name))
+            || number.is_empty()
+            || !number.bytes().all(|b| b.is_ascii_digit())
+        {
+            return None;
+        }
+        let number = number.parse::<i64>().ok().filter(|n| *n > 0)?;
+        Some(Self {
+            repository_id: integration.repository_id.clone(),
+            number,
         })
     }
 }
@@ -284,6 +323,37 @@ pub enum ForgeClient {
 }
 
 impl ForgeClient {
+    pub async fn list_open_pull_requests(
+        &self,
+        repository: &str,
+        login: &str,
+    ) -> Result<Vec<pulls::ForgePullRequest>, String> {
+        match self {
+            Self::Github(cli) => cli.list_open_pull_requests(repository, login).await,
+            Self::Gitlab(cli) => cli.list_open_pull_requests(repository, login).await,
+        }
+    }
+    pub async fn pull_request(
+        &self,
+        repository: &str,
+        number: i64,
+    ) -> Result<pulls::ForgePullRequest, String> {
+        match self {
+            Self::Github(cli) => cli.pull_request(repository, number).await,
+            Self::Gitlab(cli) => cli.pull_request(repository, number).await,
+        }
+    }
+    pub async fn search_pull_requests(
+        &self,
+        repository: &str,
+        query: &str,
+    ) -> Result<Vec<pulls::ForgePullRequest>, String> {
+        match self {
+            Self::Github(cli) => cli.search_pull_requests(repository, query).await,
+            Self::Gitlab(cli) => cli.search_pull_requests(repository, query).await,
+        }
+    }
+
     pub async fn list_open_issues(
         &self,
         repository: &str,
@@ -436,6 +506,56 @@ impl Cli {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pull_request_urls_share_the_repository_and_number_only() {
+        let mut integration = ForgeIntegration {
+            repository_id: "repository".into(),
+            kind: "github".into(),
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+            babysit_model: None,
+            babysit_effort: None,
+            review_model: None,
+            review_effort: None,
+            detected_at: String::new(),
+            updated_at: String::new(),
+        };
+        let expected = Some(PullRequestRef {
+            repository_id: "repository".into(),
+            number: 42,
+        });
+        for url in [
+            "https://github.com/acme/widgets/pull/42",
+            "http://GITHUB.com/ACME/Widgets/pull/42/",
+            "https://github.com/acme/widgets/pull/42?diff=split#comment-1",
+        ] {
+            assert_eq!(PullRequestRef::parse(url, &integration), expected, "{url}");
+        }
+        for url in [
+            "https://github.com/other/widgets/pull/42",
+            "https://evil.example/acme/widgets/pull/42",
+            "https://github.com/acme/widgets/issues/42",
+            "file://github.com/acme/widgets/pull/42",
+            "https://github.com/acme/widgets/pull/0",
+            "https://github.com/acme/widgets/pull/42/files",
+        ] {
+            assert_eq!(PullRequestRef::parse(url, &integration), None, "{url}");
+        }
+        integration.kind = "gitlab".into();
+        integration.host = "gitlab.example".into();
+        integration.owner = "group/sub".into();
+        for url in [
+            "https://gitlab.example/group/sub/widgets/merge_requests/42",
+            "http://GITLAB.example/GROUP/Sub/Widgets/-/merge_requests/42/?a=b#note",
+        ] {
+            assert_eq!(PullRequestRef::parse(url, &integration), expected, "{url}");
+        }
+    }
 
     fn remote(host: &str, owner: &str, name: &str) -> Option<Remote> {
         Some(Remote {

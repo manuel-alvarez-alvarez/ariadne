@@ -65,3 +65,5 @@ mod task_failure;
 mod transcript_usage;
 mod unknown_fields;
 mod unreviewed_tasks;
+
+mod pull_requests;

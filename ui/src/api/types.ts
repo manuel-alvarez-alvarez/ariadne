@@ -95,3 +95,5 @@ export type UpdateLearnedPermissionRequest = Schemas["UpdateLearnedPermissionReq
 export type DomainEvent = Exclude<Schemas["DomainEvent"], { event: `memo${string}` }>
 /** `"goal_updated" | "task_updated" | ...` */
 export type DomainEventKind = DomainEvent["event"]
+
+export type PullRequestDto = components["schemas"]["PullRequestDto"]

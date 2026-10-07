@@ -16,6 +16,7 @@ pub(crate) mod issue;
 pub(crate) mod mcp;
 pub(crate) mod models;
 pub(crate) mod permissions;
+pub(crate) mod pr;
 pub(crate) mod repo;
 pub(crate) mod resolve;
 pub(crate) mod session;
