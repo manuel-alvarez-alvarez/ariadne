@@ -1909,6 +1909,7 @@ export interface components {
             review_effort?: string | null;
             /** @description The pin of the session that reviews a request; null starts none. */
             review_model?: string | null;
+            webhook: components["schemas"]["WebhookDto"];
         };
         /**
          * @description The forge a repository's remote is on (025): which CLI speaks to it.
@@ -3150,6 +3151,13 @@ export interface components {
             name: string;
             /** @example 0.1.0 */
             version: string;
+        };
+        /** @description Public hook status. The hook secret is never serialized. */
+        WebhookDto: {
+            error?: string | null;
+            last_delivery_at?: string | null;
+            state: string;
+            url?: string | null;
         };
         /** @description One bucket of the time axis: the counts of the facts that fall in it. */
         WorkBucketDto: {

@@ -417,6 +417,25 @@ describe("dismissing the dialog", () => {
  * user changed it.
  */
 describe("the forge integration", () => {
+  it("shows every webhook field without editable controls", () => {
+    renderDialog({
+      ...REPOSITORY,
+      forge: aForge({
+        webhook: {
+          state: "failed",
+          url: "https://hooks.example/webhooks/github/repo",
+          error: "HTTP 403: needs admin rights",
+          last_delivery_at: "2026-10-07T10:00:00Z",
+        },
+      }),
+    })
+    expect(screen.getByText("failed")).toBeDefined()
+    expect(screen.getByText("https://hooks.example/webhooks/github/repo")).toBeDefined()
+    expect(screen.getByText("HTTP 403: needs admin rights")).toBeDefined()
+    expect(screen.getByText("2026-10-07T10:00:00Z")).toBeDefined()
+    expect(screen.queryByRole("textbox", { name: /webhook/i })).toBeNull()
+  })
+
   const ON_GITHUB: RepositoryDto = { ...REPOSITORY, forge: aForge() }
 
   /** Pins one role to a catalog model, through the role's own picker. */

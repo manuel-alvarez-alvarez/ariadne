@@ -29,3 +29,5 @@ pub mod stats;
 pub(crate) mod stored_conversations;
 pub mod timeouts;
 pub mod transcript;
+
+pub mod webhooks;

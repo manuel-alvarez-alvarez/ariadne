@@ -29,12 +29,14 @@ import { NoRepositories as SharedNoRepositories } from "./no-repositories"
 import { permissionModeLabel } from "./permission-modes"
 import { repositoriesQueryOptions } from "./queries"
 import { RepositoryFormDialog } from "./repository-form-dialog"
+import { WebhookStatus } from "./webhook-status"
 
 const COLUMNS = [
   { header: "Path" },
   { header: "Base branch" },
   { header: "Permissions" },
   { header: "Forge" },
+  { header: "Webhook" },
   // Wide enough to be a sentence rather than a word per line: what made the
   // rows of this table 130px tall was a description with nothing to wrap in.
   { header: "Description", className: "min-w-48" },
@@ -145,6 +147,9 @@ function RepositoryRow({
         ) : (
           <span className="text-muted-foreground">none</span>
         )}
+      </TableCell>
+      <TableCell className="max-w-64 whitespace-normal">
+        {repository.forge ? <WebhookStatus webhook={repository.forge.webhook} /> : "-"}
       </TableCell>
       <TableCell className="min-w-48 whitespace-normal text-muted-foreground">
         {repository.description ?? <span className="italic">no description</span>}

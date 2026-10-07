@@ -37,6 +37,8 @@ unknown key stops the daemon rather than being ignored):
                            (default: <home>/run)
   tcp_listen               extra TCP listener for web/desktop UIs, e.g.
                            \"127.0.0.1:7676\" (default: unix socket only)
+  webhook_listen           signed webhook listener (default: 127.0.0.1:0)
+  webhook_public_url       public URL forwarded to the webhook listener
   log_filter               tracing filter when RUST_LOG says nothing (default: info)
   cli_bin                  the `ariadne` every session's MCP server is launched
                            with (default: the one beside this binary)
@@ -172,6 +174,11 @@ async fn main() -> Result<()> {
         &events,
         ariadne_daemon::timeouts::Timeouts::default().forge_poll,
     );
+    let webhook_listen =
+        ariadne_daemon::webhooks::WebhookListen::bind(&config, store.clone(), forge_poll.clone())
+            .await
+            .context("binding webhook listener")?;
+    info!(address = %webhook_listen.address(), "webhook ingress ready");
     let sched_tx = ariadne_daemon::scheduler::start(
         store.clone(),
         launcher.clone(),
@@ -217,6 +224,7 @@ async fn main() -> Result<()> {
         }
     };
 
+    drop(webhook_listen);
     // Best-effort cleanup of runtime files.
     failure_diagnosis.shutdown().await;
     ai_permissions_shutdown.shutdown().await;

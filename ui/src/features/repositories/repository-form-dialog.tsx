@@ -52,10 +52,10 @@ import { Textarea } from "@/components/ui/textarea"
 import { PinPicker } from "@/features/models/pin-picker"
 import { modelsQueryOptions } from "@/features/models/queries"
 import { describeError, LANDING_ITEMS } from "@/lib/format"
-
 import { forgeChanges, forgeKindLabel, forgeRepositoryLabel, forgeValues } from "./forge"
 import { PERMISSION_MODES } from "./permission-modes"
 import { useCreateRepository, useUpdateRepository } from "./queries"
+import { WebhookStatus } from "./webhook-status"
 
 const PERMISSION_ITEMS = PERMISSION_MODES.map(({ value, label }) => ({ value, label }))
 
@@ -416,6 +416,8 @@ function ForgeSection({
         <span className="font-mono">{forge.remote}</span>
         {forge.enabled && forge.login ? ` · signed in as ${forge.login}` : null}
       </p>
+
+      <WebhookStatus webhook={forge.webhook} />
 
       <Field data-invalid={enabledError ? true : undefined} orientation="horizontal">
         <Controller

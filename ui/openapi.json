@@ -4748,6 +4748,7 @@
         "type": "object",
         "description": "The forge a repository's remote is on, and whether Ariadne works with it.",
         "required": [
+          "webhook",
           "kind",
           "host",
           "owner",
@@ -4809,6 +4810,9 @@
               "null"
             ],
             "description": "The pin of the session that reviews a request; null starts none."
+          },
+          "webhook": {
+            "$ref": "#/components/schemas/WebhookDto"
           }
         }
       },
@@ -7572,6 +7576,36 @@
           "version": {
             "type": "string",
             "example": "0.1.0"
+          }
+        }
+      },
+      "WebhookDto": {
+        "type": "object",
+        "description": "Public hook status. The hook secret is never serialized.",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_delivery_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": "string"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

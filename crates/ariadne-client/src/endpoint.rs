@@ -48,6 +48,8 @@ pub struct FileConfig {
     pub run_dir: Option<PathBuf>,
     /// e.g. "127.0.0.1:7676" — TCP listener is disabled unless set.
     pub tcp_listen: Option<SocketAddr>,
+    pub webhook_listen: Option<SocketAddr>,
+    pub webhook_public_url: Option<String>,
     /// tracing filter, e.g. "info,ariadne_daemon=debug"
     pub log_filter: Option<String>,
     /// Path to the `ariadne` CLI used for MCP (default: sibling of

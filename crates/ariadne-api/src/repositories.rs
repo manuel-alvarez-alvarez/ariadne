@@ -26,9 +26,19 @@ pub struct RepositoryDto {
     pub updated_at: String,
 }
 
+/// Public hook status. The hook secret is never serialized.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct WebhookDto {
+    pub state: String,
+    pub url: Option<String>,
+    pub error: Option<String>,
+    pub last_delivery_at: Option<String>,
+}
+
 /// The forge a repository's remote is on, and whether Ariadne works with it.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ForgeDto {
+    pub webhook: WebhookDto,
     pub kind: ForgeKind,
     /// Lower-cased, like `owner` and `name`.
     #[schema(example = "github.com")]

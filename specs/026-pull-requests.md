@@ -67,7 +67,8 @@ Task completion belongs to [005](005-how-a-task-ends.md).
    `set_mode(repository_id, Mode::Timer)` enables the fallback timer.
    `Timeouts::forge_poll` defaults to 60 seconds.
    `Mode::WakeOnly` has no timer fetches; only explicit wakes fetch.
-   Enabled integrations start in `Timer`, with one immediate fetch.
+   Enabled integrations start with one immediate fetch.
+   [027](027-webhooks-and-tunnel.md) chooses `WakeOnly` for a live hook and `Timer` otherwise.
    Enabling starts one immediate fetch; disabling cancels its worker and closes its open rows.
    Daemon startup fetches every enabled integration once.
    The timer is the last resort. A live webhook in task 027 switches its repository to `WakeOnly`.

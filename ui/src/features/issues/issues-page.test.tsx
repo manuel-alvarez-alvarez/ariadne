@@ -14,6 +14,7 @@ it("lists forge issues and fills the goal dialog from a chosen issue", async () 
   const repository = aRepository({
     id: "repo-1",
     forge: {
+      webhook: { state: "polling", url: null, error: null, last_delivery_at: null },
       kind: "github",
       host: "github.com",
       owner: "acme",

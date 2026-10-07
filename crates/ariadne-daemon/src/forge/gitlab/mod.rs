@@ -1,5 +1,6 @@
 //! GitLab, through `glab`.
 
+mod hooks;
 mod open;
 mod pulls;
 

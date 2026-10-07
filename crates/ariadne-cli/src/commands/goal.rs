@@ -617,6 +617,12 @@ mod tests {
         let repositories = get(|| async {
             let mut repository = repository("repo-1", "/work/widgets", "main");
             repository.forge = Some(ariadne_api::repositories::ForgeDto {
+                webhook: ariadne_api::repositories::WebhookDto {
+                    state: "polling".into(),
+                    url: None,
+                    error: None,
+                    last_delivery_at: None,
+                },
                 kind: ariadne_core::ForgeKind::Github,
                 host: "github.com".into(),
                 owner: "acme".into(),

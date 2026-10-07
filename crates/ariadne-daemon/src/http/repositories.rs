@@ -140,6 +140,12 @@ pub(super) async fn update(
             write,
         )
         .await?;
+    forge::hooks::remove_replaced(
+        &state.launcher.cfg,
+        current.forge.as_ref(),
+        repository.forge.as_ref(),
+    )
+    .await;
     state.store.close_disabled_pull_requests(&id).await?;
     state.forge_poll.changed(&id).await;
     Ok(Json(repository_dto(repository)))
@@ -153,7 +159,9 @@ pub(super) async fn delete(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
+    let previous = state.store.get_repository(&id).await?;
     state.store.delete_repository(&id).await?;
+    forge::hooks::remove_replaced(&state.launcher.cfg, previous.forge.as_ref(), None).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

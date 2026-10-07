@@ -23,6 +23,9 @@ pub struct Config {
     pub run_dir: PathBuf,
     pub pid_file: PathBuf,
     pub tcp_listen: Option<SocketAddr>,
+    /// Separate signed ingress. None binds loopback on an operating-system port.
+    pub webhook_listen: Option<SocketAddr>,
+    pub webhook_public_url: Option<String>,
     pub log_filter: String,
     /// The `ariadne` binary every session's MCP server is launched with.
     pub cli_bin: String,
@@ -104,6 +107,8 @@ impl Config {
             run_dir: file.run_dir.unwrap_or_else(|| root.join("run")),
             pid_file: endpoint::pid_file(&root),
             tcp_listen: file.tcp_listen,
+            webhook_listen: file.webhook_listen,
+            webhook_public_url: file.webhook_public_url,
             log_filter: file.log_filter.unwrap_or_else(|| "info".to_string()),
             cli_bin: file.cli_bin.unwrap_or_else(default_cli_bin),
             delete_merged_branches: file.delete_merged_branches.unwrap_or(true),
@@ -204,6 +209,23 @@ mod tests {
         assert_eq!(config.nvidia_smi_bin, None);
         assert_eq!(config.gh_bin, None);
         assert_eq!(config.glab_bin, None);
+    }
+
+    #[test]
+    fn webhook_configuration_uses_a_random_port_unless_an_address_is_given() {
+        let dir = home_with("");
+        let cfg = Config::load(Some(dir.path().join("home"))).unwrap();
+        assert_eq!(cfg.webhook_listen, None);
+        assert_eq!(cfg.webhook_public_url, None);
+        let dir = home_with(
+            "webhook_listen = \"127.0.0.1:8181\"\nwebhook_public_url = \"https://hooks.example\"\n",
+        );
+        let cfg = Config::load(Some(dir.path().join("home"))).unwrap();
+        assert_eq!(cfg.webhook_listen, Some("127.0.0.1:8181".parse().unwrap()));
+        assert_eq!(
+            cfg.webhook_public_url.as_deref(),
+            Some("https://hooks.example")
+        );
     }
 
     /// The forge CLIs are keys a user may set, each a path or a bare name.

@@ -289,6 +289,12 @@ pub struct ForgeIntegration {
     /// The pin of the session that reviews a request. None starts none.
     pub review_model: Option<String>,
     pub review_effort: Option<String>,
+    pub webhook_id: Option<i64>,
+    pub webhook_secret: Option<String>,
+    pub webhook_url: Option<String>,
+    pub webhook_state: String,
+    pub webhook_error: Option<String>,
+    pub webhook_last_delivery_at: Option<String>,
     pub detected_at: String,
     pub updated_at: String,
 }

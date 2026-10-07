@@ -41,6 +41,7 @@ the desktop app as a whole (015).
    `review_effort`, `detected_at` and `updated_at`. `host`, `owner` and
    `name` are stored lower-cased. A repository with no usable remote has no
    row. Deleting the repository deletes its row.
+   Hook metadata and the nested DTO block follow [027](027-webhooks-and-tunnel.md).
 2. The remote is `origin`. Where there is no `origin` and the checkout has
    exactly one remote, that remote stands in. Any other checkout has no
    usable remote.

@@ -8,6 +8,7 @@
 
 pub mod github;
 pub mod gitlab;
+pub mod hooks;
 pub mod poll;
 pub mod pulls;
 
@@ -175,7 +176,10 @@ pub async fn redetect(
 ) -> ariadne_store::Result<Repository> {
     let detected = detect(cfg, Path::new(&repository.path)).await;
     let row = merged(&repository.id, repository.forge.as_ref(), detected.as_ref());
-    written(store, repository, row).await
+    let previous = repository.forge.clone();
+    let repository = written(store, repository, row).await?;
+    hooks::remove_replaced(cfg, previous.as_ref(), repository.forge.as_ref()).await;
+    Ok(repository)
 }
 
 /// Write the forge row a repository is to have, where it differs from the
@@ -510,6 +514,12 @@ mod tests {
     #[test]
     fn pull_request_urls_share_the_repository_and_number_only() {
         let mut integration = ForgeIntegration {
+            webhook_id: None,
+            webhook_secret: None,
+            webhook_url: None,
+            webhook_state: "polling".into(),
+            webhook_error: None,
+            webhook_last_delivery_at: None,
             repository_id: "repository".into(),
             kind: "github".into(),
             host: "github.com".into(),

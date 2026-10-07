@@ -249,6 +249,7 @@ export function aRepository(overrides: Partial<RepositoryDto> = {}): RepositoryD
 
 export function aForge(overrides: Partial<ForgeDto> = {}): ForgeDto {
   return {
+    webhook: { state: "polling", url: null, error: null, last_delivery_at: null },
     kind: "github",
     host: "github.com",
     owner: "acme",

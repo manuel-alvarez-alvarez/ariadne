@@ -20,6 +20,11 @@ name = "it"
 path = "tests/it/main.rs"
 
 [dependencies]
+hmac = { workspace = true }
+sha2 = { workspace = true }
+subtle = { workspace = true }
+hex = { workspace = true }
+getrandom = { workspace = true }
 agent-client-protocol = { workspace = true }
 tokio-util = { workspace = true }
 ariadne-core = { workspace = true }

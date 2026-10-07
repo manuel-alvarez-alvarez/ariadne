@@ -41,6 +41,13 @@ futures-util = { version = "0.3", default-features = false }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors"] }
 
+# Signed forge deliveries and per-integration secrets.
+hmac = "0.12"
+sha2 = "0.10"
+subtle = "2"
+hex = "0.4"
+getrandom = "0.4"
+
 # openapi
 utoipa = { version = "5", features = ["axum_extras"] }
 utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"] }

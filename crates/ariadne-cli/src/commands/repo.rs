@@ -303,6 +303,34 @@ fn inspect_rows(r: &RepositoryDto) -> Vec<(&'static str, Kv)> {
         None => rows.push(("forge", "-".into())),
         Some(forge) => rows.extend([
             ("forge", forge_label(forge).into()),
+            ("webhook state", forge.webhook.state.clone().into()),
+            (
+                "webhook URL",
+                forge
+                    .webhook
+                    .url
+                    .clone()
+                    .unwrap_or_else(|| "-".into())
+                    .into(),
+            ),
+            (
+                "webhook error",
+                forge
+                    .webhook
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "-".into())
+                    .into(),
+            ),
+            (
+                "webhook last delivery",
+                forge
+                    .webhook
+                    .last_delivery_at
+                    .clone()
+                    .unwrap_or_else(|| "-".into())
+                    .into(),
+            ),
             (
                 "forge remote",
                 format!("{} ({})", forge.remote, forge.host).into(),
@@ -371,6 +399,12 @@ mod tests {
 
     fn forge(enabled: bool, login: Option<&str>) -> ForgeDto {
         ForgeDto {
+            webhook: ariadne_api::repositories::WebhookDto {
+                state: "live".into(),
+                url: Some("https://hooks.example/webhooks/github/repo".into()),
+                error: None,
+                last_delivery_at: Some("2026-10-07T10:00:00Z".into()),
+            },
             kind: ariadne_core::ForgeKind::Github,
             host: "github.com".into(),
             owner: "acme".into(),
@@ -467,6 +501,16 @@ mod tests {
         assert!(block.contains("github acme/widgets on"), "{block}");
         assert!(block.contains("origin (github.com)"), "{block}");
         assert!(block.contains("octocat"), "{block}");
+        assert!(
+            block.contains("webhook state") && block.contains("live"),
+            "{block}"
+        );
+        assert!(
+            block.contains("https://hooks.example/webhooks/github/repo"),
+            "{block}"
+        );
+        assert!(block.contains("webhook error"), "{block}");
+        assert!(block.contains("2026-10-07T10:00:00Z"), "{block}");
         assert!(block.contains("stub:test-model @ high"), "{block}");
         assert!(
             block

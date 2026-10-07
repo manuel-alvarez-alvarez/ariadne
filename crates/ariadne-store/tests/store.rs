@@ -4976,3 +4976,68 @@ async fn pull_request_migration_preserves_existing_rows_and_a_recoverable_backup
     );
     assert_eq!(recovered.list_repositories().await.unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn webhook_migration_preserves_existing_integrations_and_a_recoverable_backup() {
+    let dir = tempfile::tempdir().unwrap();
+    let old_migrations = dir.path().join("migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations")).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_name().to_string_lossy().as_ref() < "0008" {
+            std::fs::copy(entry.path(), old_migrations.join(entry.file_name())).unwrap();
+        }
+    }
+    let path = dir.path().join("old.db");
+    let db = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations.as_path())
+        .await
+        .unwrap()
+        .run(&db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO repositories (id,path,base_branch,created_at,updated_at) VALUES ('old-repo','/work/widgets','main','2026-10-01','2026-10-01')").execute(&db).await.unwrap();
+    sqlx::query("INSERT INTO forge_integrations (repository_id,kind,host,owner,name,remote,enabled,login,detected_at,updated_at) VALUES ('old-repo','github','github.com','acme','widgets','origin',1,'me','2026-10-01','2026-10-01')").execute(&db).await.unwrap();
+    let backup = dir.path().join("backup.db");
+    sqlx::query("VACUUM INTO ?")
+        .bind(backup.to_str().unwrap())
+        .execute(&db)
+        .await
+        .unwrap();
+    db.close().await;
+    let upgraded = Store::open(&path).await.unwrap();
+    let row = upgraded.get_repository("old-repo").await.unwrap();
+    let forge = row.forge.unwrap();
+    assert_eq!(forge.login.as_deref(), Some("me"));
+    assert_eq!(forge.webhook_state, "polling");
+    assert!(forge.webhook_id.is_none());
+    assert!(forge.webhook_secret.is_none());
+    assert!(forge.webhook_last_delivery_at.is_none());
+    assert_eq!(row.path, "/work/widgets");
+    assert_eq!(row.base_branch, "main");
+    assert!(
+        upgraded
+            .list_pull_requests(PullRequestFilter::default())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    upgraded.close().await;
+    let recovered = Store::open(&backup).await.unwrap();
+    assert_eq!(
+        recovered
+            .get_repository("old-repo")
+            .await
+            .unwrap()
+            .created_at,
+        "2026-10-01"
+    );
+    assert_eq!(recovered.list_repositories().await.unwrap().len(), 1);
+}

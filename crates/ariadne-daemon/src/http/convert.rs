@@ -68,6 +68,12 @@ pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
 
     fn forge_dto(f: store::ForgeIntegration) -> ForgeDto {
         kind: f.kind(),
+        webhook: ariadne_api::repositories::WebhookDto {
+            state: f.webhook_state,
+            url: f.webhook_url,
+            error: f.webhook_error,
+            last_delivery_at: f.webhook_last_delivery_at,
+        },
         .. host, owner, name, remote, enabled, login, babysit_model, babysit_effort,
            review_model, review_effort
     }

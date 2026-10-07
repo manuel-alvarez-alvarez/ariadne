@@ -48,7 +48,8 @@ and the ACP runtime that reports the agent events (021).
    optionally, on a TCP address for the desktop app.
 2. DTOs and the error shape live in one crate (`ariadne-api`) and are the
    single source of truth for the OpenAPI document every client generates
-   from. Every endpoint appears in that document.
+   from. Every API endpoint appears in that document.
+   The separate forge webhook ingress follows [027](027-webhooks-and-tunnel.md).
 3. A refusal is an envelope with a machine-readable code and one sentence a
    person can act on — the state machine's own explanation where a transition
    was refused (001). Every request DTO denies unknown fields, so a body that

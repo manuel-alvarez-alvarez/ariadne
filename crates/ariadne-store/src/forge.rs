@@ -69,6 +69,24 @@ pub(crate) async fn write_forge(
               detected_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (repository_id) DO UPDATE SET
+             webhook_id = CASE
+                 WHEN kind = excluded.kind AND host = excluded.host AND owner = excluded.owner AND name = excluded.name
+                 THEN webhook_id ELSE NULL END,
+             webhook_secret = CASE
+                 WHEN kind = excluded.kind AND host = excluded.host AND owner = excluded.owner AND name = excluded.name
+                 THEN webhook_secret ELSE NULL END,
+             webhook_url = CASE
+                 WHEN kind = excluded.kind AND host = excluded.host AND owner = excluded.owner AND name = excluded.name
+                 THEN webhook_url ELSE NULL END,
+             webhook_state = CASE
+                 WHEN kind = excluded.kind AND host = excluded.host AND owner = excluded.owner AND name = excluded.name
+                 THEN webhook_state ELSE 'polling' END,
+             webhook_error = CASE
+                 WHEN kind = excluded.kind AND host = excluded.host AND owner = excluded.owner AND name = excluded.name
+                 THEN webhook_error ELSE NULL END,
+             webhook_last_delivery_at = CASE
+                 WHEN kind = excluded.kind AND host = excluded.host AND owner = excluded.owner AND name = excluded.name
+                 THEN webhook_last_delivery_at ELSE NULL END,
              detected_at = CASE
                  WHEN kind = excluded.kind AND host = excluded.host AND owner = excluded.owner
                       AND name = excluded.name AND remote = excluded.remote

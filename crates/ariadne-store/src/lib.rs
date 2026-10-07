@@ -28,6 +28,7 @@ mod stats;
 mod task_agents;
 mod tasks;
 mod usage;
+mod webhooks;
 
 pub use ai_permissions::AiPermissionSettingsUpdate;
 pub use change::Change;

@@ -87,6 +87,27 @@ describe("RepositoriesPage", () => {
     expect(screen.queryByText("2 repositories")).toBeNull()
   })
 
+  it("shows webhook state URL error and last delivery", async () => {
+    stubDaemon([
+      {
+        ...ARIADNE,
+        forge: aForge({
+          webhook: {
+            state: "failed",
+            url: "https://hooks.example/webhooks/github/repo",
+            error: "HTTP 403: needs admin rights",
+            last_delivery_at: "2026-10-07T10:00:00Z",
+          },
+        }),
+      },
+    ])
+    renderScreen(<RepositoriesPage />)
+    expect(await screen.findByText("failed")).toBeDefined()
+    expect(screen.getByText("https://hooks.example/webhooks/github/repo")).toBeDefined()
+    expect(screen.getByText("HTTP 403: needs admin rights")).toBeDefined()
+    expect(screen.getByText("2026-10-07T10:00:00Z")).toBeDefined()
+  })
+
   it("shows the forge each remote is on, and whether it is enabled", async () => {
     stubDaemon([
       { ...ARIADNE, forge: aForge({ enabled: true, login: "octocat" }) },

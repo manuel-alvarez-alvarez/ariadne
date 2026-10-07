@@ -1,5 +1,6 @@
 //! GitHub, through `gh`.
 
+mod hooks;
 mod open;
 mod pulls;
 
