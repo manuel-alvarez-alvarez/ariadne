@@ -1534,56 +1534,6 @@ async fn a_task_remembers_the_request_it_was_published_as() {
     assert_eq!(store.get_task(&task.id).await.unwrap().pr_url, None);
 }
 
-/// Whether a published request last read ready to merge: false until a
-/// report says otherwise, true only on the change into it, and false again
-/// once a later report takes it back — so a caller knows from the answer
-/// alone whether to raise or clear the notice, rather than reading the row
-/// twice.
-#[tokio::test]
-async fn a_tasks_readiness_report_says_whether_it_changed() {
-    let w = World::new().await;
-    let (store, task) = (&w.store, &w.task);
-    assert!(!store.get_task(&task.id).await.unwrap().pr_ready());
-
-    // The first ready report is a change.
-    assert!(
-        store
-            .set_task_pull_request_ready(&task.id, true)
-            .await
-            .unwrap()
-    );
-    assert!(store.get_task(&task.id).await.unwrap().pr_ready());
-
-    // A repeat of the same answer changes nothing.
-    assert!(
-        !store
-            .set_task_pull_request_ready(&task.id, true)
-            .await
-            .unwrap()
-    );
-    assert!(store.get_task(&task.id).await.unwrap().pr_ready());
-
-    // A later report that it stopped being ready is a change too.
-    assert!(
-        store
-            .set_task_pull_request_ready(&task.id, false)
-            .await
-            .unwrap()
-    );
-    assert!(!store.get_task(&task.id).await.unwrap().pr_ready());
-
-    // Clearing the request forgets its readiness with it: a retried task
-    // does not start its new request out as already ready.
-    let url = "https://github.com/ariadne/ariadne/pull/14";
-    store.set_task_pull_request(&task.id, url).await.unwrap();
-    store
-        .set_task_pull_request_ready(&task.id, true)
-        .await
-        .unwrap();
-    store.clear_task_pull_request(&task.id).await.unwrap();
-    assert!(!store.get_task(&task.id).await.unwrap().pr_ready());
-}
-
 #[tokio::test]
 async fn sessions_and_events_round_trip() {
     let w = World::new().await;
@@ -2888,6 +2838,70 @@ async fn a_dropped_shipped_skill_leaves_an_existing_database_on_reopen() {
     );
 }
 
+/// `pull-request` left the catalog once opening a request became the
+/// daemon's own tool rather than an agent's skill. An old staffing on it is
+/// the kept-row case any dropped skill proves: the row stays a built-in,
+/// because the task that staffed it still names it, and it reads as an empty
+/// skill since nothing ships under its name any more.
+#[tokio::test]
+async fn an_old_staffing_on_pull_request_keeps_its_row_and_reads_as_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+
+    let store = Store::open(&path).await.unwrap();
+    let (goal, repo) = seed_goal(&store).await;
+    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    drop(store);
+
+    // The era that shipped `pull-request`, reproduced: a row this release no
+    // longer ships, staffed on the task's author.
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO skills (name, document, builtin, created_at, updated_at)
+         VALUES ('pull-request', NULL, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO task_agent_skills (agent_id, skill_name, ordinal)
+         SELECT id, 'pull-request', 1 FROM task_agents
+          WHERE task_id = ? AND seat = 'author'",
+    )
+    .bind(&task.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+
+    let store = Store::open(&path).await.unwrap();
+    let loaded = store.get_skill("pull-request").await.unwrap();
+    assert!(
+        loaded.is_builtin(),
+        "an old staffing on pull-request keeps its row"
+    );
+    assert_eq!(
+        loaded.document_text(),
+        "",
+        "the dropped skill reads as empty"
+    );
+
+    let author = store.task_author(&task.id).await.unwrap();
+    let names: Vec<String> = store
+        .agent_skills(&author.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|s| s.name)
+        .collect();
+    assert!(
+        names.contains(&"pull-request".to_string()),
+        "the task still names it: {names:?}"
+    );
+}
+
 /// A skill that merged into another takes its staffings with it: the rows
 /// that named it name the skill that does its work now, so a task staffed
 /// before the merge still reads as the work it did. An agent staffed on both
@@ -3126,9 +3140,9 @@ async fn a_database_from_before_the_squash_says_which_file_to_delete() {
 }
 
 /// A database that only ever ran the squashed `0001_init.sql` — every
-/// database written before `pr_ready` was added — opens on this release the
-/// ordinary way: a new migration adds the column rather than editing the
-/// squashed one, so its checksum, and every database already recorded
+/// database written before a later migration touched `tasks` — opens on this
+/// release the ordinary way: a later migration edits the column rather than
+/// the squashed one, so its checksum, and every database already recorded
 /// against it, stay as they were.
 ///
 /// The old chain is run with sqlx's own migrator over a directory holding
@@ -3160,23 +3174,14 @@ async fn a_database_that_only_ran_the_squashed_migration_upgrades_in_place() {
     pool.close().await;
 
     // This release's own migrations run over it: the squashed one is
-    // unchanged and already recorded, so only the new one applies.
+    // unchanged and already recorded, so only the later ones apply.
     let store = Store::open(&path)
         .await
-        .expect("a pre-pr_ready database failed to upgrade in place");
+        .expect("a pre-squash database failed to upgrade in place");
 
-    // The new column is there, usable, and starts every existing task out
-    // unready rather than refusing the read.
     let (goal, repo) = seed_goal(&store).await;
     let task = seed_task(&store, &goal, &repo, vec![]).await;
-    assert!(!store.get_task(&task.id).await.unwrap().pr_ready());
-    assert!(
-        store
-            .set_task_pull_request_ready(&task.id, true)
-            .await
-            .unwrap()
-    );
-    assert!(store.get_task(&task.id).await.unwrap().pr_ready());
+    assert_eq!(store.get_task(&task.id).await.unwrap().pr_url, None);
 }
 
 /// A copy of the previous schema keeps an existing goal when the nullable

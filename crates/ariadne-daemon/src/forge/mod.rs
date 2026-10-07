@@ -335,6 +335,23 @@ impl ForgeClient {
             ForgeClient::Gitlab(cli) => cli.whoami(host).await,
         }
     }
+
+    /// Open a pull or merge request from `head` onto `base` in `owner/name`,
+    /// titled and bodied as asked, and answer its URL.
+    pub async fn open(
+        &self,
+        repo: &str,
+        head: &str,
+        base: &str,
+        title: &str,
+        body: &str,
+        draft: bool,
+    ) -> Result<String, String> {
+        match self {
+            ForgeClient::Github(cli) => cli.open(repo, head, base, title, body, draft).await,
+            ForgeClient::Gitlab(cli) => cli.open(repo, head, base, title, body, draft).await,
+        }
+    }
 }
 
 /// One forge CLI: the program the config names, found the way `python_bin`

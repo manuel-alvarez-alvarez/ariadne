@@ -1,5 +1,7 @@
 //! GitLab, through `glab`.
 
+mod open;
+
 use super::Cli;
 mod issues;
 

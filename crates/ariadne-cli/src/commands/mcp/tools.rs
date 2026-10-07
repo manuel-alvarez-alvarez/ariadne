@@ -18,7 +18,7 @@ use ariadne_api::messages::SendMessageRequest;
 use ariadne_api::sessions::SwitchSessionRequest;
 use ariadne_api::skills::{SkillDto, SkillSeat};
 use ariadne_api::tasks::{
-    AgentAssignment, CreateTaskRequest, PickWinnerRequest, RecordPullRequestRequest,
+    AgentAssignment, CreateTaskRequest, OpenPullRequestRequest, PickWinnerRequest,
     TransitionRequest, UpdateTaskRequest,
 };
 use ariadne_core::{Actor, MessageKind, Seat, TaskStatus};
@@ -155,14 +155,14 @@ pub(super) struct FinishTaskReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub(super) struct RecordPullRequestReq {
-    /// The URL of the pull request, as `gh pr create` or `glab mr create`
-    /// printed it.
-    pub url: String,
-    /// True once every required approval and check reads green. Ariadne
-    /// tells the user only on this change, and only once.
+pub(super) struct OpenPullRequestReq {
+    /// Titled by the repository's own commit conventions.
+    pub title: String,
+    /// Filled from the repository's own request template.
+    pub body: String,
+    /// Opens the request as a draft.
     #[serde(default)]
-    pub ready: bool,
+    pub draft: bool,
 }
 
 /// The two verdicts a review round ends in, as the one verdict tool takes
@@ -631,19 +631,20 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Report the pull or merge request you opened. Set `ready` once every required approval and check is green."
+        description = "Open the pull or merge request your task lands by. Ariadne runs the forge CLI and answers the URL. A second call on the same task answers that URL again and opens nothing."
     )]
-    async fn record_pull_request(
+    async fn open_pull_request(
         &self,
-        Parameters(req): Parameters<RecordPullRequestReq>,
+        Parameters(req): Parameters<OpenPullRequestReq>,
     ) -> Result<CallToolResult, McpError> {
         let path = self.task_path(None, "/pull-request")?;
         json_result(
             self.post(
                 &path,
-                &RecordPullRequestRequest {
-                    url: req.url,
-                    ready: req.ready,
+                &OpenPullRequestRequest {
+                    title: req.title,
+                    body: req.body,
+                    draft: req.draft,
                 },
             )
             .await?,
@@ -985,6 +986,40 @@ mod tests {
         assert_eq!(
             sent["reason"],
             serde_json::json!("Rewrote the parser; cargo test green.")
+        );
+    }
+
+    /// Opening a request posts the title and the body to the task's own
+    /// pull-request endpoint, which is where the daemon runs the forge CLI:
+    /// the tool carries only what the author cannot read off the task or the
+    /// repository itself.
+    #[tokio::test]
+    async fn opening_a_pull_request_posts_the_title_and_the_body() {
+        let (endpoint, seen) = recording_daemon().await;
+        let mcp = server_at(
+            McpSeat::Author,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        mcp.open_pull_request(Parameters(OpenPullRequestReq {
+            title: "feat(cli): add the repo inspect command".into(),
+            body: "## Summary\n- adds `ariadne repo inspect`".into(),
+            draft: false,
+        }))
+        .await
+        .expect("open the pull request");
+
+        let seen = seen.lock().expect("lock").clone();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert_eq!(seen[0].method, "POST");
+        assert_eq!(seen[0].path, "/v1/tasks/01TASK/pull-request");
+        let sent: serde_json::Value = serde_json::from_str(&seen[0].body).expect("json");
+        assert_eq!(
+            sent,
+            serde_json::json!({
+                "title": "feat(cli): add the repo inspect command",
+                "body": "## Summary\n- adds `ariadne repo inspect`",
+                "draft": false,
+            })
         );
     }
 

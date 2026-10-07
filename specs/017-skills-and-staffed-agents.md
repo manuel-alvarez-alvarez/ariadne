@@ -1,7 +1,7 @@
 ---
 id: skills-and-staffed-agents
 status: current
-updated: 2026-10-05
+updated: 2026-10-07
 areas: [store, api, cli, ui, daemon, prompts]
 commits: [03f9c8b7, 29e6d84e]
 tests:
@@ -49,18 +49,18 @@ written into the system prompt (006), and the lifecycle the seats sit in
    unreviewed only when nothing can be tested whole, such as a release or a
    report. That task is approved as soon as its author asks (001). A task
    with several authors needs at least one reviewer, to pick the winner.
-4. Ariadne ships a catalog of fourteen skills, in four scopes:
+4. Ariadne ships a catalog of thirteen skills, in four scopes:
    - **orchestrate** — `orchestration`, the orchestrator's own playbook;
    - **produce** — `spec-writing`, `coding`, `debugging`, `refactoring`,
      `documentation`, `research`;
    - **review** — `code-review`, `spec-review`, `performance-review`,
      `architecture-review`;
-   - **operate** — `migration`, `conflict-resolution`, `pull-request`.
+   - **operate** — `migration`, `conflict-resolution`.
 
-   `pull-request` is staffable like any other, but nobody has to staff it:
-   the launcher adds it on its own (behavior 14) to the one author whose
-   landing opens a request, the way it loads `orchestration` for every
-   orchestrator (behavior 10).
+   `pull-request` left the catalog once opening a request became the
+   daemon's own tool (`open_pull_request`) rather than an agent's to read a
+   procedure for (005): what used to be staffed, or added on an author's
+   behalf, is now one call in the landing briefing.
 
    The catalog holds what Ariadne is staffed on, so a skill nothing is ever
    staffed on leaves it. `release`, `dependency-upgrade`, `security-review`
@@ -127,16 +127,6 @@ written into the system prompt (006), and the lifecycle the seats sit in
     `switch_session` (013), rather than leave the task to fail.
 13. Every user-facing skill action exists in both the CLI (`ariadne skill`)
     and the desktop app, per the parity rule of spec 015.
-14. An author's skills are its staffed ones, plus `pull-request` where its
-    task's effective landing opens a request: the goal's landing is
-    `pull_request`, or the task is the final task of a `feature_branch`
-    goal and has started on the goal branch (005). On a several-author task
-    this holds for every author before a winner is picked, since landing is
-    not yet anybody's, and for the picked winner alone after — the losing
-    authors' sessions are gone by then (004). The launcher checks this on
-    every launch, resume and `switch_session` alike, since nothing is
-    written to the database for it: a task re-staffed to carry the skill of
-    its own does not get two copies of it, the same document reached twice.
 
 ## Acceptance criteria
 
@@ -200,21 +190,20 @@ written into the system prompt (006), and the lifecycle the seats sit in
   pin (`store.rs::the_schema_names_agents_by_registry_id_alone`).
 - A staffed agent's skills reach it as an index and as documents on disk
   (`prompts.rs::a_spawned_author_is_briefed_from_the_builtin_template`).
-- An author whose task lands by pull request reads the `pull-request` skill
-  from its first launch, whether or not anybody staffed it
-  (`skill_documents.rs::an_author_landing_by_pull_request_reads_the_pull_request_skill`),
-  without a second copy where it was staffed explicitly too
-  (`::an_author_already_staffed_on_it_gets_no_second_copy`), and an author
-  whose task lands by merge reads none of it
-  (`::an_author_landing_by_merge_reads_no_pull_request_skill`).
+- No author reads a `pull-request` skill: opening a request is the daemon's
+  own tool now. An old staffing on it — the row a database written before
+  this release still carries — keeps its row, because the task that staffed
+  it still names it, and reads as empty, since nothing ships under the name
+  any more
+  (`skill_documents.rs::an_old_staffing_on_pull_request_reads_as_empty`,
+  `store.rs::an_old_staffing_on_pull_request_keeps_its_row_and_reads_as_empty`).
 
 ## Sources
 
 `crates/ariadne-store/skills/` (the shipped documents),
 `crates/ariadne-store/src/skills.rs`, `crates/ariadne-store/src/task_agents.rs`,
 `crates/ariadne-store/src/defaults.rs` (`BUILTIN_SKILLS`,
-`ORCHESTRATION_SKILL`, `PULL_REQUEST_SKILL`),
-`crates/ariadne-daemon/src/launcher.rs` (`author_lands_by_pull_request`),
+`ORCHESTRATION_SKILL`),
 `crates/ariadne-store/src/entities.rs`
 (`Skill::seat`), `crates/ariadne-daemon/src/launcher.rs` (the orchestrator's
 skill), `crates/ariadne-core/src/lib.rs` (`Seat`).

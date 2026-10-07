@@ -965,10 +965,11 @@ impl Store {
         self.publish_task_update(task_id, n).await
     }
 
-    /// Record the pull or merge request a task was published as.
+    /// Record the pull or merge request a task was opened as.
     ///
-    /// The URL is the whole of it: nothing polls the request but the
-    /// author's own session, and the URL is what the UI and the CLI show.
+    /// The URL is the whole of it: the daemon opens the request once and
+    /// answers it on every later call, and the URL is what the UI and the
+    /// CLI show.
     pub async fn set_task_pull_request(&self, task_id: &str, url: &str) -> Result<()> {
         let n = sqlx::query("UPDATE tasks SET pr_url = ?, updated_at = ? WHERE id = ?")
             .bind(url)
@@ -980,12 +981,12 @@ impl Store {
         self.publish_task_update(task_id, n).await
     }
 
-    /// Forget the request a task was published as: a task retried after its
+    /// Forget the request a task was opened as: a task retried after its
     /// request was closed unmerged would otherwise show the user a request
     /// nobody will merge.
     pub async fn clear_task_pull_request(&self, task_id: &str) -> Result<()> {
         let n = sqlx::query(
-            "UPDATE tasks SET pr_url = NULL, pr_ready = 0, updated_at = ?
+            "UPDATE tasks SET pr_url = NULL, updated_at = ?
              WHERE id = ? AND pr_url IS NOT NULL",
         )
         .bind(now())
@@ -994,28 +995,6 @@ impl Store {
         .await?
         .rows_affected();
         self.publish_task_update(task_id, n).await
-    }
-
-    /// Record whether the published request's approvals and checks last read
-    /// ready to merge, and say whether that changed the row.
-    ///
-    /// A forge's own rules for "ready" are the skill's to read; the daemon
-    /// only keeps the one bit a repeated poll must not re-announce, and the
-    /// one a new change or a failed check must take back down.
-    pub async fn set_task_pull_request_ready(&self, task_id: &str, ready: bool) -> Result<bool> {
-        let n = sqlx::query(
-            "UPDATE tasks SET pr_ready = ?, updated_at = ?
-             WHERE id = ? AND pr_ready <> ?",
-        )
-        .bind(i64::from(ready))
-        .bind(now())
-        .bind(task_id)
-        .bind(i64::from(ready))
-        .execute(self.w())
-        .await?
-        .rows_affected();
-        self.publish_task_update(task_id, n).await?;
-        Ok(n > 0)
     }
 
     /// Bring a task's stall into line with what its agents' own flags say.

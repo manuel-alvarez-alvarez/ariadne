@@ -1172,15 +1172,10 @@ impl super::Scheduler {
 
     /// Put the agent a task is waiting on back on it: its author, resumed
     /// where its session merely ended and started afresh where there is none.
-    ///
-    /// Whatever the user is owed comes back up with it
-    /// ([`Self::keep_waiting_user`]): starting the author again is the
-    /// recovery for the agent, and no answer at all to a person who still has
-    /// a request to merge.
     pub(super) async fn start_author(&mut self, task: &Task) -> anyhow::Result<()> {
         let instruction = self.resume_text(task).await?;
-        let session = self.launcher.resume_author(&task.id, &instruction).await?;
-        self.keep_waiting_user(&session, None).await
+        self.launcher.resume_author(&task.id, &instruction).await?;
+        Ok(())
     }
 
     /// [`Self::start_author`], on a fresh conversation rather than the one
@@ -1188,46 +1183,29 @@ impl super::Scheduler {
     /// would have said.
     async fn start_author_afresh(&mut self, task: &Task) -> anyhow::Result<()> {
         let instruction = self.resume_text(task).await?;
-        let session = self
-            .launcher
+        self.launcher
             .spawn_author_told(&task.id, &instruction)
             .await?;
-        self.keep_waiting_user(&session, None).await
+        Ok(())
     }
 
     /// Put back on the agent that came up what a human still owes its work.
     ///
     /// `waiting_user` is nobody's flag but the user's: it says a person owes
-    /// this task something — a message written to them, a request that is
-    /// theirs to merge — and putting the agent underneath back on its feet
-    /// answers none of it. Both ways of doing that lose it all the same: a
-    /// resume revives the row through `restart_session`, which drops its
-    /// attention with everything else, and a spawn that had to start afresh
-    /// leaves the flag on a row nobody looks at any more
-    /// (`clear_superseded_attention`). So it goes back on the session that
-    /// came up.
-    ///
-    /// Two ways to know it is owed, and either is enough. `carried` is what
-    /// the row that went down was flagged with, for the caller that has that
-    /// row. The task is the other, and the one that answers where the flag
-    /// was already lost — swept aside by a `disconnected` before the resume,
-    /// or left on a superseded row: an approved task whose request last read
-    /// ready to merge has handed the merge to a human, and no restart of its
-    /// author merges it for them.
+    /// this task something — a message written to them — and putting the
+    /// agent underneath back on its feet answers none of it. Both ways of
+    /// doing that lose it all the same: a resume revives the row through
+    /// `restart_session`, which drops its attention with everything else, and
+    /// a spawn that had to start afresh leaves the flag on a row nobody looks
+    /// at any more (`clear_superseded_attention`). So it goes back on the
+    /// session that came up, where `carried` — what the row that went down
+    /// was flagged with — says the flag was owed.
     pub(super) async fn keep_waiting_user(
         &self,
         back: &AgentSession,
         carried: Option<AttentionReason>,
     ) -> anyhow::Result<()> {
-        let mut owed = carried.is_some_and(|reason| reason.is_for_the_user());
-        if !owed
-            && back.seat() == Some(Seat::Author)
-            && let Some(task_id) = back.task_id.as_deref()
-        {
-            let task = self.store.get_task(task_id).await?;
-            owed = task.status() == TaskStatus::Approved && task.pr_ready();
-        }
-        if owed {
+        if carried.is_some_and(|reason| reason.is_for_the_user()) {
             info!(session = %back.id, seat = ?back.seat, "the agent is back on its feet and the user is still owed, raising it again");
             self.store
                 .set_session_attention(&back.id, AttentionReason::WaitingUser)

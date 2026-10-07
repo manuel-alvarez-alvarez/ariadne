@@ -1115,6 +1115,31 @@ impl Harness {
             .unwrap();
     }
 
+    /// Stage a skill this release no longer ships, staffed on `agent_id`.
+    /// Straight SQL: `set_agent_skills` refuses a name nothing answers to, so
+    /// the only way to reach the state an old database carries — a staffing
+    /// on a skill the catalog has since dropped — is to write the rows a
+    /// database of that era would already hold.
+    pub(crate) async fn stage_dropped_skill(&self, agent_id: &str, name: &str, ordinal: i64) {
+        sqlx::query(
+            "INSERT INTO skills (name, document, builtin, created_at, updated_at)
+             VALUES (?, NULL, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .bind(name)
+        .execute(&self.db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO task_agent_skills (agent_id, skill_name, ordinal) VALUES (?, ?, ?)",
+        )
+        .bind(agent_id)
+        .bind(name)
+        .bind(ordinal)
+        .execute(&self.db)
+        .await
+        .unwrap();
+    }
+
     /// Every fact of `kind` in the stats ledger, oldest first, as
     /// `(session_id, launch_id, seat, model, skills, data)`. Straight SQL: the
     /// daemon reads the ledger only as aggregates, and a test of the fact

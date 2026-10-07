@@ -51,7 +51,7 @@ use ariadne_store::{AgentSession, Goal, NewTaskAgent, SessionFilter, Task};
 
 #[cfg(unix)]
 use common::sh;
-use common::{Harness, eventually, harness, test_pin};
+use common::{Harness, QUIET, eventually, harness, test_pin};
 
 /// The budget the goal's orchestrator spends: how many attempts starting one is
 /// worth, as the scheduler has it.
@@ -1880,18 +1880,17 @@ async fn a_wedged_agent_flagged_for_the_user_keeps_the_flag_and_is_relaunched() 
     );
 }
 
-/// And the flag comes back up for an author that was never carrying it, on
-/// the one thing a restart cannot settle: a task published as a request.
+/// A task with a request open raises no attention, and a resumed author
+/// carries none either.
 ///
-/// The chain this is about is the whole of an approved task's ending. The
-/// author opens the request, tells the user it is theirs to merge, and stops
-/// — it has nothing left to do until they do. Its agent going away is read as
-/// a disconnect, since landing the change is still the author's turn, and the
-/// resume that answers the disconnect wipes the row clean. Nothing in any of
-/// that merged anything, so the task must still say who it is waiting for
-/// afterwards.
+/// The task ends once the request is open and pushed, rather than once a
+/// human merges it, so there is no mid-task stretch where the request is the
+/// user's to act on and the daemon has to keep saying so. An approved task
+/// whose author's agent went away is read as a disconnect the way any other
+/// is, and the resume that answers it puts the author back on the task with
+/// nothing carried forward.
 #[tokio::test]
-async fn a_published_task_still_says_the_merge_is_the_users_after_its_author_is_resumed() {
+async fn an_open_pull_request_raises_no_attention() {
     let w = World::active().await;
     w.advance(&w.task, TaskStatus::UnderReview).await;
     // Live in the database with no agent process under it: the agent that
@@ -1906,10 +1905,6 @@ async fn a_published_task_still_says_the_merge_is_the_users_after_its_author_is_
         .unwrap();
     w.store
         .set_task_pull_request(&w.task.id, "https://example.test/pull/1")
-        .await
-        .unwrap();
-    w.store
-        .set_task_pull_request_ready(&w.task.id, true)
         .await
         .unwrap();
 
@@ -1930,15 +1925,15 @@ async fn a_published_task_still_says_the_merge_is_the_users_after_its_author_is_
     )
     .await;
     sched.task(&w.task);
-    eventually(
-        TIMEOUT,
-        "the request to still be the user's to merge",
-        async || w.attention(&session).await == Some(AttentionReason::WaitingUser),
-    )
-    .await;
+    tokio::time::sleep(QUIET).await;
+    assert_eq!(
+        w.attention(&session).await,
+        None,
+        "an open request raises nothing for the daemon to keep saying"
+    );
     assert!(
         !w.store.get_task(&w.task.id).await.unwrap().is_stalled(),
-        "and what the user is owed is not the task stalling"
+        "and the open request is not the task stalling either"
     );
 }
 

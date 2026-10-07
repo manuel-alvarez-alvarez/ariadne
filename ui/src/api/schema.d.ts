@@ -1146,31 +1146,18 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Record the pull or merge request the author opened for a task, and
-         *     whether it currently reads ready to merge.
-         * @description The URL travels as a tool call, so a published task is either one the UI
-         *     and the CLI can point at or one that was never reported. Publication
-         *     alone is not readiness: a request nobody can merge yet is not a human's
-         *     to act on, so `ready` is what the pull-request skill reports once its own
-         *     poll of the forge finds every required approval and check green.
+         * Open the pull or merge request a task lands by, through the repository's
+         *     own forge CLI, and answer its URL.
+         * @description The daemon runs the forge call, never the agent: `gh` or `glab` only ever
+         *     run here, with the authentication the user already set up for them
+         *     ([`crate::forge`]). The author supplies only what the daemon cannot read
+         *     off the task or the repository — the title and the body — and gets the
+         *     URL back to show the user.
          *
-         *     This is the moment the task becomes the user's: a request ready to merge
-         *     but a human is exactly what `waiting_user` says, so it goes up here, on
-         *     the session that reported it — the console they answer in, and the one
-         *     place the request can be traced back to. It is raised only on the
-         *     transition into ready, so a poll that finds nothing changed raises
-         *     nothing twice, and it comes back down the moment a later poll reports
-         *     `ready: false` — a new change or a failed check that undid an earlier
-         *     ready read.
-         *
-         *     Once raised that way it stays up until the user acts: an agent's own
-         *     events never take `waiting_user` down (`clear_agent_attention`), and the
-         *     author polling its request is exactly such an agent.
-         *     `Scheduler::keep_waiting_user` puts it back on whatever comes up when
-         *     that author is restarted while the request still reads ready, which is
-         *     what makes the two halves one flag rather than two.
+         *     One request per task: a task that already has a `pr_url` answers it again
+         *     and opens nothing, so a retried call never opens a second request.
          */
-        post: operations["tasks_record_pull_request"];
+        post: operations["tasks_open_pull_request"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2239,6 +2226,19 @@ export interface components {
             /** @description The absolute path of an existing directory the agent works in. */
             working_directory: string;
         };
+        /**
+         * @description The author asking the daemon to open the pull or merge request its task
+         *     lands by. The daemon runs the forge's own CLI, so this carries only what
+         *     the author cannot read off the task or the repository itself.
+         */
+        OpenPullRequestRequest: {
+            /** @description Filled from the repository's own request template. */
+            body: string;
+            /** @description Opens the request as a draft. Defaults to false. */
+            draft?: boolean;
+            /** @description Titled by the repository's own commit conventions. */
+            title: string;
+        };
         /** @description A file or directory the daemon depends on. */
         PathStateDto: {
             exists: boolean;
@@ -2344,20 +2344,6 @@ export interface components {
              * @example 3.12.1
              */
             version?: string | null;
-        };
-        /**
-         * @description The author reporting the pull or merge request it opened for a task, so
-         *     the user has somewhere to go and read it: taken off `gh pr create`'s output
-         *     and recorded on the task.
-         */
-        RecordPullRequestRequest: {
-            /**
-             * @description Whether every required approval and check last read green. Defaults
-             *     to false, which records the URL without announcing it to the user.
-             */
-            ready?: boolean;
-            /** @description The request's URL, e.g. `https://github.com/owner/repo/pull/12`. */
-            url: string;
         };
         RepositoryDto: {
             base_branch: string;
@@ -5359,7 +5345,7 @@ export interface operations {
             };
         };
     };
-    tasks_record_pull_request: {
+    tasks_open_pull_request: {
         parameters: {
             query?: never;
             header?: never;
@@ -5371,7 +5357,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RecordPullRequestRequest"];
+                "application/json": components["schemas"]["OpenPullRequestRequest"];
             };
         };
         responses: {
@@ -5383,13 +5369,6 @@ export interface operations {
                     "application/json": components["schemas"]["TaskDto"];
                 };
             };
-            /** @description empty URL */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description not an author session */
             403: {
                 headers: {
@@ -5397,7 +5376,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description the task is not approved */
+            /** @description the task is not approved, has no forge, is not authenticated, or is not pushed */
             409: {
                 headers: {
                     [name: string]: unknown;

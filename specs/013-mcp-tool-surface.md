@@ -1,7 +1,7 @@
 ---
 id: mcp-tool-surface
 status: current
-updated: 2026-10-05
+updated: 2026-10-07
 areas: [mcp, cli]
 commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -62,8 +62,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      `complete_goal` — the last five are what it supervises the goal with
      once the plan is under way (003)
    - **author**: `get_task`, `request_review`, `fail_task`, `finish_task`,
-     `record_pull_request` (the URL, and a `ready` flag, false unless given,
-     for whether every required approval and check on it reads green: 005)
+     `open_pull_request` (a title and a body; the daemon runs the forge's own
+     CLI and answers the URL it opened, rather than the agent: 005)
    - **reviewer**: `get_task`, `get_diff` (which takes an `author` on a task
      staffed with several, naming whose branch to read), `submit_verdict`
      (an `author` likewise, naming whose change the verdict judges — and

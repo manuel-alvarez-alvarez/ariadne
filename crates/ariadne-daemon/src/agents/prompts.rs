@@ -374,7 +374,6 @@ mod tests {
             stalled: 0,
             merge_commit: None,
             pr_url: None,
-            pr_ready: 0,
             picked_agent_id: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
@@ -764,10 +763,7 @@ mod tests {
             &repo,
             &repo.base_branch,
         );
-        assert!(
-            published.to_lowercase().contains("pull-request` skill"),
-            "{published}"
-        );
+        assert!(published.contains("`open_pull_request`"), "{published}");
         assert!(!published.contains("reset --soft"), "{published}");
         assert!(!published.contains("gh pr"), "{published}");
 

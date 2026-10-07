@@ -2917,9 +2917,9 @@
         "tags": [
           "tasks"
         ],
-        "summary": "Record the pull or merge request the author opened for a task, and\nwhether it currently reads ready to merge.",
-        "description": "The URL travels as a tool call, so a published task is either one the UI\nand the CLI can point at or one that was never reported. Publication\nalone is not readiness: a request nobody can merge yet is not a human's\nto act on, so `ready` is what the pull-request skill reports once its own\npoll of the forge finds every required approval and check green.\n\nThis is the moment the task becomes the user's: a request ready to merge\nbut a human is exactly what `waiting_user` says, so it goes up here, on\nthe session that reported it — the console they answer in, and the one\nplace the request can be traced back to. It is raised only on the\ntransition into ready, so a poll that finds nothing changed raises\nnothing twice, and it comes back down the moment a later poll reports\n`ready: false` — a new change or a failed check that undid an earlier\nready read.\n\nOnce raised that way it stays up until the user acts: an agent's own\nevents never take `waiting_user` down (`clear_agent_attention`), and the\nauthor polling its request is exactly such an agent.\n`Scheduler::keep_waiting_user` puts it back on whatever comes up when\nthat author is restarted while the request still reads ready, which is\nwhat makes the two halves one flag rather than two.",
-        "operationId": "record_pull_request",
+        "summary": "Open the pull or merge request a task lands by, through the repository's\nown forge CLI, and answer its URL.",
+        "description": "The daemon runs the forge call, never the agent: `gh` or `glab` only ever\nrun here, with the authentication the user already set up for them\n([`crate::forge`]). The author supplies only what the daemon cannot read\noff the task or the repository — the title and the body — and gets the\nURL back to show the user.\n\nOne request per task: a task that already has a `pr_url` answers it again\nand opens nothing, so a retried call never opens a second request.",
+        "operationId": "open_pull_request",
         "parameters": [
           {
             "name": "id",
@@ -2935,7 +2935,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RecordPullRequestRequest"
+                "$ref": "#/components/schemas/OpenPullRequestRequest"
               }
             }
           },
@@ -2952,14 +2952,11 @@
               }
             }
           },
-          "400": {
-            "description": "empty URL"
-          },
           "403": {
             "description": "not an author session"
           },
           "409": {
-            "description": "the task is not approved"
+            "description": "the task is not approved, has no forge, is not authenticated, or is not pushed"
           }
         }
       }
@@ -5293,6 +5290,29 @@
         },
         "additionalProperties": false
       },
+      "OpenPullRequestRequest": {
+        "type": "object",
+        "description": "The author asking the daemon to open the pull or merge request its task\nlands by. The daemon runs the forge's own CLI, so this carries only what\nthe author cannot read off the task or the repository itself.",
+        "required": [
+          "title",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "Filled from the repository's own request template."
+          },
+          "draft": {
+            "type": "boolean",
+            "description": "Opens the request as a draft. Defaults to false."
+          },
+          "title": {
+            "type": "string",
+            "description": "Titled by the repository's own commit conventions."
+          }
+        },
+        "additionalProperties": false
+      },
       "PathStateDto": {
         "type": "object",
         "description": "A file or directory the daemon depends on.",
@@ -5583,24 +5603,6 @@
             "example": "3.12.1"
           }
         }
-      },
-      "RecordPullRequestRequest": {
-        "type": "object",
-        "description": "The author reporting the pull or merge request it opened for a task, so\nthe user has somewhere to go and read it: taken off `gh pr create`'s output\nand recorded on the task.",
-        "required": [
-          "url"
-        ],
-        "properties": {
-          "ready": {
-            "type": "boolean",
-            "description": "Whether every required approval and check last read green. Defaults\nto false, which records the URL without announcing it to the user."
-          },
-          "url": {
-            "type": "string",
-            "description": "The request's URL, e.g. `https://github.com/owner/repo/pull/12`."
-          }
-        },
-        "additionalProperties": false
       },
       "RepositoryDto": {
         "type": "object",

@@ -254,6 +254,27 @@ impl GitManager {
         Ok(())
     }
 
+    /// Whether `branch`'s local tip is also what `remote` has for it, read
+    /// with `git ls-remote` rather than a fetch: the push check before the
+    /// daemon opens a request, and the merge verification before it accepts
+    /// `finish_task` for one.
+    pub async fn remote_has_branch_tip(
+        &self,
+        repo: &Path,
+        remote: &str,
+        branch: &str,
+    ) -> Result<bool> {
+        let local = self.git(repo, &["rev-parse", branch]).await?;
+        let refs = self
+            .git(repo, &["ls-remote", "--heads", remote, branch])
+            .await?;
+        Ok(refs
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().next())
+            .is_some_and(|sha| sha == local))
+    }
+
     /// True when `ancestor` is reachable from `descendant` — the merge
     /// verification used before accepting `finish_task`.
     pub async fn is_ancestor(&self, repo: &Path, ancestor: &str, descendant: &str) -> Result<bool> {

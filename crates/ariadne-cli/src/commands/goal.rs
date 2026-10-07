@@ -95,9 +95,9 @@ pub(crate) enum GoalCommand {
         #[arg(long, value_name = "EFFORT", value_parser = parse_effort, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::efforts))]
         effort: Option<String>,
         /// How every task of the goal ends: merge on the base branch,
-        /// pull-request opened and seen through to its merge, none where
-        /// there is nothing to land, or feature-branch. Fixed once the goal
-        /// is created. Default: merge
+        /// pull-request opened and pushed, none where there is nothing to
+        /// land, or feature-branch. Fixed once the goal is created. Default:
+        /// merge
         #[arg(long, value_enum)]
         landing: Option<Landing>,
     },
