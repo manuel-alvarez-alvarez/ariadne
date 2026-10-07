@@ -591,6 +591,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/repositories/{id}/issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["issues_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/repositories/{id}/issues/{number}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["issues_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sessions": {
         parameters: {
             query?: never;
@@ -1538,6 +1570,7 @@ export interface components {
              * @example high
              */
             effort?: string | null;
+            issue_url?: string | null;
             landing?: null | components["schemas"]["Landing"];
             /**
              * @description What the orchestrator runs on, `<agent>:<model>` — the id of an agent
@@ -1834,6 +1867,7 @@ export interface components {
              */
             effort?: string | null;
             id: string;
+            issue_url?: string | null;
             /** @description How every task of the goal ends, chosen when the goal was created. */
             landing: components["schemas"]["Landing"];
             /**
@@ -1925,6 +1959,16 @@ export interface components {
             started_at: string;
             /** @description The daemon's version, as `GET /v1/version` reports it. */
             version: string;
+        };
+        IssueDto: {
+            assignees: string[];
+            body: string;
+            labels: string[];
+            /** Format: int64 */
+            number: number;
+            title: string;
+            updated_at: string;
+            url: string;
         };
         /**
          * @description How the tasks of one goal end.
@@ -4214,6 +4258,64 @@ export interface operations {
                 content?: never;
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    issues_list: {
+        parameters: {
+            query?: {
+                /** @description `me` filters to the forge login; `all` reads all open issues. */
+                assigned?: string | null;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueDto"][];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    issues_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueDto"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

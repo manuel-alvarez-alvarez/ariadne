@@ -12,6 +12,7 @@ pub struct GoalDto {
     pub id: String,
     pub title: String,
     pub description: String,
+    pub issue_url: Option<String>,
     pub status: GoalStatus,
     /// Whether this goal has an orchestrator for its lifetime.
     pub orchestrated: bool,
@@ -70,6 +71,8 @@ pub struct CreateGoalRequest {
     pub title: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default)]
+    pub issue_url: Option<String>,
     /// Ids of registered repositories (`POST /v1/repositories`); at least one.
     pub repository_ids: Vec<String>,
     /// What the orchestrator runs on, `<agent>:<model>` — the id of an agent

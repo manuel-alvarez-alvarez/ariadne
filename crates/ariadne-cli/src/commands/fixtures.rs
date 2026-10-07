@@ -22,6 +22,7 @@ pub(crate) const NOW: &str = "2026-08-18T10:00:00Z";
 
 pub(crate) fn goal(id: &str, title: &str) -> GoalDto {
     GoalDto {
+        issue_url: None,
         id: id.into(),
         title: title.into(),
         description: String::new(),

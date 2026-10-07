@@ -87,6 +87,48 @@ fn an_empty_description_is_not_advertised_as_a_default() {
     }
 }
 
+#[test]
+fn an_issue_can_supply_the_goal_title_and_repository() {
+    let Command::Goal {
+        command:
+            GoalCommand::Create {
+                title,
+                description,
+                from_issue,
+                repos,
+                ..
+            },
+    } = parse(&[
+        "ariadne",
+        "goal",
+        "create",
+        "--from-issue",
+        "https://github.com/acme/widgets/issues/12",
+        "--model",
+        "stub:test-model",
+    ])
+    .command
+    else {
+        panic!("goal create")
+    };
+    assert_eq!(title, None);
+    assert_eq!(description, None);
+    assert!(repos.is_empty());
+    assert_eq!(
+        from_issue.as_deref(),
+        Some("https://github.com/acme/widgets/issues/12")
+    );
+
+    let Command::Issue {
+        command: IssueCommand::Ls { repo, all },
+    } = parse(&["ariadne", "issue", "ls", "--repo", "/work/widgets", "--all"]).command
+    else {
+        panic!("issue ls")
+    };
+    assert_eq!(repo, "/work/widgets");
+    assert!(all);
+}
+
 /// Every command a user can actually run, and whether `--format` shapes
 /// what it prints. Hidden internal commands are in here too: `--format`
 /// is global, so it reaches them whether or not anyone meant it to.
@@ -112,6 +154,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("goal inspect", true),
     ("goal ls", true),
     ("goal rm", true),
+    ("issue ls", true),
     ("mcp serve", false),
     ("models disable", true),
     ("models enable", true),

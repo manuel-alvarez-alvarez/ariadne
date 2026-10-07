@@ -1,11 +1,12 @@
 //! GitLab, through `glab`.
 
 use super::Cli;
+mod issues;
 
 /// `glab`, as the config names it.
 #[derive(Debug, Clone)]
 pub struct Gitlab {
-    cli: Cli,
+    pub(super) cli: Cli,
 }
 
 impl Gitlab {

@@ -1,11 +1,12 @@
 //! GitHub, through `gh`.
 
 use super::Cli;
+mod issues;
 
 /// `gh`, as the config names it.
 #[derive(Debug, Clone)]
 pub struct Github {
-    cli: Cli,
+    pub(super) cli: Cli,
 }
 
 impl Github {

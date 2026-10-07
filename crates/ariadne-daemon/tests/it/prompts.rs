@@ -15,9 +15,12 @@
 
 use crate::common;
 
+use crate::common::post_json;
 use ariadne_core::{Actor, PromptKind, Seat, TaskStatus};
 use ariadne_daemon::agents::prompts;
 use ariadne_store::defaults::default_prompt_text;
+use axum::http::StatusCode;
+use serde_json::json;
 
 use common::{Cast, Harness, harness};
 
@@ -44,6 +47,36 @@ fn fill(template: &str, values: &[(&str, &str)]) -> String {
 
 fn default_for(kind: PromptKind) -> String {
     default_prompt_text(kind).to_string()
+}
+
+#[tokio::test]
+async fn an_issue_goal_keeps_its_url_and_briefs_the_orchestrator_to_close_it() {
+    let h = harness().await;
+    let (_, repository) = h.goal().await;
+    let url = "https://github.com/acme/widgets/issues/12";
+    let goal: ariadne_api::goals::GoalDto = h
+        .json(
+            post_json(
+                "/v1/goals",
+                json!({
+                    "title": "Fix issue", "description": "Issue body", "issue_url": url,
+                    "repository_ids": [repository.id], "model": "stub:test-model"
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let read = h.store.get_goal(&goal.id).await.unwrap();
+    assert_eq!(read.issue_url.as_deref(), Some(url));
+    let dto: ariadne_api::goals::GoalDto = h.get(&format!("/v1/goals/{}", goal.id)).await;
+    assert_eq!(dto.issue_url.as_deref(), Some(url));
+    let session = h.launcher.spawn_orchestrator(&goal.id).await.unwrap();
+    let briefing = h.launch_file(&session.id).unwrap().initial_prompt.unwrap();
+    assert!(
+        briefing.contains(&format!("This goal comes from {url}")),
+        "{briefing}"
+    );
+    assert!(briefing.contains(&format!("Closes {url}")), "{briefing}");
 }
 
 /// The built-in template is the briefing the agent is launched with,

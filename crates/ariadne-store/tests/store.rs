@@ -499,6 +499,7 @@ async fn seed_goal(store: &Store) -> (Goal, Repository) {
     let repo = seed_repository(store).await;
     let goal = store
         .create_goal(NewGoal {
+            issue_url: None,
             landing: None,
             title: "Test goal".into(),
             description: "desc".into(),
@@ -821,6 +822,7 @@ async fn a_task_lands_by_the_ending_its_goal_carries() {
     let (store, _dir) = test_store().await;
     let repo = seed_repository(&store).await;
     let goal_ending_in = |landing: Option<Landing>| NewGoal {
+        issue_url: None,
         landing,
         title: "Ship it".into(),
         description: String::new(),
@@ -885,6 +887,7 @@ async fn a_goal_reads_its_repositories_live() {
 
     let goal = store
         .create_goal(NewGoal {
+            issue_url: None,
             landing: None,
             title: "Two repos".into(),
             description: "desc".into(),
@@ -926,6 +929,7 @@ async fn a_goal_needs_repositories_that_exist() {
     let (store, _dir) = test_store().await;
     let repo = seed_repository(&store).await;
     let new_goal = |repository_ids: Vec<String>| NewGoal {
+        issue_url: None,
         landing: None,
         title: "Goal".into(),
         description: "desc".into(),
@@ -3173,6 +3177,47 @@ async fn a_database_that_only_ran_the_squashed_migration_upgrades_in_place() {
             .unwrap()
     );
     assert!(store.get_task(&task.id).await.unwrap().pr_ready());
+}
+
+/// A copy of the previous schema keeps an existing goal when the nullable
+/// issue URL column is added. The old migration files remain unchanged.
+#[tokio::test]
+async fn the_issue_url_migration_keeps_existing_goals() {
+    let dir = tempfile::tempdir().unwrap();
+    let old_migrations = dir.path().join("old_migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    for name in [
+        "0001_init.sql",
+        "0002_task_pr_ready.sql",
+        "0003_ai_permission_thresholds_hand_set.sql",
+        "0004_forge_integrations.sql",
+    ] {
+        let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("migrations")
+            .join(name);
+        std::fs::copy(source, old_migrations.join(name)).unwrap();
+    }
+    let path = dir.path().join("old.db");
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}?mode=rwc", path.display()))
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations)
+        .await
+        .unwrap()
+        .run(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO goals (id, title, description, created_at, updated_at, model) VALUES ('old-goal', 'Fix widgets', 'Old body', '2026-01-01', '2026-01-01', 'stub:model')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    let store = Store::open(&path).await.unwrap();
+    let goal = store.get_goal("old-goal").await.unwrap();
+    assert_eq!(goal.title, "Fix widgets");
+    assert_eq!(goal.description, "Old body");
+    assert_eq!(goal.issue_url, None);
 }
 
 /// A database from before `thresholds_hand_set` (it ran `0001` and `0002`)

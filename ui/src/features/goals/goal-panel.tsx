@@ -280,6 +280,13 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
         {/* Chosen once, at creation, and followed by every task of the goal. */}
         <span>{LANDING_LABELS[goal.landing]}</span>
       </Fact>
+      {goal.issue_url && (
+        <Fact label="Issue">
+          <a href={goal.issue_url} target="_blank" rel="noreferrer">
+            {goal.issue_url}
+          </a>
+        </Fact>
+      )}
       <Fact label="Repositories" className="sm:col-span-3 lg:col-span-4">
         {/* Named by its folder rather than its full path — the path is only
             worth the room a tooltip gives it — with the base branch beside it

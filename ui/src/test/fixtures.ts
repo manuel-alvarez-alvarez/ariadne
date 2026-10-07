@@ -51,6 +51,7 @@ export function aGoal(overrides: Partial<GoalDto> = {}): GoalDto {
     id: GOAL_ID,
     title: "Ship the board",
     description: "",
+    issue_url: null,
     model: "claude-agent-acp:claude-sonnet-5",
     orchestrated: true,
     landing: "merge",

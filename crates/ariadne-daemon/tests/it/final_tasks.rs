@@ -21,6 +21,7 @@ use common::{Harness, TIMEOUT, as_session, harness, post_json, sh, test_pin};
 async fn feature_goal(h: &Harness, repo: &Repository) -> Goal {
     h.store
         .create_goal(ariadne_store::NewGoal {
+            issue_url: None,
             title: "Ship feature".into(),
             description: String::new(),
             repository_ids: vec![repo.id.clone()],

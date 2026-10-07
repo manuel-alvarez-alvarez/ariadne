@@ -8,6 +8,7 @@ pub mod doctor;
 pub mod error;
 pub mod events;
 pub mod goals;
+pub mod issues;
 pub mod logs;
 pub mod messages;
 pub mod models;

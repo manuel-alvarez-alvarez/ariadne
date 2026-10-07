@@ -83,7 +83,7 @@ pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
         landing: g.landing(),
         repos: repos,
         usage: usage,
-        .. id, title, description, orchestrated, model, effort,
+        .. id, title, description, issue_url, orchestrated, model, effort,
            created_at, updated_at
     }
 

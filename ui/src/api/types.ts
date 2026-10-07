@@ -12,6 +12,7 @@ export type { components, operations, paths } from "./schema"
 type Schemas = components["schemas"]
 
 export type GoalDto = Schemas["GoalDto"]
+export type IssueDto = Schemas["IssueDto"]
 export type GoalUsage = Schemas["GoalUsageDto"]
 export type GoalStatus = Schemas["GoalStatus"]
 export type CreateGoalRequest = Schemas["CreateGoalRequest"]

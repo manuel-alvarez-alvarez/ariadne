@@ -126,7 +126,7 @@ pub(crate) fn orchestrator_briefing(template: &str, goal: &Goal, repos: &[Reposi
         })
         .collect::<Vec<_>>()
         .join("\n");
-    render(
+    let briefing = render(
         template,
         &[
             ("goal_title", &goal.title),
@@ -134,7 +134,13 @@ pub(crate) fn orchestrator_briefing(template: &str, goal: &Goal, repos: &[Reposi
             ("landing", goal.landing().as_str()),
             ("repositories", &repo_lines),
         ],
-    )
+    );
+    match &goal.issue_url {
+        Some(url) => format!(
+            "{briefing}\n\nThis goal comes from {url}. Every request an author opens must say `Closes {url}` in its body."
+        ),
+        None => briefing,
+    }
 }
 
 /// What an orchestrator that has gone quiet is nudged with.
@@ -309,6 +315,7 @@ mod tests {
 
     fn goal() -> Goal {
         Goal {
+            issue_url: None,
             id: "01goalxxxxxxxxxxxxxxxxxxxx".into(),
             title: "Ship the UI".into(),
             description: "The board needs swimlanes.".into(),

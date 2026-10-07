@@ -903,6 +903,7 @@ mod tests {
             .unwrap();
         let goal = store
             .create_goal(ariadne_store::NewGoal {
+                issue_url: None,
                 landing: None,
                 title: "probe".into(),
                 description: String::new(),

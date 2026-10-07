@@ -65,6 +65,10 @@ interface OutsideSessionFilters {
 }
 
 export const qk = {
+  issues: {
+    list: (repository: string, assigned: "me" | "all") =>
+      ["issues", "list", { repository, assigned }] as const,
+  },
   goals: {
     all: () => ["goals"] as const,
     lists: () => ["goals", "list"] as const,

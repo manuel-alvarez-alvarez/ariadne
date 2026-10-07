@@ -912,6 +912,7 @@ impl Harness {
     ) -> Goal {
         self.store
             .create_goal(NewGoal {
+                issue_url: None,
                 landing,
                 title: "Ship the UI".into(),
                 description: "desc".into(),

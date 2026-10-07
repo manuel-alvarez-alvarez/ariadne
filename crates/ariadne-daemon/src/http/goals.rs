@@ -86,6 +86,7 @@ pub(super) async fn create(
         .create_goal(NewGoal {
             title: req.title,
             description: req.description,
+            issue_url: req.issue_url,
             repository_ids: req.repository_ids,
             pin,
             landing: req.landing,

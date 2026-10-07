@@ -35,6 +35,7 @@ test that proves it.
 | 023 | [Stats](023-stats.md) | the stats ledger, its facts, the stat families, and the route, command and screen over them |
 | 024 | [Advisory failure diagnosis](024-advisory-failure-diagnosis.md) | the optional local classifier beside a failed session's error, and why it never changes recovery |
 | 025 | [Forge integration](025-forge-integration.md) | the forge a repository's remote is on, enabling it, the two role pins, and the `gh` and `glab` client |
+| 028 | [Issues and goals](028-issues-and-goals.md) | live forge issues and goals created from them |
 
 ## Writing one
 

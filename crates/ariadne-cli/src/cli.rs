@@ -9,6 +9,7 @@ pub(crate) mod values;
 use crate::commands::agent::AgentCommand;
 use crate::commands::completions::CompletionsCommand;
 use crate::commands::goal::GoalCommand;
+use crate::commands::issue::IssueCommand;
 use crate::commands::models::ModelsCommand;
 use crate::commands::permissions::PermissionsCommand;
 use crate::commands::repo::RepoCommand;
@@ -352,6 +353,11 @@ pub(crate) enum Command {
     Repo {
         #[command(subcommand)]
         command: RepoCommand,
+    },
+    /// List open issues from an enabled repository forge
+    Issue {
+        #[command(subcommand)]
+        command: IssueCommand,
     },
     /// Manage the AI permission model behind the `ai` permission mode (022)
     ///

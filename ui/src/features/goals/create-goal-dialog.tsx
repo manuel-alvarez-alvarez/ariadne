@@ -85,10 +85,12 @@ export function CreateGoalDialog({
   open,
   onOpenChange,
   onCreated,
+  initial,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   onCreated?: (goal: GoalDto) => void
+  initial?: { title: string; description: string; repository_id: string; issue_url: string }
 }) {
   const repositories = useQuery({ ...repositoriesQueryOptions(), enabled: open })
   const models = useQuery({ ...modelsQueryOptions(), enabled: open })
@@ -100,7 +102,19 @@ export function CreateGoalDialog({
   })
   const errors = form.formState.errors
 
-  useResetOnOpen(open, form, DEFAULT_VALUES, createGoal)
+  useResetOnOpen(
+    open,
+    form,
+    initial
+      ? {
+          ...DEFAULT_VALUES,
+          title: initial.title,
+          description: initial.description,
+          repository_ids: [initial.repository_id],
+        }
+      : DEFAULT_VALUES,
+    createGoal,
+  )
   useClearErrorOnEdit(form, createGoal)
 
   // The effort the orchestrator is pinned at, which the picker holds beside
@@ -129,6 +143,7 @@ export function CreateGoalDialog({
     const body: CreateGoalRequest = {
       title: values.title.trim(),
       description: values.description,
+      ...(initial ? { issue_url: initial.issue_url } : {}),
       model,
       ...(effort.length > 0 ? { effort } : {}),
       repository_ids: values.repository_ids,

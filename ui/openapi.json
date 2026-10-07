@@ -1387,6 +1387,96 @@
         }
       }
     },
+    "/v1/repositories/{id}/issues": {
+      "get": {
+        "tags": [
+          "issues"
+        ],
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "assigned",
+            "in": "query",
+            "description": "`me` filters to the forge login; `all` reads all open issues.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/IssueDto"
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/repositories/{id}/issues/{number}": {
+      "get": {
+        "tags": [
+          "issues"
+        ],
+        "operationId": "get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/sessions": {
       "get": {
         "tags": [
@@ -3637,6 +3727,12 @@
             "description": "The reasoning effort to run that model at, one of the efforts `GET\n/v1/models` lists for it; anything else is refused. Omitted (or\n\"default\") = whatever the agent runs the model at.",
             "example": "high"
           },
+          "issue_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "landing": {
             "oneOf": [
               {
@@ -4482,6 +4578,12 @@
           "id": {
             "type": "string"
           },
+          "issue_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "landing": {
             "$ref": "#/components/schemas/Landing",
             "description": "How every task of the goal ends, chosen when the goal was created."
@@ -4663,6 +4765,48 @@
           "version": {
             "type": "string",
             "description": "The daemon's version, as `GET /v1/version` reports it."
+          }
+        }
+      },
+      "IssueDto": {
+        "type": "object",
+        "required": [
+          "number",
+          "title",
+          "body",
+          "url",
+          "labels",
+          "assignees",
+          "updated_at"
+        ],
+        "properties": {
+          "assignees": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "body": {
+            "type": "string"
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "number": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
           }
         }
       },
@@ -7127,6 +7271,10 @@
     {
       "name": "goals",
       "description": "Goals and their plans"
+    },
+    {
+      "name": "issues",
+      "description": "Open issues read from enabled forges"
     },
     {
       "name": "tasks",

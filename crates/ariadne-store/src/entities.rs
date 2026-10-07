@@ -337,6 +337,7 @@ pub struct Goal {
     pub id: String,
     pub title: String,
     pub description: String,
+    pub issue_url: Option<String>,
     pub status: String,
     /// Whether this goal has an orchestrator for its lifetime.
     pub orchestrated: bool,

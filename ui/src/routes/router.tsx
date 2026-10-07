@@ -24,6 +24,7 @@ import { createHashRouter, Navigate, type RouteObject, useParams } from "react-r
 import { AppShell, type PageHandle } from "@/components/app-shell"
 import { AgentsPage } from "@/features/agents/agents-page"
 import { GoalsListPage } from "@/features/goals/goals-list-page"
+import { IssuesPage } from "@/features/issues/issues-page"
 import { PermissionsPage } from "@/features/permissions/permissions-page"
 import { RepositoriesPage } from "@/features/repositories/repositories-page"
 import { SessionsPage } from "@/features/sessions/sessions-page"
@@ -46,6 +47,7 @@ function TaskPanelRedirect() {
 const routes: RouteObject[] = [
   { index: true, element: <Navigate to={paths.goals()} replace /> },
   { path: "goals", element: <GoalsListPage />, handle: { title: "Goals" } satisfies PageHandle },
+  { path: "issues", element: <IssuesPage />, handle: { title: "Issues" } satisfies PageHandle },
   { path: "goals/:goalId", element: <GoalPanelRedirect /> },
   { path: "tasks", element: <Navigate to={paths.goals()} replace /> },
   { path: "tasks/:taskId", element: <TaskPanelRedirect /> },

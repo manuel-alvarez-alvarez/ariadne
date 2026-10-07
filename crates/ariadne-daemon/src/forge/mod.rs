@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::time::Duration;
 
+use ariadne_api::issues::IssueDto;
 use tracing::warn;
 
 pub use ariadne_core::ForgeKind;
@@ -283,6 +284,23 @@ pub enum ForgeClient {
 }
 
 impl ForgeClient {
+    pub async fn list_open_issues(
+        &self,
+        repository: &str,
+        assignee: Option<&str>,
+    ) -> Result<Vec<IssueDto>, String> {
+        match self {
+            Self::Github(cli) => cli.list_open_issues(repository, assignee).await,
+            Self::Gitlab(cli) => cli.list_open_issues(repository, assignee).await,
+        }
+    }
+
+    pub async fn issue(&self, repository: &str, number: i64) -> Result<IssueDto, String> {
+        match self {
+            Self::Github(cli) => cli.issue(repository, number).await,
+            Self::Gitlab(cli) => cli.issue(repository, number).await,
+        }
+    }
     /// The CLI of a kind of forge, as the config names it.
     pub fn new(cfg: &Config, kind: ForgeKind) -> ForgeClient {
         match kind {

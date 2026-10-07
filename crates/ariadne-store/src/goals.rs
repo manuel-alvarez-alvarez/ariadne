@@ -17,6 +17,7 @@ const GOAL_ENDED: &str = "goal_ended";
 pub struct NewGoal {
     pub title: String,
     pub description: String,
+    pub issue_url: Option<String>,
     /// Ids of registered repositories the goal works in; each must exist.
     /// The goal reads them live, so editing one moves the goal with it.
     pub repository_ids: Vec<String>,
@@ -70,13 +71,14 @@ impl Store {
         let mut tx = self.w().begin().await?;
         let (model, effort) = AgentPin::columns(&new.pin);
         sqlx::query(
-            "INSERT INTO goals (id, title, description, status,
+            "INSERT INTO goals (id, title, description, issue_url, status,
                                 orchestrated, model, effort, landing, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.title)
         .bind(&new.description)
+        .bind(&new.issue_url)
         .bind(status.as_str())
         .bind(orchestrated)
         .bind(&model)

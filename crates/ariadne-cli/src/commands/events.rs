@@ -526,6 +526,7 @@ mod tests {
 
     fn goal() -> GoalDto {
         GoalDto {
+            issue_url: None,
             updated_at: AT.into(),
             ..fixtures::goal("01GOAL", "Ship the board")
         }

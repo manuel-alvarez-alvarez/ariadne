@@ -431,6 +431,7 @@ mod tests {
             .unwrap();
         let goal = store
             .create_goal(NewGoal {
+                issue_url: None,
                 landing: None,
                 title: "probe".into(),
                 description: String::new(),

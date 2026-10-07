@@ -36,6 +36,7 @@ export const SKILL_PARAM = "skill"
 const FOCUS_PARAM = "focus"
 
 export const paths = {
+  issues: () => "/issues",
   goals: () => "/goals",
   /** The goals board with this goal's panel open. */
   goal: (goalId: string) => `/goals?goal=${goalId}`,

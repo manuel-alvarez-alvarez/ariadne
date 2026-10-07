@@ -11,6 +11,7 @@ mod doctor;
 mod error;
 pub(crate) mod events;
 mod goals;
+mod issues;
 mod landing;
 mod logs;
 mod permissions;
@@ -123,6 +124,7 @@ impl AppState {
         skills::reset_document,
         repositories::create, repositories::list, repositories::get,
         repositories::update, repositories::delete,
+        issues::list, issues::get,
         permissions::get, permissions::update, permissions::refresh,
         permissions::list_learned, permissions::get_learned, permissions::delete_learned,
         permissions::update_learned,
@@ -159,6 +161,7 @@ impl AppState {
         (name = "repositories", description = "Git repositories registered with the daemon"),
         (name = "permissions", description = "The AI permission model: the local model the `ai` permission mode answers with"),
         (name = "goals", description = "Goals and their plans"),
+        (name = "issues", description = "Open issues read from enabled forges"),
         (name = "tasks", description = "Tasks, transitions, and what their agents say"),
         (name = "sessions", description = "Agent sessions, and the console each one is driven through"),
         (name = "events", description = "Agent events the ACP runtime reports, and the live domain-event stream"),
@@ -207,6 +210,8 @@ pub fn router(state: AppState) -> Router {
                 .put(repositories::update)
                 .delete(repositories::delete),
         )
+        .route("/v1/repositories/{id}/issues", get(issues::list))
+        .route("/v1/repositories/{id}/issues/{number}", get(issues::get))
         // permissions
         .route(
             "/v1/permissions/ai",
