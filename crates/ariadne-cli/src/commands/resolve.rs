@@ -377,6 +377,7 @@ mod tests {
                 context_size: None,
                 created_at: Some("2026-09-12T12:00:00Z".into()),
                 ended_at: Some("2026-09-12T12:00:00Z".into()),
+                pull_request_id: None,
             }
         }
 

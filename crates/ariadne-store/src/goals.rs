@@ -311,6 +311,19 @@ impl Store {
             .ok_or_else(|| not_found("goal_repository", repository_id))
     }
 
+    /// Whether `branch` is the goal branch of some goal in this repository:
+    /// a merged request on it took that goal onto its base (026).
+    pub async fn is_goal_branch(&self, repository_id: &str, branch: &str) -> Result<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM goal_repositories
+                             WHERE repository_id = ? AND goal_branch = ?)",
+        )
+        .bind(repository_id)
+        .bind(branch)
+        .fetch_one(self.r())
+        .await?)
+    }
+
     pub async fn set_goal_branch(
         &self,
         goal_id: &str,

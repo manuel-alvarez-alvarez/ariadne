@@ -51,6 +51,7 @@ dto! {
         seat: match s.seat() {
             store::SkillSeat::Orchestrator => SkillSeat::Orchestrator,
             store::SkillSeat::Task => SkillSeat::Task,
+            store::SkillSeat::PullRequest => SkillSeat::PullRequest,
         },
         summary: s.summary().to_string(),
         document: s.document_text().to_string(),
@@ -172,7 +173,7 @@ pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
         context_size: s.context_size.and_then(|value| u64::try_from(value).ok()),
         .. id, goal_id, task_id, task_agent_id, model, effort, internal_session_id,
            worktree_path, attention_since,
-           last_activity_at, created_at, ended_at, title, switched_from
+           last_activity_at, created_at, ended_at, title, switched_from, pull_request_id
     }
 }
 
@@ -320,6 +321,7 @@ pub(crate) async fn session_entry_of(
         context_used: session.context_used,
         context_size: session.context_size,
         ended_at: session.ended_at,
+        pull_request_id: session.pull_request_id,
     })
 }
 
@@ -351,6 +353,7 @@ pub(crate) fn outside_entry(outside: &OutsideSessionDto) -> SessionEntryDto {
         context_size: None,
         created_at: None,
         ended_at: None,
+        pull_request_id: None,
     }
 }
 
@@ -438,10 +441,32 @@ async fn goal_usage(store: &Store, goal_id: &str) -> Result<GoalUsageDto, StoreE
 }
 
 /// The complete ledger row, shared by REST and events.
+/// A ledger row as the API answers it, with the newest session the daemon
+/// started on it.
+pub(crate) async fn pull_request_dto_of(
+    store: &Store,
+    row: ariadne_store::PullRequest,
+) -> Result<ariadne_api::pull_requests::PullRequestDto, StoreError> {
+    let session_id = store
+        .list_sessions(SessionFilter {
+            pull_request_id: Some(row.id.clone()),
+            ..Default::default()
+        })
+        .await?
+        .pop()
+        .map(|session| session.id);
+    Ok(pull_request_dto(row, session_id))
+}
+
+/// A ledger row as the API answers it, with the session already looked up.
 pub(crate) fn pull_request_dto(
     row: ariadne_store::PullRequest,
+    session_id: Option<String>,
 ) -> ariadne_api::pull_requests::PullRequestDto {
     ariadne_api::pull_requests::PullRequestDto {
+        failed_checks: serde_json::from_str(&row.failed_checks).unwrap_or_default(),
+        behind_base: row.behind_base,
+        session_id,
         id: row.id,
         repository_id: row.repository_id,
         number: row.number,
@@ -465,5 +490,28 @@ pub(crate) fn pull_request_dto(
         last_seen_at: row.last_seen_at,
         created_at: row.created_at,
         updated_at: row.updated_at,
+    }
+}
+
+pub(crate) fn pull_request_comment_dto(
+    row: ariadne_store::PullRequestComment,
+) -> ariadne_api::pull_requests::PullRequestCommentDto {
+    ariadne_api::pull_requests::PullRequestCommentDto {
+        id: row.id,
+        pull_request_id: row.pull_request_id,
+        forge_id: row.forge_id,
+        thread_id: row.thread_id,
+        kind: row.kind,
+        author_login: row.author_login,
+        author_is_bot: row.author_is_bot,
+        body: row.body,
+        path: row.path,
+        line: row.line,
+        in_reply_to: row.in_reply_to,
+        created_at: row.created_at,
+        fetched_at: row.fetched_at,
+        answered: row.answered,
+        resolved: row.resolved,
+        told_at: row.told_at,
     }
 }

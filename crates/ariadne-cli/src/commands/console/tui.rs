@@ -480,6 +480,7 @@ mod tests {
             ended_at: None,
             title: None,
             switched_from: None,
+            pull_request_id: None,
         };
 
         let header = super::header(&client, session).await;

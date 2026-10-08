@@ -1,11 +1,11 @@
 //! Timer fallback and explicit repository wakes. Each repository has one worker.
 use super::{ForgeClient, pulls};
-use crate::{bus::EventBus, config::Config, webhooks::Public};
+use crate::{bus::EventBus, config::Config, scheduler::SchedEvent, webhooks::Public};
 use ariadne_api::stream::DomainEvent;
-use ariadne_store::{ForgeIntegration, PullRequest, PullRequestFilter, Store};
+use ariadne_store::{ForgeIntegration, PullRequest, PullRequestFilter, SessionFilter, Store};
 use std::{
     collections::{HashMap, HashSet},
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::Duration,
 };
 use tokio::sync::{Notify, mpsc, oneshot, watch};
@@ -26,6 +26,27 @@ enum Command {
 pub struct ForgePoll {
     commands: mpsc::UnboundedSender<Command>,
     webhook_url: crate::webhooks::WebhookUrl,
+    /// Where a changed request is reported, once the scheduler is up: it
+    /// is what starts, tells and ends the request's session (026).
+    scheduler: Waker,
+}
+
+/// The scheduler's event sender, shared by the handle and every worker.
+type Waker = Arc<OnceLock<mpsc::UnboundedSender<SchedEvent>>>;
+
+/// Tell the scheduler that `pull_request_id` changed.
+fn wake_scheduler(scheduler: &Waker, pull_request_id: &str) {
+    if let Some(tx) = scheduler.get() {
+        let _ = tx.send(SchedEvent::PullRequestChanged(pull_request_id.into()));
+    }
+}
+
+/// What a fetch hands its changed rows on to (026): how long a detail fetch
+/// may take, and the scheduler to report to.
+#[derive(Clone)]
+struct Handoff {
+    details: Duration,
+    scheduler: Waker,
 }
 struct Worker {
     identity: (String, String, String, String),
@@ -57,6 +78,11 @@ impl ForgePoll {
         }
     }
 
+    /// Report every changed request to `tx` from now on.
+    pub fn connect_scheduler(&self, tx: mpsc::UnboundedSender<SchedEvent>) {
+        let _ = self.scheduler.set(tx);
+    }
+
     pub fn wake(&self, repository_id: &str) {
         let _ = self.commands.send(Command::Wake(repository_id.into()));
     }
@@ -67,7 +93,20 @@ impl ForgePoll {
     }
 }
 
-pub fn start(store: Store, cfg: Arc<Config>, events: &EventBus, every: Duration) -> ForgePoll {
+/// Start the fetches: `every` is the fallback timer, and `details` bounds one
+/// detail fetch of a request (`Timeouts::forge_details`).
+pub fn start(
+    store: Store,
+    cfg: Arc<Config>,
+    events: &EventBus,
+    every: Duration,
+    details: Duration,
+) -> ForgePoll {
+    let scheduler: Waker = Arc::default();
+    let handoff = Handoff {
+        details,
+        scheduler: scheduler.clone(),
+    };
     let webhook_url = crate::webhooks::WebhookUrl::new(cfg.webhook_public_url.clone());
     let mut urls = webhook_url.subscribe();
     let mut events = events.subscribe();
@@ -75,39 +114,39 @@ pub fn start(store: Store, cfg: Arc<Config>, events: &EventBus, every: Duration)
     tokio::spawn(async move {
         let mut workers = HashMap::new();
         let mut public_url = urls.borrow_and_update().clone();
-        reconcile(&store, &cfg, every, &mut workers, &public_url).await;
+        reconcile(&store, &cfg, every, &mut workers, &public_url, &handoff).await;
         loop {
             tokio::select! {
                 changed = urls.changed() => {
                     if changed.is_err() { break; }
                     public_url = urls.borrow_and_update().clone();
-                    reconcile(&store, &cfg, every, &mut workers, &public_url).await;
+                    reconcile(&store, &cfg, every, &mut workers, &public_url, &handoff).await;
                 },
                 command = requests.recv() => match command {
                     None => break,
                     Some(Command::Changed(id, done)) => {
-                        sync(&store, &cfg, every, &mut workers, &id, &public_url).await;
+                        sync(&store, &cfg, every, &mut workers, &id, &public_url, &handoff).await;
                         let _ = done.send(());
                     }
                     Some(Command::Wake(id)) => {
                         let existed = workers.contains_key(&id);
-                        sync(&store, &cfg, every, &mut workers, &id, &public_url).await;
+                        sync(&store, &cfg, every, &mut workers, &id, &public_url, &handoff).await;
                         if existed && let Some(worker) = workers.get(&id) { worker.wake.notify_one(); }
                     }
                     Some(Command::Mode(id, mode)) => {
-                        sync(&store, &cfg, every, &mut workers, &id, &public_url).await;
+                        sync(&store, &cfg, every, &mut workers, &id, &public_url, &handoff).await;
                         if let Some(worker) = workers.get(&id) { worker.mode.send_replace(mode); }
                     }
                 },
                 event = events.recv() => match event {
                     Ok(event) => match event.event {
                         DomainEvent::RepositoryCreated(repo) | DomainEvent::RepositoryUpdated(repo) => {
-                            sync(&store, &cfg, every, &mut workers, &repo.id, &public_url).await;
+                            sync(&store, &cfg, every, &mut workers, &repo.id, &public_url, &handoff).await;
                         }
                         DomainEvent::RepositoryDeleted(repo) => { workers.remove(&repo.id); }
                         _ => {}
                     },
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => reconcile(&store, &cfg, every, &mut workers, &public_url).await,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => reconcile(&store, &cfg, every, &mut workers, &public_url, &handoff).await,
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
             }
@@ -116,6 +155,7 @@ pub fn start(store: Store, cfg: Arc<Config>, events: &EventBus, every: Duration)
     ForgePoll {
         commands,
         webhook_url,
+        scheduler,
     }
 }
 
@@ -125,13 +165,14 @@ async fn reconcile(
     every: Duration,
     workers: &mut HashMap<String, Worker>,
     public_url: &Public,
+    handoff: &Handoff,
 ) {
     match store.list_repositories().await {
         Ok(repositories) => {
             let ids: HashSet<_> = repositories.iter().map(|r| r.id.clone()).collect();
             workers.retain(|id, _| ids.contains(id));
             for repo in repositories {
-                sync(store, cfg, every, workers, &repo.id, public_url).await;
+                sync(store, cfg, every, workers, &repo.id, public_url, handoff).await;
             }
         }
         Err(error) => warn!(%error, "cannot reconcile forge fetches"),
@@ -145,6 +186,7 @@ async fn sync(
     workers: &mut HashMap<String, Worker>,
     id: &str,
     public_url: &Public,
+    handoff: &Handoff,
 ) {
     let row = match store.forge_integration(id).await {
         Ok(row) => row,
@@ -165,8 +207,14 @@ async fn sync(
         {
             warn!(%error, repository = id, "cannot remove forge hook");
         }
-        if let Err(error) = store.close_disabled_pull_requests(id).await {
-            warn!(%error, repository = id, "cannot close disabled pull requests");
+        match store.close_disabled_pull_requests(id).await {
+            // A closed request's session ends with it (026).
+            Ok(closed) => {
+                for row in closed {
+                    wake_scheduler(&handoff.scheduler, &row.id);
+                }
+            }
+            Err(error) => warn!(%error, repository = id, "cannot close disabled pull requests"),
         }
         return;
     }
@@ -219,6 +267,7 @@ async fn sync(
         let task = tokio::spawn(worker(
             store.clone(),
             cfg.clone(),
+            handoff.clone(),
             id.into(),
             every,
             wake.clone(),
@@ -240,13 +289,14 @@ async fn sync(
 async fn worker(
     store: Store,
     cfg: Arc<Config>,
+    handoff: Handoff,
     id: String,
     every: Duration,
     wake: Arc<Notify>,
     mut mode: watch::Receiver<Mode>,
 ) {
     loop {
-        if let Err(error) = fetch(&store, &cfg, &id).await {
+        if let Err(error) = fetch(&store, &cfg, &handoff, &id).await {
             warn!(%error, repository = id, "cannot fetch pull requests");
         }
         loop {
@@ -260,7 +310,7 @@ async fn worker(
     }
 }
 
-async fn fetch(store: &Store, cfg: &Config, id: &str) -> Result<(), String> {
+async fn fetch(store: &Store, cfg: &Config, handoff: &Handoff, id: &str) -> Result<(), String> {
     let Some(integration) = store
         .forge_integration(id)
         .await
@@ -322,7 +372,7 @@ async fn fetch(store: &Store, cfg: &Config, id: &str) -> Result<(), String> {
                 .0,
         );
     }
-    after_fetch(id, &changed).await;
+    after_fetch(store, handoff, &integration, &client, &slug, &changed).await;
     Ok(())
 }
 
@@ -340,5 +390,85 @@ async fn still_enabled(store: &Store, expected: &ForgeIntegration) -> Result<boo
         }))
 }
 
-/// The next task fills this with per-request details and news routing.
-async fn after_fetch(_repository_id: &str, _changed_rows: &[PullRequest]) {}
+/// Whether the request `row` wants a session (026): an open request of
+/// mine, in a repository whose integration names a `babysit_model`.
+pub(crate) fn wants_session(row: &PullRequest, integration: &ForgeIntegration) -> bool {
+    row.state == "open"
+        && row.role == "author"
+        && integration.enabled
+        && integration.babysit_model.is_some()
+}
+
+/// The hand-off after a repository fetch (026): read the details of every
+/// open row that has a session or wants one, store its comments and checks,
+/// and tell the scheduler about every row the fetch changed.
+///
+/// A detail fetch that fails leaves the row as the list fetch wrote it:
+/// the next fetch reads it again.
+async fn after_fetch(
+    store: &Store,
+    handoff: &Handoff,
+    integration: &ForgeIntegration,
+    client: &ForgeClient,
+    slug: &str,
+    changed_rows: &[PullRequest],
+) {
+    let login = integration.login.as_deref().unwrap_or_default();
+    for row in changed_rows.iter().filter(|row| row.state == "open") {
+        let has_session = store
+            .list_sessions(SessionFilter {
+                pull_request_id: Some(row.id.clone()),
+                live_only: true,
+                ..Default::default()
+            })
+            .await
+            .is_ok_and(|live| !live.is_empty());
+        if !has_session && !wants_session(row, integration) {
+            continue;
+        }
+        if let Err(error) = details(store, handoff, integration, client, slug, row, login).await {
+            warn!(%error, pull_request = %row.id, "cannot read the details of a pull request");
+        }
+    }
+    for row in changed_rows {
+        wake_scheduler(&handoff.scheduler, &row.id);
+    }
+}
+
+/// One request's details, read and stored.
+async fn details(
+    store: &Store,
+    handoff: &Handoff,
+    integration: &ForgeIntegration,
+    client: &ForgeClient,
+    slug: &str,
+    row: &PullRequest,
+    login: &str,
+) -> Result<(), String> {
+    let details = client.details(slug, row.number, handoff.details).await?;
+    if details.pull.number != row.number {
+        return Err("the forge returned another request number".into());
+    }
+    if !still_enabled(store, integration).await? {
+        return Ok(());
+    }
+    pulls::record(
+        store,
+        integration,
+        details.pull,
+        "forge",
+        None,
+        Some(row.id.clone()),
+    )
+    .await?;
+    store
+        .upsert_pull_request_comments(&row.id, &details.comments, login)
+        .await
+        .map_err(|e| e.to_string())?;
+    let failed = serde_json::to_string(&details.failed_checks).map_err(|e| e.to_string())?;
+    store
+        .set_pull_request_details(&row.id, &failed, details.behind_base)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}

@@ -300,6 +300,7 @@ mod tests {
             context_size: None,
             created_at: None,
             ended_at: None,
+            pull_request_id: None,
         }
     }
 

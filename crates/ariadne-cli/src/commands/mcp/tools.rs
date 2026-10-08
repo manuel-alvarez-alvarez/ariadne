@@ -15,6 +15,7 @@ use rmcp::{ErrorData as McpError, schemars, tool, tool_router};
 
 use ariadne_api::goals::{CompleteGoalRequest, FinalizePlanRequest};
 use ariadne_api::messages::SendMessageRequest;
+use ariadne_api::pull_requests::{ReplyCommentRequest, ReportPullRequestRequest};
 use ariadne_api::sessions::SwitchSessionRequest;
 use ariadne_api::skills::{SkillDto, SkillSeat};
 use ariadne_api::tasks::{
@@ -223,6 +224,52 @@ pub(super) struct SendMessageReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+pub(super) struct ListCommentsReq {
+    /// List only the threads that wait on your answer.
+    pub unanswered_only: Option<bool>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(super) struct ReplyCommentReq {
+    /// The `id` of the comment, as the news or `list_comments` gives it.
+    pub comment_id: String,
+    /// What you changed, or why the code stays.
+    pub body: String,
+}
+
+/// The two states a human ends a request in, and the one it stands in.
+#[derive(Clone, Copy, Debug, serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+#[serde(rename_all = "snake_case")]
+pub(super) enum PullRequestState {
+    Open,
+    Merged,
+    Closed,
+}
+
+impl PullRequestState {
+    fn as_str(self) -> &'static str {
+        match self {
+            PullRequestState::Open => "open",
+            PullRequestState::Merged => "merged",
+            PullRequestState::Closed => "closed",
+        }
+    }
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(super) struct ReportPullRequestReq {
+    /// True once every required approval and check reads green. False when
+    /// a later change turns one back.
+    pub ready: Option<bool>,
+    /// The state a human moved the request to.
+    pub state: Option<PullRequestState>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
 pub(super) struct ReadMessagesReq {
     /// The task whose channel to read. Omit it for your own task.
     pub task_id: Option<String>,
@@ -404,7 +451,7 @@ impl AriadneMcp {
                 None,
             ));
         }
-        let path = format!("/v1/goals/{}/tasks", self.goal_id);
+        let path = format!("/v1/goals/{}/tasks", self.goal()?);
         let body = CreateTaskRequest {
             title: req.title,
             description: req.description,
@@ -507,7 +554,7 @@ impl AriadneMcp {
         &self,
         Parameters(_): Parameters<Empty>,
     ) -> Result<CallToolResult, McpError> {
-        let path = format!("/v1/goals/{}/finalize", self.goal_id);
+        let path = format!("/v1/goals/{}/finalize", self.goal()?);
         json_result(self.post(&path, &FinalizePlanRequest {}).await?)
     }
 
@@ -518,7 +565,7 @@ impl AriadneMcp {
         &self,
         Parameters(_): Parameters<Empty>,
     ) -> Result<CallToolResult, McpError> {
-        let path = format!("/v1/tasks?goal_id={}", self.goal_id);
+        let path = format!("/v1/tasks?goal_id={}", self.goal()?);
         json_result(self.get::<serde_json::Value>(&path).await?)
     }
 
@@ -578,7 +625,7 @@ impl AriadneMcp {
         &self,
         Parameters(_): Parameters<Empty>,
     ) -> Result<CallToolResult, McpError> {
-        let path = format!("/v1/goals/{}/complete", self.goal_id);
+        let path = format!("/v1/goals/{}/complete", self.goal()?);
         json_result(self.post(&path, &CompleteGoalRequest {}).await?)
     }
 
@@ -701,6 +748,93 @@ impl AriadneMcp {
         )
     }
 
+    // ---- pull request author ----
+
+    #[tool(
+        description = "Read your pull request: its state, branches, checks and failed checks, and whether the head is behind its base. It also gives your worktree, the repository path and your login."
+    )]
+    async fn get_pull_request(
+        &self,
+        Parameters(_): Parameters<Empty>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut pull: serde_json::Value = self.get(&self.pull_request_path("")?).await?;
+        let repository: serde_json::Value = self
+            .get(&format!(
+                "/v1/repositories/{}",
+                pull["repository_id"].as_str().unwrap_or_default()
+            ))
+            .await?;
+        let session: serde_json::Value = self
+            .get(&format!("/v1/sessions/{}", self.session_id))
+            .await?;
+        pull["worktree_path"] = session["worktree_path"].clone();
+        pull["repository_path"] = repository["path"].clone();
+        pull["login"] = repository["forge"]["login"].clone();
+        json_result(pull)
+    }
+
+    #[tool(
+        description = "List the stored comments of your pull request, with every field. Set `unanswered_only` for the threads that wait on your answer."
+    )]
+    async fn list_comments(
+        &self,
+        Parameters(req): Parameters<ListCommentsReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut path = self.pull_request_path("/comments")?;
+        if req.unanswered_only.unwrap_or(false) {
+            path.push_str("?unanswered_only=true");
+        }
+        json_result(self.get::<serde_json::Value>(&path).await?)
+    }
+
+    #[tool(
+        description = "Reply once to one comment of your pull request. Ariadne posts the reply on the forge. Nothing closes the thread: a human does that."
+    )]
+    async fn reply_comment(
+        &self,
+        Parameters(req): Parameters<ReplyCommentReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let body = req.body.trim();
+        if body.is_empty() {
+            return Err(McpError::invalid_params("a reply needs a body", None));
+        }
+        let path = self.pull_request_path(&format!("/comments/{}/reply", req.comment_id))?;
+        json_result(
+            self.post(
+                &path,
+                &ReplyCommentRequest {
+                    body: body.to_string(),
+                },
+            )
+            .await?,
+        )
+    }
+
+    #[tool(
+        description = "Report your pull request. Set `ready` to true once every required approval and check reads green, and to false on a change back. Set `state` once a human merged or closed it."
+    )]
+    async fn report_pull_request(
+        &self,
+        Parameters(req): Parameters<ReportPullRequestReq>,
+    ) -> Result<CallToolResult, McpError> {
+        if req.ready.is_none() && req.state.is_none() {
+            return Err(McpError::invalid_params(
+                "report `ready`, `state` or both",
+                None,
+            ));
+        }
+        json_result(
+            self.post(
+                &self.pull_request_path("/report")?,
+                &ReportPullRequestRequest {
+                    ready: req.ready,
+                    state: req.state.map(|s| s.as_str().to_string()),
+                },
+            )
+            .await?,
+        )
+    }
+
     // ---- everyone ----
 
     #[tool(
@@ -721,7 +855,7 @@ impl AriadneMcp {
         &self,
         Parameters(req): Parameters<ReadMessagesReq>,
     ) -> Result<CallToolResult, McpError> {
-        let path = self.channel_path(req.task_id, "/messages");
+        let path = self.channel_path(req.task_id, "/messages")?;
         let path = match req.all.unwrap_or(false) {
             true => path,
             // A default read is a delivery: the daemon narrows it to this
@@ -829,6 +963,79 @@ mod tests {
 
     use crate::commands::mcp::McpSeat;
     use crate::commands::mcp::tests::{recording_daemon, recording_daemon_answering, server_at};
+
+    /// The tools of a pull request session reach the routes of its own
+    /// request (026): a read of the request with the worktree, repository
+    /// path and login beside it, the comment list, one reply, and the report.
+    #[tokio::test]
+    async fn the_pull_request_tools_call_the_routes_of_the_sessions_request() {
+        let (endpoint, seen) = recording_daemon_answering(
+            r#"{"id":"01PR","repository_id":"01R","path":"/repos/widgets","forge":{"login":"me"},"worktree_path":"/wt/pr-01PR"}"#,
+        )
+        .await;
+        let mcp = server_at(
+            McpSeat::PullRequestAuthor,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let read = mcp
+            .get_pull_request(Parameters(Empty {}))
+            .await
+            .expect("read the request");
+        let ContentBlock::Text(text) = &read.content[0] else {
+            panic!("the request came back as something other than text");
+        };
+        let read: serde_json::Value = serde_json::from_str(&text.text).expect("json");
+        assert_eq!(read["worktree_path"], "/wt/pr-01PR");
+        assert_eq!(read["repository_path"], "/repos/widgets");
+        assert_eq!(read["login"], "me");
+        mcp.list_comments(Parameters(ListCommentsReq {
+            unanswered_only: Some(true),
+        }))
+        .await
+        .expect("list the comments");
+        mcp.reply_comment(Parameters(ReplyCommentReq {
+            comment_id: "01C".into(),
+            body: "Renamed it.".into(),
+        }))
+        .await
+        .expect("reply");
+        mcp.report_pull_request(Parameters(ReportPullRequestReq {
+            ready: Some(true),
+            state: Some(PullRequestState::Merged),
+        }))
+        .await
+        .expect("report");
+
+        let seen = seen.lock().expect("lock").clone();
+        let calls: Vec<(String, String)> = seen
+            .iter()
+            .map(|s| (s.method.clone(), s.path.clone()))
+            .collect();
+        assert_eq!(
+            calls,
+            [
+                ("GET".into(), "/v1/pull-requests/01PR".into()),
+                ("GET".into(), "/v1/repositories/01R".into()),
+                ("GET".into(), "/v1/sessions/01SESSION".into()),
+                (
+                    "GET".into(),
+                    "/v1/pull-requests/01PR/comments?unanswered_only=true".into()
+                ),
+                (
+                    "POST".into(),
+                    "/v1/pull-requests/01PR/comments/01C/reply".into()
+                ),
+                ("POST".into(), "/v1/pull-requests/01PR/report".into()),
+            ]
+        );
+        let reply: serde_json::Value = serde_json::from_str(&seen[4].body).expect("json");
+        assert_eq!(reply, serde_json::json!({"body": "Renamed it."}));
+        let report: serde_json::Value = serde_json::from_str(&seen[5].body).expect("json");
+        assert_eq!(
+            report,
+            serde_json::json!({"ready": true, "state": "merged"})
+        );
+    }
 
     /// The orchestrator is never offered a model it cannot staff an agent on.
     ///

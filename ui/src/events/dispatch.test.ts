@@ -268,6 +268,38 @@ describe("session events", () => {
   })
 })
 
+describe("pull request session events", () => {
+  /** A client holding a pull request list and its detail, as its screen and panel do. */
+  function withPullRequest(): QueryClient {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    queryClient.setQueryData(qk.pullRequests.list(), [])
+    queryClient.setQueryData(qk.pullRequests.detail("pull-42"), {})
+    return queryClient
+  }
+
+  it("refetches the request a session watches when that session starts or moves, for its session_id", () => {
+    for (const event of ["session_created", "session_updated"] as const) {
+      const queryClient = withPullRequest()
+
+      dispatch(queryClient, { event, data: aSession({ pull_request_id: "pull-42" }) })
+
+      expect(stale(queryClient, qk.pullRequests.list())).toBe(true)
+      expect(stale(queryClient, qk.pullRequests.detail("pull-42"))).toBe(true)
+    }
+  })
+
+  it("leaves the pull requests alone for a session that watches none", () => {
+    for (const event of ["session_created", "session_updated"] as const) {
+      const queryClient = withPullRequest()
+
+      dispatch(queryClient, { event, data: aSession() })
+
+      expect(stale(queryClient, qk.pullRequests.list())).toBe(false)
+      expect(stale(queryClient, qk.pullRequests.detail("pull-42"))).toBe(false)
+    }
+  })
+})
+
 describe("ai permissions events", () => {
   it("replaces the cached status whole, so a card that read installing reads ready", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })

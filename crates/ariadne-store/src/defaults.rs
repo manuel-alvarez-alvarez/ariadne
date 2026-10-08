@@ -60,6 +60,11 @@ pub struct BuiltinSkill {
 /// the launcher loads this skill for every orchestrator session.
 pub const ORCHESTRATION_SKILL: &str = "orchestration";
 
+/// The skill of a pull request session (026): the daemon loads it for every
+/// session it starts on an open request of the user, and no orchestrator
+/// staffs it. Its seat is a fact of the name, as the orchestrator's is.
+pub const PR_BABYSIT_SKILL: &str = "pr-babysit";
+
 /// The skills a fresh database is seeded with, grouped by what they are for:
 /// orchestrating a goal, producing work, reviewing it, and operating what it
 /// produced.
@@ -68,7 +73,7 @@ pub const ORCHESTRATION_SKILL: &str = "orchestration";
 /// adding a kind of work Ariadne knows how to staff. One skill is nobody's to
 /// staff: [`ORCHESTRATION_SKILL`] belongs to the orchestrator's seat, and the
 /// store refuses a task agent staffed on it.
-pub const BUILTIN_SKILLS: [BuiltinSkill; 13] = [
+pub const BUILTIN_SKILLS: [BuiltinSkill; 14] = [
     // Orchestrating.
     builtin(
         ORCHESTRATION_SKILL,
@@ -112,6 +117,10 @@ pub const BUILTIN_SKILLS: [BuiltinSkill; 13] = [
     builtin(
         "conflict-resolution",
         include_str!("../skills/conflict-resolution/SKILL.md"),
+    ),
+    builtin(
+        PR_BABYSIT_SKILL,
+        include_str!("../skills/pr-babysit/SKILL.md"),
     ),
 ];
 
@@ -195,6 +204,39 @@ pub fn default_prompt_text(kind: PromptKind) -> &'static str {
     }
 }
 
+/// The system prompt of a pull request session (026): what the seat owes,
+/// as [`default_system_prompt`] says it for a task's seats. The work itself
+/// is the [`PR_BABYSIT_SKILL`] document.
+pub fn pull_request_system_prompt() -> &'static str {
+    PULL_REQUEST_SYSTEM_PROMPT
+}
+
+/// The briefing a pull request session starts on: the request, and the
+/// values its commands act on.
+pub fn pull_request_briefing_prompt() -> &'static str {
+    PULL_REQUEST_BRIEFING
+}
+
+/// The prompt the daemon wakes a pull request session with: one line per
+/// thing it has not been told yet, rendered by `forge::news`.
+pub fn pull_request_news_prompt() -> &'static str {
+    PULL_REQUEST_NEWS
+}
+
+/// The placeholders [`pull_request_briefing_prompt`] and
+/// [`pull_request_news_prompt`] are rendered with, by the daemon's
+/// `prompts` builders.
+pub const PULL_REQUEST_PLACEHOLDERS: [&str; 8] = [
+    "title",
+    "url",
+    "repo_path",
+    "worktree_path",
+    "head_branch",
+    "base_branch",
+    "login",
+    "news",
+];
+
 /// The whole procedure that ends a task on `landing`, which is what its
 /// author is handed once the task is approved.
 ///
@@ -266,6 +308,31 @@ const REVIEWER_SYSTEM_PROMPT: &str = r#"You review one Ariadne task. An approval
 4. Wait for every check. Use each result in your verdict. Where something blocks the review, request changes and name it.
 5. Use `send_message` for questions. After a question, end turn. Do not poll `read_messages`. Ariadne sends answers as turns. Questions give no verdict.
 6. Call `submit_verdict` once per review you are asked for. Put that SHA in every verdict. It is the verdict, and nothing else counts. Approve with a note on what you checked. Or request changes: list files and functions, with each item must-fix or optional. Write the verdict in STE."#;
+
+/// Pull request seat text: what a session on one open request of the user
+/// owes. No task, no review and no ending of its own: the request ends when
+/// a human merges or closes it, and the daemon ends the session then.
+const PULL_REQUEST_SYSTEM_PROMPT: &str = r#"You keep one open pull or merge request of the user moving. Work only in your worktree, on its head branch. Commit nothing generated or unrelated. Write no authorship trailer, no tool trailer and no mention of Ariadne. Ariadne wakes you with the news of the request. Handle it as your skill says. Then end your turn."#;
+
+/// Initial briefing of a pull request session.
+const PULL_REQUEST_BRIEFING: &str = r#"# Pull request: {title}
+
+{url}
+
+## Context
+- Repo: {repo_path}
+- Worktree (your cwd): {worktree_path}
+- Branch: {head_branch} onto {base_branch}
+- Your login: {login}
+
+Ariadne reads the forge and wakes you with the news of this request."#;
+
+/// What a pull request session is woken with: the news since it was last
+/// told, one line each.
+const PULL_REQUEST_NEWS: &str = r#"News on "{title}":
+{news}
+
+Handle each item. Then end your turn."#;
 
 /// Initial briefing of an orchestrator session: the goal, its landing, and
 /// the repositories it works in.
@@ -573,6 +640,7 @@ pub mod ste {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SkillSeat;
 
     /// Every default text there is, named as the test failures name it: the
     /// system prompt of each seat, the template of each prompt kind, and the
@@ -599,7 +667,23 @@ mod tests {
                 FINAL_LANDING.to_string(),
                 final_landing_prompt(),
             )))
+            .chain(pull_request_texts())
             .collect()
+    }
+
+    /// The texts of a pull request session, named for a failure.
+    fn pull_request_texts() -> [(String, &'static str); 3] {
+        [
+            (
+                "pull request system prompt".into(),
+                pull_request_system_prompt(),
+            ),
+            (
+                "pull request briefing".into(),
+                pull_request_briefing_prompt(),
+            ),
+            ("pull request news".into(), pull_request_news_prompt()),
+        ]
     }
 
     /// Every shipped skill, named the way a failure names it.
@@ -779,7 +863,10 @@ mod tests {
         // set, and the total is the two plus the third at its own cap.
         // The direct landing now handles a target outside the current checkout.
         const LANDING_TOTAL: usize = 4450;
-        const GRAND_TOTAL: usize = 9130;
+        // A pull request session added three texts of its own (026): its
+        // seat text, its briefing and the news it is woken with. They are
+        // capped together at 700 below, and the grand total rose by that.
+        const GRAND_TOTAL: usize = 9830;
 
         // A cap per seat, not one for the three. The orchestrator's carried
         // its playbook up to 1750; the playbook is the `orchestration` skill
@@ -860,6 +947,20 @@ mod tests {
         assert!(
             landings <= LANDING_TOTAL,
             "the landing briefings total {landings} characters, over {LANDING_TOTAL}"
+        );
+
+        let mut pull_request = 0;
+        for (name, text) in pull_request_texts() {
+            pull_request += text.len();
+            assert!(
+                text.len() <= 400,
+                "the {name} is {} characters, over its 400",
+                text.len()
+            );
+        }
+        assert!(
+            pull_request <= 700,
+            "the pull request texts total {pull_request} characters, over 700"
         );
 
         let grand: usize = all_defaults().iter().map(|(_, text)| text.len()).sum();
@@ -1411,6 +1512,11 @@ mod tests {
                     "the {name} divides a task into a {divided}"
                 );
             }
+            // A pull request session reads no author seat text (026), so
+            // its skill is the one owner of the amend rule there.
+            if name == format!("{PR_BABYSIT_SKILL} skill") {
+                continue;
+            }
             for lifecycle in ["commit per review answer", "amend"] {
                 assert!(
                     !document.contains(lifecycle),
@@ -1575,6 +1681,51 @@ mod tests {
                 assert!(!text.contains(command), "the {name} names {command}");
             }
         }
+    }
+
+    /// The pull request session is fed by the daemon (026), so its skill
+    /// names none of the ways an agent would feed itself: no forge CLI, no
+    /// timer, no poll. A human closes a thread and a human merges, so it
+    /// names neither the call that resolves one nor a forge merge command.
+    /// And the turn ends when the news is handled, which is what lets the
+    /// next news start a turn of its own.
+    #[test]
+    fn the_pr_babysit_skill_is_fed_by_the_daemon_and_ends_its_turn() {
+        let doc = default_skill_document(PR_BABYSIT_SKILL).expect("the pr-babysit skill");
+        let words: Vec<String> = doc
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .map(str::to_lowercase)
+            .collect();
+        for gone in [
+            "gh", "glab", "sleep", "poll", "polling", "resolve", "resolved",
+        ] {
+            assert!(
+                !words.iter().any(|word| word == gone),
+                "the pr-babysit skill names {gone}"
+            );
+        }
+        for command in ["gh pr merge", "glab mr merge", "pr merge", "mr merge"] {
+            assert!(
+                !doc.contains(command),
+                "the pr-babysit skill names {command}"
+            );
+        }
+        let doc = unwrapped(doc);
+        for step in [
+            "`get_pull_request`",
+            "`list_comments` with `unanswered_only`",
+            "`reply_comment` once",
+            "`git merge --no-edit <remote>/<base>`",
+            "Never amend, rebase or force a push.",
+            "`report_pull_request` with `ready: true`",
+            "`ready: false`",
+            "End your turn when the news is handled.",
+            "## Do not tell yourself",
+            "## Done",
+        ] {
+            assert!(doc.contains(step), "the pr-babysit skill has no {step}");
+        }
+        assert_eq!(SkillSeat::of(PR_BABYSIT_SKILL), SkillSeat::PullRequest);
     }
 
     /// Every rule an agent is briefed with is written down once.
@@ -2111,7 +2262,10 @@ mod tests {
         // Dropped from 40_600 with the pull-request skill, which left the
         // catalog whole: opening a request is now the daemon's own tool,
         // called straight from the landing briefing.
-        const TOTAL: usize = 36_600;
+        // Raised from 36_600 for the pr-babysit skill (026), which a pull
+        // request session loads: the daemon feeds it the forge's news, so it
+        // states how to answer it and nothing of how to fetch it.
+        const TOTAL: usize = 39_200;
         let cap = |name: &str| match name {
             // The orchestration playbook grew a step-4 choice — one author
             // for most tasks, several where the reviewers pick a winner —
@@ -2132,6 +2286,10 @@ mod tests {
             "debugging" => 3400,
             "code-review" => 4000,
             "coding" => 5400,
+            // Seven steps, one per kind of news and the report, and the two
+            // rules no other skill has: leave every thread to a human, and
+            // reach the forge only through the session's tools.
+            PR_BABYSIT_SKILL => 2600,
             _ => 2400,
         };
 

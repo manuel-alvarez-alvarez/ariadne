@@ -210,15 +210,28 @@ async fn timer_wake_only_and_disable_control_repository_fetches() {
     };
     eventually(TIMEOUT, "enable and timer fetch", async || lists() >= 4).await;
     h.state.forge_poll.set_mode(&id, Mode::WakeOnly);
-    // A wake produces a completion event after the mode command is consumed.
-    let mut events = h.bus.subscribe();
+    // The fetch after the mode change is told apart by what it reads: a
+    // title no earlier fetch wrote. It has ended once its row carries that
+    // title and no forge call is still running.
+    let mut marked = github_pull(1, "me");
+    marked["title"] = json!("Fix widgets again");
+    stub.reprogram(script(vec![marked.clone()], marked));
     h.state.forge_poll.wake(&id);
-    crate::common::next_event(&mut events, |e| e.event.kind() == "pull_request_updated").await;
+    let idle = || stub.completed() == stub.invocations().len();
+    eventually(TIMEOUT, "the fetch after the mode change", async || {
+        let rows: Vec<Value> = h.get("/v1/pull-requests").await;
+        rows.iter().any(|r| r["title"] == "Fix widgets again") && idle()
+    })
+    .await;
     let count = lists();
     tokio::time::sleep(QUIET + RUNS_OUT).await;
     assert_eq!(lists(), count, "WakeOnly must not use the timer");
     h.state.forge_poll.wake(&id);
-    crate::common::next_event(&mut events, |e| e.event.kind() == "pull_request_updated").await;
+    eventually(TIMEOUT, "the wake's fetch", async || {
+        lists() >= count + 2 && idle()
+    })
+    .await;
+    tokio::time::sleep(QUIET).await;
     assert_eq!(
         lists(),
         count + 2,
@@ -423,6 +436,7 @@ async fn startup_fetches_enabled_repositories_and_reads_a_missing_forge_row_as_m
         h.launcher.cfg.clone(),
         &h.bus,
         h.timeouts.forge_poll,
+        h.timeouts.forge_details,
     );
     // Replace the only public handle, which shuts down the old manager.
     // The router also holds a clone, so drop its state before replacement.

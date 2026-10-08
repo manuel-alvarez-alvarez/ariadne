@@ -16,6 +16,7 @@ mod auto_switch;
 mod coalesce;
 mod goals;
 mod messages;
+mod pull_requests;
 mod quiet;
 mod sweeps;
 mod tasks;
@@ -46,6 +47,9 @@ pub enum SchedEvent {
     GoalChanged(String),
     /// An agent session reported activity.
     SessionEvent(String),
+    /// A pull request of the ledger changed: a fetch read it, a session
+    /// reported on it, or it was closed with its integration (026).
+    PullRequestChanged(String),
     /// Test support: answered the moment this event is dequeued, which is
     /// only once every event sent before it has been reconciled to
     /// completion — the loop below awaits each one fully before it asks the
@@ -190,6 +194,11 @@ pub(crate) struct Scheduler {
     review_briefed: HashSet<(String, String)>,
     /// Exhausted switches the task's orchestrator has not received yet.
     exhausted_notices: HashMap<String, ExhaustedNotice>,
+    /// Pull request sessions whose request ended, by session id, and when
+    /// the scheduler first saw that: the end is told to each, and the turn
+    /// that reads it waited for, at most `QUIET_NUDGE_SECS` (026).
+    pull_request_farewell: HashMap<String, std::time::Instant>,
+    pull_request_cleanup_retry: HashMap<String, std::time::Instant>,
     /// Held while any session is live, so the machine does not idle-sleep
     /// out from under a working agent.
     sleep: SleepInhibitor,
@@ -221,6 +230,8 @@ pub fn start(
         pick_briefed: HashSet::new(),
         review_briefed: HashSet::new(),
         exhausted_notices: HashMap::new(),
+        pull_request_farewell: HashMap::new(),
+        pull_request_cleanup_retry: HashMap::new(),
         sleep: SleepInhibitor::new(),
         prevent_sleep,
     };
@@ -235,6 +246,7 @@ pub fn start(
                 event = rx.recv() => match event {
                     Some(SchedEvent::TaskChanged(id)) => scheduler.reconcile(Target::Task(&id)).await,
                     Some(SchedEvent::GoalChanged(id)) => scheduler.reconcile(Target::Goal(&id)).await,
+                    Some(SchedEvent::PullRequestChanged(id)) => scheduler.reconcile_pull_request(&id).await,
                     Some(SchedEvent::SessionEvent(id)) => {
                         if wakes.wake(&id, tokio::time::Instant::now()) {
                             scheduler.reconcile_session(&id).await;
@@ -309,7 +321,7 @@ impl Scheduler {
 
     /// Whether the runtime took a prompt, with a refused one's nudge given
     /// back.
-    fn handed(&mut self, session: &AgentSession, handed: anyhow::Result<()>) -> bool {
+    pub(super) fn handed(&mut self, session: &AgentSession, handed: anyhow::Result<()>) -> bool {
         match handed {
             Ok(()) => true,
             Err(e) => {
@@ -410,6 +422,7 @@ impl Scheduler {
         self.exhausted_sweep().await;
         self.tell_exhausted_notices().await;
         self.reconcile_entities().await;
+        self.reconcile_pull_requests().await;
         self.stale_attention_sweep().await;
     }
 
@@ -480,13 +493,11 @@ impl Scheduler {
             return;
         }
         self.auto_switch_exhausted(&session).await;
-        match &session.task_id {
-            Some(task) => self.reconcile(Target::Task(task)).await,
-            None => {
-                if let Some(goal_id) = &session.goal_id {
-                    self.reconcile(Target::Goal(goal_id)).await;
-                }
-            }
+        match (&session.task_id, &session.goal_id, &session.pull_request_id) {
+            (Some(task), _, _) => self.reconcile(Target::Task(task)).await,
+            (None, Some(goal_id), _) => self.reconcile(Target::Goal(goal_id)).await,
+            (None, None, Some(pull_request)) => self.reconcile_pull_request(pull_request).await,
+            (None, None, None) => {}
         }
     }
 }

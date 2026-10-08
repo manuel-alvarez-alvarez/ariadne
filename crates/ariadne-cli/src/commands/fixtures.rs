@@ -91,6 +91,7 @@ pub(crate) fn session(id: &str, goal_id: &str, task_id: Option<&str>) -> Session
         ended_at: None,
         title: None,
         switched_from: None,
+        pull_request_id: None,
     }
 }
 

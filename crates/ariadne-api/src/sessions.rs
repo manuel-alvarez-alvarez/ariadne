@@ -49,6 +49,9 @@ pub struct SessionDto {
     /// The session this one replaced on its seat, when a switch started it
     /// (`POST /v1/sessions/{id}/switch`); null otherwise.
     pub switched_from: Option<String>,
+    /// The pull request this session watches (026); null for every other
+    /// session.
+    pub pull_request_id: Option<String>,
 }
 
 /// A stored session of an ACP agent that Ariadne did not start, listed over
@@ -155,6 +158,8 @@ pub struct SessionEntryDto {
     /// When Ariadne created the row; None on an outside row.
     pub created_at: Option<String>,
     pub ended_at: Option<String>,
+    /// The pull request this session watches; None for every other session.
+    pub pull_request_id: Option<String>,
 }
 
 /// One page of `GET /v1/sessions`, newest activity first.
@@ -200,6 +205,8 @@ pub struct SessionPageQuery {
     pub goal: Option<String>,
     /// Filter by task id. No outside session has one.
     pub task: Option<String>,
+    /// Filter by pull request id. No outside session has one.
+    pub pull_request: Option<String>,
     /// Filter by status. No outside session has one. A named status also
     /// lists sessions that have ended, as `all` does.
     pub status: Option<SessionStatus>,

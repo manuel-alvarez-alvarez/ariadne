@@ -37,7 +37,7 @@ use ariadne_api::events::{AgentEventDto, IngestEventRequest, PermissionReplyDto}
 use ariadne_core::acp::LaunchConfig;
 use ariadne_core::id::new_id;
 use ariadne_core::{PermissionMode, TokenUsage};
-use ariadne_store::Store;
+use ariadne_store::{PullRequestTold, Store};
 
 use crate::acp_calls::PromptTurn;
 use crate::acp_transport::{PromptWrites, witnessed_pipes};
@@ -222,10 +222,44 @@ impl PromptSource {
 struct Prompt {
     text: String,
     source: PromptSource,
-    /// The agent message this prompt carries (018). The driver claims it
-    /// right before the prompt goes out. A nudge, a briefing and console
-    /// input carry none.
-    message_id: Option<String>,
+    /// What this prompt delivers: an agent message (018) or a pull
+    /// request's news (026). The driver claims it right before the prompt
+    /// goes out. A nudge, a briefing and console input carry none.
+    delivery: Option<Delivery>,
+}
+
+/// What a daemon prompt hands over that the store records as handed, claimed
+/// by the driver right before the prompt goes out and given back where the
+/// prompt was never written.
+#[derive(Debug, Clone)]
+pub(crate) enum Delivery {
+    /// An agent message, by id (018).
+    Message(String),
+    /// The news of a pull request (026). Boxed: it carries two marks and a
+    /// list, where a message carries an id.
+    PullRequestNews(Box<NewsDelivery>),
+}
+
+/// One pull request's news, as its prompt delivers it: the comments it
+/// names, the told mark it leaves, and the mark it found, which a prompt
+/// that never went out puts back.
+#[derive(Debug, Clone)]
+pub(crate) struct NewsDelivery {
+    pub(crate) pull_request_id: String,
+    pub(crate) comment_ids: Vec<String>,
+    pub(crate) told: PullRequestTold,
+    pub(crate) before: PullRequestTold,
+}
+
+impl Delivery {
+    /// What tells two queued deliveries apart: one per message, and one per
+    /// pull request, whose next news waits until the queued one is claimed.
+    fn key(&self) -> String {
+        match self {
+            Delivery::Message(id) => format!("message:{id}"),
+            Delivery::PullRequestNews(news) => format!("news:{}", news.pull_request_id),
+        }
+    }
 }
 
 /// The commands the agent most recently offered for this session.
@@ -349,9 +383,10 @@ struct RunningAgent {
     /// behind whichever one is running.
     prompts: mpsc::UnboundedSender<Prompt>,
     switches: mpsc::UnboundedSender<ConfigSwitch>,
-    /// The agent messages in `prompts` that the driver has not taken off yet.
-    /// A scheduler pass hands every unstamped message again, and one already
-    /// queued here is not queued twice.
+    /// The deliveries in `prompts` that the driver has not taken off yet, by
+    /// [`Delivery::key`]. A scheduler pass hands every unstamped message and
+    /// every untold piece of news again, and one already queued here is not
+    /// queued twice.
     queued_messages: HashSet<String>,
     /// The reply channel while the agent waits on one permission request.
     permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
@@ -587,6 +622,23 @@ impl AcpRuntime {
         self.queue_daemon_prompt(session_id, text, None)
     }
 
+    /// Hand the running agent a pull request's news as a prompt (026). The
+    /// driver writes the told marks right before the prompt goes out, and
+    /// gives them back where it never went out; news of a request still
+    /// queued is not queued again.
+    pub(crate) fn send_news(
+        &self,
+        session_id: &str,
+        news: NewsDelivery,
+        text: String,
+    ) -> Result<()> {
+        self.queue_daemon_prompt(
+            session_id,
+            text,
+            Some(Delivery::PullRequestNews(Box::new(news))),
+        )
+    }
+
     /// Hand the running agent an agent message as a prompt, the way
     /// [`Self::send_prompt`] does. The driver claims the message right
     /// before the prompt goes out, and skips the prompt where a read took
@@ -600,41 +652,46 @@ impl AcpRuntime {
         message_id: &str,
         text: String,
     ) -> Result<()> {
-        self.queue_daemon_prompt(session_id, text, Some(message_id))
+        self.queue_daemon_prompt(
+            session_id,
+            text,
+            Some(Delivery::Message(message_id.to_string())),
+        )
     }
 
     fn queue_daemon_prompt(
         &self,
         session_id: &str,
         text: String,
-        message_id: Option<&str>,
+        delivery: Option<Delivery>,
     ) -> Result<()> {
         let mut running = self.inner.running.lock().expect("acp registry lock");
         let agent = running
             .get_mut(session_id)
             .ok_or_else(|| anyhow!("no ACP agent is running for session {session_id}"))?;
-        if let Some(id) = message_id
-            && !agent.queued_messages.insert(id.to_string())
+        let key = delivery.as_ref().map(Delivery::key);
+        if let Some(key) = &key
+            && !agent.queued_messages.insert(key.clone())
         {
             return Ok(());
         }
         let sent = agent.prompts.send(Prompt {
             text,
             source: PromptSource::Daemon,
-            message_id: message_id.map(str::to_string),
+            delivery,
         });
         if sent.is_err()
-            && let Some(id) = message_id
+            && let Some(key) = &key
         {
-            agent.queued_messages.remove(id);
+            agent.queued_messages.remove(key);
         }
         sent.map_err(|_| anyhow!("the ACP agent for session {session_id} is no longer listening"))
     }
 
-    /// Take a message off this launch's queue: the driver is about to claim
+    /// Take a delivery off this launch's queue: the driver is about to claim
     /// it, and a later hand-over may queue it again. A relaunch has a queue
     /// of its own, which this leaves alone.
-    fn dequeue_message(&self, session_id: &str, launch_id: &str, message_id: &str) {
+    fn dequeue_message(&self, session_id: &str, launch_id: &str, key: &str) {
         if let Some(agent) = self
             .inner
             .running
@@ -643,7 +700,7 @@ impl AcpRuntime {
             .get_mut(session_id)
             .filter(|agent| agent.launch_id == launch_id)
         {
-            agent.queued_messages.remove(message_id);
+            agent.queued_messages.remove(key);
         }
     }
 
@@ -692,7 +749,7 @@ impl AcpRuntime {
             .send(Prompt {
                 text,
                 source: PromptSource::Console,
-                message_id: None,
+                delivery: None,
             })
             .map_err(|_| anyhow!("the ACP agent for session {session_id} is no longer listening"))
     }
@@ -1164,13 +1221,26 @@ impl AcpRuntime {
         // it held with it — the store's event order among them, which the
         // session's last words below take again.
         drop(protocol);
-        // A claimed message whose prompt never reached the agent's stdin —
+        // A claimed delivery whose prompt never reached the agent's stdin —
         // the write failed, or a kill came first — waits for the next live
-        // agent, or for a read, again (018).
-        if let Some(message_id) = in_flight.unwritten()
-            && let Err(error) = self.inner.store.unmark_message_delivered(&message_id).await
-        {
-            tracing::warn!(session = %launch.session_id, message = %message_id, error = %format!("{error:#}"), "releasing the message failed");
+        // agent, or for a read, again (018, 026).
+        if let Some(delivery) = in_flight.unwritten() {
+            let released = match &delivery {
+                Delivery::Message(id) => self.inner.store.unmark_message_delivered(id).await,
+                Delivery::PullRequestNews(news) => {
+                    self.inner
+                        .store
+                        .release_pull_request_news(
+                            &news.pull_request_id,
+                            &news.comment_ids,
+                            &news.before,
+                        )
+                        .await
+                }
+            };
+            if let Err(error) = released {
+                tracing::warn!(session = %launch.session_id, delivery = %delivery.key(), error = %format!("{error:#}"), "releasing the delivery failed");
+            }
         }
         // The conversation's outcome where it reached one; otherwise the
         // link's, so a connection that failed before the protocol could say
@@ -2229,7 +2299,7 @@ async fn run_protocol(
         let prompt = Prompt {
             text: prompt.to_string(),
             source: PromptSource::Daemon,
-            message_id: None,
+            delivery: None,
         };
         prompt_once(rpc, &session_id, &config.system_prompt, &prompt).await?;
     }
@@ -2307,48 +2377,63 @@ async fn serve_with_input(
     }
 }
 
-/// Claim the agent message a prompt carries, right before the prompt goes
-/// out (018). Answers whether the prompt goes out. A prompt that carries no
-/// message always does. One whose message a read already took does not:
-/// the agent has that text, and the prompt would say it twice.
+/// Claim the delivery a prompt carries, right before the prompt goes out
+/// (018, 026). Answers whether the prompt goes out. A prompt that carries no
+/// delivery always does. One whose message a read already took does not:
+/// the agent has that text, and the prompt would say it twice. A pull
+/// request's news is claimed by writing its told marks.
 async fn claim_message(rpc: &Rpc, prompt: &Prompt) -> bool {
-    let Some(id) = &prompt.message_id else {
+    let Some(delivery) = &prompt.delivery else {
         return true;
     };
     let sink = &rpc.sink;
     sink.runtime
-        .dequeue_message(&sink.session_id, &sink.launch_id, id);
-    match sink.runtime.inner.store.mark_message_delivered(id).await {
+        .dequeue_message(&sink.session_id, &sink.launch_id, &delivery.key());
+    let store = &sink.runtime.inner.store;
+    let claimed = match delivery {
+        Delivery::Message(id) => store.mark_message_delivered(id).await,
+        Delivery::PullRequestNews(news) => {
+            store
+                .claim_pull_request_news(
+                    &news.pull_request_id,
+                    &news.comment_ids,
+                    &news.before,
+                    &news.told,
+                )
+                .await
+        }
+    };
+    match claimed {
         Ok(true) => {
-            rpc.in_flight.claim(id);
+            rpc.in_flight.claim(delivery.clone());
             true
         }
         Ok(false) => {
-            tracing::debug!(session = %sink.session_id, message = %id, "a read took the message first; its prompt is skipped");
+            tracing::debug!(session = %sink.session_id, delivery = %delivery.key(), "the delivery was taken first, or its news is stale; its prompt is skipped");
             false
         }
         // Unclaimed, so the next scheduler pass hands it again.
         Err(error) => {
-            tracing::warn!(session = %sink.session_id, message = %id, error = %format!("{error:#}"), "claiming the message failed");
+            tracing::warn!(session = %sink.session_id, delivery = %delivery.key(), error = %format!("{error:#}"), "claiming the delivery failed");
             false
         }
     }
 }
 
-/// The agent message whose prompt is going out, and whether that prompt was
+/// The delivery whose prompt is going out, and whether that prompt was
 /// written. It lives outside the protocol, so the driver still reads it after
 /// a failed write or a kill took the protocol down.
 #[derive(Clone, Default)]
 struct MessageInFlight {
-    claimed: Arc<Mutex<Option<String>>>,
+    claimed: Arc<Mutex<Option<Delivery>>>,
     writes: PromptWrites,
 }
 
 impl MessageInFlight {
-    /// The driver claimed this message, and its prompt goes out next.
-    fn claim(&self, message_id: &str) {
+    /// The driver claimed this delivery, and its prompt goes out next.
+    fn claim(&self, delivery: Delivery) {
         self.writes.reset();
-        *self.claimed.lock().expect("message in flight lock") = Some(message_id.to_string());
+        *self.claimed.lock().expect("message in flight lock") = Some(delivery);
     }
 
     /// The prompt's turn ended: the agent had the text.
@@ -2356,10 +2441,10 @@ impl MessageInFlight {
         self.claimed.lock().expect("message in flight lock").take();
     }
 
-    /// The claimed message whose prompt the agent's stdin never took whole.
+    /// The claimed delivery whose prompt the agent's stdin never took whole.
     /// A prompt that was written keeps its claim, whatever came after: the
     /// agent may have read it.
-    fn unwritten(&self) -> Option<String> {
+    fn unwritten(&self) -> Option<Delivery> {
         let claimed = self
             .claimed
             .lock()

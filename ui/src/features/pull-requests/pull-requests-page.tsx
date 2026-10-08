@@ -1,13 +1,13 @@
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { useState } from "react"
-import { useNavigate, useSearchParams } from "react-router-dom"
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom"
 import { api, qk, unwrap } from "@/api"
 import { DataTable } from "@/components/data-table"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { TableCell, TableRow } from "@/components/ui/table"
 import { repositoriesQueryOptions } from "@/features/repositories/queries"
-import { paths } from "@/routes/paths"
+import { paths, sessionPanelFrom } from "@/routes/paths"
 import { AddPullRequestDialog } from "./add-pull-request-dialog"
 import { useRemovePullRequest } from "./queries"
 
@@ -20,12 +20,14 @@ const COLUMNS = [
   "Checks",
   "Review decision",
   "Unanswered comments",
+  "Session",
   "Updated",
   "Actions",
 ].map((header) => ({ header }))
 export function PullRequestsPage() {
   const [search, setSearch] = useSearchParams()
   const navigate = useNavigate()
+  const { pathname } = useLocation()
   const [adding, setAdding] = useState(false)
   const filters = {
     repo: search.get("repo") || undefined,
@@ -130,6 +132,20 @@ export function PullRequestsPage() {
               <TableCell>{row.checks}</TableCell>
               <TableCell>{row.review_decision}</TableCell>
               <TableCell>{row.unanswered_comments}</TableCell>
+              {/* The newest session the daemon started on the request: its
+                  own panel, over this screen. */}
+              <TableCell onClick={(e) => e.stopPropagation()}>
+                {row.session_id ? (
+                  <Link
+                    to={sessionPanelFrom(pathname, search, row.session_id)}
+                    aria-label={`Open the session of #${row.number}`}
+                  >
+                    Session
+                  </Link>
+                ) : (
+                  "—"
+                )}
+              </TableCell>
               <TableCell>{row.updated_at}</TableCell>
               <TableCell onClick={(e) => e.stopPropagation()}>
                 <Button variant="ghost" aria-label={`Inspect #${row.number}`} onClick={inspect}>

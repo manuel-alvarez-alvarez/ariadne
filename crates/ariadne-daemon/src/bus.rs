@@ -344,13 +344,14 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
         Change::SkillUpdated(skill) => unscoped(DomainEvent::SkillUpdated(skill_dto(skill))),
         Change::SkillDeleted(name) => unscoped(DomainEvent::SkillDeleted(DeletedDto { id: name })),
         Change::PullRequestCreated(row) => unscoped(DomainEvent::PullRequestCreated(
-            crate::http::convert::pull_request_dto(row),
+            crate::http::convert::pull_request_dto_of(store, row).await?,
         )),
         Change::PullRequestUpdated(row) => unscoped(DomainEvent::PullRequestUpdated(
-            crate::http::convert::pull_request_dto(row),
+            crate::http::convert::pull_request_dto_of(store, row).await?,
         )),
+        // The sessions of a removed request went with it.
         Change::PullRequestDeleted(row) => unscoped(DomainEvent::PullRequestDeleted(
-            crate::http::convert::pull_request_dto(row),
+            crate::http::convert::pull_request_dto(row, None),
         )),
         Change::RepositoryCreated(repo) => {
             unscoped(DomainEvent::RepositoryCreated(repository_dto(repo)))
@@ -468,6 +469,7 @@ mod tests {
                 model: "stub:test-model".into(),
                 effort: None,
                 worktree_path: None,
+                pull_request_id: None,
             })
             .await
             .unwrap();

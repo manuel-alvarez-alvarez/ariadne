@@ -1,7 +1,7 @@
 ---
 id: mcp-tool-surface
 status: current
-updated: 2026-10-07
+updated: 2026-10-08
 areas: [mcp, cli]
 commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -30,7 +30,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    `session/resume` (021). It reads its identity from the environment —
    session, seat, goal and, for a task session, the task — and proxies to the
    daemon's REST API with a session header, so the daemon enforces the scoping
-   itself.
+   itself. A pull request session (026) carries `ARIADNE_PULL_REQUEST_ID` in
+   place of a goal and a task, and its instructions name the request.
 2. The server's instructions, which every session receives before its first
    prompt, say what this session is and carry the session rules that hold for
    every seat alike (006). A client can defer the tools of a server: Claude
@@ -40,7 +41,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 3. Whether anyone answers a question is the one rule picked by seat: the
    orchestrator's user answers in the console, one question at a time, and the
    orchestrator then waits; an author or reviewer works alone, and asks only
-   where the task cannot go on without the answer. The rule names no channel —
+   where the task cannot go on without the answer, and a pull request author
+   where the request cannot. The rule names no channel —
    the seat's own playbook already says how to ask.
 4. Tools are filtered by seat both in the listing and on the call, so a tool a
    seat may not use is one it never sees:
@@ -70,6 +72,20 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      required there, since several reviews are open at once), `pick_winner`
      (the pick of spec 004: once per reviewer, only once every author is
      approved)
+   - **pull request author** — a session with `ARIADNE_PULL_REQUEST_ID` set
+     and seat `author` (026): `get_pull_request` (the request's DTO with its
+     failed checks and `behind_base`, plus the worktree, the repository path
+     and the login), `list_comments` (`unanswered_only` narrows it to the
+     threads that wait on the login), `reply_comment` (one `comment_id` and a
+     `body`; the daemon posts it) and `report_pull_request` (`ready`,
+     `state`). It has no task tool and no message tool: a pull request
+     session has no goal, task or staffed agent to write to, and the user
+     reaches it through its console, `ariadne attach <session>` and the
+     session panel, as for any session (008). No tool resolves a thread: a
+     human closes a thread. A tool is added to the seat by
+     naming it in `McpSeat::PullRequestAuthor`'s list beside its `#[tool]`
+     in `tools.rs`; each one calls a route under `/v1/pull-requests/{id}`
+     that the daemon accepts from the request's own session alone.
 5. A call to a tool outside the seat's list is refused by name rather than
    forwarded.
 6. A tool with no task in scope takes the session's own task, and refuses with
@@ -136,6 +152,14 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 - Every text the server hands an agent — instructions and tool descriptions —
   is Simplified Technical English
   (`mcp.rs::every_text_the_server_hands_an_agent_is_simplified_technical_english`).
+- The pull request author seat lists its four tools and no task or message
+  tool, and its instructions name the request and no goal
+  (`mcp.rs::the_pull_request_author_seat_lists_its_four_tools_and_no_task_or_message_tool`);
+  its tools call the routes of the session's request
+  (`tools.rs::the_pull_request_tools_call_the_routes_of_the_sessions_request`).
+- A pull request session's MCP server is told the request and no goal or
+  task
+  (`adapters.rs::a_pull_request_session_tells_its_mcp_server_the_request_and_no_goal`).
 - A refused call reaches the agent in the daemon's words
   (`mcp.rs::a_refused_call_reaches_the_agent_in_the_daemons_words`).
 - The skill catalog excludes orchestrator-only skills, and gives a name and a

@@ -45,6 +45,9 @@ IGNORED = {
     "crates/ariadne-api/src/error.rs: ErrorDetail": (
         "the `error` field of `ErrorBody`; serde writes it and utoipa names it in the OpenAPI"
     ),
+    "crates/ariadne-api/src/pull_requests.rs: FailedCheckDto": (
+        "the element type of the public field `PullRequestDto::failed_checks`; utoipa names it"
+    ),
     "crates/ariadne-store/src/defaults.rs: BuiltinSkill": (
         "the element type of the public `BUILTIN_SKILLS`; its callers read the fields"
     ),

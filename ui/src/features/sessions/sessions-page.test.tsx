@@ -18,7 +18,7 @@ import { cleanup, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it } from "vitest"
 
-import type { components, GoalDto, SessionDto, TaskDto } from "@/api"
+import type { components, GoalDto, PullRequestDto, SessionDto, TaskDto } from "@/api"
 import { SEAT_LABELS, shortId } from "@/lib/format"
 import { useSettingsStore } from "@/stores/settings"
 import {
@@ -31,6 +31,7 @@ import {
   aTask,
 } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
+import { pull } from "@/test/pull-request"
 
 import { dayBefore } from "./outside-filters"
 import type { OutsideSessionDto } from "./queries"
@@ -119,6 +120,7 @@ function stubDaemon({
   tasks = [TASK],
   acpAgents = [],
   resumed = RESUMED,
+  pullRequests = [],
 }: {
   sessions?: SessionDto[]
   sessionsResponse?: () => Promise<Response>
@@ -129,6 +131,7 @@ function stubDaemon({
   tasks?: TaskDto[]
   acpAgents?: AcpAgentDto[]
   resumed?: SessionDto
+  pullRequests?: PullRequestDto[]
 } = {}) {
   daemonFetch.mockImplementation((input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init)
@@ -169,6 +172,8 @@ function stubDaemon({
     if (url.pathname === "/v1/goals") return Promise.resolve(jsonResponse(goals))
     if (url.pathname === "/v1/tasks") return Promise.resolve(jsonResponse(tasks))
     if (url.pathname === "/v1/acp-agents") return Promise.resolve(jsonResponse(acpAgents))
+    const pullRequest = pullRequests.find((one) => url.pathname === `/v1/pull-requests/${one.id}`)
+    if (pullRequest) return Promise.resolve(jsonResponse(pullRequest))
     return Promise.resolve(jsonResponse([]))
   })
 }
@@ -621,6 +626,30 @@ it("shows the seat, the goal and the task of an Ariadne row together, in one Wor
   expect(headers).toContain("Work")
   expect(headers).not.toContain("Goal")
   expect(headers).not.toContain("Task")
+})
+
+it("names a pull request session by its request, linked to the forge, and says it is ready to merge", async () => {
+  const session = aSession({
+    id: "01JSESS00000000000000PULL1",
+    goal_id: null,
+    task_id: null,
+    task_agent_id: null,
+    seat: "author",
+    title: pull.title,
+    pull_request_id: pull.id,
+    status: "idle",
+    attention_reason: "waiting_user",
+  })
+  stubDaemon({ sessions: [session], outside: [], pullRequests: [pull] })
+  renderPage()
+
+  const cells = within(await waitFor(() => row(pull.title)))
+  const link = await cells.findByRole("link", { name: pull.title })
+  expect(link.getAttribute("href")).toBe(pull.url)
+  expect(link.getAttribute("target")).toBe("_blank")
+  expect(cells.getByText(SEAT_LABELS.author)).toBeTruthy()
+  expect(cells.getByText("Ready to merge")).toBeTruthy()
+  expect(cells.queryByText("Waiting for you")).toBeNull()
 })
 
 it("narrows the table to a goal picked in the Work column, opening no panel", async () => {

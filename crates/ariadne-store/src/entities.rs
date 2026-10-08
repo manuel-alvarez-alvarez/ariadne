@@ -10,7 +10,8 @@ use ariadne_core::{
 };
 
 use crate::defaults::{
-    ORCHESTRATION_SKILL, default_landing_prompt, default_skill_document, skill_summary,
+    ORCHESTRATION_SKILL, PR_BABYSIT_SKILL, default_landing_prompt, default_skill_document,
+    skill_summary,
 };
 
 /// The typed reading of a TEXT column that holds a core enum. The accessor
@@ -107,8 +108,9 @@ impl Skill {
     }
 
     /// The seat this skill serves, read off the name and stored nowhere:
-    /// `orchestration` is the orchestrator's own playbook, and every other
-    /// skill is a task agent's to be staffed on.
+    /// `orchestration` is the orchestrator's own playbook, `pr-babysit` the
+    /// playbook of a pull request session, and every other skill is a task
+    /// agent's to be staffed on.
     pub fn seat(&self) -> SkillSeat {
         SkillSeat::of(&self.name)
     }
@@ -125,14 +127,18 @@ pub enum SkillSeat {
     Orchestrator,
     /// Staffed on a task's author or reviewers.
     Task,
+    /// Loaded by the daemon for a pull request session (026), staffable on
+    /// nothing.
+    PullRequest,
 }
 
 impl SkillSeat {
     /// The seat of the skill called `name`.
     pub fn of(name: &str) -> Self {
-        match name == ORCHESTRATION_SKILL {
-            true => Self::Orchestrator,
-            false => Self::Task,
+        match name {
+            ORCHESTRATION_SKILL => Self::Orchestrator,
+            PR_BABYSIT_SKILL => Self::PullRequest,
+            _ => Self::Task,
         }
     }
 }
@@ -509,6 +515,10 @@ pub struct AgentSession {
     /// The session this one replaced on its seat, when a switch started it:
     /// the same seat on another pin, in a new conversation.
     pub switched_from: Option<String>,
+    /// The pull request this session watches (026), or None for a session of
+    /// a goal, a task or nothing at all. A pull request session has no goal,
+    /// no task and no staffed agent.
+    pub pull_request_id: Option<String>,
 }
 
 impl AgentSession {
@@ -642,4 +652,54 @@ pub struct PullRequest {
     pub last_seen_at: String,
     pub created_at: String,
     pub updated_at: String,
+    /// The checks that failed on the head, as the detail fetch read them: a
+    /// JSON list of `{name, url, conclusion}`.
+    pub failed_checks: String,
+    /// Whether the base branch has commits the head does not.
+    pub behind_base: bool,
+    /// The names of the failed checks the request's session was told of.
+    pub told_checks: String,
+    /// Whether the session was told the head is behind its base.
+    pub told_behind_base: bool,
+    /// The review decision and the state the session was last told; None
+    /// is the baseline of a fresh row, `none` and `open`.
+    pub told_review_decision: Option<String>,
+    pub told_state: Option<String>,
+    /// The rolled-up check state the session was last told; None is the
+    /// baseline of a fresh row, `none`.
+    pub told_check_state: Option<String>,
+    /// When the session was last handed news: the claim of its prompt.
+    pub news_told_at: Option<String>,
+    /// When the daemon took the work of an ended request down; None while
+    /// that is still owed, on an ended author row.
+    pub cleaned_at: Option<String>,
+}
+
+/// One comment on a pull request, as the daemon stored it from the forge
+/// (026): a review comment on a line, a comment on the conversation, or the
+/// body of a review.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct PullRequestComment {
+    pub id: String,
+    pub pull_request_id: String,
+    /// The forge's own id of the comment.
+    pub forge_id: String,
+    /// The forge's thread or discussion the comment is in.
+    pub thread_id: String,
+    pub kind: String,
+    pub author_login: String,
+    pub author_is_bot: bool,
+    pub body: String,
+    pub path: Option<String>,
+    pub line: Option<i64>,
+    pub in_reply_to: Option<String>,
+    /// When the forge says the comment was written.
+    pub created_at: String,
+    pub fetched_at: String,
+    /// A later comment in the thread is by the integration login.
+    pub answered: bool,
+    /// The forge reports the thread resolved.
+    pub resolved: bool,
+    /// When the comment was handed to the request's session.
+    pub told_at: Option<String>,
 }

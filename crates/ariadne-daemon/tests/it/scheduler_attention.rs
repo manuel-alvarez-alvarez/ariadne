@@ -2207,3 +2207,123 @@ async fn a_burst_that_queues_behind_a_slow_reconcile_still_costs_two_reconciles(
          the pass cost"
     );
 }
+
+/// A pull request of mine on an enabled repository with a babysit pin, and
+/// a session on it with the stub agent running, as the launcher leaves one
+/// (026). `number` tells two of them apart.
+async fn pull_request_session(h: &Harness, number: i64) -> AgentSession {
+    let repo = match h.store.list_repositories().await.unwrap().pop() {
+        Some(repo) => repo,
+        None => {
+            let repo = h.repository(&h.at("widgets")).await;
+            h.store
+                .set_forge_integration(ariadne_store::SetForgeIntegration {
+                    repository_id: repo.id.clone(),
+                    kind: ariadne_core::ForgeKind::Github,
+                    host: "github.com".into(),
+                    owner: "acme".into(),
+                    name: "widgets".into(),
+                    remote: "origin".into(),
+                    enabled: true,
+                    login: Some("me".into()),
+                    babysit_model: Some(test_pin().model),
+                    babysit_effort: None,
+                    review_model: None,
+                    review_effort: None,
+                })
+                .await
+                .unwrap();
+            repo
+        }
+    };
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            existing_id: None,
+            repository_id: repo.id.clone(),
+            number,
+            url: format!("https://github.com/acme/widgets/pull/{number}"),
+            title: format!("Fix widgets {number}"),
+            author_login: "me".into(),
+            tracked_by: "forge".into(),
+            state: "open".into(),
+            draft: false,
+            head_branch: format!("fix-{number}"),
+            head_sha: "abc".into(),
+            head_repo: None,
+            base_branch: "main".into(),
+            checks: "none".into(),
+            review_decision: "none".into(),
+            origin_task_id: None,
+            opened_at: "2026-10-01T00:00:00Z".into(),
+        })
+        .await
+        .unwrap();
+    let worktree = h.at(&format!("wt-pr-{number}"));
+    std::fs::create_dir_all(&worktree).unwrap();
+    let session = h
+        .store
+        .create_session(ariadne_store::NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: Some(Seat::Author),
+            task_agent_id: None,
+            model: test_pin().model,
+            effort: None,
+            worktree_path: Some(worktree.display().to_string()),
+            pull_request_id: Some(pull.id),
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_session_internal_id(&session.id, "uuid-1234")
+        .await
+        .unwrap();
+    h.agent_runs(&session).await;
+    session
+}
+
+/// An idle pull request session is waiting on the forge, as an idle
+/// planning orchestrator waits on the user (009 rule 41): however long it
+/// sits idle it is never nudged, never flagged and never relaunched. A
+/// second one stuck mid-turn just as long is relaunched, which is also what
+/// says the pass over the first ran.
+#[tokio::test]
+async fn an_idle_pull_request_session_is_waiting_on_the_forge_and_a_wedged_one_is_relaunched() {
+    let h = harness().await;
+    let idle = pull_request_session(&h, 1).await;
+    let wedged = pull_request_session(&h, 2).await;
+    h.idle_for(&idle, RELAUNCH_SECS + 60).await;
+    h.launched_ago(&wedged, RELAUNCH_SECS + 60).await;
+    let idle_launched = h.launched_at(&idle).await;
+    let wedged_launched = h.launched_at(&wedged).await;
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    for session in [&idle, &wedged] {
+        sched
+            .send(SchedEvent::PullRequestChanged(
+                session.pull_request_id.clone().unwrap(),
+            ))
+            .unwrap();
+    }
+    eventually(TIMEOUT, "the wedged session to be relaunched", async || {
+        h.relaunched(&wedged, &wedged_launched).await
+    })
+    .await;
+    let back = h.launch_file(&wedged.id).expect("a launch file");
+    assert_eq!(back.resume_session_id.as_deref(), Some("uuid-1234"));
+    assert!(
+        back.initial_prompt
+            .unwrap_or_default()
+            .contains("# Pull request: Fix widgets 2"),
+        "a relaunched request session is briefed on its request again"
+    );
+
+    assert_eq!(
+        h.prompts_to(&idle).len(),
+        0,
+        "an idle request session is not nudged past {NUDGE_SECS} s"
+    );
+    assert_eq!(h.launched_at(&idle).await, idle_launched, "nor relaunched");
+    assert_eq!(h.attention(&idle).await, None, "nor flagged stalled");
+}

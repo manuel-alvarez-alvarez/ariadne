@@ -924,6 +924,7 @@ mod tests {
                 model: "stub:test-model".into(),
                 effort: None,
                 worktree_path: None,
+                pull_request_id: None,
             })
             .await
             .unwrap()

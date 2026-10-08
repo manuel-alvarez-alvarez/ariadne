@@ -102,10 +102,20 @@ impl Store {
             // The orchestrator's skill is nobody's to staff: its seat is a
             // fact of the name, so the refusal reads it the same way the
             // launcher does, and no schema has to know it.
-            if SkillSeat::of(name) == SkillSeat::Orchestrator {
-                return Err(StoreError::Conflict(format!(
-                    "skill {name} is the orchestrator's; a task agent cannot load it"
-                )));
+            match SkillSeat::of(name) {
+                SkillSeat::Orchestrator => {
+                    return Err(StoreError::Conflict(format!(
+                        "skill {name} is the orchestrator's; a task agent cannot load it"
+                    )));
+                }
+                // A pull request session is staffed by the daemon, never by
+                // an orchestrator (017).
+                SkillSeat::PullRequest => {
+                    return Err(StoreError::Conflict(format!(
+                        "skill {name} is a pull request session's; a task agent cannot load it"
+                    )));
+                }
+                SkillSeat::Task => {}
             }
             sqlx::query(
                 "INSERT INTO task_agent_skills (agent_id, skill_name, ordinal) VALUES (?, ?, ?)",

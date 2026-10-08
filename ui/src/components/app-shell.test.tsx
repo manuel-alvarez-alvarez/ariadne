@@ -69,6 +69,8 @@ it("ends the navigation with stats, right after repositories and permissions", (
     .map((link) => link.getAttribute("aria-label"))
   expect(links).toEqual([
     "Goals",
+    "Pull requests",
+    "Issues",
     "Sessions",
     "Skills",
     "Agents",

@@ -103,6 +103,7 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       // another window: the outside rows are cut without the ones a session
       // holds, so theirs are asked for again.
       void queryClient.invalidateQueries({ queryKey: qk.outsideSessions.lists() })
+      invalidateWatchedPullRequest(queryClient, event.data.pull_request_id)
       break
     }
     case "session_updated": {
@@ -110,6 +111,7 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       void queryClient.invalidateQueries({ queryKey: qk.sessions.lists() })
       // A session that ended wrote a fact the stats read.
       void queryClient.invalidateQueries({ queryKey: qk.stats.all() })
+      invalidateWatchedPullRequest(queryClient, event.data.pull_request_id)
       break
     }
     case "agent_event": {
@@ -179,6 +181,20 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       console.warn("[events] unhandled domain event", unknown)
     }
   }
+}
+
+/**
+ * A pull request session that starts or moves: the request names its newest
+ * session (`PullRequestDto.session_id`), so its detail and every list holding
+ * it are read again. Nothing for any other session.
+ */
+function invalidateWatchedPullRequest(
+  queryClient: QueryClient,
+  pullRequestId: string | null | undefined,
+): void {
+  if (!pullRequestId) return
+  void queryClient.invalidateQueries({ queryKey: qk.pullRequests.detail(pullRequestId) })
+  void queryClient.invalidateQueries({ queryKey: qk.pullRequests.lists() })
 }
 
 /**

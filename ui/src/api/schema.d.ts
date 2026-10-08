@@ -623,6 +623,65 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/pull-requests/{id}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["pull-requests_comments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pull-requests/{id}/comments/{comment_id}/reply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reply to one stored comment. The daemon posts the reply through the
+         *     forge CLI, stores it as a comment of the integration login, and counts
+         *     the threads that wait again. There is no route that resolves a thread:
+         *     a human closes a thread.
+         */
+        post: operations["pull-requests_reply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pull-requests/{id}/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * What the request's session says of it: `ready` once every required
+         *     approval and check reads green, which raises `waiting_user` on the
+         *     session, and a `state` a human moved it to.
+         */
+        post: operations["pull-requests_report"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/repositories": {
         parameters: {
             query?: never;
@@ -1895,6 +1954,17 @@ export interface components {
          * @enum {string}
          */
         EventOrder: "asc" | "desc";
+        /** @description One check that failed on a request's head. */
+        FailedCheckDto: {
+            /**
+             * @description The forge's own word for how it ended: `failure`, `cancelled` and
+             *     the like.
+             */
+            conclusion: string;
+            name: string;
+            /** @description Where the forge shows the check's run; empty where it names none. */
+            url: string;
+        };
         /**
          * @description Body of `POST /v1/goals/{id}/finalize`: the orchestrator ends planning and
          *     execution starts. The orchestrator's call, not the user's, and it carries
@@ -2459,12 +2529,48 @@ export interface components {
             /** @description Id of the author picked, one of the task's authors. */
             author_agent_id: string;
         };
+        /** @description One comment on a request, as the daemon stored it from the forge. */
+        PullRequestCommentDto: {
+            /** @description A later comment in the thread is by the integration login. */
+            answered: boolean;
+            author_is_bot: boolean;
+            author_login: string;
+            body: string;
+            created_at: string;
+            fetched_at: string;
+            /** @description The forge's id of the comment. */
+            forge_id: string;
+            /** @description The daemon's own id: what `reply` takes. */
+            id: string;
+            in_reply_to?: string | null;
+            /** @description `review_comment`, `issue_comment` or `review`. */
+            kind: string;
+            /** Format: int64 */
+            line?: number | null;
+            path?: string | null;
+            pull_request_id: string;
+            /** @description The forge reports the thread resolved. */
+            resolved: boolean;
+            /**
+             * @description The forge's thread or discussion; the conversation of the request
+             *     is one thread.
+             */
+            thread_id: string;
+            told_at?: string | null;
+        };
         PullRequestDto: {
             author_login: string;
             base_branch: string;
+            /** @description Whether the base branch has commits the head does not. */
+            behind_base?: boolean;
             checks: string;
             created_at: string;
             draft: boolean;
+            /**
+             * @description The checks that failed on the head, as the last detail fetch read
+             *     them.
+             */
+            failed_checks?: components["schemas"]["FailedCheckDto"][];
             head_branch: string;
             head_repo?: string | null;
             head_sha: string;
@@ -2478,6 +2584,8 @@ export interface components {
             repository_id: string;
             review_decision: string;
             role: string;
+            /** @description The newest session the daemon started on this request, if any. */
+            session_id?: string | null;
             state: string;
             title: string;
             tracked_by: string;
@@ -2509,6 +2617,20 @@ export interface components {
              * @example 3.12.1
              */
             version?: string | null;
+        };
+        /** @description Body of `POST /v1/pull-requests/{id}/comments/{comment_id}/reply`. */
+        ReplyCommentRequest: {
+            body: string;
+        };
+        /**
+         * @description Body of `POST /v1/pull-requests/{id}/report`: what the request's session
+         *     says of it.
+         */
+        ReportPullRequestRequest: {
+            /** @description Every required approval and check reads green. */
+            ready?: boolean | null;
+            /** @description `open`, `merged` or `closed`. */
+            state?: string | null;
         };
         RepositoryDto: {
             base_branch: string;
@@ -2605,6 +2727,11 @@ export interface components {
              *     session runs on, and the model of it.
              */
             model: string;
+            /**
+             * @description The pull request this session watches (026); null for every other
+             *     session.
+             */
+            pull_request_id?: string | null;
             seat?: null | components["schemas"]["Seat"];
             status: components["schemas"]["SessionStatus"];
             /**
@@ -2664,6 +2791,8 @@ export interface components {
             last_activity_at?: string | null;
             /** @description Model requested at launch, `<agent>:<model>`; None on an outside row. */
             model?: string | null;
+            /** @description The pull request this session watches; None for every other session. */
+            pull_request_id?: string | null;
             seat?: null | components["schemas"]["Seat"];
             status?: null | components["schemas"]["SessionStatus"];
             /**
@@ -2766,7 +2895,7 @@ export interface components {
          * @description Where a skill is used: by the orchestrator, or to staff a task agent.
          * @enum {string}
          */
-        SkillSeat: "orchestrator" | "task";
+        SkillSeat: "orchestrator" | "task" | "pull_request";
         /** @description What was spent in one bucket of the time axis. */
         SpendBucketDto: {
             /** Format: int64 */
@@ -4468,6 +4597,135 @@ export interface operations {
             };
         };
     };
+    "pull-requests_comments": {
+        parameters: {
+            query?: {
+                /** @description Only the threads that wait on an answer from the integration login. */
+                unanswered_only?: boolean | null;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestCommentDto"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_reply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                comment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReplyCommentRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestCommentDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportPullRequestRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     repositories_list: {
         parameters: {
             query?: never;
@@ -4722,6 +4980,8 @@ export interface operations {
                 goal?: string | null;
                 /** @description Filter by task id. No outside session has one. */
                 task?: string | null;
+                /** @description Filter by pull request id. No outside session has one. */
+                pull_request?: string | null;
                 /**
                  * @description Filter by status. No outside session has one. A named status also
                  *     lists sessions that have ended, as `all` does.

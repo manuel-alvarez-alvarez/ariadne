@@ -1,16 +1,16 @@
 import { useQuery } from "@tanstack/react-query"
-import { api, type PullRequestDto, qk, unwrap } from "@/api"
+import type { ReactNode } from "react"
+import { Link, useLocation, useSearchParams } from "react-router-dom"
+import type { PullRequestDto } from "@/api"
 import { ErrorState } from "@/components/error-state"
 import { PanelSheet } from "@/components/panel-sheet"
 import { Button } from "@/components/ui/button"
 import { PaneBody, PaneHeader, PaneTitle } from "@/components/ui/docked-pane"
-import { useRemovePullRequest } from "./queries"
+import { sessionPanelFrom } from "@/routes/paths"
+import { pullRequestQueryOptions, useRemovePullRequest } from "./queries"
 
 export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => void }) {
-  const query = useQuery<PullRequestDto>({
-    queryKey: qk.pullRequests.detail(id),
-    queryFn: () => unwrap(api().GET("/v1/pull-requests/{id}", { params: { path: { id } } })),
-  })
+  const query = useQuery(pullRequestQueryOptions(id))
   const remove = useRemovePullRequest(onClose)
   return (
     <PanelSheet onClose={onClose}>
@@ -38,15 +38,7 @@ export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => v
               <div key={key} className="contents">
                 <dt className="text-muted-foreground">{key}</dt>
                 <dd>
-                  {key === "url" ? (
-                    <a href={String(value)} target="_blank" rel="noreferrer">
-                      {String(value)}
-                    </a>
-                  ) : value === null ? (
-                    "null"
-                  ) : (
-                    String(value)
-                  )}
+                  <FieldValue pull={query.data} field={key} value={value} />
                 </dd>
               </div>
             ))}
@@ -55,4 +47,54 @@ export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => v
       </PaneBody>
     </PanelSheet>
   )
+}
+
+/**
+ * One field as `ariadne pr inspect` prints it, with the three that point
+ * somewhere made into links: the request on the forge, each failed check's
+ * run, and the request's session, opened as its own panel in this one's
+ * place.
+ */
+function FieldValue({
+  pull,
+  field,
+  value,
+}: {
+  pull: PullRequestDto
+  field: string
+  value: unknown
+}): ReactNode {
+  const [search] = useSearchParams()
+  const { pathname } = useLocation()
+  if (field === "url") {
+    return (
+      <a href={pull.url} target="_blank" rel="noreferrer">
+        {pull.url}
+      </a>
+    )
+  }
+  if (field === "session_id" && pull.session_id) {
+    return <Link to={sessionPanelFrom(pathname, search, pull.session_id)}>{pull.session_id}</Link>
+  }
+  if (field === "failed_checks") {
+    const checks = pull.failed_checks ?? []
+    if (!checks.length) return "none"
+    return (
+      <ul className="flex flex-col gap-1">
+        {checks.map((check) => (
+          <li key={`${check.name}:${check.url}`}>
+            {check.url ? (
+              <a href={check.url} target="_blank" rel="noreferrer">
+                {check.name}
+              </a>
+            ) : (
+              check.name
+            )}{" "}
+            <span className="text-muted-foreground">({check.conclusion})</span>
+          </li>
+        ))}
+      </ul>
+    )
+  }
+  return value === null ? "null" : String(value)
 }

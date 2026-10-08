@@ -144,3 +144,20 @@ it("filters, refreshes, and removes through the same routes as the CLI", async (
     ),
   ).toBe(true)
 })
+
+it("opens a request's session panel from its row and shows its unanswered comments", async () => {
+  const row = { ...pull, session_id: "01JSESS00000000000000PULL1" }
+  daemonFetch.mockImplementation(async (input) => {
+    const path = new URL((input as Request).url).pathname
+    if (path === "/v1/pull-requests")
+      return jsonResponse([row, { ...pull, id: "pull-7", number: 7 }])
+    return jsonResponse([])
+  })
+  const { location } = renderScreen(<PullRequestsPage />, { route: "/pull-requests?pr=pull-42" })
+  const link = await screen.findByRole("link", { name: "Open the session of #42" })
+  // A request with no session yet has nothing to open.
+  expect(screen.queryByRole("link", { name: "Open the session of #7" })).toBeNull()
+  expect(link.closest("tr")?.textContent).toContain(String(pull.unanswered_comments))
+  await userEvent.click(link)
+  expect(location.url).toBe(`/pull-requests?session=${row.session_id}`)
+})

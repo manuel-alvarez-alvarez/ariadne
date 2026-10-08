@@ -422,6 +422,7 @@ impl HarnessBuilder {
             launcher.cfg.clone(),
             &bus,
             self.timeouts.forge_poll,
+            self.timeouts.forge_details,
         );
         // Started by a test that binds a listener: a harness opens no tunnel.
         let tunnel = ariadne_daemon::forge::tunnel::Tunnel::new(
@@ -431,6 +432,9 @@ impl HarnessBuilder {
             &forge_poll,
             self.timeouts,
         );
+        if let Some(sched) = &sched {
+            forge_poll.connect_scheduler(sched.clone());
+        }
         let state = AppState {
             tunnel,
             forge_poll,
@@ -648,9 +652,16 @@ impl Harness {
     /// session fresh or calls `set_status(.., Idle)` before reusing one;
     /// this only turns that into something enforced rather than assumed.
     pub(crate) async fn agent_runs_as(&self, session: &AgentSession, agent_id: &str) {
-        let repository_id = match &session.task_id {
-            Some(task) => self.store.get_task(task).await.unwrap().repo_id,
-            None => {
+        let repository_id = match (&session.task_id, &session.pull_request_id) {
+            (Some(task), _) => self.store.get_task(task).await.unwrap().repo_id,
+            (None, Some(pull)) => {
+                self.store
+                    .get_pull_request(pull)
+                    .await
+                    .unwrap()
+                    .repository_id
+            }
+            (None, None) => {
                 self.store
                     .list_goal_repositories(session.goal_id.as_deref().unwrap())
                     .await
@@ -1110,6 +1121,7 @@ impl Harness {
                 model: test_pin().model,
                 effort: None,
                 worktree_path: Some(worktree.display().to_string()),
+                pull_request_id: None,
             })
             .await
             .unwrap()

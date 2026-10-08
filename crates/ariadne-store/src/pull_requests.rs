@@ -24,6 +24,20 @@ pub struct NewPullRequest {
     pub opened_at: String,
 }
 
+/// What a request's session has been told, written after a news prompt went
+/// out (026): the failed checks by name, whether the head is behind its
+/// base, and the review decision and state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PullRequestTold {
+    pub checks: Vec<String>,
+    pub behind_base: bool,
+    pub review_decision: String,
+    pub state: String,
+    /// The rolled-up state of the checks: `pending`, `success`, `failure`
+    /// or `none`. A change of it is what a ready report is decided on.
+    pub check_state: String,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct PullRequestFilter {
     pub repository_id: Option<String>,
@@ -61,8 +75,9 @@ impl Store {
         let id = new_id();
         let ts = now();
         let row: PullRequest = sqlx::query_as(
-            "INSERT INTO pull_requests (id, repository_id, number, url, title, author_login, tracked_by, state, draft, head_branch, head_sha, head_repo, base_branch, checks, review_decision, unanswered_comments, origin_task_id, opened_at, role, ready, last_seen_at, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO pull_requests (id, repository_id, number, url, title, author_login, tracked_by, state, draft, head_branch, head_sha, head_repo, base_branch, checks, review_decision, unanswered_comments, origin_task_id, opened_at, role, ready, last_seen_at, created_at, updated_at, cleaned_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    CASE WHEN ? = 'open' THEN NULL ELSE ? END)
             ON CONFLICT (repository_id, number) DO UPDATE SET
                 url = excluded.url,
                 title = excluded.title,
@@ -80,7 +95,8 @@ impl Store {
                 opened_at = excluded.opened_at,
                 role = excluded.role,
                 last_seen_at = excluded.last_seen_at,
-                updated_at = excluded.updated_at
+                updated_at = excluded.updated_at,
+                cleaned_at = CASE WHEN excluded.state = 'open' THEN NULL ELSE pull_requests.cleaned_at END
             RETURNING *")
             .bind(&id)
             .bind(&new.repository_id)
@@ -104,6 +120,9 @@ impl Store {
             .bind(false)
             .bind(&ts)
             .bind(&ts)
+            .bind(&ts)
+            // A row born ended owes no cleanup: no session ever ran for it.
+            .bind(&new.state)
             .bind(&ts)
             .fetch_one(&mut *tx).await?;
         tx.commit().await?;
@@ -153,12 +172,111 @@ impl Store {
     }
 
     /// Close open rows only while the integration is disabled or absent.
-    pub async fn close_disabled_pull_requests(&self, repository_id: &str) -> Result<()> {
+    pub async fn close_disabled_pull_requests(
+        &self,
+        repository_id: &str,
+    ) -> Result<Vec<PullRequest>> {
         let rows: Vec<PullRequest> = sqlx::query_as("UPDATE pull_requests SET state = 'closed', updated_at = ? WHERE repository_id = ? AND state = 'open' AND NOT EXISTS (SELECT 1 FROM forge_integrations WHERE repository_id = ? AND enabled = 1) RETURNING *")
             .bind(now()).bind(repository_id).bind(repository_id).fetch_all(self.w()).await?;
-        for row in rows {
-            self.publish(Change::PullRequestUpdated(row));
+        for row in &rows {
+            self.publish(Change::PullRequestUpdated(row.clone()));
         }
+        Ok(rows)
+    }
+
+    /// Write what a detail fetch read beside the list fetch's fields: the
+    /// checks that failed, as a JSON list, and whether the head is behind
+    /// its base.
+    pub async fn set_pull_request_details(
+        &self,
+        id: &str,
+        failed_checks: &str,
+        behind_base: bool,
+    ) -> Result<PullRequest> {
+        let row: PullRequest = sqlx::query_as(
+            "UPDATE pull_requests SET failed_checks = ?, behind_base = ?, updated_at = ?
+              WHERE id = ? RETURNING *",
+        )
+        .bind(failed_checks)
+        .bind(behind_base)
+        .bind(now())
+        .bind(id)
+        .fetch_optional(self.w())
+        .await?
+        .ok_or_else(|| not_found("pull_request", id))?;
+        self.publish(Change::PullRequestUpdated(row.clone()));
+        Ok(row)
+    }
+
+    /// Record what the request's session was told without a prompt: the
+    /// marks of a check that turned green again, or of a head that caught up
+    /// with its base, so their next turn is news again. Publishes nothing:
+    /// the mark is the daemon's own bookkeeping, and no reader of the ledger
+    /// shows it.
+    pub async fn set_pull_request_told(&self, id: &str, told: &PullRequestTold) -> Result<()> {
+        let mut tx = self.w().begin().await?;
+        crate::pull_request_comments::write_told(&mut tx, id, told).await?;
+        tx.commit().await?;
         Ok(())
+    }
+
+    /// Record that the work of an ended request is taken down, so no later
+    /// pass, in this daemon or the next, owes it anything (026).
+    pub async fn mark_pull_request_cleaned(&self, id: &str) -> Result<()> {
+        sqlx::query("UPDATE pull_requests SET cleaned_at = ? WHERE id = ?")
+            .bind(now())
+            .bind(id)
+            .execute(self.w())
+            .await?;
+        Ok(())
+    }
+
+    /// Set whether the request's session reports it ready to merge. Answers
+    /// the row, and whether the flag moved.
+    pub async fn set_pull_request_ready(
+        &self,
+        id: &str,
+        ready: bool,
+    ) -> Result<(PullRequest, bool)> {
+        let changed: Option<PullRequest> = sqlx::query_as(
+            "UPDATE pull_requests SET ready = ?, updated_at = ? WHERE id = ? AND ready <> ?
+             RETURNING *",
+        )
+        .bind(ready)
+        .bind(now())
+        .bind(id)
+        .bind(ready)
+        .fetch_optional(self.w())
+        .await?;
+        match changed {
+            Some(row) => {
+                self.publish(Change::PullRequestUpdated(row.clone()));
+                Ok((row, true))
+            }
+            None => Ok((self.get_pull_request(id).await?, false)),
+        }
+    }
+
+    /// Write the state the request's session reports: `open`, `merged` or
+    /// `closed`.
+    pub async fn set_pull_request_state(&self, id: &str, state: &str) -> Result<PullRequest> {
+        if !matches!(state, "open" | "merged" | "closed") {
+            return Err(StoreError::Invalid(format!(
+                "a pull request is open, merged or closed, not {state}"
+            )));
+        }
+        let row: PullRequest = sqlx::query_as(
+            "UPDATE pull_requests SET state = ?1, updated_at = ?2,
+                    cleaned_at = CASE WHEN ?1 = 'open' THEN NULL ELSE cleaned_at END
+              WHERE id = ?3 RETURNING *",
+        )
+        .bind(state)
+        .bind(now())
+        .bind(id)
+        .fetch_optional(self.w())
+        .await?
+        .ok_or_else(|| not_found("pull_request", id))?;
+        self.publish(Change::PullRequestUpdated(row.clone()));
+        Ok(row)
     }
 }

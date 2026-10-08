@@ -141,6 +141,7 @@ function ariadneSession(entry: SessionEntryDto): SessionDto {
     context_size: entry.context_size,
     created_at: entry.created_at ?? "",
     ended_at: entry.ended_at,
+    pull_request_id: entry.pull_request_id,
     // A listing row's title is its work's where it has work; only a loose
     // session's is its own.
     title: entry.goal_id || entry.task_id ? null : entry.title,

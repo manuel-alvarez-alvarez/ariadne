@@ -111,6 +111,10 @@ impl AppState {
     pub fn notify_scheduler_goal(&self, goal_id: &str) {
         self.wake(SchedEvent::GoalChanged(goal_id.to_string()));
     }
+
+    pub(crate) fn notify_scheduler_pull_request(&self, pull_request_id: &str) {
+        self.wake(SchedEvent::PullRequestChanged(pull_request_id.to_string()));
+    }
 }
 
 #[derive(OpenApi)]
@@ -132,6 +136,7 @@ impl AppState {
         forge::get_tunnel, forge::set_tunnel,
         issues::list, issues::get,
         pull_requests::list, pull_requests::get, pull_requests::add, pull_requests::delete, pull_requests::refresh, pull_requests::search,
+        pull_requests::comments, pull_requests::reply, pull_requests::report,
         permissions::get, permissions::update, permissions::refresh,
         permissions::list_learned, permissions::get_learned, permissions::delete_learned,
         permissions::update_learned,
@@ -202,6 +207,15 @@ pub fn router(state: AppState) -> Router {
             "/v1/repositories/{id}/pull-requests/search",
             get(pull_requests::search),
         )
+        .route(
+            "/v1/pull-requests/{id}/comments",
+            get(pull_requests::comments),
+        )
+        .route(
+            "/v1/pull-requests/{id}/comments/{comment_id}/reply",
+            post(pull_requests::reply),
+        )
+        .route("/v1/pull-requests/{id}/report", post(pull_requests::report))
         .route("/v1/health", get(health))
         .route("/v1/version", get(version))
         .route("/v1/doctor", get(doctor::report))

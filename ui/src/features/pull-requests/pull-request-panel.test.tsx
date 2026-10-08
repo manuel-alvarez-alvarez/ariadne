@@ -33,6 +33,9 @@ it("shows every inspect field and removes a user row", async () => {
     "checks",
     "review_decision",
     "unanswered_comments",
+    "failed_checks",
+    "behind_base",
+    "session_id",
     "ready",
     "origin_task_id",
     "opened_at",
@@ -46,4 +49,31 @@ it("shows every inspect field and removes a user row", async () => {
   expect(screen.getByText("task-1")).toBeTruthy()
   await userEvent.click(screen.getByRole("button", { name: "Remove" }))
   await waitFor(() => expect(close).toHaveBeenCalledOnce())
+})
+
+it("links each failed check to its run and the session to its own panel", async () => {
+  daemonFetch.mockImplementation(async () =>
+    jsonResponse({
+      ...pull,
+      behind_base: true,
+      session_id: "01JSESS00000000000000PULL1",
+      failed_checks: [
+        { name: "lint", url: "https://ci.example/lint", conclusion: "failure" },
+        { name: "deploy", url: "", conclusion: "cancelled" },
+      ],
+    }),
+  )
+  const { location } = renderScreen(<PullRequestPanel id="pull-42" onClose={() => {}} />, {
+    route: "/pull-requests?pr=pull-42",
+  })
+  const lint = await screen.findByRole("link", { name: "lint" })
+  expect(lint.getAttribute("href")).toBe("https://ci.example/lint")
+  expect(lint.getAttribute("target")).toBe("_blank")
+  expect(screen.getByText("(failure)")).toBeTruthy()
+  // A check the forge names no run for is its name alone.
+  expect(screen.getByText("deploy")).toBeTruthy()
+  expect(screen.queryByRole("link", { name: "deploy" })).toBeNull()
+  expect(screen.getByText("behind_base").nextElementSibling?.textContent).toBe("true")
+  await userEvent.click(screen.getByRole("link", { name: "01JSESS00000000000000PULL1" }))
+  expect(location.url).toBe("/pull-requests?session=01JSESS00000000000000PULL1")
 })

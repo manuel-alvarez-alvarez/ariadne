@@ -9,6 +9,7 @@
 pub mod github;
 pub mod gitlab;
 pub mod hooks;
+pub mod news;
 pub mod poll;
 pub mod pulls;
 pub mod tunnel;
@@ -356,6 +357,45 @@ impl ForgeClient {
         match self {
             Self::Github(cli) => cli.search_pull_requests(repository, query).await,
             Self::Gitlab(cli) => cli.search_pull_requests(repository, query).await,
+        }
+    }
+
+    /// Everything a request holds beyond the list fetch's fields (026),
+    /// bounded by `within` ([`crate::timeouts::Timeouts::forge_details`]).
+    pub async fn details(
+        &self,
+        repository: &str,
+        number: i64,
+        within: Duration,
+    ) -> Result<pulls::ForgeDetails, String> {
+        let read = async {
+            match self {
+                Self::Github(cli) => cli.details(repository, number).await,
+                Self::Gitlab(cli) => cli.details(repository, number).await,
+            }
+        };
+        tokio::time::timeout(within, read)
+            .await
+            .unwrap_or_else(|_| {
+                Err(format!(
+                    "the details of request {number} did not arrive in {} seconds",
+                    within.as_secs()
+                ))
+            })
+    }
+
+    /// Reply to one stored comment of request `number` with `body`, and
+    /// answer the forge id of the reply. Nothing here resolves a thread.
+    pub async fn reply(
+        &self,
+        repository: &str,
+        number: i64,
+        comment: &ariadne_store::PullRequestComment,
+        body: &str,
+    ) -> Result<String, String> {
+        match self {
+            Self::Github(cli) => cli.reply(repository, number, comment, body).await,
+            Self::Gitlab(cli) => cli.reply(repository, number, comment, body).await,
         }
     }
 

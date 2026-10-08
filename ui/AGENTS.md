@@ -161,8 +161,8 @@ the query cache and it stays live.
 | `task_created` | patch `tasks.detail`, invalidate `tasks.lists` |
 | `task_updated` | patch `tasks.detail`, invalidate `tasks.lists` and `stats.all`, and `tasks.transitions` when the event carries a transition |
 | `message_sent` | invalidate `tasks.messages` for the task it is about; a message about the goal itself belongs to no task's channel |
-| `session_created` | patch `sessions.detail`, invalidate `sessions.lists` and `outsideSessions.lists` — a resume adopts an outside row |
-| `session_updated` | patch `sessions.detail`, invalidate `sessions.lists` and `stats.all` |
+| `session_created` | patch `sessions.detail`, invalidate `sessions.lists` and `outsideSessions.lists` — a resume adopts an outside row; a session with a `pull_request_id` also invalidates that `pullRequests.detail` and `pullRequests.list`, for its `session_id` |
+| `session_updated` | patch `sessions.detail`, invalidate `sessions.lists` and `stats.all`; a session with a `pull_request_id` also invalidates that `pullRequests.detail` and `pullRequests.list` |
 | `agent_event` | invalidate `agentEvents.lists` |
 | `skill_created`, `skill_updated` | patch `skills.detail`, invalidate `skills.lists` |
 | `skill_deleted` | remove `skills.detail`, invalidate `skills.lists` |

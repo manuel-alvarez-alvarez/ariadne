@@ -124,6 +124,7 @@ export function aSession(overrides: Partial<SessionDto> = {}): SessionDto {
     created_at: STAMP,
     ended_at: null,
     title: null,
+    pull_request_id: null,
     ...overrides,
   }
 }

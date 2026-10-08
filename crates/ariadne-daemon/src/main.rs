@@ -178,6 +178,7 @@ async fn main() -> Result<()> {
         config.clone(),
         &events,
         ariadne_daemon::timeouts::Timeouts::default().forge_poll,
+        ariadne_daemon::timeouts::Timeouts::default().forge_details,
     );
     let webhook_listen =
         ariadne_daemon::webhooks::WebhookListen::bind(&config, store.clone(), forge_poll.clone())
@@ -198,6 +199,8 @@ async fn main() -> Result<()> {
         config.prevent_sleep,
         ariadne_daemon::timeouts::Timeouts::default(),
     );
+    // A changed pull request is what starts, tells and ends its session.
+    forge_poll.connect_scheduler(sched_tx.clone());
     let outside_sessions = ariadne_daemon::acp_sessions::OutsideSessions::from_env();
     // The first listing then finds the snapshot taken, or being taken, rather
     // than asking every agent itself.

@@ -1460,6 +1460,168 @@
         }
       }
     },
+    "/v1/pull-requests/{id}/comments": {
+      "get": {
+        "tags": [
+          "pull-requests"
+        ],
+        "operationId": "comments",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "unanswered_only",
+            "in": "query",
+            "description": "Only the threads that wait on an answer from the integration login.",
+            "required": false,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PullRequestCommentDto"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/pull-requests/{id}/comments/{comment_id}/reply": {
+      "post": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "Reply to one stored comment. The daemon posts the reply through the\nforge CLI, stores it as a comment of the integration login, and counts\nthe threads that wait again. There is no route that resolves a thread:\na human closes a thread.",
+        "operationId": "reply",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "comment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplyCommentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullRequestCommentDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          },
+          "502": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/pull-requests/{id}/report": {
+      "post": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "What the request's session says of it: `ready` once every required\napproval and check reads green, which raises `waiting_user` on the\nsession, and a `state` a human moved it to.",
+        "operationId": "report",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportPullRequestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullRequestDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/repositories": {
       "get": {
         "tags": [
@@ -1815,6 +1977,18 @@
             "name": "task",
             "in": "query",
             "description": "Filter by task id. No outside session has one.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "pull_request",
+            "in": "query",
+            "description": "Filter by pull request id. No outside session has one.",
             "required": false,
             "schema": {
               "type": [
@@ -4780,6 +4954,28 @@
           "desc"
         ]
       },
+      "FailedCheckDto": {
+        "type": "object",
+        "description": "One check that failed on a request's head.",
+        "required": [
+          "name",
+          "url",
+          "conclusion"
+        ],
+        "properties": {
+          "conclusion": {
+            "type": "string",
+            "description": "The forge's own word for how it ended: `failure`, `cancelled` and\nthe like."
+          },
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "description": "Where the forge shows the check's run; empty where it names none."
+          }
+        }
+      },
       "FinalizePlanRequest": {
         "type": "object",
         "description": "Body of `POST /v1/goals/{id}/finalize`: the orchestrator ends planning and\nexecution starts. The orchestrator's call, not the user's, and it carries\nnothing — the plan is the tasks it wrote.",
@@ -6008,6 +6204,93 @@
         },
         "additionalProperties": false
       },
+      "PullRequestCommentDto": {
+        "type": "object",
+        "description": "One comment on a request, as the daemon stored it from the forge.",
+        "required": [
+          "id",
+          "pull_request_id",
+          "forge_id",
+          "thread_id",
+          "kind",
+          "author_login",
+          "author_is_bot",
+          "body",
+          "created_at",
+          "fetched_at",
+          "answered",
+          "resolved"
+        ],
+        "properties": {
+          "answered": {
+            "type": "boolean",
+            "description": "A later comment in the thread is by the integration login."
+          },
+          "author_is_bot": {
+            "type": "boolean"
+          },
+          "author_login": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "fetched_at": {
+            "type": "string"
+          },
+          "forge_id": {
+            "type": "string",
+            "description": "The forge's id of the comment."
+          },
+          "id": {
+            "type": "string",
+            "description": "The daemon's own id: what `reply` takes."
+          },
+          "in_reply_to": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "description": "`review_comment`, `issue_comment` or `review`."
+          },
+          "line": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pull_request_id": {
+            "type": "string"
+          },
+          "resolved": {
+            "type": "boolean",
+            "description": "The forge reports the thread resolved."
+          },
+          "thread_id": {
+            "type": "string",
+            "description": "The forge's thread or discussion; the conversation of the request\nis one thread."
+          },
+          "told_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "PullRequestDto": {
         "type": "object",
         "required": [
@@ -6040,6 +6323,10 @@
           "base_branch": {
             "type": "string"
           },
+          "behind_base": {
+            "type": "boolean",
+            "description": "Whether the base branch has commits the head does not."
+          },
           "checks": {
             "type": "string"
           },
@@ -6048,6 +6335,13 @@
           },
           "draft": {
             "type": "boolean"
+          },
+          "failed_checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FailedCheckDto"
+            },
+            "description": "The checks that failed on the head, as the last detail fetch read\nthem."
           },
           "head_branch": {
             "type": "string"
@@ -6091,6 +6385,13 @@
           },
           "role": {
             "type": "string"
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The newest session the daemon started on this request, if any."
           },
           "state": {
             "type": "string"
@@ -6173,6 +6474,40 @@
             "example": "3.12.1"
           }
         }
+      },
+      "ReplyCommentRequest": {
+        "type": "object",
+        "description": "Body of `POST /v1/pull-requests/{id}/comments/{comment_id}/reply`.",
+        "required": [
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReportPullRequestRequest": {
+        "type": "object",
+        "description": "Body of `POST /v1/pull-requests/{id}/report`: what the request's session\nsays of it.",
+        "properties": {
+          "ready": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Every required approval and check reads green."
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`open`, `merged` or `closed`."
+          }
+        },
+        "additionalProperties": false
       },
       "RepositoryDto": {
         "type": "object",
@@ -6387,6 +6722,13 @@
             "type": "string",
             "description": "Model requested at launch, `<agent>:<model>`: the registry agent the\nsession runs on, and the model of it."
           },
+          "pull_request_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The pull request this session watches (026); null for every other\nsession."
+          },
           "seat": {
             "oneOf": [
               {
@@ -6540,6 +6882,13 @@
               "null"
             ],
             "description": "Model requested at launch, `<agent>:<model>`; None on an outside row."
+          },
+          "pull_request_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The pull request this session watches; None for every other session."
           },
           "seat": {
             "oneOf": [
@@ -6761,7 +7110,8 @@
         "description": "Where a skill is used: by the orchestrator, or to staff a task agent.",
         "enum": [
           "orchestrator",
-          "task"
+          "task",
+          "pull_request"
         ]
       },
       "SpendBucketDto": {

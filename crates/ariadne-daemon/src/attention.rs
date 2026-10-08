@@ -34,6 +34,13 @@ pub async fn work_is_active(store: &Store, session: &AgentSession) -> bool {
         // Every status the author is working in or about to be woken for;
         // `pending` has no author yet and `under_review` is not its turn.
         // `approved` is: landing the change is the author's last job.
+        // A pull request session works for its request while it is open
+        // (026): what it raises — the request ready to merge — is owed
+        // until a human merged or closed it.
+        Some(Seat::Author | Seat::Reviewer) if session.pull_request_id.is_some() => store
+            .get_pull_request(session.pull_request_id.as_deref().unwrap_or_default())
+            .await
+            .is_ok_and(|pull| pull.state == "open"),
         Some(Seat::Author) => match task_of(store, session).await {
             Some(task) => matches!(
                 task.status(),
