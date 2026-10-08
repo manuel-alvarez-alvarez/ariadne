@@ -10,7 +10,8 @@
  * the table reads at a glance without a column for each. The row holds no
  * button: a click opens the request's panel, which is where everything that
  * can be done to it is — an Ariadne review of a request of the user's among
- * it. Nothing is added by hand on this screen: the forge's lists are the list.
+ * it. The list is read live off the forge, and read again on every
+ * `pull_requests_changed`; nothing adds or removes a request.
  */
 
 import { useMutation, useQuery } from "@tanstack/react-query"
@@ -37,7 +38,7 @@ import {
 import { repositoriesQueryOptions } from "@/features/repositories/queries"
 import { paths, sessionPanelFrom } from "@/routes/paths"
 
-import { pullRequestsQueryOptions } from "./queries"
+import { pullRequestKey, pullRequestsQueryOptions } from "./queries"
 import { ARIADNE_REVIEWING, CHECKS, REVIEW } from "./status"
 
 /**
@@ -146,13 +147,13 @@ export function PullRequestsPage() {
             description="The open requests of the repositories with their forge enabled show up here."
           />
         }
-        rowKey={(row) => row.id}
+        rowKey={(row) => pullRequestKey(row)}
         renderRow={(row) => (
           <PullRequestRow
             row={row}
             repository={forgeName(repositories.data?.find((r) => r.id === row.repository_id))}
             sessionTo={row.session_id ? sessionPanelFrom(pathname, search, row.session_id) : null}
-            onInspect={() => navigate(paths.pullRequest(row.id, search))}
+            onInspect={() => navigate(paths.pullRequest(pullRequestKey(row), search))}
           />
         )}
       />
@@ -209,7 +210,6 @@ function PullRequestRow({
             {row.role === "author" ? "by you" : `by ${row.author_login}`} ·{" "}
             <span className="font-mono">{row.head_branch}</span> →{" "}
             <span className="font-mono">{row.base_branch}</span>
-            {row.tracked_by === "user" ? " · added by hand" : ""}
           </span>
         </div>
       </TableCell>
@@ -229,12 +229,12 @@ function PullRequestRow({
       </TableCell>
       <TableCell
         className={
-          row.unanswered_comments > 0
+          (row.unanswered_comments ?? 0) > 0
             ? "text-right font-medium tabular-nums"
             : "text-right text-muted-foreground tabular-nums"
         }
       >
-        {row.unanswered_comments}
+        {row.unanswered_comments ?? 0}
       </TableCell>
       {/* The session that works on the request: its own panel, over this
           screen. */}

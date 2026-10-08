@@ -288,6 +288,17 @@ describe("pull request session events", () => {
     }
   })
 
+  it("reads every request again on pull_requests_changed, which carries none", () => {
+    const queryClient = withPullRequest()
+    queryClient.setQueryData(qk.pullRequests.detail("repo:42"), {})
+
+    dispatch(queryClient, { event: "pull_requests_changed", data: { repository_id: "repo" } })
+
+    expect(stale(queryClient, qk.pullRequests.list())).toBe(true)
+    expect(stale(queryClient, qk.pullRequests.detail("pull-42"))).toBe(true)
+    expect(stale(queryClient, qk.pullRequests.detail("repo:42"))).toBe(true)
+  })
+
   it("leaves the pull requests alone for a session that watches none", () => {
     for (const event of ["session_created", "session_updated"] as const) {
       const queryClient = withPullRequest()

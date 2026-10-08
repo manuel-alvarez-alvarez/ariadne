@@ -136,3 +136,42 @@ for entry in script:
 sys.stderr.write("stub %s: no entry for %s\n" % (program, " ".join(args)))
 sys.exit(1)
 "#;
+
+/// A request Ariadne works on, as a fetch would leave its read in memory
+/// (026): open on github.com/acme/widgets, by `author`, from `head` onto
+/// `main` at `head_sha`, with nothing on it to tell. What a test that writes
+/// the row itself seeds, since no fetch read it.
+pub(crate) fn seed_live(
+    h: &super::Harness,
+    row: &ariadne_store::PullRequestRow,
+    author: &str,
+    head: &str,
+    head_sha: &str,
+    review_requested: bool,
+) {
+    h.launcher.live.set(
+        &row.id,
+        ariadne_daemon::forge::live::Live {
+            pull: ariadne_daemon::forge::pulls::ForgePullRequest {
+                number: row.number,
+                url: row.url.clone(),
+                title: format!("Fix widgets {}", row.number),
+                body: String::new(),
+                author_login: author.into(),
+                state: "open".into(),
+                draft: false,
+                head_branch: head.into(),
+                head_sha: head_sha.into(),
+                head_repo: None,
+                base_branch: "main".into(),
+                checks: "none".into(),
+                review_decision: "none".into(),
+                opened_at: "2026-10-01T00:00:00Z".into(),
+                updated_at: "2026-10-01T00:00:00Z".into(),
+                merge_sha: None,
+            },
+            review_requested,
+            details: Some(ariadne_daemon::forge::live::Details::default()),
+        },
+    );
+}

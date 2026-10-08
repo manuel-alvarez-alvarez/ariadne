@@ -582,9 +582,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /**
+         * The open requests of the enabled repositories, read live off the forge
+         *     (026): every one, or with `role` and `requested` the user's own or the
+         *     ones that ask for their review, each with what Ariadne keeps of it where
+         *     it works on it. With `task`, the request a task opened, which its author
+         *     keeps (005).
+         */
         get: operations["pull-requests_list"];
         put?: never;
-        post: operations["pull-requests_add"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -614,31 +621,9 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** A request Ariadne works on, read off the forge now. */
         get: operations["pull-requests_get"];
         put?: never;
-        post?: never;
-        delete: operations["pull-requests_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/pull-requests/{id}/ariadne-review": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /**
-         * Ask Ariadne to review a request of the user's own on the model the user
-         *     picks, or stop asking (029): a review session runs on that pin while the
-         *     request is open and out of draft, and posts one review as a comment in
-         *     the user's name. A request that asks for the user's review has one
-         *     already, on the repository's review pin, and takes no asking.
-         */
-        put: operations["pull-requests_ask_review"];
         post?: never;
         delete?: never;
         options?: never;
@@ -653,7 +638,29 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /**
+         * The comments of a request Ariadne works on, read off the forge now, with
+         *     the marks beside them; with `unanswered_only`, the threads that wait on
+         *     the integration login.
+         */
         get: operations["pull-requests_comments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pull-requests/{id}/comments/{comment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One comment of a request Ariadne works on, read off the forge now. */
+        get: operations["pull-requests_comment"];
         put?: never;
         post?: never;
         delete?: never;
@@ -672,9 +679,9 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Reply to one stored comment. The daemon posts the reply through the
-         *     forge CLI, stores it as a comment of the integration login, and counts
-         *     the threads that wait again.
+         * Reply to one comment. The daemon posts the reply through the forge CLI,
+         *     marks it the review's where a review session posts it (029), and reads
+         *     the request again.
          */
         post: operations["pull-requests_reply"];
         delete?: never;
@@ -693,10 +700,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Resolve the thread of one stored comment, once a push fixed what it
-         *     found (029). Only a review session resolves, and only a thread it opened
-         *     under the integration login: the threads of anyone else stay open for
-         *     the person who wrote them.
+         * Resolve the thread of one comment, once a push fixed what it found
+         *     (029). Only a review session resolves, and only a thread it opened under
+         *     the integration login: the threads of anyone else stay open for the
+         *     person who wrote them.
          */
         post: operations["pull-requests_resolve"];
         delete?: never;
@@ -739,7 +746,7 @@ export interface paths {
         /**
          * What the request's session says of it: `ready` once every required
          *     approval and check reads green, which raises `waiting_user` on the
-         *     session, and a `state` a human moved it to.
+         *     session, and the head a review session posted its review on.
          */
         post: operations["pull-requests_report"];
         delete?: never;
@@ -764,8 +771,8 @@ export interface paths {
          *     on the request — posted on the first round, edited on every later one. A
          *     round with no new finding posts no review. `request_changes` stands only
          *     on a P0 finding, new or still open. Any other event is refused, an
-         *     approval above all: the user gives every approval. The daemon stores what
-         *     it posted as comments of the integration login, marked as the review's.
+         *     approval above all: the user gives every approval. What it posted is
+         *     marked as the review's.
          */
         post: operations["pull-requests_submit_review"];
         delete?: never;
@@ -852,6 +859,52 @@ export interface paths {
         };
         get: operations["pull-requests_search"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/repositories/{id}/pull-requests/{number}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One open request of a repository, read off the forge now (026): its
+         *     own read, its checks and its comments, with what Ariadne keeps of it
+         *     where it works on it. What the desktop's panel shows.
+         */
+        get: operations["pull-requests_get_by_number"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/repositories/{id}/pull-requests/{number}/ariadne-review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Ask Ariadne to review a request of the user's own on the model the user
+         *     picks, or stop asking (029): a review session runs on that pin while the
+         *     request is open and out of draft, and posts each round as a comment in
+         *     the user's name. Asking starts Ariadne's work on the request; stopping
+         *     ends it, where no task keeps the request. A request that asks for the
+         *     user's review has a review already, on the repository's review pin, and
+         *     takes no asking.
+         */
+        put: operations["pull-requests_ask_review"];
         post?: never;
         delete?: never;
         options?: never;
@@ -1503,12 +1556,6 @@ export interface components {
          * @enum {string}
          */
         Actor: "orchestrator" | "author" | "reviewer" | "daemon" | "user";
-        AddPullRequestRequest: {
-            /** Format: int64 */
-            number?: number | null;
-            repository_id?: string | null;
-            url?: string | null;
-        };
         /**
          * @description One agent to staff on a task: where it sits, the skills it loads, and what
          *     it is to run on.
@@ -1669,7 +1716,8 @@ export interface components {
             weights_present: boolean;
         };
         /**
-         * @description Body of `PUT /v1/pull-requests/{id}/ariadne-review`: whether Ariadne
+         * @description Body of `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-review`:
+         *     whether Ariadne
          *     reviews a request of the user's own (029).
          */
         AskReviewRequest: {
@@ -1930,18 +1978,6 @@ export interface components {
          *     the `data:` field.
          */
         DomainEvent: {
-            data: components["schemas"]["PullRequestDto"];
-            /** @enum {string} */
-            event: "pull_request_created";
-        } | {
-            data: components["schemas"]["PullRequestDto"];
-            /** @enum {string} */
-            event: "pull_request_updated";
-        } | {
-            data: components["schemas"]["PullRequestDto"];
-            /** @enum {string} */
-            event: "pull_request_deleted";
-        } | {
             data: components["schemas"]["GoalDto"];
             /** @enum {string} */
             event: "goal_created";
@@ -2048,6 +2084,14 @@ export interface components {
             data: components["schemas"]["IssuesChangedDto"];
             /** @enum {string} */
             event: "issues_changed";
+        } | {
+            /**
+             * @description The requests of one repository moved: on its forge, or in what
+             *     Ariadne keeps of them (026). Read them again; they are the forge's.
+             */
+            data: components["schemas"]["PullRequestsChangedDto"];
+            /** @enum {string} */
+            event: "pull_requests_changed";
         };
         /**
          * @description One reasoning effort an entry can be run at: the name it is passed by, and
@@ -2644,7 +2688,10 @@ export interface components {
             /** @description Id of the author picked, one of the task's authors. */
             author_agent_id: string;
         };
-        /** @description One comment on a request, as the daemon stored it from the forge. */
+        /**
+         * @description One comment on a request, as the forge holds it now, read live (026),
+         *     with the marks Ariadne keeps of it.
+         */
         PullRequestCommentDto: {
             /** @description A later comment in the thread is by the integration login. */
             answered: boolean;
@@ -2652,10 +2699,12 @@ export interface components {
             author_login: string;
             body: string;
             created_at: string;
-            fetched_at: string;
-            /** @description The forge's id of the comment. */
-            forge_id: string;
-            /** @description The daemon's own id: what `reply` takes. */
+            /** @description An Ariadne review session posted it (029). */
+            from_review?: boolean;
+            /**
+             * @description The forge's id of the comment, `rc-<n>`, `ic-<n>`, `rv-<n>` or
+             *     `note-<n>`: what `reply` and `resolve` take.
+             */
             id: string;
             in_reply_to?: string | null;
             /** @description `review_comment`, `issue_comment` or `review`. */
@@ -2671,33 +2720,42 @@ export interface components {
              *     is one thread.
              */
             thread_id: string;
+            /** @description When the request's session was told of it. */
             told_at?: string | null;
         };
+        /**
+         * @description A pull request as the forge holds it now, read live (026), with what
+         *     Ariadne keeps of it where Ariadne works on it: the request a task opened,
+         *     one that asks for the user's review on a repository with a review pin,
+         *     or one of the user's they asked Ariadne to review.
+         */
         PullRequestDto: {
             author_login: string;
             base_branch: string;
             /** @description Whether the base branch has commits the head does not. */
             behind_base?: boolean;
-            /** @description The request's description, as the forge holds it. */
+            /** @description The request's description. */
             body?: string;
+            /** @description The rolled-up checks: `pending`, `success`, `failure` or `none`. */
             checks: string;
-            created_at: string;
             draft: boolean;
-            /**
-             * @description The checks that failed on the head, as the last detail fetch read
-             *     them.
-             */
+            /** @description The checks that failed on the head, read as `unanswered_comments` is. */
             failed_checks?: components["schemas"]["FailedCheckDto"][];
             head_branch: string;
             head_repo?: string | null;
             head_sha: string;
-            id: string;
-            last_seen_at: string;
+            /**
+             * @description Ariadne's id of the request while it works on it; null on a request
+             *     nobody works on, which the forge alone holds.
+             */
+            id?: string | null;
             /** Format: int64 */
             number: number;
             opened_at: string;
+            /** @description The task that opened the request: its author keeps it (005). */
             origin_task_id?: string | null;
-            ready: boolean;
+            /** @description Whether the request's session reported it ready to merge. */
+            ready?: boolean;
             repository_id: string;
             /**
              * @description Whether the user asked Ariadne to review this request of their own
@@ -2712,33 +2770,40 @@ export interface components {
             review_requested?: boolean;
             /** @description The skills that review loads beside `pr-reviewer`. */
             review_skills?: string[];
+            /** @description `author` for a request of the user's, `reviewer` for any other. */
             role: string;
             /**
-             * @description The newest session on this request, if any: the review session of a
-             *     request that asks for the user's review (029), or the author of the
-             *     task that opened it (005).
+             * @description The newest session on this request, if any: its review session
+             *     (029), or the author of the task that opened it (005).
              */
             session_id?: string | null;
+            /** @description `open`, `merged` or `closed`. */
             state: string;
             title: string;
-            tracked_by: string;
-            /** Format: int64 */
-            unanswered_comments: number;
+            /**
+             * Format: int64
+             * @description The threads that wait on the user's login. Read where Ariadne works
+             *     on the request, or where the request is read on its own; 0 on a row
+             *     of a list nobody works on.
+             */
+            unanswered_comments?: number;
+            /** @description When the forge last saw the request move. */
             updated_at: string;
             url: string;
         };
-        /**
-         * @description An open request a search found that is not the user's own: a request of
-         *     the user's own is kept by the task that opened it (005), and is no
-         *     request to add by hand.
-         */
+        /** @description An open request a search found that is not the user's own. */
         PullRequestMatchDto: {
             author_login: string;
             /** Format: int64 */
             number: number;
             title: string;
+            /** @description Whether Ariadne works on it. */
             tracked: boolean;
             url: string;
+        };
+        /** @description Payload of `pull_requests_changed`: the repository whose requests moved. */
+        PullRequestsChangedDto: {
+            repository_id: string;
         };
         /** @description The Python interpreter the daemon found, as it answered `--version`. */
         PythonDto: {
@@ -2768,8 +2833,6 @@ export interface components {
             ready?: boolean | null;
             /** @description The head a reviewer session posted its review on (029). */
             reviewed_sha?: string | null;
-            /** @description `open`, `merged` or `closed`. */
-            state?: string | null;
         };
         RepositoryDto: {
             base_branch: string;
@@ -4624,10 +4687,7 @@ export interface operations {
         parameters: {
             query?: {
                 repo?: string | null;
-                /**
-                 * @description `reviewer` for the requests that ask for the user's review, `author`
-                 *     for the ones a task opened.
-                 */
+                /** @description `reviewer` for the requests of others, `author` for the user's own. */
                 role?: string | null;
                 /** @description The task that opened the request. */
                 task?: string | null;
@@ -4636,8 +4696,6 @@ export interface operations {
                  *     for the ones that do not.
                  */
                 requested?: boolean | null;
-                /** @description Open by default; `all` includes closed and merged requests. */
-                state?: string | null;
             };
             header?: never;
             path?: never;
@@ -4653,44 +4711,7 @@ export interface operations {
                     "application/json": components["schemas"]["PullRequestDto"][];
                 };
             };
-        };
-    };
-    "pull-requests_add": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AddPullRequestRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PullRequestDto"];
-                };
-            };
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PullRequestDto"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            409: {
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4748,69 +4769,7 @@ export interface operations {
                 };
                 content?: never;
             };
-        };
-    };
-    "pull-requests_delete": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    "pull-requests_ask_review": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AskReviewRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PullRequestDto"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            409: {
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4847,6 +4806,52 @@ export interface operations {
                 content?: never;
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_comment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                comment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestCommentDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5332,6 +5337,90 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_get_by_number": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestDto"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_ask_review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskReviewRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

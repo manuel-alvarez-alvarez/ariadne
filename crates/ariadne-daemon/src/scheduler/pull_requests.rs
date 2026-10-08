@@ -36,8 +36,8 @@ const CLEANUP_RETRY: Duration = Duration::from_secs(60);
 const SITUATION: &str = "pull_request";
 
 impl super::Scheduler {
-    /// Every request that could want something done: the open ones, and the
-    /// ended ones whose session or worktree is still there.
+    /// Every request Ariadne works on: a row is one, until its work is
+    /// taken down and the row goes (026).
     pub(super) async fn reconcile_pull_requests(&mut self) {
         let rows = match self
             .store
@@ -58,18 +58,7 @@ impl super::Scheduler {
             {
                 continue;
             }
-            // An ended request is passed over until its work is taken down,
-            // which the row records, so a restart owes it the same.
-            let leftover = row.state != "open"
-                && (row.cleaned_at.is_none()
-                    || self.launcher.pull_request_worktree_exists(&row)
-                    || self
-                        .live_pull_request_sessions(&row.id)
-                        .await
-                        .is_ok_and(|live| !live.is_empty()));
-            if row.state == "open" || leftover {
-                self.reconcile_pull_request(&row.id).await;
-            }
+            self.reconcile_pull_request(&row.id).await;
         }
     }
 
@@ -81,10 +70,33 @@ impl super::Scheduler {
     }
 
     async fn pull_request_pass(&mut self, id: &str) -> anyhow::Result<()> {
-        let pull = match self.store.get_pull_request(id).await {
-            Ok(pull) => pull,
+        let row = match self.store.get_pull_request(id).await {
+            Ok(row) => row,
             Err(StoreError::NotFound { .. }) => return Ok(()),
             Err(e) => return Err(e.into()),
+        };
+        let enabled = self
+            .store
+            .forge_integration(&row.repository_id)
+            .await?
+            .is_some_and(|i| i.enabled);
+        // With the integration off nothing reads the forge for the request:
+        // its review ends, and Ariadne stops working on it, but for a task's
+        // request, whose author keeps it once the integration is on again.
+        if !enabled {
+            self.launcher
+                .end_pull_request_sessions(&row.id, &row.repository_id)
+                .await?;
+            if row.origin_task_id.is_none() {
+                self.stop_working(&row.id).await?;
+            }
+            return Ok(());
+        }
+        // Read off the forge by the fetch, which reads every request Ariadne
+        // works on at once: until it has, there is nothing to act on.
+        let Some(pull) = crate::forge::live::of_row(&self.store, &self.launcher.live, row).await?
+        else {
+            return Ok(());
         };
         // A request the user reviews has a lifecycle of its own (029).
         if pull.role != "author" {
@@ -93,12 +105,28 @@ impl super::Scheduler {
         // A request of mine the user asked Ariadne to review has a review
         // session beside its author's (029), taken down the same way.
         if pull.review_asked
-            || self.launcher.pull_request_worktree_exists(&pull)
+            || self.launcher.pull_request_worktree_exists(&pull.id)
             || !self.live_pull_request_sessions(&pull.id).await?.is_empty()
         {
             self.review_pass(&pull).await?;
         }
+        if pull.origin_task_id.is_none() && !pull.review_asked {
+            // Nobody keeps it and nobody reviews it: nothing to work on.
+            return self.stop_working(&pull.id).await;
+        }
         self.keep_pass(&pull).await
+    }
+
+    /// Stop working on a request (026): its row goes, and what was read of
+    /// it is forgotten. Its sessions stay, let go of it.
+    async fn stop_working(&mut self, id: &str) -> anyhow::Result<()> {
+        if self.store.delete_pull_request(id).await?.is_some() {
+            info!(pull_request = %id, "Ariadne stopped working on the request");
+        }
+        self.launcher.live.remove(id);
+        self.review_news.remove(id);
+        self.pull_request_cleanup_retry.remove(id);
+        Ok(())
     }
 
     /// A request of mine: its news handed to the author of the task that
@@ -118,6 +146,11 @@ impl super::Scheduler {
         let Some(task) = task.filter(|task| !ends_its_work(task)) else {
             if pull.state != "open" {
                 return self.end_kept_request(pull).await;
+            }
+            // Open with nobody to keep it: Ariadne stops working on it, but
+            // for the review the user asked of it, which runs on (029).
+            if !pull.review_asked {
+                return self.stop_working(&pull.id).await;
             }
             return Ok(());
         };
@@ -152,7 +185,11 @@ impl super::Scheduler {
     /// task: the author's turn that read the merge is the task's event, and
     /// the request's pass is what finishes it (005).
     pub(super) async fn merge_ended(&mut self, task: &Task) -> anyhow::Result<bool> {
-        let Some(pull) = self.store.pull_request_of_task(&task.id).await? else {
+        let Some(row) = self.store.pull_request_of_task(&task.id).await? else {
+            return Ok(false);
+        };
+        let Some(pull) = crate::forge::live::of_row(&self.store, &self.launcher.live, row).await?
+        else {
             return Ok(false);
         };
         if pull.state != "merged" {
@@ -338,7 +375,14 @@ impl super::Scheduler {
         ) {
             return Ok(false);
         }
-        let news = news::untold(&self.store, pull, login, session.seat()).await?;
+        let news = news::untold(
+            &self.store,
+            &self.launcher.live,
+            pull,
+            login,
+            session.seat(),
+        )
+        .await?;
         if let Some(recovered) = news.recovered() {
             self.store
                 .set_pull_request_told(&pull.id, recovered)
@@ -368,33 +412,27 @@ impl super::Scheduler {
     /// branch deleted (`Launcher::cleanup_kept_request`). The task's own
     /// cleanup took its worktree and its branch.
     async fn end_kept_request(&mut self, pull: &PullRequest) -> anyhow::Result<()> {
-        if pull.cleaned_at.is_some()
-            && !self.launcher.pull_request_worktree_exists(pull)
-            && self.live_pull_request_sessions(&pull.id).await?.is_empty()
-        {
-            return Ok(());
-        }
         let enabled = self
             .store
             .forge_integration(&pull.repository_id)
             .await?
             .is_some_and(|i| i.enabled);
         info!(pull_request = %pull.id, state = %pull.state, "the request ended, taking its work down");
-        // Done only once every branch it owes is gone, which the row records,
-        // so a restart owes it the same. A deletion that failed is tried
-        // again, on the next change of the request at once and on the tick
-        // after a wait. Where the integration was disabled no branch is
+        // Done only once every branch it owes is gone: until then the row
+        // stays, so a restart owes it the same. A deletion that failed is
+        // tried again, on the next change of the request at once and on the
+        // tick after a wait. Where the integration was disabled no branch is
         // touched.
         let cleaned = match enabled {
             true => self.launcher.cleanup_kept_request(pull).await,
-            false => self.launcher.end_pull_request_sessions(pull).await,
+            false => {
+                self.launcher
+                    .end_pull_request_sessions(&pull.id, &pull.repository_id)
+                    .await
+            }
         };
         match cleaned {
-            Ok(()) => {
-                self.pull_request_cleanup_retry.remove(&pull.id);
-                self.store.mark_pull_request_cleaned(&pull.id).await?;
-                Ok(())
-            }
+            Ok(()) => self.stop_working(&pull.id).await,
             Err(e) => {
                 self.pull_request_cleanup_retry
                     .insert(pull.id.clone(), Instant::now() + CLEANUP_RETRY);
@@ -481,7 +519,14 @@ impl super::Scheduler {
         login: &str,
         session: &AgentSession,
     ) -> anyhow::Result<bool> {
-        let news = news::untold(&self.store, pull, login, session.seat()).await?;
+        let news = news::untold(
+            &self.store,
+            &self.launcher.live,
+            pull,
+            login,
+            session.seat(),
+        )
+        .await?;
         if news.is_empty() {
             self.review_news.remove(&pull.id);
             return Ok(true);
@@ -504,24 +549,28 @@ impl super::Scheduler {
     /// A request I review that wants no session: merged, closed, back in
     /// draft, or no longer asking for my review (029). Its sessions are
     /// killed and its worktree removed; no branch is touched, since none is
-    /// mine. An ended request records the cleanup, as an author's does.
+    /// mine. Ariadne then stops working on it, but for a draft, whose review
+    /// waits for it to leave draft. A request of mine ends its review alone:
+    /// its row is its author's side to end (`end_kept_request`).
     async fn end_review(
         &mut self,
         pull: &PullRequest,
         live: &[AgentSession],
     ) -> anyhow::Result<()> {
-        // An ended request of mine owes the cleanup its author's side
-        // records (`end_kept_request`); here only the review is taken down.
-        let owed = pull.state != "open" && pull.cleaned_at.is_none() && pull.role != "author";
-        if live.is_empty() && !self.launcher.pull_request_worktree_exists(pull) && !owed {
+        let done = pull.role == "reviewer" && (pull.state != "open" || !pull.review_requested);
+        if live.is_empty() && !self.launcher.pull_request_worktree_exists(&pull.id) && !done {
             return Ok(());
         }
         info!(pull_request = %pull.id, state = %pull.state, "the request wants no review, taking its work down");
-        match self.launcher.end_pull_request_sessions(pull).await {
+        match self
+            .launcher
+            .end_pull_request_sessions(&pull.id, &pull.repository_id)
+            .await
+        {
             Ok(()) => {
                 self.pull_request_cleanup_retry.remove(&pull.id);
-                if pull.state != "open" && pull.role != "author" {
-                    self.store.mark_pull_request_cleaned(&pull.id).await?;
+                if done {
+                    self.stop_working(&pull.id).await?;
                 }
                 Ok(())
             }

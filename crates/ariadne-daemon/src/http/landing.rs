@@ -104,11 +104,8 @@ pub(super) async fn verify_merged(
                      `open_pull_request` first",
                 ));
             };
-            let merged = state
-                .store
-                .pull_request_of_task(&task.id)
-                .await?
-                .is_some_and(|pull| pull.state == "merged");
+            // Read off the forge now: nothing stored says a request merged.
+            let merged = request_state(state, task, url).await? == "merged";
             if !merged {
                 return Err(ApiError::conflict(format!(
                     "merge not verified: {url} is not merged — a human merges it, and Ariadne \
@@ -254,17 +251,31 @@ async fn record_opened_pull_request(state: &AppState, task: &Task, url: &str) ->
             "the forge returned another request number",
         ));
     }
-    crate::forge::pulls::record(
-        &state.store,
-        &forge,
-        pull,
-        "forge",
-        Some(task.id.clone()),
-        None,
-    )
-    .await
-    .map_err(unresolved)?;
+    let (row, _) =
+        crate::forge::pulls::start_work(&state.store, &forge, &pull, Some(task.id.clone()))
+            .await
+            .map_err(unresolved)?;
+    state.launcher.live.set_pull(&row.id, pull, false);
+    state.notify_scheduler_pull_request(&row.id);
     Ok(())
+}
+
+/// The state the forge gives the request a task opened at `url`, read now
+/// (005): `open`, `merged` or `closed`.
+async fn request_state(state: &AppState, task: &Task, url: &str) -> ApiResult<String> {
+    let forge = state
+        .store
+        .forge_integration(&task.repo_id)
+        .await?
+        .ok_or_else(|| ApiError::conflict("the repository has no forge integration"))?;
+    let reference = crate::forge::PullRequestRef::parse(url, &forge)
+        .ok_or_else(|| ApiError::conflict("the pull request URL does not match the repository"))?;
+    let slug = format!("{}/{}/{}", forge.host, forge.owner, forge.name);
+    let pull = ForgeClient::for_repository(&state.launcher.cfg, &forge)
+        .pull_request(&slug, reference.number)
+        .await
+        .map_err(unresolved)?;
+    Ok(pull.state)
 }
 
 /// The messages of a task: what its agents have said to each other.

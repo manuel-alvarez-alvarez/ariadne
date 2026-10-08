@@ -82,9 +82,6 @@ pub struct ResyncDto {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "event", content = "data", rename_all = "snake_case")]
 pub enum DomainEvent {
-    PullRequestCreated(crate::pull_requests::PullRequestDto),
-    PullRequestUpdated(crate::pull_requests::PullRequestDto),
-    PullRequestDeleted(crate::pull_requests::PullRequestDto),
     GoalCreated(GoalDto),
     /// Covers status changes: finalize, cancel, completion.
     GoalUpdated(GoalDto),
@@ -120,6 +117,9 @@ pub enum DomainEvent {
     /// The open issues of one repository moved on its forge (028): read them
     /// again from `GET /v1/repositories/{id}/issues`.
     IssuesChanged(IssuesChangedDto),
+    /// The requests of one repository moved: on its forge, or in what
+    /// Ariadne keeps of them (026). Read them again; they are the forge's.
+    PullRequestsChanged(PullRequestsChangedDto),
 }
 
 /// Payload of `issues_changed`: the repository whose open issues moved.
@@ -128,13 +128,16 @@ pub struct IssuesChangedDto {
     pub repository_id: String,
 }
 
+/// Payload of `pull_requests_changed`: the repository whose requests moved.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PullRequestsChangedDto {
+    pub repository_id: String,
+}
+
 impl DomainEvent {
     /// SSE `event:` name.
     pub fn kind(&self) -> &'static str {
         match self {
-            Self::PullRequestCreated(_) => "pull_request_created",
-            Self::PullRequestUpdated(_) => "pull_request_updated",
-            Self::PullRequestDeleted(_) => "pull_request_deleted",
             Self::GoalCreated(_) => "goal_created",
             Self::GoalUpdated(_) => "goal_updated",
             Self::GoalDeleted(_) => "goal_deleted",
@@ -157,6 +160,7 @@ impl DomainEvent {
             Self::LearnedPermissionDeleted(_) => "learned_permission_deleted",
             Self::ForgeSettingsUpdated(_) => "forge_settings_updated",
             Self::IssuesChanged(_) => "issues_changed",
+            Self::PullRequestsChanged(_) => "pull_requests_changed",
         }
     }
 
@@ -167,9 +171,7 @@ impl DomainEvent {
             serde_json::to_value(value).unwrap_or(serde_json::Value::Null)
         }
         match self {
-            Self::PullRequestCreated(p)
-            | Self::PullRequestUpdated(p)
-            | Self::PullRequestDeleted(p) => json(p),
+            Self::PullRequestsChanged(p) => json(p),
             Self::GoalCreated(g) | Self::GoalUpdated(g) => json(g),
             Self::GoalDeleted(d) => json(d),
             Self::TaskCreated(t) => json(t),

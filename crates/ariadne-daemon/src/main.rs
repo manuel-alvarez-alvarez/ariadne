@@ -156,6 +156,7 @@ async fn main() -> Result<()> {
             .with_failure_diagnosis(failure_diagnosis.clone()),
         registry: agent_registry.clone(),
         branches: ariadne_daemon::branch::BranchWatchers::new(events.clone()),
+        live: ariadne_daemon::forge::live::LivePulls::default(),
     });
     // The watches are the process's own: whatever was in flight when the last
     // daemon stopped is picked up again here.
@@ -177,6 +178,7 @@ async fn main() -> Result<()> {
         store.clone(),
         config.clone(),
         &events,
+        launcher.live.clone(),
         ariadne_daemon::timeouts::Timeouts::default().forge_poll,
         ariadne_daemon::timeouts::Timeouts::default().forge_details,
     );

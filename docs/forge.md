@@ -114,7 +114,7 @@ asks what the reviewer runs on — a model and an effort, not the
 repository's review pin — and which skills it loads: `pr-reviewer`, its
 own playbook, is always on and is all it starts with; any other skill can
 join it. The
-same is `PUT /v1/pull-requests/<id>/ariadne-review` with `{"asked": true,
+same is `PUT /v1/repositories/<repo-id>/pull-requests/<number>/ariadne-review` with `{"asked": true,
 "model": "<agent:model>", "effort": "<effort>", "skills": [...]}`. That
 session hears of pushes alone — the comments are the author's news — and
 its review is always posted as a comment, since no forge takes a change
@@ -267,9 +267,9 @@ decision as pills, "by you" on a request of yours, and **Ariadne
 reviewing** while Ariadne reviews one of yours. A row holds no button: a
 click on it opens the request's panel — its state and checks, its facts with
 links to the forge and to each failed check, its description rendered, and
-its sessions — where **Start review**, **Stop review** and, on a request
-added by hand, **Remove** are. The list updates on its own as each fetch
-finds a change. While a repository in view polls, or its webhook is down,
+its sessions — where **Start review** and **Stop review** are. The list and
+the panel are read live off the forge, and read again on their own as each
+fetch finds a change. While a repository in view polls, or its webhook is down,
 **Refresh** asks for a fetch now; with every webhook live there is nothing
 to refresh, and the button is gone.
 
@@ -277,18 +277,32 @@ to refresh, and the button is gone.
 ariadne pr ls --repo <repo-id>
 ariadne pr ls --mine
 ariadne pr ls --review-requests
-ariadne pr add https://github.com/owner/repo/pull/42
-ariadne pr rm <id>
+ariadne pr inspect <repo-id> 42
 ```
 
 `ariadne pr ls` lists every open request, `--mine` your own and
 `--review-requests` the ones that ask for your review, as the tab's
-three choices do. A request
-someone else opened, from a repository with the integration off or one the
-lists miss, can be added by hand from the CLI alone; a request of your own
-is refused with 409 `pull_request_is_yours`, since the fetch lists it.
-`ariadne pr rm` and the panel's Remove button only work on one you added by
-hand; a request the forge found cannot be removed this way.
+three choices do, and `ariadne pr inspect` reads one whole.
+
+## What Ariadne keeps of a request
+
+Ariadne stores nothing the forge holds: the title, the description, the
+branches, the checks and the comments are read off the forge every time,
+so nothing it shows or hands an agent is an old copy. The agents read them
+the same way — `get_pull_request`, `list_comments` and `get_comment` ask the
+forge at the call.
+
+It keeps a small record of a request only while it works on it: the
+request a task opened, a request that asks for your review on a repository
+with a review pin, and one of yours you asked it to review. The record is
+its own bookkeeping — which task keeps the request, what each agent was
+told, the head last reviewed, the review's summary comment — and a mark per
+comment it told or its review posted. Once the request merges or closes
+and its work is taken down, the record goes, so an ended request takes no
+room. The sessions that ran on it stay, with their history and spend.
+
+Nothing adds or removes a request by hand, in the desktop app or the CLI:
+it all happens on its own.
 
 ## The issues screen and `goal create --from-issue`
 

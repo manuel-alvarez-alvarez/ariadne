@@ -67,13 +67,16 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      `open_pull_request` (a title and a body; the daemon runs the forge's own
      CLI and answers the URL it opened, rather than the agent: 005), and the
      tools of the request its task opened, which it keeps until a human
-     merges or closes it (005, 026): `get_pull_request` (the request's DTO
-     with its failed checks and `behind_base`, plus the worktree, the
-     repository path and the login), `list_comments` (`unanswered_only`
-     narrows it to the threads that wait on the login), `reply_comment` (one
+     merges or closes it (005, 026): `get_pull_request` (the request's DTO,
+     its description, failed checks and `behind_base`, read off the forge at
+     the call, plus the worktree, the repository path and the login),
+     `list_comments` (read off the forge at the call; `unanswered_only`
+     narrows it to the threads that wait on the login), `get_comment` (one
+     `comment_id`, read off the forge at the call), `reply_comment` (one
      `comment_id` and a `body`; the daemon posts it) and
-     `report_pull_request` (`ready`, `state`). Each request tool finds the
-     request through `GET /v1/pull-requests?task=<id>&role=author&state=all`,
+     `report_pull_request` (`ready`). Nothing the forge holds is stored, so
+     each read is the forge's now (026). Each request tool finds the
+     request through `GET /v1/pull-requests?task=<id>&role=author`,
      and says to call `open_pull_request` first where there is none. No
      author tool resolves a thread.
    - **reviewer**: `get_task`, `get_diff` (which takes an `author` on a task
@@ -85,13 +88,13 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    - **pull request reviewer** — a session with `ARIADNE_PULL_REQUEST_ID`
      set and seat `reviewer` (029): `get_pull_request`, `get_diff` (on a
      request it reads `/v1/pull-requests/{id}/diff`, and `since` narrows it
-     to the commits after that sha), `list_comments`, `reply_comment`,
+     to the commits after that sha), `list_comments`, `get_comment`, `reply_comment`,
      `submit_review` (one round: an `event` of `request_changes` or
      `comment`, a `body` that is the review's whole summary, written into
      its one summary comment, and the round's new `comments` of `path`,
      `line`, `body` and a `priority` of `P0`, `P1` or `P2`), `resolve_thread` (one `comment_id` of a thread it
      opened, once a push fixed it) and `report_pull_request` (which takes
-     `reviewed_sha` beside `ready` and `state`). Seven tools, and no task
+     `reviewed_sha` beside `ready` and `state`). Eight tools, and no task
      tool and no message tool: a review session has no goal, task or staffed
      agent to write to, and the user reaches it through its console. No tool
      approves or merges: the user does. A tool is added to the seat

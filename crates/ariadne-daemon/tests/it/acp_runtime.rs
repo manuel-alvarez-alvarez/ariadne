@@ -739,6 +739,7 @@ async fn a_stub_session_resumes_through_session_load_after_a_daemon_restart() {
         acp: ariadne_daemon::acp::AcpRuntime::new(h.store.clone()),
         registry: h.launcher.registry.clone(),
         branches: ariadne_daemon::branch::BranchWatchers::new(h.bus.clone()),
+        live: h.launcher.live.clone(),
     };
     let revived = restarted
         .revive_session(&session.id, Some("carry on"))

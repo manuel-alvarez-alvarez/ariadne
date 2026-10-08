@@ -1,6 +1,8 @@
-//! Pull request ledger commands: the open requests of the enabled
-//! repositories, narrowed to the user's own or to the ones that ask for
-//! their review (026, 029), as the desktop's Pull requests tab narrows them.
+//! Pull request commands: the open requests of the enabled repositories,
+//! read live off the forge and narrowed to the user's own or to the ones
+//! that ask for their review (026, 029), as the desktop's Pull requests tab
+//! narrows them. Ariadne keeps a request only while it works on it, and
+//! nothing here adds or removes one: that is all automatic.
 use super::{
     follow, query_path,
     resolve::{self, Kind},
@@ -18,7 +20,7 @@ const COLUMNS: &[Column] = &[
     col("number", UNCAPPED),
     col("title", 48).title(),
     col("author", 20),
-    col("tracked by", 10),
+    col("ariadne", 10),
     col("draft", 6),
     col("checks", 10),
     col("review decision", 20),
@@ -37,24 +39,21 @@ pub(crate) enum PrCommand {
         /// Only the requests that ask for your review
         #[arg(long)]
         review_requests: bool,
-        /// Include closed and merged requests
-        #[arg(long)]
-        all: bool,
         #[arg(long)]
         watch: bool,
     },
-    /// Show every field of a pull request
-    Inspect { id: String },
+    /// Show every field of one open pull request, read off the forge now
+    Inspect {
+        /// The repository, by id or path
+        repo: String,
+        number: i64,
+    },
     /// Search the open requests of an enabled repository that are not yours
     Search {
         #[arg(long)]
         repo: String,
         query: String,
     },
-    /// Track a pull request that asks for your review, by URL
-    Add { url: String },
-    /// Remove a request tracked by hand
-    Rm { id: String },
     /// Fetch requests of one repository or all enabled repositories
     Refresh {
         #[arg(long)]
@@ -94,7 +93,7 @@ async fn list(client: &Client, path: &str, format: Format) -> Result<()> {
         COLUMNS,
         |r| {
             vec![
-                r.id.clone(),
+                r.id.clone().unwrap_or_else(|| "-".into()),
                 r.repository_id.clone(),
                 r.number.to_string(),
                 r.title.clone(),
@@ -102,7 +101,13 @@ async fn list(client: &Client, path: &str, format: Format) -> Result<()> {
                     "author" => "you".to_string(),
                     _ => r.author_login.clone(),
                 },
-                r.tracked_by.clone(),
+                // What Ariadne does with it: keeps it for a task, reviews it,
+                // or nothing.
+                match (&r.origin_task_id, r.id.is_some()) {
+                    (Some(_), _) => "keeps".to_string(),
+                    (None, true) => "reviews".to_string(),
+                    (None, false) => "-".to_string(),
+                },
                 r.draft.to_string(),
                 r.checks.clone(),
                 r.review_decision.clone(),
@@ -119,7 +124,6 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
             repo,
             mine,
             review_requests,
-            all,
             watch,
         } => {
             // Every open request with neither flag, as the desktop's All.
@@ -133,7 +137,6 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
                 role,
                 task: None,
                 requested,
-                state: all.then(|| "all".into()),
             };
             let path = query_path("/v1/pull-requests", &query)?;
             if watch {
@@ -148,10 +151,12 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
                 list(client, &path, format).await
             }
         }
-        PrCommand::Inspect { id } => {
-            let id = resolve::id(client, Kind::PullRequest, &id).await?;
+        PrCommand::Inspect { repo, number } => {
+            let repo = resolve::id(client, Kind::Repo, &repo).await?;
             inspect(
-                &client.get_json(&format!("/v1/pull-requests/{id}")).await?,
+                &client
+                    .get_json(&format!("/v1/repositories/{repo}/pull-requests/{number}"))
+                    .await?,
                 format,
             )
         }
@@ -184,23 +189,6 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
                 "No matching pull requests",
             )
         }
-        PrCommand::Add { url } => {
-            let row: PullRequestDto = client
-                .post_json("/v1/pull-requests", &json!({"url": url}))
-                .await?;
-            inspect(&row, format)
-        }
-        PrCommand::Rm { id } => {
-            let id = resolve::id(client, Kind::PullRequest, &id).await?;
-            client
-                .send_no_content::<()>(
-                    http::Method::DELETE,
-                    &format!("/v1/pull-requests/{id}"),
-                    None,
-                )
-                .await?;
-            print(format, &json!({"id": id}), || println!("removed {id}"))
-        }
         PrCommand::Refresh { repo } => {
             let path = query_path(
                 "/v1/pull-requests/refresh",
@@ -229,7 +217,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     fn row() -> serde_json::Value {
-        json!({"id":"pull-42","repository_id":"repo-1","number":42,"url":"https://github.com/acme/widgets/pull/42","title":"Fix widgets","author_login":"me","role":"author","tracked_by":"user","state":"open","draft":false,"head_branch":"fix","head_sha":"abc","head_repo":null,"base_branch":"main","checks":"none","review_decision":"none","unanswered_comments":0,"ready":false,"origin_task_id":null,"opened_at":"2026-10-01","last_seen_at":"2026-10-07","created_at":"2026-10-01","updated_at":"2026-10-07"})
+        json!({"id":"pull-42","repository_id":"repo-1","number":42,"url":"https://github.com/acme/widgets/pull/42","title":"Fix widgets","author_login":"me","role":"author","state":"open","draft":false,"head_branch":"fix","head_sha":"abc","head_repo":null,"base_branch":"main","checks":"none","review_decision":"none","unanswered_comments":0,"ready":false,"origin_task_id":null,"opened_at":"2026-10-01","updated_at":"2026-10-07"})
     }
     type Calls = Arc<Mutex<Vec<(String, String, serde_json::Value)>>>;
     async fn answer(State(calls): State<Calls>, request: Request) -> axum::response::Response {
@@ -255,7 +243,7 @@ mod tests {
             )])
         } else if uri.contains("/search") {
             json!([{"number":42,"title":"Fix widgets","author_login":"me","role":"author","tracked":true,"url":"https://github.com/acme/widgets/pull/42"}])
-        } else if method == "GET" && !uri.starts_with("/v1/pull-requests/pull-42") {
+        } else if method == "GET" && !uri.ends_with("/pull-requests/42") {
             json!([row()])
         } else {
             row()
@@ -274,16 +262,19 @@ mod tests {
         let parse = |argv: &[&str]| <Pr as clap::Parser>::try_parse_from(argv);
         assert!(parse(&["pr", "ls", "--mine", "--review-requests"]).is_err());
         assert!(parse(&["pr", "ls", "--mine"]).is_ok());
-        assert!(parse(&["pr", "ls", "--review-requests", "--all"]).is_ok());
+        assert!(parse(&["pr", "ls", "--review-requests", "--all"]).is_err());
+        assert!(parse(&["pr", "add", "https://github.com/acme/widgets/pull/1"]).is_err());
+        assert!(parse(&["pr", "rm", "pull-42"]).is_err());
     }
 
     #[tokio::test]
-    async fn pr_commands_use_the_ledger_routes_and_preserve_search_text() {
+    async fn pr_commands_use_the_live_routes_and_preserve_search_text() {
         let calls: Calls = Arc::default();
         let app = Router::new()
             .route("/v1/repositories", get(answer))
             .route("/v1/pull-requests", get(answer).post(answer))
-            .route("/v1/pull-requests/{id}", get(answer).delete(answer))
+            .route("/v1/pull-requests/{id}", get(answer))
+            .route("/v1/repositories/repo-1/pull-requests/42", get(answer))
             .route("/v1/pull-requests/refresh", post(answer))
             .route("/v1/repositories/repo-1/pull-requests/search", get(answer))
             .with_state(calls.clone());
@@ -295,35 +286,27 @@ mod tests {
                 repo: Some("/work/widgets".into()),
                 mine: false,
                 review_requests: true,
-                all: true,
                 watch: false,
             },
             PrCommand::Ls {
                 repo: None,
                 mine: true,
                 review_requests: false,
-                all: false,
                 watch: false,
             },
             PrCommand::Ls {
                 repo: None,
                 mine: false,
                 review_requests: false,
-                all: false,
                 watch: false,
             },
             PrCommand::Inspect {
-                id: "pull-42".into(),
+                repo: "repo-1".into(),
+                number: 42,
             },
             PrCommand::Search {
                 repo: "repo-1".into(),
                 query: "fix & widgets".into(),
-            },
-            PrCommand::Add {
-                url: "https://github.com/acme/widgets/pull/42".into(),
-            },
-            PrCommand::Rm {
-                id: "pull-42".into(),
             },
             PrCommand::Refresh {
                 repo: Some("repo-1".into()),
@@ -334,7 +317,7 @@ mod tests {
         server.abort();
         let calls = calls.lock().unwrap();
         assert!(calls.iter().any(|(method, path, _)| method == "GET"
-            && path == "/v1/pull-requests?repo=repo-1&role=reviewer&requested=true&state=all"));
+            && path == "/v1/pull-requests?repo=repo-1&role=reviewer&requested=true"));
         assert!(
             calls
                 .iter()
@@ -349,19 +332,17 @@ mod tests {
         assert!(
             calls
                 .iter()
-                .any(|(_, path, _)| path == "/v1/pull-requests/pull-42")
+                .any(|(_, path, _)| path == "/v1/repositories/repo-1/pull-requests/42")
         );
         assert!(
             calls.iter().any(|(_, path, _)| path
                 == "/v1/repositories/repo-1/pull-requests/search?q=fix+%26+widgets")
         );
-        assert!(calls.iter().any(|(method, path, body)| method == "POST"
-            && path == "/v1/pull-requests"
-            && body["url"] == "https://github.com/acme/widgets/pull/42"));
         assert!(
             calls
                 .iter()
-                .any(|(method, path, _)| method == "DELETE" && path == "/v1/pull-requests/pull-42")
+                .all(|(method, _, _)| method != "DELETE" && method != "PUT"),
+            "nothing adds or removes a request by hand"
         );
         assert!(
             calls.iter().any(|(method, path, _)| method == "POST"

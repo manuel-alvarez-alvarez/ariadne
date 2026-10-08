@@ -184,14 +184,31 @@ async fn repository(h: &Harness, path: &Path, review: Option<&str>) -> String {
 
 /// The one request of the ledger, once the first fetch recorded it.
 async fn the_request(h: &Harness) -> String {
-    let mut rows: Vec<Value> = Vec::new();
-    eventually(TIMEOUT, "the request to be recorded", async || {
-        rows = h.get("/v1/pull-requests?state=all").await;
-        rows.len() == 1
-    })
+    let mut rows = Vec::new();
+    eventually(
+        TIMEOUT,
+        "Ariadne to start working on the request",
+        async || {
+            rows = h
+                .store
+                .list_pull_requests(ariadne_store::PullRequestFilter::default())
+                .await
+                .unwrap();
+            rows.len() == 1
+        },
+    )
     .await;
-    assert_eq!(rows[0]["role"], "reviewer");
-    rows[0]["id"].as_str().unwrap().to_string()
+    assert_eq!(rows[0].role, "reviewer");
+    rows[0].id.clone()
+}
+
+/// Whether Ariadne works on any request: a row is one.
+async fn no_rows(h: &Harness) -> bool {
+    h.store
+        .list_pull_requests(ariadne_store::PullRequestFilter::default())
+        .await
+        .unwrap()
+        .is_empty()
 }
 
 /// The live session on a request, once its briefing turn has ended.
@@ -345,17 +362,15 @@ async fn a_draft_starts_no_review_until_it_leaves_draft() {
         ..Shown::open(&head)
     }));
     let repo = repository(&h, &path, Some(PIN)).await;
-    let id = the_request(&h).await;
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    h.state.forge_poll.wake(&repo);
     tokio::time::sleep(QUIET).await;
     h.flush_scheduler().await;
-    assert!(
-        sessions(&h, &id).await.is_empty(),
-        "a draft gets no session"
-    );
+    assert!(no_rows(&h).await, "a draft is no work yet");
 
     stub.reprogram(script(&Shown::open(&head)));
     h.state.forge_poll.wake(&repo);
+    let id = the_request(&h).await;
     idle_session(&h, &id).await;
 }
 
@@ -368,12 +383,11 @@ async fn a_repository_with_no_review_model_starts_no_review() {
     let (path, head) = checkout(&h);
     stub.reprogram(script(&Shown::open(&head)));
     let repo = repository(&h, &path, None).await;
-    let id = the_request(&h).await;
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     h.state.forge_poll.wake(&repo);
     tokio::time::sleep(QUIET).await;
     h.flush_scheduler().await;
-    assert!(sessions(&h, &id).await.is_empty());
+    assert!(no_rows(&h).await, "nothing reviews it, so it is no work");
 }
 
 /// A push moves the worktree to the new head and hands the session one
@@ -661,8 +675,11 @@ async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
         ]
     );
     assert!(stored.iter().all(|c| c["author_login"] == "me"));
-    let comments: Vec<Value> = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
-    assert_eq!(comments.len(), 3, "the review is stored");
+    // What is kept of them is the mark that the review posted them; their
+    // text is the forge's.
+    let marks = h.store.pull_request_comment_marks(&id).await.unwrap();
+    assert_eq!(marks.len(), 3);
+    assert!(marks.iter().all(|m| m.from_review));
 
     // A later round with no new finding posts no review: it edits the one
     // summary, and the P0 still open keeps the change request standing.
@@ -682,9 +699,11 @@ async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
         summary_writes(&stub).last(),
         Some(&("PATCH".to_string(), later.to_string()))
     );
-    let comments: Vec<Value> = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
-    assert_eq!(comments.len(), 3, "the summary is edited, not added");
-    assert!(comments.iter().any(|c| c["body"] == later));
+    assert_eq!(
+        h.store.pull_request_comment_marks(&id).await.unwrap().len(),
+        3,
+        "the summary is edited, not added"
+    );
     let row = h.store.get_pull_request(&id).await.unwrap();
     assert_eq!(row.summary_comment_id.as_deref(), Some("ic-301"));
 }
@@ -736,7 +755,7 @@ async fn a_review_resolves_the_thread_of_its_own_fixed_finding_and_no_other() {
         .await;
     let mine = stored
         .iter()
-        .find(|c| c["forge_id"] == "rc-501")
+        .find(|c| c["id"] == "rc-501")
         .expect("the finding is stored")["id"]
         .as_str()
         .unwrap()
@@ -770,7 +789,7 @@ async fn a_review_resolves_the_thread_of_its_own_fixed_finding_and_no_other() {
     let comments: Vec<Value> = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
     let theirs = comments
         .iter()
-        .find(|c| c["forge_id"] == "rc-601")
+        .find(|c| c["id"] == "rc-601")
         .expect("their comment is stored");
     h.error(
         resolve(theirs["id"].as_str().unwrap(), &session.id),
@@ -947,13 +966,10 @@ async fn a_review_posted_after_a_withdrawal_does_not_keep_the_review() {
         async || !r.h.session_status(&r.session).await.is_live() && !r.worktree.exists(),
     )
     .await;
-    assert!(
-        !r.h.store
-            .get_pull_request(&r.id)
-            .await
-            .unwrap()
-            .review_requested
-    );
+    eventually(TIMEOUT, "Ariadne to stop working on it", async || {
+        r.h.store.get_pull_request(&r.id).await.is_err()
+    })
+    .await;
 }
 
 /// GitHub stops listing a request as asking for my review once I reviewed
@@ -969,11 +985,11 @@ async fn a_request_the_forge_stops_listing_after_my_review_keeps_its_review() {
     }));
     fetch_again(&r.h, &r.stub, &r.repo).await;
     assert!(
-        r.h.store
-            .get_pull_request(&r.id)
-            .await
-            .unwrap()
-            .review_requested
+        r.h.launcher
+            .live
+            .get(&r.id)
+            .is_some_and(|live| live.review_requested),
+        "the timeline still asks"
     );
     assert!(r.h.session_status(&r.session).await.is_live());
     assert!(r.worktree.exists());
@@ -1001,13 +1017,10 @@ async fn a_request_withdrawn_after_my_review_ends_its_review() {
         async || !r.h.session_status(&r.session).await.is_live() && !r.worktree.exists(),
     )
     .await;
-    assert!(
-        !r.h.store
-            .get_pull_request(&r.id)
-            .await
-            .unwrap()
-            .review_requested
-    );
+    eventually(TIMEOUT, "Ariadne to stop working on it", async || {
+        r.h.store.get_pull_request(&r.id).await.is_err()
+    })
+    .await;
 }
 
 /// A request of mine gets no review session until the user asks Ariadne for
@@ -1027,25 +1040,23 @@ async fn a_request_of_mine_is_reviewed_once_asked_and_its_review_is_a_comment() 
     // No repository review pin: a request of mine runs on the one asked.
     let repo = repository(&h, &path, None).await;
     let mut rows: Vec<Value> = Vec::new();
-    eventually(TIMEOUT, "the request to be recorded", async || {
-        rows = h.get("/v1/pull-requests?state=all").await;
+    eventually(TIMEOUT, "the request to be listed", async || {
+        rows = h.get("/v1/pull-requests").await;
         rows.len() == 1
     })
     .await;
     assert_eq!(rows[0]["role"], "author");
     assert_eq!(rows[0]["review_asked"], false);
-    let id = rows[0]["id"].as_str().unwrap().to_string();
+    assert!(rows[0]["id"].is_null(), "nobody works on it yet");
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     h.flush_scheduler().await;
-    assert!(
-        sessions(&h, &id).await.is_empty(),
-        "nobody asked for a review"
-    );
 
     let ask = |asked: bool| {
         axum::http::Request::builder()
             .method("PUT")
-            .uri(format!("/v1/pull-requests/{id}/ariadne-review"))
+            .uri(format!(
+                "/v1/repositories/{repo}/pull-requests/1/ariadne-review"
+            ))
             .header("content-type", "application/json")
             .body(Body::from(
                 json!({"asked": asked, "model": asked.then_some(PIN),
@@ -1057,6 +1068,8 @@ async fn a_request_of_mine_is_reviewed_once_asked_and_its_review_is_a_comment() 
     let asked: Value = h.json(ask(true), StatusCode::OK).await;
     assert_eq!(asked["review_asked"], true);
     assert_eq!(asked["review_model"], PIN);
+    // Asking starts Ariadne's work on it: the request has a row now.
+    let id = asked["id"].as_str().expect("a row").to_string();
     let session = idle_session(&h, &id).await;
     assert_eq!(session.seat.as_deref(), Some("reviewer"));
     assert_eq!(
@@ -1098,24 +1111,38 @@ async fn a_request_of_mine_is_reviewed_once_asked_and_its_review_is_a_comment() 
 
     let _: Value = h.json(ask(false), StatusCode::OK).await;
     eventually(TIMEOUT, "the review to end", async || {
-        sessions(&h, &id)
-            .await
-            .iter()
-            .all(|s| !s.status().is_live())
+        !h.session_status(&session).await.is_live()
     })
     .await;
+    // Nobody keeps it and nobody reviews it: Ariadne stops working on it,
+    // and the session stays, let go of it.
+    eventually(TIMEOUT, "the row to go", async || {
+        h.flush_scheduler().await;
+        h.store.get_pull_request(&id).await.is_err()
+    })
+    .await;
+    assert_eq!(
+        h.store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .pull_request_id,
+        None
+    );
 
-    // Asked again on another model, the review is a fresh session on it:
-    // the last conversation keeps the model it started on.
+    // Asked again on another model, the review is a fresh session on it.
     let again = axum::http::Request::builder()
         .method("PUT")
-        .uri(format!("/v1/pull-requests/{id}/ariadne-review"))
+        .uri(format!(
+            "/v1/repositories/{repo}/pull-requests/1/ariadne-review"
+        ))
         .header("content-type", "application/json")
         .body(Body::from(
             json!({"asked": true, "model": "stub:new-model"}).to_string(),
         ))
         .unwrap();
-    let _: Value = h.json(again, StatusCode::OK).await;
+    let again: Value = h.json(again, StatusCode::OK).await;
+    let id = again["id"].as_str().expect("a row").to_string();
     let mut fresh = None;
     eventually(TIMEOUT, "a review on the new model", async || {
         fresh = sessions(&h, &id)
@@ -1139,18 +1166,13 @@ async fn asking_needs_a_model_and_a_request_of_mine() {
         author: "me",
         ..Shown::open(&head)
     }));
-    repository(&h, &path, None).await;
-    let mut rows: Vec<Value> = Vec::new();
-    eventually(TIMEOUT, "the request to be recorded", async || {
-        rows = h.get("/v1/pull-requests?state=all").await;
-        rows.len() == 1
-    })
-    .await;
-    let id = rows[0]["id"].as_str().unwrap().to_string();
+    let repo = repository(&h, &path, None).await;
     let ask = |body: Value| {
         axum::http::Request::builder()
             .method("PUT")
-            .uri(format!("/v1/pull-requests/{id}/ariadne-review"))
+            .uri(format!(
+                "/v1/repositories/{repo}/pull-requests/1/ariadne-review"
+            ))
             .header("content-type", "application/json")
             .body(Body::from(body.to_string()))
             .unwrap()
@@ -1167,42 +1189,36 @@ async fn asking_needs_a_model_and_a_request_of_mine() {
         StatusCode::BAD_REQUEST,
     )
     .await;
-    let row: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
-    assert_eq!(row["review_asked"], false, "a refusal asks nothing");
+    assert!(
+        h.store
+            .list_pull_requests(ariadne_store::PullRequestFilter::default())
+            .await
+            .unwrap()
+            .is_empty(),
+        "a refusal starts no work"
+    );
 
-    let reviewing = h
-        .store
-        .upsert_pull_request(ariadne_store::NewPullRequest {
-            existing_id: None,
-            repository_id: rows[0]["repository_id"].as_str().unwrap().into(),
-            number: 2,
-            url: "https://github.com/acme/widgets/pull/2".into(),
-            title: "Theirs".into(),
-            body: String::new(),
-            author_login: "other".into(),
-            tracked_by: "forge".into(),
-            state: "open".into(),
-            draft: false,
-            head_branch: "theirs".into(),
-            head_sha: head.clone(),
-            head_repo: None,
-            base_branch: "main".into(),
-            checks: "none".into(),
-            review_decision: "none".into(),
-            origin_task_id: None,
-            opened_at: "2026-10-01T00:00:00Z".into(),
-            merge_sha: None,
-        })
-        .await
-        .unwrap()
-        .0;
-    let ask = axum::http::Request::builder()
-        .method("PUT")
-        .uri(format!("/v1/pull-requests/{}/ariadne-review", reviewing.id))
-        .header("content-type", "application/json")
-        .body(Body::from(json!({"asked": true, "model": PIN}).to_string()))
-        .unwrap();
-    h.error(ask, StatusCode::CONFLICT).await;
+    // A request that asks for my review is reviewed on the repository's
+    // pin, and takes no asking.
+    let mut theirs = script(&Shown::open(&head));
+    theirs.as_array_mut().unwrap().insert(
+        0,
+        answer(
+            &["pr", "view"],
+            0,
+            &json!({"number": 1, "url": "https://github.com/acme/widgets/pull/1",
+            "title": "Theirs", "author": {"login": "other"}, "state": "OPEN", "isDraft": false,
+            "headRefName": "fix", "headRefOid": head, "baseRefName": "main",
+            "statusCheckRollup": [], "reviewDecision": "", "createdAt": "2026-10-01T00:00:00Z"})
+            .to_string(),
+        ),
+    );
+    stub.reprogram(theirs);
+    h.error(
+        ask(json!({"asked": true, "model": PIN})),
+        StatusCode::CONFLICT,
+    )
+    .await;
 }
 
 /// On GitLab a finding on a renamed file is placed with the file's path on

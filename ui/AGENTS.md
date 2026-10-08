@@ -121,6 +121,7 @@ write a key literal. Every key is `[entity, "list" | "detail", ...]`:
 ["agent-events", "list", filters]
 ["permissions",  "detail", "ai"]  ["forge",    "detail", "tunnel"]
 ["issues",       "list", repository, { assigned }]
+["pull-requests", "list", filters]  ["pull-requests", "detail", id | "repository:number"]
 ["learned-permissions", "list", filters] ["learned-permissions", "detail", id]
 ["stats",        "list", family, filter]
 ```
@@ -181,6 +182,7 @@ the query cache and it stays live.
 | `repository_deleted` | remove `repositories.detail`, invalidate `repositories.lists` |
 | `ai_permissions_updated` | patch `permissions.ai()` whole — the one settings row, no list beside it |
 | `forge_settings_updated` | patch `forge.tunnel()` whole — the tunnel switch and state, no list beside it |
+| `pull_requests_changed` | invalidate every `pullRequests` key — requests are read live off the forge, so the event carries none |
 | `issues_changed` | invalidate `issues.ofRepository(id)` — both assignment filters of the repository whose open issues moved; issues are read off the forge, so the event carries none |
 | `learned_permission_created`, `learned_permission_updated` | patch `learnedPermissions.detail`, invalidate `learnedPermissions.lists` |
 | `learned_permission_deleted` | remove `learnedPermissions.detail`, invalidate `learnedPermissions.lists` |

@@ -146,7 +146,8 @@ pub(super) async fn update(
         repository.forge.as_ref(),
     )
     .await;
-    state.store.close_disabled_pull_requests(&id).await?;
+    // A disabled integration ends the work on its requests: the fetch's
+    // sync wakes the scheduler for each (026).
     state.forge_poll.changed(&id).await;
     Ok(Json(repository_dto(repository)))
 }

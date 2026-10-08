@@ -135,8 +135,8 @@ impl AppState {
         repositories::update, repositories::delete,
         forge::get_tunnel, forge::set_tunnel,
         issues::list, issues::get,
-        pull_requests::list, pull_requests::get, pull_requests::add, pull_requests::delete, pull_requests::refresh, pull_requests::search,
-        pull_requests::comments, pull_requests::reply, pull_requests::resolve,
+        pull_requests::list, pull_requests::get, pull_requests::get_by_number, pull_requests::refresh, pull_requests::search,
+        pull_requests::comments, pull_requests::comment, pull_requests::reply, pull_requests::resolve,
         pull_requests::report,
         pull_requests::diff, pull_requests::submit_review, pull_requests::ask_review,
         permissions::get, permissions::update, permissions::refresh,
@@ -196,14 +196,12 @@ fn api_doc() -> utoipa::openapi::OpenApi {
 /// Build the daemon router.
 pub fn router(state: AppState) -> Router {
     Router::new()
-        .route(
-            "/v1/pull-requests",
-            get(pull_requests::list).post(pull_requests::add),
-        )
+        .route("/v1/pull-requests", get(pull_requests::list))
         .route("/v1/pull-requests/refresh", post(pull_requests::refresh))
+        .route("/v1/pull-requests/{id}", get(pull_requests::get))
         .route(
-            "/v1/pull-requests/{id}",
-            get(pull_requests::get).delete(pull_requests::delete),
+            "/v1/repositories/{id}/pull-requests/{number}",
+            get(pull_requests::get_by_number),
         )
         .route(
             "/v1/repositories/{id}/pull-requests/search",
@@ -212,6 +210,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/pull-requests/{id}/comments",
             get(pull_requests::comments),
+        )
+        .route(
+            "/v1/pull-requests/{id}/comments/{comment_id}",
+            get(pull_requests::comment),
         )
         .route(
             "/v1/pull-requests/{id}/comments/{comment_id}/reply",
@@ -228,7 +230,7 @@ pub fn router(state: AppState) -> Router {
             post(pull_requests::submit_review),
         )
         .route(
-            "/v1/pull-requests/{id}/ariadne-review",
+            "/v1/repositories/{id}/pull-requests/{number}/ariadne-review",
             put(pull_requests::ask_review),
         )
         .route("/v1/health", get(health))

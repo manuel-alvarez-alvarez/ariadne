@@ -625,37 +625,27 @@ pub struct TaskTransition {
     pub created_at: String,
 }
 
-/// A pull request in the repository ledger (026).
+/// A pull request Ariadne works on (026), as the database keeps it: the
+/// daemon's own bookkeeping of it, and nothing the forge holds. A row
+/// exists while Ariadne works on the request — the request a task opened,
+/// one that asks for the user's review on a repository with a review pin, or
+/// one of the user's they asked Ariadne to review — and goes once the
+/// request merged or closed and its work was taken down. What the request
+/// says — its title, its branches, its checks, its comments — is read off
+/// the forge on every fetch and held in memory alone ([`PullRequestLive`]).
 #[derive(Debug, Clone, sqlx::FromRow)]
-pub struct PullRequest {
+pub struct PullRequestRow {
     pub id: String,
     pub repository_id: String,
     pub number: i64,
     pub url: String,
-    pub title: String,
-    pub author_login: String,
-    pub tracked_by: String,
-    pub state: String,
-    pub draft: bool,
-    pub head_branch: String,
-    pub head_sha: String,
-    pub head_repo: Option<String>,
-    pub base_branch: String,
-    pub checks: String,
-    pub review_decision: String,
-    pub unanswered_comments: i64,
-    pub origin_task_id: Option<String>,
-    pub opened_at: String,
+    /// `author` for a request of the user's, `reviewer` for one that asks
+    /// for their review.
     pub role: String,
+    /// The task that opened the request: its author keeps it (005).
+    pub origin_task_id: Option<String>,
+    /// Whether the request's session reported it ready to merge.
     pub ready: bool,
-    pub last_seen_at: String,
-    pub created_at: String,
-    pub updated_at: String,
-    /// The checks that failed on the head, as the detail fetch read them: a
-    /// JSON list of `{name, url, conclusion}`.
-    pub failed_checks: String,
-    /// Whether the base branch has commits the head does not.
-    pub behind_base: bool,
     /// The names of the failed checks the request's session was told of.
     pub told_checks: String,
     /// Whether the session was told the head is behind its base.
@@ -669,24 +659,13 @@ pub struct PullRequest {
     pub told_check_state: Option<String>,
     /// When the session was last handed news: the claim of its prompt.
     pub news_told_at: Option<String>,
-    /// When the daemon took the work of an ended request down; None while
-    /// that is still owed, on an ended author row.
-    pub cleaned_at: Option<String>,
     /// The head a reviewer session last posted a review on (029).
     pub reviewed_sha: Option<String>,
     /// The head the request's session was last told of (029).
     pub told_head_sha: Option<String>,
-    /// Whether the last repository fetch listed the request as asking for
-    /// the user's review (029).
-    pub review_requested: bool,
     /// Whether the user asked Ariadne to review a request of their own
     /// (029): a review session runs on it while it is open.
     pub review_asked: bool,
-    /// The request's description, as the forge holds it.
-    pub body: String,
-    /// The commit the request landed as once merged, as the forge reports
-    /// it (005); None while it is not merged, or where the forge named none.
-    pub merge_sha: Option<String>,
     /// The forge id of the one summary comment an Ariadne review keeps on
     /// the request, edited on every round (029); None before its first.
     pub summary_comment_id: Option<String>,
@@ -695,12 +674,140 @@ pub struct PullRequest {
     pub review_model: Option<String>,
     pub review_effort: Option<String>,
     /// The skills the user picked for that review beside `pr-reviewer`, as a
-    /// JSON list. Read through [`PullRequest::review_skills`].
+    /// JSON list.
     #[sqlx(rename = "review_skills")]
+    pub review_skills_json: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// What the forge says of a request, as the last read found it: held in
+/// memory, never stored (026).
+#[derive(Debug, Clone, Default)]
+pub struct PullRequestLive {
+    pub title: String,
+    /// The request's description.
+    pub body: String,
+    pub author_login: String,
+    /// `open`, `merged` or `closed`.
+    pub state: String,
+    pub draft: bool,
+    pub head_branch: String,
+    pub head_sha: String,
+    pub head_repo: Option<String>,
+    pub base_branch: String,
+    /// The rolled-up checks: `pending`, `success`, `failure` or `none`.
+    pub checks: String,
+    pub review_decision: String,
+    pub opened_at: String,
+    /// When the forge last saw the request move.
+    pub forge_updated_at: String,
+    /// The checks that failed on the head: a JSON list of `{name, url,
+    /// conclusion}`.
+    pub failed_checks: String,
+    /// Whether the base branch has commits the head does not.
+    pub behind_base: bool,
+    /// Whether the request asks for the user's review (029).
+    pub review_requested: bool,
+    /// The commit a merged request landed as (005).
+    pub merge_sha: Option<String>,
+    /// The threads that wait on the integration login.
+    pub unanswered_comments: i64,
+}
+
+/// A request Ariadne works on, as the daemon reads it: its row, and what
+/// the forge says of it now.
+#[derive(Debug, Clone)]
+pub struct PullRequest {
+    pub id: String,
+    pub repository_id: String,
+    pub number: i64,
+    pub url: String,
+    pub title: String,
+    pub body: String,
+    pub author_login: String,
+    pub state: String,
+    pub draft: bool,
+    pub head_branch: String,
+    pub head_sha: String,
+    pub head_repo: Option<String>,
+    pub base_branch: String,
+    pub checks: String,
+    pub review_decision: String,
+    pub unanswered_comments: i64,
+    pub origin_task_id: Option<String>,
+    pub opened_at: String,
+    pub forge_updated_at: String,
+    pub role: String,
+    pub ready: bool,
+    pub created_at: String,
+    pub updated_at: String,
+    pub failed_checks: String,
+    pub behind_base: bool,
+    pub told_checks: String,
+    pub told_behind_base: bool,
+    pub told_review_decision: Option<String>,
+    pub told_state: Option<String>,
+    pub told_check_state: Option<String>,
+    pub news_told_at: Option<String>,
+    pub reviewed_sha: Option<String>,
+    pub told_head_sha: Option<String>,
+    pub review_requested: bool,
+    pub review_asked: bool,
+    pub merge_sha: Option<String>,
+    pub summary_comment_id: Option<String>,
+    pub review_model: Option<String>,
+    pub review_effort: Option<String>,
     pub review_skills_json: String,
 }
 
 impl PullRequest {
+    /// The request `row` keeps, as the forge reads it now.
+    pub fn of(row: PullRequestRow, live: PullRequestLive) -> Self {
+        Self {
+            id: row.id,
+            repository_id: row.repository_id,
+            number: row.number,
+            url: row.url,
+            title: live.title,
+            body: live.body,
+            author_login: live.author_login,
+            state: live.state,
+            draft: live.draft,
+            head_branch: live.head_branch,
+            head_sha: live.head_sha,
+            head_repo: live.head_repo,
+            base_branch: live.base_branch,
+            checks: live.checks,
+            review_decision: live.review_decision,
+            unanswered_comments: live.unanswered_comments,
+            origin_task_id: row.origin_task_id,
+            opened_at: live.opened_at,
+            forge_updated_at: live.forge_updated_at,
+            role: row.role,
+            ready: row.ready,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            failed_checks: live.failed_checks,
+            behind_base: live.behind_base,
+            told_checks: row.told_checks,
+            told_behind_base: row.told_behind_base,
+            told_review_decision: row.told_review_decision,
+            told_state: row.told_state,
+            told_check_state: row.told_check_state,
+            news_told_at: row.news_told_at,
+            reviewed_sha: row.reviewed_sha,
+            told_head_sha: row.told_head_sha,
+            review_requested: live.review_requested,
+            review_asked: row.review_asked,
+            merge_sha: live.merge_sha,
+            summary_comment_id: row.summary_comment_id,
+            review_model: row.review_model,
+            review_effort: row.review_effort,
+            review_skills_json: row.review_skills_json,
+        }
+    }
+
     /// The skills the user picked for the review of a request of their own
     /// (029), beside the `pr-reviewer` every review session loads.
     pub fn review_skills(&self) -> Vec<String> {
@@ -708,14 +815,25 @@ impl PullRequest {
     }
 }
 
-/// One comment on a pull request, as the daemon stored it from the forge
-/// (026): a review comment on a line, a comment on the conversation, or the
-/// body of a review.
+/// What the database keeps of one comment of a request Ariadne works on
+/// (026): whether its session was told of it, and whether an Ariadne review
+/// posted it. Its text, its author and its thread are the forge's.
 #[derive(Debug, Clone, sqlx::FromRow)]
+pub struct CommentMark {
+    pub pull_request_id: String,
+    pub forge_id: String,
+    pub told_at: Option<String>,
+    pub from_review: bool,
+}
+
+/// One comment on a pull request, as the forge holds it and the daemon's
+/// marks read beside it (026): a review comment on a line, a comment on the
+/// conversation, or the body of a review.
+#[derive(Debug, Clone)]
 pub struct PullRequestComment {
+    /// The forge's own id of the comment, which is also its id here.
     pub id: String,
     pub pull_request_id: String,
-    /// The forge's own id of the comment.
     pub forge_id: String,
     /// The forge's thread or discussion the comment is in.
     pub thread_id: String,
@@ -728,7 +846,6 @@ pub struct PullRequestComment {
     pub in_reply_to: Option<String>,
     /// When the forge says the comment was written.
     pub created_at: String,
-    pub fetched_at: String,
     /// A later comment in the thread is by the integration login.
     pub answered: bool,
     /// The forge reports the thread resolved.

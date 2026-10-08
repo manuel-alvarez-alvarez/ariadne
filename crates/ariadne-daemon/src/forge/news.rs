@@ -1,11 +1,11 @@
 //! What a pull request's session has not been told yet (026).
 //!
-//! After a detail fetch stores what the forge holds, the news is the
+//! After a detail fetch reads what the forge holds, the news is the
 //! difference between that and what the session was last told: comments by
 //! another login nobody told it of, checks that turned to failure, checks
 //! whose rolled-up state moved, a head that fell behind its base, a review
 //! decision that changed, and a state that turned `merged` or `closed`. Each
-//! change is told once (009 rule 4): a comment carries `told_at`, and the row
+//! change is told once (009 rule 4): a comment's mark carries `told_at`, and the row
 //! carries a told mark for the rest. The ACP driver writes both right before
 //! the prompt goes out, and gives them back where it never did (018).
 //!
@@ -178,7 +178,8 @@ fn told_before(pull: &PullRequest) -> PullRequestTold {
 }
 
 /// The news of the request `pull` for a session of `seat`, read off the
-/// store: `login` is the integration's, whose own comments are no news.
+/// last read of the forge and the marks: `login` is the integration's,
+/// whose own comments are no news.
 ///
 /// A review session on a request of mine (029) hears of a push and of the
 /// answers in the threads it opened: those are posted under my login, by the
@@ -186,18 +187,18 @@ fn told_before(pull: &PullRequest) -> PullRequestTold {
 /// and each is told once (005).
 pub async fn untold(
     store: &Store,
+    live: &super::live::LivePulls,
     pull: &PullRequest,
     login: &str,
     seat: Option<ariadne_core::Seat>,
 ) -> ariadne_store::Result<News> {
+    let comments = super::live::comments_of(store, live, pull).await?;
     let reviewing = seat == Some(ariadne_core::Seat::Reviewer);
     if reviewing && pull.role == "author" {
-        let answers = store.untold_review_replies(&pull.id, login).await?;
+        let answers = super::live::untold_review_replies(&comments, login);
         return Ok(of_review(pull, &answers));
     }
-    let untold = store
-        .untold_pull_request_comments(&pull.id, login, pull.role == "reviewer")
-        .await?;
+    let untold = super::live::untold(&comments, &pull.role, login, pull.role == "reviewer");
     Ok(of(pull, &untold))
 }
 
@@ -228,7 +229,6 @@ mod tests {
             url: "https://github.com/acme/widgets/pull/7".into(),
             title: "Fix widgets".into(),
             author_login: "me".into(),
-            tracked_by: "forge".into(),
             state: "open".into(),
             draft: false,
             head_branch: "fix".into(),
@@ -242,7 +242,7 @@ mod tests {
             opened_at: String::new(),
             role: "author".into(),
             ready: false,
-            last_seen_at: String::new(),
+            forge_updated_at: String::new(),
             created_at: String::new(),
             updated_at: String::new(),
             failed_checks: "[]".into(),
@@ -253,7 +253,6 @@ mod tests {
             told_state: None,
             told_check_state: None,
             news_told_at: None,
-            cleaned_at: None,
             reviewed_sha: None,
             told_head_sha: None,
             review_requested: true,

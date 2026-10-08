@@ -417,6 +417,7 @@ impl HarnessBuilder {
             .with_failure_diagnosis(failure_diagnosis.clone()),
             registry: agent_registry.clone(),
             branches: BranchWatchers::new(bus.clone()),
+            live: ariadne_daemon::forge::live::LivePulls::default(),
         });
         let sched = self
             .scheduler
@@ -426,6 +427,7 @@ impl HarnessBuilder {
             store.clone(),
             launcher.cfg.clone(),
             &bus,
+            launcher.live.clone(),
             self.timeouts.forge_poll,
             self.timeouts.forge_details,
         );

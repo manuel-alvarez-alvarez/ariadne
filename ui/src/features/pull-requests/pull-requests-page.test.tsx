@@ -30,12 +30,17 @@ it("renders rows, updates from an event, and opens the floating panel", async ()
     pull.url,
   )
   row = { ...pull, checks: "success" }
-  act(() => dispatchDomainEvent(queryClient, { event: "pull_request_updated", data: row }))
+  act(() =>
+    dispatchDomainEvent(queryClient, {
+      event: "pull_requests_changed",
+      data: { repository_id: "repo" },
+    }),
+  )
   expect(await screen.findByText("Passing")).toBeTruthy()
   // The row holds no button: a click on it opens the panel.
   expect(screen.queryByRole("button", { name: /#42/ })).toBeNull()
   await userEvent.click(screen.getByRole("row", { name: "Open #42 Fix widgets" }))
-  expect(location.url).toBe("/forge/pull-requests?pr=pull-42")
+  expect(location.url).toBe("/forge/pull-requests?pr=repo%3A42")
   expect(await screen.findByText("Unanswered comments")).toBeTruthy()
 })
 
@@ -114,7 +119,7 @@ it("opens a request's session panel from its row and shows its unanswered commen
     return jsonResponse([])
   })
   const { location } = renderScreen(<PullRequestsPage />, {
-    route: "/forge/pull-requests?pr=pull-42",
+    route: "/forge/pull-requests?pr=repo%3A42",
   })
   const link = await screen.findByRole("link", { name: "Open the session of #42" })
   // A request with no session yet has nothing to open.

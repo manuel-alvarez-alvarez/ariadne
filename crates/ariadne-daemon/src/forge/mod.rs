@@ -9,6 +9,7 @@
 pub mod github;
 pub mod gitlab;
 pub mod hooks;
+pub mod live;
 pub mod news;
 pub mod poll;
 pub mod pulls;

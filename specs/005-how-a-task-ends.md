@@ -91,8 +91,9 @@ works with it (025), and what becomes of a request once it is open (026).
 6. `pull_request`: rebase once — the only rebase — push the branch, and call
    `open_pull_request`, titled by the repository's commit conventions and
    with its body from the repository's request template. The daemon opens
-   the request through `gh` or `glab` itself (rule 13), and records it in
-   the ledger (026). It refuses where the repository's forge integration is
+   the request through `gh` or `glab` itself (rule 13), and starts its work
+   on it: a row that keeps Ariadne's bookkeeping of the request, and none of
+   what the forge holds (026). It refuses where the repository's forge integration is
    off: nothing would then read the request for its author. The task stays
    `approved`, and its author keeps the request from there with the
    `pr-babysit` skill, which the daemon loads for every author of a task that
@@ -171,7 +172,7 @@ works with it (025), and what becomes of a request once it is open (026).
     `feature_branch` accept a sha only once git proves it, with
     `git merge-base --is-ancestor`, an ancestor of the landing branch: a
     merge that never happened is refused. `pull_request` accepts it once the
-    ledger row of the task's request reads `merged` — no sha is asked onto
+    forge, read at the call, says the task's request merged — no sha is asked onto
     the base branch, since the daemon never merges the request itself, and
     the head branch may be gone from the remote by then. The final task of a
     `feature_branch` goal is verified the same way, once it works on the

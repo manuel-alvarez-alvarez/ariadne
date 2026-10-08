@@ -352,10 +352,16 @@ async fn the_final_task_waits_then_lands_the_goal_branch_on_the_base() {
         .await
         .unwrap()
         .expect("the ledger holds the task's request");
-    h.store
-        .set_pull_request_state(&kept.id, "merged")
-        .await
-        .unwrap();
+    // A human merges it: the forge says so, which is what `finish_task`
+    // reads (005).
+    assert_eq!(kept.role, "author");
+    let mut merged = opened_pull(URL, &goal_branch(&goal));
+    merged["state"] = serde_json::json!("MERGED");
+    cli.reprogram(serde_json::json!([
+        answer(&["auth", "status"], 0, ""),
+        answer(&["pr", "view"], 0, &merged.to_string()),
+        answer(&["pr", "list"], 0, "[]"),
+    ]));
     let finished: TaskDto = h.json(finish(&tip), StatusCode::OK).await;
     assert_eq!(finished.status, TaskStatus::Finished);
     assert_eq!(finished.merge_commit.as_deref(), Some(tip.as_str()));
@@ -365,6 +371,8 @@ async fn the_final_task_waits_then_lands_the_goal_branch_on_the_base() {
     // branch, local and remote (026); nothing of it merged the goal branch
     // onto the base itself.
     common::eventually(TIMEOUT, "the goal branch to go", async || {
+        // The merge reaches the daemon by a fetch, as a webhook wakes one.
+        h.state.forge_poll.wake(&repo.id);
         h.flush_scheduler().await;
         !sh(&path, "git branch --list").contains(&branch)
     })

@@ -66,9 +66,11 @@ interface OutsideSessionFilters {
 
 export const qk = {
   pullRequests: {
+    all: () => ["pull-requests"] as const,
     lists: () => ["pull-requests", "list"] as const,
-    list: (filters?: { repo?: string; role?: string; requested?: boolean; state?: string }) =>
+    list: (filters?: { repo?: string; role?: string; requested?: boolean }) =>
       ["pull-requests", "list", filters ?? {}] as const,
+    /** By Ariadne's id of a request it works on, or by `repository:number`. */
     detail: (id: string) => ["pull-requests", "detail", id] as const,
     search: (repo: string, q: string) => ["pull-requests", "search", { repo, q }] as const,
   },

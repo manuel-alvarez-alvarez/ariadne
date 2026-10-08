@@ -245,29 +245,16 @@ pub(super) struct ReplyCommentReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub(super) struct ResolveThreadReq {
-    /// The `id` of a comment of the thread, as `list_comments` gives it.
+pub(super) struct GetCommentReq {
+    /// The `id` of the comment, as the news or `list_comments` gives it.
     pub comment_id: String,
 }
 
-/// The two states a human ends a request in, and the one it stands in.
-#[derive(Clone, Copy, Debug, serde::Deserialize, schemars::JsonSchema)]
+#[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-#[serde(rename_all = "snake_case")]
-pub(super) enum PullRequestState {
-    Open,
-    Merged,
-    Closed,
-}
-
-impl PullRequestState {
-    fn as_str(self) -> &'static str {
-        match self {
-            PullRequestState::Open => "open",
-            PullRequestState::Merged => "merged",
-            PullRequestState::Closed => "closed",
-        }
-    }
+pub(super) struct ResolveThreadReq {
+    /// The `id` of a comment of the thread, as `list_comments` gives it.
+    pub comment_id: String,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -276,8 +263,6 @@ pub(super) struct ReportPullRequestReq {
     /// True once every required approval and check reads green. False when
     /// a later change turns one back.
     pub ready: Option<bool>,
-    /// The state a human moved the request to.
-    pub state: Option<PullRequestState>,
     /// The head sha your posted review is on.
     pub reviewed_sha: Option<String>,
 }
@@ -834,7 +819,7 @@ impl AriadneMcp {
     // ---- pull request author ----
 
     #[tool(
-        description = "Read your pull request: its state, branches, checks and failed checks, and whether the head is behind its base. It also gives your worktree, the repository path and your login."
+        description = "Read your pull request off the forge now: its description, state, branches, checks and failed checks, and whether the head is behind its base. It also gives your worktree, the repository path and your login."
     )]
     async fn get_pull_request(
         &self,
@@ -857,7 +842,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "List the stored comments of your pull request, with every field. Set `unanswered_only` for the threads that wait on your answer."
+        description = "List the comments of your pull request, read off the forge now, with every field. Set `unanswered_only` for the threads that wait on your answer."
     )]
     async fn list_comments(
         &self,
@@ -867,6 +852,19 @@ impl AriadneMcp {
         if req.unanswered_only.unwrap_or(false) {
             path.push_str("?unanswered_only=true");
         }
+        json_result(self.get::<serde_json::Value>(&path).await?)
+    }
+
+    #[tool(
+        description = "Read one comment of your pull request off the forge now, with every field."
+    )]
+    async fn get_comment(
+        &self,
+        Parameters(req): Parameters<GetCommentReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let path = self
+            .pull_request_path(&format!("/comments/{}", req.comment_id))
+            .await?;
         json_result(self.get::<serde_json::Value>(&path).await?)
     }
 
@@ -909,15 +907,15 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Report your pull request. Set `ready` to true once every required approval and check reads green, and to false on a change back. Set `state` once a human merged or closed it. Set `reviewed_sha` after you post a review."
+        description = "Report your pull request. Set `ready` to true once every required approval and check reads green, and to false on a change back. Set `reviewed_sha` after you post a review."
     )]
     async fn report_pull_request(
         &self,
         Parameters(req): Parameters<ReportPullRequestReq>,
     ) -> Result<CallToolResult, McpError> {
-        if req.ready.is_none() && req.state.is_none() && req.reviewed_sha.is_none() {
+        if req.ready.is_none() && req.reviewed_sha.is_none() {
             return Err(McpError::invalid_params(
-                "report `ready`, `state` or `reviewed_sha`",
+                "report `ready` or `reviewed_sha`",
                 None,
             ));
         }
@@ -926,7 +924,6 @@ impl AriadneMcp {
                 &self.pull_request_path("/report").await?,
                 &ReportPullRequestRequest {
                     ready: req.ready,
-                    state: req.state.map(|s| s.as_str().to_string()),
                     reviewed_sha: req.reviewed_sha,
                 },
             )
@@ -1147,7 +1144,6 @@ mod tests {
         .expect("reply");
         mcp.report_pull_request(Parameters(ReportPullRequestReq {
             ready: Some(true),
-            state: Some(PullRequestState::Merged),
             reviewed_sha: None,
         }))
         .await
@@ -1160,7 +1156,7 @@ mod tests {
             .collect();
         let find = (
             "GET".to_string(),
-            "/v1/pull-requests?task=01TASK&role=author&state=all".to_string(),
+            "/v1/pull-requests?task=01TASK&role=author".to_string(),
         );
         assert_eq!(
             calls,
@@ -1188,7 +1184,7 @@ mod tests {
         let report: serde_json::Value = serde_json::from_str(&seen[9].body).expect("json");
         assert_eq!(
             report,
-            serde_json::json!({"ready": true, "state": "merged", "reviewed_sha": null})
+            serde_json::json!({"ready": true, "reviewed_sha": null})
         );
     }
 
@@ -1245,7 +1241,6 @@ mod tests {
         .expect("post the review");
         mcp.report_pull_request(Parameters(ReportPullRequestReq {
             ready: None,
-            state: None,
             reviewed_sha: Some("abc".into()),
         }))
         .await

@@ -6,8 +6,12 @@
  * that work on it.
  *
  * Everything that can be done to a request is here rather than on its row:
- * ask Ariadne to review a request of the user's own and stop asking (029),
- * and remove one added by hand.
+ * ask Ariadne to review a request of the user's own and stop asking (029).
+ * Nothing adds or removes a request: Ariadne works on one while it reviews
+ * it or a task keeps it, and lets go of it once it merged or closed.
+ *
+ * The request is read off the forge each time the panel opens, by its
+ * repository and number, and read again on every `pull_requests_changed`.
  *
  * The sessions are the task panel's: a review session Ariadne runs on the
  * request, and the author of the task that keeps it (005). Picking one drills
@@ -16,7 +20,7 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { BotIcon, BotOffIcon, ExternalLinkIcon, Trash2Icon } from "lucide-react"
+import { BotIcon, BotOffIcon, ExternalLinkIcon } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 
@@ -45,7 +49,7 @@ import { useFocusReturn } from "@/hooks/use-focus-return"
 import { shortId, shortSha } from "@/lib/format"
 import { usePanelSessionNavigation, useTaskPanelTo } from "@/routes/paths"
 
-import { pullRequestQueryOptions, useAskReview, useRemovePullRequest } from "./queries"
+import { pullRequestByKeyQueryOptions, useAskReview } from "./queries"
 import { StartReviewDialog } from "./start-review-dialog"
 import { ARIADNE_REVIEWING, CHECKS, REVIEW } from "./status"
 
@@ -54,13 +58,16 @@ type Tab = (typeof TABS)[number]
 
 export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => void }) {
   const [search, setSearch] = useSearchParams()
-  const query = useQuery(pullRequestQueryOptions(id))
+  const query = useQuery(pullRequestByKeyQueryOptions(id))
+  // Ariadne's id of the request, while it works on it: what its sessions
+  // name.
+  const workedId = query.data?.id ?? null
   const session = search.get("session") ?? undefined
   const selectSession = usePanelSessionNavigation()
   const tab = TABS.find((value) => value === search.get("tab")) ?? "description"
   const panel = useRef<HTMLDivElement>(null)
   useFocusReturn(session ?? null, panel)
-  const opened = useReviewOpening(id, (sessionId) => {
+  const opened = useReviewOpening(workedId, (sessionId) => {
     const params = new URLSearchParams(search)
     params.set("tab", "sessions")
     params.set("session", sessionId)
@@ -78,7 +85,7 @@ export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => v
       {session ? (
         <PullRequestSessionView
           pull={query.data}
-          pullRequestId={id}
+          pullRequestId={workedId}
           sessionId={session}
           onSelect={selectSession}
         />
@@ -110,7 +117,6 @@ export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => v
         <>
           <PullRequestHeader
             pull={query.data}
-            onRemoved={onClose}
             onReviewStarted={() => {
               opened.await()
               setTab("sessions")
@@ -153,14 +159,15 @@ export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => v
  * a new session, or the last one resumed. The list follows `session_created` on its own; the interval is
  * what holds while the stream is down.
  */
-function useReviewOpening(pullRequestId: string, open: (sessionId: string) => void) {
+function useReviewOpening(pullRequestId: string | null, open: (sessionId: string) => void) {
   const [before, setBefore] = useState<string[] | null>(null)
   // Taken the moment a session is handed over, ahead of any render: a later
   // pass of the effect, on a list read again meanwhile, must not hand the
   // same session over a second time and pull the panel back into it.
   const pending = useRef(false)
   const reviews = useQuery({
-    ...sessionsQueryOptions({ pull_request: pullRequestId }),
+    ...sessionsQueryOptions({ pull_request: pullRequestId ?? "" }),
+    enabled: pullRequestId !== null,
     refetchInterval: before ? 2000 : false,
   })
   // A review comes up as a new session, or as the last one resumed on the
@@ -193,16 +200,13 @@ function useReviewOpening(pullRequestId: string, open: (sessionId: string) => vo
  */
 function PullRequestHeader({
   pull,
-  onRemoved,
   onReviewStarted,
 }: {
   pull: PullRequestDto
-  onRemoved: () => void
   /** A review was asked for in the dialog, which closed itself. */
   onReviewStarted: () => void
 }) {
   const ask = useAskReview()
-  const remove = useRemovePullRequest(onRemoved)
   const [starting, setStarting] = useState(false)
   const checks = CHECKS[pull.checks]
   const review = REVIEW[pull.review_decision]
@@ -212,37 +216,30 @@ function PullRequestHeader({
       <PanelHeader
         title={`#${pull.number} ${pull.title}`}
         actions={
-          <>
-            {mine && pull.state === "open" ? (
-              pull.review_asked ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  pending={ask.isPending}
-                  onClick={() => ask.mutate({ id: pull.id, asked: false })}
-                >
-                  <BotOffIcon />
-                  Stop review
-                </Button>
-              ) : (
-                <Button size="sm" onClick={() => setStarting(true)}>
-                  <BotIcon />
-                  Start review
-                </Button>
-              )
-            ) : null}
-            {pull.tracked_by === "user" ? (
+          mine && pull.state === "open" ? (
+            pull.review_asked ? (
               <Button
                 variant="outline"
                 size="sm"
-                pending={remove.isPending}
-                onClick={() => remove.mutate(pull.id)}
+                pending={ask.isPending}
+                onClick={() =>
+                  ask.mutate({
+                    repository_id: pull.repository_id,
+                    number: pull.number,
+                    asked: false,
+                  })
+                }
               >
-                <Trash2Icon />
-                Remove
+                <BotOffIcon />
+                Stop review
               </Button>
-            ) : null}
-          </>
+            ) : (
+              <Button size="sm" onClick={() => setStarting(true)}>
+                <BotIcon />
+                Start review
+              </Button>
+            )
+          ) : null
         }
         status={
           <>
@@ -261,7 +258,7 @@ function PullRequestHeader({
             ) : null}
           </>
         }
-        id={<CopyableId value={pull.id} label="pull request id" />}
+        id={pull.id ? <CopyableId value={pull.id} label="pull request id" /> : undefined}
         stamps={
           <>
             <span>opened</span>
@@ -278,12 +275,9 @@ function PullRequestHeader({
         onOpenChange={setStarting}
         onStarted={onReviewStarted}
       />
-      {ask.error || remove.error ? (
+      {ask.error ? (
         <div className="px-4">
-          <ErrorState
-            title={ask.error ? "Could not change Ariadne's review" : "Could not remove the request"}
-            error={ask.error ?? remove.error}
-          />
+          <ErrorState title="Could not change Ariadne's review" error={ask.error} />
         </div>
       ) : null}
     </>
@@ -321,9 +315,7 @@ function PullRequestFacts({ pull }: { pull: PullRequestDto }) {
       </Fact>
       <Fact label="Unanswered comments">{pull.unanswered_comments}</Fact>
       <Fact label="Base">{pull.behind_base ? "Ahead of the head" : "Level with the head"}</Fact>
-      <Fact label="Tracked">
-        {pull.tracked_by === "user" ? "Added by hand" : "Listed by the forge"}
-      </Fact>
+      <Fact label="Ariadne">{ariadneWork(pull)}</Fact>
       {pull.origin_task_id ? (
         <Fact label="Kept by">
           <TaskLink taskId={pull.origin_task_id} />
@@ -356,6 +348,13 @@ function PullRequestFacts({ pull }: { pull: PullRequestDto }) {
   )
 }
 
+/** What Ariadne does with the request. */
+function ariadneWork(pull: PullRequestDto): string {
+  if (pull.origin_task_id) return "Keeps it for a task"
+  if (pull.id) return "Reviews it"
+  return "Works on nothing here"
+}
+
 /** The task that opened the request, whose author keeps it, as its panel. */
 function TaskLink({ taskId }: { taskId: string }) {
   const to = useTaskPanelTo(taskId)
@@ -381,10 +380,14 @@ function PullRequestSessions({
     <>
       <section className="flex flex-col gap-2">
         <h3 className="text-sm font-medium">Ariadne review</h3>
-        <SessionsList
-          filters={{ pull_request: pull.id }}
-          onSelect={(session) => onSelect(session.id)}
-        />
+        {pull.id ? (
+          <SessionsList
+            filters={{ pull_request: pull.id }}
+            onSelect={(session) => onSelect(session.id)}
+          />
+        ) : (
+          <EmptyState emphasis="quiet" title="No Ariadne review of this request yet" />
+        )}
       </section>
       {pull.origin_task_id ? (
         <section className="flex flex-col gap-2">
@@ -411,17 +414,17 @@ function PullRequestSessionView({
   onSelect,
 }: {
   pull: PullRequestDto | undefined
-  pullRequestId: string
+  pullRequestId: string | null
   sessionId: string
   onSelect: (sessionId: string | null) => void
 }) {
   const session = useQuery(sessionQueryOptions(sessionId))
   const ours =
     session.data !== undefined &&
-    (session.data.pull_request_id === pullRequestId ||
+    ((pullRequestId !== null && session.data.pull_request_id === pullRequestId) ||
       (pull?.origin_task_id != null && session.data.task_id === pull.origin_task_id))
   const breadcrumb = {
-    label: pull ? `#${pull.number} ${pull.title}` : `pull request ${shortId(pullRequestId)}`,
+    label: pull ? `#${pull.number} ${pull.title}` : "pull request",
     onClick: () => onSelect(null),
   }
   return (

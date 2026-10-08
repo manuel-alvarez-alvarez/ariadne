@@ -651,6 +651,7 @@ async fn startup_checks_a_stored_hook_without_creating_another_and_fetches_once(
         store.clone(),
         std::sync::Arc::new(cfg),
         &bus,
+        ariadne_daemon::forge::live::LivePulls::default(),
         crate::common::RUNS_OUT,
         ariadne_daemon::timeouts::Timeouts::default().forge_details,
     );

@@ -29,7 +29,6 @@ pub(crate) enum Kind {
     Task,
     Session,
     Repo,
-    PullRequest,
 }
 
 impl Kind {
@@ -40,7 +39,6 @@ impl Kind {
             Self::Task => "task",
             Self::Session => "session",
             Self::Repo => "repository",
-            Self::PullRequest => "pull request",
         }
     }
 
@@ -51,7 +49,6 @@ impl Kind {
             Self::Task => "tasks",
             Self::Session => "sessions",
             Self::Repo => "repositories",
-            Self::PullRequest => "pull requests",
         }
     }
 
@@ -62,7 +59,6 @@ impl Kind {
             Self::Task => "/v1/tasks",
             Self::Session => "/v1/sessions",
             Self::Repo => "/v1/repositories",
-            Self::PullRequest => "/v1/pull-requests?state=all",
         }
     }
 
@@ -73,7 +69,6 @@ impl Kind {
             Self::Task => "ariadne task ls",
             Self::Session => "ariadne session ls",
             Self::Repo => "ariadne repo ls",
-            Self::PullRequest => "ariadne pr ls --all",
         }
     }
 
@@ -81,7 +76,7 @@ impl Kind {
     fn row(self, v: &Value) -> Row {
         let f = |key: &str| field(v, key);
         let (label, alias) = match self {
-            Self::Goal | Self::Task | Self::PullRequest => (f("title"), None),
+            Self::Goal | Self::Task => (f("title"), None),
             Self::Session => (format!("{} session ({})", f("seat"), f("status")), None),
             Self::Repo => (
                 format!("{} [{}]", f("path"), f("base_branch")),

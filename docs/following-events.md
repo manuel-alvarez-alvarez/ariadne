@@ -51,11 +51,12 @@ disagree with the daemon's own exhaustion check, and that disagreement is
 never acted on (021, 024).
 
 A repository with the forge integration on (see [The forge
-integration](forge.md)) also carries `pull_request_created`,
-`pull_request_updated` and `pull_request_deleted` in `ariadne events -f`,
-one per request the ledger gains, changes, or drops, with the request's id
-as the subject and its title and state as the detail; and
+integration](forge.md)) also carries `pull_requests_changed` in `ariadne
+events -f`, with the repository's id as the subject, whenever its requests
+move on the forge or in what Ariadne keeps of them — the requests
+themselves are read live, so the event carries none; and
 `forge_settings_updated`, subject "forge tunnel", whenever the webhook
 tunnel's switch or state changes. Neither belongs to a goal or a task, so
 `--goal` and `--task` leave them out; `--kind` still selects them, and
-`ariadne pr inspect <id>` reads a request's current state directly.
+`ariadne pr inspect <repo> <number>` reads a request's current state
+directly.

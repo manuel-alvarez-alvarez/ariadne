@@ -290,11 +290,9 @@ and the ACP runtime that reports the agent events (021).
 
 | Event | Payload |
 | --- | --- |
-| `pull_request_created` | The complete `PullRequestDto` after its first insertion. |
-| `pull_request_updated` | The complete `PullRequestDto` after an update. |
-| `pull_request_deleted` | The complete `PullRequestDto` removed from the ledger. |
+| `pull_requests_changed` | `{repository_id}`: the repository whose requests moved, on the forge since its fetch last read them, or in what Ariadne keeps of them. |
 
-These events have no goal or task routing scope, even when the request records an origin task.
+Requests are read live off the forge and not stored, so the event carries no request: a client reads them again. It has no goal or task routing scope.
 See [026](026-pull-requests.md) for identity, routes, and event tests.
 
 ## Forge settings events (027)

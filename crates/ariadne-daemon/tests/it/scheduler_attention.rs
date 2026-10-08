@@ -1973,29 +1973,16 @@ async fn approved_with_a_kept_request(w: &World) -> (AgentSession, String) {
     let (pull, _) = w
         .store
         .upsert_pull_request(ariadne_store::NewPullRequest {
-            existing_id: None,
             repository_id: w.task.repo_id.clone(),
             number: 1,
             url: URL.into(),
-            title: "Fix widgets".into(),
-            body: String::new(),
-            author_login: "me".into(),
-            tracked_by: "forge".into(),
-            state: "open".into(),
-            draft: false,
-            head_branch: w.task.branch.clone(),
-            head_sha: "abc".into(),
-            head_repo: None,
-            base_branch: "main".into(),
-            // Quiet: nothing on it is news the author was not told.
-            checks: "none".into(),
-            review_decision: "none".into(),
+            role: "author".into(),
             origin_task_id: Some(w.task.id.clone()),
-            opened_at: "2026-10-01T00:00:00Z".into(),
-            merge_sha: None,
         })
         .await
         .unwrap();
+    // Quiet: nothing on it is news the author was not told.
+    crate::common::forge::seed_live(&w.h, &pull, "me", &w.task.branch, "abc", false);
     (session, pull.id)
 }
 
@@ -2367,28 +2354,15 @@ async fn pull_request_session(h: &Harness, number: i64) -> AgentSession {
     let (pull, _) = h
         .store
         .upsert_pull_request(ariadne_store::NewPullRequest {
-            existing_id: None,
             repository_id: repo.id.clone(),
             number,
             url: format!("https://github.com/acme/widgets/pull/{number}"),
-            title: format!("Fix widgets {number}"),
-            body: String::new(),
-            author_login: "someone".into(),
-            tracked_by: "forge".into(),
-            state: "open".into(),
-            draft: false,
-            head_branch: format!("fix-{number}"),
-            head_sha: "abc".into(),
-            head_repo: None,
-            base_branch: "main".into(),
-            checks: "none".into(),
-            review_decision: "none".into(),
+            role: "reviewer".into(),
             origin_task_id: None,
-            opened_at: "2026-10-01T00:00:00Z".into(),
-            merge_sha: None,
         })
         .await
         .unwrap();
+    crate::common::forge::seed_live(h, &pull, "someone", &format!("fix-{number}"), "abc", true);
     let worktree = h.at(&format!("wt-pr-{number}"));
     std::fs::create_dir_all(&worktree).unwrap();
     let session = h

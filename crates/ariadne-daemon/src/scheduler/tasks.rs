@@ -1243,7 +1243,16 @@ impl super::Scheduler {
                 .store
                 .pull_request_of_task(task_id)
                 .await?
-                .is_some_and(|pull| pull.state == "open" && pull.ready);
+                // A row is a request Ariadne still works on: open, or ended
+                // with its work not taken down yet; the forge says which.
+                .is_some_and(|pull| {
+                    pull.ready
+                        && self
+                            .launcher
+                            .live
+                            .get(&pull.id)
+                            .is_none_or(|live| live.pull.state == "open")
+                });
         }
         if owed {
             info!(session = %back.id, seat = ?back.seat, "the agent is back on its feet and the user is still owed, raising it again");

@@ -366,6 +366,13 @@ async fn the_author_replies_and_reports_and_no_other_session_may() {
         call.args.contains(&"body=Renamed it.".to_string()),
         "{call:?}"
     );
+    // The forge holds the reply now, and the next read finds the thread
+    // answered.
+    let answered = [
+        review_comment(101, "alice", None, "2026-10-02T00:00:00Z"),
+        review_comment(201, "me", Some(101), "2026-10-03T00:00:00Z"),
+    ];
+    stub.reprogram(script("OPEN", &answered, json!([])));
     let dto: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
     assert_eq!(dto["unanswered_comments"], 0);
     h.error(
@@ -473,12 +480,8 @@ async fn a_merge_is_told_to_the_author_and_then_ends_the_task_and_its_agent() {
         "the request's cleanup to be recorded",
         async || {
             pass_over(&h, &id).await;
-            h.store
-                .get_pull_request(&id)
-                .await
-                .unwrap()
-                .cleaned_at
-                .is_some()
+            // Taken down, Ariadne works on it no more: the row is gone.
+            h.store.get_pull_request(&id).await.is_err()
         },
     )
     .await;
@@ -495,7 +498,6 @@ async fn a_merge_ends_the_task_on_its_own_merge_commit_once_the_local_base_holds
         stub,
         task,
         author,
-        id,
         repo,
         path,
         bare,
@@ -544,8 +546,6 @@ async fn a_merge_ends_the_task_on_its_own_merge_commit_once_the_local_base_holds
         h.status(&task.id).await == TaskStatus::Finished
     })
     .await;
-    let row = h.store.get_pull_request(&id).await.unwrap();
-    assert_eq!(row.merge_sha.as_deref(), Some(merge.as_str()));
     let finished = h.store.get_task(&task.id).await.unwrap();
     assert_eq!(
         finished.merge_commit.as_deref(),
@@ -617,12 +617,14 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_author() {
     ] {
         entries.insert(0, entry);
     }
-    stub.reprogram(script);
+    stub.reprogram(script.clone());
     fetch_again(&h, &stub, &repo).await;
 
     let ask = Request::builder()
         .method("PUT")
-        .uri(format!("/v1/pull-requests/{id}/ariadne-review"))
+        .uri(format!(
+            "/v1/repositories/{repo}/pull-requests/1/ariadne-review"
+        ))
         .header("content-type", "application/json")
         .body(Body::from(
             json!({"asked": true, "model": "stub:review-model"}).to_string(),
@@ -661,11 +663,30 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_author() {
         .await;
     let finding_id = stored
         .iter()
-        .find(|c| c["forge_id"] == "rc-501")
+        .find(|c| c["id"] == "rc-501")
         .expect("the finding is stored")["id"]
         .as_str()
         .unwrap()
         .to_string();
+    // The forge holds what the review posted from now on: the finding on
+    // its line, and the summary on the conversation.
+    let holds = |script: &mut Value, comments: Value, summary: Value| {
+        for entry in script.as_array_mut().unwrap() {
+            if entry["args"] == json!(["api", "repos/acme/widgets/pulls/1/comments"]) {
+                entry["stdout"] = json!(comments.to_string());
+            }
+            if entry["args"] == json!(["api", "repos/acme/widgets/issues/1/comments"]) {
+                entry["stdout"] = json!(summary.to_string());
+            }
+        }
+    };
+    let me = json!({"login": "me", "type": "User"});
+    let summary = json!([{"id": 301, "user": me, "body": "One P1.",
+        "created_at": "2026-10-02T00:00:00Z"}]);
+    let mut posted = finding.clone();
+    posted[0]["user"] = me.clone();
+    holds(&mut script, posted.clone(), summary.clone());
+    stub.reprogram(script.clone());
     let dto: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
     assert_eq!(
         dto["unanswered_comments"], 2,
@@ -702,6 +723,13 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_author() {
             StatusCode::CREATED,
         )
         .await;
+    let mut answered = posted.as_array().unwrap().clone();
+    answered.push(
+        json!({"id": 601, "in_reply_to_id": 501, "user": me, "body": "Added the test.",
+        "path": "src/lib.rs", "line": 3, "created_at": "2026-10-03T00:00:00Z"}),
+    );
+    holds(&mut script, json!(answered), summary);
+    stub.reprogram(script);
     // The answer is posted under the user's login, yet it is news to the
     // review that opened the thread.
     let answer_id = answer["id"].as_str().unwrap().to_string();
@@ -912,13 +940,8 @@ async fn a_merged_goal_branch_goes_once_its_task_is_over_and_a_failed_remote_del
         "the remote could not be reached"
     );
     assert!(
-        h.store
-            .get_pull_request(&id)
-            .await
-            .unwrap()
-            .cleaned_at
-            .is_none(),
-        "the cleanup stays owed"
+        h.store.get_pull_request(&id).await.is_ok(),
+        "the cleanup stays owed: the row stays"
     );
 
     sh(
@@ -961,20 +984,28 @@ async fn a_closed_request_i_review_deletes_no_branch() {
         .json(
             post_json(
                 "/v1/repositories",
-                json!({"path": path, "forge": {"enabled": true}}),
+                json!({"path": path, "forge": {"enabled": true, "review_model": "stub:review-model"}}),
             ),
             StatusCode::CREATED,
         )
         .await;
     let repo = created["id"].as_str().unwrap().to_string();
-    let mut rows: Vec<Value> = Vec::new();
-    eventually(TIMEOUT, "the request to be recorded", async || {
-        rows = h.get("/v1/pull-requests?state=all").await;
-        rows.len() == 1
-    })
+    let mut rows = Vec::new();
+    eventually(
+        TIMEOUT,
+        "Ariadne to start reviewing the request",
+        async || {
+            rows = h
+                .store
+                .list_pull_requests(ariadne_store::PullRequestFilter::default())
+                .await
+                .unwrap();
+            rows.len() == 1
+        },
+    )
     .await;
-    assert_eq!(rows[0]["role"], "reviewer");
-    let id = rows[0]["id"].as_str().unwrap().to_string();
+    assert_eq!(rows[0].role, "reviewer");
+    let id = rows[0].id.clone();
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
 
     read["state"] = json!("CLOSED");
@@ -986,11 +1017,15 @@ async fn a_closed_request_i_review_deletes_no_branch() {
         &threads.to_string(),
     ));
     h.state.forge_poll.wake(&repo);
-    eventually(TIMEOUT, "the request to close", async || {
-        h.get::<Value>(&format!("/v1/pull-requests/{id}")).await["state"] == "closed"
-    })
+    eventually(
+        TIMEOUT,
+        "Ariadne to stop working on the closed request",
+        async || {
+            h.flush_scheduler().await;
+            h.store.get_pull_request(&id).await.is_err()
+        },
+    )
     .await;
-    pass_over(&h, &id).await;
     assert_eq!(sh(&path, "git branch --list fix"), "fix");
     assert!(
         h.store

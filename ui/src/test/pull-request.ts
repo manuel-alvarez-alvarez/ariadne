@@ -1,4 +1,5 @@
 import type { PullRequestDto } from "@/api"
+/** A request Ariadne works on, as the forge reads it: one that asks for my review. */
 export const pull: PullRequestDto = {
   id: "pull-42",
   repository_id: "repo",
@@ -7,7 +8,6 @@ export const pull: PullRequestDto = {
   title: "Fix widgets",
   author_login: "someone",
   role: "reviewer",
-  tracked_by: "user",
   state: "open",
   draft: false,
   head_branch: "fix",
@@ -26,7 +26,5 @@ export const pull: PullRequestDto = {
   ready: false,
   origin_task_id: null,
   opened_at: "2026-10-01T00:00:00Z",
-  last_seen_at: "2026-10-07T00:00:00Z",
-  created_at: "2026-10-02T00:00:00Z",
   updated_at: "2026-10-07T01:00:00Z",
 }

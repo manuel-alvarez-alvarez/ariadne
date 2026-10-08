@@ -68,6 +68,7 @@ impl McpSeat {
                 "open_pull_request",
                 "get_pull_request",
                 "list_comments",
+                "get_comment",
                 "reply_comment",
                 "report_pull_request",
                 "send_message",
@@ -89,6 +90,7 @@ impl McpSeat {
                 "get_pull_request",
                 "get_diff",
                 "list_comments",
+                "get_comment",
                 "reply_comment",
                 "resolve_thread",
                 "submit_review",
@@ -153,16 +155,14 @@ impl AriadneMcp {
         Ok(format!("/v1/pull-requests/{id}{tail}"))
     }
 
-    /// The request this session's task opened, as the ledger holds it.
+    /// The request this session's task opened, while Ariadne works on it.
     async fn task_pull_request(&self) -> Result<String, McpError> {
         let task = self
             .task_id
             .as_deref()
             .ok_or_else(|| McpError::invalid_params("this session works for no request", None))?;
         let rows: Vec<serde_json::Value> = self
-            .get(&format!(
-                "/v1/pull-requests?task={task}&role=author&state=all"
-            ))
+            .get(&format!("/v1/pull-requests?task={task}&role=author"))
             .await?;
         rows.first()
             .and_then(|row| row["id"].as_str())
@@ -472,6 +472,7 @@ pub(crate) mod tests {
                     "open_pull_request",
                     "get_pull_request",
                     "list_comments",
+                    "get_comment",
                     "reply_comment",
                     "report_pull_request",
                     "send_message",
@@ -495,6 +496,7 @@ pub(crate) mod tests {
                     "get_pull_request",
                     "get_diff",
                     "list_comments",
+                    "get_comment",
                     "reply_comment",
                     "resolve_thread",
                     "submit_review",
@@ -514,6 +516,7 @@ pub(crate) mod tests {
             "fail_task",
             "finalize_plan",
             "finish_task",
+            "get_comment",
             "get_diff",
             "get_pull_request",
             "get_task",
@@ -572,12 +575,12 @@ pub(crate) mod tests {
         );
     }
 
-    /// A reviewer pull request session (029) is listed seven tools: the
-    /// request, its diff, its comments, a reply, the resolve of a thread it
-    /// opened, one review and the report. It has no task tool and no
+    /// A reviewer pull request session (029) is listed eight tools: the
+    /// request, its diff, its comments, one comment, a reply, the resolve of
+    /// a thread it opened, one review and the report. It has no task tool and no
     /// message tool, and nothing it is listed approves or merges.
     #[test]
-    fn the_pull_request_reviewer_seat_lists_its_seven_tools_and_no_task_or_message_tool() {
+    fn the_pull_request_reviewer_seat_lists_its_eight_tools_and_no_task_or_message_tool() {
         assert_eq!(
             mcp_seat("reviewer", true).unwrap(),
             McpSeat::PullRequestReviewer
@@ -596,6 +599,7 @@ pub(crate) mod tests {
         assert_eq!(
             listed,
             [
+                "get_comment",
                 "get_diff",
                 "get_pull_request",
                 "list_comments",
@@ -604,7 +608,7 @@ pub(crate) mod tests {
                 "resolve_thread",
                 "submit_review",
             ],
-            "the pull request reviewer is listed seven tools"
+            "the pull request reviewer is listed eight tools"
         );
         for tool in [
             "get_task",

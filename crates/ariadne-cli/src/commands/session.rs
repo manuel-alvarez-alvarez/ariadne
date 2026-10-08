@@ -612,10 +612,22 @@ async fn render_page(client: &Client, options: &ListOptions, format: Format) -> 
     if format == Format::Json {
         return crate::output::print_json(&page);
     }
-    if page.sessions.iter().any(|s| s.pull_request_id.is_some()) {
-        let pulls: Vec<PullRequestDto> = client.get_json("/v1/pull-requests?state=all").await?;
-        link_pull_requests(&mut page, &pulls);
+    // Each request a row names, read off the forge: what Ariadne still
+    // works on. One it stopped working on keeps the title it has.
+    let mut ids: Vec<String> = page
+        .sessions
+        .iter()
+        .filter_map(|s| s.pull_request_id.clone())
+        .collect();
+    ids.sort();
+    ids.dedup();
+    let mut pulls: Vec<PullRequestDto> = Vec::new();
+    for id in ids {
+        if let Ok(pull) = client.get_json(&format!("/v1/pull-requests/{id}")).await {
+            pulls.push(pull);
+        }
     }
+    link_pull_requests(&mut page, &pulls);
     print_list(
         format,
         &page.sessions,
@@ -642,7 +654,7 @@ fn link_pull_requests(page: &mut SessionPageDto, pulls: &[PullRequestDto]) {
         let Some(pull) = session
             .pull_request_id
             .as_deref()
-            .and_then(|id| pulls.iter().find(|p| p.id == id))
+            .and_then(|id| pulls.iter().find(|p| p.id.as_deref() == Some(id)))
         else {
             continue;
         };
@@ -1156,11 +1168,11 @@ mod tests {
         let pull: PullRequestDto = serde_json::from_value(serde_json::json!({
             "id": "01PR", "repository_id": "01R", "number": 42,
             "url": "https://github.com/acme/widgets/pull/42", "title": "Fix widgets",
-            "author_login": "me", "tracked_by": "forge", "state": "open", "draft": false,
+            "author_login": "me", "state": "open", "draft": false,
             "head_branch": "fix", "head_sha": "abc", "head_repo": null, "base_branch": "main",
             "checks": "none", "review_decision": "none", "unanswered_comments": 1,
             "origin_task_id": null, "opened_at": "", "role": "author", "ready": false,
-            "last_seen_at": "", "created_at": "", "updated_at": "", "failed_checks": [],
+            "updated_at": "", "failed_checks": [],
             "behind_base": false, "session_id": "01PRS"
         }))
         .unwrap();

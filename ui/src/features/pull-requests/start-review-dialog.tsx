@@ -77,7 +77,8 @@ export function StartReviewDialog({
   function start() {
     ask.mutate(
       {
-        id: pull.id,
+        repository_id: pull.repository_id,
+        number: pull.number,
         asked: true,
         model: pin.model,
         effort: pin.effort || undefined,

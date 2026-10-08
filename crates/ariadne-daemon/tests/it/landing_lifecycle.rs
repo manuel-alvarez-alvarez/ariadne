@@ -730,10 +730,16 @@ async fn opening_a_pull_request_runs_the_forge_cli_once_and_keeps_the_task_until
         .await
         .unwrap()
         .expect("the ledger holds the task's request");
-    h.store
-        .set_pull_request_state(&kept.id, "merged")
-        .await
-        .unwrap();
+    // A human merges it: the forge says so, which is what `finish_task`
+    // reads (005).
+    assert_eq!(kept.role, "author");
+    let mut merged = opened_pull(URL, "fix");
+    merged["state"] = serde_json::json!("MERGED");
+    cli.reprogram(serde_json::json!([
+        answer(&["auth", "status"], 0, ""),
+        answer(&["pr", "view"], 0, &merged.to_string()),
+        answer(&["pr", "list"], 0, "[]"),
+    ]));
     let finished: TaskDto = h.json(finish(), StatusCode::OK).await;
     assert_eq!(finished.status, TaskStatus::Finished);
     assert_eq!(finished.merge_commit.as_deref(), Some(tip.as_str()));

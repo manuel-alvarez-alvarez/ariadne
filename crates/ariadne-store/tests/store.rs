@@ -4984,110 +4984,87 @@ async fn one_forge_repository_is_enabled_on_one_row() {
     assert_eq!(rows[0].repository_id, second.id);
 }
 
+/// A row is Ariadne's bookkeeping of a request it works on (026): one per
+/// repository and number, the first task that opened it staying its origin.
+/// Starting and stopping the work says so per repository, and the sessions
+/// that ran on a row outlive it, let go of it.
 #[tokio::test]
-async fn pull_requests_keep_identity_user_tracking_and_detail_fields() {
-    let (store, dir) = test_store().await;
-    let repo = store
-        .create_repository(NewRepository {
-            path: "/tmp/pull-requests".into(),
-            base_branch: "main".into(),
-            description: None,
-            permission_mode: None,
-            default_landing: None,
-        })
-        .await
-        .unwrap();
-    store
-        .set_forge_integration(SetForgeIntegration {
-            repository_id: repo.id.clone(),
-            kind: ariadne_core::ForgeKind::Github,
-            host: "github.com".into(),
-            owner: "acme".into(),
-            name: "widgets".into(),
-            remote: "origin".into(),
-            enabled: true,
-            login: Some("me".into()),
-            review_model: None,
-            review_effort: None,
-        })
-        .await
-        .unwrap();
-    let mut changes = store.watch_changes().unwrap();
-    let mut new = NewPullRequest {
-        existing_id: None,
-        repository_id: repo.id.clone(),
-        number: 42,
-        url: "https://github.com/acme/widgets/pull/42".into(),
-        title: "Fix the bug".into(),
-        body: String::new(),
-        author_login: "me".into(),
-        tracked_by: "forge".into(),
-        state: "open".into(),
-        draft: false,
-        head_branch: "fix".into(),
-        head_sha: "abc".into(),
-        head_repo: None,
-        base_branch: "main".into(),
-        checks: "pending".into(),
-        review_decision: "none".into(),
-        origin_task_id: None,
-        opened_at: "2026-10-01T00:00:00Z".into(),
-        merge_sha: None,
-    };
-    let (first, created) = store.upsert_pull_request(new.clone()).await.unwrap();
-    assert!(created);
+async fn a_pull_request_row_keeps_its_identity_and_origin_and_its_sessions_outlive_it() {
+    let (store, _dir, first) = store_with_my_pull_request().await;
     assert_eq!(first.role, "author");
-    assert!(matches!(
-        changes.recv().await.unwrap(),
-        Change::PullRequestCreated(_)
-    ));
-    assert!(matches!(
-        store.delete_pull_request(&first.id).await,
-        Err(StoreError::Conflict(_))
-    ));
-    new.tracked_by = "user".into();
-    let (second, created) = store.upsert_pull_request(new.clone()).await.unwrap();
-    assert!(!created);
-    assert_eq!(first.id, second.id);
-    assert!(matches!(
-        changes.recv().await.unwrap(),
-        Change::PullRequestUpdated(_)
-    ));
-    let db = sqlx::SqlitePool::connect(&format!(
-        "sqlite://{}",
-        dir.path().join("test.db").display()
-    ))
-    .await
-    .unwrap();
-    sqlx::query("UPDATE pull_requests SET unanswered_comments = 3, ready = 1 WHERE id = ?")
-        .bind(&first.id)
-        .execute(&db)
+    assert_eq!(first.origin_task_id, None);
+    let mut changes = store.watch_changes().unwrap();
+    let (second, created) = store
+        .upsert_pull_request(NewPullRequest {
+            repository_id: first.repository_id.clone(),
+            number: 7,
+            url: first.url.clone(),
+            role: "author".into(),
+            origin_task_id: None,
+        })
         .await
         .unwrap();
-    db.close().await;
-    new.tracked_by = "forge".into();
-    let (third, _) = store.upsert_pull_request(new).await.unwrap();
-    assert_eq!(third.tracked_by, "user");
-    assert_eq!(third.unanswered_comments, 3);
-    assert!(third.ready);
-    assert_eq!(third.created_at, first.created_at);
+    assert!(!created);
+    assert_eq!(second.id, first.id);
     assert!(matches!(
-        changes.recv().await.unwrap(),
-        Change::PullRequestUpdated(_)
+        store
+            .upsert_pull_request(NewPullRequest {
+                repository_id: first.repository_id.clone(),
+                number: 8,
+                url: "https://github.com/acme/widgets/pull/8".into(),
+                role: "maintainer".into(),
+                origin_task_id: None,
+            })
+            .await,
+        Err(StoreError::Invalid(_))
     ));
     assert_eq!(
         store
-            .list_pull_requests(PullRequestFilter::default())
+            .pull_request_by_number(&first.repository_id, 7)
             .await
             .unwrap()
-            .len(),
-        1
+            .map(|row| row.id),
+        Some(first.id.clone())
     );
-    store.delete_pull_request(&first.id).await.unwrap();
-    assert!(matches!(
-        changes.recv().await.unwrap(),
-        Change::PullRequestDeleted(_)
-    ));
+    let session = store
+        .create_session(NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: Some(ariadne_core::Seat::Reviewer),
+            task_agent_id: None,
+            model: "stub:m".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: Some(first.id.clone()),
+        })
+        .await
+        .unwrap();
+    while let Ok(change) = changes.try_recv() {
+        drop(change);
+    }
+    let gone = store.delete_pull_request(&first.id).await.unwrap();
+    assert_eq!(gone.map(|row| row.id), Some(first.id.clone()));
+    loop {
+        match changes.recv().await.unwrap() {
+            Change::PullRequestsChanged(repository) => {
+                assert_eq!(repository, first.repository_id);
+                break;
+            }
+            _ => continue,
+        }
+    }
+    let kept = store.get_session(&session.id).await.unwrap();
+    assert_eq!(
+        kept.pull_request_id, None,
+        "the session is let go of the row"
+    );
+    assert!(
+        store
+            .delete_pull_request(&first.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
     assert!(
         store
             .list_pull_requests(PullRequestFilter::default())
@@ -5157,7 +5134,7 @@ async fn pull_request_migration_preserves_existing_rows_and_a_recoverable_backup
 
 /// A store with one enabled GitHub repository, signed in as `me`, and one
 /// open request of mine on it.
-async fn store_with_my_pull_request() -> (Store, tempfile::TempDir, PullRequest) {
+async fn store_with_my_pull_request() -> (Store, tempfile::TempDir, PullRequestRow) {
     let (store, dir) = test_store().await;
     let repo = store
         .create_repository(NewRepository {
@@ -5186,102 +5163,25 @@ async fn store_with_my_pull_request() -> (Store, tempfile::TempDir, PullRequest)
         .unwrap();
     let (row, _) = store
         .upsert_pull_request(NewPullRequest {
-            existing_id: None,
             repository_id: repo.id.clone(),
             number: 7,
             url: "https://github.com/acme/widgets/pull/7".into(),
-            title: "Fix widgets".into(),
-            body: String::new(),
-            author_login: "me".into(),
-            tracked_by: "forge".into(),
-            state: "open".into(),
-            draft: false,
-            head_branch: "fix".into(),
-            head_sha: "abc".into(),
-            head_repo: None,
-            base_branch: "main".into(),
-            checks: "none".into(),
-            review_decision: "none".into(),
+            role: "author".into(),
             origin_task_id: None,
-            opened_at: "2026-10-01T00:00:00Z".into(),
-            merge_sha: None,
         })
         .await
         .unwrap();
     (store, dir, row)
 }
 
-fn comment(forge_id: &str, thread: &str, author: &str, at: &str) -> NewPullRequestComment {
-    NewPullRequestComment {
-        forge_id: forge_id.into(),
-        thread_id: thread.into(),
-        kind: "review_comment".into(),
-        author_login: author.into(),
-        author_is_bot: false,
-        body: format!("comment {forge_id}"),
-        path: Some("src/lib.rs".into()),
-        line: Some(3),
-        in_reply_to: None,
-        created_at: at.into(),
-        resolved: false,
-        from_review: false,
-    }
-}
-
-/// `unanswered_comments` is the number of threads whose last comment is by
-/// another login than mine (026): a thread I answered last counts zero, and
-/// so does a resolved one. A claim of the news stamps it and a release gives
-/// it back. A comment read again keeps its row and the stamp that says its
-/// session was told of it.
+/// A comment is the forge's; what the store keeps of one is a mark (026):
+/// told, once a claim of the news that names it held, and given back by a
+/// release; posted by a review, once a review session posted it (029). A
+/// claim is a compare and set over the row's told mark and the comments'
+/// marks, so the same news is not claimed twice.
 #[tokio::test]
-async fn unanswered_comments_count_the_threads_another_login_spoke_last_in() {
+async fn comment_marks_are_claimed_once_released_whole_and_keep_the_review_mark() {
     let (store, _dir, row) = store_with_my_pull_request().await;
-    let mut resolved = comment("3", "t3", "carol", "2026-10-02T00:00:00Z");
-    resolved.resolved = true;
-    let fetched = [
-        comment("1", "t1", "alice", "2026-10-02T00:00:00Z"),
-        comment("2", "t2", "bob", "2026-10-02T00:00:00Z"),
-        comment("2r", "t2", "ME", "2026-10-03T00:00:00Z"),
-        resolved,
-    ];
-    let updated = store
-        .upsert_pull_request_comments(&row.id, &fetched, "me")
-        .await
-        .unwrap();
-    assert_eq!(updated.unanswered_comments, 1);
-
-    let untold = store
-        .untold_pull_request_comments(&row.id, "me", false)
-        .await
-        .unwrap();
-    assert_eq!(
-        untold
-            .iter()
-            .map(|c| c.forge_id.as_str())
-            .collect::<Vec<_>>(),
-        ["1"],
-        "an answered, a resolved and my own comment are no news"
-    );
-    let waiting = store
-        .list_pull_request_comments(&row.id, true, "me")
-        .await
-        .unwrap();
-    assert_eq!(
-        waiting
-            .iter()
-            .map(|c| c.forge_id.as_str())
-            .collect::<Vec<_>>(),
-        ["1"]
-    );
-    assert_eq!(
-        store
-            .list_pull_request_comments(&row.id, false, "me")
-            .await
-            .unwrap()
-            .len(),
-        4
-    );
-
     let told = PullRequestTold {
         checks: vec!["lint".into()],
         behind_base: true,
@@ -5298,45 +5198,41 @@ async fn unanswered_comments_count_the_threads_another_login_spoke_last_in() {
         check_state: "none".into(),
         head_sha: String::new(),
     };
-    // A claim whose prompt never went out is given back whole: the comment
-    // is untold again and the row takes back the mark it had.
+    let comment = ["rc-1".to_string()];
     assert!(
         store
-            .claim_pull_request_news(&row.id, &[untold[0].id.clone()], &before, &told)
+            .claim_pull_request_news(&row.id, &comment, &before, &told)
             .await
             .unwrap()
     );
     let claimed = store.get_pull_request(&row.id).await.unwrap();
     assert!(claimed.news_told_at.is_some());
-    // A second claim of the same news finds the mark moved and the comment
-    // told, and is refused: a news is told once, whoever queued it.
-    assert!(
-        !store
-            .claim_pull_request_news(&row.id, &[untold[0].id.clone()], &before, &told)
-            .await
-            .unwrap(),
-        "the same news is not claimed twice"
-    );
     assert_eq!(claimed.told_checks, r#"["lint"]"#);
     assert_eq!(claimed.told_check_state.as_deref(), Some("failure"));
+    let marks = store.pull_request_comment_marks(&row.id).await.unwrap();
+    assert_eq!(marks.len(), 1);
+    assert!(marks[0].told_at.is_some());
+    assert!(
+        !store
+            .claim_pull_request_news(&row.id, &comment, &told, &told)
+            .await
+            .unwrap(),
+        "a told comment is not claimed twice"
+    );
+    // A claim whose prompt never went out is given back whole.
     store
-        .release_pull_request_news(&row.id, &[untold[0].id.clone()], &before)
+        .release_pull_request_news(&row.id, &comment, &before)
         .await
         .unwrap();
     let released = store.get_pull_request(&row.id).await.unwrap();
     assert_eq!(released.told_checks, "[]");
     assert!(!released.told_behind_base);
-    assert_eq!(
-        store
-            .untold_pull_request_comments(&row.id, "me", false)
-            .await
-            .unwrap()
-            .len(),
-        1,
-        "a released comment is news again"
+    assert!(
+        store.pull_request_comment_marks(&row.id).await.unwrap()[0]
+            .told_at
+            .is_none()
     );
-    // A news with no comment, computed from a mark that has moved since,
-    // is refused too, and leaves the row as it was.
+    // A news computed from a mark that moved since is refused.
     let stale = PullRequestTold {
         review_decision: "changes_requested".into(),
         ..before.clone()
@@ -5347,76 +5243,35 @@ async fn unanswered_comments_count_the_threads_another_login_spoke_last_in() {
             .await
             .unwrap()
     );
-    assert_eq!(
-        store.get_pull_request(&row.id).await.unwrap().told_checks,
-        "[]"
-    );
-    assert!(
-        store
-            .claim_pull_request_news(&row.id, &[untold[0].id.clone()], &before, &told)
-            .await
-            .unwrap()
-    );
-    let again = store
-        .upsert_pull_request_comments(&row.id, &fetched, "me")
+    store
+        .mark_review_comments(&row.id, &["rc-1".into(), "ic-2".into()])
         .await
         .unwrap();
-    assert_eq!(again.unanswered_comments, 1);
+    let mut marks = store.pull_request_comment_marks(&row.id).await.unwrap();
+    marks.sort_by(|a, b| a.forge_id.cmp(&b.forge_id));
+    assert!(marks.iter().all(|m| m.from_review));
     assert!(
         store
-            .untold_pull_request_comments(&row.id, "me", false)
+            .claim_pull_request_news(&row.id, &comment, &before, &told)
+            .await
+            .unwrap(),
+        "a review's mark leaves the comment untold"
+    );
+    store.delete_pull_request(&row.id).await.unwrap();
+    assert!(
+        store
+            .pull_request_comment_marks(&row.id)
             .await
             .unwrap()
             .is_empty(),
-        "a comment read again keeps its told stamp"
+        "the marks go with the row"
     );
-    let first = store
-        .get_pull_request_comment(&row.id, &untold[0].id)
-        .await
-        .unwrap();
-    assert_eq!(first.forge_id, "1");
-    assert!(first.told_at.is_some());
-
-    // My reply answers the thread, and a later comment by another login
-    // opens it again.
-    store
-        .upsert_pull_request_comments(
-            &row.id,
-            &[comment("1r", "t1", "me", "2026-10-04T00:00:00Z")],
-            "me",
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        store
-            .get_pull_request(&row.id)
-            .await
-            .unwrap()
-            .unanswered_comments,
-        0
-    );
-    assert!(
-        store
-            .get_pull_request_comment(&row.id, &untold[0].id)
-            .await
-            .unwrap()
-            .answered
-    );
-    let reopened = store
-        .upsert_pull_request_comments(
-            &row.id,
-            &[comment("1rr", "t1", "alice", "2026-10-05T00:00:00Z")],
-            "me",
-        )
-        .await
-        .unwrap();
-    assert_eq!(reopened.unanswered_comments, 1);
 }
 
-/// The ready flag and the state a session reports move the row, and a
-/// repeated ready report says nothing moved.
+/// The ready flag a session reports moves the row, and a repeated ready
+/// report says nothing moved.
 #[tokio::test]
-async fn a_pull_request_reports_ready_once_and_takes_its_state() {
+async fn a_pull_request_reports_ready_once() {
     let (store, _dir, row) = store_with_my_pull_request().await;
     let (ready, moved) = store.set_pull_request_ready(&row.id, true).await.unwrap();
     assert!(ready.ready && moved);
@@ -5424,27 +5279,13 @@ async fn a_pull_request_reports_ready_once_and_takes_its_state() {
     assert!(!moved, "a repeat moves nothing");
     let (ready, moved) = store.set_pull_request_ready(&row.id, false).await.unwrap();
     assert!(!ready.ready && moved);
-    assert_eq!(
-        store
-            .set_pull_request_state(&row.id, "merged")
-            .await
-            .unwrap()
-            .state,
-        "merged"
-    );
-    assert!(matches!(
-        store.set_pull_request_state(&row.id, "gone").await,
-        Err(StoreError::Invalid(_))
-    ));
 }
 
 /// A reviewer row keeps the head its session last reviewed, and says once
-/// whether that moved (029). A reviewer session hears only of the threads
-/// its login opened.
+/// whether that moved (029).
 #[tokio::test]
-async fn a_reviewed_sha_moves_once_and_a_reviewer_hears_of_its_own_threads() {
+async fn a_reviewed_sha_moves_once() {
     let (store, _dir, row) = store_with_my_pull_request().await;
-    assert!(row.review_requested, "a new row asks for a review");
     assert_eq!(row.reviewed_sha, None);
     let (reviewed, moved) = store
         .set_pull_request_reviewed(&row.id, "abc")
@@ -5462,43 +5303,6 @@ async fn a_reviewed_sha_moves_once_and_a_reviewer_hears_of_its_own_threads() {
         .await
         .unwrap();
     assert!(moved, "a later sha moves it again");
-    let withdrawn = store
-        .set_pull_request_review_requested(&row.id, false)
-        .await
-        .unwrap();
-    assert!(!withdrawn.review_requested);
-
-    let fetched = [
-        comment("1", "mine", "me", "2026-10-02T00:00:00Z"),
-        comment("1r", "mine", "alice", "2026-10-03T00:00:00Z"),
-        comment("2", "theirs", "bob", "2026-10-02T00:00:00Z"),
-    ];
-    store
-        .upsert_pull_request_comments(&row.id, &fetched, "me")
-        .await
-        .unwrap();
-    let forge_ids = |comments: Vec<ariadne_store::PullRequestComment>| -> Vec<String> {
-        comments.into_iter().map(|c| c.forge_id).collect()
-    };
-    assert_eq!(
-        forge_ids(
-            store
-                .untold_pull_request_comments(&row.id, "me", true)
-                .await
-                .unwrap()
-        ),
-        ["1r"],
-        "a reviewer hears of the reply in its own thread alone"
-    );
-    assert_eq!(
-        forge_ids(
-            store
-                .untold_pull_request_comments(&row.id, "me", false)
-                .await
-                .unwrap()
-        ),
-        ["2", "1r"]
-    );
 }
 
 /// A task's author keeps the request it opened (005), so the migration that
@@ -5635,25 +5439,11 @@ async fn pull_request_session_migration_preserves_sessions_and_requests() {
     let session = upgraded.get_session("s").await.unwrap();
     assert_eq!(session.worktree_path.as_deref(), Some("/work/wt"));
     assert_eq!(session.pull_request_id, None);
-    let row = upgraded.get_pull_request("p").await.unwrap();
-    assert_eq!(row.unanswered_comments, 2);
-    assert_eq!(row.failed_checks, "[]");
-    assert!(!row.behind_base);
-    assert_eq!(row.told_state, None);
-    assert_eq!(row.cleaned_at, None, "an open row owes no cleanup yet");
-    assert_eq!(
-        upgraded
-            .get_pull_request("q")
-            .await
-            .unwrap()
-            .cleaned_at
-            .as_deref(),
-        Some("2026-09-02"),
-        "a request that ended before this release owes no cleanup"
-    );
+    // Nothing works on either request — no integration reads them, and one
+    // ended long ago — so neither keeps a row (0020).
     assert!(
         upgraded
-            .list_pull_request_comments("p", false, "me")
+            .list_pull_requests(PullRequestFilter::default())
             .await
             .unwrap()
             .is_empty()
@@ -5670,7 +5460,132 @@ async fn pull_request_session_migration_preserves_sessions_and_requests() {
             .as_deref(),
         Some("/work/wt")
     );
-    assert_eq!(recovered.get_pull_request("p").await.unwrap().number, 1);
+}
+
+/// The migration that takes the forge's content out of the database (0020)
+/// keeps the row of each request Ariadne works on, with its marks: the
+/// request a task opened, an open one that asks for the user's review on a
+/// repository with a review pin, and one of the user's they asked Ariadne
+/// to review. Every other row goes, and so does an ended one whose work was
+/// taken down. A comment keeps its told and review marks alone, and a
+/// session that ran on a row that goes stays, let go of it.
+#[tokio::test]
+async fn the_migration_that_drops_forge_content_keeps_the_rows_of_work_and_their_marks() {
+    let dir = tempfile::tempdir().unwrap();
+    let old_migrations = dir.path().join("migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations")).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_name().to_string_lossy().as_ref() < "0020" {
+            std::fs::copy(entry.path(), old_migrations.join(entry.file_name())).unwrap();
+        }
+    }
+    let path = dir.path().join("old.db");
+    let db = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations.as_path())
+        .await
+        .unwrap()
+        .run(&db)
+        .await
+        .unwrap();
+    let pull = |id: &str,
+                number: i64,
+                author: &str,
+                role: &str,
+                state: &str,
+                task: &str,
+                asked: i64,
+                requested: i64,
+                cleaned: &str| {
+        format!(
+            "INSERT INTO pull_requests (id,repository_id,number,url,title,author_login,tracked_by,state,draft,head_branch,head_sha,base_branch,checks,review_decision,unanswered_comments,origin_task_id,opened_at,role,ready,last_seen_at,created_at,updated_at,review_asked,review_requested,cleaned_at) VALUES ('{id}','r',{number},'https://github.com/acme/widgets/pull/{number}','Fix','{author}','forge','{state}',0,'fix-{number}','abc','main','none','none',0,{task},'2026-10-01','{role}',0,'2026-10-01','2026-10-01','2026-10-01',{asked},{requested},{cleaned})"
+        )
+    };
+    for statement in [
+        "INSERT INTO repositories (id,path,base_branch,created_at,updated_at) VALUES ('r','/work/widgets','main','2026-10-01','2026-10-01')".to_string(),
+        "INSERT INTO forge_integrations (repository_id,kind,host,owner,name,remote,enabled,login,review_model,detected_at,updated_at) VALUES ('r','github','github.com','acme','widgets','origin',1,'me','stub:r','2026-10-01','2026-10-01')".to_string(),
+        "INSERT INTO goals (id,title,description,created_at,updated_at,model) VALUES ('g','Ship','Body','2026-10-01','2026-10-01','stub:m')".to_string(),
+        "INSERT INTO tasks (id,goal_id,repo_id,title,description,branch,created_at,updated_at) VALUES ('t','g','r','Fix','Body','ariadne/fix','2026-10-01','2026-10-01')".to_string(),
+        pull("tasks", 1, "me", "author", "open", "'t'", 0, 0, "NULL"),
+        pull("review", 2, "someone", "reviewer", "open", "NULL", 0, 1, "NULL"),
+        pull("asked", 3, "me", "author", "open", "NULL", 1, 0, "NULL"),
+        pull("listed", 4, "someone", "reviewer", "open", "NULL", 0, 0, "NULL"),
+        pull("mine", 5, "me", "author", "open", "NULL", 0, 0, "NULL"),
+        pull("ended", 6, "someone", "reviewer", "merged", "NULL", 0, 1, "'2026-10-02'"),
+        pull("owed", 7, "me", "author", "merged", "'t'", 0, 0, "NULL"),
+        "INSERT INTO agent_sessions (id,model,status,created_at,seat,pull_request_id) VALUES ('reviewing','stub:r','idle','2026-10-01','reviewer','review')".to_string(),
+        "INSERT INTO agent_sessions (id,model,status,created_at,seat,pull_request_id) VALUES ('reviewed','stub:r','exited','2026-10-01','reviewer','ended')".to_string(),
+        "INSERT INTO pull_request_comments (id,pull_request_id,forge_id,thread_id,kind,author_login,author_is_bot,body,created_at,fetched_at,told_at) VALUES ('c1','tasks','rc-1','T1','review_comment','alice',0,'Rename it.','2026-10-02','2026-10-02','2026-10-02')".to_string(),
+        "INSERT INTO pull_request_comments (id,pull_request_id,forge_id,thread_id,kind,author_login,author_is_bot,body,created_at,fetched_at,from_review) VALUES ('c2','asked','rc-2','T2','review_comment','me',0,'[P1] Untested','2026-10-02','2026-10-02',1)".to_string(),
+        "INSERT INTO pull_request_comments (id,pull_request_id,forge_id,thread_id,kind,author_login,author_is_bot,body,created_at,fetched_at) VALUES ('c3','tasks','rc-3','T3','review_comment','bob',0,'Untold.','2026-10-02','2026-10-02')".to_string(),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(statement)).execute(&db).await.unwrap();
+    }
+    db.close().await;
+
+    let upgraded = Store::open(&path).await.unwrap();
+    let mut kept: Vec<String> = upgraded
+        .list_pull_requests(PullRequestFilter::default())
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.id)
+        .collect();
+    kept.sort();
+    assert_eq!(kept, ["asked", "owed", "review", "tasks"]);
+    assert_eq!(
+        upgraded
+            .get_pull_request("tasks")
+            .await
+            .unwrap()
+            .origin_task_id
+            .as_deref(),
+        Some("t")
+    );
+    let told = upgraded.pull_request_comment_marks("tasks").await.unwrap();
+    assert_eq!(told.len(), 1, "an untold comment leaves no mark");
+    assert_eq!(told[0].forge_id, "rc-1");
+    assert!(told[0].told_at.is_some());
+    let review = upgraded.pull_request_comment_marks("asked").await.unwrap();
+    assert!(review[0].from_review);
+    assert_eq!(
+        upgraded
+            .get_session("reviewing")
+            .await
+            .unwrap()
+            .pull_request_id
+            .as_deref(),
+        Some("review")
+    );
+    let let_go = upgraded.get_session("reviewed").await.unwrap();
+    assert_eq!(let_go.pull_request_id, None, "a session outlives its row");
+    let db = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    let columns: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM pragma_table_info('pull_requests')")
+            .fetch_all(&db)
+            .await
+            .unwrap();
+    for gone in [
+        "title",
+        "body",
+        "author_login",
+        "head_sha",
+        "checks",
+        "state",
+    ] {
+        assert!(!columns.iter().any(|c| c == gone), "{gone} is the forge's");
+    }
+    db.close().await;
+    upgraded.close().await;
 }
 
 #[tokio::test]

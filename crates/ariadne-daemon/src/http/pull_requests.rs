@@ -1,20 +1,24 @@
-//! The ledger and live forge search.
+//! Pull requests, read live off the forge (026), and the requests Ariadne
+//! works on: what the forge holds is never stored, so every route here reads
+//! it, and joins what Ariadne keeps of a request it works on.
 use super::{
     AppState,
     caller::call_ctx,
-    convert::{pull_request_comment_dto, pull_request_dto_of},
+    convert::{forge_pull_dto, pull_request_comment_dto, pull_request_dto_of},
     error::{ApiError, ApiResult, Json},
 };
-use crate::forge::pulls::{DraftComment, ReviewDraft};
+use crate::forge::live::{self, Details, Live};
+use crate::forge::pulls::{CONVERSATION, DraftComment, ReviewDraft};
 use crate::forge::{ForgeClient, PullRequestRef, pulls};
 use ariadne_api::pull_requests::{
-    AddPullRequestRequest, AskReviewRequest, PullRequestCommentDto, PullRequestCommentQuery,
-    PullRequestDiffQuery, PullRequestDto, PullRequestListQuery, PullRequestMatchDto,
-    ReplyCommentRequest, ReportPullRequestRequest, SubmitReviewRequest,
+    AskReviewRequest, PullRequestCommentDto, PullRequestCommentQuery, PullRequestDiffQuery,
+    PullRequestDto, PullRequestListQuery, PullRequestMatchDto, ReplyCommentRequest,
+    ReportPullRequestRequest, SubmitReviewRequest,
 };
 use ariadne_core::{AttentionReason, Seat};
 use ariadne_store::{
-    AgentSession, ForgeIntegration, NewPullRequestComment, PullRequest, PullRequestFilter,
+    AgentSession, ForgeIntegration, PullRequest, PullRequestComment, PullRequestFilter,
+    PullRequestRow,
 };
 use axum::{
     extract::{Path, Query, State},
@@ -38,8 +42,65 @@ async fn integration(state: &AppState, id: &str) -> ApiResult<ForgeIntegration> 
 fn slug(forge: &ForgeIntegration) -> String {
     format!("{}/{}/{}", forge.host, forge.owner, forge.name)
 }
+fn client(state: &AppState, forge: &ForgeIntegration) -> ForgeClient {
+    ForgeClient::for_repository(&state.launcher.cfg, forge)
+}
 
-#[utoipa::path(get, path = "/v1/pull-requests", tag = "pull-requests", params(PullRequestListQuery), responses((status = 200, body = [PullRequestDto])))]
+/// Read a request Ariadne works on off the forge now, and leave the read
+/// where the fetch leaves its own (026): what a session asks for is never an
+/// earlier read.
+async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullRequest> {
+    let forge = integration(state, &row.repository_id).await?;
+    let details = client(state, &forge)
+        .details(
+            &slug(&forge),
+            row.number,
+            crate::timeouts::Timeouts::default().forge_details,
+        )
+        .await
+        .map_err(forge_error)?;
+    if details.pull.number != row.number {
+        return Err(forge_error(
+            "the forge returned another request number".into(),
+        ));
+    }
+    let review_requested = state
+        .launcher
+        .live
+        .get(&row.id)
+        .is_some_and(|l| l.review_requested);
+    state.launcher.live.set(
+        &row.id,
+        Live {
+            pull: details.pull,
+            review_requested,
+            details: Some(Details {
+                comments: details.comments,
+                failed_checks: details.failed_checks,
+                behind_base: details.behind_base,
+            }),
+        },
+    );
+    live::of_row(&state.store, &state.launcher.live, row)
+        .await?
+        .ok_or_else(|| ApiError::conflict("the request could not be read off the forge"))
+}
+
+/// A request Ariadne works on, as the last read found it, or read now where
+/// nothing has read it yet.
+async fn read_held(state: &AppState, row: PullRequestRow) -> ApiResult<PullRequest> {
+    match live::of_row(&state.store, &state.launcher.live, row.clone()).await? {
+        Some(pull) => Ok(pull),
+        None => read_now(state, row).await,
+    }
+}
+
+/// The open requests of the enabled repositories, read live off the forge
+/// (026): every one, or with `role` and `requested` the user's own or the
+/// ones that ask for their review, each with what Ariadne keeps of it where
+/// it works on it. With `task`, the request a task opened, which its author
+/// keeps (005).
+#[utoipa::path(get, path = "/v1/pull-requests", tag = "pull-requests", params(PullRequestListQuery), responses((status = 200, body = [PullRequestDto]), (status = 502)))]
 pub(super) async fn list(
     State(state): State<AppState>,
     Query(q): Query<PullRequestListQuery>,
@@ -50,113 +111,119 @@ pub(super) async fn list(
     {
         return Err(ApiError::bad_request("role must be author or reviewer"));
     }
-    let selected = q.state.as_deref().unwrap_or("open");
-    if !matches!(selected, "open" | "merged" | "closed" | "all") {
-        return Err(ApiError::bad_request(
-            "state must be open, merged, closed or all",
-        ));
+    if let Some(task) = q.task {
+        let rows = state
+            .store
+            .list_pull_requests(PullRequestFilter {
+                origin_task_id: Some(task),
+                ..Default::default()
+            })
+            .await?;
+        let mut dtos = Vec::with_capacity(rows.len());
+        for row in rows {
+            let pull = read_held(&state, row).await?;
+            dtos.push(pull_request_dto_of(&state.store, pull).await?);
+        }
+        return Ok(Json(dtos));
     }
-    let rows = state
-        .store
-        .list_pull_requests(PullRequestFilter {
-            repository_id: q.repo,
-            role: q.role,
-            state: (selected != "all").then(|| selected.to_owned()),
-            origin_task_id: q.task,
-            review_requested: q.requested,
-        })
-        .await?;
-    let mut dtos = Vec::with_capacity(rows.len());
-    for row in rows {
-        dtos.push(pull_request_dto_of(&state.store, row).await?);
+    let forges = match &q.repo {
+        Some(id) => vec![integration(&state, id).await?],
+        None => state.store.enabled_forge_integrations().await?,
+    };
+    let mut dtos = Vec::new();
+    for forge in forges {
+        let login = forge.login.clone().unwrap_or_default();
+        let pulls::Listed { open, requested } = client(&state, &forge)
+            .list_open_pull_requests(&slug(&forge), &login)
+            .await
+            .map_err(forge_error)?;
+        for pull in open {
+            let role = pulls::role(&pull.author_login, &forge);
+            let asks = requested.contains(&pull.number);
+            if q.role.as_deref().is_some_and(|wanted| wanted != role)
+                || q.requested.is_some_and(|wanted| wanted != asks)
+            {
+                continue;
+            }
+            let row = state
+                .store
+                .pull_request_by_number(&forge.repository_id, pull.number)
+                .await?;
+            dtos.push(match row {
+                // Ariadne works on it: the list's read beside the details the
+                // last detail read found.
+                Some(row) => {
+                    let details = state.launcher.live.get(&row.id).and_then(|l| l.details);
+                    let read = Live {
+                        pull,
+                        review_requested: asks,
+                        details,
+                    };
+                    let marks = state.store.pull_request_comment_marks(&row.id).await?;
+                    let view = live::view(row, &read, &marks, &login);
+                    pull_request_dto_of(&state.store, view).await?
+                }
+                None => forge_pull_dto(&forge.repository_id, pull, role, asks),
+            });
+        }
     }
+    dtos.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     Ok(Json(dtos))
 }
-#[utoipa::path(get, path = "/v1/pull-requests/{id}", tag = "pull-requests", params(("id" = String, Path)), responses((status = 200, body = PullRequestDto), (status = 404)))]
+
+/// A request Ariadne works on, read off the forge now.
+#[utoipa::path(get, path = "/v1/pull-requests/{id}", tag = "pull-requests", params(("id" = String, Path)), responses((status = 200, body = PullRequestDto), (status = 404), (status = 502)))]
 pub(super) async fn get(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    headers: HeaderMap,
 ) -> ApiResult<Json<PullRequestDto>> {
     let row = state.store.get_pull_request(&id).await?;
-    Ok(Json(pull_request_dto_of(&state.store, row).await?))
+    refuse_other_sessions(&state, &headers, &row).await?;
+    let pull = read_now(&state, row).await?;
+    Ok(Json(pull_request_dto_of(&state.store, pull).await?))
 }
-#[utoipa::path(post, path = "/v1/pull-requests", tag = "pull-requests", request_body = AddPullRequestRequest, responses((status = 201, body = PullRequestDto), (status = 200, body = PullRequestDto), (status = 404), (status = 409)))]
-pub(super) async fn add(
+
+/// One open request of a repository, read off the forge now (026): its
+/// own read, its checks and its comments, with what Ariadne keeps of it
+/// where it works on it. What the desktop's panel shows.
+#[utoipa::path(get, path = "/v1/repositories/{id}/pull-requests/{number}", tag = "pull-requests", params(("id" = String, Path), ("number" = i64, Path)), responses((status = 200, body = PullRequestDto), (status = 409), (status = 502)))]
+pub(super) async fn get_by_number(
     State(state): State<AppState>,
-    Json(req): Json<AddPullRequestRequest>,
-) -> ApiResult<(StatusCode, Json<PullRequestDto>)> {
-    let (forge, number) = match (req.repository_id, req.number, req.url) {
-        (Some(id), Some(number), None) if number > 0 => (integration(&state, &id).await?, number),
-        (None, None, Some(url)) => state
-            .store
-            .enabled_forge_integrations()
-            .await?
-            .into_iter()
-            .find_map(|forge| {
-                PullRequestRef::parse(&url, &forge).map(|reference| (forge, reference.number))
-            })
-            .ok_or_else(|| {
-                ApiError::new(
-                    StatusCode::NOT_FOUND,
-                    "pull_request_not_found",
-                    "no enabled repository matches this URL",
-                )
-            })?,
-        _ => {
-            return Err(ApiError::bad_request(
-                "provide a URL or a repository_id and positive number",
-            ));
-        }
-    };
-    let pull = ForgeClient::for_repository(&state.launcher.cfg, &forge)
-        .pull_request(&slug(&forge), number)
+    Path((id, number)): Path<(String, i64)>,
+) -> ApiResult<Json<PullRequestDto>> {
+    if let Some(row) = state.store.pull_request_by_number(&id, number).await? {
+        let pull = read_now(&state, row).await?;
+        return Ok(Json(pull_request_dto_of(&state.store, pull).await?));
+    }
+    let forge = integration(&state, &id).await?;
+    let login = forge.login.clone().unwrap_or_default();
+    let details = client(&state, &forge)
+        .details(
+            &slug(&forge),
+            number,
+            crate::timeouts::Timeouts::default().forge_details,
+        )
         .await
         .map_err(forge_error)?;
-    if pull.number != number {
-        return Err(forge_error(
-            "the forge returned another request number".into(),
-        ));
-    }
-    // A request of the user's own is the task's that opened it, and its
-    // author keeps it (005). By hand, Ariadne takes only a request it is to
-    // review.
-    if pulls::role(&pull.author_login, &forge) == "author" {
-        return Err(ApiError::new(
-            StatusCode::CONFLICT,
-            "pull_request_is_yours",
-            "this request is yours: Ariadne tracks by hand only a request that asks for your              review, and the task that opened a request of yours keeps it",
-        ));
-    }
-    let (row, created) = pulls::record(&state.store, &forge, pull, "user", None, None)
-        .await
-        .map_err(forge_error)?;
-    Ok((
-        if created {
-            StatusCode::CREATED
-        } else {
-            StatusCode::OK
-        },
-        Json(pull_request_dto_of(&state.store, row).await?),
-    ))
+    let role = pulls::role(&details.pull.author_login, &forge);
+    let comments = live::answered(live::comments("", &details.comments, &[]), role, &login);
+    let unanswered = live::waiting_threads(&comments, role, &login).len() as i64;
+    let mut dto = forge_pull_dto(&id, details.pull, role, false);
+    dto.unanswered_comments = unanswered;
+    dto.behind_base = details.behind_base;
+    dto.failed_checks = details
+        .failed_checks
+        .into_iter()
+        .map(|c| ariadne_api::pull_requests::FailedCheckDto {
+            name: c.name,
+            url: c.url,
+            conclusion: c.conclusion,
+        })
+        .collect();
+    Ok(Json(dto))
 }
-#[utoipa::path(delete, path = "/v1/pull-requests/{id}", tag = "pull-requests", params(("id" = String, Path)), responses((status = 204), (status = 404), (status = 409)))]
-pub(super) async fn delete(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> ApiResult<StatusCode> {
-    // The request's sessions go with its row: their agents are taken down
-    // first, so none is left running under a row that is gone.
-    let row = state.store.get_pull_request(&id).await?;
-    if row.tracked_by == "user" {
-        state
-            .launcher
-            .end_pull_request_sessions(&row)
-            .await
-            .map_err(|e| ApiError::conflict(e.to_string()))?;
-    }
-    state.store.delete_pull_request(&id).await?;
-    Ok(StatusCode::NO_CONTENT)
-}
+
 #[derive(Debug, Default, Deserialize, IntoParams)]
 pub(super) struct RefreshQuery {
     repo: Option<String>,
@@ -198,7 +265,7 @@ pub(super) async fn search(
             ..Default::default()
         })
         .await?;
-    let matches = ForgeClient::for_repository(&state.launcher.cfg, &forge)
+    let matches = client(&state, &forge)
         .search_pull_requests(&slug(&forge), &q.q)
         .await
         .map_err(forge_error)?;
@@ -211,7 +278,6 @@ pub(super) async fn search(
                 "the forge returned a request outside this repository".into(),
             ));
         };
-        // A request of the user's own is no request to add by hand (005).
         if pulls::role(&pull.author_login, &forge) == "author" {
             continue;
         }
@@ -233,27 +299,25 @@ pub(super) async fn search(
 async fn own_session(
     state: &AppState,
     headers: &HeaderMap,
-    pull: &PullRequest,
+    row: &PullRequestRow,
 ) -> ApiResult<AgentSession> {
     let ctx = call_ctx(&state.store, headers).await?;
     let keeps = |session: &AgentSession| {
-        pull.role == "author"
+        row.role == "author"
             && session.seat() == Some(Seat::Author)
             && session.task_id.is_some()
-            && session.task_id == pull.origin_task_id
+            && session.task_id == row.origin_task_id
     };
     match ctx.session {
-        Some(session) if session.pull_request_id.as_deref() == Some(pull.id.as_str()) => {
-            Ok(session)
-        }
+        Some(session) if session.pull_request_id.as_deref() == Some(row.id.as_str()) => Ok(session),
         Some(session) if keeps(&session) => Ok(session),
         Some(session) => Err(ApiError::forbidden(format!(
             "session {} does not watch pull request {}",
-            session.id, pull.id
+            session.id, row.id
         ))),
         None => Err(ApiError::forbidden(format!(
             "only the session of pull request {} answers for it",
-            pull.id
+            row.id
         ))),
     }
 }
@@ -263,41 +327,87 @@ async fn own_session(
 async fn refuse_other_sessions(
     state: &AppState,
     headers: &HeaderMap,
-    pull: &PullRequest,
+    row: &PullRequestRow,
 ) -> ApiResult<()> {
     match call_ctx(&state.store, headers).await?.session {
-        Some(_) => own_session(state, headers, pull).await.map(drop),
+        Some(_) => own_session(state, headers, row).await.map(drop),
         None => Ok(()),
     }
 }
 
+/// The comments of a request Ariadne works on, read off the forge now, with
+/// the marks beside them; with `unanswered_only`, the threads that wait on
+/// the integration login.
 #[utoipa::path(get, path = "/v1/pull-requests/{id}/comments", tag = "pull-requests",
     params(("id" = String, Path), PullRequestCommentQuery),
-    responses((status = 200, body = [PullRequestCommentDto]), (status = 403), (status = 404)))]
+    responses((status = 200, body = [PullRequestCommentDto]), (status = 403), (status = 404), (status = 502)))]
 pub(super) async fn comments(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Query(q): Query<PullRequestCommentQuery>,
     headers: HeaderMap,
 ) -> ApiResult<Json<Vec<PullRequestCommentDto>>> {
-    let pull = state.store.get_pull_request(&id).await?;
-    refuse_other_sessions(&state, &headers, &pull).await?;
-    let login = integration(&state, &pull.repository_id)
-        .await
-        .map(|forge| forge.login.unwrap_or_default())
-        .unwrap_or_default();
-    let rows = state
-        .store
-        .list_pull_request_comments(&pull.id, q.unanswered_only.unwrap_or(false), &login)
-        .await?;
+    let row = state.store.get_pull_request(&id).await?;
+    refuse_other_sessions(&state, &headers, &row).await?;
+    let pull = read_now(&state, row).await?;
+    let comments = live::comments_of(&state.store, &state.launcher.live, &pull).await?;
+    let comments = match q.unanswered_only.unwrap_or(false) {
+        true => {
+            let login = live::login_of(&state.store, &pull.repository_id).await?;
+            live::waiting(&comments, &pull.role, &login)
+        }
+        false => comments,
+    };
     Ok(Json(
-        rows.into_iter().map(pull_request_comment_dto).collect(),
+        comments.into_iter().map(pull_request_comment_dto).collect(),
     ))
 }
 
-/// Reply to one stored comment. The daemon posts the reply through the
-/// forge CLI, stores it as a comment of the integration login, and counts
-/// the threads that wait again.
+/// One comment of a request Ariadne works on, read off the forge now.
+#[utoipa::path(get, path = "/v1/pull-requests/{id}/comments/{comment_id}", tag = "pull-requests",
+    params(("id" = String, Path), ("comment_id" = String, Path)),
+    responses((status = 200, body = PullRequestCommentDto), (status = 403), (status = 404), (status = 502)))]
+pub(super) async fn comment(
+    State(state): State<AppState>,
+    Path((id, comment_id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> ApiResult<Json<PullRequestCommentDto>> {
+    let row = state.store.get_pull_request(&id).await?;
+    refuse_other_sessions(&state, &headers, &row).await?;
+    let pull = read_now(&state, row).await?;
+    let comment = find_comment(&state, &pull, &comment_id).await?;
+    Ok(Json(pull_request_comment_dto(comment)))
+}
+
+/// A comment of `pull` by its forge id, as the last read found it, or as a
+/// read now finds it where the last one does not hold it yet.
+async fn find_comment(
+    state: &AppState,
+    pull: &PullRequest,
+    comment_id: &str,
+) -> ApiResult<PullRequestComment> {
+    let held = live::comments_of(&state.store, &state.launcher.live, pull).await?;
+    if let Some(comment) = held.into_iter().find(|c| c.id == comment_id) {
+        return Ok(comment);
+    }
+    let row = state.store.get_pull_request(&pull.id).await?;
+    let pull = read_now(state, row).await?;
+    live::comments_of(&state.store, &state.launcher.live, &pull)
+        .await?
+        .into_iter()
+        .find(|c| c.id == comment_id)
+        .ok_or_else(|| {
+            ariadne_store::StoreError::NotFound {
+                entity: "pull_request_comment",
+                id: comment_id.to_string(),
+            }
+            .into()
+        })
+}
+
+/// Reply to one comment. The daemon posts the reply through the forge CLI,
+/// marks it the review's where a review session posts it (029), and reads
+/// the request again.
 #[utoipa::path(post, path = "/v1/pull-requests/{id}/comments/{comment_id}/reply", tag = "pull-requests",
     params(("id" = String, Path), ("comment_id" = String, Path)),
     request_body = ReplyCommentRequest,
@@ -308,24 +418,28 @@ pub(super) async fn reply(
     headers: HeaderMap,
     Json(req): Json<ReplyCommentRequest>,
 ) -> ApiResult<(StatusCode, Json<PullRequestCommentDto>)> {
-    let pull = state.store.get_pull_request(&id).await?;
-    let session = own_session(&state, &headers, &pull).await?;
+    let row = state.store.get_pull_request(&id).await?;
+    let session = own_session(&state, &headers, &row).await?;
     // A review session's reply is the review's, as its findings are.
-    let from_review = session.pull_request_id.as_deref() == Some(pull.id.as_str());
+    let from_review = session.pull_request_id.as_deref() == Some(row.id.as_str());
     let body = req.body.trim();
     if body.is_empty() {
         return Err(ApiError::bad_request("a reply needs a body"));
     }
-    let comment = state
-        .store
-        .get_pull_request_comment(&pull.id, &comment_id)
-        .await?;
+    let pull = read_held(&state, row).await?;
+    let comment = find_comment(&state, &pull, &comment_id).await?;
     let forge = integration(&state, &pull.repository_id).await?;
     let login = forge.login.clone().unwrap_or_default();
-    let forge_id = ForgeClient::for_repository(&state.launcher.cfg, &forge)
+    let forge_id = client(&state, &forge)
         .reply(&slug(&forge), pull.number, &comment, body)
         .await
         .map_err(forge_error)?;
+    if from_review {
+        state
+            .store
+            .mark_review_comments(&pull.id, std::slice::from_ref(&forge_id))
+            .await?;
+    }
     let in_reply_to = match comment.kind.as_str() {
         "review_comment" => comment
             .in_reply_to
@@ -333,46 +447,54 @@ pub(super) async fn reply(
             .or(Some(comment.forge_id.clone())),
         _ => None,
     };
-    let kind = match comment.kind.as_str() {
-        "review_comment" => "review_comment",
-        _ => "issue_comment",
+    let posted = PullRequestComment {
+        id: forge_id.clone(),
+        pull_request_id: pull.id.clone(),
+        forge_id,
+        thread_id: comment.thread_id.clone(),
+        kind: match comment.kind.as_str() {
+            "review_comment" => "review_comment",
+            _ => "issue_comment",
+        }
+        .into(),
+        author_login: login,
+        author_is_bot: false,
+        body: body.to_string(),
+        path: comment.path.clone(),
+        line: comment.line,
+        in_reply_to,
+        created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        answered: false,
+        resolved: comment.resolved,
+        told_at: None,
+        from_review,
     };
-    state
-        .store
-        .upsert_pull_request_comments(
-            &pull.id,
-            &[NewPullRequestComment {
-                forge_id: forge_id.clone(),
-                thread_id: comment.thread_id.clone(),
-                kind: kind.into(),
-                author_login: login.clone(),
-                author_is_bot: false,
-                body: body.to_string(),
-                path: comment.path.clone(),
-                line: comment.line,
-                in_reply_to,
-                created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-                resolved: comment.resolved,
-                from_review,
-            }],
-            &login,
-        )
-        .await?;
-    let stored = state
-        .store
-        .list_pull_request_comments(&pull.id, false, &login)
-        .await?
-        .into_iter()
-        .find(|c| c.forge_id == forge_id)
-        .ok_or_else(|| ApiError::conflict("the reply was posted but not stored"))?;
+    state.launcher.live.add_comments(
+        &pull.id,
+        &[ariadne_store::NewPullRequestComment {
+            forge_id: posted.forge_id.clone(),
+            thread_id: posted.thread_id.clone(),
+            kind: posted.kind.clone(),
+            author_login: posted.author_login.clone(),
+            author_is_bot: false,
+            body: posted.body.clone(),
+            path: posted.path.clone(),
+            line: posted.line,
+            in_reply_to: posted.in_reply_to.clone(),
+            created_at: posted.created_at.clone(),
+            resolved: posted.resolved,
+            from_review,
+        }],
+    );
+    state.forge_poll.wake(&pull.repository_id);
     state.notify_scheduler_pull_request(&pull.id);
-    Ok((StatusCode::CREATED, Json(pull_request_comment_dto(stored))))
+    Ok((StatusCode::CREATED, Json(pull_request_comment_dto(posted))))
 }
 
-/// Resolve the thread of one stored comment, once a push fixed what it
-/// found (029). Only a review session resolves, and only a thread it opened
-/// under the integration login: the threads of anyone else stay open for
-/// the person who wrote them.
+/// Resolve the thread of one comment, once a push fixed what it found
+/// (029). Only a review session resolves, and only a thread it opened under
+/// the integration login: the threads of anyone else stay open for the
+/// person who wrote them.
 #[utoipa::path(post, path = "/v1/pull-requests/{id}/comments/{comment_id}/resolve", tag = "pull-requests",
     params(("id" = String, Path), ("comment_id" = String, Path)),
     responses((status = 200, body = PullRequestCommentDto), (status = 403), (status = 404), (status = 409), (status = 502)))]
@@ -381,29 +503,22 @@ pub(super) async fn resolve(
     Path((id, comment_id)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> ApiResult<Json<PullRequestCommentDto>> {
-    let pull = state.store.get_pull_request(&id).await?;
-    let session = own_session(&state, &headers, &pull).await?;
-    if session.pull_request_id.as_deref() != Some(pull.id.as_str()) {
+    let row = state.store.get_pull_request(&id).await?;
+    let session = own_session(&state, &headers, &row).await?;
+    if session.pull_request_id.as_deref() != Some(row.id.as_str()) {
         return Err(ApiError::forbidden(format!(
             "only the review session of pull request {} resolves a thread",
-            pull.id
+            row.id
         )));
     }
-    let comment = state
-        .store
-        .get_pull_request_comment(&pull.id, &comment_id)
-        .await?;
+    let pull = read_held(&state, row).await?;
+    let mut comment = find_comment(&state, &pull, &comment_id).await?;
     let forge = integration(&state, &pull.repository_id).await?;
     let login = forge.login.clone().unwrap_or_default();
-    let thread = state
-        .store
-        .list_pull_request_comments(&pull.id, false, &login)
+    let opened_by_me = live::comments_of(&state.store, &state.launcher.live, &pull)
         .await?
         .into_iter()
-        .filter(|c| c.thread_id == comment.thread_id)
-        .collect::<Vec<_>>();
-    let opened_by_me = thread
-        .first()
+        .find(|c| c.thread_id == comment.thread_id)
         .is_some_and(|first| first.author_login.eq_ignore_ascii_case(&login));
     if !opened_by_me {
         return Err(ApiError::forbidden(format!(
@@ -412,26 +527,20 @@ pub(super) async fn resolve(
         )));
     }
     if !comment.resolved {
-        ForgeClient::for_repository(&state.launcher.cfg, &forge)
+        client(&state, &forge)
             .resolve(&slug(&forge), pull.number, &comment)
             .await
             .map_err(forge_error)?;
-        state
-            .store
-            .resolve_pull_request_thread(&pull.id, &comment.thread_id, &login)
-            .await?;
+        comment.resolved = true;
     }
-    let stored = state
-        .store
-        .get_pull_request_comment(&pull.id, &comment.id)
-        .await?;
+    state.forge_poll.wake(&pull.repository_id);
     state.notify_scheduler_pull_request(&pull.id);
-    Ok(Json(pull_request_comment_dto(stored)))
+    Ok(Json(pull_request_comment_dto(comment)))
 }
 
 /// What the request's session says of it: `ready` once every required
 /// approval and check reads green, which raises `waiting_user` on the
-/// session, and a `state` a human moved it to.
+/// session, and the head a review session posted its review on.
 #[utoipa::path(post, path = "/v1/pull-requests/{id}/report", tag = "pull-requests",
     params(("id" = String, Path)),
     request_body = ReportPullRequestRequest,
@@ -442,11 +551,11 @@ pub(super) async fn report(
     headers: HeaderMap,
     Json(req): Json<ReportPullRequestRequest>,
 ) -> ApiResult<Json<PullRequestDto>> {
-    let mut pull = state.store.get_pull_request(&id).await?;
-    let session = own_session(&state, &headers, &pull).await?;
+    let mut row = state.store.get_pull_request(&id).await?;
+    let session = own_session(&state, &headers, &row).await?;
     if let Some(ready) = req.ready {
-        let (row, moved) = state.store.set_pull_request_ready(&pull.id, ready).await?;
-        pull = row;
+        let (next, moved) = state.store.set_pull_request_ready(&row.id, ready).await?;
+        row = next;
         if moved && ready {
             state
                 .store
@@ -456,13 +565,10 @@ pub(super) async fn report(
             state.store.clear_session_attention(&session.id).await?;
         }
     }
-    if let Some(next) = req.state.as_deref() {
-        pull = state.store.set_pull_request_state(&pull.id, next).await?;
-    }
     // A review posted on a new head is the user's to act on: the approval
     // is theirs to give (029). The same sha again raises nothing.
     if let Some(sha) = req.reviewed_sha.as_deref() {
-        if pull.role != "reviewer" && !pull.review_asked {
+        if row.role != "reviewer" && !row.review_asked {
             return Err(ApiError::bad_request(
                 "only a request Ariadne reviews takes a reviewed_sha",
             ));
@@ -470,8 +576,8 @@ pub(super) async fn report(
         if !is_sha(sha) {
             return Err(ApiError::bad_request(format!("{sha} is no commit sha")));
         }
-        let (row, moved) = state.store.set_pull_request_reviewed(&pull.id, sha).await?;
-        pull = row;
+        let (next, moved) = state.store.set_pull_request_reviewed(&row.id, sha).await?;
+        row = next;
         if moved {
             if session.attention_reason() == Some(AttentionReason::WaitingUser) {
                 state.store.clear_session_attention(&session.id).await?;
@@ -482,7 +588,8 @@ pub(super) async fn report(
                 .await?;
         }
     }
-    state.notify_scheduler_pull_request(&pull.id);
+    state.notify_scheduler_pull_request(&row.id);
+    let pull = read_held(&state, row).await?;
     Ok(Json(pull_request_dto_of(&state.store, pull).await?))
 }
 
@@ -506,8 +613,8 @@ pub(super) async fn diff(
     Query(q): Query<PullRequestDiffQuery>,
     headers: HeaderMap,
 ) -> ApiResult<String> {
-    let pull = state.store.get_pull_request(&id).await?;
-    let session = own_session(&state, &headers, &pull).await?;
+    let row = state.store.get_pull_request(&id).await?;
+    let session = own_session(&state, &headers, &row).await?;
     let worktree = session
         .worktree_path
         .map(std::path::PathBuf::from)
@@ -523,6 +630,7 @@ pub(super) async fn diff(
         }
         return git.diff_since(&worktree, since).await.map_err(failed);
     }
+    let pull = read_held(&state, row).await?;
     let repo = state.store.get_repository(&pull.repository_id).await?;
     let remote = repo
         .forge
@@ -546,8 +654,8 @@ pub(super) async fn diff(
 /// on the request — posted on the first round, edited on every later one. A
 /// round with no new finding posts no review. `request_changes` stands only
 /// on a P0 finding, new or still open. Any other event is refused, an
-/// approval above all: the user gives every approval. The daemon stores what
-/// it posted as comments of the integration login, marked as the review's.
+/// approval above all: the user gives every approval. What it posted is
+/// marked as the review's.
 #[utoipa::path(post, path = "/v1/pull-requests/{id}/reviews", tag = "pull-requests",
     params(("id" = String, Path)),
     request_body = SubmitReviewRequest,
@@ -558,8 +666,8 @@ pub(super) async fn submit_review(
     headers: HeaderMap,
     Json(req): Json<SubmitReviewRequest>,
 ) -> ApiResult<(StatusCode, Json<Vec<PullRequestCommentDto>>)> {
-    let pull = state.store.get_pull_request(&id).await?;
-    own_session(&state, &headers, &pull).await?;
+    let row = state.store.get_pull_request(&id).await?;
+    own_session(&state, &headers, &row).await?;
     let asked = match req.event.as_str() {
         "request_changes" => true,
         "comment" => false,
@@ -569,14 +677,14 @@ pub(super) async fn submit_review(
             )));
         }
     };
-    if pull.role != "reviewer" && !pull.review_asked {
+    if row.role != "reviewer" && !row.review_asked {
         return Err(ApiError::conflict(
             "only a request Ariadne reviews takes a review",
         ));
     }
     // A forge takes no change request on a request of its own author's: the
     // review of a request of mine is a comment, whatever it found (029).
-    let request_changes = asked && pull.role == "reviewer";
+    let request_changes = asked && row.role == "reviewer";
     // The body is the review's one summary: where the review stands, kept
     // on the request in a comment of its own and edited every round.
     let body = req.body.trim().to_string();
@@ -616,14 +724,13 @@ pub(super) async fn submit_review(
             ),
         });
     }
+    let pull = read_held(&state, row).await?;
     let forge = integration(&state, &pull.repository_id).await?;
     let login = forge.login.clone().unwrap_or_default();
     // A change request is its P0 findings, each on its own line of code: a
     // new one in this round, or an earlier one still open. One with neither
     // is a summary that asks for changes it never shows.
-    let open_p0 = state
-        .store
-        .list_pull_request_comments(&pull.id, false, &login)
+    let open_p0 = live::comments_of(&state.store, &state.launcher.live, &pull)
         .await?
         .iter()
         .any(|c| c.from_review && !c.resolved && c.body.starts_with("**[P0]"));
@@ -632,12 +739,12 @@ pub(super) async fn submit_review(
             "a change request carries each P0 finding as an inline comment on its line",
         ));
     }
-    let client = ForgeClient::for_repository(&state.launcher.cfg, &forge);
+    let forge_client = client(&state, &forge);
     // A round with no new finding posts no review: its summary says where
     // the review stands.
     let mut posted = match comments.is_empty() {
         true => Vec::new(),
-        false => client
+        false => forge_client
             .submit_review(
                 &slug(&forge),
                 pull.number,
@@ -651,7 +758,7 @@ pub(super) async fn submit_review(
             .await
             .map_err(forge_error)?,
     };
-    let (summary_id, written_at) = client
+    let (summary_id, written_at) = forge_client
         .write_summary(
             &slug(&forge),
             pull.number,
@@ -666,11 +773,11 @@ pub(super) async fn submit_review(
             .set_pull_request_summary(&pull.id, &summary_id)
             .await?;
     }
-    posted.push(NewPullRequestComment {
+    posted.push(ariadne_store::NewPullRequestComment {
         forge_id: summary_id,
-        thread_id: crate::forge::pulls::CONVERSATION.into(),
+        thread_id: CONVERSATION.into(),
         kind: "issue_comment".into(),
-        author_login: login.clone(),
+        author_login: login,
         author_is_bot: false,
         body,
         path: None,
@@ -682,46 +789,57 @@ pub(super) async fn submit_review(
     });
     // Posted under the user's login, yet a review's: on a request of their
     // own the task's author answers it (029).
+    let ids: Vec<String> = posted.iter().map(|c| c.forge_id.clone()).collect();
+    state.store.mark_review_comments(&pull.id, &ids).await?;
     for comment in &mut posted {
         comment.from_review = true;
     }
-    state
-        .store
-        .upsert_pull_request_comments(&pull.id, &posted, &login)
-        .await?;
-    let stored = state
-        .store
-        .list_pull_request_comments(&pull.id, false, &login)
-        .await?
-        .into_iter()
-        .filter(|c| posted.iter().any(|p| p.forge_id == c.forge_id))
+    state.launcher.live.add_comments(&pull.id, &posted);
+    // In the order they were posted: the findings, then the summary.
+    let views = live::comments(&pull.id, &posted, &[]);
+    let answered: Vec<PullRequestCommentDto> = ids
+        .iter()
+        .filter_map(|id| views.iter().find(|c| &c.id == id).cloned())
         .map(pull_request_comment_dto)
         .collect();
+    state.forge_poll.wake(&pull.repository_id);
     state.notify_scheduler_pull_request(&pull.id);
-    Ok((StatusCode::CREATED, Json(stored)))
+    Ok((StatusCode::CREATED, Json(answered)))
 }
 
 /// Ask Ariadne to review a request of the user's own on the model the user
 /// picks, or stop asking (029): a review session runs on that pin while the
-/// request is open and out of draft, and posts one review as a comment in
-/// the user's name. A request that asks for the user's review has one
-/// already, on the repository's review pin, and takes no asking.
-#[utoipa::path(put, path = "/v1/pull-requests/{id}/ariadne-review", tag = "pull-requests",
-    params(("id" = String, Path)),
+/// request is open and out of draft, and posts each round as a comment in
+/// the user's name. Asking starts Ariadne's work on the request; stopping
+/// ends it, where no task keeps the request. A request that asks for the
+/// user's review has a review already, on the repository's review pin, and
+/// takes no asking.
+#[utoipa::path(put, path = "/v1/repositories/{id}/pull-requests/{number}/ariadne-review", tag = "pull-requests",
+    params(("id" = String, Path), ("number" = i64, Path)),
     request_body = AskReviewRequest,
-    responses((status = 200, body = PullRequestDto), (status = 404), (status = 409)))]
+    responses((status = 200, body = PullRequestDto), (status = 400), (status = 404), (status = 409), (status = 502)))]
 pub(super) async fn ask_review(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path((id, number)): Path<(String, i64)>,
     Json(req): Json<AskReviewRequest>,
 ) -> ApiResult<Json<PullRequestDto>> {
-    let pull = state.store.get_pull_request(&id).await?;
-    if pull.role != "author" {
+    let forge = integration(&state, &id).await?;
+    let pull = client(&state, &forge)
+        .pull_request(&slug(&forge), number)
+        .await
+        .map_err(forge_error)?;
+    if pull.number != number {
+        return Err(forge_error(
+            "the forge returned another request number".into(),
+        ));
+    }
+    if pulls::role(&pull.author_login, &forge) != "author" {
         return Err(ApiError::conflict(
             "Ariadne reviews a request that asks for your review on its own: ask only on a \
              request of yours",
         ));
     }
+    let row = state.store.pull_request_by_number(&id, number).await?;
     let pin = match req.asked {
         false => None,
         true => {
@@ -731,7 +849,6 @@ pub(super) async fn ask_review(
                     pull.state
                 )));
             }
-            integration(&state, &pull.repository_id).await?;
             let Some(model) = req.model.as_deref().filter(|m| !m.trim().is_empty()) else {
                 return Err(ApiError::bad_request(
                     "a review runs on a model: pick one, as agent:model",
@@ -762,16 +879,33 @@ pub(super) async fn ask_review(
             Some((pin, skills))
         }
     };
+    let row = match (row, &pin) {
+        (Some(row), _) => row,
+        // Asking starts the work on the request.
+        (None, Some(_)) => {
+            pulls::start_work(&state.store, &forge, &pull, None)
+                .await
+                .map_err(forge_error)?
+                .0
+        }
+        // Nothing works on it, so there is no asking to stop.
+        (None, None) => {
+            let role = pulls::role(&pull.author_login, &forge);
+            return Ok(Json(forge_pull_dto(&id, pull, role, false)));
+        }
+    };
     let row = state
         .store
         .set_pull_request_review_asked(
-            &pull.id,
+            &row.id,
             pin.as_ref().map(|(pin, skills)| (pin, skills.as_slice())),
         )
         .await?;
+    state.launcher.live.set_pull(&row.id, pull.clone(), false);
     // The session is the scheduler's to start, and the details its news is
     // read from the fetch's.
     state.forge_poll.wake(&row.repository_id);
     state.notify_scheduler_pull_request(&row.id);
-    Ok(Json(pull_request_dto_of(&state.store, row).await?))
+    let view = read_held(&state, row).await?;
+    Ok(Json(pull_request_dto_of(&state.store, view).await?))
 }

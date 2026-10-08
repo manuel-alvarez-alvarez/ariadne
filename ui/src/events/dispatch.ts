@@ -29,15 +29,10 @@ import { type DomainEvent, qk } from "@/api"
 /** Apply one domain event to the query cache. */
 export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent): void {
   switch (event.event) {
-    case "pull_request_created":
-    case "pull_request_updated": {
-      queryClient.setQueryData(qk.pullRequests.detail(event.data.id), event.data)
-      void queryClient.invalidateQueries({ queryKey: qk.pullRequests.lists() })
-      break
-    }
-    case "pull_request_deleted": {
-      queryClient.removeQueries({ queryKey: qk.pullRequests.detail(event.data.id) })
-      void queryClient.invalidateQueries({ queryKey: qk.pullRequests.lists() })
+    case "pull_requests_changed": {
+      // Requests are read live off the forge and carried by no event: every
+      // list and panel over them reads again.
+      void queryClient.invalidateQueries({ queryKey: qk.pullRequests.all() })
       break
     }
     case "goal_created": {

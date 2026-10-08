@@ -1273,6 +1273,7 @@
         "tags": [
           "pull-requests"
         ],
+        "summary": "The open requests of the enabled repositories, read live off the forge\n(026): every one, or with `role` and `requested` the user's own or the\nones that ask for their review, each with what Ariadne keeps of it where\nit works on it. With `task`, the request a task opened, which its author\nkeeps (005).",
         "operationId": "list",
         "parameters": [
           {
@@ -1289,7 +1290,7 @@
           {
             "name": "role",
             "in": "query",
-            "description": "`reviewer` for the requests that ask for the user's review, `author`\nfor the ones a task opened.",
+            "description": "`reviewer` for the requests of others, `author` for the user's own.",
             "required": false,
             "schema": {
               "type": [
@@ -1321,18 +1322,6 @@
                 "null"
               ]
             }
-          },
-          {
-            "name": "state",
-            "in": "query",
-            "description": "Open by default; `all` includes closed and merged requests.",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
-            }
           }
         ],
         "responses": {
@@ -1348,49 +1337,8 @@
                 }
               }
             }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "pull-requests"
-        ],
-        "operationId": "add",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AddPullRequestRequest"
-              }
-            }
           },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PullRequestDto"
-                }
-              }
-            }
-          },
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PullRequestDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
+          "502": {
             "description": ""
           }
         }
@@ -1430,6 +1378,7 @@
         "tags": [
           "pull-requests"
         ],
+        "summary": "A request Ariadne works on, read off the forge now.",
         "operationId": "get",
         "parameters": [
           {
@@ -1454,79 +1403,8 @@
           },
           "404": {
             "description": ""
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "pull-requests"
-        ],
-        "operationId": "delete",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": ""
           },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/v1/pull-requests/{id}/ariadne-review": {
-      "put": {
-        "tags": [
-          "pull-requests"
-        ],
-        "summary": "Ask Ariadne to review a request of the user's own on the model the user\npicks, or stop asking (029): a review session runs on that pin while the\nrequest is open and out of draft, and posts one review as a comment in\nthe user's name. A request that asks for the user's review has one\nalready, on the repository's review pin, and takes no asking.",
-        "operationId": "ask_review",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AskReviewRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PullRequestDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
+          "502": {
             "description": ""
           }
         }
@@ -1537,6 +1415,7 @@
         "tags": [
           "pull-requests"
         ],
+        "summary": "The comments of a request Ariadne works on, read off the forge now, with\nthe marks beside them; with `unanswered_only`, the threads that wait on\nthe integration login.",
         "operationId": "comments",
         "parameters": [
           {
@@ -1579,6 +1458,57 @@
           },
           "404": {
             "description": ""
+          },
+          "502": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/pull-requests/{id}/comments/{comment_id}": {
+      "get": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "One comment of a request Ariadne works on, read off the forge now.",
+        "operationId": "comment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "comment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullRequestCommentDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "502": {
+            "description": ""
           }
         }
       }
@@ -1588,7 +1518,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "Reply to one stored comment. The daemon posts the reply through the\nforge CLI, stores it as a comment of the integration login, and counts\nthe threads that wait again.",
+        "summary": "Reply to one comment. The daemon posts the reply through the forge CLI,\nmarks it the review's where a review session posts it (029), and reads\nthe request again.",
         "operationId": "reply",
         "parameters": [
           {
@@ -1649,7 +1579,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "Resolve the thread of one stored comment, once a push fixed what it\nfound (029). Only a review session resolves, and only a thread it opened\nunder the integration login: the threads of anyone else stay open for\nthe person who wrote them.",
+        "summary": "Resolve the thread of one comment, once a push fixed what it found\n(029). Only a review session resolves, and only a thread it opened under\nthe integration login: the threads of anyone else stay open for the\nperson who wrote them.",
         "operationId": "resolve",
         "parameters": [
           {
@@ -1755,7 +1685,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "What the request's session says of it: `ready` once every required\napproval and check reads green, which raises `waiting_user` on the\nsession, and a `state` a human moved it to.",
+        "summary": "What the request's session says of it: `ready` once every required\napproval and check reads green, which raises `waiting_user` on the\nsession, and the head a review session posted its review on.",
         "operationId": "report",
         "parameters": [
           {
@@ -1805,7 +1735,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "Post one round of a review of a request, in the user's name (029): its\nnew findings as one review of inline comments, each led by its priority,\nand its summary, written into the one summary comment the review keeps\non the request — posted on the first round, edited on every later one. A\nround with no new finding posts no review. `request_changes` stands only\non a P0 finding, new or still open. Any other event is refused, an\napproval above all: the user gives every approval. The daemon stores what\nit posted as comments of the integration login, marked as the review's.",
+        "summary": "Post one round of a review of a request, in the user's name (029): its\nnew findings as one review of inline comments, each led by its priority,\nand its summary, written into the one summary comment the review keeps\non the request — posted on the first round, edited on every later one. A\nround with no new finding posts no review. `request_changes` stands only\non a P0 finding, new or still open. Any other event is refused, an\napproval above all: the user gives every approval. What it posted is\nmarked as the review's.",
         "operationId": "submit_review",
         "parameters": [
           {
@@ -2157,6 +2087,114 @@
             }
           },
           "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/repositories/{id}/pull-requests/{number}": {
+      "get": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "One open request of a repository, read off the forge now (026): its\nown read, its checks and its comments, with what Ariadne keeps of it\nwhere it works on it. What the desktop's panel shows.",
+        "operationId": "get_by_number",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullRequestDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": ""
+          },
+          "502": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/repositories/{id}/pull-requests/{number}/ariadne-review": {
+      "put": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "Ask Ariadne to review a request of the user's own on the model the user\npicks, or stop asking (029): a review session runs on that pin while the\nrequest is open and out of draft, and posts each round as a comment in\nthe user's name. Asking starts Ariadne's work on the request; stopping\nends it, where no task keeps the request. A request that asks for the\nuser's review has a review already, on the repository's review pin, and\ntakes no asking.",
+        "operationId": "ask_review",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullRequestDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          },
+          "502": {
             "description": ""
           }
         }
@@ -3921,31 +3959,6 @@
           "user"
         ]
       },
-      "AddPullRequestRequest": {
-        "type": "object",
-        "properties": {
-          "number": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
-          },
-          "repository_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "url": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "additionalProperties": false
-      },
       "AgentAssignment": {
         "type": "object",
         "description": "One agent to staff on a task: where it sits, the skills it loads, and what\nit is to run on.\n\nThe model is written `<agent>:<model>`: the id of an agent in the ACP\nregistry, and after the `:` one model of it. Both halves are required — a\nmodel is required, and no agent default stands in for one — and a string\nnaming no registry agent is refused: nothing here derives one from the\nother.",
@@ -4238,7 +4251,7 @@
       },
       "AskReviewRequest": {
         "type": "object",
-        "description": "Body of `PUT /v1/pull-requests/{id}/ariadne-review`: whether Ariadne\nreviews a request of the user's own (029).",
+        "description": "Body of `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-review`:\nwhether Ariadne\nreviews a request of the user's own (029).",
         "required": [
           "asked"
         ],
@@ -4747,60 +4760,6 @@
             ],
             "properties": {
               "data": {
-                "$ref": "#/components/schemas/PullRequestDto"
-              },
-              "event": {
-                "type": "string",
-                "enum": [
-                  "pull_request_created"
-                ]
-              }
-            }
-          },
-          {
-            "type": "object",
-            "required": [
-              "data",
-              "event"
-            ],
-            "properties": {
-              "data": {
-                "$ref": "#/components/schemas/PullRequestDto"
-              },
-              "event": {
-                "type": "string",
-                "enum": [
-                  "pull_request_updated"
-                ]
-              }
-            }
-          },
-          {
-            "type": "object",
-            "required": [
-              "data",
-              "event"
-            ],
-            "properties": {
-              "data": {
-                "$ref": "#/components/schemas/PullRequestDto"
-              },
-              "event": {
-                "type": "string",
-                "enum": [
-                  "pull_request_deleted"
-                ]
-              }
-            }
-          },
-          {
-            "type": "object",
-            "required": [
-              "data",
-              "event"
-            ],
-            "properties": {
-              "data": {
                 "$ref": "#/components/schemas/GoalDto"
               },
               "event": {
@@ -5205,6 +5164,26 @@
                 "type": "string",
                 "enum": [
                   "issues_changed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The requests of one repository moved: on its forge, or in what\nAriadne keeps of them (026). Read them again; they are the forge's.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/PullRequestsChangedDto",
+                "description": "The requests of one repository moved: on its forge, or in what\nAriadne keeps of them (026). Read them again; they are the forge's."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "pull_requests_changed"
                 ]
               }
             }
@@ -6484,18 +6463,16 @@
       },
       "PullRequestCommentDto": {
         "type": "object",
-        "description": "One comment on a request, as the daemon stored it from the forge.",
+        "description": "One comment on a request, as the forge holds it now, read live (026),\nwith the marks Ariadne keeps of it.",
         "required": [
           "id",
           "pull_request_id",
-          "forge_id",
           "thread_id",
           "kind",
           "author_login",
           "author_is_bot",
           "body",
           "created_at",
-          "fetched_at",
           "answered",
           "resolved"
         ],
@@ -6516,16 +6493,13 @@
           "created_at": {
             "type": "string"
           },
-          "fetched_at": {
-            "type": "string"
-          },
-          "forge_id": {
-            "type": "string",
-            "description": "The forge's id of the comment."
+          "from_review": {
+            "type": "boolean",
+            "description": "An Ariadne review session posted it (029)."
           },
           "id": {
             "type": "string",
-            "description": "The daemon's own id: what `reply` takes."
+            "description": "The forge's id of the comment, `rc-<n>`, `ic-<n>`, `rv-<n>` or\n`note-<n>`: what `reply` and `resolve` take."
           },
           "in_reply_to": {
             "type": [
@@ -6565,20 +6539,20 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "When the request's session was told of it."
           }
         }
       },
       "PullRequestDto": {
         "type": "object",
+        "description": "A pull request as the forge holds it now, read live (026), with what\nAriadne keeps of it where Ariadne works on it: the request a task opened,\none that asks for the user's review on a repository with a review pin,\nor one of the user's they asked Ariadne to review.",
         "required": [
-          "id",
           "repository_id",
           "number",
           "url",
           "title",
           "author_login",
-          "tracked_by",
           "state",
           "draft",
           "head_branch",
@@ -6586,13 +6560,9 @@
           "base_branch",
           "checks",
           "review_decision",
-          "unanswered_comments",
           "opened_at",
-          "role",
-          "ready",
-          "last_seen_at",
-          "created_at",
-          "updated_at"
+          "updated_at",
+          "role"
         ],
         "properties": {
           "author_login": {
@@ -6607,13 +6577,11 @@
           },
           "body": {
             "type": "string",
-            "description": "The request's description, as the forge holds it."
+            "description": "The request's description."
           },
           "checks": {
-            "type": "string"
-          },
-          "created_at": {
-            "type": "string"
+            "type": "string",
+            "description": "The rolled-up checks: `pending`, `success`, `failure` or `none`."
           },
           "draft": {
             "type": "boolean"
@@ -6623,7 +6591,7 @@
             "items": {
               "$ref": "#/components/schemas/FailedCheckDto"
             },
-            "description": "The checks that failed on the head, as the last detail fetch read\nthem."
+            "description": "The checks that failed on the head, read as `unanswered_comments` is."
           },
           "head_branch": {
             "type": "string"
@@ -6638,10 +6606,11 @@
             "type": "string"
           },
           "id": {
-            "type": "string"
-          },
-          "last_seen_at": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Ariadne's id of the request while it works on it; null on a request\nnobody works on, which the forge alone holds."
           },
           "number": {
             "type": "integer",
@@ -6654,10 +6623,12 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "The task that opened the request: its author keeps it (005)."
           },
           "ready": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether the request's session reported it ready to merge."
           },
           "repository_id": {
             "type": "string"
@@ -6694,30 +6665,31 @@
             "description": "The skills that review loads beside `pr-reviewer`."
           },
           "role": {
-            "type": "string"
+            "type": "string",
+            "description": "`author` for a request of the user's, `reviewer` for any other."
           },
           "session_id": {
             "type": [
               "string",
               "null"
             ],
-            "description": "The newest session on this request, if any: the review session of a\nrequest that asks for the user's review (029), or the author of the\ntask that opened it (005)."
+            "description": "The newest session on this request, if any: its review session\n(029), or the author of the task that opened it (005)."
           },
           "state": {
-            "type": "string"
+            "type": "string",
+            "description": "`open`, `merged` or `closed`."
           },
           "title": {
             "type": "string"
           },
-          "tracked_by": {
-            "type": "string"
-          },
           "unanswered_comments": {
             "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "description": "The threads that wait on the user's login. Read where Ariadne works\non the request, or where the request is read on its own; 0 on a row\nof a list nobody works on."
           },
           "updated_at": {
-            "type": "string"
+            "type": "string",
+            "description": "When the forge last saw the request move."
           },
           "url": {
             "type": "string"
@@ -6726,7 +6698,7 @@
       },
       "PullRequestMatchDto": {
         "type": "object",
-        "description": "An open request a search found that is not the user's own: a request of\nthe user's own is kept by the task that opened it (005), and is no\nrequest to add by hand.",
+        "description": "An open request a search found that is not the user's own.",
         "required": [
           "number",
           "url",
@@ -6746,9 +6718,22 @@
             "type": "string"
           },
           "tracked": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether Ariadne works on it."
           },
           "url": {
+            "type": "string"
+          }
+        }
+      },
+      "PullRequestsChangedDto": {
+        "type": "object",
+        "description": "Payload of `pull_requests_changed`: the repository whose requests moved.",
+        "required": [
+          "repository_id"
+        ],
+        "properties": {
+          "repository_id": {
             "type": "string"
           }
         }
@@ -6812,13 +6797,6 @@
               "null"
             ],
             "description": "The head a reviewer session posted its review on (029)."
-          },
-          "state": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "`open`, `merged` or `closed`."
           }
         },
         "additionalProperties": false

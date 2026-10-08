@@ -2,44 +2,58 @@
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
+/// A pull request as the forge holds it now, read live (026), with what
+/// Ariadne keeps of it where Ariadne works on it: the request a task opened,
+/// one that asks for the user's review on a repository with a review pin,
+/// or one of the user's they asked Ariadne to review.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PullRequestDto {
-    pub id: String,
+    /// Ariadne's id of the request while it works on it; null on a request
+    /// nobody works on, which the forge alone holds.
+    pub id: Option<String>,
     pub repository_id: String,
     pub number: i64,
     pub url: String,
     pub title: String,
-    /// The request's description, as the forge holds it.
+    /// The request's description.
     #[serde(default)]
     pub body: String,
     pub author_login: String,
-    pub tracked_by: String,
+    /// `open`, `merged` or `closed`.
     pub state: String,
     pub draft: bool,
     pub head_branch: String,
     pub head_sha: String,
     pub head_repo: Option<String>,
     pub base_branch: String,
+    /// The rolled-up checks: `pending`, `success`, `failure` or `none`.
     pub checks: String,
     pub review_decision: String,
-    pub unanswered_comments: i64,
-    pub origin_task_id: Option<String>,
     pub opened_at: String,
-    pub role: String,
-    pub ready: bool,
-    pub last_seen_at: String,
-    pub created_at: String,
+    /// When the forge last saw the request move.
     pub updated_at: String,
-    /// The checks that failed on the head, as the last detail fetch read
-    /// them.
+    /// `author` for a request of the user's, `reviewer` for any other.
+    pub role: String,
+    /// Whether the request asks for the user's review (029).
+    #[serde(default)]
+    pub review_requested: bool,
+    /// The threads that wait on the user's login. Read where Ariadne works
+    /// on the request, or where the request is read on its own; 0 on a row
+    /// of a list nobody works on.
+    #[serde(default)]
+    pub unanswered_comments: i64,
+    /// The checks that failed on the head, read as `unanswered_comments` is.
     #[serde(default)]
     pub failed_checks: Vec<FailedCheckDto>,
     /// Whether the base branch has commits the head does not.
     #[serde(default)]
     pub behind_base: bool,
-    /// Whether the request asks for the user's review (029).
+    /// The task that opened the request: its author keeps it (005).
     #[serde(default)]
-    pub review_requested: bool,
+    pub origin_task_id: Option<String>,
+    /// Whether the request's session reported it ready to merge.
+    #[serde(default)]
+    pub ready: bool,
     /// Whether the user asked Ariadne to review this request of their own
     /// (029).
     #[serde(default)]
@@ -52,9 +66,8 @@ pub struct PullRequestDto {
     /// The skills that review loads beside `pr-reviewer`.
     #[serde(default)]
     pub review_skills: Vec<String>,
-    /// The newest session on this request, if any: the review session of a
-    /// request that asks for the user's review (029), or the author of the
-    /// task that opened it (005).
+    /// The newest session on this request, if any: its review session
+    /// (029), or the author of the task that opened it (005).
     #[serde(default)]
     pub session_id: Option<String>,
 }
@@ -70,14 +83,14 @@ pub struct FailedCheckDto {
     pub conclusion: String,
 }
 
-/// One comment on a request, as the daemon stored it from the forge.
+/// One comment on a request, as the forge holds it now, read live (026),
+/// with the marks Ariadne keeps of it.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PullRequestCommentDto {
-    /// The daemon's own id: what `reply` takes.
+    /// The forge's id of the comment, `rc-<n>`, `ic-<n>`, `rv-<n>` or
+    /// `note-<n>`: what `reply` and `resolve` take.
     pub id: String,
     pub pull_request_id: String,
-    /// The forge's id of the comment.
-    pub forge_id: String,
     /// The forge's thread or discussion; the conversation of the request
     /// is one thread.
     pub thread_id: String,
@@ -90,12 +103,15 @@ pub struct PullRequestCommentDto {
     pub line: Option<i64>,
     pub in_reply_to: Option<String>,
     pub created_at: String,
-    pub fetched_at: String,
     /// A later comment in the thread is by the integration login.
     pub answered: bool,
     /// The forge reports the thread resolved.
     pub resolved: bool,
+    /// When the request's session was told of it.
     pub told_at: Option<String>,
+    /// An Ariadne review session posted it (029).
+    #[serde(default)]
+    pub from_review: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, IntoParams)]
@@ -118,8 +134,6 @@ pub struct ReplyCommentRequest {
 pub struct ReportPullRequestRequest {
     /// Every required approval and check reads green.
     pub ready: Option<bool>,
-    /// `open`, `merged` or `closed`.
-    pub state: Option<String>,
     /// The head a reviewer session posted its review on (029).
     #[serde(default)]
     pub reviewed_sha: Option<String>,
@@ -162,7 +176,8 @@ pub struct ReviewCommentRequest {
     pub priority: String,
 }
 
-/// Body of `PUT /v1/pull-requests/{id}/ariadne-review`: whether Ariadne
+/// Body of `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-review`:
+/// whether Ariadne
 /// reviews a request of the user's own (029).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -181,37 +196,28 @@ pub struct AskReviewRequest {
     pub skills: Vec<String>,
 }
 
+/// Query of `GET /v1/pull-requests`: the open requests of the enabled
+/// repositories, read live off the forge, or with `task` the request a
+/// task opened.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, IntoParams)]
 pub struct PullRequestListQuery {
     pub repo: Option<String>,
-    /// `reviewer` for the requests that ask for the user's review, `author`
-    /// for the ones a task opened.
+    /// `reviewer` for the requests of others, `author` for the user's own.
     pub role: Option<String>,
     /// The task that opened the request.
     pub task: Option<String>,
     /// True for the requests that ask for the user's review (029), false
     /// for the ones that do not.
     pub requested: Option<bool>,
-    /// Open by default; `all` includes closed and merged requests.
-    pub state: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AddPullRequestRequest {
-    pub repository_id: Option<String>,
-    pub number: Option<i64>,
-    pub url: Option<String>,
-}
-
-/// An open request a search found that is not the user's own: a request of
-/// the user's own is kept by the task that opened it (005), and is no
-/// request to add by hand.
+/// An open request a search found that is not the user's own.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PullRequestMatchDto {
     pub number: i64,
     pub url: String,
     pub title: String,
     pub author_login: String,
+    /// Whether Ariadne works on it.
     pub tracked: bool,
 }

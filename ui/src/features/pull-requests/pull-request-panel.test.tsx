@@ -9,7 +9,7 @@
 
 import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { expect, it, vi } from "vitest"
+import { expect, it } from "vitest"
 
 import type { PullRequestDto } from "@/api"
 import { aModel, aSession, aSessionPage } from "@/test/fixtures"
@@ -44,23 +44,37 @@ function daemon(row: () => PullRequestDto, writes: Request[] = []) {
   })
 }
 
-it("reads its facts by name, renders its description, links the forge, and removes a hand-added row", async () => {
-  const close = vi.fn()
+it("reads its facts by name, renders its description, links the forge, and removes nothing", async () => {
+  const asked: string[] = []
   daemon(() => ({ ...pull, body: "## Summary\n\n- Fixes **widgets** on an empty list." }))
-  renderScreen(<PullRequestPanel id="pull-42" onClose={close} />)
+  const answer = daemonFetch.getMockImplementation()
+  daemonFetch.mockImplementation(async (input) => {
+    asked.push(new URL((input as Request).url).pathname)
+    return answer?.(input)
+  })
+  renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
 
   await screen.findByText("#42 Fix widgets")
-  for (const label of ["Repository", "Author", "Branches", "Head", "Unanswered comments"]) {
+  // Read off the forge by its repository and number.
+  expect(asked).toContain("/v1/repositories/repo/pull-requests/42")
+  for (const label of [
+    "Repository",
+    "Author",
+    "Branches",
+    "Head",
+    "Unanswered comments",
+    "Ariadne",
+  ]) {
     expect(screen.getByText(label)).toBeTruthy()
   }
+  expect(screen.getByText("Reviews it")).toBeTruthy()
   expect(screen.queryByText("head_sha")).toBeNull()
   expect(screen.getByRole("heading", { name: "Summary" })).toBeTruthy()
   expect(screen.getByText("widgets").tagName).toBe("STRONG")
   const forge = screen.getByRole("link", { name: /#42 on the forge/ })
   expect(forge.getAttribute("href")).toBe(pull.url)
-
-  await userEvent.click(screen.getByRole("button", { name: "Remove" }))
-  await waitFor(() => expect(close).toHaveBeenCalledOnce())
+  // Ariadne lets go of a request on its own: nothing removes one by hand.
+  expect(screen.queryByRole("button", { name: "Remove" })).toBeNull()
 })
 
 it("links each failed check to its run, and lists the request's review sessions", async () => {
@@ -78,8 +92,8 @@ it("links each failed check to its run, and lists the request's review sessions"
     asked.push((input as Request).url)
     return fetch?.(input)
   })
-  renderScreen(<PullRequestPanel id="pull-42" onClose={() => {}} />, {
-    route: "/forge/pull-requests?pr=pull-42",
+  renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />, {
+    route: "/forge/pull-requests?pr=repo%3A42",
   })
   const lint = await screen.findByRole("link", { name: "lint" })
   expect(lint.getAttribute("href")).toBe("https://ci.example/lint")
@@ -96,7 +110,7 @@ it("links each failed check to its run, and lists the request's review sessions"
 
 it("starts an Ariadne review of a request of mine on the model and skills picked, opens its console, and stops it", async () => {
   const user = userEvent.setup()
-  let row: PullRequestDto = { ...pull, role: "author", author_login: "me", tracked_by: "forge" }
+  let row: PullRequestDto = { ...pull, role: "author", author_login: "me" }
   const review = aSession({
     id: "01JSESS0000000000000REVIEW",
     seat: "reviewer",
@@ -119,8 +133,8 @@ it("starts an Ariadne review of a request of mine on the model and skills picked
     if (path === `/v1/sessions/${review.id}`) return jsonResponse(review)
     return update?.(input)
   })
-  const { location } = renderScreen(<PullRequestPanel id="pull-42" onClose={() => {}} />, {
-    route: "/forge/pull-requests?pr=pull-42",
+  const { location } = renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />, {
+    route: "/forge/pull-requests?pr=repo%3A42",
   })
 
   await user.click(await screen.findByRole("button", { name: "Start review" }))
@@ -173,7 +187,7 @@ it("starts an Ariadne review of a request of mine on the model and skills picked
 
 it("offers no Ariadne review on a request that asks for my review", async () => {
   daemon(() => pull)
-  renderScreen(<PullRequestPanel id="pull-42" onClose={() => {}} />)
+  renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
   await screen.findByText("#42 Fix widgets")
   expect(screen.queryByRole("button", { name: "Start review" })).toBeNull()
   expect(screen.getByText("someone")).toBeTruthy()
@@ -185,7 +199,6 @@ it("opens the console of a review resumed on the same session", async () => {
     ...pull,
     role: "author",
     author_login: "me",
-    tracked_by: "forge",
     review_model: "stub:review-model",
   }
   const ended = aSession({
@@ -208,8 +221,8 @@ it("opens the console of a review resumed on the same session", async () => {
     if (path === `/v1/sessions/${ended.id}`) return jsonResponse(review)
     return answer?.(input)
   })
-  const { location } = renderScreen(<PullRequestPanel id="pull-42" onClose={() => {}} />, {
-    route: "/forge/pull-requests?pr=pull-42",
+  const { location } = renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />, {
+    route: "/forge/pull-requests?pr=repo%3A42",
   })
 
   await user.click(await screen.findByRole("button", { name: "Start review" }))

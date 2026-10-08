@@ -159,6 +159,17 @@ impl EventBus {
         )));
     }
 
+    /// Publish that the requests of a repository moved on its forge (026):
+    /// they are read live, so the fetch that read them is the only one that
+    /// knows.
+    pub fn pull_requests_changed(&self, repository_id: &str) {
+        self.publish(unscoped(DomainEvent::PullRequestsChanged(
+            ariadne_api::stream::PullRequestsChangedDto {
+                repository_id: repository_id.to_string(),
+            },
+        )));
+    }
+
     /// Answers once the pump has published every change it had been handed
     /// when this was called.
     ///
@@ -354,15 +365,8 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
         Change::SkillCreated(skill) => unscoped(DomainEvent::SkillCreated(skill_dto(skill))),
         Change::SkillUpdated(skill) => unscoped(DomainEvent::SkillUpdated(skill_dto(skill))),
         Change::SkillDeleted(name) => unscoped(DomainEvent::SkillDeleted(DeletedDto { id: name })),
-        Change::PullRequestCreated(row) => unscoped(DomainEvent::PullRequestCreated(
-            crate::http::convert::pull_request_dto_of(store, row).await?,
-        )),
-        Change::PullRequestUpdated(row) => unscoped(DomainEvent::PullRequestUpdated(
-            crate::http::convert::pull_request_dto_of(store, row).await?,
-        )),
-        // The sessions of a removed request went with it.
-        Change::PullRequestDeleted(row) => unscoped(DomainEvent::PullRequestDeleted(
-            crate::http::convert::pull_request_dto(row, None),
+        Change::PullRequestsChanged(repository_id) => unscoped(DomainEvent::PullRequestsChanged(
+            ariadne_api::stream::PullRequestsChangedDto { repository_id },
         )),
         Change::RepositoryCreated(repo) => {
             unscoped(DomainEvent::RepositoryCreated(repository_dto(repo)))

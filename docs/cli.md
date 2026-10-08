@@ -511,23 +511,23 @@ ariadne pr ls --repo <repo-id>
 ariadne pr ls --mine
 ariadne pr ls --review-requests --watch
 ariadne pr search --repo <repo-id> "rate limit"
-ariadne pr add https://github.com/owner/repo/pull/42
-ariadne pr rm <id>
+ariadne pr inspect <repo-id> 42
 ariadne pr refresh --repo <repo-id>
 ```
 
-`ariadne pr ls` lists every open request of your enabled repositories, as
-the desktop's **All** does. `--mine` narrows it to your own, and
-`--review-requests` to the ones that ask for your review; the two do not
-combine. `--repo` narrows it to one repository, `--all` adds the closed and
-merged ones, and `--watch` redraws it as rows change. The author column
-reads "you" on a request of yours.
-`ariadne pr inspect <id>` prints every field. `ariadne pr search` searches
-an enabled repository's open requests live, by number, title or author,
-your own left out. `ariadne pr add` tracks one by its URL — a request of
-your own is refused, since the fetch lists it — and `ariadne pr rm` drops
-one you added this way; a request the forge found cannot be removed. `ariadne pr refresh` wakes one
-repository's fetch, or every enabled one.
+`ariadne pr ls` lists every open request of your enabled repositories, read
+live off the forge, as the desktop's **All** does. `--mine` narrows it to
+your own, and `--review-requests` to the ones that ask for your review; the
+two do not combine. `--repo` narrows it to one repository, and `--watch`
+redraws it as requests move. The author column reads "you" on a request of
+yours, and the `ariadne` column says whether Ariadne keeps it for a task,
+reviews it, or does nothing with it.
+`ariadne pr inspect <repo> <number>` prints every field of one request,
+read off the forge now. `ariadne pr search` searches an enabled
+repository's open requests live, by number, title or author, your own left
+out. `ariadne pr refresh` wakes one repository's fetch, or every enabled
+one. Nothing adds or removes a request: Ariadne starts and stops working on
+one on its own (see [The forge integration](forge.md)).
 
 ```sh
 ariadne issue ls --repo <repo-id>

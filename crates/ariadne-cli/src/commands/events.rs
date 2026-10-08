@@ -332,15 +332,13 @@ fn agent_line(e: &AgentEventSummaryDto) -> Line {
 fn domain_line(event: &DomainEvent) -> Line {
     let kind = event.kind().to_string();
     match event {
-        DomainEvent::PullRequestCreated(p)
-        | DomainEvent::PullRequestUpdated(p)
-        | DomainEvent::PullRequestDeleted(p) => Line {
-            at: p.updated_at.clone(),
+        DomainEvent::PullRequestsChanged(p) => Line {
+            at: String::new(),
             kind,
-            subject: p.id.clone(),
-            detail: titled(&p.title, &p.state),
+            subject: p.repository_id.clone(),
+            detail: "pull requests moved".into(),
             session: None,
-            status: Some(p.state.clone()),
+            status: None,
         },
         DomainEvent::GoalCreated(g) | DomainEvent::GoalUpdated(g) => Line {
             at: g.updated_at.clone(),

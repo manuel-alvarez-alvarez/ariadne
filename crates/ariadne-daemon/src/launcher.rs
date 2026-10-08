@@ -39,9 +39,21 @@ pub struct Launcher {
     /// The task branches whose head the daemon is following, so that a commit
     /// an author makes reaches the clients watching its diff.
     pub branches: BranchWatchers,
+    /// What the forge said of each request Ariadne works on, on its last
+    /// read (026): held here, never stored.
+    pub live: crate::forge::live::LivePulls,
 }
 
 impl Launcher {
+    /// The request row `id` keeps, as the forge read it last (026): an
+    /// error until a fetch has read it, which the next fetch does.
+    pub(crate) async fn pull_view(&self, id: &str) -> Result<PullRequest> {
+        let row = self.store.get_pull_request(id).await?;
+        crate::forge::live::of_row(&self.store, &self.live, row)
+            .await?
+            .with_context(|| format!("pull request {id} has not been read off the forge yet"))
+    }
+
     fn run_dir(&self, session_id: &str) -> PathBuf {
         self.cfg.run_dir.join(session_id)
     }
@@ -124,7 +136,7 @@ impl Launcher {
     async fn skills_of(&self, session: &AgentSession) -> Result<Vec<ariadne_store::Skill>> {
         let seat = session.seat().context("a staffed session needs a seat")?;
         if let Some(pull_request_id) = &session.pull_request_id {
-            let pull = self.store.get_pull_request(pull_request_id).await?;
+            let pull = self.pull_view(pull_request_id).await?;
             return self.review_skills(&pull).await;
         }
         Ok(match seat {
@@ -294,8 +306,7 @@ impl Launcher {
             // the request's head branch (026).
             None if session.pull_request_id.is_some() => {
                 let pull = self
-                    .store
-                    .get_pull_request(session.pull_request_id.as_deref().unwrap_or_default())
+                    .pull_view(session.pull_request_id.as_deref().unwrap_or_default())
                     .await?;
                 task_branch = Some(pull.head_branch.clone());
                 Some(self.store.get_repository(&pull.repository_id).await?)
@@ -1928,13 +1939,13 @@ impl Launcher {
 /// the user's own has none: its task's author keeps it (005).
 impl Launcher {
     /// Where a request's worktree is cut: one per request, named by its id.
-    fn pull_request_worktree_path(&self, pull: &PullRequest) -> PathBuf {
-        self.cfg.worktree_root.join(format!("pr-{}", pull.id))
+    fn pull_request_worktree_path(&self, pull_request_id: &str) -> PathBuf {
+        self.cfg.worktree_root.join(format!("pr-{pull_request_id}"))
     }
 
     /// Whether a request's worktree is still on disk.
-    pub(crate) fn pull_request_worktree_exists(&self, pull: &PullRequest) -> bool {
-        self.pull_request_worktree_path(pull).exists()
+    pub(crate) fn pull_request_worktree_exists(&self, pull_request_id: &str) -> bool {
+        self.pull_request_worktree_path(pull_request_id).exists()
     }
 
     /// The worktree of a request the user reviews (029), detached at the
@@ -1948,7 +1959,7 @@ impl Launcher {
         pull: &PullRequest,
         repo: &Repository,
     ) -> Result<PathBuf> {
-        let worktree = self.pull_request_worktree_path(pull);
+        let worktree = self.pull_request_worktree_path(&pull.id);
         let repo_path = PathBuf::from(&repo.path);
         if !self.git.has_commit(&repo_path, &pull.head_sha).await? {
             let from = pull.head_repo.clone().unwrap_or_else(|| {
@@ -2144,7 +2155,8 @@ impl Launcher {
     /// cleanup took its worktree and its branch, so no other branch is
     /// touched. Idempotent: a pass that stopped halfway runs again.
     pub(crate) async fn cleanup_kept_request(&self, pull: &PullRequest) -> Result<()> {
-        self.end_pull_request_sessions(pull).await?;
+        self.end_pull_request_sessions(&pull.id, &pull.repository_id)
+            .await?;
         let goal_branch = pull.state == "merged"
             && self
                 .store
@@ -2180,20 +2192,24 @@ impl Launcher {
     }
 
     /// Kill a request's sessions and remove its worktree, and touch no
-    /// branch: what removing a tracked request by hand takes down.
-    pub(crate) async fn end_pull_request_sessions(&self, pull: &PullRequest) -> Result<()> {
-        let repo = self.store.get_repository(&pull.repository_id).await?;
+    /// branch: what Ariadne takes down when it stops working on a request.
+    pub(crate) async fn end_pull_request_sessions(
+        &self,
+        pull_request_id: &str,
+        repository_id: &str,
+    ) -> Result<()> {
+        let repo = self.store.get_repository(repository_id).await?;
         let repo_path = PathBuf::from(&repo.path);
         let sessions = self
             .store
             .list_sessions(SessionFilter {
-                pull_request_id: Some(pull.id.clone()),
+                pull_request_id: Some(pull_request_id.to_string()),
                 ..Default::default()
             })
             .await?;
         for session in &sessions {
             if session.status().is_live() || self.acp.is_running(&session.id) {
-                tracing::info!(pull_request = %pull.id, session = %session.id, "the request ended, killing its session");
+                tracing::info!(pull_request = %pull_request_id, session = %session.id, "the request ended, killing its session");
                 self.kill_session(&session.id).await.ok();
             }
         }
@@ -2201,11 +2217,11 @@ impl Launcher {
             .iter()
             .filter_map(|s| s.worktree_path.as_deref().map(PathBuf::from))
             .collect();
-        worktrees.push(self.pull_request_worktree_path(pull));
+        worktrees.push(self.pull_request_worktree_path(pull_request_id));
         worktrees.sort();
         worktrees.dedup();
         for worktree in worktrees.iter().filter(|w| w.exists()) {
-            tracing::info!(pull_request = %pull.id, worktree = %worktree.display(), "removing the request's worktree");
+            tracing::info!(pull_request = %pull_request_id, worktree = %worktree.display(), "removing the request's worktree");
             self.git.remove_worktree(&repo_path, worktree).await.ok();
         }
         self.git.prune_worktrees(&repo_path).await.ok();
@@ -2216,8 +2232,7 @@ impl Launcher {
     /// resume text — the next news is what it works on.
     async fn pull_request_switch(&self, old: &AgentSession) -> Result<SwitchPlan> {
         let pull = self
-            .store
-            .get_pull_request(old.pull_request_id.as_deref().unwrap_or_default())
+            .pull_view(old.pull_request_id.as_deref().unwrap_or_default())
             .await?;
         let repo = self.store.get_repository(&pull.repository_id).await?;
         let worktree = self.review_worktree(&pull, &repo).await?;
