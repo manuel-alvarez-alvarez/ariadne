@@ -92,7 +92,8 @@ amended, rebased or force-pushed. It reports the request ready once every
 required approval and check reads green, and takes the readiness back down
 the moment a later change turns one back. Once you merge the request, the
 author brings the base branch up to date and finishes the task; a request
-closed unmerged fails it.
+closed unmerged fails it. Should the author not finish it once it has read
+the merge, Ariadne finishes the task itself and stops the author's agent.
 
 A request of yours that no task opened — one you opened by hand — is listed
 too, and nobody keeps it.
@@ -131,8 +132,8 @@ It posts its findings at one of three priorities:
 
 It posts one review per round — `request_changes` where a P0 finding
 exists, `comment` otherwise — never an approval. The review's own text is a
-summary: how many findings of each priority, their titles, and what it
-checked, tied to no line. Each finding is an inline comment of its own on
+short verdict: how many findings of each priority and their titles, tied to
+no line and saying nothing of what the reviewer did. Each finding is an inline comment of its own on
 the line of the defect, opening on **[P0] Title**, then what goes wrong and
 how to fix it. A change request whose P0 findings are not on their lines is
 refused. On GitHub that is one API
@@ -142,9 +143,12 @@ of its own, one discussion per comment and a summary note that opens with
 
 ## Nothing approves or merges in your name
 
-No session can post an approval, merge a request, or resolve a thread —
-there is no tool for any of the three. `pr-reviewer` posts at most a
-comment; the approving call, and the merge, are always yours.
+No session can post an approval or merge a request — there is no tool for
+either. `pr-reviewer` posts at most a comment; the approving call, and the
+merge, are always yours. The one thread a session resolves is a review
+thread it opened itself: on a later round, once a push fixed that finding,
+it replies and resolves it. Every thread anyone else opened stays yours to
+resolve.
 
 ## Readiness and review flags on `ariadne attention`
 
@@ -252,7 +256,10 @@ reviewing** while Ariadne reviews one of yours. A row holds no button: a
 click on it opens the request's panel — its state and checks, its facts with
 links to the forge and to each failed check, its description rendered, and
 its sessions — where **Start review**, **Stop review** and, on a request
-added by hand, **Remove** are. **Refresh** asks for a fetch now.
+added by hand, **Remove** are. The list updates on its own as each fetch
+finds a change. While a repository in view polls, or its webhook is down,
+**Refresh** asks for a fetch now; with every webhook live there is nothing
+to refresh, and the button is gone.
 
 ```sh
 ariadne pr ls --repo <repo-id>
@@ -282,8 +289,9 @@ lists open issues from an enabled repository — by default only the ones
 assigned to the login the integration stored, or every open one with
 `--all`. The Issues tab of the desktop app's **Forge** screen does the same,
 with a repository filter, an "Assigned to me" switch on by default, a text
-box over the title and description, and **Refresh**. It reads the issues
-again on its own when a fetch finds they moved.
+box over the title and description. It reads the issues again on its own
+when a fetch finds they moved, and offers **Refresh** only while a
+repository in view polls or its webhook is down.
 
 ```sh
 ariadne goal create --from-issue https://github.com/owner/repo/issues/7 \

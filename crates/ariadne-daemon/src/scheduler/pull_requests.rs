@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use tracing::{info, warn};
 
-use ariadne_core::{Seat, SessionStatus, TaskStatus};
+use ariadne_core::{Actor, Seat, SessionStatus, TaskStatus};
 use ariadne_store::{
     AgentPin, AgentSession, PullRequest, PullRequestFilter, SessionFilter, StoreError, Task,
 };
@@ -24,7 +24,7 @@ use crate::acp::NewsDelivery;
 use crate::agents::prompts;
 use crate::forge::{news, poll::wants_session};
 
-use super::SPAWN_RETRY_BUDGET;
+use super::{QUIET_NUDGE_SECS, SPAWN_RETRY_BUDGET};
 
 /// How long the tick waits before it tries a failed cleanup again. A change
 /// of the request tries at once.
@@ -128,17 +128,111 @@ impl super::Scheduler {
         else {
             return Ok(());
         };
-        let Some(author) = self.keeper_of(&task).await? else {
+        let author = self
+            .keeper_of(&task)
+            .await?
+            .filter(|author| self.launcher.acp.is_running(&author.id));
+        if pull.state == "merged" && self.merge_is_read(pull, author.as_ref()) {
+            // Boxed: the fetch it waits on would otherwise sit in every
+            // scheduler future that reaches a request's pass.
+            return Box::pin(self.finish_merged(&task, pull)).await;
+        }
+        let Some(author) = author else {
             // The task's own pass starts its author again, and the news
             // waits for it.
             return Ok(());
         };
-        if !self.launcher.acp.is_running(&author.id) {
-            return Ok(());
-        }
         let login = integration.login.clone().unwrap_or_default();
         self.tell_pull_request(&author, pull, &login).await?;
         Ok(())
+    }
+
+    /// Whether an approved task's request merged and its pass ended the
+    /// task: the author's turn that read the merge is the task's event, and
+    /// the request's pass is what finishes it (005).
+    pub(super) async fn merge_ended(&mut self, task: &Task) -> anyhow::Result<bool> {
+        let Some(pull) = self.store.pull_request_of_task(&task.id).await? else {
+            return Ok(false);
+        };
+        if pull.state != "merged" {
+            return Ok(false);
+        }
+        self.reconcile_pull_request(&pull.id).await;
+        Ok(self.store.get_task(&task.id).await?.status() != TaskStatus::Approved)
+    }
+
+    /// Whether the author of a task whose request merged is done with it:
+    /// it was told the merge and the turn that read it has ended, or it has
+    /// not answered in [`QUIET_NUDGE_SECS`] since, or no author is up to tell
+    /// at all (005).
+    fn merge_is_read(&self, pull: &PullRequest, author: Option<&AgentSession>) -> bool {
+        let Some(author) = author else {
+            return true;
+        };
+        if pull.told_state.as_deref() != Some("merged") {
+            return false;
+        }
+        let stamp = |at: &Option<String>| {
+            at.as_deref()
+                .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+                .map(|at| at.with_timezone(&chrono::Utc))
+        };
+        let Some(told) = stamp(&pull.news_told_at) else {
+            return false;
+        };
+        let answered = author.status() == SessionStatus::Idle
+            && stamp(&author.last_activity_at).is_some_and(|heard| heard > told);
+        let waited = (chrono::Utc::now() - told).num_seconds() >= QUIET_NUDGE_SECS;
+        answered || waited
+    }
+
+    /// End a task whose request a human merged (005): the author's own
+    /// finish is no longer waited on, and the task's cleanup takes its
+    /// sessions and its worktree down, so no agent stays up on a request
+    /// that is done.
+    async fn finish_merged(&mut self, task: &Task, pull: &PullRequest) -> anyhow::Result<()> {
+        info!(task = %task.id, pull_request = %pull.id, "the request merged, finishing its task");
+        let merge_commit = self.merged_base_tip(pull).await;
+        match self
+            .store
+            .transition_task(
+                &task.id,
+                TaskStatus::Finished,
+                Actor::Daemon,
+                Some(&format!("{} merged", pull.url)),
+                Some(&merge_commit),
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            // The author finished it in the meantime.
+            Err(StoreError::Transition(_)) => Ok(()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// What a merged request's task is finished by: the tip of the base it
+    /// merged into, read off the remote the way the author's own `finish_task`
+    /// reads it, or the checkout's own base, or at the last its head (005).
+    async fn merged_base_tip(&self, pull: &PullRequest) -> String {
+        let Ok(repo) = self.store.get_repository(&pull.repository_id).await else {
+            return pull.head_sha.clone();
+        };
+        let path = std::path::PathBuf::from(&repo.path);
+        let remote = repo
+            .forge
+            .as_ref()
+            .map_or_else(|| "origin".to_string(), |forge| forge.remote.clone());
+        let git = &self.launcher.git;
+        match git.fetched_tip(&path, &remote, &pull.base_branch).await {
+            Ok(sha) => sha,
+            Err(e) => {
+                warn!(pull_request = %pull.id, error = %format!("{e:#}"), "the merged base could not be fetched");
+                git.branch_tip(&path, &pull.base_branch)
+                    .await
+                    .unwrap_or_else(|_| pull.head_sha.clone())
+            }
+        }
     }
 
     /// The live session of the author that keeps a task's request: the

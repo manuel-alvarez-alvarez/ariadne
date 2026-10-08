@@ -136,7 +136,8 @@ impl AppState {
         forge::get_tunnel, forge::set_tunnel,
         issues::list, issues::get,
         pull_requests::list, pull_requests::get, pull_requests::add, pull_requests::delete, pull_requests::refresh, pull_requests::search,
-        pull_requests::comments, pull_requests::reply, pull_requests::report,
+        pull_requests::comments, pull_requests::reply, pull_requests::resolve,
+        pull_requests::report,
         pull_requests::diff, pull_requests::submit_review, pull_requests::ask_review,
         permissions::get, permissions::update, permissions::refresh,
         permissions::list_learned, permissions::get_learned, permissions::delete_learned,
@@ -215,6 +216,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/pull-requests/{id}/comments/{comment_id}/reply",
             post(pull_requests::reply),
+        )
+        .route(
+            "/v1/pull-requests/{id}/comments/{comment_id}/resolve",
+            post(pull_requests::resolve),
         )
         .route("/v1/pull-requests/{id}/report", post(pull_requests::report))
         .route("/v1/pull-requests/{id}/diff", get(pull_requests::diff))

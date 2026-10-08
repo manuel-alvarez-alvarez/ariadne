@@ -1791,8 +1791,9 @@ mod tests {
 
     /// The reviewer session is fed by the daemon too (029), and the user
     /// gives every approval and lands every request: the skill names no
-    /// approve, merge, resolve, sleep, poll or forge CLI. It names the three
-    /// priorities, and asks for changes only where a P0 stands.
+    /// approve, merge, sleep, poll or forge CLI. It names the three
+    /// priorities, asks for changes only where a P0 stands, and resolves a
+    /// thread of its own once a push fixed it.
     #[test]
     fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
         let doc = default_skill_document(PR_REVIEWER_SKILL).expect("the pr-reviewer skill");
@@ -1800,9 +1801,7 @@ mod tests {
             .split(|c: char| !c.is_ascii_alphanumeric())
             .map(str::to_lowercase)
             .collect();
-        for gone in [
-            "approve", "merge", "resolve", "sleep", "poll", "polling", "gh", "glab",
-        ] {
+        for gone in ["approve", "merge", "sleep", "poll", "polling", "gh", "glab"] {
             assert!(
                 !words.iter().any(|word| word == gone),
                 "the pr-reviewer skill names {gone}"
@@ -1832,6 +1831,13 @@ mod tests {
             "`report_pull_request` with `reviewed_sha`",
             "`reply_comment` once",
             "in the foreground",
+            // The summary is a verdict on the findings, not an account of
+            // the work, and each finding sits on its own line of code.
+            "short verdict on the findings",
+            "nothing of what you did",
+            "then `resolve_thread` on",
+            "Resolve only a thread you opened",
+            "one inline comment on the line of the defect",
             "End your turn when the review is posted.",
             "## Do not tell yourself",
             "## Done",
@@ -2409,9 +2415,10 @@ mod tests {
             // Eleven steps: the read, the checks, the hunt, the three
             // priorities, one inline comment per finding with its title and
             // its fix, the summary with no line in it, the one review, the
-            // report and the later round. The inline step is what keeps a
-            // review from being one comment that lists every defect.
-            PR_REVIEWER_SKILL => 3300,
+            // report and the later round, which resolves each thread a push
+            // fixed. The inline step is what keeps a review from being one
+            // comment that lists every defect.
+            PR_REVIEWER_SKILL => 3500,
             _ => 2400,
         };
 

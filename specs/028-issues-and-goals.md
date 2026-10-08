@@ -33,7 +33,7 @@ The CLI and desktop conventions are in 014 and 015.
 5. `ariadne issue ls --repo <id|path> [--all]` reads the issue list. `ariadne goal create --from-issue <url> --model ...` reads the issue detail and uses its title and body when `--title` and `-d` are absent. `ariadne goal inspect` prints the issue URL.
 6. The Issues tab of the Forge screen, at `#/forge/issues`, lists issues from enabled repositories. It filters by repository and has an Assigned to me switch on by default, both kept in the URL. Each row shows the linked issue number and title with the repository under it, the labels as pills, the assignees, and the update age.
 7. Each repository fetch (026 rule 6) reads the open issues too, and publishes `issues_changed` with the repository id where they moved since that fetch worker's last read (012). A webhook delivery of an issue event wakes that fetch (027). The desktop reads that repository's issue lists again on the event, both assignment filters; the issues of other repositories stay.
-8. A text box narrows the Issues tab to the words of the number, title, body, labels or assignees, kept in the URL. Refresh reads the issues from the forge again.
+8. A text box narrows the Issues tab to the words of the number, title, body, labels or assignees, kept in the URL. `issues_changed` reads them again on its own. Refresh, offered only while a repository in view polls or its webhook is down (026), reads the issues from the forge again.
 9. Create goal on an issue opens the existing dialog with its title, body, issue URL, and repository. The description ends with a blank line and `Issue: <url>`. The goal panel links to the issue.
 
 ## Acceptance criteria

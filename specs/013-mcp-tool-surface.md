@@ -74,8 +74,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      `comment_id` and a `body`; the daemon posts it) and
      `report_pull_request` (`ready`, `state`). Each request tool finds the
      request through `GET /v1/pull-requests?task=<id>&role=author&state=all`,
-     and says to call `open_pull_request` first where there is none. No tool
-     resolves a thread: a human closes a thread.
+     and says to call `open_pull_request` first where there is none. No
+     author tool resolves a thread.
    - **reviewer**: `get_task`, `get_diff` (which takes an `author` on a task
      staffed with several, naming whose branch to read), `submit_verdict`
      (an `author` likewise, naming whose change the verdict judges — and
@@ -88,11 +88,12 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      to the commits after that sha), `list_comments`, `reply_comment`,
      `submit_review` (an `event` of `request_changes` or `comment`, a
      `body`, and `comments` of `path`, `line`, `body` and a `priority` of
-     `P0`, `P1` or `P2`) and `report_pull_request` (which takes
-     `reviewed_sha` beside `ready` and `state`). Six tools, and no task tool
-     and no message tool: a review session has no goal, task or staffed
+     `P0`, `P1` or `P2`), `resolve_thread` (one `comment_id` of a thread it
+     opened, once a push fixed it) and `report_pull_request` (which takes
+     `reviewed_sha` beside `ready` and `state`). Seven tools, and no task
+     tool and no message tool: a review session has no goal, task or staffed
      agent to write to, and the user reaches it through its console. No tool
-     approves, merges or resolves: the user does. A tool is added to the seat
+     approves or merges: the user does. A tool is added to the seat
      by naming it in `McpSeat::PullRequestReviewer`'s list beside its
      `#[tool]` in `tools.rs`; each one calls a route under
      `/v1/pull-requests/{id}` that the daemon accepts from the request's own
@@ -171,9 +172,9 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`tools.rs::the_authors_request_tools_call_the_routes_of_the_request_its_task_opened`),
   and say to open one where there is none
   (`tools.rs::an_author_with_no_request_is_told_to_open_one`).
-- The pull request reviewer seat lists its six tools and no task or message
+- The pull request reviewer seat lists its seven tools and no task or message
   tool
-  (`mcp.rs::the_pull_request_reviewer_seat_lists_its_six_tools_and_no_task_or_message_tool`);
+  (`mcp.rs::the_pull_request_reviewer_seat_lists_its_seven_tools_and_no_task_or_message_tool`);
   its diff, review and report call the routes of the session's request
   (`tools.rs::the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request`).
 - A review session's MCP server is told the request and no goal or task

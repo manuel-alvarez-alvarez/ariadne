@@ -59,7 +59,7 @@ impl McpSeat {
             ],
             // The author keeps the request its task opens until a human
             // merges it (005): the request's tools are its own too. None of
-            // them resolves a thread: a human closes a thread.
+            // them resolves a thread: the reviewer that opened it does.
             McpSeat::Author => &[
                 "get_task",
                 "request_review",
@@ -81,15 +81,16 @@ impl McpSeat {
                 "send_message",
                 "read_messages",
             ],
-            // No task tool, no message tool and no tool that resolves a
-            // thread: a human closes a thread, and the user reaches the
-            // session through its console. No tool approves: the user gives
+            // No task tool and no message tool: the user reaches the
+            // session through its console. It resolves only a thread it
+            // opened, once a push fixed it. No tool approves: the user gives
             // every approval (029).
             McpSeat::PullRequestReviewer => &[
                 "get_pull_request",
                 "get_diff",
                 "list_comments",
                 "reply_comment",
+                "resolve_thread",
                 "submit_review",
                 "report_pull_request",
             ],
@@ -495,6 +496,7 @@ pub(crate) mod tests {
                     "get_diff",
                     "list_comments",
                     "reply_comment",
+                    "resolve_thread",
                     "submit_review",
                     "report_pull_request",
                 ][..],
@@ -525,6 +527,7 @@ pub(crate) mod tests {
             "reply_comment",
             "report_pull_request",
             "request_review",
+            "resolve_thread",
             "retry_task",
             "send_message",
             "submit_review",
@@ -569,12 +572,12 @@ pub(crate) mod tests {
         );
     }
 
-    /// A reviewer pull request session (029) is listed six tools: the
-    /// request, its diff, its comments, a reply, one review and the
-    /// report. It has no task tool and no message tool, and nothing it is
-    /// listed approves, merges or resolves.
+    /// A reviewer pull request session (029) is listed seven tools: the
+    /// request, its diff, its comments, a reply, the resolve of a thread it
+    /// opened, one review and the report. It has no task tool and no
+    /// message tool, and nothing it is listed approves or merges.
     #[test]
-    fn the_pull_request_reviewer_seat_lists_its_six_tools_and_no_task_or_message_tool() {
+    fn the_pull_request_reviewer_seat_lists_its_seven_tools_and_no_task_or_message_tool() {
         assert_eq!(
             mcp_seat("reviewer", true).unwrap(),
             McpSeat::PullRequestReviewer
@@ -598,9 +601,10 @@ pub(crate) mod tests {
                 "list_comments",
                 "reply_comment",
                 "report_pull_request",
+                "resolve_thread",
                 "submit_review",
             ],
-            "the pull request reviewer is listed six tools"
+            "the pull request reviewer is listed seven tools"
         );
         for tool in [
             "get_task",
@@ -611,7 +615,7 @@ pub(crate) mod tests {
         ] {
             assert!(!mcp.allows(tool), "{tool} is not its tool");
         }
-        for word in ["approve", "merge", "resolve"] {
+        for word in ["approve", "merge"] {
             assert!(listed.iter().all(|name| !name.contains(word)), "{word}");
         }
         let instructions = mcp.get_info().instructions.expect("instructions");

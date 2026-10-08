@@ -1588,7 +1588,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "Reply to one stored comment. The daemon posts the reply through the\nforge CLI, stores it as a comment of the integration login, and counts\nthe threads that wait again. There is no route that resolves a thread:\na human closes a thread.",
+        "summary": "Reply to one stored comment. The daemon posts the reply through the\nforge CLI, stores it as a comment of the integration login, and counts\nthe threads that wait again.",
         "operationId": "reply",
         "parameters": [
           {
@@ -1620,6 +1620,57 @@
         },
         "responses": {
           "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullRequestCommentDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          },
+          "502": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/pull-requests/{id}/comments/{comment_id}/resolve": {
+      "post": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "Resolve the thread of one stored comment, once a push fixed what it\nfound (029). Only a review session resolves, and only a thread it opened\nunder the integration login: the threads of anyone else stay open for\nthe person who wrote them.",
+        "operationId": "resolve",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "comment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
             "description": "",
             "content": {
               "application/json": {
@@ -6870,7 +6921,8 @@
         ],
         "properties": {
           "body": {
-            "type": "string"
+            "type": "string",
+            "description": "What goes wrong, and how to fix it."
           },
           "line": {
             "type": "integer",
@@ -6883,6 +6935,10 @@
           "priority": {
             "type": "string",
             "description": "`P0`, `P1` or `P2`."
+          },
+          "title": {
+            "type": "string",
+            "description": "A short title of the defect; the comment opens on `[P0] Title`."
           }
         },
         "additionalProperties": false

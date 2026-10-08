@@ -1,10 +1,10 @@
-//! Replying to a comment on a pull request, through `gh` (026). There is no
-//! call here that resolves a thread: a human closes a thread.
+//! Replying to a comment on a pull request, and resolving a review thread
+//! a reviewer session opened once a push fixed it, through `gh` (026, 029).
 use serde::Deserialize;
 
 use super::Github;
 use super::details::{issue_comment_id, review_comment_id};
-use crate::forge::pulls::split_slug;
+use crate::forge::pulls::{CONVERSATION, split_slug};
 use ariadne_store::PullRequestComment;
 
 #[derive(Deserialize)]
@@ -69,5 +69,49 @@ impl Github {
             .and_then(|(_, id)| id.trim().parse::<i64>().ok())
             .map(issue_comment_id)
             .unwrap_or(url))
+    }
+
+    /// Resolve the review thread `comment` is in, `resolveReviewThread`.
+    ///
+    /// The thread is GraphQL's node id, which the detail fetch reads; a
+    /// comment posted since then still has its own id for one, so the
+    /// request's threads are read for it first. The conversation is no
+    /// thread, and nothing resolves it.
+    pub(crate) async fn resolve(
+        &self,
+        repo: &str,
+        number: i64,
+        comment: &PullRequestComment,
+    ) -> Result<(), String> {
+        if comment.kind != "review_comment" || comment.thread_id == CONVERSATION {
+            return Err("only a review thread on a line resolves".into());
+        }
+        let (host, owner, name) = split_slug(repo)?;
+        let thread = match comment.thread_id.strip_prefix("rc-") {
+            Some(own) => {
+                let id: i64 = own
+                    .parse()
+                    .map_err(|_| format!("{} names no review comment", comment.thread_id))?;
+                self.threads(host, owner, name, number)
+                    .await?
+                    .remove(&id)
+                    .map(|(thread, _)| thread)
+                    .ok_or_else(|| format!("GitHub holds no thread of comment {id}"))?
+            }
+            None => comment.thread_id.clone(),
+        };
+        self.cli
+            .answer(&[
+                "api",
+                "graphql",
+                "--hostname",
+                host,
+                "-f",
+                "query=mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { isResolved } } }",
+                "-f",
+                &format!("id={thread}"),
+            ])
+            .await?;
+        Ok(())
     }
 }

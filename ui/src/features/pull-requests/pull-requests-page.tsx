@@ -31,6 +31,7 @@ import {
   ForgeFilters,
   forgeName,
   matchesText,
+  useNeedsRefresh,
   useSearchFilter,
 } from "@/features/forge/forge-filters"
 import { repositoriesQueryOptions } from "@/features/repositories/queries"
@@ -70,6 +71,7 @@ export function PullRequestsPage() {
   const rows = useQuery(pullRequestsQueryOptions(filters))
   const repositories = useQuery(repositoriesQueryOptions())
   const enabled = repositories.data?.filter((each) => each.forge?.enabled) ?? []
+  const needsRefresh = useNeedsRefresh(repo ? enabled.filter((each) => each.id === repo) : enabled)
   const refresh = useMutation({
     mutationFn: () =>
       unwrap(
@@ -83,10 +85,14 @@ export function PullRequestsPage() {
         title="Pull requests"
         description="The open pull requests of your repositories: yours, and the ones that ask for your review. A request a task opened is kept by that task's author."
         actions={
-          <Button variant="outline" pending={refresh.isPending} onClick={() => refresh.mutate()}>
-            <RefreshCwIcon />
-            Refresh
-          </Button>
+          // A live webhook brings every change here on its own: only a
+          // repository that polls, or whose hook is down, waits for one.
+          needsRefresh ? (
+            <Button variant="outline" pending={refresh.isPending} onClick={() => refresh.mutate()}>
+              <RefreshCwIcon />
+              Refresh
+            </Button>
+          ) : null
         }
       />
       <ForgeFilters

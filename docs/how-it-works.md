@@ -35,8 +35,8 @@ each task author works in its own git worktree.
    keeps the request with the `pr-babysit` skill: the daemon reads the forge
    and prompts the author with each new comment, failed check or moved base,
    and every fix goes through the task's reviewers before it is pushed. Once
-   a human merges the request the author finishes the task; a close fails
-   it. A request asking for your review gets a `pr-reviewer` session, and so
+   a human merges the request the task finishes and its author's agent
+   stops; a close fails it. A request asking for your review gets a `pr-reviewer` session, and so
    does a request of yours you ask Ariadne to review. None approves or
    merges anything. Publishing a request is not the same as it being ready
    to merge: `ariadne attention` carries the author as waiting on you only

@@ -20,6 +20,7 @@ import {
   ForgeFilters,
   forgeName,
   matchesText,
+  useNeedsRefresh,
   useSearchFilter,
 } from "@/features/forge/forge-filters"
 import { CreateGoalDialog } from "@/features/goals/create-goal-dialog"
@@ -48,6 +49,7 @@ export function IssuesPage() {
   const visible = repositoryId
     ? enabled.filter((repository) => repository.id === repositoryId)
     : enabled
+  const needsRefresh = useNeedsRefresh(visible)
   const assigned = assignedToMe ? "me" : "all"
   const issueQueries = useQueries({
     queries: visible.map((repository) => ({
@@ -93,15 +95,18 @@ export function IssuesPage() {
         actions={
           // No ledger stands behind this list, as one does behind the pull
           // requests: the issues are read from the forge on every load, so a
-          // refresh reads them again.
-          <Button
-            variant="outline"
-            pending={issueQueries.some((result) => result.isFetching)}
-            onClick={() => issueQueries.forEach((result) => void result.refetch())}
-          >
-            <RefreshCwIcon />
-            Refresh
-          </Button>
+          // refresh reads them again. A live webhook tells the screen to on
+          // its own (`issues_changed`), so only polling needs the button.
+          needsRefresh ? (
+            <Button
+              variant="outline"
+              pending={issueQueries.some((result) => result.isFetching)}
+              onClick={() => issueQueries.forEach((result) => void result.refetch())}
+            >
+              <RefreshCwIcon />
+              Refresh
+            </Button>
+          ) : null
         }
       />
       <ForgeFilters

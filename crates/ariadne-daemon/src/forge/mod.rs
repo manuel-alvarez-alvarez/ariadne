@@ -381,7 +381,7 @@ impl ForgeClient {
     }
 
     /// Reply to one stored comment of request `number` with `body`, and
-    /// answer the forge id of the reply. Nothing here resolves a thread.
+    /// answer the forge id of the reply.
     pub async fn reply(
         &self,
         repository: &str,
@@ -392,6 +392,20 @@ impl ForgeClient {
         match self {
             Self::Github(cli) => cli.reply(repository, number, comment, body).await,
             Self::Gitlab(cli) => cli.reply(repository, number, comment, body).await,
+        }
+    }
+
+    /// Resolve the thread one stored comment of request `number` is in: a
+    /// thread a reviewer session opened, once a push fixed it (029).
+    pub async fn resolve(
+        &self,
+        repository: &str,
+        number: i64,
+        comment: &ariadne_store::PullRequestComment,
+    ) -> Result<(), String> {
+        match self {
+            Self::Github(cli) => cli.resolve(repository, number, comment).await,
+            Self::Gitlab(cli) => cli.resolve(repository, number, comment).await,
         }
     }
 

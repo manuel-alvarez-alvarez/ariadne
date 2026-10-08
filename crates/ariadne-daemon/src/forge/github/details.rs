@@ -249,7 +249,7 @@ impl Github {
 
     /// The review thread of each review comment, by the comment's numeric
     /// id: its GraphQL node id and whether it is resolved.
-    async fn threads(
+    pub(super) async fn threads(
         &self,
         host: &str,
         owner: &str,

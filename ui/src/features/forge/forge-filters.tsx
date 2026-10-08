@@ -6,6 +6,7 @@
  * other tab — another route — starts that one unfiltered.
  */
 
+import { useQuery } from "@tanstack/react-query"
 import { SearchIcon } from "lucide-react"
 import type { ReactNode } from "react"
 import { useSearchParams } from "react-router-dom"
@@ -21,6 +22,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
+import { tunnelQueryOptions } from "@/features/repositories/queries"
+import { pushesLive } from "@/features/repositories/webhook-pill"
 
 /** What the repository filter holds for "every enabled repository". */
 const ALL = "all"
@@ -29,6 +32,18 @@ const ALL = "all"
 export function forgeName(repository: RepositoryDto | undefined): string {
   if (!repository) return ""
   return repository.forge ? `${repository.forge.owner}/${repository.forge.name}` : repository.path
+}
+
+/**
+ * Whether a tab needs a Refresh button: some repository in view is not
+ * pushed live, so its rows wait for the next poll. A live webhook already
+ * brings every change to the screen through the event stream.
+ */
+export function useNeedsRefresh(repositories: RepositoryDto[]): boolean {
+  const tunnel = useQuery(tunnelQueryOptions())
+  return repositories.some(
+    (repository) => repository.forge && !pushesLive(repository.forge, tunnel.data),
+  )
 }
 
 /**

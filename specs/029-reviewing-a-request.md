@@ -73,6 +73,10 @@ Out: the ledger, the fetch, the comments table and the PR session kind
    branches, the login, and the last `reviewed_sha`, or `none`. The seat text
    says to work only in the detached worktree, and to commit and push
    nothing.
+5a. A review session that went away is resumed on its own row and
+   conversation, unless the pin moved since it started: a conversation keeps
+   the model it started on, so a new model or effort is a fresh session on
+   it.
 6. `pull_requests.told_head_sha` is the head the session was last told of.
    Each start and resume writes it to `head_sha`, since the briefing names
    that head.
@@ -110,7 +114,7 @@ Out: the ledger, the fetch, the comments table and the PR session kind
 ## Tools and routes
 
 11. The reviewer PR seat lists `get_pull_request`, `get_diff`,
-    `list_comments`, `reply_comment`, `submit_review` and
+    `list_comments`, `reply_comment`, `resolve_thread`, `submit_review` and
     `report_pull_request`, and no task tool and no message tool (013). The
     user reaches the session through its console (008).
 12. `GET /v1/pull-requests/{id}/diff?since=` answers `git diff <base>...HEAD`
@@ -140,22 +144,37 @@ Out: the ledger, the fetch, the comments table and the PR session kind
     change request from a request's own author.
 14. Every `event` but `request_changes` and `comment` answers 400 before the
     forge sees a call. An approval is refused above all: the user gives it.
-    No route approves, merges or resolves a thread.
+    No route approves or merges.
 15. `report_pull_request` takes `reviewed_sha`, a hex sha, on a reviewer row,
     or on a row of the user's own with `review_asked`, alone. It writes `pull_requests.reviewed_sha`. A sha that moves it raises
     `waiting_user` on the session again; the same sha raises nothing.
 16. Diffs, reviews and reports are accepted from the request's own session
     alone. Another session, or a call with no session, gets 403.
+16a. `POST /v1/pull-requests/{id}/comments/{comment_id}/resolve` resolves
+    the thread of that comment on the forge and marks every stored comment
+    of it resolved, then counts the threads that wait again. Only the
+    request's review session calls it, and only on a thread whose first
+    comment is by the integration login: a thread anyone else opened
+    answers 403, and so does the author of the task that opened the
+    request. A resolved thread answers as it is, with no forge call.
+    - GitHub: `resolveReviewThread` through `gh api graphql`, on the thread's
+      node id. A comment posted since the last detail fetch has its own id
+      for a thread, so the request's threads are read for it first.
+    - GitLab: `PUT .../merge_requests/<n>/discussions/<id>` with
+      `resolved=true`, through `glab api`.
+    The conversation is no thread, and nothing resolves it.
 
 ## Verdict and attention
 
 17. `pr-reviewer` asks for changes when a P0 finding exists, and comments
     otherwise. P0 breaks behavior, data or security and must change before
     the request lands; P1 is a defect or a missing proof that will bite; P2
-    is worth fixing. It writes the review body as a summary — the count of
-    each priority, each finding's title, what it checked — with no file or
-    line, and each finding as one inline comment with a title, the failure
-    and a fix.
+    is worth fixing. It writes the review body as a short verdict on the
+    findings — the count of each priority and each finding's title — with
+    no file, no line and nothing of what it did, and each finding as one
+    inline comment with a title, the failure and a fix. On a later round it
+    replies on each earlier finding, and resolves the thread of each one a
+    push fixed.
 18. `waiting_user` on a reviewer PR session reads "review posted, approve
     yourself" in `ariadne attention` and "Review posted, approve yourself" in
     the desktop app. The approval and the merge stay the user's.
@@ -165,6 +184,10 @@ Out: the ledger, the fetch, the comments table and the PR session kind
 - An open request out of draft gets one live session on the review pin, seat
   `reviewer`, detached at `head_sha`, with `pr-reviewer` indexed:
   `pull_request_reviews.rs::an_open_request_i_review_gets_one_session_detached_at_its_head`.
+- The review session resolves the thread of its own fixed finding through
+  `resolveReviewThread`, and a thread someone else opened, or a resolve from
+  another session, is refused:
+  `pull_request_reviews.rs::a_review_resolves_the_thread_of_its_own_fixed_finding_and_no_other`.
 - A draft gets none until it leaves draft:
   `pull_request_reviews.rs::a_draft_starts_no_review_until_it_leaves_draft`.
 - A repository with no `review_model` gets none:
@@ -195,18 +218,19 @@ Out: the ledger, the fetch, the comments table and the PR session kind
   `pull_request_reviews.rs::a_request_the_forge_stops_listing_after_my_review_keeps_its_review`.
 - The reviewer briefing fills every placeholder it names:
   `prompts.rs::tests::the_pull_request_texts_fill_every_placeholder_they_name`.
-- The reviewer PR seat lists its six tools and no task or message tool, and
+- The reviewer PR seat lists its seven tools and no task or message tool, and
   its tools call the routes of its request:
-  `mcp.rs::tests::the_pull_request_reviewer_seat_lists_its_six_tools_and_no_task_or_message_tool`,
+  `mcp.rs::tests::the_pull_request_reviewer_seat_lists_its_seven_tools_and_no_task_or_message_tool`,
   `tools.rs::tests::the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request`.
 - The skill is within its caps, names the three priorities, names
-  `request_changes` only beside P0, and names no approve, merge, resolve,
-  sleep, poll, `gh` or `glab`:
+  `request_changes` only beside P0, resolves a thread a push fixed, and
+  names no approve, merge, sleep, poll, `gh` or `glab`:
   `defaults.rs::tests::the_pr_reviewer_skill_ranks_its_findings_and_never_approves`,
   `::skill_size_caps_hold`.
 - A request of mine gets no review until the user asks, then one on the pin
   and with the skills they picked, detached at its head, whose review is a
-  comment, and stopping the asking ends it:
+  comment, and stopping the asking ends it; asked again on another model,
+  the review is a fresh session on that model:
   `pull_request_reviews.rs::a_request_of_mine_is_reviewed_once_asked_and_its_review_is_a_comment`.
 - Asking needs a model the catalog holds and skills a task agent is staffed
   on, and is refused on a request that asks for my review:
@@ -220,7 +244,9 @@ Out: the ledger, the fetch, the comments table and the PR session kind
   review session's console in the panel once the daemon starts it, stops it,
   and offers it on no other:
   `pull-request-panel.test.tsx::starts an Ariadne review of a request of mine on the model and skills picked, opens its console, and stops it`,
-  `::offers no Ariadne review on a request that asks for my review`.
+  `::offers no Ariadne review on a request that asks for my review`. A review
+  resumed on its last session opens that console the same way:
+  `::opens the console of a review resumed on the same session`.
 - The attention text says the review is posted and the approval is the
   user's:
   `attention.rs::tests::a_session_is_reported_for_the_reason_the_ui_would_give`,

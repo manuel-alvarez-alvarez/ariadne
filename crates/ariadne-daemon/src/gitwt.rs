@@ -273,6 +273,21 @@ impl GitManager {
         Ok(())
     }
 
+    /// The tip `branch` has on `from` — a remote name or a clone URL — as a
+    /// full sha, fetched into `FETCH_HEAD` alone: the base a request merged
+    /// into, which the checkout's own branch may not have caught up with
+    /// (005).
+    pub(crate) async fn fetched_tip(
+        &self,
+        repo: &Path,
+        from: &str,
+        branch: &str,
+    ) -> Result<String> {
+        self.fetch_head_of(repo, from, branch).await?;
+        self.git(repo, &["rev-parse", "--verify", "FETCH_HEAD^{commit}"])
+            .await
+    }
+
     /// The diff of `HEAD` in `worktree` from the commit `since`:
     /// `git diff <since>..HEAD` (029).
     pub(crate) async fn diff_since(&self, worktree: &Path, since: &str) -> Result<String> {

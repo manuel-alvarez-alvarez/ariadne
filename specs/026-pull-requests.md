@@ -156,7 +156,7 @@ Task completion belongs to [005](005-how-a-task-ends.md).
 
 19. The author seat lists `get_pull_request`, `list_comments`, `reply_comment` and `report_pull_request` beside its task tools (013).
     Each finds the request its task opened through `GET /v1/pull-requests?task=<id>&role=author&state=all`; with none yet, it says to call `open_pull_request` first.
-    No tool and no route resolves a thread: a human closes a thread.
+    No author tool resolves a thread. A review session resolves a thread it opened, once a push fixed it (029); every other thread is its author's to resolve.
 20. A reply posts through the forge CLI: `gh api .../pulls/<n>/comments/<id>/replies` on the thread's first review comment, else `gh pr comment`; GitLab adds a note to the discussion.
     The daemon stores the reply as a comment of the integration login, marks the thread answered, and counts `unanswered_comments` again.
 21. A report with `ready: true` on a change raises `waiting_user` on the author's session. `ready: false` on a change clears it. A repeat raises nothing.
@@ -167,6 +167,7 @@ Task completion belongs to [005](005-how-a-task-ends.md).
 ## Cleanup
 
 23. A `merged` or `closed` row is told to its author like any other news; the author finishes or fails the task.
+    A merged row whose task is still `approved` once the author read the news is finished by the daemon (005 rule 9), which stops the author.
     Once the task is over, what is left of the request is taken down: any session or worktree an earlier release started on it, and, on a merge whose head is a goal branch, that goal branch, local and remote.
     The task's own cleanup took its worktree and its branch.
     `pull_requests.cleaned_at` records the cleanup, so a restarted daemon owes the same. A deletion that fails keeps the cleanup pending: the next change of the request tries it again, and the tick after 60 seconds.
@@ -192,6 +193,7 @@ All routes appear in OpenAPI, under the rules of [012](012-http-api-events-and-u
 | `POST /v1/pull-requests/refresh?repo=` | Wake one repository or every enabled repository. Return 202. |
 | `GET /v1/pull-requests/{id}/comments?unanswered_only=` | List the stored comments, or the threads that wait on the login. |
 | `POST /v1/pull-requests/{id}/comments/{comment_id}/reply` | Post a reply through the forge CLI and store it. Return 201. |
+| `POST /v1/pull-requests/{id}/comments/{comment_id}/resolve` | Resolve, from the review session, a thread it opened (029). Return 200. |
 | `POST /v1/pull-requests/{id}/report` | Take `ready` and `state` from the request's own session. |
 | `GET /v1/sessions?pull_request=` | List the sessions of one request (012). |
 
@@ -215,7 +217,7 @@ Pull requests lists the open rows alone. A three-way choice narrows them: All (e
 A text box narrows the rows to the words of their number, title, description, author or head branch, and a repository picker to one enabled repository. Every filter is kept in the URL.
 A row shows the linked number and title with a Draft or Ariadne reviewing pill, and under it the repository, "by you" or the author, the head and base branches and "added by hand" for a user row; then pills for the checks and the review decision, the unanswered comments, a link to the session, and the update age.
 A row holds no button: a click on it, or Enter on it, opens the request's panel.
-The header offers Refresh. The screen adds no request by hand: `pr add` is the CLI's alone.
+The header offers Refresh only while a repository in view is not pushed live: the tunnel is off, the tunnel or its hook is down, or the last fetch failed. With every webhook live the events bring each change and there is no Refresh. The screen adds no request by hand: `pr add` is the CLI's alone.
 A row opens the floating pane through `?pr=<id>` and `paths.pullRequest`.
 The panel's header carries the number and title, pills for the state, the checks, the review decision and an Ariadne review, the id, and when it opened and moved.
 Under it are the facts by name — a link to the request on the forge, the repository, the author, the branches, the head, the unanswered comments, the base, how it is tracked, the task that keeps it and each failed check linked to its run — then two tabs: Description, the body rendered as Markdown, and Sessions, the request's review sessions and the task's author.
@@ -262,6 +264,8 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   lists every open request by default and narrows to mine or to review requests, adding none by hand
   (`::lists every open request by default, narrows to mine or to review requests, and adds none by hand`),
   narrows by text (`::narrows the rows to the words of their title or description`),
+  offers Refresh only while a repository in view polls or its webhook is down
+  (`::offers a refresh only while a repository in view polls or its webhook is down`),
   and holds no button: a click on the row opens the panel.
 - The sidebar lists Forge beside the other screens:
   `app-shell.test.tsx::ends the navigation with stats, and lists Forge beside the other screens`.
@@ -274,10 +278,10 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 
 - A new comment by another login is stored, counted, and told once by id to the author of the task that opened the request; a failed check is told by name; the request has no session of its own:
   `kept_requests.rs::the_news_of_its_request_reaches_the_author_once`.
-- The author replies, answering the thread with nothing resolved, and reports; another session and no session get 403:
+- The author replies, answering the thread, and reports; its resolve is refused; another session and no session get 403:
   `kept_requests.rs::the_author_replies_and_reports_and_no_other_session_may`.
-- The task stays approved and its finish is refused until a merge, which is told to the author, whose finish it then accepts; the cleanup is recorded:
-  `kept_requests.rs::a_merge_is_told_to_the_author_whose_finish_it_then_accepts`.
+- The task stays approved and its finish is refused until a merge, which is told to the author; the daemon then finishes the task, the author is stopped, and the cleanup is recorded:
+  `kept_requests.rs::a_merge_is_told_to_the_author_and_then_ends_the_task_and_its_agent`.
 - A close is told to the author and finishes nothing:
   `kept_requests.rs::a_close_is_told_to_the_author_and_finishes_nothing`.
 - A check that recovers and fails again is told again:

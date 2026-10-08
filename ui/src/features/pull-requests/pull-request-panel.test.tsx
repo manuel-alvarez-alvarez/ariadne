@@ -178,3 +178,42 @@ it("offers no Ariadne review on a request that asks for my review", async () => 
   expect(screen.queryByRole("button", { name: "Start review" })).toBeNull()
   expect(screen.getByText("someone")).toBeTruthy()
 })
+
+it("opens the console of a review resumed on the same session", async () => {
+  const user = userEvent.setup()
+  let row: PullRequestDto = {
+    ...pull,
+    role: "author",
+    author_login: "me",
+    tracked_by: "forge",
+    review_model: "stub:review-model",
+  }
+  const ended = aSession({
+    id: "01JSESS000000000000ENDED1",
+    seat: "reviewer",
+    status: "exited",
+    goal_id: null,
+    task_id: null,
+    pull_request_id: "pull-42",
+  })
+  daemon(() => row)
+  const answer = daemonFetch.getMockImplementation()
+  daemonFetch.mockImplementation(async (input) => {
+    const request = input as Request
+    const path = new URL(request.url).pathname
+    if (request.method === "PUT") row = { ...row, review_asked: true }
+    // The daemon resumes the last review on its own row once asked.
+    const review = row.review_asked ? { ...ended, status: "idle" as const } : ended
+    if (path === "/v1/sessions") return jsonResponse(aSessionPage([review]))
+    if (path === `/v1/sessions/${ended.id}`) return jsonResponse(review)
+    return answer?.(input)
+  })
+  const { location } = renderScreen(<PullRequestPanel id="pull-42" onClose={() => {}} />, {
+    route: "/forge/pull-requests?pr=pull-42",
+  })
+
+  await user.click(await screen.findByRole("button", { name: "Start review" }))
+  const dialog = await screen.findByRole("dialog", { name: "Start an Ariadne review" })
+  await user.click(within(dialog).getByRole("button", { name: "Start review" }))
+  await waitFor(() => expect(location.url).toContain(`session=${ended.id}`), { timeout: 4000 })
+})

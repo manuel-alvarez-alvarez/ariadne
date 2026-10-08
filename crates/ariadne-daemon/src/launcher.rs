@@ -2072,7 +2072,8 @@ impl Launcher {
     /// Put a request's session back on its feet, as an author's is (009
     /// rule 23): the same row, on the conversation it left behind, in its
     /// worktree. A fresh session is spawned where there is nothing to resume,
-    /// or where the last launch died on arrival.
+    /// where the last launch died on arrival, or where the pin moved since
+    /// the last session started: an agent's conversation keeps its model.
     ///
     /// The resume carries the request's briefing again: one short turn that
     /// ends, after which the session waits on the forge for its next news.
@@ -2094,8 +2095,11 @@ impl Launcher {
             .into_iter()
             .rev()
             .find(|s| s.seat() == Some(seat));
+        // A conversation runs on the model it started on, so a pin the
+        // user changed since is a fresh session on the new one.
         let Some((previous, internal)) = previous
             .filter(|s| !s.died_on_arrival())
+            .filter(|s| s.model == pin.model && s.effort == pin.effort)
             .and_then(|s| s.internal_session_id.clone().map(|internal| (s, internal)))
         else {
             return self.spawn_pull_request_session(pull, pin).await;

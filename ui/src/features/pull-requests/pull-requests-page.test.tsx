@@ -135,3 +135,29 @@ it("narrows the rows to the words of their title or description", async () => {
   expect(screen.getByRole("link", { name: "#42 Fix widgets" })).toBeTruthy()
   expect(location.url).toBe("/forge/pull-requests?q=empty+list")
 })
+
+it("offers a refresh only while a repository in view polls or its webhook is down", async () => {
+  const live = aRepository({
+    id: "live",
+    forge: aForge({ enabled: true, webhook: { ...aForge().webhook, state: "live" } }),
+  })
+  const polled = aRepository({
+    id: "polled",
+    forge: aForge({ enabled: true, name: "gadgets" }),
+  })
+  daemonFetch.mockImplementation(async (input) => {
+    const path = new URL((input as Request).url).pathname
+    if (path === "/v1/repositories") return jsonResponse([live, polled])
+    if (path === "/v1/forge/tunnel")
+      return jsonResponse({ enabled: true, state: "up", url: null, listen: null, since: null })
+    return jsonResponse([pull])
+  })
+  renderScreen(<PullRequestsPage />, { route: "/forge/pull-requests?repo=live" })
+  await screen.findByRole("link", { name: "#42 Fix widgets" })
+  // The live webhook brings every change on its own.
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull())
+
+  await userEvent.click(screen.getByRole("combobox", { name: "Filter by repository" }))
+  await userEvent.click(await screen.findByRole("option", { name: "acme/gadgets" }))
+  expect(await screen.findByRole("button", { name: "Refresh" })).toBeTruthy()
+})

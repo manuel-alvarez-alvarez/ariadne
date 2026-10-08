@@ -436,6 +436,12 @@ impl super::Scheduler {
                     .await?;
             }
             TaskStatus::Approved => {
+                // The author's own turns are this task's events, not its
+                // request's: a merge it has just read is the request's to
+                // act on, which ends the task (005).
+                if task.pr_url.is_some() && Box::pin(self.merge_ended(&task)).await? {
+                    return Ok(());
+                }
                 // Landing the change is the author's last turn, and the
                 // session that wrote it is still there to take it: nothing
                 // took the worktree away. What it has not had is the briefing

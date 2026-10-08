@@ -533,6 +533,102 @@ async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
     assert_eq!(comments.len(), 3, "the review is stored");
 }
 
+/// Once a push fixed a finding, the review session resolves the thread it
+/// opened: through `resolveReviewThread` on the thread GitHub holds for the
+/// comment, and the stored thread reads resolved. A thread somebody else
+/// opened is refused, and so is a resolve from any other session.
+#[tokio::test]
+async fn a_review_resolves_the_thread_of_its_own_fixed_finding_and_no_other() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    let threads = json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": [
+        {"id": "PRRT_501", "isResolved": false, "comments": {"nodes": [{"databaseId": 501}]}},
+        {"id": "PRRT_601", "isResolved": false, "comments": {"nodes": [{"databaseId": 601}]}}
+    ]}}}}});
+    let theirs = json!([{"id": 601, "user": {"login": "other", "type": "User"},
+        "body": "Why this name?", "path": "a.txt", "line": 1,
+        "created_at": "2026-10-01T00:00:00Z"}]);
+    let mut script = script(&Shown::open(&head));
+    let entries = script.as_array_mut().unwrap();
+    entries.insert(0, answer(&["api", "graphql"], 0, &threads.to_string()));
+    entries.insert(
+        0,
+        answer(
+            &["api", "repos/acme/widgets/pulls/1/comments"],
+            0,
+            &theirs.to_string(),
+        ),
+    );
+    stub.reprogram(script);
+    repository(&h, &path, Some(PIN)).await;
+    let id = the_request(&h).await;
+    let session = idle_session(&h, &id).await;
+
+    let stored: Vec<Value> = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/reviews"),
+                &session.id,
+                json!({"event": "request_changes", "body": "One P0.", "comments": [
+                    {"path": "src/lib.rs", "line": 3, "title": "Empty list",
+                     "body": "An empty list panics.", "priority": "P0"}
+                ]}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let mine = stored
+        .iter()
+        .find(|c| c["forge_id"] == "rc-501")
+        .expect("the finding is stored")["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let resolve = |comment: &str, as_: &str| {
+        as_session(
+            &format!("/v1/pull-requests/{id}/comments/{comment}/resolve"),
+            as_,
+            json!({}),
+        )
+    };
+    let stranger = h.lone_session("stranger").await;
+    h.error(resolve(&mine, &stranger.id), StatusCode::FORBIDDEN)
+        .await;
+
+    let resolved: Value = h.json(resolve(&mine, &session.id), StatusCode::OK).await;
+    assert_eq!(resolved["resolved"], true);
+    let call = stub
+        .invocations()
+        .into_iter()
+        .find(|i| i.args.iter().any(|a| a.contains("resolveReviewThread")))
+        .expect("the resolve mutation");
+    assert!(call.args.contains(&"id=PRRT_501".to_string()), "{call:?}");
+
+    fetch_again(
+        &h,
+        &stub,
+        &h.store.get_pull_request(&id).await.unwrap().repository_id,
+    )
+    .await;
+    let comments: Vec<Value> = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+    let theirs = comments
+        .iter()
+        .find(|c| c["forge_id"] == "rc-601")
+        .expect("their comment is stored");
+    h.error(
+        resolve(theirs["id"].as_str().unwrap(), &session.id),
+        StatusCode::FORBIDDEN,
+    )
+    .await;
+    let mutations = stub
+        .invocations()
+        .iter()
+        .filter(|i| i.args.iter().any(|a| a.contains("resolveReviewThread")))
+        .count();
+    assert_eq!(mutations, 1, "their thread stays open");
+}
+
 /// A reported `reviewed_sha` is stored and raises `waiting_user` for my
 /// approval. The same sha again raises nothing; a later sha raises it
 /// again.
@@ -852,6 +948,28 @@ async fn a_request_of_mine_is_reviewed_once_asked_and_its_review_is_a_comment() 
             .all(|s| !s.status().is_live())
     })
     .await;
+
+    // Asked again on another model, the review is a fresh session on it:
+    // the last conversation keeps the model it started on.
+    let again = axum::http::Request::builder()
+        .method("PUT")
+        .uri(format!("/v1/pull-requests/{id}/ariadne-review"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"asked": true, "model": "stub:new-model"}).to_string(),
+        ))
+        .unwrap();
+    let _: Value = h.json(again, StatusCode::OK).await;
+    let mut fresh = None;
+    eventually(TIMEOUT, "a review on the new model", async || {
+        fresh = sessions(&h, &id)
+            .await
+            .into_iter()
+            .find(|s| s.status().is_live() && s.model == "stub:new-model");
+        fresh.is_some()
+    })
+    .await;
+    assert_ne!(fresh.unwrap().id, session.id, "a fresh session");
 }
 
 /// Asking needs a model the catalog holds, and a request that asks for my

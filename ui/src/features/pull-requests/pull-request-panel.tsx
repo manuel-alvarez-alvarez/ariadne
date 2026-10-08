@@ -39,6 +39,7 @@ import { forgeName } from "@/features/forge/forge-filters"
 import { repositoriesQueryOptions } from "@/features/repositories/queries"
 import { sessionQueryOptions, sessionsQueryOptions } from "@/features/sessions/queries"
 import { SessionDetailView, SessionPanelHeader } from "@/features/sessions/session-detail-view"
+import { isLiveStatus } from "@/features/sessions/session-display"
 import { SessionsList } from "@/features/sessions/sessions-list"
 import { useFocusReturn } from "@/hooks/use-focus-return"
 import { shortId, shortSha } from "@/lib/format"
@@ -146,15 +147,10 @@ export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => v
 }
 
 /**
- * The title, the actions on the request, and its state in pills: open,
- * merged or closed, the checks, the review decision, and an Ariadne review
- * while one is asked.
- */
-/**
  * The review session a Start review asked for, opened once it exists: the
- * daemon starts it a moment after the ask (029), so the review sessions the
- * request had then are noted, and the first one besides them is handed to
- * `open`. The list follows `session_created` on its own; the interval is
+ * daemon starts it a moment after the ask (029), so the review sessions live
+ * then are noted, and the first one live besides them is handed to `open` —
+ * a new session, or the last one resumed. The list follows `session_created` on its own; the interval is
  * what holds while the stream is down.
  */
 function useReviewOpening(pullRequestId: string, open: (sessionId: string) => void) {
@@ -167,9 +163,14 @@ function useReviewOpening(pullRequestId: string, open: (sessionId: string) => vo
     ...sessionsQueryOptions({ pull_request: pullRequestId }),
     refetchInterval: before ? 2000 : false,
   })
-  const ids = reviews.data?.map((session) => session.id).join(" ")
+  // A review comes up as a new session, or as the last one resumed on the
+  // same pin: either way it is a session live now that was not at the ask.
+  const live = (reviews.data ?? [])
+    .filter((session) => isLiveStatus(session.status))
+    .map((session) => session.id)
+  const ids = live.join(" ")
   useEffect(() => {
-    if (!before || !pending.current || ids === undefined) return
+    if (!before || !pending.current) return
     const fresh = ids.split(" ").find((each) => each && !before.includes(each))
     if (!fresh) return
     pending.current = false
@@ -180,11 +181,16 @@ function useReviewOpening(pullRequestId: string, open: (sessionId: string) => vo
     waiting: before !== null,
     await: () => {
       pending.current = true
-      setBefore(reviews.data?.map((session) => session.id) ?? [])
+      setBefore(live)
     },
   }
 }
 
+/**
+ * The title, the actions on the request, and its state in pills: open,
+ * merged or closed, the checks, the review decision, and an Ariadne review
+ * while one is asked.
+ */
 function PullRequestHeader({
   pull,
   onRemoved,

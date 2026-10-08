@@ -297,8 +297,7 @@ pub(super) async fn comments(
 
 /// Reply to one stored comment. The daemon posts the reply through the
 /// forge CLI, stores it as a comment of the integration login, and counts
-/// the threads that wait again. There is no route that resolves a thread:
-/// a human closes a thread.
+/// the threads that wait again.
 #[utoipa::path(post, path = "/v1/pull-requests/{id}/comments/{comment_id}/reply", tag = "pull-requests",
     params(("id" = String, Path), ("comment_id" = String, Path)),
     request_body = ReplyCommentRequest,
@@ -365,6 +364,66 @@ pub(super) async fn reply(
         .ok_or_else(|| ApiError::conflict("the reply was posted but not stored"))?;
     state.notify_scheduler_pull_request(&pull.id);
     Ok((StatusCode::CREATED, Json(pull_request_comment_dto(stored))))
+}
+
+/// Resolve the thread of one stored comment, once a push fixed what it
+/// found (029). Only a review session resolves, and only a thread it opened
+/// under the integration login: the threads of anyone else stay open for
+/// the person who wrote them.
+#[utoipa::path(post, path = "/v1/pull-requests/{id}/comments/{comment_id}/resolve", tag = "pull-requests",
+    params(("id" = String, Path), ("comment_id" = String, Path)),
+    responses((status = 200, body = PullRequestCommentDto), (status = 403), (status = 404), (status = 409), (status = 502)))]
+pub(super) async fn resolve(
+    State(state): State<AppState>,
+    Path((id, comment_id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> ApiResult<Json<PullRequestCommentDto>> {
+    let pull = state.store.get_pull_request(&id).await?;
+    let session = own_session(&state, &headers, &pull).await?;
+    if session.pull_request_id.as_deref() != Some(pull.id.as_str()) {
+        return Err(ApiError::forbidden(format!(
+            "only the review session of pull request {} resolves a thread",
+            pull.id
+        )));
+    }
+    let comment = state
+        .store
+        .get_pull_request_comment(&pull.id, &comment_id)
+        .await?;
+    let forge = integration(&state, &pull.repository_id).await?;
+    let login = forge.login.clone().unwrap_or_default();
+    let thread = state
+        .store
+        .list_pull_request_comments(&pull.id, false, &login)
+        .await?
+        .into_iter()
+        .filter(|c| c.thread_id == comment.thread_id)
+        .collect::<Vec<_>>();
+    let opened_by_me = thread
+        .first()
+        .is_some_and(|first| first.author_login.eq_ignore_ascii_case(&login));
+    if !opened_by_me {
+        return Err(ApiError::forbidden(format!(
+            "thread {} was not opened by {login}: its author resolves it",
+            comment.thread_id
+        )));
+    }
+    if !comment.resolved {
+        ForgeClient::for_repository(&state.launcher.cfg, &forge)
+            .resolve(&slug(&forge), pull.number, &comment)
+            .await
+            .map_err(forge_error)?;
+        state
+            .store
+            .resolve_pull_request_thread(&pull.id, &comment.thread_id, &login)
+            .await?;
+    }
+    let stored = state
+        .store
+        .get_pull_request_comment(&pull.id, &comment.id)
+        .await?;
+    state.notify_scheduler_pull_request(&pull.id);
+    Ok(Json(pull_request_comment_dto(stored)))
 }
 
 /// What the request's session says of it: `ready` once every required

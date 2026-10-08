@@ -60,7 +60,9 @@ Out: how each state is *worked* — planning (003), engineering and review
      `approved` only once every author is approved and the reviewers have
      picked the winner (004)
    - `changes_requested → in_progress` (daemon), when the author resumes
-   - `approved → finished` (author), through `finish_task`
+   - `approved → finished` (author), through `finish_task`; and (daemon)
+     once the request of a `pull_request` task merged and its author read
+     the news (005)
    - `approved → under_review` (author), when a published request is revised
    - `failed → ready` (user, orchestrator), which is a retry
 6. Two blanket rules sit above that table: the **user** and the

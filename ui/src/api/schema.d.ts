@@ -674,10 +674,31 @@ export interface paths {
         /**
          * Reply to one stored comment. The daemon posts the reply through the
          *     forge CLI, stores it as a comment of the integration login, and counts
-         *     the threads that wait again. There is no route that resolves a thread:
-         *     a human closes a thread.
+         *     the threads that wait again.
          */
         post: operations["pull-requests_reply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pull-requests/{id}/comments/{comment_id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve the thread of one stored comment, once a push fixed what it
+         *     found (029). Only a review session resolves, and only a thread it opened
+         *     under the integration login: the threads of anyone else stay open for
+         *     the person who wrote them.
+         */
+        post: operations["pull-requests_resolve"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2786,6 +2807,7 @@ export interface components {
         };
         /** @description One inline comment of a review (029). */
         ReviewCommentRequest: {
+            /** @description What goes wrong, and how to fix it. */
             body: string;
             /**
              * Format: int64
@@ -2795,6 +2817,8 @@ export interface components {
             path: string;
             /** @description `P0`, `P1` or `P2`. */
             priority: string;
+            /** @description A short title of the defect; the comment opens on `[P0] Title`. */
+            title?: string;
         };
         /**
          * @description Where an agent sits: the orchestrator of a goal, or the author or a
@@ -4840,6 +4864,52 @@ export interface operations {
         };
         responses: {
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestCommentDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                comment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

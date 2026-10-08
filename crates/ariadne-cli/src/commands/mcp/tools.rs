@@ -243,6 +243,13 @@ pub(super) struct ReplyCommentReq {
     pub body: String,
 }
 
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(super) struct ResolveThreadReq {
+    /// The `id` of a comment of the thread, as `list_comments` gives it.
+    pub comment_id: String,
+}
+
 /// The two states a human ends a request in, and the one it stands in.
 #[derive(Clone, Copy, Debug, serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
@@ -862,7 +869,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Reply once to one comment of your pull request. Ariadne posts the reply on the forge. Nothing closes the thread: a human does that."
+        description = "Reply once to one comment of your pull request. Ariadne posts the reply on the forge."
     )]
     async fn reply_comment(
         &self,
@@ -884,6 +891,19 @@ impl AriadneMcp {
             )
             .await?,
         )
+    }
+
+    #[tool(
+        description = "Resolve the thread of one of your own review comments once a push fixed it. Ariadne resolves it on the forge. A thread somebody else opened is refused: its author resolves it."
+    )]
+    async fn resolve_thread(
+        &self,
+        Parameters(req): Parameters<ResolveThreadReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let path = self
+            .pull_request_path(&format!("/comments/{}/resolve", req.comment_id))
+            .await?;
+        json_result(self.post(&path, &serde_json::json!({})).await?)
     }
 
     #[tool(
@@ -1228,6 +1248,11 @@ mod tests {
         }))
         .await
         .expect("report");
+        mcp.resolve_thread(Parameters(ResolveThreadReq {
+            comment_id: "01C".into(),
+        }))
+        .await
+        .expect("resolve");
 
         let seen = seen.lock().expect("lock").clone();
         let calls: Vec<(String, String)> = seen
@@ -1240,6 +1265,10 @@ mod tests {
                 ("GET".into(), "/v1/pull-requests/01PR/diff?since=abc".into()),
                 ("POST".into(), "/v1/pull-requests/01PR/reviews".into()),
                 ("POST".into(), "/v1/pull-requests/01PR/report".into()),
+                (
+                    "POST".into(),
+                    "/v1/pull-requests/01PR/comments/01C/resolve".into()
+                ),
             ]
         );
         let review: serde_json::Value = serde_json::from_str(&seen[1].body).expect("json");

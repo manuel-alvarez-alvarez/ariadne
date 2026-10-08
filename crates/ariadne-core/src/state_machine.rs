@@ -195,8 +195,10 @@ pub fn check_transition(
         (S::UnderReview, S::Approved) => &[A::Daemon],
         (S::ChangesRequested, S::InProgress) => &[A::Daemon],
         // Ending the task is the author's own: an approved task is one it is
-        // finishing, and `finish_task` is the only way out of it.
-        (S::Approved, S::Finished) => &[A::Author],
+        // finishing, and `finish_task` is how it gets out. The daemon ends
+        // one whose pull request a human merged once its author has read
+        // the merge, so no agent stays up on a request that is done (005).
+        (S::Approved, S::Finished) => &[A::Author, A::Daemon],
         // And back to the reviewers when the people on a published request
         // ask for changes: that revision is reviewed like any other round.
         (S::Approved, S::UnderReview) => &[A::Author],
@@ -233,6 +235,7 @@ mod tests {
         (S::UnderReview, S::Approved, A::Daemon),
         (S::ChangesRequested, S::InProgress, A::Daemon),
         (S::Approved, S::Finished, A::Author),
+        (S::Approved, S::Finished, A::Daemon),
         (S::Approved, S::UnderReview, A::Author),
         (S::Failed, S::Ready, A::User),
         (S::Failed, S::Ready, A::Orchestrator),

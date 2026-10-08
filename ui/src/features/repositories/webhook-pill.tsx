@@ -25,6 +25,17 @@ function delivery(forge: ForgeDto, tunnel: ForgeTunnelDto | undefined) {
   return { mode: tunnelled ? "localtunnel" : "polling", working }
 }
 
+/**
+ * Whether the forge pushes every change of an enabled integration the moment
+ * it happens: the tunnel is on and the hook is live. Anything else — polling,
+ * or a tunnel or hook that is down — leaves a list up to five minutes behind,
+ * so the Forge tabs offer a refresh only then.
+ */
+export function pushesLive(forge: ForgeDto, tunnel: ForgeTunnelDto | undefined) {
+  const { mode, working } = delivery(forge, tunnel)
+  return mode === "localtunnel" && working
+}
+
 export function WebhookPill({
   forge,
   tunnel,

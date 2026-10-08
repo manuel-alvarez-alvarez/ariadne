@@ -90,6 +90,29 @@ impl Store {
         Ok(row)
     }
 
+    /// Mark one thread of a request resolved, every comment of it, once the
+    /// forge resolved it (029), and count the threads that wait again.
+    pub async fn resolve_pull_request_thread(
+        &self,
+        pull_request_id: &str,
+        thread_id: &str,
+        login: &str,
+    ) -> Result<PullRequest> {
+        let mut tx = self.w().begin().await?;
+        sqlx::query(
+            "UPDATE pull_request_comments SET resolved = 1
+              WHERE pull_request_id = ? AND thread_id = ?",
+        )
+        .bind(pull_request_id)
+        .bind(thread_id)
+        .execute(&mut *tx)
+        .await?;
+        let row = recount(&mut tx, pull_request_id, login).await?;
+        tx.commit().await?;
+        self.publish(Change::PullRequestUpdated(row.clone()));
+        Ok(row)
+    }
+
     /// Every stored comment of a request, oldest first, or only those of the
     /// threads that wait on an answer from `login`.
     pub async fn list_pull_request_comments(

@@ -117,7 +117,13 @@ works with it (025), and what becomes of a request once it is open (026).
    on that one change; a later `ready: false` takes it back down. Ariadne
    never merges the request: a human does. On the merge the author
    fast-forwards the base branch in the primary checkout and reports the sha
-   with `finish_task`. A request closed unmerged ends the task with
+   with `finish_task`. Where the task is still `approved` after that, the
+   daemon finishes it itself, as `daemon`: once the author's turn that read
+   the merge has ended, once the author has been quiet for the quiet nudge
+   since it was told, or at once where no author is up. The merge commit is
+   the tip of the base branch fetched from the remote, else the checkout's
+   own base, else the request's head. The task's cleanup then stops the
+   author and its agent (009). A request closed unmerged ends the task with
    `fail_task`. A restart that resumes the author while its open request
    still reads ready raises `waiting_user` again (009).
 10. `feature_branch` ends in a final task per repository: the one live task
@@ -242,7 +248,10 @@ works with it (025), and what becomes of a request once it is open (026).
   author loads `pr-babysit`, and `finish_task` is refused until the request's
   row reads `merged`, then accepted with no sha asked onto the base branch
   (`landing_lifecycle.rs::opening_a_pull_request_runs_the_forge_cli_once_and_keeps_the_task_until_the_merge`,
-  `kept_requests.rs::a_merge_is_told_to_the_author_whose_finish_it_then_accepts`).
+  `kept_requests.rs::a_merge_is_told_to_the_author_and_then_ends_the_task_and_its_agent`).
+  After the merge news, the daemon finishes the task itself, the author is
+  stopped and the request's cleanup is recorded
+  (`kept_requests.rs::a_merge_is_told_to_the_author_and_then_ends_the_task_and_its_agent`).
   A close is told to the author and finishes nothing
   (`kept_requests.rs::a_close_is_told_to_the_author_and_finishes_nothing`).
 - A revision of an open request goes back to the reviewers, opens no second

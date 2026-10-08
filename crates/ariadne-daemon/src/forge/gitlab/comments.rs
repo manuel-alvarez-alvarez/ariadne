@@ -1,10 +1,11 @@
-//! Replying to a note on a merge request, through `glab api` (026). There
-//! is no call here that resolves a discussion: a human closes a thread.
+//! Replying to a note on a merge request, and resolving a discussion a
+//! reviewer session opened once a push fixed it, through `glab api` (026,
+//! 029).
 use serde::Deserialize;
 
 use super::Gitlab;
 use super::details::{note_id, project};
-use crate::forge::pulls::split_slug;
+use crate::forge::pulls::{CONVERSATION, split_slug};
 use ariadne_store::PullRequestComment;
 
 #[derive(Deserialize)]
@@ -43,5 +44,36 @@ impl Gitlab {
         let created: Created = serde_json::from_str(&output)
             .map_err(|e| format!("cannot read the note GitLab stored: {e}"))?;
         Ok(note_id(created.id))
+    }
+
+    /// Resolve the discussion `comment` is in. The conversation of notes
+    /// that start no discussion is none, and nothing resolves it.
+    pub(crate) async fn resolve(
+        &self,
+        repo: &str,
+        number: i64,
+        comment: &PullRequestComment,
+    ) -> Result<(), String> {
+        if comment.thread_id == CONVERSATION {
+            return Err("only a discussion resolves".into());
+        }
+        let (host, owner, name) = split_slug(repo)?;
+        self.cli
+            .answer(&[
+                "api",
+                &format!(
+                    "projects/{}/merge_requests/{number}/discussions/{}",
+                    project(owner, name),
+                    comment.thread_id
+                ),
+                "--hostname",
+                host,
+                "--method",
+                "PUT",
+                "-f",
+                "resolved=true",
+            ])
+            .await?;
+        Ok(())
     }
 }

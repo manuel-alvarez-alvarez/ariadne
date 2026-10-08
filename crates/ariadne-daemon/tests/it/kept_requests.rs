@@ -295,7 +295,7 @@ async fn the_news_of_its_request_reaches_the_author_once() {
 }
 
 /// The author replies through the forge's reply command, stored as my
-/// comment in the thread, which answers it; nothing resolves a thread. Its
+/// comment in the thread, which answers it; the author resolves no thread. Its
 /// `ready: true` raises `waiting_user` on its own session once, and
 /// `ready: false` takes it down. Any other session is refused, and so is a
 /// call that comes from no session.
@@ -348,6 +348,15 @@ async fn the_author_replies_and_reports_and_no_other_session_may() {
     );
     let dto: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
     assert_eq!(dto["unanswered_comments"], 0);
+    h.error(
+        as_session(
+            &format!("/v1/pull-requests/{id}/comments/{comment_id}/resolve"),
+            &author.id,
+            json!({}),
+        ),
+        StatusCode::FORBIDDEN,
+    )
+    .await;
     for call in stub.invocations() {
         let line = call.args.join(" ");
         assert!(
@@ -398,10 +407,11 @@ async fn the_author_replies_and_reports_and_no_other_session_may() {
 }
 
 /// The task stays approved while its request is open, and its finish is
-/// refused. A merge is told to the author, whose finish is then accepted; the
-/// request ended with its task, so its cleanup is recorded.
+/// refused. A merge is told to the author; once the turn that read it ended,
+/// the daemon finishes the task itself, the task's cleanup stops the author,
+/// and the request's cleanup is recorded.
 #[tokio::test]
-async fn a_merge_is_told_to_the_author_whose_finish_it_then_accepts() {
+async fn a_merge_is_told_to_the_author_and_then_ends_the_task_and_its_agent() {
     let Kept {
         h,
         stub,
@@ -428,8 +438,16 @@ async fn a_merge_is_told_to_the_author_whose_finish_it_then_accepts() {
         h.prompted(&author).contains("The request is now merged.")
     })
     .await;
-    let finished: TaskDto = h.json(finish(&task, &author, &tip), StatusCode::OK).await;
-    assert_eq!(finished.status, TaskStatus::Finished);
+    eventually(TIMEOUT, "the daemon to finish the task", async || {
+        h.flush_scheduler().await;
+        h.status(&task.id).await == TaskStatus::Finished
+    })
+    .await;
+    eventually(TIMEOUT, "the author to be stopped", async || {
+        h.flush_scheduler().await;
+        !h.session_status(&author).await.is_live()
+    })
+    .await;
     eventually(
         TIMEOUT,
         "the request's cleanup to be recorded",
@@ -623,14 +641,13 @@ async fn a_merged_goal_branch_goes_once_its_task_is_over_and_a_failed_remote_del
         h.prompted(&author).contains("The request is now merged.")
     })
     .await;
-    pass_over(&h, &id).await;
-    assert_eq!(
-        sh(&path, "git branch --list fix"),
-        "fix",
-        "the goal branch stays while its task is not over"
-    );
-    let tip = sh(&path, &format!("git rev-parse {}", task.branch));
-    let _: TaskDto = h.json(finish(&task, &author, &tip), StatusCode::OK).await;
+    // The daemon ends the task once the author read the merge, and the
+    // goal branch goes after it.
+    eventually(TIMEOUT, "the task to end", async || {
+        h.flush_scheduler().await;
+        h.status(&task.id).await == TaskStatus::Finished
+    })
+    .await;
     eventually(TIMEOUT, "the local goal branch to go", async || {
         pass_over(&h, &id).await;
         sh(&path, "git branch --list fix").is_empty()
