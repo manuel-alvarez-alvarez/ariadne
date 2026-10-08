@@ -43,11 +43,16 @@ src/
     goals/         the goals board (swimlanes, attention strip), the goal panel,
                    and the attention count the shell shows everywhere else
     tasks/         the task panel: facts, diff, reviews, history
+    pull-requests/ the pull request ledger: requests a task opened, the forge
+                   found, or added by hand, and the pane over one
+    issues/        the issues screen: open issues from an enabled repository's
+                   forge, and filling a goal dialog from one
     sessions/      the sessions screen, the session panel and its console: a
                    terminal pane on the daemon's terminal socket
     models/        the pin picker, the model catalog and the agent summary
     skills/        skills screen: the catalog, and the document each one is
-    repositories/  the registered checkouts goals are created against
+    repositories/  the registered checkouts goals are created against, their
+                   forge integration, and the webhook tunnel switch
     agents/        agents screen: the flags each registry agent is launched with
     permissions/   the Permissions screen: Learned (every approval a `learn`
                    or `ai` repository has kept, and one added by hand) and AI

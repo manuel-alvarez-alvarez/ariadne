@@ -49,3 +49,13 @@ session has ended by then. It never changes what the error itself says, and
 never decides whether a session retries or switches models: the model may
 disagree with the daemon's own exhaustion check, and that disagreement is
 never acted on (021, 024).
+
+A repository with the forge integration on (see [The forge
+integration](forge.md)) also carries `pull_request_created`,
+`pull_request_updated` and `pull_request_deleted` in `ariadne events -f`,
+one per request the ledger gains, changes, or drops, with the request's id
+as the subject and its title and state as the detail; and
+`forge_settings_updated`, subject "forge tunnel", whenever the webhook
+tunnel's switch or state changes. Neither belongs to a goal or a task, so
+`--goal` and `--task` leave them out; `--kind` still selects them, and
+`ariadne pr inspect <id>` reads a request's current state directly.
