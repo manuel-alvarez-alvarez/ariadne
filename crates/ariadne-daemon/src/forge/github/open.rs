@@ -3,8 +3,9 @@
 use super::Github;
 
 impl Github {
-    /// `gh pr create --repo <owner>/<name> --head <head> --base <base>
-    /// --title <title> --body <body> [--draft]`: the URL `gh` answers with.
+    /// `gh pr create --repo <host>/<owner>/<name> --head <head> --base
+    /// <base> --title <title> --body <body> [--draft]`: the URL `gh` answers
+    /// with. `repo` is `host/owner/name`, which `gh` takes as it is.
     pub async fn open(
         &self,
         repo: &str,

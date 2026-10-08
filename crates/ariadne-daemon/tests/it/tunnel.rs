@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::common::forge::{StubForgeCli, answer, stub_forge_cli};
+use crate::common::forge::{Invocation, StubForgeCli, answer, stub_forge_cli};
 use crate::common::{
     Harness, QUIET, RUNS_OUT, TIMEOUT, eventually, harness, next_event, post_json, put_json, sh,
 };
@@ -274,12 +274,17 @@ fn fetches(stub: &StubForgeCli) -> usize {
         .count()
 }
 
-/// Every hook request: an `api` call other than the login's.
+/// Whether a call is a hook request: an `api` call on a `hooks` path.
+fn is_hook_call(call: &Invocation) -> bool {
+    call.args.first().is_some_and(|a| a == "api")
+        && call.args.get(1).is_some_and(|path| path.contains("/hooks"))
+}
+
+/// Every hook request.
 fn hook_calls(stub: &StubForgeCli) -> usize {
     stub.invocations()
         .iter()
-        .filter(|call| call.args.first().is_some_and(|a| a == "api"))
-        .filter(|call| call.args.get(1).is_none_or(|a| a != "user"))
+        .filter(|call| is_hook_call(call))
         .count()
 }
 
@@ -288,7 +293,7 @@ fn fetches_after_the_last_hook_call(stub: &StubForgeCli) -> usize {
     let calls = stub.invocations();
     let last = calls
         .iter()
-        .rposition(|call| call.args.first().is_some_and(|a| a == "api") && call.args[1] != "user")
+        .rposition(is_hook_call)
         .expect("a hook request");
     calls[last..]
         .iter()

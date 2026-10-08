@@ -288,6 +288,54 @@ impl GitManager {
             .await
     }
 
+    /// Move the local `branch` forward to `to`, a commit already in the
+    /// repository, and only forward (005): a branch that already holds `to`
+    /// is left as it is, one with commits `to` lacks is refused, and a
+    /// missing one is created at `to`. Where a
+    /// worktree has the branch checked out, `git merge --ff-only` runs in
+    /// it, which refuses to overwrite a local change; elsewhere the ref is
+    /// moved with `update-ref`, guarded by its old value.
+    pub(crate) async fn fast_forward(&self, repo: &Path, branch: &str, to: &str) -> Result<()> {
+        if !self.branch_exists(repo, branch).await? {
+            // No local branch yet: it starts where the remote's is.
+            self.git(repo, &["update-ref", &format!("refs/heads/{branch}"), to])
+                .await?;
+            return Ok(());
+        }
+        let tip = self.branch_tip(repo, branch).await?;
+        if self.is_ancestor(repo, to, &tip).await? {
+            return Ok(());
+        }
+        if !self.is_ancestor(repo, &tip, to).await? {
+            bail!("{branch} has commits that {to} lacks: it cannot be fast-forwarded");
+        }
+        let listed = self.git(repo, &["worktree", "list", "--porcelain"]).await?;
+        let wanted = format!("branch refs/heads/{branch}");
+        let mut path = None;
+        let mut checked_out = None;
+        for line in listed.lines() {
+            if let Some(at) = line.strip_prefix("worktree ") {
+                path = Some(at.to_string());
+            } else if line == wanted {
+                checked_out = path.clone();
+            }
+        }
+        match checked_out {
+            Some(worktree) => {
+                self.git(Path::new(&worktree), &["merge", "--ff-only", "--quiet", to])
+                    .await?;
+            }
+            None => {
+                self.git(
+                    repo,
+                    &["update-ref", &format!("refs/heads/{branch}"), to, &tip],
+                )
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
     /// The diff of `HEAD` in `worktree` from the commit `since`:
     /// `git diff <since>..HEAD` (029).
     pub(crate) async fn diff_since(&self, worktree: &Path, since: &str) -> Result<String> {

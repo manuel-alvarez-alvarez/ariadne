@@ -639,6 +639,7 @@ mod tests {
             review_model: None,
             review_effort: None,
             review_skills_json: "[]".into(),
+            merge_sha: None,
         };
         for template in [pull_request_briefing_prompt(), pull_request_news_prompt()] {
             let mut rest = template;

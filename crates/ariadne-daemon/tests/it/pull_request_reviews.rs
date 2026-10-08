@@ -1035,6 +1035,7 @@ async fn asking_needs_a_model_and_a_request_of_mine() {
             review_decision: "none".into(),
             origin_task_id: None,
             opened_at: "2026-10-01T00:00:00Z".into(),
+            merge_sha: None,
         })
         .await
         .unwrap()
@@ -1046,4 +1047,73 @@ async fn asking_needs_a_model_and_a_request_of_mine() {
         .body(Body::from(json!({"asked": true, "model": PIN}).to_string()))
         .unwrap();
     h.error(ask, StatusCode::CONFLICT).await;
+}
+
+/// On GitLab a finding on a renamed file is placed with the file's path on
+/// each side of the diff: its old path, read off the merge request's diffs
+/// before anything is posted, and the new one the finding names.
+#[tokio::test]
+async fn a_gitlab_finding_on_a_renamed_file_names_its_old_path() {
+    use ariadne_core::ForgeKind;
+    use ariadne_daemon::forge::ForgeClient;
+    use ariadne_daemon::forge::pulls::{DraftComment, ReviewDraft};
+
+    let base = "projects/team%2Fwidgets/merge_requests/7";
+    let diffs = format!("{base}/diffs?per_page=100");
+    let discussions = format!("{base}/discussions");
+    let notes = format!("{base}/notes");
+    let stub = stub_forge_cli(json!([
+        {"program": "glab", "args": ["api", diffs], "stdout": json!([
+            {"old_path": "src/old.rs", "new_path": "src/new.rs"},
+            {"old_path": "src/same.rs", "new_path": "src/same.rs"}
+        ]).to_string()},
+        {"program": "glab", "args": ["api", discussions], "stdout": json!(
+            {"id": "d1", "notes": [{"id": 9, "created_at": "2026-10-02T00:00:00Z"}]}
+        ).to_string()},
+        {"program": "glab", "args": ["api", notes], "stdout": json!(
+            {"id": 10, "created_at": "2026-10-02T00:00:00Z"}
+        ).to_string()},
+        {"program": "glab", "args": ["api", base], "stdout": json!({"diff_refs":
+            {"base_sha": "b", "start_sha": "s", "head_sha": "h"}}).to_string()},
+    ]));
+    let h = harness().forge_cli(&stub).await;
+    let finding = |path: &str| DraftComment {
+        path: path.into(),
+        line: 3,
+        body: "**[P1] Renamed**\n\nIt breaks.".into(),
+    };
+    ForgeClient::new(&h.launcher.cfg, ForgeKind::Gitlab)
+        .submit_review(
+            "gitlab.com/team/widgets",
+            7,
+            &ReviewDraft {
+                request_changes: false,
+                body: "One finding.".into(),
+                head_sha: "h".into(),
+                comments: vec![finding("src/new.rs"), finding("src/same.rs")],
+            },
+            "maria",
+        )
+        .await
+        .expect("the review is posted");
+    let posted: Vec<Vec<String>> = stub
+        .invocations()
+        .into_iter()
+        .filter(|call| call.args.get(1) == Some(&discussions))
+        .map(|call| call.args)
+        .collect();
+    assert_eq!(posted.len(), 2, "{posted:?}");
+    for (call, old, new) in [
+        (&posted[0], "src/old.rs", "src/new.rs"),
+        (&posted[1], "src/same.rs", "src/same.rs"),
+    ] {
+        assert!(
+            call.contains(&format!("position[old_path]={old}")),
+            "{call:?}"
+        );
+        assert!(
+            call.contains(&format!("position[new_path]={new}")),
+            "{call:?}"
+        );
+    }
 }

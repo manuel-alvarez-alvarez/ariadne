@@ -131,6 +131,8 @@ async fn kept_request(script: Value) -> Kept {
     let cast = h.active_cast_ending_in(Landing::PullRequest).await;
     with_forge(&h, &cast.repo).await;
     let bare = h.at("remote.git");
+    // The base is on the remote, as a forge's is: a merge is fetched from it.
+    sh(&path, "git push -q origin main");
     let task = cast.task.clone();
     let (worktree, author) = walk_to_approved(&h, &task, &cast.reviewer.id).await;
     sh(&worktree, "git push -q origin HEAD");
@@ -462,6 +464,231 @@ async fn a_merge_is_told_to_the_author_and_then_ends_the_task_and_its_agent() {
         },
     )
     .await;
+}
+
+/// A merge done on the forge while the author is down ends the task on the
+/// request's own merge commit — not on a later commit another request put on
+/// the base before the pass — and only once the local base branch holds it,
+/// so the tasks that wait on this one branch from a base with its change.
+#[tokio::test]
+async fn a_merge_ends_the_task_on_its_own_merge_commit_once_the_local_base_holds_it() {
+    let Kept {
+        h,
+        stub,
+        task,
+        author,
+        id,
+        repo,
+        path,
+        bare,
+        ..
+    } = kept_request(quiet_script()).await;
+    // A human merges the request on the forge, and another request merges
+    // on top of it before Ariadne's next pass.
+    let clone = h.at("forge-clone");
+    sh(
+        &h.at(""),
+        &format!("git clone -q {} {}", bare.display(), clone.display()),
+    );
+    sh(
+        &clone,
+        &format!(
+            "git checkout -q main && git -c user.name=t -c user.email=t@t merge -q --no-ff origin/{} -m merged && git push -q origin HEAD:main",
+            task.branch
+        ),
+    );
+    let merge = sh(&clone, "git rev-parse HEAD");
+    sh(
+        &clone,
+        "echo later > later.txt && git add later.txt && git -c user.name=t -c user.email=t@t commit -qm later && git push -q origin HEAD:main",
+    );
+    let later = sh(&clone, "git rev-parse HEAD");
+    assert_ne!(sh(&path, "git rev-parse main"), later);
+
+    let _: Value = h
+        .json(
+            crate::common::post(&format!("/v1/sessions/{}/kill", author.id)),
+            StatusCode::OK,
+        )
+        .await;
+    let mut merged = pull("MERGED", "abc");
+    merged["mergeCommit"] = json!({"oid": merge});
+    stub.reprogram(script_of(
+        merged,
+        &[],
+        &[],
+        r#"{"check_runs": []}"#,
+        r#"{"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}}"#,
+    ));
+    h.state.forge_poll.wake(&repo);
+    eventually(TIMEOUT, "the daemon to finish the task", async || {
+        h.flush_scheduler().await;
+        h.status(&task.id).await == TaskStatus::Finished
+    })
+    .await;
+    let row = h.store.get_pull_request(&id).await.unwrap();
+    assert_eq!(row.merge_sha.as_deref(), Some(merge.as_str()));
+    let finished = h.store.get_task(&task.id).await.unwrap();
+    assert_eq!(
+        finished.merge_commit.as_deref(),
+        Some(merge.as_str()),
+        "the request's own merge, not the later tip"
+    );
+    assert_eq!(
+        sh(&path, "git rev-parse main"),
+        later,
+        "the local base is fast-forwarded to the remote's"
+    );
+}
+
+/// An Ariadne review of a request a task's author keeps posts under the
+/// user's login, yet its findings are the author's to answer (029): each is
+/// told to the author once, named as the review's, and waits on it; the
+/// author's reply answers it.
+#[tokio::test]
+async fn an_ariadne_review_of_a_kept_request_reaches_its_author() {
+    let Kept {
+        h,
+        stub,
+        task,
+        author,
+        id,
+        repo,
+        path,
+        ..
+    } = kept_request(quiet_script()).await;
+    // The request's head is the task branch, so the review has a commit to
+    // be detached at.
+    let tip = sh(&path, &format!("git rev-parse {}", task.branch));
+    let headed = |script: Value| -> Value {
+        serde_json::from_str(
+            &script
+                .to_string()
+                .replace("abc", &tip)
+                .replace("\"fix\"", &format!("\"{}\"", task.branch)),
+        )
+        .unwrap()
+    };
+    let finding = json!([{"id": 501, "body": "**[P1] Untested**\n\nNo test covers it.",
+        "path": "src/lib.rs", "line": 3, "created_at": "2026-10-02T00:00:00Z"}]);
+    let mut script = headed(quiet_script());
+    let entries = script.as_array_mut().unwrap();
+    for entry in [
+        answer(
+            &[
+                "api",
+                "repos/acme/widgets/pulls/1/reviews",
+                "--hostname",
+                "github.com",
+                "--method",
+                "POST",
+            ],
+            0,
+            r#"{"id": 77, "submitted_at": "2026-10-02T00:00:00Z"}"#,
+        ),
+        answer(
+            &["api", "repos/acme/widgets/pulls/1/reviews/77/comments"],
+            0,
+            &finding.to_string(),
+        ),
+        answer(
+            &["api", "repos/acme/widgets/pulls/1/comments/501/replies"],
+            0,
+            r#"{"id": 601}"#,
+        ),
+    ] {
+        entries.insert(0, entry);
+    }
+    stub.reprogram(script);
+    fetch_again(&h, &stub, &repo).await;
+
+    let ask = Request::builder()
+        .method("PUT")
+        .uri(format!("/v1/pull-requests/{id}/ariadne-review"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"asked": true, "model": "stub:review-model"}).to_string(),
+        ))
+        .unwrap();
+    let _: Value = h.json(ask, StatusCode::OK).await;
+    let mut review = None;
+    eventually(TIMEOUT, "the review session to be idle", async || {
+        review = h
+            .store
+            .list_sessions(SessionFilter {
+                pull_request_id: Some(id.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|s| s.status() == SessionStatus::Idle && s.launched_at.is_some());
+        review.is_some()
+    })
+    .await;
+    let review = review.unwrap();
+    let told = h.prompts_to(&author).len();
+    let stored: Vec<Value> = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/reviews"),
+                &review.id,
+                json!({"event": "comment", "body": "One P1.", "comments": [
+                    {"path": "src/lib.rs", "line": 3, "title": "Untested",
+                     "body": "No test covers it.", "priority": "P1"}
+                ]}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let finding_id = stored
+        .iter()
+        .find(|c| c["forge_id"] == "rc-501")
+        .expect("the finding is stored")["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let dto: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
+    assert_eq!(
+        dto["unanswered_comments"], 2,
+        "the finding and the summary wait"
+    );
+
+    fetch_again(&h, &stub, &repo).await;
+    eventually(TIMEOUT, "the finding to reach the author", async || {
+        h.prompts_to(&author)
+            .iter()
+            .skip(told)
+            .any(|p| p.contains(&finding_id))
+    })
+    .await;
+    let news = h
+        .prompts_to(&author)
+        .into_iter()
+        .skip(told)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(news.contains("by the Ariadne review"), "{news}");
+    assert!(
+        !h.prompted(&review).contains(&finding_id),
+        "the review is not told its own finding"
+    );
+
+    let _: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/comments/{finding_id}/reply"),
+                &author.id,
+                json!({"body": "Added the test."}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let dto: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
+    assert_eq!(
+        dto["unanswered_comments"], 1,
+        "the author's reply answers the finding"
+    );
 }
 
 /// A close is told to the author too, and a closed request finishes nothing:

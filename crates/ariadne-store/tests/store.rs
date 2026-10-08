@@ -5032,6 +5032,7 @@ async fn pull_requests_keep_identity_user_tracking_and_detail_fields() {
         review_decision: "none".into(),
         origin_task_id: None,
         opened_at: "2026-10-01T00:00:00Z".into(),
+        merge_sha: None,
     };
     let (first, created) = store.upsert_pull_request(new.clone()).await.unwrap();
     assert!(created);
@@ -5203,6 +5204,7 @@ async fn store_with_my_pull_request() -> (Store, tempfile::TempDir, PullRequest)
             review_decision: "none".into(),
             origin_task_id: None,
             opened_at: "2026-10-01T00:00:00Z".into(),
+            merge_sha: None,
         })
         .await
         .unwrap();
@@ -5222,6 +5224,7 @@ fn comment(forge_id: &str, thread: &str, author: &str, at: &str) -> NewPullReque
         in_reply_to: None,
         created_at: at.into(),
         resolved: false,
+        from_review: false,
     }
 }
 

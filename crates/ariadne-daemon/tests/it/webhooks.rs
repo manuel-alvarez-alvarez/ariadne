@@ -660,9 +660,11 @@ async fn startup_checks_a_stored_hook_without_creating_another_and_fetches_once(
     assert_eq!(
         calls
             .iter()
-            .filter(|c| c.args.first().is_some_and(|a| a == "api"))
+            .filter(|c| c.args.first().is_some_and(|a| a == "api")
+                && c.args.get(1).is_some_and(|path| path.contains("/hooks")))
             .count(),
-        1
+        1,
+        "one hook call: the check, and no create"
     );
     assert!(
         calls.iter().any(

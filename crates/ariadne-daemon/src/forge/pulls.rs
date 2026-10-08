@@ -79,6 +79,8 @@ pub struct ForgePullRequest {
     pub checks: String,
     pub review_decision: String,
     pub opened_at: String,
+    /// The commit a merged request landed as; None on an open one.
+    pub merge_sha: Option<String>,
 }
 
 /// What a repository fetch lists: every open request, and the numbers of
@@ -132,6 +134,7 @@ pub(crate) async fn record(
             review_decision: pull.review_decision,
             origin_task_id,
             opened_at: pull.opened_at,
+            merge_sha: pull.merge_sha,
         })
         .await
         .map_err(|error| error.to_string())

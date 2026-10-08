@@ -406,7 +406,10 @@ async fn fetch(store: &Store, cfg: &Config, handoff: &Handoff, id: &str) -> Resu
 /// that fails tells nothing, and the next fetch reads them again.
 async fn issues_moved(handoff: &Handoff, integration: &ForgeIntegration, client: &ForgeClient) {
     use std::hash::{Hash, Hasher};
-    let repository = format!("{}/{}", integration.owner, integration.name);
+    let repository = format!(
+        "{}/{}/{}",
+        integration.host, integration.owner, integration.name
+    );
     let issues = match client.list_open_issues(&repository, None).await {
         Ok(issues) => issues,
         Err(error) => {

@@ -13,6 +13,7 @@
 
 use std::time::{Duration, Instant};
 
+use anyhow::Context;
 use tracing::{info, warn};
 
 use ariadne_core::{Actor, Seat, SessionStatus, TaskStatus};
@@ -191,8 +192,18 @@ impl super::Scheduler {
     /// sessions and its worktree down, so no agent stays up on a request
     /// that is done.
     async fn finish_merged(&mut self, task: &Task, pull: &PullRequest) -> anyhow::Result<()> {
-        info!(task = %task.id, pull_request = %pull.id, "the request merged, finishing its task");
-        let merge_commit = self.merged_base_tip(pull).await;
+        let merge_commit = match self.land_merge_locally(pull).await {
+            Ok(sha) => sha,
+            Err(e) => {
+                // The task waits approved, and the next pass tries again: a
+                // task finished on a base that lacks its change would start
+                // its dependents without it.
+                warn!(task = %task.id, pull_request = %pull.id, error = %format!("{e:#}"),
+                    "the merged request is not on the local base yet");
+                return Ok(());
+            }
+        };
+        info!(task = %task.id, pull_request = %pull.id, %merge_commit, "the request merged, finishing its task");
         match self
             .store
             .transition_task(
@@ -211,28 +222,46 @@ impl super::Scheduler {
         }
     }
 
-    /// What a merged request's task is finished by: the tip of the base it
-    /// merged into, read off the remote the way the author's own `finish_task`
-    /// reads it, or the checkout's own base, or at the last its head (005).
-    async fn merged_base_tip(&self, pull: &PullRequest) -> String {
-        let Ok(repo) = self.store.get_repository(&pull.repository_id).await else {
-            return pull.head_sha.clone();
-        };
+    /// Bring the merge of a request into the checkout before its task ends
+    /// (005), and answer the commit it landed as. The base is fetched from
+    /// the remote, the request's own merge commit — as the forge reported it —
+    /// must be on it, and the local base branch is fast-forwarded to it, so
+    /// the tasks that wait on this one branch from a base that holds it. A
+    /// row the forge named no merge commit for is finished by its head where
+    /// the head is on the base, as after a fast-forward or rebase merge, and
+    /// by the fetched tip as the last resort.
+    async fn land_merge_locally(&self, pull: &PullRequest) -> anyhow::Result<String> {
+        let repo = self.store.get_repository(&pull.repository_id).await?;
         let path = std::path::PathBuf::from(&repo.path);
         let remote = repo
             .forge
             .as_ref()
             .map_or_else(|| "origin".to_string(), |forge| forge.remote.clone());
         let git = &self.launcher.git;
-        match git.fetched_tip(&path, &remote, &pull.base_branch).await {
-            Ok(sha) => sha,
-            Err(e) => {
-                warn!(pull_request = %pull.id, error = %format!("{e:#}"), "the merged base could not be fetched");
-                git.branch_tip(&path, &pull.base_branch)
-                    .await
-                    .unwrap_or_else(|_| pull.head_sha.clone())
+        let tip = git
+            .fetched_tip(&path, &remote, &pull.base_branch)
+            .await
+            .with_context(|| format!("fetching {} from {remote}", pull.base_branch))?;
+        let merge_commit = match &pull.merge_sha {
+            Some(sha) => {
+                if !git.is_ancestor(&path, sha, &tip).await? {
+                    anyhow::bail!(
+                        "the merge commit {sha} is not on {remote}/{}",
+                        pull.base_branch
+                    );
+                }
+                sha.clone()
             }
-        }
+            None if git.is_ancestor(&path, &pull.head_sha, &tip).await? => pull.head_sha.clone(),
+            None => {
+                warn!(pull_request = %pull.id, "the forge named no merge commit; the base tip stands for it");
+                tip.clone()
+            }
+        };
+        git.fast_forward(&path, &pull.base_branch, &tip)
+            .await
+            .with_context(|| format!("fast-forwarding {} in {}", pull.base_branch, repo.path))?;
+        Ok(merge_commit)
     }
 
     /// The live session of the author that keeps a task's request: the

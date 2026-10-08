@@ -684,6 +684,9 @@ pub struct PullRequest {
     pub review_asked: bool,
     /// The request's description, as the forge holds it.
     pub body: String,
+    /// The commit the request landed as once merged, as the forge reports
+    /// it (005); None while it is not merged, or where the forge named none.
+    pub merge_sha: Option<String>,
     /// The pin the user picked for the review they asked of a request of
     /// their own (029); None where nobody asked.
     pub review_model: Option<String>,
@@ -729,4 +732,7 @@ pub struct PullRequestComment {
     pub resolved: bool,
     /// When the comment was handed to the request's session.
     pub told_at: Option<String>,
+    /// An Ariadne review session posted it (029): on a request of the
+    /// user's own it is a finding for the task's author, not the user's.
+    pub from_review: bool,
 }

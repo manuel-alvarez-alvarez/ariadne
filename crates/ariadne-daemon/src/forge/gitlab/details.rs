@@ -71,6 +71,14 @@ pub(crate) fn project(owner: &str, name: &str) -> String {
     format!("{owner}/{name}").replace('/', "%2F")
 }
 
+/// What `glab -R` takes for `host/group/name`: the project's URL. `-R` reads
+/// a bare `host/group/name` as a group path on the default host, so the
+/// host would be lost.
+pub(crate) fn repo_url(slug: &str) -> Result<String, String> {
+    let (host, owner, name) = split_slug(slug)?;
+    Ok(format!("https://{host}/{owner}/{name}"))
+}
+
 pub(crate) fn note_id(id: i64) -> String {
     format!("note-{id}")
 }
@@ -78,7 +86,11 @@ pub(crate) fn note_id(id: i64) -> String {
 impl Gitlab {
     /// `glab api <path> --hostname <host> --paginate`, read as every page's
     /// items, one JSON list per page.
-    async fn pages<T: DeserializeOwned>(&self, host: &str, path: &str) -> Result<Vec<T>, String> {
+    pub(super) async fn pages<T: DeserializeOwned>(
+        &self,
+        host: &str,
+        path: &str,
+    ) -> Result<Vec<T>, String> {
         let output = self
             .cli
             .answer(&["api", path, "--hostname", host, "--paginate"])
@@ -90,7 +102,11 @@ impl Gitlab {
         Ok(items)
     }
 
-    async fn object<T: DeserializeOwned>(&self, host: &str, path: &str) -> Result<T, String> {
+    pub(super) async fn object<T: DeserializeOwned>(
+        &self,
+        host: &str,
+        path: &str,
+    ) -> Result<T, String> {
         let output = self.cli.answer(&["api", path, "--hostname", host]).await?;
         serde_json::from_str(&output).map_err(|e| format!("cannot read `glab api {path}`: {e}"))
     }
@@ -129,6 +145,7 @@ impl Gitlab {
                     line,
                     created_at: note.created_at,
                     resolved,
+                    from_review: false,
                 });
             }
         }

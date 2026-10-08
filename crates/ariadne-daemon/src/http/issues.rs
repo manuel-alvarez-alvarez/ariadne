@@ -26,7 +26,7 @@ async fn client(state: &AppState, id: &str) -> ApiResult<(ForgeClient, String, S
         .ok_or_else(|| ApiError::conflict("the repository's forge integration is off"))?;
     Ok((
         ForgeClient::for_repository(&state.launcher.cfg, forge),
-        format!("{}/{}", forge.owner, forge.name),
+        format!("{}/{}/{}", forge.host, forge.owner, forge.name),
         forge.login.clone().unwrap_or_default(),
     ))
 }

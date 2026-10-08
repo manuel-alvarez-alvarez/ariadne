@@ -1992,6 +1992,7 @@ async fn approved_with_a_kept_request(w: &World) -> (AgentSession, String) {
             review_decision: "none".into(),
             origin_task_id: Some(w.task.id.clone()),
             opened_at: "2026-10-01T00:00:00Z".into(),
+            merge_sha: None,
         })
         .await
         .unwrap();
@@ -2384,6 +2385,7 @@ async fn pull_request_session(h: &Harness, number: i64) -> AgentSession {
             review_decision: "none".into(),
             origin_task_id: None,
             opened_at: "2026-10-01T00:00:00Z".into(),
+            merge_sha: None,
         })
         .await
         .unwrap();

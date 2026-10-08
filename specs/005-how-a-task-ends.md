@@ -121,8 +121,18 @@ works with it (025), and what becomes of a request once it is open (026).
    daemon finishes it itself, as `daemon`: once the author's turn that read
    the merge has ended, once the author has been quiet for the quiet nudge
    since it was told, or at once where no author is up. The merge commit is
-   the tip of the base branch fetched from the remote, else the checkout's
-   own base, else the request's head. The task's cleanup then stops the
+   the request's own, as the forge reports it (`pull_requests.merge_sha`,
+   migration `0017`: GitHub's `mergeCommit`, GitLab's merge or squash
+   commit, or its head after a fast-forward merge). Before the task ends
+   the daemon fetches the base from the remote, checks that the merge
+   commit is on it, and fast-forwards the local base branch to it: with
+   `git merge --ff-only` in the worktree that has it checked out, else
+   `update-ref`. A base with local commits the remote lacks, a local change
+   the fast-forward would overwrite, or a failed fetch leaves the task
+   `approved`, and the next pass tries again: a task finished on a base
+   that lacks its change would start its dependents without it. A row the
+   forge named no merge commit for ends on its head where the head is on
+   the base, else on the fetched tip. The task's cleanup then stops the
    author and its agent (009). A request closed unmerged ends the task with
    `fail_task`. A restart that resumes the author while its open request
    still reads ready raises `waiting_user` again (009).
@@ -172,6 +182,9 @@ works with it (025), and what becomes of a request once it is open (026).
     not, is what `open_pull_request` needs to find one, and the host it
     names is what the CLI's authentication is checked against. The daemon
     runs the forge's own CLI, `gh` or `glab`, itself — never the agent.
+    Every call names that host: `gh pr create --repo <host>/<owner>/<name>`,
+    and `glab mr create -R https://<host>/<group>/<name>`, since `-R` reads
+    a bare `host/group/name` as a group path on its default host.
 
 ## Acceptance criteria
 
@@ -252,6 +265,10 @@ works with it (025), and what becomes of a request once it is open (026).
   After the merge news, the daemon finishes the task itself, the author is
   stopped and the request's cleanup is recorded
   (`kept_requests.rs::a_merge_is_told_to_the_author_and_then_ends_the_task_and_its_agent`).
+  A merge done while the author is down ends the task on the request's own
+  merge commit, not on a later tip, once the local base is fast-forwarded
+  to the remote's
+  (`kept_requests.rs::a_merge_ends_the_task_on_its_own_merge_commit_once_the_local_base_holds_it`).
   A close is told to the author and finishes nothing
   (`kept_requests.rs::a_close_is_told_to_the_author_and_finishes_nothing`).
 - A revision of an open request goes back to the reviewers, opens no second

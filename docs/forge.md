@@ -139,7 +139,9 @@ how to fix it. A change request whose P0 findings are not on their lines is
 refused. On GitHub that is one API
 call carrying every inline comment; on GitLab, which has no review verdict
 of its own, one discussion per comment and a summary note that opens with
-"Request changes" when it asks for changes.
+"Request changes" when it asks for changes. On a request a task's author keeps, the review's
+findings go to that author like anyone else's comments, though they are
+posted under your login: it answers each one, and fixes what needs fixing.
 
 ## Nothing approves or merges in your name
 

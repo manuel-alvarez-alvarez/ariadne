@@ -109,7 +109,11 @@ fn script(list: Vec<Value>, view: Value) -> Value {
         answer(&["api", "user"], 0, "me"),
         answer(&["pr", "list"], 0, &serde_json::to_string(&list).unwrap()),
         answer(&["pr", "view"], 0, &view.to_string()),
-        answer(&["issue", "list"], 0, "[]"),
+        answer(
+            &["api", "repos/acme/widgets/issues?state=open&per_page=100"],
+            0,
+            "[]"
+        ),
     ])
 }
 
@@ -574,6 +578,16 @@ async fn gitlab_requests_keep_fork_checks_review_and_search_by_author_or_number(
         assert_eq!(found.len(), 1);
         assert_eq!(found[0]["tracked"], true);
     }
+    // `-R` names the project by its URL: a bare `host/group/name` would be
+    // read as a group path on the CLI's default host.
+    for call in stub.invocations() {
+        if let Some(at) = call.args.iter().position(|a| a == "-R") {
+            assert!(
+                call.args[at + 1].starts_with("https://gitlab.com/"),
+                "{call:?}"
+            );
+        }
+    }
 }
 
 #[tokio::test]
@@ -700,16 +714,16 @@ async fn a_fetch_publishes_issues_changed_only_when_the_open_issues_moved() {
     use ariadne_api::stream::DomainEvent;
     use ariadne_daemon::forge::poll::Mode;
     let issue = |number: i64, title: &str| {
-        json!({"number": number, "title": title, "body": "", "url":
+        json!({"number": number, "title": title, "body": "", "html_url":
             format!("https://github.com/acme/widgets/issues/{number}"),
-            "labels": [], "assignees": [], "updatedAt": "2026-10-01T00:00:00Z"})
+            "labels": [], "assignees": [], "updated_at": "2026-10-01T00:00:00Z"})
     };
     let with_issues = |issues: Vec<Value>| {
         let mut scripted = script(vec![], github_pull(1, "other"));
         scripted.as_array_mut().unwrap().insert(
             0,
             answer(
-                &["issue", "list"],
+                &["api", "repos/acme/widgets/issues?state=open&per_page=100"],
                 0,
                 &serde_json::to_string(&issues).unwrap(),
             ),

@@ -112,7 +112,11 @@ fn is_bot(user: &User) -> bool {
 impl Github {
     /// `gh api --hostname <host> --paginate <path>`, read as every page's
     /// items: `--paginate` writes one JSON value per page, back to back.
-    async fn pages<T: DeserializeOwned>(&self, host: &str, path: &str) -> Result<Vec<T>, String> {
+    pub(super) async fn pages<T: DeserializeOwned>(
+        &self,
+        host: &str,
+        path: &str,
+    ) -> Result<Vec<T>, String> {
         let output = self
             .cli
             .answer(&["api", path, "--hostname", host, "--paginate"])
@@ -141,7 +145,11 @@ impl Github {
     }
 
     /// One `gh api` object.
-    async fn object<T: DeserializeOwned>(&self, host: &str, path: &str) -> Result<T, String> {
+    pub(super) async fn object<T: DeserializeOwned>(
+        &self,
+        host: &str,
+        path: &str,
+    ) -> Result<T, String> {
         let output = self.cli.answer(&["api", path, "--hostname", host]).await?;
         serde_json::from_str(&output).map_err(|e| format!("cannot read `gh api {path}`: {e}"))
     }
@@ -174,6 +182,7 @@ impl Github {
                 in_reply_to: c.in_reply_to_id.map(review_comment_id),
                 created_at: c.created_at,
                 resolved,
+                from_review: false,
             });
         }
         for c in self
@@ -192,6 +201,7 @@ impl Github {
                 in_reply_to: None,
                 created_at: c.created_at,
                 resolved: false,
+                from_review: false,
             });
         }
         for r in self
@@ -214,6 +224,7 @@ impl Github {
                 in_reply_to: None,
                 created_at: at,
                 resolved: false,
+                from_review: false,
             });
         }
         let failed_checks = self

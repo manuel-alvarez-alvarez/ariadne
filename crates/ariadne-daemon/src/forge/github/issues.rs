@@ -1,22 +1,27 @@
-//! GitHub issues through `gh`.
+//! GitHub issues through `gh api` (028): every page of the open ones, on the
+//! integration's own host.
 
 use ariadne_api::issues::IssueDto;
 use serde::Deserialize;
 
 use super::Github;
-
-const FIELDS: &str = "number,title,body,url,labels,assignees,updatedAt";
+use crate::forge::pulls::split_slug;
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct Issue {
     number: i64,
     title: String,
-    body: String,
-    url: String,
+    #[serde(default)]
+    body: Option<String>,
+    html_url: String,
+    #[serde(default)]
     labels: Vec<Name>,
+    #[serde(default)]
     assignees: Vec<Login>,
     updated_at: String,
+    /// Set on a pull request: the issues endpoint lists those too.
+    #[serde(default)]
+    pull_request: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -34,8 +39,8 @@ impl From<Issue> for IssueDto {
         Self {
             number: issue.number,
             title: issue.title,
-            body: issue.body,
-            url: issue.url,
+            body: issue.body.unwrap_or_default(),
+            url: issue.html_url,
             labels: issue.labels.into_iter().map(|label| label.name).collect(),
             assignees: issue.assignees.into_iter().map(|user| user.login).collect(),
             updated_at: issue.updated_at,
@@ -44,33 +49,32 @@ impl From<Issue> for IssueDto {
 }
 
 impl Github {
+    /// Every open issue of `repo`, `host/owner/name`, or those assigned to
+    /// `assignee`: `gh api --paginate repos/<owner>/<name>/issues`, a hundred
+    /// a page, with the pull requests it also lists left out.
     pub(crate) async fn list_open_issues(
         &self,
-        repository: &str,
+        repo: &str,
         assignee: Option<&str>,
     ) -> Result<Vec<IssueDto>, String> {
-        let mut args = vec![
-            "issue", "list", "--repo", repository, "--state", "open", "--json", FIELDS,
-        ];
+        let (host, owner, name) = split_slug(repo)?;
+        let mut path = format!("repos/{owner}/{name}/issues?state=open&per_page=100");
         if let Some(login) = assignee {
-            args.extend(["--assignee", login]);
+            path.push_str(&format!("&assignee={login}"));
         }
-        let answer = self.cli.answer(&args).await?;
-        serde_json::from_str::<Vec<Issue>>(&answer)
-            .map(|issues| issues.into_iter().map(Into::into).collect())
-            .map_err(|error| format!("cannot read GitHub issues: {error}"))
+        Ok(self
+            .pages::<Issue>(host, &path)
+            .await?
+            .into_iter()
+            .filter(|issue| issue.pull_request.is_none())
+            .map(Into::into)
+            .collect())
     }
 
-    pub(crate) async fn issue(&self, repository: &str, number: i64) -> Result<IssueDto, String> {
-        let number = number.to_string();
-        let answer = self
-            .cli
-            .answer(&[
-                "issue", "view", &number, "--repo", repository, "--json", FIELDS,
-            ])
-            .await?;
-        serde_json::from_str::<Issue>(&answer)
+    pub(crate) async fn issue(&self, repo: &str, number: i64) -> Result<IssueDto, String> {
+        let (host, owner, name) = split_slug(repo)?;
+        self.object::<Issue>(host, &format!("repos/{owner}/{name}/issues/{number}"))
+            .await
             .map(Into::into)
-            .map_err(|error| format!("cannot read GitHub issue: {error}"))
     }
 }

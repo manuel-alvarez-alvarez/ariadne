@@ -22,6 +22,9 @@ pub struct NewPullRequestComment {
     pub in_reply_to: Option<String>,
     pub created_at: String,
     pub resolved: bool,
+    /// Posted by an Ariadne review session (029). A fetch reads every
+    /// comment as false, and the mark a post set stays.
+    pub from_review: bool,
 }
 
 impl Store {
@@ -40,8 +43,8 @@ impl Store {
             sqlx::query(
                 "INSERT INTO pull_request_comments (id, pull_request_id, forge_id, thread_id, kind,
                      author_login, author_is_bot, body, path, line, in_reply_to, created_at,
-                     fetched_at, resolved)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     fetched_at, resolved, from_review)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT (pull_request_id, forge_id) DO UPDATE SET
                      thread_id = excluded.thread_id,
                      kind = excluded.kind,
@@ -53,7 +56,8 @@ impl Store {
                      in_reply_to = excluded.in_reply_to,
                      created_at = excluded.created_at,
                      fetched_at = excluded.fetched_at,
-                     resolved = excluded.resolved",
+                     resolved = excluded.resolved,
+                     from_review = MAX(pull_request_comments.from_review, excluded.from_review)",
             )
             .bind(new_id())
             .bind(pull_request_id)
@@ -69,6 +73,7 @@ impl Store {
             .bind(&comment.created_at)
             .bind(&fetched)
             .bind(comment.resolved)
+            .bind(comment.from_review)
             .execute(&mut *tx)
             .await?;
         }
@@ -128,7 +133,10 @@ impl Store {
                      SELECT thread_id FROM pull_request_comments l
                       WHERE l.pull_request_id = c.pull_request_id
                         AND l.answered = 0 AND l.resolved = 0
-                        AND lower(l.author_login) <> lower(?))))
+                        AND (lower(l.author_login) <> lower(?)
+                     OR (l.from_review = 1 AND EXISTS (
+                         SELECT 1 FROM pull_requests p
+                          WHERE p.id = l.pull_request_id AND p.role = 'author'))))))
               ORDER BY c.created_at, c.id",
         )
         .bind(pull_request_id)
@@ -153,7 +161,8 @@ impl Store {
     }
 
     /// The comments the request's session has not been told of: by another
-    /// login than `login`, in a thread nobody resolved, and not answered yet.
+    /// login than `login`, or on a request of the user's own by an Ariadne
+    /// review (029), in a thread nobody resolved, and not answered yet.
     /// With `opened_by_login`, only those of a thread `login` opened: what a
     /// reviewer session hears of (029).
     pub async fn untold_pull_request_comments(
@@ -165,7 +174,10 @@ impl Store {
         Ok(sqlx::query_as(
             "SELECT * FROM pull_request_comments c
               WHERE c.pull_request_id = ? AND c.told_at IS NULL AND c.answered = 0
-                AND c.resolved = 0 AND lower(c.author_login) <> lower(?)
+                AND c.resolved = 0 AND (lower(c.author_login) <> lower(?)
+                     OR (c.from_review = 1 AND EXISTS (
+                         SELECT 1 FROM pull_requests p
+                          WHERE p.id = c.pull_request_id AND p.role = 'author')))
                 AND (? = 0 OR lower((SELECT o.author_login FROM pull_request_comments o
                                       WHERE o.pull_request_id = c.pull_request_id
                                         AND o.thread_id = c.thread_id
@@ -273,7 +285,10 @@ impl Store {
 
 /// Work out `answered` for every comment of the request and its
 /// `unanswered_comments`, by the rule 026 states: a thread waits on `login`
-/// while its last comment is by another login and nobody resolved it.
+/// while its last comment is by another login and nobody resolved it. On a
+/// request of the user's own a comment an Ariadne review posted counts as
+/// another login's (029): it waits on the task's author, whose reply
+/// answers it.
 async fn recount(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     pull_request_id: &str,
@@ -283,7 +298,10 @@ async fn recount(
         "UPDATE pull_request_comments AS c SET answered = EXISTS (
              SELECT 1 FROM pull_request_comments r
               WHERE r.pull_request_id = c.pull_request_id AND r.thread_id = c.thread_id
-                AND lower(r.author_login) = lower(?)
+                AND (lower(r.author_login) = lower(?)
+                     AND NOT (r.from_review = 1 AND EXISTS (
+                         SELECT 1 FROM pull_requests p
+                          WHERE p.id = r.pull_request_id AND p.role = 'author')))
                 AND (r.created_at > c.created_at OR (r.created_at = c.created_at AND r.id > c.id)))
           WHERE c.pull_request_id = ?",
     )
@@ -292,9 +310,12 @@ async fn recount(
     .execute(&mut **tx)
     .await?;
     let waiting: i64 = sqlx::query_scalar(
-        "SELECT COUNT(DISTINCT thread_id) FROM pull_request_comments
-          WHERE pull_request_id = ? AND resolved = 0 AND answered = 0
-            AND lower(author_login) <> lower(?)",
+        "SELECT COUNT(DISTINCT c.thread_id) FROM pull_request_comments c
+          WHERE c.pull_request_id = ? AND c.resolved = 0 AND c.answered = 0
+            AND (lower(c.author_login) <> lower(?)
+                     OR (c.from_review = 1 AND EXISTS (
+                         SELECT 1 FROM pull_requests p
+                          WHERE p.id = c.pull_request_id AND p.role = 'author')))",
     )
     .bind(pull_request_id)
     .bind(login)

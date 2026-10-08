@@ -143,10 +143,15 @@ fn comment_lines(untold: &[PullRequestComment]) -> Vec<String> {
                 (Some(path), None) => format!("on {path}"),
                 _ => "on the conversation".to_string(),
             };
+            // A review posts under the user's login: its findings are
+            // named for what they are (029).
+            let by = match comment.from_review {
+                true => "the Ariadne review",
+                false => comment.author_login.as_str(),
+            };
             format!(
-                "- {what} {} by {} {place}: {}",
+                "- {what} {} by {by} {place}: {}",
                 comment.id,
-                comment.author_login,
                 first_line(&comment.body)
             )
         })
@@ -254,6 +259,7 @@ mod tests {
             review_model: None,
             review_effort: None,
             review_skills_json: "[]".into(),
+            merge_sha: None,
         }
     }
 

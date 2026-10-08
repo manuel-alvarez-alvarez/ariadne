@@ -24,6 +24,8 @@ pub struct NewPullRequest {
     pub review_decision: String,
     pub origin_task_id: Option<String>,
     pub opened_at: String,
+    /// The commit a merged request landed as; None on an open one.
+    pub merge_sha: Option<String>,
 }
 
 /// What a request's session has been told, written after a news prompt went
@@ -83,9 +85,9 @@ impl Store {
         let id = new_id();
         let ts = now();
         let row: PullRequest = sqlx::query_as(
-            "INSERT INTO pull_requests (id, repository_id, number, url, title, body, author_login, tracked_by, state, draft, head_branch, head_sha, head_repo, base_branch, checks, review_decision, unanswered_comments, origin_task_id, opened_at, role, ready, last_seen_at, created_at, updated_at, cleaned_at)
+            "INSERT INTO pull_requests (id, repository_id, number, url, title, body, author_login, tracked_by, state, draft, head_branch, head_sha, head_repo, base_branch, checks, review_decision, unanswered_comments, origin_task_id, opened_at, role, ready, last_seen_at, created_at, updated_at, cleaned_at, merge_sha)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    CASE WHEN ? = 'open' THEN NULL ELSE ? END)
+                    CASE WHEN ? = 'open' THEN NULL ELSE ? END, ?)
             ON CONFLICT (repository_id, number) DO UPDATE SET
                 url = excluded.url,
                 title = excluded.title,
@@ -105,7 +107,8 @@ impl Store {
                 role = excluded.role,
                 last_seen_at = excluded.last_seen_at,
                 updated_at = excluded.updated_at,
-                cleaned_at = CASE WHEN excluded.state = 'open' THEN NULL ELSE pull_requests.cleaned_at END
+                cleaned_at = CASE WHEN excluded.state = 'open' THEN NULL ELSE pull_requests.cleaned_at END,
+                merge_sha = COALESCE(excluded.merge_sha, pull_requests.merge_sha)
             RETURNING *")
             .bind(&id)
             .bind(&new.repository_id)
@@ -134,6 +137,7 @@ impl Store {
             // A row born ended owes no cleanup: no session ever ran for it.
             .bind(&new.state)
             .bind(&ts)
+            .bind(&new.merge_sha)
             .fetch_one(&mut *tx).await?;
         tx.commit().await?;
         let created = row.id == id;

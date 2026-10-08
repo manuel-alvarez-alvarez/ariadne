@@ -219,7 +219,9 @@ pub(super) async fn open_pull_request(
     }
 
     let base = state.store.task_landing_branch(&task, &repo).await?;
-    let slug = format!("{}/{}", forge.owner, forge.name);
+    // The host rides along: a repository on an enterprise host is opened
+    // there, not on the CLI's default one.
+    let slug = format!("{}/{}/{}", forge.host, forge.owner, forge.name);
     let url = client
         .open(&slug, &branch, &base, &req.title, &req.body, req.draft)
         .await

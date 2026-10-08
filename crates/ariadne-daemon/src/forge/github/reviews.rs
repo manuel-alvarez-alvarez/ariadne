@@ -91,6 +91,7 @@ impl Github {
                 in_reply_to: None,
                 created_at: at.clone(),
                 resolved: false,
+                from_review: false,
             });
         }
         if review.comments.is_empty() {
@@ -122,6 +123,7 @@ impl Github {
                 in_reply_to: None,
                 created_at: comment.created_at,
                 resolved: false,
+                from_review: false,
             });
         }
         Ok(stored)

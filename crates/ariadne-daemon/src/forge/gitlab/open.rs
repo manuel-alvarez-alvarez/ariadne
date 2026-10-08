@@ -1,11 +1,13 @@
 //! Opening a merge request, through `glab mr create`.
 
 use super::Gitlab;
+use super::details::repo_url;
 
 impl Gitlab {
-    /// `glab mr create -R <owner>/<name> --source-branch <head>
-    /// --target-branch <base> --title <title> --description <body>
-    /// [--draft]`: the URL `glab` answers with.
+    /// `glab mr create -R https://<host>/<group>/<name> --source-branch
+    /// <head> --target-branch <base> --title <title> --description <body>
+    /// [--draft]`: the URL `glab` answers with. `repo` is `host/group/name`,
+    /// and `-R` takes the project's URL, which names its host.
     pub async fn open(
         &self,
         repo: &str,
@@ -15,11 +17,12 @@ impl Gitlab {
         body: &str,
         draft: bool,
     ) -> Result<String, String> {
+        let project = repo_url(repo)?;
         let mut args = vec![
             "mr",
             "create",
             "-R",
-            repo,
+            &project,
             "--source-branch",
             head,
             "--target-branch",

@@ -1,16 +1,19 @@
-//! GitLab issues through `glab`.
+//! GitLab issues through `glab api` (028): every page of the open ones, on
+//! the integration's own host.
 
 use ariadne_api::issues::IssueDto;
 use serde::Deserialize;
 
 use super::Gitlab;
+use super::details::project;
+use crate::forge::pulls::split_slug;
 
 #[derive(Deserialize)]
 struct Issue {
     iid: i64,
     title: String,
     #[serde(default)]
-    description: String,
+    description: Option<String>,
     web_url: String,
     #[serde(default)]
     labels: Vec<String>,
@@ -29,7 +32,7 @@ impl From<Issue> for IssueDto {
         Self {
             number: issue.iid,
             title: issue.title,
-            body: issue.description,
+            body: issue.description.unwrap_or_default(),
             url: issue.web_url,
             labels: issue.labels,
             assignees: issue
@@ -43,29 +46,37 @@ impl From<Issue> for IssueDto {
 }
 
 impl Gitlab {
+    /// Every open issue of `repo`, `host/group/name`, or those assigned to
+    /// `assignee`: `glab api --paginate projects/<id>/issues`, a hundred a
+    /// page.
     pub(crate) async fn list_open_issues(
         &self,
-        repository: &str,
+        repo: &str,
         assignee: Option<&str>,
     ) -> Result<Vec<IssueDto>, String> {
-        let mut args = vec!["issue", "list", "-R", repository, "-F", "json"];
+        let (host, owner, name) = split_slug(repo)?;
+        let mut path = format!(
+            "projects/{}/issues?state=opened&per_page=100",
+            project(owner, name)
+        );
         if let Some(login) = assignee {
-            args.extend(["--assignee", login]);
+            path.push_str(&format!("&assignee_username={login}"));
         }
-        let answer = self.cli.answer(&args).await?;
-        serde_json::from_str::<Vec<Issue>>(&answer)
-            .map(|issues| issues.into_iter().map(Into::into).collect())
-            .map_err(|error| format!("cannot read GitLab issues: {error}"))
+        Ok(self
+            .pages::<Issue>(host, &path)
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect())
     }
 
-    pub(crate) async fn issue(&self, repository: &str, number: i64) -> Result<IssueDto, String> {
-        let number = number.to_string();
-        let answer = self
-            .cli
-            .answer(&["issue", "view", &number, "-R", repository, "-F", "json"])
-            .await?;
-        serde_json::from_str::<Issue>(&answer)
-            .map(Into::into)
-            .map_err(|error| format!("cannot read GitLab issue: {error}"))
+    pub(crate) async fn issue(&self, repo: &str, number: i64) -> Result<IssueDto, String> {
+        let (host, owner, name) = split_slug(repo)?;
+        self.object::<Issue>(
+            host,
+            &format!("projects/{}/issues/{number}", project(owner, name)),
+        )
+        .await
+        .map(Into::into)
     }
 }

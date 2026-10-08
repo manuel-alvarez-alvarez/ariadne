@@ -309,7 +309,9 @@ pub(super) async fn reply(
     Json(req): Json<ReplyCommentRequest>,
 ) -> ApiResult<(StatusCode, Json<PullRequestCommentDto>)> {
     let pull = state.store.get_pull_request(&id).await?;
-    own_session(&state, &headers, &pull).await?;
+    let session = own_session(&state, &headers, &pull).await?;
+    // A review session's reply is the review's, as its findings are.
+    let from_review = session.pull_request_id.as_deref() == Some(pull.id.as_str());
     let body = req.body.trim();
     if body.is_empty() {
         return Err(ApiError::bad_request("a reply needs a body"));
@@ -351,6 +353,7 @@ pub(super) async fn reply(
                 in_reply_to,
                 created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
                 resolved: comment.resolved,
+                from_review,
             }],
             &login,
         )
@@ -621,10 +624,15 @@ pub(super) async fn submit_review(
         head_sha: pull.head_sha.clone(),
         comments,
     };
-    let posted = ForgeClient::for_repository(&state.launcher.cfg, &forge)
+    let mut posted = ForgeClient::for_repository(&state.launcher.cfg, &forge)
         .submit_review(&slug(&forge), pull.number, &draft, &login)
         .await
         .map_err(forge_error)?;
+    // Posted under the user's login, yet a review's: on a request of their
+    // own the task's author answers it (029).
+    for comment in &mut posted {
+        comment.from_review = true;
+    }
     state
         .store
         .upsert_pull_request_comments(&pull.id, &posted, &login)

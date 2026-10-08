@@ -26,6 +26,12 @@ struct Pull {
     #[serde(default)]
     detailed_merge_status: String,
     created_at: String,
+    /// The merge commit, or the squash commit of a squash merge; GitLab
+    /// names neither on a fast-forward merge, which lands the head itself.
+    #[serde(default)]
+    merge_commit_sha: Option<String>,
+    #[serde(default)]
+    squash_commit_sha: Option<String>,
 }
 #[derive(Deserialize)]
 struct User {
@@ -49,6 +55,12 @@ struct Approvals {
 }
 impl Pull {
     fn normalized(self) -> ForgePullRequest {
+        let merge_sha = (self.state == "merged").then(|| {
+            self.merge_commit_sha
+                .clone()
+                .or_else(|| self.squash_commit_sha.clone())
+                .unwrap_or_else(|| self.sha.clone())
+        });
         ForgePullRequest {
             number: self.iid,
             url: self.web_url,
@@ -79,11 +91,13 @@ impl Pull {
             }
             .into(),
             opened_at: self.created_at,
+            merge_sha,
         }
     }
 }
 impl Gitlab {
     async fn pulls(&self, repo: &str, filter: &[&str]) -> Result<Vec<ForgePullRequest>, String> {
+        let project = super::details::repo_url(repo)?;
         let mut all = Vec::new();
         for page in 1.. {
             let page = page.to_string();
@@ -91,7 +105,7 @@ impl Gitlab {
                 "mr",
                 "list",
                 "-R",
-                repo,
+                &project,
                 "-F",
                 "json",
                 "--per-page",
@@ -154,9 +168,18 @@ impl Gitlab {
         repo: &str,
         number: i64,
     ) -> Result<ForgePullRequest, String> {
+        let project = super::details::repo_url(repo)?;
         let output = self
             .cli
-            .answer(&["mr", "view", &number.to_string(), "-R", repo, "-F", "json"])
+            .answer(&[
+                "mr",
+                "view",
+                &number.to_string(),
+                "-R",
+                &project,
+                "-F",
+                "json",
+            ])
             .await?;
         let pull: Pull = serde_json::from_str(&output)
             .map_err(|e| format!("cannot read GitLab merge request: {e}"))?;

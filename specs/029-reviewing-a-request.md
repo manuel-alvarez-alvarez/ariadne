@@ -6,6 +6,7 @@ areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
   - crates/ariadne-daemon/tests/it/pull_request_reviews.rs
+  - crates/ariadne-daemon/tests/it/kept_requests.rs
   - crates/ariadne-daemon/src/forge/news.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
   - crates/ariadne-store/tests/store.rs
@@ -137,9 +138,15 @@ Out: the ledger, the fetch, the comments table and the PR session kind
     - GitLab: one discussion per inline comment on the merge request's diff,
       through `glab api`, then one summary note. GitLab has no review verdict,
       so the note starts with "Request changes" where the review asks for
-      changes.
+      changes. Each position names the file on both sides of the diff: the
+      merge request's `diffs` are read before anything is posted, and a
+      renamed file takes its old path as `old_path`.
     The daemon stores the posted body and comments as comments of the
-    integration login, and answers them with 201. On a request of the user's
+    integration login, marked `from_review` (migration `0018`), as it marks
+    a review session's replies, and answers them with 201. On a request of
+    the user's own a `from_review` comment counts as another login's: it is
+    told once to the task's author, as "by the Ariadne review", and waits
+    on it until the author replies (026 rules 17 to 19). On a request of the user's
     own the review is a comment whatever its `event`: no forge takes a
     change request from a request's own author.
 14. Every `event` but `request_changes` and `comment` answers 400 before the
@@ -188,6 +195,11 @@ Out: the ledger, the fetch, the comments table and the PR session kind
   `resolveReviewThread`, and a thread someone else opened, or a resolve from
   another session, is refused:
   `pull_request_reviews.rs::a_review_resolves_the_thread_of_its_own_fixed_finding_and_no_other`.
+- On GitLab a finding on a renamed file names its old path:
+  `pull_request_reviews.rs::a_gitlab_finding_on_a_renamed_file_names_its_old_path`.
+- An Ariadne review of a request a task's author keeps reaches that author,
+  waits on it, and is answered by its reply:
+  `kept_requests.rs::an_ariadne_review_of_a_kept_request_reaches_its_author`.
 - A draft gets none until it leaves draft:
   `pull_request_reviews.rs::a_draft_starts_no_review_until_it_leaves_draft`.
 - A repository with no `review_model` gets none:

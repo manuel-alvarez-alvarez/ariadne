@@ -21,6 +21,13 @@ struct DiffRefs {
     head_sha: String,
 }
 
+/// One file of the merge request's diff: a renamed one has two paths.
+#[derive(Deserialize)]
+struct Change {
+    old_path: String,
+    new_path: String,
+}
+
 #[derive(Deserialize)]
 struct Discussion {
     id: String,
@@ -55,7 +62,17 @@ impl Gitlab {
             let refs = serde_json::from_str::<MergeRequest>(&output)
                 .map_err(|e| format!("cannot read `glab api {base}`: {e}"))?
                 .diff_refs;
+            // A position names the file on both sides of the diff, and a
+            // renamed file has another path on the old side. Read before
+            // any comment is posted, so a failed read posts nothing.
+            let changes = self
+                .pages::<Change>(host, &format!("{base}/diffs?per_page=100"))
+                .await?;
             for comment in &review.comments {
+                let old_path = changes
+                    .iter()
+                    .find(|change| change.new_path == comment.path)
+                    .map_or(comment.path.as_str(), |change| change.old_path.as_str());
                 let output = self
                     .cli
                     .answer(&[
@@ -78,7 +95,7 @@ impl Gitlab {
                         "-f",
                         &format!("position[new_path]={}", comment.path),
                         "-f",
-                        &format!("position[old_path]={}", comment.path),
+                        &format!("position[old_path]={old_path}"),
                         "-F",
                         &format!("position[new_line]={}", comment.line),
                     ])
@@ -100,6 +117,7 @@ impl Gitlab {
                     in_reply_to: None,
                     created_at: note.created_at.clone(),
                     resolved: false,
+                    from_review: false,
                 });
             }
         }
@@ -138,6 +156,7 @@ impl Gitlab {
             in_reply_to: None,
             created_at: note.created_at,
             resolved: false,
+            from_review: false,
         });
         Ok(stored)
     }

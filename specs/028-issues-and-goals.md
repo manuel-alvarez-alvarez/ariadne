@@ -28,7 +28,7 @@ The CLI and desktop conventions are in 014 and 015.
 
 1. `GET /v1/repositories/{id}/issues` reads open issues from the forge each time. `assigned=me` is the default and filters by the stored forge login. `assigned=all` reads all open issues. No issue is stored locally.
 2. `GET /v1/repositories/{id}/issues/{number}` reads one issue. Both routes refuse a repository whose forge integration is off with 409.
-3. Each issue has its number, title, body, URL, labels, assignees, and update time. GitHub uses `gh issue list` and `gh issue view`; GitLab uses `glab issue list` and `glab issue view`.
+3. Each issue has its number, title, body, URL, labels, assignees, and update time. Both are read through the forge's API on the integration's own host, every page of them, a hundred a page: GitHub with `gh api --paginate repos/<owner>/<name>/issues?state=open` (with `assignee`), leaving out the pull requests that endpoint lists too; GitLab with `glab api --paginate projects/<group%2Fname>/issues?state=opened` (with `assignee_username`). One issue is `.../issues/<number>`. The CLIs' own `issue list` reads one page and, without a host, the default one.
 4. A goal can store a nullable `issue_url`. Its DTO carries the URL. An orchestrator briefing for such a goal names the issue and requires every author request body to say `Closes <url>`.
 5. `ariadne issue ls --repo <id|path> [--all]` reads the issue list. `ariadne goal create --from-issue <url> --model ...` reads the issue detail and uses its title and body when `--title` and `-d` are absent. `ariadne goal inspect` prints the issue URL.
 6. The Issues tab of the Forge screen, at `#/forge/issues`, lists issues from enabled repositories. It filters by repository and has an Assigned to me switch on by default, both kept in the URL. Each row shows the linked issue number and title with the repository under it, the labels as pills, the assignees, and the update age.
@@ -38,8 +38,8 @@ The CLI and desktop conventions are in 014 and 015.
 
 ## Acceptance criteria
 
-- The live route reads two stub issues, passes the login for `me`, and refuses an integration that is off (`issues.rs::open_issues_are_live_and_assigned_uses_the_forge_login`).
-- GitLab issue reads pass the group path and login to `glab` (`issues.rs::gitlab_issues_use_glab_json_and_the_group_path`).
+- The live route reads every page of an enterprise host's issues through `gh api --hostname`, leaves out a pull request, passes the login for `me`, and refuses an integration that is off (`issues.rs::open_issues_are_live_on_every_page_of_the_integrations_host`).
+- GitLab issue reads go through `glab api` on every page, with the group path and login (`issues.rs::gitlab_issues_read_every_page_through_glab_api_and_the_group_path`).
 - A goal stores and returns `issue_url`, and its orchestrator briefing names the issue and `Closes` line (`prompts.rs::an_issue_goal_keeps_its_url_and_briefs_the_orchestrator_to_close_it`).
 - The nullable migration retains existing goals (`store.rs::the_issue_url_migration_keeps_existing_goals`).
 - The CLI creates a goal using the issue title and body (`goal.rs::create_from_issue_reads_its_title_and_body_through_the_route`).

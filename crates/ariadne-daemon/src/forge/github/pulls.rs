@@ -3,7 +3,7 @@ use super::Github;
 use crate::forge::pulls::ForgePullRequest;
 use serde::Deserialize;
 
-const FIELDS: &str = "number,url,title,body,author,state,isDraft,headRefName,headRefOid,headRepository,headRepositoryOwner,baseRefName,statusCheckRollup,reviewDecision,createdAt";
+const FIELDS: &str = "number,url,title,body,author,state,isDraft,headRefName,headRefOid,headRepository,headRepositoryOwner,baseRefName,statusCheckRollup,reviewDecision,createdAt,mergeCommit";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,6 +24,13 @@ struct Pull {
     status_check_rollup: Option<Vec<Check>>,
     review_decision: Option<String>,
     created_at: String,
+    /// The commit a merged request landed as.
+    #[serde(default)]
+    merge_commit: Option<Commit>,
+}
+#[derive(Deserialize)]
+struct Commit {
+    oid: String,
 }
 #[derive(Deserialize)]
 struct Login {
@@ -102,6 +109,10 @@ impl Pull {
             }
             .into(),
             opened_at: self.created_at,
+            merge_sha: self
+                .merge_commit
+                .filter(|_| self.state == "MERGED")
+                .map(|commit| commit.oid),
         }
     }
 }

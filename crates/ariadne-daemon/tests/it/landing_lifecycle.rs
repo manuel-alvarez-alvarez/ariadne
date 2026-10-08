@@ -671,7 +671,7 @@ async fn opening_a_pull_request_runs_the_forge_cli_once_and_keeps_the_task_until
         .collect();
     assert_eq!(creates.len(), 1, "{creates:?}");
     for value in [
-        "acme/widgets",
+        "github.com/acme/widgets",
         task.branch.as_str(),
         "main",
         "feat: ship it",
