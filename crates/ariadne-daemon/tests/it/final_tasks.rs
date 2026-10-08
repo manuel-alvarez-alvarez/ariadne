@@ -371,8 +371,8 @@ async fn the_final_task_waits_then_lands_the_goal_branch_on_the_base() {
     // branch, local and remote (026); nothing of it merged the goal branch
     // onto the base itself.
     common::eventually(TIMEOUT, "the goal branch to go", async || {
-        // The merge reaches the daemon by a fetch, as a webhook wakes one.
-        h.state.forge_poll.wake(&repo.id);
+        // No fetch has read the merge: the task's finish did, and the
+        // request is read again before Ariadne lets go of it.
         h.flush_scheduler().await;
         !sh(&path, "git branch --list").contains(&branch)
     })

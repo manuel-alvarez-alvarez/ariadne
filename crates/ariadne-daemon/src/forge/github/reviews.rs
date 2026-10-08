@@ -132,9 +132,10 @@ impl Github {
     /// Write the one summary comment a review keeps on request `number`
     /// (029): `existing`, an `ic-<id>` of an earlier round, is edited in
     /// place, `gh api repos/<owner>/<name>/issues/comments/<id> --method
-    /// PATCH`; with none, or one the forge no longer holds, a comment is
-    /// posted on the conversation. Answers its forge id and when it was
-    /// written.
+    /// PATCH`; with none, or one GitHub answers 404 for, a comment is posted
+    /// on the conversation. Any other failed edit is the error: a second
+    /// summary would leave the first behind. Answers its forge id and when
+    /// it was written.
     pub(crate) async fn write_summary(
         &self,
         repo: &str,
@@ -158,8 +159,10 @@ impl Github {
                     &field,
                 ])
                 .await;
-            if let Ok(output) = edited {
-                return read_comment(&output);
+            match edited {
+                Ok(output) => return read_comment(&output),
+                Err(error) if crate::forge::pulls::is_missing(&error) => {}
+                Err(error) => return Err(error),
             }
         }
         let output = self

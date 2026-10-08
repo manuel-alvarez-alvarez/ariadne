@@ -58,7 +58,8 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
    list of review requests that holds it says yes (026 rule 5). For an open
    row that asked on the last read and the list no longer holds, the fetch
    asks the forge
-   (`ForgeClient::review_still_requested`). GitHub stops listing a request
+   (`ForgeClient::review_still_requested`). A detail read with no fetch
+   before it says the request still asks: only a fetch withdraws it. GitHub stops listing a request
    once the user reviewed it, and writes no removal event for that. So it
    reads the request's timeline: the last review request or removed request
    for the login decides. A review decides nothing, so a review posted after a
@@ -145,7 +146,17 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     comment on the request (`pull_requests.summary_comment_id`, migration
     `0019`): the first round posts it, and every later round replaces its
     text, so the request carries one summary however many rounds ran. A
-    summary the forge no longer holds is posted again. A round with no new
+    summary the forge answers 404 for is posted again; any other failed
+    edit is the error, and posts no second summary. Every comment a review
+    posts — each finding, the summary, each reply — ends on an HTML comment,
+    `<!-- ariadne:review -->`, which the forge renders as nothing, and the
+    summary on `<!-- ariadne:review-summary -->` too: what tells the
+    review's comments from the user's own when no row recalls them. A review
+    stopped and asked again, whose row went in between, finds its findings
+    and edits its summary by them. The marks are left out of every body a
+    reader is shown. The findings are marked and held before the summary is
+    written: a summary that fails answers 502 saying the findings are
+    posted, and a round with no comments writes it. A round with no new
     finding posts no review, only the summary. A comment with no path, no
     line from 1, no title or no body answers 400, and so does an empty
     `body`, and a `request_changes` with no P0 among its comments and none
@@ -237,6 +248,16 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   `pull_request_reviews.rs::a_gitlab_finding_on_a_renamed_file_names_its_old_path`.
   The author's answer in a review's thread reaches the review:
   `kept_requests.rs::an_ariadne_review_of_a_kept_request_reaches_its_author`.
+- A summary that fails keeps the findings posted, and a round with no
+  comments writes it:
+  `pull_request_reviews.rs::a_failed_summary_keeps_the_posted_findings_for_a_round_with_no_comments`.
+  A failed summary edit posts no second summary; one GitHub says is gone is
+  posted again:
+  `pull_request_reviews.rs::a_summary_is_posted_again_only_where_github_says_it_is_gone`.
+  A detail read before any fetch withdraws no review request:
+  `pull_request_reviews.rs::a_detail_read_before_any_fetch_keeps_a_review_request_asking`.
+  A review stopped and asked again edits its summary, found by its mark:
+  `pull_request_reviews.rs::a_request_of_mine_is_reviewed_once_asked_and_its_review_is_a_comment`.
 - Two pushes in quick succession are told once, on the last head, after
   the news settled:
   `pull_request_reviews.rs::a_burst_of_pushes_is_told_once_after_it_settles`.

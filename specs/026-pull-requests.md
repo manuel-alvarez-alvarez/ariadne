@@ -159,7 +159,7 @@ Task completion belongs to [005](005-how-a-task-ends.md).
     The task's own cleanup took its worktree and its branch.
     Then Ariadne stops working on the request: its row and its marks go, so an ended request takes no room. Its sessions stay, with their history and spend, let go of it.
     A deletion that fails keeps the row: the next change of the request tries it again, and the tick after 60 seconds, and so does a restarted daemon.
-    A task that ends while its request is open lets go of it too, unless the user asked Ariadne to review it.
+    A task that ends while the last read says its request is open reads the forge again first: a finish reads it at the call, so a merge no fetch has read yet still has its work taken down. A request still open lets go of it too, unless the user asked Ariadne to review it.
 24. A head branch that is a `goal_repositories.goal_branch` is the goal's.
     A merged request deletes it, local and remote. A closed one deletes neither.
 25. With the integration disabled, nothing reads the forge for its requests: each review session ends and its worktree goes, and Ariadne stops working on every request but a task's. Nobody merged or closed anything, so nothing is told and no branch is deleted.

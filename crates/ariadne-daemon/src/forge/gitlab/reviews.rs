@@ -124,8 +124,9 @@ impl Gitlab {
 
     /// Write the one summary note a review keeps on merge request `number`
     /// (029): `existing`, a `note-<id>` of an earlier round, is edited in
-    /// place with `PUT .../notes/<id>`; with none, or one GitLab no longer
-    /// holds, a note is posted. Answers its forge id and when it was written.
+    /// place with `PUT .../notes/<id>`; with none, or one GitLab answers 404
+    /// for, a note is posted. Any other failed edit is the error. Answers
+    /// its forge id and when it was written.
     pub(crate) async fn write_summary(
         &self,
         repo: &str,
@@ -158,8 +159,10 @@ impl Gitlab {
                     &field,
                 ])
                 .await;
-            if let Ok(output) = edited {
-                return read(&output);
+            match edited {
+                Ok(output) => return read(&output),
+                Err(error) if crate::forge::pulls::is_missing(&error) => {}
+                Err(error) => return Err(error),
             }
         }
         let output = self

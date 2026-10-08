@@ -64,11 +64,14 @@ async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullReques
             "the forge returned another request number".into(),
         ));
     }
+    // A detail read says nothing of whether the request still asks for my
+    // review: the last fetch's word stands, and with none yet a request I
+    // review still asks until a fetch says otherwise (029).
     let review_requested = state
         .launcher
         .live
         .get(&row.id)
-        .is_some_and(|l| l.review_requested);
+        .map_or(row.role == "reviewer", |l| l.review_requested);
     state.launcher.live.set(
         &row.id,
         Live {
@@ -430,8 +433,13 @@ pub(super) async fn reply(
     let comment = find_comment(&state, &pull, &comment_id).await?;
     let forge = integration(&state, &pull.repository_id).await?;
     let login = forge.login.clone().unwrap_or_default();
+    // A review's reply is signed as the review's (029).
+    let sent = match from_review {
+        true => pulls::signed(body, false),
+        false => body.to_string(),
+    };
     let forge_id = client(&state, &forge)
-        .reply(&slug(&forge), pull.number, &comment, body)
+        .reply(&slug(&forge), pull.number, &comment, &sent)
         .await
         .map_err(forge_error)?;
     if from_review {
@@ -716,11 +724,14 @@ pub(super) async fn submit_review(
         comments.push(DraftComment {
             path: comment.path,
             line: comment.line,
-            body: format!(
-                "**[{}] {}**\n\n{}",
-                comment.priority,
-                comment.title.trim(),
-                comment.body.trim()
+            body: pulls::signed(
+                &format!(
+                    "**[{}] {}**\n\n{}",
+                    comment.priority,
+                    comment.title.trim(),
+                    comment.body.trim()
+                ),
+                false,
             ),
         });
     }
@@ -758,22 +769,56 @@ pub(super) async fn submit_review(
             .await
             .map_err(forge_error)?,
     };
-    let (summary_id, written_at) = forge_client
+    // The findings are the review's the moment the forge holds them: marked
+    // and held before the summary is written, so a summary that fails loses
+    // none of them, and the round is finished by a call with no comments.
+    hold_review_comments(&state, &pull.id, &mut posted).await?;
+    // The summary the row names, else the one the forge holds under its
+    // mark: a review stopped and asked again finds its own summary.
+    let existing = pull.summary_comment_id.clone().or_else(|| {
+        state
+            .launcher
+            .live
+            .get(&pull.id)
+            .and_then(|l| l.details)
+            .and_then(|d| {
+                d.comments
+                    .into_iter()
+                    .filter(|c| {
+                        c.thread_id == CONVERSATION
+                            && c.author_login.eq_ignore_ascii_case(&login)
+                            && c.body.contains(pulls::SUMMARY_MARK)
+                    })
+                    .map(|c| c.forge_id)
+                    .next_back()
+            })
+    });
+    let written = forge_client
         .write_summary(
             &slug(&forge),
             pull.number,
-            pull.summary_comment_id.as_deref(),
-            &body,
+            existing.as_deref(),
+            &pulls::signed(&body, true),
         )
-        .await
-        .map_err(forge_error)?;
+        .await;
+    let (summary_id, written_at) = match written {
+        Ok(written) => written,
+        Err(error) if !posted.is_empty() => {
+            return Err(forge_error(format!(
+                "the {} new findings are posted; the summary was not written: {error}. \
+                 Call submit_review again with the summary and no comments",
+                posted.len()
+            )));
+        }
+        Err(error) => return Err(forge_error(error)),
+    };
     if pull.summary_comment_id.as_deref() != Some(summary_id.as_str()) {
         state
             .store
             .set_pull_request_summary(&pull.id, &summary_id)
             .await?;
     }
-    posted.push(ariadne_store::NewPullRequestComment {
+    let mut summary = vec![ariadne_store::NewPullRequestComment {
         forge_id: summary_id,
         thread_id: CONVERSATION.into(),
         kind: "issue_comment".into(),
@@ -786,15 +831,10 @@ pub(super) async fn submit_review(
         created_at: written_at,
         resolved: false,
         from_review: true,
-    });
-    // Posted under the user's login, yet a review's: on a request of their
-    // own the task's author answers it (029).
+    }];
+    hold_review_comments(&state, &pull.id, &mut summary).await?;
+    posted.extend(summary);
     let ids: Vec<String> = posted.iter().map(|c| c.forge_id.clone()).collect();
-    state.store.mark_review_comments(&pull.id, &ids).await?;
-    for comment in &mut posted {
-        comment.from_review = true;
-    }
-    state.launcher.live.add_comments(&pull.id, &posted);
     // In the order they were posted: the findings, then the summary.
     let views = live::comments(&pull.id, &posted, &[]);
     let answered: Vec<PullRequestCommentDto> = ids
@@ -805,6 +845,29 @@ pub(super) async fn submit_review(
     state.forge_poll.wake(&pull.repository_id);
     state.notify_scheduler_pull_request(&pull.id);
     Ok((StatusCode::CREATED, Json(answered)))
+}
+
+/// Mark what a review posted as the review's, and hold it beside the last
+/// read until the next fetch reads it back (029): posted under the user's
+/// login, yet on a request of their own the task's author answers it.
+async fn hold_review_comments(
+    state: &AppState,
+    pull_request_id: &str,
+    posted: &mut [ariadne_store::NewPullRequestComment],
+) -> ApiResult<()> {
+    if posted.is_empty() {
+        return Ok(());
+    }
+    let ids: Vec<String> = posted.iter().map(|c| c.forge_id.clone()).collect();
+    state
+        .store
+        .mark_review_comments(pull_request_id, &ids)
+        .await?;
+    for comment in posted.iter_mut() {
+        comment.from_review = true;
+    }
+    state.launcher.live.add_comments(pull_request_id, posted);
+    Ok(())
 }
 
 /// Ask Ariadne to review a request of the user's own on the model the user

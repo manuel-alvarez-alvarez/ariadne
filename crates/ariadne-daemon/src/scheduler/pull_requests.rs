@@ -117,6 +117,43 @@ impl super::Scheduler {
         self.keep_pass(&pull).await
     }
 
+    /// The request `pull` as the forge reads it now, where that is merged
+    /// or closed: the last read held for it said open. None while it is
+    /// still open, or where the integration is off or the read fails.
+    async fn read_ended(&mut self, pull: &PullRequest) -> anyhow::Result<Option<PullRequest>> {
+        let Some(integration) = self
+            .store
+            .forge_integration(&pull.repository_id)
+            .await?
+            .filter(|i| i.enabled)
+        else {
+            return Ok(None);
+        };
+        let slug = format!(
+            "{}/{}/{}",
+            integration.host, integration.owner, integration.name
+        );
+        let read = match crate::forge::ForgeClient::for_repository(&self.launcher.cfg, &integration)
+            .pull_request(&slug, pull.number)
+            .await
+        {
+            Ok(read) if read.number == pull.number => read,
+            Ok(_) => return Ok(None),
+            Err(error) => {
+                warn!(pull_request = %pull.id, %error, "cannot read whether the request ended");
+                return Ok(None);
+            }
+        };
+        if read.state == "open" {
+            return Ok(None);
+        }
+        self.launcher
+            .live
+            .set_pull(&pull.id, read, pull.review_requested);
+        let row = self.store.get_pull_request(&pull.id).await?;
+        Ok(crate::forge::live::of_row(&self.store, &self.launcher.live, row).await?)
+    }
+
     /// Stop working on a request (026): its row goes, and what was read of
     /// it is forgotten. Its sessions stay, let go of it.
     async fn stop_working(&mut self, id: &str) -> anyhow::Result<()> {
@@ -146,6 +183,12 @@ impl super::Scheduler {
         let Some(task) = task.filter(|task| !ends_its_work(task)) else {
             if pull.state != "open" {
                 return self.end_kept_request(pull).await;
+            }
+            // The last read may be older than the merge that ended the task:
+            // a finish reads the forge at the call. The forge is asked again,
+            // so a merged request still has its work taken down.
+            if let Some(ended) = Box::pin(self.read_ended(pull)).await? {
+                return Box::pin(self.end_kept_request(&ended)).await;
             }
             // Open with nobody to keep it: Ariadne stops working on it, but
             // for the review the user asked of it, which runs on (029).

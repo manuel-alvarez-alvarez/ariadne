@@ -21,7 +21,7 @@ use ariadne_store::{
     PullRequestRow,
 };
 
-use super::pulls::{CONVERSATION, FailedCheck, ForgePullRequest};
+use super::pulls::{CONVERSATION, FailedCheck, ForgePullRequest, REVIEW_MARK, unsigned};
 
 /// The last read of one request Ariadne works on.
 #[derive(Debug, Clone)]
@@ -171,7 +171,7 @@ pub fn comments(
                 kind: c.kind.clone(),
                 author_login: c.author_login.clone(),
                 author_is_bot: c.author_is_bot,
-                body: c.body.clone(),
+                body: unsigned(&c.body),
                 path: c.path.clone(),
                 line: c.line,
                 in_reply_to: c.in_reply_to.clone(),
@@ -179,7 +179,11 @@ pub fn comments(
                 answered: false,
                 resolved: resolved.contains(c.thread_id.as_str()),
                 told_at: mark.and_then(|m| m.told_at.clone()),
-                from_review: c.from_review || mark.is_some_and(|m| m.from_review),
+                // The review's mark is on the forge with the comment, and
+                // the store's beside it: either says so.
+                from_review: c.from_review
+                    || c.body.contains(REVIEW_MARK)
+                    || mark.is_some_and(|m| m.from_review),
             }
         })
         .collect();

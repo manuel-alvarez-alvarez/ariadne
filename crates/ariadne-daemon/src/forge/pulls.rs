@@ -54,6 +54,41 @@ pub struct DraftComment {
 /// any of them answers the conversation.
 pub(crate) const CONVERSATION: &str = "conversation";
 
+/// What every comment an Ariadne review posts ends on (029): an HTML
+/// comment, which the forge renders as nothing. It is what tells the
+/// review's comments from the user's own, which share the login, and it
+/// lives on the forge with the comment: a review stopped and started again,
+/// whose row went in between, still knows its own findings.
+pub(crate) const REVIEW_MARK: &str = "<!-- ariadne:review -->";
+
+/// What the review's one summary comment ends on beside [`REVIEW_MARK`]: how
+/// a review that has no record of its summary finds it again, to edit it
+/// rather than post a second.
+pub(crate) const SUMMARY_MARK: &str = "<!-- ariadne:review-summary -->";
+
+/// Whether a forge call failed because what it named is not there: `gh`
+/// and `glab` both say "404" for it. Anything else — a server error, a lost
+/// answer — is no proof the thing is gone.
+pub(crate) fn is_missing(error: &str) -> bool {
+    error.contains("HTTP 404") || error.contains("404 Not Found")
+}
+
+/// `body` signed as a review's, or as its summary's.
+pub(crate) fn signed(body: &str, summary: bool) -> String {
+    match summary {
+        true => format!("{body}\n\n{SUMMARY_MARK}\n{REVIEW_MARK}"),
+        false => format!("{body}\n\n{REVIEW_MARK}"),
+    }
+}
+
+/// `body` without the marks a review signs it with: what a reader is shown.
+pub(crate) fn unsigned(body: &str) -> String {
+    body.replace(SUMMARY_MARK, "")
+        .replace(REVIEW_MARK, "")
+        .trim_end()
+        .to_string()
+}
+
 /// A forge repository as the fetch names it, `host/owner/name`, split into
 /// its three parts. On GitLab the owner can be a group path.
 pub(crate) fn split_slug(slug: &str) -> Result<(&str, &str, &str), String> {
