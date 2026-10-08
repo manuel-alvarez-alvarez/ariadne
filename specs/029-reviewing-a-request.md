@@ -133,28 +133,42 @@ Out: the ledger, the fetch, the comments table and the PR session kind
     the worktree answers 400.
 13. `POST /v1/pull-requests/{id}/reviews` takes `event`, `body` and
     `comments` of `path`, `line`, `title`, `body` and `priority` (`P0`, `P1`
-    or `P2`). `body` is a summary of the findings tied to no line; each
-    finding is one inline comment on the line of its defect. The daemon
-    posts each as `**[P0] Title**`, a blank line, then its body: what goes
-    wrong and how to fix it. A comment with no path, no line from 1, no title
-    or no body answers 400, and so does a `request_changes` with no P0
-    finding among its comments: a change request shows its P0s on their
+    or `P2`). One call is one round of the review. `comments` are the
+    round's new findings, each one inline comment on the line of its
+    defect, posted as `**[P0] Title**`, a blank line, then its body: what
+    goes wrong and how to fix it. `body` is required: the review's whole
+    summary as it stands, tied to no line. The review keeps one summary
+    comment on the request (`pull_requests.summary_comment_id`, migration
+    `0019`): the first round posts it, and every later round replaces its
+    text, so the request carries one summary however many rounds ran. A
+    summary the forge no longer holds is posted again. A round with no new
+    finding posts no review, only the summary. A comment with no path, no
+    line from 1, no title or no body answers 400, and so does an empty
+    `body`, and a `request_changes` with no P0 among its comments and none
+    of the review's still open: a change request shows its P0s on their
     lines.
     - GitHub: one `gh api repos/<owner>/<name>/pulls/<n>/reviews` call with
-      `REQUEST_CHANGES` or `COMMENT`, the head as `commit_id`, and every
-      inline comment. The daemon then reads the review's comments back.
+      `REQUEST_CHANGES` or `COMMENT`, the head as `commit_id`, every inline
+      comment and no body; a forge that refuses a review with no body takes
+      it again with one line that points at the summary. The daemon then
+      reads the review's comments back. The summary is an issue comment,
+      `.../issues/<n>/comments`, edited with `PATCH
+      .../issues/comments/<id>`.
     - GitLab: one discussion per inline comment on the merge request's diff,
-      through `glab api`, then one summary note. GitLab has no review verdict,
-      so the note starts with "Request changes" where the review asks for
-      changes. Each position names the file on both sides of the diff: the
-      merge request's `diffs` are read before anything is posted, and a
-      renamed file takes its old path as `old_path`.
-    The daemon stores the posted body and comments as comments of the
+      through `glab api`. GitLab has no review verdict: the summary note,
+      edited with `PUT .../notes/<id>`, says where the review stands. Each
+      position names the file on both sides of the diff: the merge
+      request's `diffs` are read before anything is posted, and a renamed
+      file takes its old path as `old_path`.
+    The daemon stores the posted summary and comments as comments of the
     integration login, marked `from_review` (migration `0018`), as it marks
     a review session's replies, and answers them with 201. On a request of
     the user's own a `from_review` comment counts as another login's: it is
     told once to the task's author, as "by the Ariadne review", and waits
-    on it until the author replies (026 rules 17 to 19). On a request of the user's
+    on it until the author replies (026 rules 17 to 19). The other way, a
+    comment under the login that no review posted — the author's answer,
+    or the user's — in a thread a review opened is the review session's
+    news, so the answer to a finding reaches its reviewer. On a request of the user's
     own the review is a comment whatever its `event`: no forge takes a
     change request from a request's own author.
 14. Every `event` but `request_changes` and `comment` answers 400 before the
@@ -184,12 +198,16 @@ Out: the ledger, the fetch, the comments table and the PR session kind
 17. `pr-reviewer` asks for changes when a P0 finding exists, and comments
     otherwise. P0 breaks behavior, data or security and must change before
     the request lands; P1 is a defect or a missing proof that will bite; P2
-    is worth fixing. It writes the review body as a short verdict on the
-    findings — the count of each priority and each finding's title — with
-    no file, no line and nothing of what it did, and each finding as one
-    inline comment with a title, the failure and a fix. On a later round it
-    replies on each earlier finding, and resolves the thread of each one a
-    push fixed.
+    is worth fixing. It writes the review body as the whole summary of the
+    review as it stands: the commit range it reviewed, the state —
+    "Changes requested" while a P0 is open, "Changes recommended" while a
+    P1 or P2 is, else "No findings" — and each open finding's priority and
+    title, with no file, no line and nothing of what it did. Each new
+    finding is one inline comment with a title, the failure and a fix. On a
+    later round it posts nothing more in a thread nobody answered since its
+    last entry: it waits for the answer. A thread a commit fixed gets one
+    reply and is resolved; an answered thread whose defect is still there
+    gets one reply that says so and why.
 18. `waiting_user` on a reviewer PR session reads "review posted, approve
     yourself" in `ariadne attention` and "Review posted, approve yourself" in
     the desktop app. The approval and the merge stay the user's.
@@ -203,6 +221,14 @@ Out: the ledger, the fetch, the comments table and the PR session kind
   `resolveReviewThread`, and a thread someone else opened, or a resolve from
   another session, is refused:
   `pull_request_reviews.rs::a_review_resolves_the_thread_of_its_own_fixed_finding_and_no_other`.
+- A round's findings are one review with no body, the summary is one
+  comment posted once and edited by the next round, a round with no new
+  finding posts no review, and a change request stands on a P0 still open:
+  `pull_request_reviews.rs::a_review_posts_its_findings_by_priority_and_an_approval_is_refused`.
+  GitLab's summary note is edited the same way:
+  `pull_request_reviews.rs::a_gitlab_finding_on_a_renamed_file_names_its_old_path`.
+  The author's answer in a review's thread reaches the review:
+  `kept_requests.rs::an_ariadne_review_of_a_kept_request_reaches_its_author`.
 - Two pushes in quick succession are told once, on the last head, after
   the news settled:
   `pull_request_reviews.rs::a_burst_of_pushes_is_told_once_after_it_settles`.

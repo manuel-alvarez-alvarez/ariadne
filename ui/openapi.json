@@ -1805,7 +1805,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "Post one review of a request the user reviews, in the user's name\n(029): `request_changes` or `comment`, with inline comments each led by\nits priority. Any other event is refused, an approval above all: the\nuser gives every approval. The daemon stores what it posted as comments\nof the integration login.",
+        "summary": "Post one round of a review of a request, in the user's name (029): its\nnew findings as one review of inline comments, each led by its priority,\nand its summary, written into the one summary comment the review keeps\non the request — posted on the first round, edited on every later one. A\nround with no new finding posts no review. `request_changes` stands only\non a P0 finding, new or still open. Any other event is refused, an\napproval above all: the user gives every approval. The daemon stores what\nit posted as comments of the integration login, marked as the review's.",
         "operationId": "submit_review",
         "parameters": [
           {
@@ -7622,7 +7622,8 @@
         ],
         "properties": {
           "body": {
-            "type": "string"
+            "type": "string",
+            "description": "The review's summary as it stands now: the daemon writes it into the\none summary comment the review keeps on the request."
           },
           "comments": {
             "type": "array",

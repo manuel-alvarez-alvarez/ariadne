@@ -24,13 +24,14 @@ pub struct FailedCheck {
 }
 
 /// One review a reviewer session posts in the name of the integration
-/// login (029): its verdict, its body and its inline comments. The forge
-/// takes no approval from it: the user gives every approval.
+/// login (029): its verdict and its inline findings. Its summary is not
+/// part of it: the review keeps one summary comment on the request, written
+/// with `write_summary` and edited on every round. The forge takes no
+/// approval from it: the user gives every approval.
 #[derive(Debug, Clone)]
 pub struct ReviewDraft {
     /// Ask for changes; else the review is a comment.
     pub request_changes: bool,
-    pub body: String,
     /// The head the review is on.
     pub head_sha: String,
     pub comments: Vec<DraftComment>,

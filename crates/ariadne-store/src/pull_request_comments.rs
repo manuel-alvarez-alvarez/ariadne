@@ -192,6 +192,33 @@ impl Store {
         .await?)
     }
 
+    /// The answers a review session has not been told of on a request of
+    /// the user's own (029): comments under the integration login that no
+    /// review posted — the task author's replies, or the user's own — in a
+    /// thread an Ariadne review opened. Every other comment there is the
+    /// author's news, so no comment is told to both.
+    pub async fn untold_review_replies(
+        &self,
+        pull_request_id: &str,
+        login: &str,
+    ) -> Result<Vec<PullRequestComment>> {
+        Ok(sqlx::query_as(
+            "SELECT * FROM pull_request_comments c
+              WHERE c.pull_request_id = ? AND c.told_at IS NULL AND c.resolved = 0
+                AND c.from_review = 0 AND lower(c.author_login) = lower(?)
+                AND (SELECT o.from_review FROM pull_request_comments o
+                      WHERE o.pull_request_id = c.pull_request_id
+                        AND o.thread_id = c.thread_id
+                      ORDER BY o.created_at, o.id LIMIT 1) = 1
+                AND c.thread_id <> 'conversation'
+              ORDER BY c.created_at, c.id",
+        )
+        .bind(pull_request_id)
+        .bind(login)
+        .fetch_all(self.r())
+        .await?)
+    }
+
     /// Claim a pull request's news, right before the prompt that tells it
     /// goes out (026): its comments are stamped told, and the row takes the
     /// told mark the news leaves and the time it was told.

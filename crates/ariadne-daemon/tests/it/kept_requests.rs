@@ -80,6 +80,24 @@ fn script_of(
             0,
             &json!(comments).to_string()
         ),
+        // The review's one summary comment: posted once, then edited.
+        answer(
+            &[
+                "api",
+                "repos/acme/widgets/issues/1/comments",
+                "--hostname",
+                "github.com",
+                "--method",
+                "POST"
+            ],
+            0,
+            r#"{"id": 301, "created_at": "2026-10-02T00:00:00Z"}"#
+        ),
+        answer(
+            &["api", "repos/acme/widgets/issues/comments/301"],
+            0,
+            r#"{"id": 301, "created_at": "2026-10-02T00:00:00Z"}"#
+        ),
         answer(&["api", "repos/acme/widgets/issues/1/comments"], 0, "[]"),
         answer(&["api", "repos/acme/widgets/pulls/1/reviews"], 0, "[]"),
         answer(
@@ -674,7 +692,7 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_author() {
         "the review is not told its own finding"
     );
 
-    let _: Value = h
+    let answer: Value = h
         .json(
             as_session(
                 &format!("/v1/pull-requests/{id}/comments/{finding_id}/reply"),
@@ -684,6 +702,14 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_author() {
             StatusCode::CREATED,
         )
         .await;
+    // The answer is posted under the user's login, yet it is news to the
+    // review that opened the thread.
+    let answer_id = answer["id"].as_str().unwrap().to_string();
+    eventually(TIMEOUT, "the answer to reach the review", async || {
+        h.flush_scheduler().await;
+        h.prompted(&review).contains(&answer_id)
+    })
+    .await;
     let dto: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
     assert_eq!(
         dto["unanswered_comments"], 1,

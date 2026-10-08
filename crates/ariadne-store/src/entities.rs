@@ -687,6 +687,9 @@ pub struct PullRequest {
     /// The commit the request landed as once merged, as the forge reports
     /// it (005); None while it is not merged, or where the forge named none.
     pub merge_sha: Option<String>,
+    /// The forge id of the one summary comment an Ariadne review keeps on
+    /// the request, edited on every round (029); None before its first.
+    pub summary_comment_id: Option<String>,
     /// The pin the user picked for the review they asked of a request of
     /// their own (029); None where nobody asked.
     pub review_model: Option<String>,

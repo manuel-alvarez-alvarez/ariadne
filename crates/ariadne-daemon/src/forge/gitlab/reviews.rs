@@ -1,12 +1,13 @@
 //! Posting one review of a merge request, through `glab api` (029). GitLab
 //! has no review verdict: each inline comment is a discussion of its own,
-//! and a summary note says "Request changes" where the review asks for
-//! them. There is no call here that approves: the user gives every approval.
+//! and the review's one summary note, edited on every round, says where it
+//! stands. There is no call here that approves: the user gives every
+//! approval.
 use serde::Deserialize;
 
 use super::Gitlab;
 use super::details::{note_id, project};
-use crate::forge::pulls::{CONVERSATION, ReviewDraft, split_slug};
+use crate::forge::pulls::{ReviewDraft, split_slug};
 use ariadne_store::NewPullRequestComment;
 
 #[derive(Deserialize)]
@@ -41,12 +42,9 @@ struct PostedNote {
     created_at: String,
 }
 
-/// The first words of a summary note that asks for changes.
-const REQUEST_CHANGES: &str = "Request changes";
-
 impl Gitlab {
     /// Post `review`: one discussion per inline comment, placed on the
-    /// merge request's diff, then one summary note. Answers what it posted.
+    /// merge request's diff. Answers what it posted.
     pub(crate) async fn submit_review(
         &self,
         repo: &str,
@@ -121,43 +119,62 @@ impl Gitlab {
                 });
             }
         }
-        let summary = match (review.request_changes, review.body.trim().is_empty()) {
-            (true, true) => REQUEST_CHANGES.to_string(),
-            (true, false) => format!("{REQUEST_CHANGES}\n\n{}", review.body),
-            (false, _) => review.body.clone(),
+        Ok(stored)
+    }
+
+    /// Write the one summary note a review keeps on merge request `number`
+    /// (029): `existing`, a `note-<id>` of an earlier round, is edited in
+    /// place with `PUT .../notes/<id>`; with none, or one GitLab no longer
+    /// holds, a note is posted. Answers its forge id and when it was written.
+    pub(crate) async fn write_summary(
+        &self,
+        repo: &str,
+        number: i64,
+        existing: Option<&str>,
+        body: &str,
+    ) -> Result<(String, String), String> {
+        let (host, owner, name) = split_slug(repo)?;
+        let notes = format!(
+            "projects/{}/merge_requests/{number}/notes",
+            project(owner, name)
+        );
+        let field = format!("body={body}");
+        let read = |output: &str| {
+            serde_json::from_str::<PostedNote>(output)
+                .map(|note| (note_id(note.id), note.created_at))
+                .map_err(|e| format!("cannot read the note GitLab stored: {e}"))
         };
-        if summary.trim().is_empty() {
-            return Ok(stored);
+        if let Some(id) = existing.and_then(|id| id.strip_prefix("note-")) {
+            let edited = self
+                .cli
+                .answer(&[
+                    "api",
+                    &format!("{notes}/{id}"),
+                    "--hostname",
+                    host,
+                    "--method",
+                    "PUT",
+                    "-f",
+                    &field,
+                ])
+                .await;
+            if let Ok(output) = edited {
+                return read(&output);
+            }
         }
         let output = self
             .cli
             .answer(&[
                 "api",
-                &format!("{base}/notes"),
+                &notes,
                 "--hostname",
                 host,
                 "--method",
                 "POST",
                 "-f",
-                &format!("body={summary}"),
+                &field,
             ])
             .await?;
-        let note: PostedNote = serde_json::from_str(&output)
-            .map_err(|e| format!("cannot read the note GitLab stored: {e}"))?;
-        stored.push(NewPullRequestComment {
-            forge_id: note_id(note.id),
-            thread_id: CONVERSATION.into(),
-            kind: "issue_comment".into(),
-            author_login: login.to_string(),
-            author_is_bot: false,
-            body: summary,
-            path: None,
-            line: None,
-            in_reply_to: None,
-            created_at: note.created_at,
-            resolved: false,
-            from_review: false,
-        });
-        Ok(stored)
+        read(&output)
     }
 }

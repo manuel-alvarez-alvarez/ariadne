@@ -1831,10 +1831,20 @@ mod tests {
             "`report_pull_request` with `reviewed_sha`",
             "`reply_comment` once",
             "in the foreground",
-            // The summary is a verdict on the findings, not an account of
-            // the work, and each finding sits on its own line of code.
-            "short verdict on the findings",
+            // The summary is one comment, rewritten whole every round with
+            // the range and the state; it is a verdict on the findings, not
+            // an account of the work, and each finding sits on its own line
+            // of code.
+            "Ariadne keeps one summary comment",
+            "The commit range you reviewed",
+            "\"Changes requested\" while a P0 is open",
+            "\"Changes recommended\"",
             "nothing of what you did",
+            "only the new comments",
+            // A thread nobody answered waits; an answered one is replied to
+            // once, and resolved where it is fixed.
+            "not answered: post nothing in it. Wait for an answer.",
+            "Never post a second comment for a defect",
             "then `resolve_thread` on",
             "Resolve only a thread you opened",
             "one inline comment on the line of the defect",
@@ -2417,8 +2427,11 @@ mod tests {
             // its fix, the summary with no line in it, the one review, the
             // report and the later round, which resolves each thread a push
             // fixed. The inline step is what keeps a review from being one
-            // comment that lists every defect.
-            PR_REVIEWER_SKILL => 3500,
+            // comment that lists every defect. The summary is one comment
+            // rewritten whole every round, so its step names the range and
+            // the state, and a thread nobody answered waits: one more entry
+            // there is the noise the user asked to stop.
+            PR_REVIEWER_SKILL => 3800,
             _ => 2400,
         };
 

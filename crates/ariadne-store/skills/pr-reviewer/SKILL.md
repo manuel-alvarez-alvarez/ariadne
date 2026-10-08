@@ -1,13 +1,12 @@
 ---
 name: pr-reviewer
-description: Review one open forge request. Post one review, a summary and one inline comment per finding, by priority.
+description: Review one open forge request. Keep one summary comment up to date, and post one inline comment per finding, by priority.
 ---
 
 # PR reviewer
 
-Ariadne wakes you with one open request, and later with new commits or a
-reply in a thread you opened. Post one review in the user's name, then end
-your turn.
+Ariadne wakes you with one open request, and later with new commits or an
+answer in a thread you opened. Do one round, then end your turn.
 
 ## Steps
 
@@ -23,30 +22,35 @@ your turn.
      request lands.
    - P1: a defect or a missing proof that will cause a failure later.
    - P2: a change that is worth the work.
-6. Write every finding as one inline comment on the line of the defect:
+6. Write every new finding as one inline comment on the line of the defect:
    - `path` and `line`: where the defect is, in the new version.
    - `title`: the defect in a few words.
    - `body`: what goes wrong, with the input and the failure it causes.
      Then a paragraph that starts "Fix:" and says how to fix it.
-7. Write the review `body` as a short verdict on the findings: the count
-   of each priority, then one line per finding with its priority and
-   title. Name no file, line or detail, and nothing of what you did: no
-   checks you ran, no steps, no conventions you read. With no finding, write
-   "No findings."
-8. Call `submit_review` once, with the body and all the comments. Set
-   `event` to `request_changes` when a P0 exists. Else set it to `comment`.
-9. Call `report_pull_request` with `reviewed_sha` set to the head you
-   reviewed.
-10. On a later round, check each earlier finding against the new commits.
-    Fixed: call `reply_comment` once to say so, then `resolve_thread` on
-    it. Still there: call `reply_comment` once to say why. Then do steps 3
-    to 9 for the new commits.
-11. A reply in a thread you opened: read it, and call `reply_comment` once.
+7. On a later round, call `list_comments`. In each thread you opened,
+   check the defect at the head:
+   - Fixed: call `reply_comment` once to say so, then `resolve_thread` on it.
+   - Still there, and answered since your last entry: call `reply_comment`
+     once to say so and why.
+   - Still there, and not answered: post nothing in it. Wait for an answer.
+8. Write the review `body`: the whole summary as it is now. Ariadne keeps
+   one summary comment and puts this text in it, so write all of it:
+   - The commit range you reviewed, from the base to the head.
+   - The state: "Changes requested" while a P0 is open, "Changes
+     recommended" while a P1 or P2 is open, else "No findings".
+   - The count of each open priority, then one line per open finding with
+     its priority and title.
+   Name no file, line or detail, and nothing of what you did.
+9. Call `submit_review` once, with the body and only the new comments. Set
+   `event` to `request_changes` while a P0 is open. Else set it to `comment`.
+10. Call `report_pull_request` with `reviewed_sha` set to the head you
+    reviewed.
 
 ## Rules
 
 - Never give an approval. The user gives it.
 - Never land the request. A human lands it.
+- Never post a second comment for a defect: its thread holds it.
 - Resolve only a thread you opened, and only when a commit fixed it.
   Leave every other thread open for its author.
 - Commit nothing and push nothing. The worktree is for reading and checks.
@@ -60,13 +64,13 @@ your turn.
   comment on its line. The summary only counts and names them.
 - "The reader wants to know what I checked." -> The summary is a verdict.
   What you did is no finding.
-- "The change looks right, so I can skip the review." -> Post the review.
+- "Nobody answered, so I say it again." -> The thread waits for an answer.
 - "This finding is small, but P0 is safe." -> A false P0 stops the request.
 - "The tests pass, so the change is right." -> Hunt the cases they miss.
 
 ## Done
 
-Each fixed earlier finding has a reply and is resolved. One review is posted. Its body is a short verdict with no file, line or
-account of your work. Each
-finding is one inline comment with a title, the failure and a fix. The
-report names the head you reviewed. Your turn has ended.
+Each answered thread has one reply, and each fixed one is resolved. The
+summary names the range, the state and each open finding. Each new finding
+is one inline comment with a title, the failure and a fix. Your turn has
+ended.

@@ -758,11 +758,14 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Post one review of a request the user reviews, in the user's name
-         *     (029): `request_changes` or `comment`, with inline comments each led by
-         *     its priority. Any other event is refused, an approval above all: the
-         *     user gives every approval. The daemon stores what it posted as comments
-         *     of the integration login.
+         * Post one round of a review of a request, in the user's name (029): its
+         *     new findings as one review of inline comments, each led by its priority,
+         *     and its summary, written into the one summary comment the review keeps
+         *     on the request — posted on the first round, edited on every later one. A
+         *     round with no new finding posts no review. `request_changes` stands only
+         *     on a P0 finding, new or still open. Any other event is refused, an
+         *     approval above all: the user gives every approval. The daemon stores what
+         *     it posted as comments of the integration login, marked as the review's.
          */
         post: operations["pull-requests_submit_review"];
         delete?: never;
@@ -3124,6 +3127,10 @@ export interface components {
          *     in the name of the integration login.
          */
         SubmitReviewRequest: {
+            /**
+             * @description The review's summary as it stands now: the daemon writes it into the
+             *     one summary comment the review keeps on the request.
+             */
             body: string;
             comments?: components["schemas"]["ReviewCommentRequest"][];
             /** @description `request_changes` or `comment`. Every other event is refused. */

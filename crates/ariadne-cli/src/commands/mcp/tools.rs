@@ -327,12 +327,14 @@ pub(super) struct ReviewFinding {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub(super) struct SubmitReviewReq {
-    /// `request_changes` when a P0 finding exists. Else `comment`.
+    /// `request_changes` while a P0 finding is open. Else `comment`.
     pub event: ReviewEvent,
-    /// A summary of the findings: how many of each priority, their titles,
-    /// and what you checked. No file or line: each finding is its comment.
+    /// The whole summary of the review as it stands now: the commit range
+    /// you reviewed, the state, and each open finding by priority and title.
+    /// Ariadne keeps one summary comment and replaces its text with this.
     pub body: String,
-    /// One inline comment per finding, on the line of the defect.
+    /// One inline comment per new finding, on the line of the defect. Leave
+    /// it empty in a round with no new finding.
     #[serde(default)]
     pub comments: Vec<ReviewFinding>,
 }
@@ -935,7 +937,7 @@ impl AriadneMcp {
     // ---- pull request reviewer ----
 
     #[tool(
-        description = "Post one review of the pull request in the name of the user. Set `event` to `request_changes` when a P0 finding exists, else to `comment`. Give each finding its file, line and priority."
+        description = "Post one round of your review in the name of the user. Give each new finding its file, line and priority. The body replaces the text of your one summary comment. Set `event` to `request_changes` while a P0 is open, else to `comment`."
     )]
     async fn submit_review(
         &self,

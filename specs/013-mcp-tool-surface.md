@@ -86,9 +86,10 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      set and seat `reviewer` (029): `get_pull_request`, `get_diff` (on a
      request it reads `/v1/pull-requests/{id}/diff`, and `since` narrows it
      to the commits after that sha), `list_comments`, `reply_comment`,
-     `submit_review` (an `event` of `request_changes` or `comment`, a
-     `body`, and `comments` of `path`, `line`, `body` and a `priority` of
-     `P0`, `P1` or `P2`), `resolve_thread` (one `comment_id` of a thread it
+     `submit_review` (one round: an `event` of `request_changes` or
+     `comment`, a `body` that is the review's whole summary, written into
+     its one summary comment, and the round's new `comments` of `path`,
+     `line`, `body` and a `priority` of `P0`, `P1` or `P2`), `resolve_thread` (one `comment_id` of a thread it
      opened, once a push fixed it) and `report_pull_request` (which takes
      `reviewed_sha` beside `ready` and `state`). Seven tools, and no task
      tool and no message tool: a review session has no goal, task or staffed

@@ -425,6 +425,22 @@ impl ForgeClient {
         }
     }
 
+    /// Write the one summary comment a review keeps on request `number`
+    /// (029): `existing` edited in place, else a new one. Answers its forge
+    /// id and when it was written.
+    pub async fn write_summary(
+        &self,
+        repository: &str,
+        number: i64,
+        existing: Option<&str>,
+        body: &str,
+    ) -> Result<(String, String), String> {
+        match self {
+            Self::Github(cli) => cli.write_summary(repository, number, existing, body).await,
+            Self::Gitlab(cli) => cli.write_summary(repository, number, existing, body).await,
+        }
+    }
+
     /// Whether request `number`, which no list holds now, still asks for
     /// the review of `login` (029). GitHub reads the request's timeline,
     /// since it stops listing a request once the reviewer reviewed it.

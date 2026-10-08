@@ -540,11 +540,14 @@ pub(super) async fn diff(
     git.diff(&worktree, &base, "HEAD").await.map_err(failed)
 }
 
-/// Post one review of a request the user reviews, in the user's name
-/// (029): `request_changes` or `comment`, with inline comments each led by
-/// its priority. Any other event is refused, an approval above all: the
-/// user gives every approval. The daemon stores what it posted as comments
-/// of the integration login.
+/// Post one round of a review of a request, in the user's name (029): its
+/// new findings as one review of inline comments, each led by its priority,
+/// and its summary, written into the one summary comment the review keeps
+/// on the request — posted on the first round, edited on every later one. A
+/// round with no new finding posts no review. `request_changes` stands only
+/// on a P0 finding, new or still open. Any other event is refused, an
+/// approval above all: the user gives every approval. The daemon stores what
+/// it posted as comments of the integration login, marked as the review's.
 #[utoipa::path(post, path = "/v1/pull-requests/{id}/reviews", tag = "pull-requests",
     params(("id" = String, Path)),
     request_body = SubmitReviewRequest,
@@ -574,9 +577,13 @@ pub(super) async fn submit_review(
     // A forge takes no change request on a request of its own author's: the
     // review of a request of mine is a comment, whatever it found (029).
     let request_changes = asked && pull.role == "reviewer";
+    // The body is the review's one summary: where the review stands, kept
+    // on the request in a comment of its own and edited every round.
     let body = req.body.trim().to_string();
-    if body.is_empty() && req.comments.is_empty() {
-        return Err(ApiError::bad_request("a review needs a body or a comment"));
+    if body.is_empty() {
+        return Err(ApiError::bad_request(
+            "a review needs a body: the summary of where it stands",
+        ));
     }
     let req_has_p0 = req.comments.iter().any(|c| c.priority == "P0");
     let mut comments = Vec::with_capacity(req.comments.len());
@@ -609,25 +616,70 @@ pub(super) async fn submit_review(
             ),
         });
     }
-    // A change request is its P0 findings, each on its own line of code:
-    // one with none inline is a summary that asks for changes it never shows.
-    if request_changes && !req_has_p0 {
+    let forge = integration(&state, &pull.repository_id).await?;
+    let login = forge.login.clone().unwrap_or_default();
+    // A change request is its P0 findings, each on its own line of code: a
+    // new one in this round, or an earlier one still open. One with neither
+    // is a summary that asks for changes it never shows.
+    let open_p0 = state
+        .store
+        .list_pull_request_comments(&pull.id, false, &login)
+        .await?
+        .iter()
+        .any(|c| c.from_review && !c.resolved && c.body.starts_with("**[P0]"));
+    if asked && !req_has_p0 && !open_p0 {
         return Err(ApiError::bad_request(
             "a change request carries each P0 finding as an inline comment on its line",
         ));
     }
-    let forge = integration(&state, &pull.repository_id).await?;
-    let login = forge.login.clone().unwrap_or_default();
-    let draft = ReviewDraft {
-        request_changes,
-        body,
-        head_sha: pull.head_sha.clone(),
-        comments,
+    let client = ForgeClient::for_repository(&state.launcher.cfg, &forge);
+    // A round with no new finding posts no review: its summary says where
+    // the review stands.
+    let mut posted = match comments.is_empty() {
+        true => Vec::new(),
+        false => client
+            .submit_review(
+                &slug(&forge),
+                pull.number,
+                &ReviewDraft {
+                    request_changes,
+                    head_sha: pull.head_sha.clone(),
+                    comments,
+                },
+                &login,
+            )
+            .await
+            .map_err(forge_error)?,
     };
-    let mut posted = ForgeClient::for_repository(&state.launcher.cfg, &forge)
-        .submit_review(&slug(&forge), pull.number, &draft, &login)
+    let (summary_id, written_at) = client
+        .write_summary(
+            &slug(&forge),
+            pull.number,
+            pull.summary_comment_id.as_deref(),
+            &body,
+        )
         .await
         .map_err(forge_error)?;
+    if pull.summary_comment_id.as_deref() != Some(summary_id.as_str()) {
+        state
+            .store
+            .set_pull_request_summary(&pull.id, &summary_id)
+            .await?;
+    }
+    posted.push(NewPullRequestComment {
+        forge_id: summary_id,
+        thread_id: crate::forge::pulls::CONVERSATION.into(),
+        kind: "issue_comment".into(),
+        author_login: login.clone(),
+        author_is_bot: false,
+        body,
+        path: None,
+        line: None,
+        in_reply_to: None,
+        created_at: written_at,
+        resolved: false,
+        from_review: true,
+    });
     // Posted under the user's login, yet a review's: on a request of their
     // own the task's author answers it (029).
     for comment in &mut posted {

@@ -139,6 +139,8 @@ pub struct PullRequestDiffQuery {
 pub struct SubmitReviewRequest {
     /// `request_changes` or `comment`. Every other event is refused.
     pub event: String,
+    /// The review's summary as it stands now: the daemon writes it into the
+    /// one summary comment the review keeps on the request.
     pub body: String,
     #[serde(default)]
     pub comments: Vec<ReviewCommentRequest>,

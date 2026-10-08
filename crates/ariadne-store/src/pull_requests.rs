@@ -274,6 +274,17 @@ impl Store {
         Ok(())
     }
 
+    /// Record the summary comment an Ariadne review keeps on the request
+    /// (029), once it first posts it.
+    pub async fn set_pull_request_summary(&self, id: &str, forge_id: &str) -> Result<()> {
+        sqlx::query("UPDATE pull_requests SET summary_comment_id = ? WHERE id = ?")
+            .bind(forge_id)
+            .bind(id)
+            .execute(self.w())
+            .await?;
+        Ok(())
+    }
+
     /// Record whether the last repository fetch listed the request as one
     /// that asks for the user's review (029). Answers the row.
     pub async fn set_pull_request_review_requested(

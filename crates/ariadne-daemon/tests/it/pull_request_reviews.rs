@@ -100,6 +100,24 @@ fn script(shown: &Shown) -> Value {
             &review_comments.to_string()
         ),
         answer(&["api", "repos/acme/widgets/pulls/1/comments"], 0, "[]"),
+        // The review's one summary comment: posted once, then edited.
+        answer(
+            &[
+                "api",
+                "repos/acme/widgets/issues/1/comments",
+                "--hostname",
+                "github.com",
+                "--method",
+                "POST"
+            ],
+            0,
+            r#"{"id": 301, "created_at": "2026-10-02T00:00:00Z"}"#
+        ),
+        answer(
+            &["api", "repos/acme/widgets/issues/comments/301"],
+            0,
+            r#"{"id": 301, "created_at": "2026-10-02T00:00:00Z"}"#
+        ),
         answer(&["api", "repos/acme/widgets/issues/1/comments"], 0, "[]"),
         answer(&["api", "repos/acme/widgets/pulls/1/reviews"], 0, "[]"),
         answer(&["api", "graphql"], 0, &threads.to_string()),
@@ -233,7 +251,32 @@ fn review_posts(stub: &StubForgeCli) -> Vec<Vec<String>> {
     stub.invocations()
         .into_iter()
         .filter(|i| i.args.iter().any(|a| a == "POST"))
+        .filter(|i| i.args.get(1).is_some_and(|path| path.ends_with("/reviews")))
         .map(|i| i.args)
+        .collect()
+}
+
+/// The writes of the review's summary comment the stub has seen: the
+/// method, `POST` or `PATCH`, and the body sent.
+fn summary_writes(stub: &StubForgeCli) -> Vec<(String, String)> {
+    stub.invocations()
+        .into_iter()
+        .filter(|i| {
+            i.args.get(1).is_some_and(|path| {
+                path == "repos/acme/widgets/issues/1/comments"
+                    || path.starts_with("repos/acme/widgets/issues/comments/")
+            })
+        })
+        .filter_map(|i| {
+            let at = i.args.iter().position(|a| a == "--method")?;
+            let method = i.args.get(at + 1)?.clone();
+            let body = i
+                .args
+                .iter()
+                .find_map(|a| a.strip_prefix("body="))?
+                .to_string();
+            Some((method, body))
+        })
         .collect()
 }
 
@@ -531,26 +574,8 @@ async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
         "an approval reaches no forge"
     );
 
-    let stored: Vec<Value> = h
-        .json(
-            as_session(
-                &reviews,
-                &session.id,
-                json!({"event": "request_changes", "body": "Two findings.", "comments": [
-                    {"path": "src/lib.rs", "line": 3, "title": "Empty list",
-                     "body": "An empty list panics.", "priority": "P0"},
-                    {"path": "tests/it.rs", "line": 9, "title": "Untested",
-                     "body": "No test covers the empty list.", "priority": "P1"}
-                ]}),
-            ),
-            StatusCode::CREATED,
-        )
-        .await;
-    let posts = review_posts(&stub);
-    assert_eq!(posts.len(), 1, "{posts:?}");
-    let call = &posts[0];
-    // A change request with no P0 inline is refused: the findings are the
-    // comments, not a list in the summary.
+    // A change request with no P0 inline, and none open, is refused: the
+    // findings are the comments, not a list in the summary.
     h.error(
         as_session(
             &reviews,
@@ -571,15 +596,42 @@ async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
         StatusCode::BAD_REQUEST,
     )
     .await;
-    assert_eq!(
-        review_posts(&stub).len(),
-        1,
+    h.error(
+        as_session(
+            &reviews,
+            &session.id,
+            json!({"event": "comment", "body": " "}),
+        ),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+    assert!(
+        review_posts(&stub).is_empty() && summary_writes(&stub).is_empty(),
         "a refused review reaches no forge"
     );
+
+    let summary = "Reviewed main..abc. Changes requested: P0 open.";
+    let stored: Vec<Value> = h
+        .json(
+            as_session(
+                &reviews,
+                &session.id,
+                json!({"event": "request_changes", "body": summary, "comments": [
+                    {"path": "src/lib.rs", "line": 3, "title": "Empty list",
+                     "body": "An empty list panics.", "priority": "P0"},
+                    {"path": "tests/it.rs", "line": 9, "title": "Untested",
+                     "body": "No test covers the empty list.", "priority": "P1"}
+                ]}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let posts = review_posts(&stub);
+    assert_eq!(posts.len(), 1, "{posts:?}");
+    let call = &posts[0];
     assert_eq!(call[1], "repos/acme/widgets/pulls/1/reviews");
     for field in [
         "event=REQUEST_CHANGES",
-        "body=Two findings.",
         &format!("commit_id={head}"),
         "comments[][path]=src/lib.rs",
         "comments[][line]=3",
@@ -590,18 +642,51 @@ async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
     ] {
         assert!(call.iter().any(|a| a == field), "{field}: {call:?}");
     }
+    assert!(
+        !call.iter().any(|a| a.starts_with("body=")),
+        "the review carries no summary of its own: {call:?}"
+    );
+    assert_eq!(
+        summary_writes(&stub),
+        [("POST".to_string(), summary.to_string())],
+        "the summary is one comment of its own"
+    );
     let bodies: Vec<&str> = stored.iter().map(|c| c["body"].as_str().unwrap()).collect();
     assert_eq!(
         bodies,
         [
-            "Two findings.",
             "**[P0] Empty list**\n\nAn empty list panics.",
-            "**[P1] Untested**\n\nNo test covers the empty list."
+            "**[P1] Untested**\n\nNo test covers the empty list.",
+            summary,
         ]
     );
     assert!(stored.iter().all(|c| c["author_login"] == "me"));
     let comments: Vec<Value> = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
     assert_eq!(comments.len(), 3, "the review is stored");
+
+    // A later round with no new finding posts no review: it edits the one
+    // summary, and the P0 still open keeps the change request standing.
+    let later = "Reviewed abc..def. Changes requested: P0 still open.";
+    let _: Vec<Value> = h
+        .json(
+            as_session(
+                &reviews,
+                &session.id,
+                json!({"event": "request_changes", "body": later}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(review_posts(&stub).len(), 1, "no second review");
+    assert_eq!(
+        summary_writes(&stub).last(),
+        Some(&("PATCH".to_string(), later.to_string()))
+    );
+    let comments: Vec<Value> = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+    assert_eq!(comments.len(), 3, "the summary is edited, not added");
+    assert!(comments.iter().any(|c| c["body"] == later));
+    let row = h.store.get_pull_request(&id).await.unwrap();
+    assert_eq!(row.summary_comment_id.as_deref(), Some("ic-301"));
 }
 
 /// Once a push fixed a finding, the review session resolves the thread it
@@ -1159,7 +1244,6 @@ async fn a_gitlab_finding_on_a_renamed_file_names_its_old_path() {
             7,
             &ReviewDraft {
                 request_changes: false,
-                body: "One finding.".into(),
                 head_sha: "h".into(),
                 comments: vec![finding("src/new.rs"), finding("src/same.rs")],
             },
@@ -1187,4 +1271,32 @@ async fn a_gitlab_finding_on_a_renamed_file_names_its_old_path() {
             "{call:?}"
         );
     }
+
+    // The summary is one note: posted once, then edited in place.
+    let client = ForgeClient::new(&h.launcher.cfg, ForgeKind::Gitlab);
+    let (first, _) = client
+        .write_summary("gitlab.com/team/widgets", 7, None, "Reviewed a..b.")
+        .await
+        .expect("the summary is posted");
+    assert_eq!(first, "note-10");
+    stub.reprogram(json!([
+        {"program": "glab", "args": ["api", format!("{notes}/10")], "stdout": json!(
+            {"id": 10, "created_at": "2026-10-02T00:00:00Z"}
+        ).to_string()},
+    ]));
+    let (again, _) = client
+        .write_summary("gitlab.com/team/widgets", 7, Some(&first), "Reviewed b..c.")
+        .await
+        .expect("the summary is edited");
+    assert_eq!(again, first);
+    let edit = stub
+        .invocations()
+        .into_iter()
+        .find(|i| i.args.get(1) == Some(&format!("{notes}/10")))
+        .expect("the edit");
+    assert!(edit.args.contains(&"PUT".to_string()), "{edit:?}");
+    assert!(
+        edit.args.contains(&"body=Reviewed b..c.".to_string()),
+        "{edit:?}"
+    );
 }

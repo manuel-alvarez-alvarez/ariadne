@@ -132,16 +132,24 @@ It posts its findings at one of three priorities:
 | P1 | a defect, or a missing proof that will bite later |
 | P2 | worth fixing |
 
-It posts one review per round — `request_changes` where a P0 finding
-exists, `comment` otherwise — never an approval. The review's own text is a
-short verdict: how many findings of each priority and their titles, tied to
-no line and saying nothing of what the reviewer did. Each finding is an inline comment of its own on
-the line of the defect, opening on **[P0] Title**, then what goes wrong and
-how to fix it. A change request whose P0 findings are not on their lines is
-refused. On GitHub that is one API
-call carrying every inline comment; on GitLab, which has no review verdict
-of its own, one discussion per comment and a summary note that opens with
-"Request changes" when it asks for changes. On a request a task's author keeps, the review's
+Each round posts its new findings as one review — `request_changes` while
+a P0 finding is open, `comment` otherwise — never an approval. Each finding
+is an inline comment of its own on the line of the defect, opening on
+**[P0] Title**, then what goes wrong and how to fix it. A change request
+whose P0 findings are not on their lines is refused. On GitHub that is one
+API call carrying every inline comment; on GitLab, which has no review
+verdict of its own, one discussion per comment.
+
+The review keeps **one summary comment** on the request, and every round
+rewrites it rather than adding another: the commit range it has reviewed,
+where it stands — **Changes requested** while a P0 is open, **Changes
+recommended** while a P1 or P2 is, or **No findings** — and each open
+finding by priority and title, saying nothing of what the reviewer did.
+
+On a later round the reviewer posts nothing more in a thread nobody has
+answered: it waits for the answer. Once a commit fixes the defect, it
+replies so and resolves the thread; once someone answers and the defect is
+still there, it replies once saying so and why. On a request a task's author keeps, the review's
 findings go to that author like anyone else's comments, though they are
 posted under your login: it answers each one, and fixes what needs fixing.
 

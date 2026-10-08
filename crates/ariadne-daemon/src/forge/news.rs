@@ -180,8 +180,10 @@ fn told_before(pull: &PullRequest) -> PullRequestTold {
 /// The news of the request `pull` for a session of `seat`, read off the
 /// store: `login` is the integration's, whose own comments are no news.
 ///
-/// A review session on a request of mine (029) hears of a push alone: the
-/// comments on it are its author's news, and each is told once (005).
+/// A review session on a request of mine (029) hears of a push and of the
+/// answers in the threads it opened: those are posted under my login, by the
+/// task's author or by me. Every other comment there is its author's news,
+/// and each is told once (005).
 pub async fn untold(
     store: &Store,
     pull: &PullRequest,
@@ -190,7 +192,8 @@ pub async fn untold(
 ) -> ariadne_store::Result<News> {
     let reviewing = seat == Some(ariadne_core::Seat::Reviewer);
     if reviewing && pull.role == "author" {
-        return Ok(of_review(pull, &[]));
+        let answers = store.untold_review_replies(&pull.id, login).await?;
+        return Ok(of_review(pull, &answers));
     }
     let untold = store
         .untold_pull_request_comments(&pull.id, login, pull.role == "reviewer")
@@ -260,6 +263,7 @@ mod tests {
             review_effort: None,
             review_skills_json: "[]".into(),
             merge_sha: None,
+            summary_comment_id: None,
         }
     }
 
