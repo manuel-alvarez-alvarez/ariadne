@@ -88,35 +88,43 @@ works with it (025), and what becomes of a request once it is open (026).
    the task. Otherwise the checks of the crates that either side changed run
    on the rebased tree: each side's own tree was proven whole by its own
    landing, so the tree that lands is still proven.
-6. `pull_request`: rebase once — the only rebase — push the branch, and call
-   `open_pull_request` with a title by the repository's own commit
-   conventions and a body from its request template. The daemon opens the
-   request itself, through `gh` (github.com) or `glab` (GitLab), whichever
-   the repository's detected forge names (025): the author never runs either
-   CLI. The call answers the URL it opened, stores it on the task, and a
-   second call on the same task answers that URL again rather than opening
-   another. The task then ends: `finish_task`, with the sha of the branch it
-   just pushed.
-7. A branch a request was opened from only grows from there: no amend, no
-   rebase, no forced push, whether before or after `open_pull_request` is
-   called. A base that has moved is merged in and pushed plainly, never
-   rebased onto.
-8. The author does not wait on the request once it is open: it never polls
-   the forge, never answers a comment on it, and never merges it — none of
-   that is this task's to do (026). A revision asked for before
-   `finish_task` goes back through the Ariadne reviewers like any other
-   round (004), pushes the branch again, and reports the same request, which
-   `open_pull_request` answers with its existing URL rather than opening a
-   second one.
-9. One request per task. `open_pull_request` opens it once; a later call on
-   the same task — a retry, a resumed author, a revision's second pass —
-   answers the URL already recorded rather than opening another. Ariadne
-   never merges the request, and nothing here waits for a human to: the task
-   finishes once the request is open and its branch is on the remote, not
-   once somebody has acted on it.
-10. `feature_branch` ends in a final task per repository: the one task that
-    depends directly on every other task of that repository. Two such tasks
-    would depend on each other, so at most one matches. It needs no reviewer.
+6. `pull_request`: rebase once — the only rebase — push the branch, and open
+   the request with `gh` (github.com) or `glab` (GitLab), whichever the
+   `origin` remote calls for, following the repository's own templates. The
+   URL is recorded with `record_pull_request`. The whole procedure — the
+   forge, the publish, the poll, the readiness report and the merge — is the
+   `pull-request` skill's (017), and the briefing carries only the task's own
+   values and a pointer to it.
+7. A published branch only grows: no amend, no rebase, no forced push. A base
+   that has moved is merged in and pushed plainly.
+8. The author waits on its own published request in its own session, polling
+   the forge and sleeping between polls, capped at five minutes a call so the
+   session keeps reporting activity (009). It answers every comment, and a
+   change somebody asks for is made on the branch and put through the Ariadne
+   reviewers before it is pushed (004).
+9. Publishing a request is not the same as it being ready to merge.
+   `record_pull_request` takes a `ready` flag beside the URL, false by
+   default, so the URL alone never raises `waiting_user`. The author sets it
+   true once every required approval and check reads green, which raises
+   `waiting_user` on that one transition — a repeated `true` changes nothing,
+   and a later `false` takes it back down, so a check that fails after an
+   earlier ready report stops claiming the request is the user's and a later
+   ready report raises the notice again. Ariadne never merges the request: a
+   human does, once it is ready. The author waits for that merge the same way
+   it waited for the checks and the comments, then fast-forwards the base
+   branch in the primary checkout and reports the sha with `finish_task`. A
+   request closed unmerged ends the task with `fail_task`. A restart that
+   resumes the author while the request still reads ready raises
+   `waiting_user` again, the same way one that merely published it once did
+   (009).
+10. `feature_branch` ends in a final task per repository: the one live task
+    that depends directly on every other live task of that repository. Two
+    such tasks would depend on each other, so at most one matches. It needs
+    no reviewer. A cancelled task counts nowhere in that match: not as the
+    task itself, not among the dependencies it carries, and not among the
+    other tasks it must depend on. Cancelled is terminal and never retried,
+    so counting one anywhere there would block every repository's final task
+    from matching again.
     `finalize_plan` refuses a `feature_branch` plan unless every repository
     of the goal has a final task, and the error names the repository. A task
     created while the goal is active joins the `depends_on` of the final task
@@ -183,6 +191,15 @@ works with it (025), and what becomes of a request once it is open (026).
 - A `feature_branch` plan with no final task in a repository is refused, and
   the error names the repository
   (`final_tasks.rs::a_feature_branch_plan_with_no_final_task_is_refused`).
+- A cancelled task counts nowhere in the final task match: a cancelled task
+  the final task never depended on does not stop a plan from finalizing, and
+  the final task still starts once the live task it depends on is finished
+  (`final_tasks.rs::a_cancelled_task_does_not_block_finalize_or_the_final_task_starting`,
+  `store.rs::final_task_ignores_a_cancelled_sibling`). A candidate's own
+  dependency on a cancelled task is excluded the same way
+  (`store.rs::final_task_ignores_a_cancelled_dependency`), and a cancelled
+  task is never the match itself, even where the count would otherwise agree
+  (`store.rs::final_task_is_never_a_cancelled_candidate`).
 - A task created after the plan is finalized joins the final task's
   `depends_on`
   (`final_tasks.rs::a_task_created_after_finalize_joins_the_final_task`).

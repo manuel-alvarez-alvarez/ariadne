@@ -1323,7 +1323,7 @@ async fn a_contested_review_request_reaches_a_live_reviewer_only_as_its_briefing
     .await;
     let pasted = h.prompted(&reviewer_session);
     assert!(
-        !pasted.contains("Message from your author"),
+        !pasted.contains("Message from the author"),
         "a contested review request was sent as a bare message: {pasted}"
     );
 

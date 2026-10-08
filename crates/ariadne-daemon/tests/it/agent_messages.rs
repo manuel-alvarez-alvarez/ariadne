@@ -176,8 +176,20 @@ async fn a_message_is_handed_to_the_agent_it_was_sent_to() {
         !pasted.contains(&sent.id),
         "the agent is told an id there is nothing to answer on: {pasted}"
     );
-    // Named by the skills it works with: an agent has no name of its own.
-    assert!(pasted.contains("reviewer (code-review)"), "{pasted}");
+    // Named by its seat, its agent id, the task it is of and its skills: an
+    // agent has no name of its own, and two reviewers on the same skills
+    // would otherwise be the same sender to the reader.
+    assert!(
+        pasted.contains(&format!(
+            r#"the reviewer {} of task {} "{}" (code-review)"#,
+            cast.reviewer.id, cast.task.id, cast.task.title
+        )),
+        "{pasted}"
+    );
+    assert!(
+        pasted.contains("Answer with send_message to that agent id and task id."),
+        "{pasted}"
+    );
 
     eventually(TIMEOUT, "the message to be stamped delivered", async || {
         h.store.get_message(&sent.id).await.unwrap().is_delivered()
@@ -331,6 +343,96 @@ async fn an_agent_writes_to_the_orchestrator_and_it_reaches_its_agent() {
     .await;
 }
 
+/// A goal with two tasks staffed on the same skills would leave the
+/// orchestrator unable to tell their authors' relays apart by seat and
+/// skills alone, so each one also names its own task and agent.
+#[tokio::test]
+async fn two_tasks_on_the_same_skills_are_named_apart_in_their_relay_to_the_orchestrator() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    let second_task = h
+        .task_on(&cast.goal, &cast.repo, "Second task", 0, test_pin())
+        .await;
+    let second_author = h.store.task_author(&second_task.id).await.unwrap();
+
+    let orchestrator = h.orchestrator_session(&cast.goal).await;
+    h.agent_runs(&orchestrator).await;
+    h.set_status(&orchestrator, SessionStatus::Idle).await;
+    let author = h
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
+        .await;
+    let second_author_session = h
+        .session(
+            &cast.goal,
+            Some(&second_task),
+            Seat::Author,
+            &second_author.id,
+        )
+        .await;
+
+    h.json::<MessageDto>(
+        as_session(
+            &messages_uri(&cast),
+            &author.id,
+            message("orchestrator", None, "The first task needs a decision."),
+        ),
+        StatusCode::CREATED,
+    )
+    .await;
+    h.json::<MessageDto>(
+        as_session(
+            &format!("/v1/tasks/{}/messages", second_task.id),
+            &second_author_session.id,
+            message("orchestrator", None, "The second task needs a decision."),
+        ),
+        StatusCode::CREATED,
+    )
+    .await;
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    sched
+        .send(SchedEvent::TaskChanged(cast.task.id.clone()))
+        .unwrap();
+    eventually(
+        TIMEOUT,
+        "the first task's relay to reach the orchestrator",
+        async || {
+            h.prompted(&orchestrator)
+                .contains("The first task needs a decision.")
+        },
+    )
+    .await;
+
+    sched
+        .send(SchedEvent::TaskChanged(second_task.id.clone()))
+        .unwrap();
+    eventually(
+        TIMEOUT,
+        "the second task's relay to reach the orchestrator",
+        async || {
+            h.prompted(&orchestrator)
+                .contains("The second task needs a decision.")
+        },
+    )
+    .await;
+
+    let pasted = h.prompted(&orchestrator);
+    assert!(
+        pasted.contains(&format!(
+            r#"the author {} of task {} "{}" (coding)"#,
+            cast.author.id, cast.task.id, cast.task.title
+        )),
+        "{pasted}"
+    );
+    assert!(
+        pasted.contains(&format!(
+            r#"the author {} of task {} "{}" (coding)"#,
+            second_author.id, second_task.id, second_task.title
+        )),
+        "{pasted}"
+    );
+}
+
 /// Asking for a review is the author writing to its reviewers, so the channel
 /// carries it: one message each, with the summary the author asked with.
 #[tokio::test]
@@ -469,7 +571,7 @@ async fn a_review_request_reaches_a_reviewer_once_as_its_briefing() {
         prompts[0]
     );
     assert!(
-        !prompts[0].contains("Message from your author"),
+        !prompts[0].contains("Message from the author"),
         "the review request arrived as a bare message: {}",
         prompts[0]
     );

@@ -1188,6 +1188,105 @@ async fn a_dependency_that_ended_unmerged_is_reported_as_blocking() {
     );
 }
 
+/// The final task is the one that depends on every other task of its
+/// repository. A cancelled one does not count: it is counted on neither
+/// side of the match, so a live task that depends on every other live task
+/// is still found.
+#[tokio::test]
+async fn final_task_ignores_a_cancelled_sibling() {
+    let w = World::new().await;
+    let (store, goal, repo) = (&w.store, &w.goal, &w.repo);
+    let cancelled = seed_task(store, goal, repo, vec![]).await;
+    store
+        .transition_task(
+            &cancelled.id,
+            TaskStatus::Cancelled,
+            Actor::User,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let last = seed_task(store, goal, repo, vec![w.task.id.clone()]).await;
+
+    assert_eq!(
+        store
+            .final_task(&goal.id, &repo.id)
+            .await
+            .unwrap()
+            .map(|t| t.id),
+        Some(last.id)
+    );
+}
+
+/// A candidate's own dependency on a cancelled task does not count against
+/// it either: the edge still sits in `task_dependencies`, but a cancelled
+/// task at the far end of it is excluded from what the candidate is
+/// credited for, the same way it is excluded from the total it is measured
+/// against.
+#[tokio::test]
+async fn final_task_ignores_a_cancelled_dependency() {
+    let w = World::new().await;
+    let (store, goal, repo) = (&w.store, &w.goal, &w.repo);
+    let cancelled = seed_task(store, goal, repo, vec![]).await;
+    store
+        .transition_task(
+            &cancelled.id,
+            TaskStatus::Cancelled,
+            Actor::User,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let last = seed_task(
+        store,
+        goal,
+        repo,
+        vec![w.task.id.clone(), cancelled.id.clone()],
+    )
+    .await;
+
+    assert_eq!(
+        store
+            .final_task(&goal.id, &repo.id)
+            .await
+            .unwrap()
+            .map(|t| t.id),
+        Some(last.id)
+    );
+}
+
+/// A cancelled task is never the final task itself, even where the count
+/// happens to match: cancelled is excluded from the "other tasks" total
+/// everywhere else, so a cancelled task that depends on the one live task
+/// left in its repository would otherwise match it, by sheer coincidence of
+/// counting zero against zero or one against one.
+#[tokio::test]
+async fn final_task_is_never_a_cancelled_candidate() {
+    let (store, _dir) = test_store().await;
+    let (goal, repo) = seed_goal(&store).await;
+    let a = seed_task(&store, &goal, &repo, vec![]).await;
+    let b = seed_task(&store, &goal, &repo, vec![]).await;
+    store
+        .set_task_dependencies(&a.id, std::slice::from_ref(&b.id))
+        .await
+        .unwrap();
+    store
+        .transition_task(&a.id, TaskStatus::Cancelled, Actor::User, None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store
+            .final_task(&goal.id, &repo.id)
+            .await
+            .unwrap()
+            .map(|t| t.id),
+        Some(b.id)
+    );
+}
+
 #[tokio::test]
 async fn setting_the_dependencies_of_a_ready_task_downgrades_it_with_audit() {
     let w = World::new().await;

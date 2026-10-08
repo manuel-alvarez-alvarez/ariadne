@@ -516,3 +516,84 @@ async fn a_final_task_sent_back_to_wait_again_and_again_still_starts() {
         goal_branch(&goal)
     );
 }
+
+/// A cancelled task used to count against the "every other task" side of
+/// every candidate match (005 rule 10), forever: cancelled is terminal and
+/// never retried, so no live final task could ever equal a count that still
+/// included it. A cancelled task the final task never depended on must not
+/// stop the plan from finalizing, and the final task must still start once
+/// the live task it depends on is finished — the cancelled one is no reason
+/// for it to wait or fail.
+#[tokio::test]
+async fn a_cancelled_task_does_not_block_finalize_or_the_final_task_starting() {
+    let h = harness().scheduler().discover_agents().await;
+    let repo = h.repository(&h.git_repo("repo")).await;
+    let goal = feature_goal(&h, &repo).await;
+    let first = task(&h, &goal, &repo, "First change", 0, vec![]).await;
+    let redundant = task(&h, &goal, &repo, "Redundant change", 0, vec![]).await;
+    let last = task(
+        &h,
+        &goal,
+        &repo,
+        "Open the request",
+        0,
+        vec![first.id.clone()],
+    )
+    .await;
+    h.store
+        .transition_task(
+            &redundant.id,
+            TaskStatus::Cancelled,
+            Actor::User,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    finalize(&h, &goal, StatusCode::OK).await;
+
+    // The scheduler runs the live task through to `finished`, on its own.
+    h.reconcile_task_until(&first.id, TIMEOUT, "the first author", async || {
+        h.running_session(&first.id, Seat::Author).await.is_some()
+    })
+    .await;
+    h.store
+        .transition_task(
+            &first.id,
+            TaskStatus::UnderReview,
+            Actor::Author,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    h.reconcile_task_until(&first.id, TIMEOUT, "the first approval", async || {
+        h.status(&first.id).await == TaskStatus::Approved
+    })
+    .await;
+    h.store
+        .transition_task(
+            &first.id,
+            TaskStatus::Finished,
+            Actor::Author,
+            None,
+            Some("abc"),
+        )
+        .await
+        .unwrap();
+
+    // Then the scheduler, not the test, starts the final task on the goal
+    // branch: if a cancelled dependency were still failing it, this is where
+    // it would show.
+    h.reconcile_task_until(&last.id, TIMEOUT, "the final author", async || {
+        h.status(&last.id).await == TaskStatus::InProgress
+            && h.running_session(&last.id, Seat::Author).await.is_some()
+    })
+    .await;
+    assert_eq!(
+        h.store.get_task(&last.id).await.unwrap().branch,
+        goal_branch(&goal)
+    );
+    assert_eq!(h.status(&redundant.id).await, TaskStatus::Cancelled);
+}

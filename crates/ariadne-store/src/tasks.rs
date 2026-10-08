@@ -264,8 +264,13 @@ impl Store {
     }
 
     /// The final task of a repository in a `feature_branch` goal: the one
-    /// task that depends directly on every other task of that repository.
-    /// Two such tasks would depend on each other, so at most one matches.
+    /// live task that depends directly on every other live task of that
+    /// repository. Two such tasks would depend on each other, so at most one
+    /// matches. A cancelled task counts nowhere in that match: not as the
+    /// candidate itself, not among the dependencies it carries, and not
+    /// among the other tasks it must depend on. Cancelled is terminal and
+    /// never retried, so counting one anywhere here would block a match for
+    /// good.
     pub async fn final_task(&self, goal_id: &str, repo_id: &str) -> Result<Option<Task>> {
         match Self::final_task_id(self.r(), goal_id, repo_id).await? {
             Some(id) => Ok(Some(self.get_task(&id).await?)),
@@ -280,12 +285,14 @@ impl Store {
     ) -> Result<Option<String>> {
         Ok(sqlx::query_scalar(
             "SELECT t.id FROM tasks t
-              WHERE t.goal_id = ? AND t.repo_id = ?
+              WHERE t.goal_id = ? AND t.repo_id = ? AND t.status <> 'cancelled'
                 AND (SELECT COUNT(*) FROM task_dependencies td
                        JOIN tasks d ON d.id = td.depends_on_task_id
-                      WHERE td.task_id = t.id AND d.repo_id = t.repo_id)
+                      WHERE td.task_id = t.id AND d.repo_id = t.repo_id
+                        AND d.status <> 'cancelled')
                   = (SELECT COUNT(*) FROM tasks o
-                      WHERE o.goal_id = t.goal_id AND o.repo_id = t.repo_id AND o.id <> t.id)
+                      WHERE o.goal_id = t.goal_id AND o.repo_id = t.repo_id AND o.id <> t.id
+                        AND o.status <> 'cancelled')
               ORDER BY t.id
               LIMIT 1",
         )

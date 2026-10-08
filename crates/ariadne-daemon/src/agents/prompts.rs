@@ -174,9 +174,44 @@ pub(crate) fn goal_attention_briefing(template: &str, goal: &Goal, tasks: &str) 
 }
 
 /// What one agent said to another, as the recipient reads it: who wrote it,
-/// the id an answer names, and what it says.
-pub(crate) fn incoming_message_briefing(template: &str, message: &Message, from: &str) -> String {
-    render(template, &[("from", from), ("body", &message.body)])
+/// the task and agent id an answer goes to, and what it says.
+///
+/// `task_title` and `skills` are the sender's, fetched by the scheduler from
+/// the message's own `task_id` and `from_agent_id` — the message carries
+/// neither, since that is store data rather than something it was sent with.
+/// A message with no task, such as the orchestrator's, is named by `seat`
+/// alone, and the briefing adds no instruction to answer an id nobody named.
+pub(crate) fn incoming_message_briefing(
+    template: &str,
+    message: &Message,
+    seat: &str,
+    task_title: Option<&str>,
+    skills: &[String],
+) -> String {
+    let from = match (&message.from_agent_id, &message.task_id, task_title) {
+        (Some(agent_id), Some(task_id), Some(title)) => {
+            let skills = if skills.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", skills.join(", "))
+            };
+            format!(r#"the {seat} {agent_id} of task {task_id} "{title}"{skills}"#)
+        }
+        _ => format!("your {seat}"),
+    };
+    let answer_hint = if message.from_agent_id.is_some() && message.task_id.is_some() {
+        " Answer with send_message to that agent id and task id."
+    } else {
+        ""
+    };
+    render(
+        template,
+        &[
+            ("from", &from),
+            ("body", &message.body),
+            ("answer_hint", answer_hint),
+        ],
+    )
 }
 
 /// Initial prompt for an author session.
@@ -509,9 +544,13 @@ mod tests {
                 PromptKind::GoalAttention => {
                     goal_attention_briefing(&template, &goal, "- one task failed")
                 }
-                PromptKind::IncomingMessage => {
-                    incoming_message_briefing(&template, &message(), "your reviewer")
-                }
+                PromptKind::IncomingMessage => incoming_message_briefing(
+                    &template,
+                    &message(),
+                    "reviewer",
+                    Some(task.title.as_str()),
+                    &["code-review".to_string()],
+                ),
                 PromptKind::AuthorBriefing => {
                     author_briefing(&template, &task, &goal, &repo, &repo.base_branch, &[])
                 }

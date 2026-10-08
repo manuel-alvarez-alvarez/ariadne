@@ -291,8 +291,9 @@ impl PromptKind {
             // What the tasks of this goal need: one line each, rendered by
             // the scheduler that noticed.
             PromptKind::GoalAttention => &["goal_title", "tasks"],
-            // What was said, who said it, and the id an answer names.
-            PromptKind::IncomingMessage => &["from", "body"],
+            // What was said, who said it, the task it is of, and whether to
+            // say how to answer.
+            PromptKind::IncomingMessage => &["from", "body", "answer_hint"],
             PromptKind::AuthorBriefing => &[
                 "task_title",
                 "task_description",
