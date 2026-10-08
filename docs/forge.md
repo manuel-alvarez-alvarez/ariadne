@@ -1,16 +1,15 @@
 # The forge integration
 
 Ariadne works with the forge a repository's remote is on — GitHub through
-`gh`, GitLab through `glab` — once you enable it. Enabled, a request of
-yours gets a session that answers it until a human merges it, and a request
-asking for your review gets a session that reviews it; neither runs a forge
-command itself, and neither approves or merges anything.
+`gh`, GitLab through `glab` — once you enable it. Enabled, a request a task
+opens is kept by that task's author until a human merges it, and a request
+asking for your review gets a session that reviews it; no agent runs a
+forge command itself, and none approves or merges anything.
 
 ## Enabling it
 
 ```sh
 ariadne repo update <repo-id> --forge on \
-    --babysit-model claude-acp:<model-id> --babysit-effort balanced \
     --review-model claude-acp:<model-id> --review-effort balanced
 ```
 
@@ -28,32 +27,34 @@ every review Ariadne posts from here on is posted as that account, never as
 you. `ariadne repo inspect <repo-id>` prints the detected remote, whether
 the integration is on, and the stored login; `ariadne repo ls` has a FORGE
 column, `<kind> <owner>/<name> on|off`. The desktop app's repository dialog
-has the same facts in its Forge section, read-only until there is a
-checkout to detect them from.
+has one switch, "GitHub integration" or "GitLab integration", once a remote
+was detected, with the detected repository, the CLI and the login beside
+it.
 
 The same checkout — the same host, owner and repository name — can only be
 enabled on one registered repository row at a time, even registered twice
 under two base branches: see [Troubleshooting](#troubleshooting).
 
-## The two pins
+## The review pin
 
-Enabling turns nothing on by itself. Two roles, each its own model and
-effort, decide which sessions run at all:
+Enabling turns no review on by itself. One pin, a model and an effort,
+decides whether review sessions run at all:
 
-| Role | Flags | Starts a session on |
-| --- | --- | --- |
-| babysit | `--babysit-model`, `--babysit-effort` | every open request of yours |
-| review | `--review-model`, `--review-effort` | every open request asking for your review |
+| Flags | Starts a session on |
+| --- | --- |
+| `--review-model`, `--review-effort` | every open request asking for your review |
 
-A role with no model pinned starts no session for it, and its requests get
-no detail fetch — Ariadne still lists them, but reads none of their
-comments or checks. An empty model (`--babysit-model ""`) clears the role
+With no model pinned no review session starts, and a request asking for
+your review gets no detail fetch — Ariadne still lists it, but reads none of
+its comments or checks. An empty model (`--review-model ""`) clears the pin
 and its effort. An effort flag on its own only moves the effort of a model
 already pinned — given with no model pinned, it is refused — and
-`--babysit-effort default` or `--review-effort default` clears the effort
-alone. In the desktop app, the repository dialog's Forge section has a pin
-picker and a Clear button for each, labelled "Babysitter runs on" and
-"Reviewer runs on".
+`--review-effort default` clears the effort alone. The pin is set from the
+CLI only: the desktop app's repository dialog has just the switch that
+enables the integration.
+
+A request of yours needs no pin: the author of the task that opened it
+keeps it, on that author's own model.
 
 ## The daemon talks to the forge, never the agent
 
@@ -62,37 +63,63 @@ checks, posting a reply or a review, registering a webhook — is the
 daemon's own, run as a child process on `gh_bin` or `glab_bin` (see
 [Configuration](configuration.md)). No agent ever runs the forge's CLI
 itself: a landing briefing that opens a request names no forge command, and
-a `pr-babysit` or `pr-reviewer` session reaches the forge only through the
-tools its session lists — never a shell.
+an author keeping its request, or a `pr-reviewer` session, reaches the forge
+only through the tools its session lists — never a shell.
 
-## What a `pr-babysit` session does
+## How an author keeps its request
 
-A task with the `pull_request` landing ends the moment its request is open
-and its branch is pushed: the request's comments, checks and merge are not
-its to wait on. From there, a request of yours — one a task opened, one the
-forge found, or one you added by hand — gets a session of its own, staffed
-on the babysit pin above, with no goal and no task behind it. It has no
-timer either: the daemon wakes it with a prompt each time the request has
-news — a new comment, a check that turned to failure or back to green, a
-base branch ahead of the head, a changed review decision, a merge, or a
-close.
+A task with the `pull_request` landing, and the final task of a
+`feature_branch` goal, does not end when its request opens. Its author keeps
+the request until a human merges or closes it, with the `pr-babysit` skill
+Ariadne loads for every such author, and the task stays `approved` until
+then. Opening it needs the integration on: with it off, `open_pull_request`
+is refused with 409 `forge_disabled`, since nothing would read the request
+for the author.
 
-That session **replies to every unanswered comment** — applying the fix it
-asks for, or saying why the code stays — and **resolves no thread**:
-resolving a thread, once its reply satisfies you, is yours to do. It fixes a
-failed check and pushes the fix forward, merges a moved base branch in
-rather than rebasing onto it, and never amends, rebases, or force-pushes the
-branch the request was opened from. It reports the request ready once every
+The author never polls. The daemon reads the forge and prompts the author's
+own session each time the request has news — a new comment, a check that
+turned to failure or back to green, a base branch ahead of the head, a
+changed review decision, a merge, or a close — and leaves an idle author
+alone in between.
+
+The author **replies to every unanswered comment** — saying what it
+changed, or why the code stays — and **resolves no thread**: resolving a
+thread, once its reply satisfies you, is yours to do. A change a comment or
+a failed check asks for goes onto the branch as a new commit and through the
+task's own reviewers with `request_review` before it is pushed. A moved base
+branch is merged in rather than rebased onto, and the branch is never
+amended, rebased or force-pushed. It reports the request ready once every
 required approval and check reads green, and takes the readiness back down
-the moment a later change turns one back.
+the moment a later change turns one back. Once you merge the request, the
+author brings the base branch up to date and finishes the task; a request
+closed unmerged fails it.
+
+A request of yours that no task opened — one you opened by hand — is listed
+too, and nobody keeps it.
 
 ## What a `pr-reviewer` session does
 
 A request that asks for your review, once it leaves draft, gets a session
-of its own too, staffed on the review pin, in a worktree detached at the
+of its own, staffed on the review pin, in a worktree detached at the
 request's head rather than a branch of its own. The daemon wakes it with the
 request, then again with every later push and with a reply in a thread it
 opened.
+
+You can ask for the same on a request of your own: open it in the desktop
+app's Pull requests tab and press **Start review** in its panel. The dialog
+asks what the reviewer runs on — a model and an effort, not the
+repository's review pin — and which skills it loads: `pr-reviewer`, its
+own playbook, is always on and is all it starts with; any other skill can
+join it. The
+same is `PUT /v1/pull-requests/<id>/ariadne-review` with `{"asked": true,
+"model": "<agent:model>", "effort": "<effort>", "skills": [...]}`. That
+session hears of pushes alone — the comments are the author's news — and
+its review is always posted as a comment, since no forge takes a change
+request from a request's own author. Starting it closes the dialog and, once the daemon
+has the agent up, opens that session's console in the panel. **Stop
+review** takes it down. The
+panel's Sessions tab lists the review session, and the task's author where
+a task opened the request; picking one opens its console in the panel.
 
 It posts its findings at one of three priorities:
 
@@ -103,23 +130,27 @@ It posts its findings at one of three priorities:
 | P2 | worth fixing |
 
 It posts one review per round — `request_changes` where a P0 finding
-exists, `comment` otherwise — never an approval. On GitHub that is one API
+exists, `comment` otherwise — never an approval. The review's own text is a
+summary: how many findings of each priority, their titles, and what it
+checked, tied to no line. Each finding is an inline comment of its own on
+the line of the defect, opening on **[P0] Title**, then what goes wrong and
+how to fix it. A change request whose P0 findings are not on their lines is
+refused. On GitHub that is one API
 call carrying every inline comment; on GitLab, which has no review verdict
 of its own, one discussion per comment and a summary note that opens with
 "Request changes" when it asks for changes.
 
 ## Nothing approves or merges in your name
 
-Neither session can post an approval, merge a request, or resolve a thread —
+No session can post an approval, merge a request, or resolve a thread —
 there is no tool for any of the three. `pr-reviewer` posts at most a
 comment; the approving call, and the merge, are always yours.
 
 ## Readiness and review flags on `ariadne attention`
 
-A babysit session that just reported ready shows in `ariadne attention` as
-"ready to merge", and in the desktop app's attention strip and session
-views as **Ready to merge** — every required approval and check reads
-green, and the merge is yours. A review session that has just posted shows
+An author that just reported its request ready shows in `ariadne attention`
+and the desktop app's attention strip as waiting on you — every required
+approval and check reads green, and the merge is yours. A review session that has just posted shows
 as "review posted, approve yourself" in the CLI and **Review posted,
 approve yourself** in the desktop app — the review needs nothing further,
 but your approval does. Either flag opens that session's console, the same
@@ -149,14 +180,18 @@ Each enabled integration's webhook sits in one of three states:
 | Webhook state | What it means | Fetch mode |
 | --- | --- | --- |
 | `live` | the hook is registered and reachable | `WakeOnly`: a delivery wakes the next fetch, no timer |
-| `polling` | no live hook yet — nothing gives the forge a URL to register against (no `webhook_public_url`, and the tunnel down or switched off), or the forge refused the last registration | `Timer`: an immediate fetch, then one every 60 seconds |
+| `polling` | no live hook yet — nothing gives the forge a URL to register against (no `webhook_public_url`, and the tunnel down or switched off), or the forge refused the last registration | `Timer`: an immediate fetch, then one every 5 minutes |
 | `failed` | a hook that was `live` broke on a later update or deletion the forge refused, while its URL still reached it | `Timer`, same as `polling` |
 
 So a delivery that never arrives, a tunnel that is down, or a hook the forge
 refuses still leaves the request moving on its timer fallback, just slower.
-The repositories table and form show the same four facts read-only —
-`state`, `url`, `error` and the time of the last delivery — and `repo
-inspect` prints them under the forge block.
+`repo inspect` prints the hook's `state`, `url`, `error`, the time of the
+last delivery and the last fetch failure under the forge block; the
+repositories table shows them as one pill, below.
+
+Each fetch reads every open request of the repository, and which of them
+ask for your review, and the open issues too: where the issues moved since
+the last read, the desktop app reads them again on its own.
 
 ## The tunnel
 
@@ -172,10 +207,15 @@ ariadne forge tunnel off
 
 `ariadne forge tunnel` with no argument prints `switch` (`on` or `off`),
 `state` (`up <url>`, `down`, or `off`), `listen` (the bound listener
-address), `since` and `error` (each `-` where there is nothing to show). The
-repositories screen shows the same state next to a **Webhook tunnel** switch
-in its header, labelled "Tunnel up", "Tunnel down" or "Tunnel off"; hover it
-for the URL, what it forwards to, and since when.
+address), `since` and `error` (each `-` where there is nothing to show). In the
+desktop app, **Settings** (the gear in the header) has the **Webhook tunnel**
+switch, what it does, and its state: "Tunnel up" with the URL, "Tunnel down"
+with the error, or "Tunnel off". The repositories table's Webhook column
+shows a pill for each enabled repository: `localtunnel` while the tunnel is
+switched on, `polling` while it is off. It is green while that works and red
+when it does not; hover it for the hook URL, the error, or how to turn the
+tunnel on. `ariadne repo inspect` prints the same, with the last fetch
+failure as `fetch error`.
 
 Where nothing gives the forge a fixed URL, the tunnel's own state decides
 which webhook state above an enabled integration can reach: `up` lets
@@ -200,24 +240,36 @@ backoff starting at one second and capped at 60; once it is back, Ariadne
 updates the hook's URL if it moved and fetches once to catch up on whatever
 a delivery could not reach it with.
 
-## Adding a request by hand
+## The Pull requests tab and adding a request by hand
 
-A request the forge opened before Ariadne tracked it, or one from a
-repository with the integration off, can still be followed:
+The desktop app's **Forge** screen opens on its Pull requests tab, which
+lists every open request of your enabled repositories. **All**, **Mine**
+and **Review requests** narrow it; a repository picker and a text box —
+the number, title, description, author or branch — narrow it further, and
+every filter stays in the address. A row shows its checks and review
+decision as pills, "by you" on a request of yours, and **Ariadne
+reviewing** while Ariadne reviews one of yours. A row holds no button: a
+click on it opens the request's panel — its state and checks, its facts with
+links to the forge and to each failed check, its description rendered, and
+its sessions — where **Start review**, **Stop review** and, on a request
+added by hand, **Remove** are. **Refresh** asks for a fetch now.
 
 ```sh
-ariadne pr add https://github.com/owner/repo/pull/42
 ariadne pr ls --repo <repo-id>
+ariadne pr ls --mine
+ariadne pr ls --review-requests
+ariadne pr add https://github.com/owner/repo/pull/42
 ariadne pr rm <id>
 ```
 
-or from the desktop app's Pull requests screen, **Add pull request**, which
-searches an enabled repository's open requests live and also accepts a URL.
-A hand-added request gets a babysit or review session the same as one a
-task opened or the forge found, on whichever pins its repository has set.
+`ariadne pr ls` lists every open request, `--mine` your own and
+`--review-requests` the ones that ask for your review, as the tab's
+three choices do. A request
+someone else opened, from a repository with the integration off or one the
+lists miss, can be added by hand from the CLI alone; a request of your own
+is refused with 409 `pull_request_is_yours`, since the fetch lists it.
 `ariadne pr rm` and the panel's Remove button only work on one you added by
-hand; a request a task opened or the forge found cannot be removed this
-way.
+hand; a request the forge found cannot be removed this way.
 
 ## The issues screen and `goal create --from-issue`
 
@@ -228,8 +280,10 @@ ariadne issue ls --repo <repo-id> --all
 
 lists open issues from an enabled repository — by default only the ones
 assigned to the login the integration stored, or every open one with
-`--all`. The desktop app's Issues screen (`#/issues`) does the same, with a
-repository filter and an "Assigned to me" switch on by default.
+`--all`. The Issues tab of the desktop app's **Forge** screen does the same,
+with a repository filter, an "Assigned to me" switch on by default, a text
+box over the title and description, and **Refresh**. It reads the issues
+again on its own when a fetch finds they moved.
 
 ```sh
 ariadne goal create --from-issue https://github.com/owner/repo/issues/7 \

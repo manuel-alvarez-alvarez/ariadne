@@ -28,7 +28,7 @@ use ariadne_api::tasks::TaskDto;
 use ariadne_core::{Actor, ForgeKind, Landing, MessageKind, Seat, TaskStatus};
 use ariadne_store::{AgentSession, NewTaskAgent, Repository, SetForgeIntegration, Task};
 
-use common::forge::{answer, stub_forge_cli};
+use common::forge::{answer, opened_pull, stub_forge_cli};
 use common::{Cast, Harness, as_session, get, harness, patch_json, post_json, sh, test_pin};
 
 /// How long a test waits for the scheduler to reach a state.
@@ -54,13 +54,21 @@ fn forge_script(url: &str) -> serde_json::Value {
     serde_json::json!([
         answer(&["auth", "status"], 0, ""),
         answer(&["pr", "create"], 0, url),
+        answer(&["pr", "view"], 0, &opened_pull(url, "fix").to_string()),
+        answer(&["pr", "list"], 0, "[]"),
     ])
 }
 
 /// A bare remote for `repo` named `origin`, and a forge row the daemon can
 /// call `gh` through — independent of the real git remote, since the CLI is
 /// stubbed and only the push and `ls-remote` the daemon runs need to be real.
-async fn with_forge(h: &Harness, repo: &Repository) {
+/// The integration is on: an author keeps the request it opens, and the
+/// integration is what reads it for the author (005).
+pub(crate) async fn with_forge(h: &Harness, repo: &Repository) {
+    with_forge_enabled(h, repo, true).await
+}
+
+async fn with_forge_enabled(h: &Harness, repo: &Repository, enabled: bool) {
     let remote = h.at("remote.git");
     let path = repo_path(repo);
     sh(
@@ -79,10 +87,8 @@ async fn with_forge(h: &Harness, repo: &Repository) {
             owner: "acme".into(),
             name: "widgets".into(),
             remote: "origin".into(),
-            enabled: false,
-            login: None,
-            babysit_model: None,
-            babysit_effort: None,
+            enabled,
+            login: enabled.then(|| "me".into()),
             review_model: None,
             review_effort: None,
         })
@@ -105,7 +111,11 @@ async fn approve(h: &Harness, task: &Task, reviewer: &str) {
 /// something, the reviewer approves, the scheduler does the rest. Returns the
 /// author's worktree — which it never gave up — and the session that has
 /// been briefed to land the change.
-async fn walk_to_approved(h: &Harness, task: &Task, reviewer: &str) -> (PathBuf, AgentSession) {
+pub(crate) async fn walk_to_approved(
+    h: &Harness,
+    task: &Task,
+    reviewer: &str,
+) -> (PathBuf, AgentSession) {
     let heading = format!("# Land task: {}", task.title);
     walk_to_landing(h, task, reviewer, &heading).await
 }
@@ -507,13 +517,14 @@ async fn a_revision_of_a_published_request_goes_back_to_the_reviewers() {
         )
         .await;
     assert_eq!(published.pr_url.as_deref(), Some(URL));
-    assert!(
+    assert_eq!(
         h.store
-            .list_pull_requests(ariadne_store::PullRequestFilter::default())
+            .pull_request_of_task(&task.id)
             .await
             .unwrap()
-            .is_empty(),
-        "an off integration records only the task URL"
+            .and_then(|pull| pull.origin_task_id),
+        Some(task.id.clone()),
+        "the ledger holds the request with its task as origin"
     );
 
     let reviewer_session = h
@@ -552,7 +563,7 @@ async fn a_revision_of_a_published_request_goes_back_to_the_reviewers() {
     );
 
     // The reviewers judge it, and the approval hands it back to the author
-    // to finish landing.
+    // to push the revision and keep its request: it opens no second one.
     h.verdict(
         &task,
         &cast.reviewer.id,
@@ -568,7 +579,7 @@ async fn a_revision_of_a_published_request_goes_back_to_the_reviewers() {
             h.status(&task.id).await == TaskStatus::Approved
                 && h.running_session(&task.id, Seat::Author)
                     .await
-                    .is_some_and(|s| h.told(&s.id).contains("# Land task:"))
+                    .is_some_and(|s| h.told(&s.id).contains("# Keep request:"))
         },
     )
     .await;
@@ -595,10 +606,11 @@ async fn a_revision_of_a_published_request_goes_back_to_the_reviewers() {
 
 /// Opening a request runs `gh pr create` once, with the pushed branch, the
 /// base, the title and the body; a second call answers the same URL and
-/// opens nothing. An unpushed branch is refused. The task ends once the
-/// request is open and pushed — no human merge is waited on inside it.
+/// opens nothing. An unpushed branch is refused. The task stays approved,
+/// its author keeps the request with the `pr-babysit` skill, and the task
+/// finishes only once a human merged the request.
 #[tokio::test]
-async fn opening_a_pull_request_runs_the_forge_cli_once_and_ends_the_task() {
+async fn opening_a_pull_request_runs_the_forge_cli_once_and_keeps_the_task_until_the_merge() {
     const URL: &str = "https://github.com/acme/widgets/pull/12";
     let cli = stub_forge_cli(forge_script(URL));
     let h = harness()
@@ -689,20 +701,78 @@ async fn opening_a_pull_request_runs_the_forge_cli_once_and_ends_the_task() {
         "a second call opened another request"
     );
 
-    // The task ends once the request is open and pushed.
+    // The author keeps the request: the skill is loaded for it, and the
+    // task stays approved until a human merges the request.
+    let launch = h.launch_file(&author.id).expect("a launch file");
+    assert!(
+        launch.system_prompt.contains("- pr-babysit: "),
+        "{}",
+        launch.system_prompt
+    );
+    assert_eq!(h.status(&task.id).await, TaskStatus::Approved);
     let tip = sh(&worktree, "git rev-parse HEAD");
-    let finished: TaskDto = h
-        .json(
-            as_session(
-                &format!("/v1/tasks/{}/transitions", task.id),
-                &author.id,
-                serde_json::json!({"to": "finished", "merge_commit": tip}),
-            ),
-            StatusCode::OK,
+    let finish = || {
+        as_session(
+            &format!("/v1/tasks/{}/transitions", task.id),
+            &author.id,
+            serde_json::json!({"to": "finished", "merge_commit": tip}),
         )
-        .await;
+    };
+    let refused = h.error(finish(), StatusCode::CONFLICT).await;
+    assert!(
+        refused.error.message.contains("is not merged"),
+        "{}",
+        refused.error.message
+    );
+    let kept = h
+        .store
+        .pull_request_of_task(&task.id)
+        .await
+        .unwrap()
+        .expect("the ledger holds the task's request");
+    h.store
+        .set_pull_request_state(&kept.id, "merged")
+        .await
+        .unwrap();
+    let finished: TaskDto = h.json(finish(), StatusCode::OK).await;
     assert_eq!(finished.status, TaskStatus::Finished);
     assert_eq!(finished.merge_commit.as_deref(), Some(tip.as_str()));
+}
+
+/// A task of a repository whose forge integration is off is refused with
+/// 409, and opens nothing: nothing would read the request for its author.
+#[tokio::test]
+async fn opening_a_pull_request_refuses_with_the_integration_off() {
+    let cli = stub_forge_cli(forge_script("https://github.com/acme/widgets/pull/12"));
+    let h = harness()
+        .scheduler()
+        .discover_agents()
+        .forge_cli(&cli)
+        .await;
+    h.git_repo("repo");
+    let cast = h.active_cast_ending_in(Landing::PullRequest).await;
+    with_forge_enabled(&h, &cast.repo, false).await;
+    let task = cast.task.clone();
+    let (worktree, author) = walk_to_approved(&h, &task, &cast.reviewer.id).await;
+    sh(&worktree, "git push origin HEAD");
+
+    let refusal = h
+        .error(
+            as_session(
+                &format!("/v1/tasks/{}/pull-request", task.id),
+                &author.id,
+                serde_json::json!({"title": "feat: ship it", "body": "Ships it."}),
+            ),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    assert_eq!(refusal.error.code, "forge_disabled");
+    assert!(
+        !cli.invocations().iter().any(|call| call
+            .args
+            .starts_with(&["pr".to_string(), "create".to_string()])),
+        "nothing was opened"
+    );
 }
 
 /// A task of a repository with no detected forge is refused with 409.

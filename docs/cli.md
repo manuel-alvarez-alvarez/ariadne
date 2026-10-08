@@ -493,36 +493,40 @@ stands, next to the rest of the daemon's environment.
 
 ```sh
 ariadne repo add ~/projects/api --forge on \
-    --babysit-model claude-acp:<model-id> --babysit-effort balanced \
     --review-model claude-acp:<model-id> --review-effort balanced
 ariadne repo update <repo-id> --forge off
 ```
 
 `repo add` and `repo update` take `--forge on` or `--forge off` to work with
 the forge a repository's remote is on, once `gh` or `glab` is signed in to
-its host. `--babysit-model` and `--babysit-effort` pin the session that
-watches a request of yours, and `--review-model` and `--review-effort` pin
-the one that reviews a request asking for your review; a model is
-`AGENT:MODEL`, or `""` to clear the role, and an effort is any effort or
-`default`. No `--forge` flag sends no change to it. See [The forge
-integration](forge.md) for what each session does.
+its host. `--review-model` and `--review-effort` pin the session that
+reviews a request asking for your review; a model is `AGENT:MODEL`, or `""`
+to clear the pin, and an effort is any effort or `default`. No `--forge`
+flag sends no change to it. A request a task opens needs no pin: the task's
+author keeps it. See [The forge integration](forge.md) for what each
+session does.
 
 ```sh
 ariadne pr ls --repo <repo-id>
-ariadne pr ls --role reviewer --watch
+ariadne pr ls --mine
+ariadne pr ls --review-requests --watch
 ariadne pr search --repo <repo-id> "rate limit"
 ariadne pr add https://github.com/owner/repo/pull/42
 ariadne pr rm <id>
 ariadne pr refresh --repo <repo-id>
 ```
 
-`ariadne pr ls` lists the pull request ledger: requests a task opened, the
-forge found, or you added by hand. `--repo`, `--role` and `--all` narrow it,
-and `--watch` redraws it as rows change. `ariadne pr inspect <id>` prints
-every field. `ariadne pr search` searches an enabled repository's open
-requests live, by number, title or author. `ariadne pr add` tracks one by
-its URL, and `ariadne pr rm` drops one you added this way — a request a task
-opened or the forge found cannot be removed. `ariadne pr refresh` wakes one
+`ariadne pr ls` lists every open request of your enabled repositories, as
+the desktop's **All** does. `--mine` narrows it to your own, and
+`--review-requests` to the ones that ask for your review; the two do not
+combine. `--repo` narrows it to one repository, `--all` adds the closed and
+merged ones, and `--watch` redraws it as rows change. The author column
+reads "you" on a request of yours.
+`ariadne pr inspect <id>` prints every field. `ariadne pr search` searches
+an enabled repository's open requests live, by number, title or author,
+your own left out. `ariadne pr add` tracks one by its URL — a request of
+your own is refused, since the fetch lists it — and `ariadne pr rm` drops
+one you added this way; a request the forge found cannot be removed. `ariadne pr refresh` wakes one
 repository's fetch, or every enabled one.
 
 ```sh
@@ -544,8 +548,8 @@ ariadne forge tunnel off
 
 `ariadne forge tunnel` prints the webhook tunnel's switch, state, URL and
 bound listener address; `on` and `off` set the switch. See [The forge
-integration](forge.md) for enabling a repository's integration, what a
-`pr-babysit` and a `pr-reviewer` session each do, and the tunnel's fallback
+integration](forge.md) for enabling a repository's integration, how an
+author keeps its request, what a `pr-reviewer` session does, and the tunnel's fallback
 to polling; see [Configuration](configuration.md) for `gh_bin`, `glab_bin`
 and the webhook keys.
 

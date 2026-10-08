@@ -419,6 +419,14 @@ fn domain_line(event: &DomainEvent) -> Line {
             session: None,
             status: None,
         },
+        DomainEvent::IssuesChanged(i) => Line {
+            at: String::new(),
+            kind,
+            subject: i.repository_id.clone(),
+            detail: "the open issues moved".to_string(),
+            session: None,
+            status: None,
+        },
         DomainEvent::LearnedPermissionCreated(p)
         | DomainEvent::LearnedPermissionUpdated(p)
         | DomainEvent::LearnedPermissionDeleted(p) => Line {

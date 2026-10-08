@@ -148,6 +148,17 @@ impl EventBus {
         self.publish(unscoped(DomainEvent::ForgeSettingsUpdated(tunnel)));
     }
 
+    /// Publish that the open issues of a repository moved on its forge
+    /// (028). Issues are no store row: the fetch that read them is the only
+    /// one that knows.
+    pub fn issues_changed(&self, repository_id: &str) {
+        self.publish(unscoped(DomainEvent::IssuesChanged(
+            ariadne_api::stream::IssuesChangedDto {
+                repository_id: repository_id.to_string(),
+            },
+        )));
+    }
+
     /// Answers once the pump has published every change it had been handed
     /// when this was called.
     ///

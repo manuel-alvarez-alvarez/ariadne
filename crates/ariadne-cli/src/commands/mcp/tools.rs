@@ -307,9 +307,12 @@ pub(super) enum Priority {
 pub(super) struct ReviewFinding {
     /// The file, from the root of the worktree.
     pub path: String,
-    /// The line in the new version of the file.
+    /// The line of the defect in the new version of the file.
     pub line: i64,
-    /// The input and the failure it causes.
+    /// A short title of the defect, in a few words.
+    pub title: String,
+    /// What goes wrong: the input and the failure it causes. Then how to
+    /// fix it.
     pub body: String,
     pub priority: Priority,
 }
@@ -319,9 +322,10 @@ pub(super) struct ReviewFinding {
 pub(super) struct SubmitReviewReq {
     /// `request_changes` when a P0 finding exists. Else `comment`.
     pub event: ReviewEvent,
-    /// The summary of the review.
+    /// A summary of the findings: how many of each priority, their titles,
+    /// and what you checked. No file or line: each finding is its comment.
     pub body: String,
-    /// One inline comment per finding.
+    /// One inline comment per finding, on the line of the defect.
     #[serde(default)]
     pub comments: Vec<ReviewFinding>,
 }
@@ -767,7 +771,7 @@ impl AriadneMcp {
     ) -> Result<CallToolResult, McpError> {
         let path = match self.pull_request_id {
             Some(_) => {
-                let mut path = self.pull_request_path("/diff")?;
+                let mut path = self.pull_request_path("/diff").await?;
                 if let Some(since) = req.since {
                     path.push_str(&format!("?since={since}"));
                 }
@@ -827,7 +831,7 @@ impl AriadneMcp {
         &self,
         Parameters(_): Parameters<Empty>,
     ) -> Result<CallToolResult, McpError> {
-        let mut pull: serde_json::Value = self.get(&self.pull_request_path("")?).await?;
+        let mut pull: serde_json::Value = self.get(&self.pull_request_path("").await?).await?;
         let repository: serde_json::Value = self
             .get(&format!(
                 "/v1/repositories/{}",
@@ -850,7 +854,7 @@ impl AriadneMcp {
         &self,
         Parameters(req): Parameters<ListCommentsReq>,
     ) -> Result<CallToolResult, McpError> {
-        let mut path = self.pull_request_path("/comments")?;
+        let mut path = self.pull_request_path("/comments").await?;
         if req.unanswered_only.unwrap_or(false) {
             path.push_str("?unanswered_only=true");
         }
@@ -868,7 +872,9 @@ impl AriadneMcp {
         if body.is_empty() {
             return Err(McpError::invalid_params("a reply needs a body", None));
         }
-        let path = self.pull_request_path(&format!("/comments/{}/reply", req.comment_id))?;
+        let path = self
+            .pull_request_path(&format!("/comments/{}/reply", req.comment_id))
+            .await?;
         json_result(
             self.post(
                 &path,
@@ -895,7 +901,7 @@ impl AriadneMcp {
         }
         json_result(
             self.post(
-                &self.pull_request_path("/report")?,
+                &self.pull_request_path("/report").await?,
                 &ReportPullRequestRequest {
                     ready: req.ready,
                     state: req.state.map(|s| s.as_str().to_string()),
@@ -921,13 +927,14 @@ impl AriadneMcp {
             .map(|c| ReviewCommentRequest {
                 path: c.path,
                 line: c.line,
+                title: c.title,
                 body: c.body,
                 priority: format!("{:?}", c.priority),
             })
             .collect();
         json_result(
             self.post(
-                &self.pull_request_path("/reviews")?,
+                &self.pull_request_path("/reviews").await?,
                 &SubmitReviewRequest {
                     event: req.event.as_str().to_string(),
                     body: req.body,
@@ -1065,19 +1072,33 @@ mod tests {
     use ariadne_client::Client;
 
     use crate::commands::mcp::McpSeat;
-    use crate::commands::mcp::tests::{recording_daemon, recording_daemon_answering, server_at};
+    use crate::commands::mcp::tests::{
+        recording_daemon, recording_daemon_answering, recording_daemon_answering_in_turn, server_at,
+    };
 
-    /// The tools of a pull request session reach the routes of its own
-    /// request (026): a read of the request with the worktree, repository
-    /// path and login beside it, the comment list, one reply, and the report.
+    /// The request tools of an author reach the routes of the request its
+    /// task opened (005): each call finds that request through the ledger,
+    /// then reads it with the worktree, repository path and login beside it,
+    /// lists its comments, posts one reply, and reports.
     #[tokio::test]
-    async fn the_pull_request_tools_call_the_routes_of_the_sessions_request() {
-        let (endpoint, seen) = recording_daemon_answering(
-            r#"{"id":"01PR","repository_id":"01R","path":"/repos/widgets","forge":{"login":"me"},"worktree_path":"/wt/pr-01PR"}"#,
-        )
+    async fn the_authors_request_tools_call_the_routes_of_the_request_its_task_opened() {
+        let found = r#"[{"id":"01PR"}]"#.to_string();
+        let row = r#"{"id":"01PR","repository_id":"01R","path":"/repos/widgets","forge":{"login":"me"},"worktree_path":"/wt/task"}"#.to_string();
+        let (endpoint, seen) = recording_daemon_answering_in_turn(vec![
+            found.clone(),
+            row.clone(),
+            row.clone(),
+            row,
+            found.clone(),
+            "[]".into(),
+            found.clone(),
+            "{}".into(),
+            found,
+            "{}".into(),
+        ])
         .await;
         let mcp = server_at(
-            McpSeat::PullRequestAuthor,
+            McpSeat::Author,
             Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
         );
         let read = mcp
@@ -1088,7 +1109,7 @@ mod tests {
             panic!("the request came back as something other than text");
         };
         let read: serde_json::Value = serde_json::from_str(&text.text).expect("json");
-        assert_eq!(read["worktree_path"], "/wt/pr-01PR");
+        assert_eq!(read["worktree_path"], "/wt/task");
         assert_eq!(read["repository_path"], "/repos/widgets");
         assert_eq!(read["login"], "me");
         mcp.list_comments(Parameters(ListCommentsReq {
@@ -1115,30 +1136,60 @@ mod tests {
             .iter()
             .map(|s| (s.method.clone(), s.path.clone()))
             .collect();
+        let find = (
+            "GET".to_string(),
+            "/v1/pull-requests?task=01TASK&role=author&state=all".to_string(),
+        );
         assert_eq!(
             calls,
             [
+                find.clone(),
                 ("GET".into(), "/v1/pull-requests/01PR".into()),
                 ("GET".into(), "/v1/repositories/01R".into()),
                 ("GET".into(), "/v1/sessions/01SESSION".into()),
+                find.clone(),
                 (
                     "GET".into(),
                     "/v1/pull-requests/01PR/comments?unanswered_only=true".into()
                 ),
+                find.clone(),
                 (
                     "POST".into(),
                     "/v1/pull-requests/01PR/comments/01C/reply".into()
                 ),
+                find,
                 ("POST".into(), "/v1/pull-requests/01PR/report".into()),
             ]
         );
-        let reply: serde_json::Value = serde_json::from_str(&seen[4].body).expect("json");
+        let reply: serde_json::Value = serde_json::from_str(&seen[7].body).expect("json");
         assert_eq!(reply, serde_json::json!({"body": "Renamed it."}));
-        let report: serde_json::Value = serde_json::from_str(&seen[5].body).expect("json");
+        let report: serde_json::Value = serde_json::from_str(&seen[9].body).expect("json");
         assert_eq!(
             report,
             serde_json::json!({"ready": true, "state": "merged", "reviewed_sha": null})
         );
+    }
+
+    /// An author whose task opened no request yet is told to open one, and
+    /// no request route is called.
+    #[tokio::test]
+    async fn an_author_with_no_request_is_told_to_open_one() {
+        let (endpoint, seen) = recording_daemon_answering("[]").await;
+        let mcp = server_at(
+            McpSeat::Author,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let refused = mcp
+            .list_comments(Parameters(ListCommentsReq {
+                unanswered_only: None,
+            }))
+            .await
+            .expect_err("no request yet");
+        assert!(
+            refused.message.contains("`open_pull_request`"),
+            "{refused:?}"
+        );
+        assert_eq!(seen.lock().expect("lock").len(), 1);
     }
 
     /// The tools of a reviewer pull request session reach the routes of its
@@ -1163,6 +1214,7 @@ mod tests {
             comments: vec![ReviewFinding {
                 path: "src/lib.rs".into(),
                 line: 3,
+                title: "An empty list panics".into(),
                 body: "An empty list panics.".into(),
                 priority: Priority::P0,
             }],
@@ -1194,7 +1246,8 @@ mod tests {
         assert_eq!(
             review,
             serde_json::json!({"event": "request_changes", "body": "One P0.", "comments": [
-                {"path": "src/lib.rs", "line": 3, "body": "An empty list panics.", "priority": "P0"}
+                {"path": "src/lib.rs", "line": 3, "title": "An empty list panics",
+                 "body": "An empty list panics.", "priority": "P0"}
             ]})
         );
         let report: serde_json::Value = serde_json::from_str(&seen[2].body).expect("json");

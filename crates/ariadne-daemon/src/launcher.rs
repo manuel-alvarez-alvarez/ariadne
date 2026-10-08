@@ -117,15 +117,15 @@ impl Launcher {
     /// and the documents on disk are then the same list by construction.
     /// The orchestrator is staffed by nobody, so its one skill — the
     /// playbook — is named in code, and an edit to it reaches the next
-    /// launch the way any task agent's skill does. A pull request session is
-    /// staffed by the daemon, so its skill is named in code too (026).
+    /// launch the way any task agent's skill does. A review session is
+    /// staffed by the daemon, so its skill is named in code too (029), and
+    /// so is the `pr-babysit` skill the author of a task that lands by
+    /// request keeps its request with (005).
     async fn skills_of(&self, session: &AgentSession) -> Result<Vec<ariadne_store::Skill>> {
         let seat = session.seat().context("a staffed session needs a seat")?;
-        if session.pull_request_id.is_some() {
-            return Ok(match pull_request_skill(seat) {
-                Some(name) => vec![self.store.get_skill(name).await?],
-                None => Vec::new(),
-            });
+        if let Some(pull_request_id) = &session.pull_request_id {
+            let pull = self.store.get_pull_request(pull_request_id).await?;
+            return self.review_skills(&pull).await;
         }
         Ok(match seat {
             Seat::Orchestrator => vec![
@@ -133,10 +133,55 @@ impl Launcher {
                     .get_skill(ariadne_store::defaults::ORCHESTRATION_SKILL)
                     .await?,
             ],
-            Seat::Author | Seat::Reviewer => match &session.task_agent_id {
-                Some(id) => self.store.agent_skills(id).await?,
-                None => Vec::new(),
-            },
+            Seat::Author | Seat::Reviewer => {
+                let mut skills = match &session.task_agent_id {
+                    Some(id) => self.store.agent_skills(id).await?,
+                    None => Vec::new(),
+                };
+                if seat == Seat::Author
+                    && let Some(task_id) = &session.task_id
+                    && self
+                        .lands_by_request(&self.store.get_task(task_id).await?)
+                        .await?
+                {
+                    skills.push(
+                        self.store
+                            .get_skill(ariadne_store::defaults::PR_BABYSIT_SKILL)
+                            .await?,
+                    );
+                }
+                skills
+            }
+        })
+    }
+
+    /// What a review session loads (029): `pr-reviewer`, its playbook, and
+    /// on a request of the user's own the skills they picked when asking. A
+    /// skill deleted since is passed over rather than failing the launch.
+    async fn review_skills(&self, pull: &PullRequest) -> Result<Vec<ariadne_store::Skill>> {
+        let mut skills = vec![
+            self.store
+                .get_skill(ariadne_store::defaults::PR_REVIEWER_SKILL)
+                .await?,
+        ];
+        if pull.role == "author" {
+            for name in pull.review_skills() {
+                if let Ok(skill) = self.store.get_skill(&name).await {
+                    skills.push(skill);
+                }
+            }
+        }
+        Ok(skills)
+    }
+
+    /// Whether a task lands by a request its author keeps (005): a task of a
+    /// `pull_request` goal, or the final task of a `feature_branch` goal,
+    /// which takes the goal branch onto the base by one.
+    pub(crate) async fn lands_by_request(&self, task: &Task) -> Result<bool> {
+        Ok(match task.landing() {
+            ariadne_core::Landing::PullRequest => true,
+            ariadne_core::Landing::FeatureBranch => self.store.works_on_goal_branch(task).await?,
+            ariadne_core::Landing::Merge | ariadne_core::Landing::None => false,
         })
     }
 
@@ -169,7 +214,7 @@ impl Launcher {
             }
         };
         let system_prompt = match session.pull_request_id {
-            Some(_) => prompts::pull_request_system_prompt(seat, &skills, skills_dir.as_deref()),
+            Some(_) => prompts::pull_request_system_prompt(&skills, skills_dir.as_deref()),
             None => prompts::system_prompt(seat, &skills, skills_dir.as_deref()),
         };
         if session.goal_id.is_none() && session.pull_request_id.is_none() {
@@ -1247,8 +1292,12 @@ impl Launcher {
             // The procedure is the goal's: the user chose how every task of
             // the goal ends when the goal was created, and it is the whole of
             // what decides which procedure the author runs. The final task of
-            // a feature branch goal takes the goal branch onto the base.
-            let template = if self.store.works_on_goal_branch(task).await? {
+            // a feature branch goal takes the goal branch onto the base. A
+            // task whose request is open already opened it: its author keeps
+            // it until a human merges it (005), and is picked up with that.
+            let template = if task.pr_url.is_some() {
+                ariadne_store::defaults::keep_request_prompt()
+            } else if self.store.works_on_goal_branch(task).await? {
                 ariadne_store::defaults::final_landing_prompt()
             } else {
                 task.landing_prompt_text()
@@ -1873,51 +1922,10 @@ impl Launcher {
     }
 }
 
-/// A request's head branch is checked out in another worktree, so no
-/// worktree of the request can hold it yet (026). The scheduler waits for
-/// the branch rather than spending a launch attempt on it.
-#[derive(Debug)]
-pub(crate) struct HeadBranchOccupied {
-    branch: String,
-    worktree: PathBuf,
-}
-
-impl std::fmt::Display for HeadBranchOccupied {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "branch {} is checked out in {}",
-            self.branch,
-            self.worktree.display()
-        )
-    }
-}
-
-impl std::error::Error for HeadBranchOccupied {}
-
-/// The skill a pull request session of `seat` loads: `pr-babysit` for the
-/// author of the request (026), `pr-reviewer` for a requested reviewer
-/// (029).
-pub(crate) fn pull_request_skill(seat: Seat) -> Option<&'static str> {
-    match seat {
-        Seat::Author => Some(ariadne_store::defaults::PR_BABYSIT_SKILL),
-        Seat::Reviewer => Some(ariadne_store::defaults::PR_REVIEWER_SKILL),
-        Seat::Orchestrator => None,
-    }
-}
-
-/// The seat of a session on `pull`: `reviewer` where the user is a
-/// requested reviewer of it (029), else `author` (026).
-pub(crate) fn pull_request_seat(pull: &PullRequest) -> Seat {
-    match pull.role.as_str() {
-        "reviewer" => Seat::Reviewer,
-        _ => Seat::Author,
-    }
-}
-
-/// A pull request's session: its worktree on the request's head branch, its
-/// row, and its agent (026). The daemon staffs it on the repository's
-/// `babysit_model`; no goal, task or orchestrator is behind it.
+/// A review session: its worktree detached at the request's head, its row,
+/// and its agent (029). The daemon staffs it on the repository's
+/// `review_model`; no goal, task or orchestrator is behind it. A request of
+/// the user's own has none: its task's author keeps it (005).
 impl Launcher {
     /// Where a request's worktree is cut: one per request, named by its id.
     fn pull_request_worktree_path(&self, pull: &PullRequest) -> PathBuf {
@@ -1927,61 +1935,6 @@ impl Launcher {
     /// Whether a request's worktree is still on disk.
     pub(crate) fn pull_request_worktree_exists(&self, pull: &PullRequest) -> bool {
         self.pull_request_worktree_path(pull).exists()
-    }
-
-    /// The request's worktree, checked out on its head branch: created on the
-    /// first spawn, and again wherever it has gone. A head branch the
-    /// checkout does not hold is fetched first, from the head repository of
-    /// a fork, else from the repository's own remote.
-    async fn pull_request_worktree(
-        &self,
-        pull: &PullRequest,
-        repo: &Repository,
-    ) -> Result<PathBuf> {
-        if pull_request_seat(pull) == Seat::Reviewer {
-            return self.review_worktree(pull, repo).await;
-        }
-        let worktree = self.pull_request_worktree_path(pull);
-        if worktree.is_dir() {
-            return Ok(worktree);
-        }
-        let repo_path = PathBuf::from(&repo.path);
-        if !self
-            .git
-            .branch_exists(&repo_path, &pull.head_branch)
-            .await?
-        {
-            let from = pull.head_repo.clone().unwrap_or_else(|| {
-                repo.forge
-                    .as_ref()
-                    .map_or_else(|| "origin".to_string(), |forge| forge.remote.clone())
-            });
-            self.git
-                .fetch_branch(&repo_path, &from, &pull.head_branch)
-                .await
-                .with_context(|| {
-                    format!(
-                        "fetching the head branch {} of pull request {}",
-                        pull.head_branch, pull.id
-                    )
-                })?;
-        }
-        std::fs::create_dir_all(&self.cfg.worktree_root)?;
-        self.git.prune_worktrees(&repo_path).await.ok();
-        if let Some(holder) = self
-            .git
-            .worktree_of_branch(&repo_path, &pull.head_branch)
-            .await?
-        {
-            return Err(anyhow::Error::new(HeadBranchOccupied {
-                branch: pull.head_branch.clone(),
-                worktree: holder,
-            }));
-        }
-        self.git
-            .add_worktree(&repo_path, &worktree, &pull.head_branch, &pull.base_branch)
-            .await?;
-        Ok(worktree)
     }
 
     /// The worktree of a request the user reviews (029), detached at the
@@ -2035,12 +1988,9 @@ impl Launcher {
         Ok(worktree)
     }
 
-    /// Refuse a second live session on one request's seat.
-    async fn assert_no_live_pull_request_session(
-        &self,
-        pull_request_id: &str,
-        seat: Seat,
-    ) -> Result<()> {
+    /// Refuse a second live review session on one request.
+    async fn assert_no_live_pull_request_session(&self, pull_request_id: &str) -> Result<()> {
+        let seat = Seat::Reviewer;
         for session in self
             .store
             .list_sessions(SessionFilter {
@@ -2061,20 +2011,19 @@ impl Launcher {
         Ok(())
     }
 
-    /// Start a fresh session on a request: its worktree on the head branch,
-    /// a row with no goal, task or staffed agent, titled by the request, and
-    /// an agent on `pin` that loads `skill` and is briefed on the request.
+    /// Start a fresh review session on a request: its worktree detached at
+    /// the head, a row with no goal, task or staffed agent, titled by the
+    /// request, and an agent on `pin` that loads `pr-reviewer` and is briefed
+    /// on the request.
     pub async fn spawn_pull_request_session(
         &self,
         pull: &PullRequest,
-        seat: Seat,
         pin: AgentPin,
-        skill: &str,
     ) -> Result<AgentSession> {
-        self.assert_no_live_pull_request_session(&pull.id, seat)
-            .await?;
+        let seat = Seat::Reviewer;
+        self.assert_no_live_pull_request_session(&pull.id).await?;
         let repo = self.store.get_repository(&pull.repository_id).await?;
-        let worktree = self.pull_request_worktree(pull, &repo).await?;
+        let worktree = self.review_worktree(pull, &repo).await?;
         let session = self
             .store
             .create_session(NewSession {
@@ -2092,7 +2041,7 @@ impl Launcher {
             .set_session_title_if_unset(&session.id, &pull.title)
             .await?;
         let briefing = self.pull_request_briefing_of(pull, &repo, &worktree);
-        let skills = vec![self.store.get_skill(skill).await?];
+        let skills = self.review_skills(pull).await?;
         let ctx = self
             .spawn_ctx_with(&session, worktree, briefing, skills)
             .await?;
@@ -2132,10 +2081,9 @@ impl Launcher {
     pub(crate) async fn resume_pull_request_session(
         &self,
         pull: &PullRequest,
-        seat: Seat,
         pin: AgentPin,
-        skill: &str,
     ) -> Result<AgentSession> {
+        let seat = Seat::Reviewer;
         let previous = self
             .store
             .list_sessions(SessionFilter {
@@ -2150,14 +2098,11 @@ impl Launcher {
             .filter(|s| !s.died_on_arrival())
             .and_then(|s| s.internal_session_id.clone().map(|internal| (s, internal)))
         else {
-            return self
-                .spawn_pull_request_session(pull, seat, pin, skill)
-                .await;
+            return self.spawn_pull_request_session(pull, pin).await;
         };
-        self.assert_no_live_pull_request_session(&pull.id, seat)
-            .await?;
+        self.assert_no_live_pull_request_session(&pull.id).await?;
         let repo = self.store.get_repository(&pull.repository_id).await?;
-        let worktree = self.pull_request_worktree(pull, &repo).await?;
+        let worktree = self.review_worktree(pull, &repo).await?;
         let session = self
             .store
             .restart_session(&previous.id, Some(&worktree.display().to_string()))
@@ -2180,7 +2125,7 @@ impl Launcher {
             .and_then(|forge| forge.login.clone())
             .unwrap_or_default();
         prompts::pull_request_briefing(
-            ariadne_store::defaults::pull_request_briefing_prompt(pull_request_seat(pull)),
+            ariadne_store::defaults::pull_request_briefing_prompt(),
             pull,
             repo,
             &worktree.display().to_string(),
@@ -2188,31 +2133,28 @@ impl Launcher {
         )
     }
 
-    /// Take a request's work down once it merged or closed: its sessions
-    /// killed, its worktree removed, and its local head branch deleted where
-    /// `delete_merged_branches` holds. A merged request whose head is a goal
-    /// branch took that goal onto its base, so the goal branch goes too,
-    /// local and remote. Idempotent: a pass that stopped halfway runs again.
-    pub(crate) async fn cleanup_pull_request(&self, pull: &PullRequest) -> Result<()> {
+    /// Take down what is left of a request a task opened, once it merged
+    /// or closed and its task is over: any session or worktree an earlier
+    /// release started on it, and, where the request merged a goal branch
+    /// onto its base, that goal branch, local and remote. The task's own
+    /// cleanup took its worktree and its branch, so no other branch is
+    /// touched. Idempotent: a pass that stopped halfway runs again.
+    pub(crate) async fn cleanup_kept_request(&self, pull: &PullRequest) -> Result<()> {
         self.end_pull_request_sessions(pull).await?;
+        let goal_branch = pull.state == "merged"
+            && self
+                .store
+                .is_goal_branch(&pull.repository_id, &pull.head_branch)
+                .await?;
+        if !goal_branch {
+            return Ok(());
+        }
         let repo = self.store.get_repository(&pull.repository_id).await?;
         let repo_path = PathBuf::from(&repo.path);
-        // A goal branch is the goal's, not the request's: it goes only with
-        // the merge that took the goal onto its base.
-        let on_goal_branch = self
-            .store
-            .is_goal_branch(&pull.repository_id, &pull.head_branch)
-            .await?;
-        let goal_branch = on_goal_branch && pull.state == "merged";
-        let delete_local = match on_goal_branch {
-            true => goal_branch,
-            false => self.cfg.delete_merged_branches,
-        };
         let checked_out = self.git.current_branch(&repo_path).await.ok();
         // A branch already gone is deleted. One that would not go fails the
         // cleanup, so the scheduler tries it again.
-        if delete_local
-            && checked_out.as_deref() != Some(pull.head_branch.as_str())
+        if checked_out.as_deref() != Some(pull.head_branch.as_str())
             && self
                 .git
                 .branch_exists(&repo_path, &pull.head_branch)
@@ -2222,16 +2164,14 @@ impl Launcher {
                 .delete_branch(&repo_path, &pull.head_branch)
                 .await?;
         }
-        if goal_branch {
-            let remote = repo
-                .forge
-                .as_ref()
-                .map_or_else(|| "origin".to_string(), |forge| forge.remote.clone());
-            tracing::info!(pull_request = %pull.id, branch = %pull.head_branch, "the goal branch merged, deleting it on the remote");
-            self.git
-                .delete_remote_branch(&repo_path, &remote, &pull.head_branch)
-                .await?;
-        }
+        let remote = repo
+            .forge
+            .as_ref()
+            .map_or_else(|| "origin".to_string(), |forge| forge.remote.clone());
+        tracing::info!(pull_request = %pull.id, branch = %pull.head_branch, "the goal branch merged, deleting it on the remote");
+        self.git
+            .delete_remote_branch(&repo_path, &remote, &pull.head_branch)
+            .await?;
         Ok(())
     }
 
@@ -2276,7 +2216,7 @@ impl Launcher {
             .get_pull_request(old.pull_request_id.as_deref().unwrap_or_default())
             .await?;
         let repo = self.store.get_repository(&pull.repository_id).await?;
-        let worktree = self.pull_request_worktree(&pull, &repo).await?;
+        let worktree = self.review_worktree(&pull, &repo).await?;
         let briefing = self.pull_request_briefing_of(&pull, &repo, &worktree);
         Ok(SwitchPlan {
             worktree: Some(worktree.display().to_string()),

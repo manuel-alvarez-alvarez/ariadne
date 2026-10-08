@@ -231,8 +231,6 @@ pub fn merged(
         remote: detected.remote.clone(),
         enabled: false,
         login: None,
-        babysit_model: None,
-        babysit_effort: None,
         review_model: None,
         review_effort: None,
     };
@@ -246,8 +244,6 @@ pub fn merged(
     Some(SetForgeIntegration {
         enabled: same && current.enabled,
         login: current.login.clone().filter(|_| same),
-        babysit_model: current.babysit_model.clone(),
-        babysit_effort: current.babysit_effort.clone(),
         review_model: current.review_model.clone(),
         review_effort: current.review_effort.clone(),
         ..fresh
@@ -265,8 +261,6 @@ fn stored(row: &ForgeIntegration) -> SetForgeIntegration {
         remote: row.remote.clone(),
         enabled: row.enabled,
         login: row.login.clone(),
-        babysit_model: row.babysit_model.clone(),
-        babysit_effort: row.babysit_effort.clone(),
         review_model: row.review_model.clone(),
         review_effort: row.review_effort.clone(),
     }
@@ -329,11 +323,13 @@ pub enum ForgeClient {
 }
 
 impl ForgeClient {
+    /// Every open request of the repository, and which of them ask for
+    /// `login`'s review.
     pub async fn list_open_pull_requests(
         &self,
         repository: &str,
         login: &str,
-    ) -> Result<Vec<pulls::ForgePullRequest>, String> {
+    ) -> Result<pulls::Listed, String> {
         match self {
             Self::Github(cli) => cli.list_open_pull_requests(repository, login).await,
             Self::Gitlab(cli) => cli.list_open_pull_requests(repository, login).await,
@@ -594,6 +590,7 @@ mod tests {
             webhook_state: "polling".into(),
             webhook_error: None,
             webhook_last_delivery_at: None,
+            fetch_error: None,
             repository_id: "repository".into(),
             kind: "github".into(),
             host: "github.com".into(),
@@ -602,8 +599,6 @@ mod tests {
             remote: "origin".into(),
             enabled: true,
             login: Some("me".into()),
-            babysit_model: None,
-            babysit_effort: None,
             review_model: None,
             review_effort: None,
             detected_at: String::new(),

@@ -69,6 +69,18 @@ pub(crate) fn answer(args: &[&str], exit: i32, stdout: &str) -> Value {
     json!({"args": args, "exit": exit, "stdout": stdout})
 }
 
+/// The request a task opened at `url`, as `gh pr view --json` answers it:
+/// open, by the integration login `me`, from `head` onto `main`.
+pub(crate) fn opened_pull(url: &str, head: &str) -> Value {
+    let number: i64 = url.rsplit('/').next().unwrap().parse().unwrap();
+    json!({"number": number, "url": url, "title": "feat: ship it",
+        "author": {"login": "me"}, "state": "OPEN", "isDraft": false,
+        "headRefName": head, "headRefOid": "abc",
+        "headRepository": {"url": "https://github.com/acme/widgets"},
+        "baseRefName": "main", "statusCheckRollup": [], "reviewDecision": "",
+        "createdAt": "2026-10-01T00:00:00Z"})
+}
+
 /// Write the stub into a directory of its own, answering from `script`.
 pub(crate) fn stub_forge_cli(script: Value) -> StubForgeCli {
     let dir = tempfile::tempdir().unwrap();

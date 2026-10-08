@@ -18,6 +18,11 @@
  * twice on purpose rather than derived from the route table, because a sidebar
  * entry and a route are not the same list: not every route belongs here.
  *
+ * Forge is one entry for what the GitHub or GitLab integration of an enabled
+ * repository reads — the pull requests that ask for a review and the open
+ * issues — each a tab of its screen. Its link is the screen's own address,
+ * so it stays active on either tab.
+ *
  * Folded down to a rail ({@link AppSidebar.collapsed}) it is the same list with
  * the labels taken off the screen but not out of the accessibility tree: each
  * entry keeps its name as an `aria-label`, and a pointer gets it back as a
@@ -30,7 +35,7 @@ import {
   ChartColumnIcon,
   CpuIcon,
   FolderGit2Icon,
-  ListTodoIcon,
+  GitPullRequestIcon,
   type LucideIcon,
   RadioTowerIcon,
   ShieldIcon,
@@ -48,11 +53,17 @@ import { paths } from "@/routes/paths"
  * under: a badge here is the only thing that says an agent is waiting on the
  * user while they are on another screen (see `attention-alerts.tsx`).
  */
-const NAV_ITEMS: { to: string; label: string; icon: LucideIcon; counts?: boolean }[] = [
+interface NavItem {
+  to: string
+  label: string
+  icon: LucideIcon
+  counts?: boolean
+}
+
+const NAV_ITEMS: NavItem[] = [
   { to: paths.goals(), label: "Goals", icon: TargetIcon, counts: true },
-  { to: paths.pullRequests(), label: "Pull requests", icon: ListTodoIcon },
-  { to: paths.issues(), label: "Issues", icon: ListTodoIcon },
   { to: paths.sessions(), label: "Sessions", icon: RadioTowerIcon },
+  { to: paths.forge(), label: "Forge", icon: GitPullRequestIcon },
   { to: paths.skills(), label: "Skills", icon: CpuIcon },
   { to: paths.agents(), label: "Agents", icon: BotIcon },
   { to: paths.permissions(), label: "Permissions", icon: ShieldIcon },
@@ -63,43 +74,55 @@ const NAV_ITEMS: { to: string; label: string; icon: LucideIcon; counts?: boolean
 export function AppSidebar({ collapsed = false }: { collapsed?: boolean }) {
   return (
     <nav aria-label="Main" className="flex flex-col gap-1 p-2">
-      {NAV_ITEMS.map(({ to, label, icon: Icon, counts }) => (
-        <NavLink
-          key={to}
-          to={to}
-          aria-label={label}
-          className={({ isActive }) =>
-            cn(
-              "flex items-center gap-2 rounded-md py-1.5 text-sm font-medium transition-colors",
-              collapsed ? "justify-center px-0" : "px-2",
-              isActive
-                ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
-            )
-          }
-        >
-          {collapsed ? (
-            // The count comes with the icon rather than after it: the row is
-            // centred and sized to its content here, so the badge's own
-            // `ml-auto` has no free space to push into and the two read as one
-            // mark. It stays inside the trigger so hovering either half names
-            // the screen.
-            <Tooltip>
-              <TooltipTrigger tabIndex={-1} render={<span className="flex items-center gap-1" />}>
-                <Icon className="size-4 shrink-0" />
-                {counts ? <AttentionBadge /> : null}
-              </TooltipTrigger>
-              <TooltipContent side="right">{label}</TooltipContent>
-            </Tooltip>
-          ) : (
-            <>
-              <Icon className="size-4 shrink-0" />
-              {label}
-              {counts ? <AttentionBadge /> : null}
-            </>
-          )}
-        </NavLink>
+      {NAV_ITEMS.map((item) => (
+        <NavEntry key={item.to} item={item} collapsed={collapsed} />
       ))}
     </nav>
+  )
+}
+
+function NavEntry({
+  item: { to, label, icon: Icon, counts },
+  collapsed,
+}: {
+  item: NavItem
+  collapsed: boolean
+}) {
+  return (
+    <NavLink
+      key={to}
+      to={to}
+      aria-label={label}
+      className={({ isActive }) =>
+        cn(
+          "flex items-center gap-2 rounded-md py-1.5 text-sm font-medium transition-colors",
+          collapsed ? "justify-center px-0" : "px-2",
+          isActive
+            ? "bg-sidebar-accent text-sidebar-accent-foreground"
+            : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
+        )
+      }
+    >
+      {collapsed ? (
+        // The count comes with the icon rather than after it: the row is
+        // centred and sized to its content here, so the badge's own
+        // `ml-auto` has no free space to push into and the two read as one
+        // mark. It stays inside the trigger so hovering either half names
+        // the screen.
+        <Tooltip>
+          <TooltipTrigger tabIndex={-1} render={<span className="flex items-center gap-1" />}>
+            <Icon className="size-4 shrink-0" />
+            {counts ? <AttentionBadge /> : null}
+          </TooltipTrigger>
+          <TooltipContent side="right">{label}</TooltipContent>
+        </Tooltip>
+      ) : (
+        <>
+          <Icon className="size-4 shrink-0" />
+          {label}
+          {counts ? <AttentionBadge /> : null}
+        </>
+      )}
+    </NavLink>
   )
 }

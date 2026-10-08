@@ -13,7 +13,7 @@ tests:
   - crates/ariadne-daemon/tests/it/landing_lifecycle.rs
   - crates/ariadne-daemon/tests/it/auto_switch.rs
   - crates/ariadne-daemon/src/scheduler/mod.rs
-  - crates/ariadne-daemon/tests/it/pull_request_sessions.rs
+  - crates/ariadne-daemon/tests/it/kept_requests.rs
 ---
 
 # Scheduler, attention and watchdogs
@@ -199,13 +199,15 @@ the ACP runtime that takes a prompt (021).
 40. An automatic switch uses the target agent's default effort and records
     `exhausted` as its reason. It tells the task's orchestrator once and names
     both models.
-41. A pull request session (026), idle between turns, is waiting on the
-    forge, as an idle planning orchestrator waits on the user (rule 31): it
-    is never nudged, never flagged stalled and never relaunched for sitting
-    idle. A turn that never ends is still flagged and relaunched, and the
-    relaunch briefs it on its request again. Its news is handed as any
-    other prompt is (rules 4 and 6): once, and queued behind a running
-    turn. Its messages are agent messages (018).
+41. A review session (029), idle between turns, is waiting on the forge, as
+    an idle planning orchestrator waits on the user (rule 31): it is never
+    nudged, never flagged stalled and never relaunched for sitting idle. A
+    turn that never ends is still flagged and relaunched, and the relaunch
+    briefs it on its request again. So is the idle author of an approved
+    task whose request is open, which keeps that request until a human
+    merges it (005). The news of a request is handed as any other prompt is
+    (rules 4 and 6): once, and queued behind a running turn. Its messages
+    are agent messages (018).
 
 ## Acceptance criteria
 
@@ -238,11 +240,11 @@ the ACP runtime that takes a prompt (021).
 - An idle orchestrator in planning is waiting on the user, not silent, so it
   is never nudged or flagged stalled, however long it sits idle
   (`scheduler_attention.rs::an_idle_planning_orchestrator_is_never_nudged_or_flagged`).
-- An idle pull request session is not nudged past `QUIET_NUDGE_SECS` and not
+- An idle review session is not nudged past `QUIET_NUDGE_SECS` and not
   relaunched, and one mid-turn past the relaunch threshold is relaunched
   (`scheduler_attention.rs::an_idle_pull_request_session_is_waiting_on_the_forge_and_a_wedged_one_is_relaunched`).
-  Its news is handed once
-  (`pull_request_sessions.rs::the_news_of_a_fetch_is_handed_to_the_session_once`).
+  The news of a request is handed to the author that keeps it once
+  (`kept_requests.rs::the_news_of_its_request_reaches_the_author_once`).
 - An idle agent is nudged once for the situation it went quiet in
   (`::an_idle_agent_is_nudged_once_for_the_situation_it_went_quiet_in`), and
   an agent mid-turn is not nudged

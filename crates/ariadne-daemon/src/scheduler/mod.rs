@@ -194,10 +194,6 @@ pub(crate) struct Scheduler {
     review_briefed: HashSet<(String, String)>,
     /// Exhausted switches the task's orchestrator has not received yet.
     exhausted_notices: HashMap<String, ExhaustedNotice>,
-    /// Pull request sessions whose request ended, by session id, and when
-    /// the scheduler first saw that: the end is told to each, and the turn
-    /// that reads it waited for, at most `QUIET_NUDGE_SECS` (026).
-    pull_request_farewell: HashMap<String, std::time::Instant>,
     pull_request_cleanup_retry: HashMap<String, std::time::Instant>,
     /// Held while any session is live, so the machine does not idle-sleep
     /// out from under a working agent.
@@ -230,7 +226,6 @@ pub fn start(
         pick_briefed: HashSet::new(),
         review_briefed: HashSet::new(),
         exhausted_notices: HashMap::new(),
-        pull_request_farewell: HashMap::new(),
         pull_request_cleanup_retry: HashMap::new(),
         sleep: SleepInhibitor::new(),
         prevent_sleep,

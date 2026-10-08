@@ -1525,7 +1525,7 @@ impl Harness {
 
     /// Move the columns the watchdog's clock is read from back, since the
     /// store only ever stamps them "now" and every threshold is minutes away.
-    async fn backdate(&self, columns: &[&str], session: &AgentSession, secs: i64) {
+    pub(crate) async fn backdate(&self, columns: &[&str], session: &AgentSession, secs: i64) {
         let when = (chrono::Utc::now() - chrono::Duration::seconds(secs))
             .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
         let set = columns

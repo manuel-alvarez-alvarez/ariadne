@@ -108,9 +108,9 @@ impl Skill {
     }
 
     /// The seat this skill serves, read off the name and stored nowhere:
-    /// `orchestration` is the orchestrator's own playbook, `pr-babysit` the
-    /// playbook of a pull request session, and every other skill is a task
-    /// agent's to be staffed on.
+    /// `orchestration` is the orchestrator's own playbook, `pr-babysit` and
+    /// `pr-reviewer` are loaded by the daemon itself, and every other skill
+    /// is a task agent's to be staffed on.
     pub fn seat(&self) -> SkillSeat {
         SkillSeat::of(&self.name)
     }
@@ -127,8 +127,9 @@ pub enum SkillSeat {
     Orchestrator,
     /// Staffed on a task's author or reviewers.
     Task,
-    /// Loaded by the daemon for a pull request session (026), staffable on
-    /// nothing.
+    /// Loaded by the daemon, staffable on nothing: `pr-babysit` onto the
+    /// author of a task that lands by request (005, 026), and `pr-reviewer`
+    /// onto the session that reviews a request (029).
     PullRequest,
 }
 
@@ -298,10 +299,6 @@ pub struct ForgeIntegration {
     pub enabled: bool,
     /// The account the forge CLI is signed in as, stored on enable.
     pub login: Option<String>,
-    /// The pin of the session that watches a published request. None starts
-    /// no such session.
-    pub babysit_model: Option<String>,
-    pub babysit_effort: Option<String>,
     /// The pin of the session that reviews a request. None starts none.
     pub review_model: Option<String>,
     pub review_effort: Option<String>,
@@ -311,6 +308,8 @@ pub struct ForgeIntegration {
     pub webhook_state: String,
     pub webhook_error: Option<String>,
     pub webhook_last_delivery_at: Option<String>,
+    /// Why the last fetch of its requests failed; None once one succeeds.
+    pub fetch_error: Option<String>,
     pub detected_at: String,
     pub updated_at: String,
 }
@@ -680,6 +679,27 @@ pub struct PullRequest {
     /// Whether the last repository fetch listed the request as asking for
     /// the user's review (029).
     pub review_requested: bool,
+    /// Whether the user asked Ariadne to review a request of their own
+    /// (029): a review session runs on it while it is open.
+    pub review_asked: bool,
+    /// The request's description, as the forge holds it.
+    pub body: String,
+    /// The pin the user picked for the review they asked of a request of
+    /// their own (029); None where nobody asked.
+    pub review_model: Option<String>,
+    pub review_effort: Option<String>,
+    /// The skills the user picked for that review beside `pr-reviewer`, as a
+    /// JSON list. Read through [`PullRequest::review_skills`].
+    #[sqlx(rename = "review_skills")]
+    pub review_skills_json: String,
+}
+
+impl PullRequest {
+    /// The skills the user picked for the review of a request of their own
+    /// (029), beside the `pr-reviewer` every review session loads.
+    pub fn review_skills(&self) -> Vec<String> {
+        serde_json::from_str(&self.review_skills_json).unwrap_or_default()
+    }
 }
 
 /// One comment on a pull request, as the daemon stored it from the forge

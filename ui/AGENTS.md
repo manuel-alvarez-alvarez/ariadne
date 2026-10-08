@@ -43,9 +43,12 @@ src/
     goals/         the goals board (swimlanes, attention strip), the goal panel,
                    and the attention count the shell shows everywhere else
     tasks/         the task panel: facts, diff, reviews, history
-    pull-requests/ the pull request ledger: requests a task opened, the forge
-                   found, or added by hand, and the pane over one
-    issues/        the issues screen: open issues from an enabled repository's
+    forge/         the Forge screen: one sidebar entry, its two tabs the
+                   pull requests and issues routes below it
+    pull-requests/ the Forge tab of the open pull requests — every one, the
+                   user's own, or the ones that ask for their review — and the
+                   pane over one
+    issues/        the Forge tab of open issues from an enabled repository's
                    forge, and filling a goal dialog from one
     sessions/      the sessions screen, the session panel and its console: a
                    terminal pane on the daemon's terminal socket
@@ -53,6 +56,7 @@ src/
     skills/        skills screen: the catalog, and the document each one is
     repositories/  the registered checkouts goals are created against, their
                    forge integration, and the webhook tunnel switch
+                   the settings dialog shows
     agents/        agents screen: the flags each registry agent is launched with
     permissions/   the Permissions screen: Learned (every approval a `learn`
                    or `ai` repository has kept, and one added by hand) and AI
@@ -116,6 +120,7 @@ write a key literal. Every key is `[entity, "list" | "detail", ...]`:
 ["agents",       "list", {}]        ["models",   "list", {}]
 ["agent-events", "list", filters]
 ["permissions",  "detail", "ai"]  ["forge",    "detail", "tunnel"]
+["issues",       "list", repository, { assigned }]
 ["learned-permissions", "list", filters] ["learned-permissions", "detail", id]
 ["stats",        "list", family, filter]
 ```
@@ -176,6 +181,7 @@ the query cache and it stays live.
 | `repository_deleted` | remove `repositories.detail`, invalidate `repositories.lists` |
 | `ai_permissions_updated` | patch `permissions.ai()` whole — the one settings row, no list beside it |
 | `forge_settings_updated` | patch `forge.tunnel()` whole — the tunnel switch and state, no list beside it |
+| `issues_changed` | invalidate `issues.ofRepository(id)` — both assignment filters of the repository whose open issues moved; issues are read off the forge, so the event carries none |
 | `learned_permission_created`, `learned_permission_updated` | patch `learnedPermissions.detail`, invalidate `learnedPermissions.lists` |
 | `learned_permission_deleted` | remove `learnedPermissions.detail`, invalidate `learnedPermissions.lists` |
 
@@ -258,8 +264,9 @@ one line, and a file that mounted one said less about its feature than the line
 it held. What the header calls a screen rides on the route's own `handle`.
 
 Screens with URLs of their own — `#/goals`, `#/sessions`, `#/skills`,
-`#/agents`, `#/permissions`, `#/repositories` and `#/stats` — and `#/`
-redirects onto the board. The Stats screen is `src/routes/stats.tsx`, and
+`#/agents`, `#/permissions`, `#/repositories`, `#/stats`, and the Forge
+screen's two tabs, `#/forge/pull-requests` and `#/forge/issues` (`#/forge`
+opens the first) — and `#/` redirects onto the board. The Stats screen is `src/routes/stats.tsx`, and
 each stat family is a section of it, `src/components/stats/<family>-section.tsx`,
 drawn through the shared `StatSection`, `StatTiles`, `StatTable`,
 `StatTimeChart` and `StatBarChart` beside it.

@@ -60,9 +60,10 @@ pub struct BuiltinSkill {
 /// the launcher loads this skill for every orchestrator session.
 pub const ORCHESTRATION_SKILL: &str = "orchestration";
 
-/// The skill of a pull request session (026): the daemon loads it for every
-/// session it starts on an open request of the user, and no orchestrator
-/// staffs it. Its seat is a fact of the name, as the orchestrator's is.
+/// The skill that keeps an open request moving (005, 026): the daemon loads
+/// it for the author of every task that lands by request, which keeps its
+/// request until a human merges or closes it, and no orchestrator staffs it.
+/// Its seat is a fact of the name, as the orchestrator's is.
 pub const PR_BABYSIT_SKILL: &str = "pr-babysit";
 
 /// The skill of a reviewer pull request session (029): the daemon loads it
@@ -213,28 +214,32 @@ pub fn default_prompt_text(kind: PromptKind) -> &'static str {
     }
 }
 
-/// The system prompt of a pull request session of `seat` (026, 029): what
-/// the seat owes, as [`default_system_prompt`] says it for a task's seats.
-/// The work itself is the [`PR_BABYSIT_SKILL`] document for the author, and
-/// the [`PR_REVIEWER_SKILL`] document for a reviewer.
-pub fn pull_request_system_prompt(seat: Seat) -> &'static str {
-    match seat {
-        Seat::Reviewer => PULL_REQUEST_REVIEW_SYSTEM_PROMPT,
-        Seat::Author | Seat::Orchestrator => PULL_REQUEST_SYSTEM_PROMPT,
-    }
+/// The system prompt of a session that reviews a request (029): what the
+/// seat owes, as [`default_system_prompt`] says it for a task's seats. The
+/// work itself is the [`PR_REVIEWER_SKILL`] document. A request of the
+/// user's own has no session of its own: its task's author keeps it (005).
+pub fn pull_request_system_prompt() -> &'static str {
+    PULL_REQUEST_REVIEW_SYSTEM_PROMPT
 }
 
-/// The briefing a pull request session of `seat` starts on: the request,
-/// and the values its commands act on.
-pub fn pull_request_briefing_prompt(seat: Seat) -> &'static str {
-    match seat {
-        Seat::Reviewer => PULL_REQUEST_REVIEW_BRIEFING,
-        Seat::Author | Seat::Orchestrator => PULL_REQUEST_BRIEFING,
-    }
+/// The briefing a review session starts on: the request, and the values its
+/// commands act on.
+pub fn pull_request_briefing_prompt() -> &'static str {
+    PULL_REQUEST_REVIEW_BRIEFING
 }
 
-/// The prompt the daemon wakes a pull request session with: one line per
-/// thing it has not been told yet, rendered by `forge::news`.
+/// What the author of a task whose request is open is picked up with (005):
+/// after its revision was approved again, or once its agent came back. The
+/// task stays approved until a human merges the request, so the landing
+/// briefing, which opens the request, is not what it wants again.
+pub fn keep_request_prompt() -> &'static str {
+    KEEP_REQUEST
+}
+
+/// The prompt the daemon wakes a session with when a request has news: one
+/// line per thing it has not been told yet, rendered by `forge::news`. The
+/// session is the review session of a request (029), or the author of the
+/// task that opened it (005).
 pub fn pull_request_news_prompt() -> &'static str {
     PULL_REQUEST_NEWS
 }
@@ -327,24 +332,6 @@ const REVIEWER_SYSTEM_PROMPT: &str = r#"You review one Ariadne task. An approval
 5. Use `send_message` for questions. After a question, end turn. Do not poll `read_messages`. Ariadne sends answers as turns. Questions give no verdict.
 6. Call `submit_verdict` once per review you are asked for. Put that SHA in every verdict. It is the verdict, and nothing else counts. Approve with a note on what you checked. Or request changes: list files and functions, with each item must-fix or optional. Write the verdict in STE."#;
 
-/// Pull request seat text: what a session on one open request of the user
-/// owes. No task, no review and no ending of its own: the request ends when
-/// a human merges or closes it, and the daemon ends the session then.
-const PULL_REQUEST_SYSTEM_PROMPT: &str = r#"You keep one open pull or merge request of the user moving. Work only in your worktree, on its head branch. Commit nothing generated or unrelated. Write no authorship trailer, no tool trailer and no mention of Ariadne. Ariadne wakes you with the news of the request. Handle it as your skill says. Then end your turn."#;
-
-/// Initial briefing of a pull request session.
-const PULL_REQUEST_BRIEFING: &str = r#"# Pull request: {title}
-
-{url}
-
-## Context
-- Repo: {repo_path}
-- Worktree (your cwd): {worktree_path}
-- Branch: {head_branch} onto {base_branch}
-- Your login: {login}
-
-Ariadne reads the forge and wakes you with the news of this request."#;
-
 /// Seat text of a reviewer pull request session (029).
 const PULL_REQUEST_REVIEW_SYSTEM_PROMPT: &str = r#"You review one open pull or merge request where the user is a requested reviewer. Work only in your worktree, detached at the head of the request. Commit nothing and push nothing. Ariadne wakes you with the request and its news. Review it as your skill says. Then end your turn."#;
 
@@ -362,8 +349,8 @@ const PULL_REQUEST_REVIEW_BRIEFING: &str = r#"# Review pull request: {title}
 
 Review this request."#;
 
-/// What a pull request session is woken with: the news since it was last
-/// told, one line each.
+/// What a session is woken with when a request has news: the news since it
+/// was last told, one line each.
 const PULL_REQUEST_NEWS: &str = r#"News on "{title}":
 {news}
 
@@ -514,15 +501,14 @@ Approved. Squash {branch} onto {base_branch} in {repo_path}. `<remote>` is what 
 
 /// What the author of an approved task in a `pull_request` repository is
 /// briefed with, unless the repository was given one of its own: rebase onto
-/// the base once, push the branch, open the request, and end the task.
+/// the base once, push the branch, open the request, and keep it.
 ///
-/// The task ends once the request is open and pushed, rather than once a
-/// human merges it: opening the daemon's own tool for it (`open_pull_request`)
+/// The task does not end when the request opens: its author keeps the
+/// request until a human merges or closes it, as its `pr-babysit` skill
+/// says. Opening it is the daemon's own tool (`open_pull_request`), which
 /// puts the forge call, the authentication and the push check behind the
-/// daemon, so the author never runs `gh` or `glab`, never polls the request
-/// and never answers a comment. What happens to the request from here —
-/// its comments, its checks, its merge — is a pull request entity's own
-/// session, not this task's.
+/// daemon, so the author never runs `gh` or `glab` and never polls the
+/// request: the daemon reads the forge and wakes the author with its news.
 const LANDING_PULL_REQUEST: &str = r#"# Land task: {task_title}
 
 Approved. Open a pull or merge request for {branch} onto {base_branch} in {repo_path}. `<remote>` is what `git -C {repo_path} remote -v` names, if anything.
@@ -531,7 +517,8 @@ Approved. Open a pull or merge request for {branch} onto {base_branch} in {repo_
 2. `git rebase {base_branch}` in your worktree. Conflicts are yours.
 3. `git push <remote> {branch}`.
 4. Call `open_pull_request`. Title it by the repository's commit conventions. Write its body from the repository's request template.
-5. `finish_task` with `git rev-parse {branch}`."#;
+5. Keep the request until a human merges or closes it, as your `pr-babysit` skill says. Never merge it yourself.
+6. End your turn. Ariadne wakes you with the news of the request."#;
 
 /// What the author of the final task of a `feature_branch` goal is briefed
 /// with: the one request that takes the goal branch onto the base branch.
@@ -543,7 +530,8 @@ Approved. Open a pull or merge request for {branch} onto {base_branch} in {repo_
 /// It skips [`LANDING_PULL_REQUEST`]'s rebase for the same reason — there is
 /// nothing left to rebase onto, the goal branch already carries it — and
 /// deletes nothing: the goal branch's delete, once the request merges, is
-/// another task's to do (026).
+/// the daemon's (026). Its author keeps the request as any other task's
+/// author keeps one.
 pub fn final_landing_prompt() -> &'static str {
     LANDING_GOAL_BRANCH
 }
@@ -554,7 +542,20 @@ Approved. Open a pull or merge request for the goal branch {branch} onto {base_b
 
 1. `git push <remote> {branch}`.
 2. Call `open_pull_request`. Title it by the repository's commit conventions. Write its body from the repository's request template.
-3. `finish_task` with `git rev-parse {branch}`."#;
+3. Keep the request until a human merges or closes it, as your `pr-babysit` skill says. Never merge it yourself.
+4. End your turn. Ariadne wakes you with the news of the request."#;
+
+/// What the author of a task whose request is open is picked up with
+/// ([`keep_request_prompt`]): push what an approved revision added, read
+/// the request, and wait for its news.
+const KEEP_REQUEST: &str = r#"# Keep request: {task_title}
+
+Your request for {branch} onto {base_branch} is open. `<remote>` is the remote `git -C {repo_path} remote -v` names.
+
+1. Push what `<remote>` lacks: `git push <remote> {branch}`. Never force a push.
+2. Call `get_pull_request`, and `list_comments` with `unanswered_only`.
+3. Handle them as your `pr-babysit` skill says.
+4. End your turn."#;
 
 /// What the author of an approved task that lands nothing is briefed with.
 ///
@@ -709,26 +710,21 @@ mod tests {
             .collect()
     }
 
-    /// The texts of a pull request session, named for a failure.
-    fn pull_request_texts() -> [(String, &'static str); 5] {
+    /// The texts of a review session and of a request's news, and the
+    /// text an author keeping its request is picked up with, named for a
+    /// failure.
+    fn pull_request_texts() -> [(String, &'static str); 4] {
         [
             (
-                "pull request system prompt".into(),
-                pull_request_system_prompt(Seat::Author),
-            ),
-            (
-                "pull request briefing".into(),
-                pull_request_briefing_prompt(Seat::Author),
-            ),
-            (
                 "pull request review system prompt".into(),
-                pull_request_system_prompt(Seat::Reviewer),
+                pull_request_system_prompt(),
             ),
             (
                 "pull request review briefing".into(),
-                pull_request_briefing_prompt(Seat::Reviewer),
+                pull_request_briefing_prompt(),
             ),
             ("pull request news".into(), pull_request_news_prompt()),
+            ("keep request briefing".into(), keep_request_prompt()),
         ]
     }
 
@@ -1292,9 +1288,20 @@ mod tests {
     /// has to run has to come first — the push of the base branch above all,
     /// which is the one step whose absence leaves the commit on this machine
     /// alone with nothing left to notice.
+    ///
+    /// A landing by request does not end the task at all: the author keeps
+    /// the request until a human merges it (005), and its `pr-babysit` skill
+    /// is where the task ends. So that briefing names no `finish_task`.
     #[test]
     fn nothing_the_author_still_has_to_run_comes_after_the_call_that_ends_the_task() {
         for (name, text) in every_landing() {
+            if text.contains("`pr-babysit`") {
+                assert!(
+                    !text.contains("`finish_task`"),
+                    "the {name} ends the task while its request is open"
+                );
+                continue;
+            }
             let ends = text
                 .find("`finish_task`")
                 .unwrap_or_else(|| panic!("the {name} never ends the task"));
@@ -1649,12 +1656,13 @@ mod tests {
         }
 
         // The published briefing opens the request itself: one rebase, one
-        // push, the daemon's own tool, and the end of the task.
+        // push, the daemon's own tool, and the skill that keeps the request.
         for step in [
             "git rebase {base_branch}",
             "git push <remote> {branch}",
             "`open_pull_request`",
-            "`finish_task`",
+            "`pr-babysit`",
+            "End your turn.",
         ] {
             assert!(
                 published.contains(step),
@@ -1693,7 +1701,7 @@ mod tests {
 
     /// The final task of a `feature_branch` goal publishes the goal branch
     /// against the base branch, and runs its steps in order: the push, the
-    /// request, and the call that ends the task. It skips the rebase a task
+    /// request, and the skill that keeps it. It skips the rebase a task
     /// branch's own landing needs, and deletes nothing.
     #[test]
     fn the_final_landing_takes_the_goal_branch_onto_the_base_in_order() {
@@ -1710,7 +1718,7 @@ mod tests {
         for step in [
             "git push <remote> {branch}",
             "`open_pull_request`",
-            "`finish_task`",
+            "`pr-babysit`",
         ] {
             let found = text[at..]
                 .find(step)
@@ -1730,10 +1738,12 @@ mod tests {
         }
     }
 
-    /// The pull request session is fed by the daemon (026), so its skill
-    /// names none of the ways an agent would feed itself: no forge CLI, no
-    /// timer, no poll. A human closes a thread and a human merges, so it
-    /// names neither the call that resolves one nor a forge merge command.
+    /// The author keeping its request is fed by the daemon (005, 026), so
+    /// its skill names none of the ways an agent would feed itself: no forge
+    /// CLI, no timer, no poll. A human closes a thread and a human merges, so
+    /// it names neither the call that resolves one nor a forge merge command.
+    /// Every fix goes through the task's reviewers before it is pushed, and
+    /// the task ends on the merge or the close, by the author's own call.
     /// And the turn ends when the news is handled, which is what lets the
     /// next news start a turn of its own.
     #[test]
@@ -1766,6 +1776,10 @@ mod tests {
             "Never amend, rebase or force a push.",
             "`report_pull_request` with `ready: true`",
             "`ready: false`",
+            "Then call `request_review`. Push nothing yet.",
+            "The reviewers approve: Ariadne tells you. Push the branch plainly.",
+            "Then call `finish_task`",
+            "call `fail_task`",
             "End your turn when the news is handled.",
             "## Do not tell yourself",
             "## Done",
@@ -2366,7 +2380,8 @@ mod tests {
         // states how to answer it and nothing of how to fetch it.
         // Raised from 39_200 for the pr-reviewer skill (029), which a
         // reviewer pull request session loads.
-        const TOTAL: usize = 42_200;
+        // Raised from 42_200 for the inline findings of pr-reviewer (029).
+        const TOTAL: usize = 42_500;
         let cap = |name: &str| match name {
             // The orchestration playbook grew a step-4 choice — one author
             // for most tasks, several where the reviewers pick a winner —
@@ -2391,9 +2406,12 @@ mod tests {
             // rules no other skill has: leave every thread to a human, and
             // reach the forge only through the session's tools.
             PR_BABYSIT_SKILL => 2600,
-            // Ten steps: the read, the checks, the hunt, the three
-            // priorities, the one review, the report and the later round.
-            PR_REVIEWER_SKILL => 3000,
+            // Eleven steps: the read, the checks, the hunt, the three
+            // priorities, one inline comment per finding with its title and
+            // its fix, the summary with no line in it, the one review, the
+            // report and the later round. The inline step is what keeps a
+            // review from being one comment that lists every defect.
+            PR_REVIEWER_SKILL => 3300,
             _ => 2400,
         };
 

@@ -249,22 +249,6 @@ impl GitManager {
         ))))
     }
 
-    /// Fetch `branch` from `from` — a remote name or a clone URL — into the
-    /// local branch of the same name: a pull request's head that the
-    /// checkout does not hold yet (026).
-    pub(crate) async fn fetch_branch(&self, repo: &Path, from: &str, branch: &str) -> Result<()> {
-        self.git(
-            repo,
-            &[
-                "fetch",
-                from,
-                &format!("refs/heads/{branch}:refs/heads/{branch}"),
-            ],
-        )
-        .await?;
-        Ok(())
-    }
-
     /// Whether `reference` names a commit the repository holds: the head of
     /// a request under review, before it is fetched (029). A reference git
     /// cannot read as one is `false`.
@@ -312,26 +296,6 @@ impl GitManager {
             Err(error) if error.to_string().contains("remote ref does not exist") => Ok(()),
             Err(error) => Err(error),
         }
-    }
-
-    /// The worktree that has `branch` checked out, the main checkout among
-    /// them, if one does: git checks a branch out in one worktree at a time.
-    pub(crate) async fn worktree_of_branch(
-        &self,
-        repo: &Path,
-        branch: &str,
-    ) -> Result<Option<PathBuf>> {
-        let listing = self.git(repo, &["worktree", "list", "--porcelain"]).await?;
-        let wanted = format!("branch refs/heads/{branch}");
-        let mut path = None;
-        for line in listing.lines() {
-            if let Some(at) = line.strip_prefix("worktree ") {
-                path = Some(PathBuf::from(at));
-            } else if line == wanted {
-                return Ok(path);
-            }
-        }
-        Ok(None)
     }
 
     pub async fn delete_branch(&self, repo: &Path, branch: &str) -> Result<()> {

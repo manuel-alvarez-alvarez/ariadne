@@ -623,6 +623,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/pull-requests/{id}/ariadne-review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Ask Ariadne to review a request of the user's own on the model the user
+         *     picks, or stop asking (029): a review session runs on that pin while the
+         *     request is open and out of draft, and posts one review as a comment in
+         *     the user's name. A request that asks for the user's review has one
+         *     already, on the repository's review pin, and takes no asking.
+         */
+        put: operations["pull-requests_ask_review"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/pull-requests/{id}/comments": {
         parameters: {
             query?: never;
@@ -1621,6 +1644,25 @@ export interface components {
             /** @description Whether the checkpoints of the last good install are on disk. */
             weights_present: boolean;
         };
+        /**
+         * @description Body of `PUT /v1/pull-requests/{id}/ariadne-review`: whether Ariadne
+         *     reviews a request of the user's own (029).
+         */
+        AskReviewRequest: {
+            asked: boolean;
+            /** @description The effort that model runs at; none for the agent's own. */
+            effort?: string | null;
+            /**
+             * @description The model the review runs on, `agent:model`: required to ask, and
+             *     checked against the catalog as any pin is.
+             */
+            model?: string | null;
+            /**
+             * @description The skills the review loads beside `pr-reviewer`, which every review
+             *     session loads; skills a task agent is staffed on.
+             */
+            skills?: string[];
+        };
         AttentionFlagDto: {
             /** Format: double */
             mean_wait_secs: number;
@@ -1974,6 +2016,14 @@ export interface components {
             data: components["schemas"]["ForgeTunnelDto"];
             /** @enum {string} */
             event: "forge_settings_updated";
+        } | {
+            /**
+             * @description The open issues of one repository moved on its forge (028): read them
+             *     again from `GET /v1/repositories/{id}/issues`.
+             */
+            data: components["schemas"]["IssuesChangedDto"];
+            /** @enum {string} */
+            event: "issues_changed";
         };
         /**
          * @description One reasoning effort an entry can be run at: the name it is passed by, and
@@ -2028,12 +2078,6 @@ export interface components {
         };
         /** @description The forge a repository's remote is on, and whether Ariadne works with it. */
         ForgeDto: {
-            babysit_effort?: string | null;
-            /**
-             * @description The pin of the session that watches a published request; null starts
-             *     none.
-             */
-            babysit_model?: string | null;
             enabled: boolean;
             /**
              * @description Lower-cased, like `owner` and `name`.
@@ -2082,8 +2126,6 @@ export interface components {
          *     written empty clears that role's pin and its effort.
          */
         ForgeUpdate: {
-            babysit_effort?: string | null;
-            babysit_model?: string | null;
             enabled?: boolean | null;
             review_effort?: string | null;
             review_model?: string | null;
@@ -2200,6 +2242,10 @@ export interface components {
             title: string;
             updated_at: string;
             url: string;
+        };
+        /** @description Payload of `issues_changed`: the repository whose open issues moved. */
+        IssuesChangedDto: {
+            repository_id: string;
         };
         /**
          * @description How the tasks of one goal end.
@@ -2608,6 +2654,8 @@ export interface components {
             base_branch: string;
             /** @description Whether the base branch has commits the head does not. */
             behind_base?: boolean;
+            /** @description The request's description, as the forge holds it. */
+            body?: string;
             checks: string;
             created_at: string;
             draft: boolean;
@@ -2627,9 +2675,25 @@ export interface components {
             origin_task_id?: string | null;
             ready: boolean;
             repository_id: string;
+            /**
+             * @description Whether the user asked Ariadne to review this request of their own
+             *     (029).
+             */
+            review_asked?: boolean;
             review_decision: string;
+            review_effort?: string | null;
+            /** @description The pin the user picked for that review. */
+            review_model?: string | null;
+            /** @description Whether the request asks for the user's review (029). */
+            review_requested?: boolean;
+            /** @description The skills that review loads beside `pr-reviewer`. */
+            review_skills?: string[];
             role: string;
-            /** @description The newest session the daemon started on this request, if any. */
+            /**
+             * @description The newest session on this request, if any: the review session of a
+             *     request that asks for the user's review (029), or the author of the
+             *     task that opened it (005).
+             */
             session_id?: string | null;
             state: string;
             title: string;
@@ -2639,11 +2703,15 @@ export interface components {
             updated_at: string;
             url: string;
         };
+        /**
+         * @description An open request a search found that is not the user's own: a request of
+         *     the user's own is kept by the task that opened it (005), and is no
+         *     request to add by hand.
+         */
         PullRequestMatchDto: {
             author_login: string;
             /** Format: int64 */
             number: number;
-            role: string;
             title: string;
             tracked: boolean;
             url: string;
@@ -3408,6 +3476,11 @@ export interface components {
         /** @description Public hook status. The hook secret is never serialized. */
         WebhookDto: {
             error?: string | null;
+            /**
+             * @description Why the last fetch of the repository's requests failed, or null once
+             *     one works: what says polling works, where no hook is live.
+             */
+            fetch_error?: string | null;
             last_delivery_at?: string | null;
             state: string;
             url?: string | null;
@@ -4520,7 +4593,18 @@ export interface operations {
         parameters: {
             query?: {
                 repo?: string | null;
+                /**
+                 * @description `reviewer` for the requests that ask for the user's review, `author`
+                 *     for the ones a task opened.
+                 */
                 role?: string | null;
+                /** @description The task that opened the request. */
+                task?: string | null;
+                /**
+                 * @description True for the requests that ask for the user's review (029), false
+                 *     for the ones that do not.
+                 */
+                requested?: boolean | null;
                 /** @description Open by default; `all` includes closed and merged requests. */
                 state?: string | null;
             };
@@ -4651,6 +4735,43 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_ask_review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskReviewRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestDto"];
+                };
             };
             404: {
                 headers: {
@@ -6210,7 +6331,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description the task is not approved, has no forge, is not authenticated, or is not pushed */
+            /** @description the task is not approved, has no forge or its integration is off, is not authenticated, or is not pushed */
             409: {
                 headers: {
                     [name: string]: unknown;

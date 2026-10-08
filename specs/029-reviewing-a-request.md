@@ -14,18 +14,21 @@ tests:
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-cli/src/commands/attention.rs
   - ui/src/features/goals/attention.test.tsx
+  - ui/src/features/pull-requests/pull-requests-page.test.tsx
 ---
 
 # Reviewing a request
 
 Every open request where the user is a requested reviewer gets a session of
-its own. The daemon wakes it with the request and with each push. It posts
-one review in the user's name, and the approval stays the user's.
+its own, and so does a request of the user's own whose review they asked
+Ariadne for. The daemon wakes it with the request and with each push. It
+posts one review in the user's name, and the approval stays the user's.
 
 ## Scope
 
-In: which reviewer rows want a session, its worktree, its news, its tools and
-routes, the verdict policy, and the attention it raises.
+In: which rows want a review session, the asking on a request of the
+user's own, its worktree, its news, its tools and routes, the verdict
+policy, and the attention it raises.
 
 Out: the ledger, the fetch, the comments table and the PR session kind
 ([026](026-pull-requests.md)); the skill catalog and staffing
@@ -39,12 +42,20 @@ Out: the ledger, the fetch, the comments table and the PR session kind
    is enabled and names a `review_model`. The daemon staffs it on
    `review_model` and `review_effort` (025), with seat `reviewer` and the
    `pr-reviewer` skill (017). A repository with no `review_model` starts
-   nothing, and its reviewer rows get no detail fetch.
+   nothing, and its reviewer rows get no detail fetch. A row with role
+   `author` wants one where `review_asked` holds: the user asked Ariadne to
+   review a request of their own (rule 10). That session runs on the pin the
+   user picked, `pull_requests.review_model` and `review_effort`, and loads
+   `pr-reviewer` and the skills they picked, `review_skills`; the
+   repository's `review_model` has no part in it.
 2. A draft starts nothing. When the request leaves draft, the next fetch
    starts the session. A request that goes back to draft ends it.
 3. `pull_requests.review_requested` records whether the request still asks
-   for the user's review. A repository fetch that lists it says yes. For an
-   open forge-tracked row that no list holds, the fetch asks the forge
+   for the user's review. The fetch's list of review requests that holds it
+   says yes (026 rule 5); a row the list of open requests alone holds, and
+   that never asked, says no and asks the forge nothing. For an open
+   forge-tracked row that asked before and the list no longer holds, the
+   fetch asks the forge
    (`ForgeClient::review_still_requested`). GitHub stops listing a request
    once the user reviewed it, and writes no removal event for that. So it
    reads the request's timeline: the last review request or removed request
@@ -70,29 +81,52 @@ Out: the ledger, the fetch, the comments table and the PR session kind
    A push is a `head_sha` that differs from `told_head_sha`. Its line names
    the new head and the last `reviewed_sha`, and asks for a review of the
    commits since it. Checks, the base, the review decision and the state are
-   no news to a reviewer.
+   no news to a reviewer. On a request of the user's own a push alone is
+   news: its comments are the news of the task's author that keeps it (026),
+   and each is told once.
 8. A push waits for the session to be idle. Then the daemon moves the
    worktree to the new head (`checkout_detached`) and hands the news in one
    prompt. A fetch with the same head hands nothing.
 9. A row that turns `merged` or `closed`, goes back to draft, or loses the
    user's review request has its sessions killed and its worktree removed. No
-   branch is touched. An ended row records `cleaned_at` (026 rule 23).
+   branch is touched. An ended row records `cleaned_at` (026 rule 23); an
+   ended request of the user's own leaves that record to the cleanup of its
+   author's side, and so does a request of theirs whose asking stopped.
+
+## Asking on a request of the user's own
+
+10. `PUT /v1/pull-requests/{id}/ariadne-review` takes `{asked, model,
+    effort, skills}` and writes `pull_requests.review_asked`, the pin
+    `review_model` and `review_effort`, and `review_skills` (migrations
+    `0014` and `0016`). `model` is required to ask and is checked against the
+    catalog as any pin is; a missing or unknown one answers 400. Each skill
+    must be one a task agent is staffed on (017), else 400; `pr-reviewer` is
+    loaded anyway and is not stored. It answers the row, and wakes the fetch
+    and the scheduler. A row with role `reviewer` is refused with 409: it
+    has a review session of its own already, on the repository's pin.
+    Asking on an ended request is refused with 409. `asked: false` clears
+    the pin and the skills and takes the session down.
 
 ## Tools and routes
 
-10. The reviewer PR seat lists `get_pull_request`, `get_diff`,
+11. The reviewer PR seat lists `get_pull_request`, `get_diff`,
     `list_comments`, `reply_comment`, `submit_review` and
     `report_pull_request`, and no task tool and no message tool (013). The
     user reaches the session through its console (008).
-11. `GET /v1/pull-requests/{id}/diff?since=` answers `git diff <base>...HEAD`
+12. `GET /v1/pull-requests/{id}/diff?since=` answers `git diff <base>...HEAD`
     in the session's worktree, or `git diff <since>..HEAD` where `since` is
     given. The base is `<remote>/<base_branch>` where the checkout holds it,
     else the local base branch. A `since` that is no hex sha of a commit in
     the worktree answers 400.
-12. `POST /v1/pull-requests/{id}/reviews` takes `event`, `body` and
-    `comments` of `path`, `line`, `body` and `priority` (`P0`, `P1` or
-    `P2`). The daemon prefixes each inline body with its priority, as
-    `P0: …`.
+13. `POST /v1/pull-requests/{id}/reviews` takes `event`, `body` and
+    `comments` of `path`, `line`, `title`, `body` and `priority` (`P0`, `P1`
+    or `P2`). `body` is a summary of the findings tied to no line; each
+    finding is one inline comment on the line of its defect. The daemon
+    posts each as `**[P0] Title**`, a blank line, then its body: what goes
+    wrong and how to fix it. A comment with no path, no line from 1, no title
+    or no body answers 400, and so does a `request_changes` with no P0
+    finding among its comments: a change request shows its P0s on their
+    lines.
     - GitHub: one `gh api repos/<owner>/<name>/pulls/<n>/reviews` call with
       `REQUEST_CHANGES` or `COMMENT`, the head as `commit_id`, and every
       inline comment. The daemon then reads the review's comments back.
@@ -101,23 +135,28 @@ Out: the ledger, the fetch, the comments table and the PR session kind
       so the note starts with "Request changes" where the review asks for
       changes.
     The daemon stores the posted body and comments as comments of the
-    integration login, and answers them with 201.
-13. Every `event` but `request_changes` and `comment` answers 400 before the
+    integration login, and answers them with 201. On a request of the user's
+    own the review is a comment whatever its `event`: no forge takes a
+    change request from a request's own author.
+14. Every `event` but `request_changes` and `comment` answers 400 before the
     forge sees a call. An approval is refused above all: the user gives it.
     No route approves, merges or resolves a thread.
-14. `report_pull_request` takes `reviewed_sha`, a hex sha, on a reviewer row
-    alone. It writes `pull_requests.reviewed_sha`. A sha that moves it raises
+15. `report_pull_request` takes `reviewed_sha`, a hex sha, on a reviewer row,
+    or on a row of the user's own with `review_asked`, alone. It writes `pull_requests.reviewed_sha`. A sha that moves it raises
     `waiting_user` on the session again; the same sha raises nothing.
-15. Diffs, reviews and reports are accepted from the request's own session
+16. Diffs, reviews and reports are accepted from the request's own session
     alone. Another session, or a call with no session, gets 403.
 
 ## Verdict and attention
 
-16. `pr-reviewer` asks for changes when a P0 finding exists, and comments
+17. `pr-reviewer` asks for changes when a P0 finding exists, and comments
     otherwise. P0 breaks behavior, data or security and must change before
     the request lands; P1 is a defect or a missing proof that will bite; P2
-    is worth fixing.
-17. `waiting_user` on a reviewer PR session reads "review posted, approve
+    is worth fixing. It writes the review body as a summary — the count of
+    each priority, each finding's title, what it checked — with no file or
+    line, and each finding as one inline comment with a title, the failure
+    and a fix.
+18. `waiting_user` on a reviewer PR session reads "review posted, approve
     yourself" in `ariadne attention` and "Review posted, approve yourself" in
     the desktop app. The approval and the merge stay the user's.
 
@@ -165,6 +204,23 @@ Out: the ledger, the fetch, the comments table and the PR session kind
   sleep, poll, `gh` or `glab`:
   `defaults.rs::tests::the_pr_reviewer_skill_ranks_its_findings_and_never_approves`,
   `::skill_size_caps_hold`.
+- A request of mine gets no review until the user asks, then one on the pin
+  and with the skills they picked, detached at its head, whose review is a
+  comment, and stopping the asking ends it:
+  `pull_request_reviews.rs::a_request_of_mine_is_reviewed_once_asked_and_its_review_is_a_comment`.
+- Asking needs a model the catalog holds and skills a task agent is staffed
+  on, and is refused on a request that asks for my review:
+  `pull_request_reviews.rs::asking_needs_a_model_and_a_request_of_mine`.
+- A review's findings are inline comments titled `[Pn] Title`; a change
+  request with no P0 inline and a comment with no title are refused:
+  `pull_request_reviews.rs::a_review_posts_its_findings_by_priority_and_an_approval_is_refused`.
+- The desktop's request panel starts an Ariadne review of a request of mine
+  on the model and skills picked in its dialog — `pr-reviewer` always on and
+  nothing else picked to start with — closes the dialog and opens the new
+  review session's console in the panel once the daemon starts it, stops it,
+  and offers it on no other:
+  `pull-request-panel.test.tsx::starts an Ariadne review of a request of mine on the model and skills picked, opens its console, and stops it`,
+  `::offers no Ariadne review on a request that asks for my review`.
 - The attention text says the review is posted and the approval is the
   user's:
   `attention.rs::tests::a_session_is_reported_for_the_reason_the_ui_would_give`,
@@ -173,6 +229,7 @@ Out: the ledger, the fetch, the comments table and the PR session kind
 ## Sources
 
 `crates/ariadne-store/migrations/0011_pull_request_reviews.sql`,
+`crates/ariadne-store/migrations/0014_ariadne_review_of_my_requests.sql`,
 `crates/ariadne-store/skills/pr-reviewer/SKILL.md`,
 `crates/ariadne-daemon/src/scheduler/pull_requests.rs`,
 `crates/ariadne-daemon/src/forge/news.rs`, `crates/ariadne-daemon/src/forge/poll.rs`,

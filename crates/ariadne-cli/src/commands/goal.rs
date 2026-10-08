@@ -622,6 +622,7 @@ mod tests {
                     url: None,
                     error: None,
                     last_delivery_at: None,
+                    fetch_error: None,
                 },
                 kind: ariadne_core::ForgeKind::Github,
                 host: "github.com".into(),
@@ -630,8 +631,6 @@ mod tests {
                 remote: "origin".into(),
                 enabled: true,
                 login: Some("octocat".into()),
-                babysit_model: None,
-                babysit_effort: None,
                 review_model: None,
                 review_effort: None,
             });

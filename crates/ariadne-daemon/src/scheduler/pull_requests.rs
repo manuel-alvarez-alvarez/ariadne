@@ -1,12 +1,10 @@
-//! What a pull request of mine wants (026): one live session while it is
-//! open, the news handed to that session once, and its work taken down once
-//! a human merged or closed it.
+//! What a pull request wants of the scheduler.
 //!
-//! The daemon staffs the session on the repository's `babysit_model` and
-//! `babysit_effort` (025, 017), never an orchestrator. The session waits on
-//! the forge between turns, so an idle one is never nudged, flagged or
-//! relaunched for sitting idle (009 rule 41); a turn that never ends is
-//! watched as any other agent's is.
+//! A request of mine is the request a task opened, and the author of that
+//! task keeps it until a human merges or closes it (005): the news of the
+//! request is handed to that author's session, once. It gets no session of
+//! its own. The task's own pass starts, resumes and watches the author; an
+//! idle author on an open request waits on the forge (009 rule 41).
 //!
 //! A request that asks for my review wants a reviewer session on the
 //! repository's `review_model` and `review_effort` (029): one detached at the
@@ -17,24 +15,23 @@ use std::time::{Duration, Instant};
 
 use tracing::{info, warn};
 
-use ariadne_core::{Seat, SessionStatus};
+use ariadne_core::{Seat, SessionStatus, TaskStatus};
 use ariadne_store::{
-    AgentPin, AgentSession, PullRequest, PullRequestFilter, SessionFilter, StoreError,
+    AgentPin, AgentSession, PullRequest, PullRequestFilter, SessionFilter, StoreError, Task,
 };
 
 use crate::acp::NewsDelivery;
 use crate::agents::prompts;
 use crate::forge::{news, poll::wants_session};
-use crate::launcher::HeadBranchOccupied;
 
-use super::{QUIET_NUDGE_SECS, SPAWN_RETRY_BUDGET};
+use super::SPAWN_RETRY_BUDGET;
 
 /// How long the tick waits before it tries a failed cleanup again. A change
 /// of the request tries at once.
 const CLEANUP_RETRY: Duration = Duration::from_secs(60);
 
-/// The situation a pull request session's watchdog spends its steps in:
-/// there is one, the request, for as long as it is open.
+/// The situation a review session's watchdog spends its steps in: there is
+/// one, the request, for as long as it is open.
 const SITUATION: &str = "pull_request";
 
 impl super::Scheduler {
@@ -92,57 +89,84 @@ impl super::Scheduler {
         if pull.role != "author" {
             return self.review_pass(&pull).await;
         }
-        let integration = self.store.forge_integration(&pull.repository_id).await?;
-        let live = self.live_pull_request_sessions(&pull.id).await?;
-        if pull.state != "open" {
-            return self.end_pull_request(&pull, &live).await;
+        // A request of mine the user asked Ariadne to review has a review
+        // session beside its author's (029), taken down the same way.
+        if pull.review_asked
+            || self.launcher.pull_request_worktree_exists(&pull)
+            || !self.live_pull_request_sessions(&pull.id).await?.is_empty()
+        {
+            self.review_pass(&pull).await?;
         }
-        let Some(integration) = integration.filter(|i| wants_session(&pull, i)) else {
-            // A request of nobody's session: one that started under another
-            // setting is ended, and nothing new starts.
-            for session in live {
-                info!(pull_request = %pull.id, session = %session.id, "the request wants no session, killing it");
-                self.launcher.kill_session(&session.id).await.ok();
+        self.keep_pass(&pull).await
+    }
+
+    /// A request of mine: its news handed to the author of the task that
+    /// opened it, and what is left of it taken down once it ended and its
+    /// task is over (005). One opened by hand has nobody to keep it.
+    async fn keep_pass(&mut self, pull: &PullRequest) -> anyhow::Result<()> {
+        let task = match &pull.origin_task_id {
+            Some(task_id) => match self.store.get_task(task_id).await {
+                Ok(task) => Some(task),
+                Err(StoreError::NotFound { .. }) => None,
+                Err(e) => return Err(e.into()),
+            },
+            None => None,
+        };
+        // The task is over: nobody keeps the request any more, and what is
+        // left of it is taken down once a human ended it.
+        let Some(task) = task.filter(|task| !ends_its_work(task)) else {
+            if pull.state != "open" {
+                return self.end_kept_request(pull).await;
             }
             return Ok(());
         };
-        let login = integration.login.clone().unwrap_or_default();
-        let running = live
-            .iter()
-            .find(|s| s.seat() == Some(Seat::Author) && self.launcher.acp.is_running(&s.id))
-            .cloned();
-        let Some(session) = running else {
-            let pin = AgentPin {
-                model: integration.babysit_model.clone().unwrap_or_default(),
-                effort: integration.babysit_effort.clone(),
-            };
-            return self
-                .start_pull_request_session(&pull, Seat::Author, pin)
-                .await;
+        let Some(integration) = self
+            .store
+            .forge_integration(&pull.repository_id)
+            .await?
+            .filter(|i| i.enabled)
+        else {
+            return Ok(());
         };
-        self.tell_pull_request(&session, &pull, &login).await?;
-        // Idle is the session waiting on the forge, not silence: only a turn
-        // that never ends is watched, and a relaunch is briefed again.
-        if session.status() == SessionStatus::Running {
-            let repo = self.store.get_repository(&pull.repository_id).await?;
-            let worktree = session.worktree_path.clone().unwrap_or_default();
-            let briefing = self.launcher.pull_request_briefing_of(
-                &pull,
-                &repo,
-                std::path::Path::new(&worktree),
-            );
-            self.check_session_quiet(&session, SITUATION.to_string(), &briefing)
-                .await?;
+        let Some(author) = self.keeper_of(&task).await? else {
+            // The task's own pass starts its author again, and the news
+            // waits for it.
+            return Ok(());
+        };
+        if !self.launcher.acp.is_running(&author.id) {
+            return Ok(());
         }
+        let login = integration.login.clone().unwrap_or_default();
+        self.tell_pull_request(&author, pull, &login).await?;
         Ok(())
     }
 
-    /// Start the request's session, or put the one it had back on its feet,
+    /// The live session of the author that keeps a task's request: the
+    /// picked winner's on a task with several authors, the lone author's
+    /// everywhere else.
+    async fn keeper_of(&self, task: &Task) -> anyhow::Result<Option<AgentSession>> {
+        let live = self
+            .store
+            .list_sessions(SessionFilter {
+                task_id: Some(task.id.clone()),
+                live_only: true,
+                ..Default::default()
+            })
+            .await?;
+        Ok(live.into_iter().find(|session| {
+            session.seat() == Some(Seat::Author)
+                && task
+                    .picked_agent_id
+                    .as_ref()
+                    .is_none_or(|winner| session.task_agent_id.as_deref() == Some(winner.as_str()))
+        }))
+    }
+
+    /// Start a review session, or put the one it had back on its feet,
     /// within the spawn-retry budget.
     async fn start_pull_request_session(
         &mut self,
         pull: &PullRequest,
-        seat: Seat,
         pin: AgentPin,
     ) -> anyhow::Result<()> {
         let last = self
@@ -161,22 +185,9 @@ impl super::Scheduler {
         if self.spawn_failures.get(&pull.id).copied().unwrap_or(0) >= SPAWN_RETRY_BUDGET {
             return Ok(());
         }
-        let skill = crate::launcher::pull_request_skill(seat).unwrap_or_default();
-        match self
-            .launcher
-            .resume_pull_request_session(pull, seat, pin, skill)
-            .await
-        {
+        match self.launcher.resume_pull_request_session(pull, pin).await {
             Ok(session) => {
                 info!(pull_request = %pull.id, session = %session.id, "the request's session is up");
-                Ok(())
-            }
-            // The head branch is checked out somewhere else — the author of
-            // the task that opened the request may still be finishing it.
-            // That is a wait, not a launch that failed: no attempt is spent,
-            // and the next pass tries again.
-            Err(e) if e.downcast_ref::<HeadBranchOccupied>().is_some() => {
-                info!(pull_request = %pull.id, error = %format!("{e:#}"), "the request's head branch is in use, waiting");
                 Ok(())
             }
             Err(e) => {
@@ -204,7 +215,7 @@ impl super::Scheduler {
         ) {
             return Ok(false);
         }
-        let news = news::untold(&self.store, pull, login).await?;
+        let news = news::untold(&self.store, pull, login, session.seat()).await?;
         if let Some(recovered) = news.recovered() {
             self.store
                 .set_pull_request_told(&pull.id, recovered)
@@ -228,66 +239,31 @@ impl super::Scheduler {
         Ok(self.handed(session, handed))
     }
 
-    /// A request a human merged or closed: its session told so once, and
-    /// killed once the turn that reads it ended; then its worktree removed
-    /// and its branch taken down (`Launcher::cleanup_pull_request`).
-    ///
-    /// Told is what the row says, not what was queued: older news queued
-    /// behind a running turn holds the request's place in the queue, so the
-    /// end is handed again on every pass until a claim wrote it (018). The
-    /// turn that reads it is the one that ends after that claim.
-    async fn end_pull_request(
-        &mut self,
-        pull: &PullRequest,
-        live: &[AgentSession],
-    ) -> anyhow::Result<()> {
-        let integration = self.store.forge_integration(&pull.repository_id).await?;
-        let enabled = integration.as_ref().is_some_and(|i| i.enabled);
-        let login = integration.and_then(|i| i.login).unwrap_or_default();
-        for session in live {
-            if !self.launcher.acp.is_running(&session.id) {
-                continue;
-            }
-            let since = *self
-                .pull_request_farewell
-                .entry(session.id.clone())
-                .or_insert_with(Instant::now);
-            let waited = since.elapsed().as_secs() >= QUIET_NUDGE_SECS as u64;
-            // A disabled integration closed the row (rule 25): nobody merged
-            // or closed anything, so there is nothing to tell.
-            if !enabled || waited {
-                continue;
-            }
-            if pull.told_state.as_deref() != Some(pull.state.as_str()) {
-                self.tell_pull_request(session, pull, &login).await?;
-                return Ok(());
-            }
-            let read = session.status() == SessionStatus::Idle
-                && match (&session.last_activity_at, &pull.news_told_at) {
-                    (Some(heard), Some(told)) => heard > told,
-                    _ => false,
-                };
-            if !read {
-                return Ok(());
-            }
-        }
-        if live.is_empty()
+    /// A request a task opened that a human merged or closed, once its task
+    /// is over: whatever an earlier release left of a session of its own
+    /// taken down, and, where it merged a goal branch onto its base, that
+    /// branch deleted (`Launcher::cleanup_kept_request`). The task's own
+    /// cleanup took its worktree and its branch.
+    async fn end_kept_request(&mut self, pull: &PullRequest) -> anyhow::Result<()> {
+        if pull.cleaned_at.is_some()
             && !self.launcher.pull_request_worktree_exists(pull)
-            && pull.cleaned_at.is_some()
+            && self.live_pull_request_sessions(&pull.id).await?.is_empty()
         {
             return Ok(());
         }
-        for session in live {
-            self.pull_request_farewell.remove(&session.id);
-        }
+        let enabled = self
+            .store
+            .forge_integration(&pull.repository_id)
+            .await?
+            .is_some_and(|i| i.enabled);
         info!(pull_request = %pull.id, state = %pull.state, "the request ended, taking its work down");
         // Done only once every branch it owes is gone, which the row records,
         // so a restart owes it the same. A deletion that failed is tried
         // again, on the next change of the request at once and on the tick
-        // after a wait. Where the integration was disabled the sessions end
-        // and no branch is touched.
+        // after a wait. Where the integration was disabled no branch is
+        // touched.
         let cleaned = match enabled {
-            true => self.launcher.cleanup_pull_request(pull).await,
+            true => self.launcher.cleanup_kept_request(pull).await,
             false => self.launcher.end_pull_request_sessions(pull).await,
         };
         match cleaned {
@@ -322,18 +298,24 @@ impl super::Scheduler {
             .find(|s| s.seat() == Some(Seat::Reviewer) && self.launcher.acp.is_running(&s.id))
             .cloned();
         let Some(session) = running else {
-            let pin = AgentPin {
-                model: integration.review_model.clone().unwrap_or_default(),
-                effort: integration.review_effort.clone(),
+            // A request of mine is reviewed on the pin the user picked when
+            // asking (029); any other on the repository's review pin.
+            let pin = match pull.role.as_str() {
+                "author" => AgentPin {
+                    model: pull.review_model.clone().unwrap_or_default(),
+                    effort: pull.review_effort.clone(),
+                },
+                _ => AgentPin {
+                    model: integration.review_model.clone().unwrap_or_default(),
+                    effort: integration.review_effort.clone(),
+                },
             };
             // The briefing names the head the worktree is put at, so only a
             // later push is news.
             self.store
                 .set_pull_request_told_head(&pull.id, &pull.head_sha)
                 .await?;
-            return self
-                .start_pull_request_session(pull, Seat::Reviewer, pin)
-                .await;
+            return self.start_pull_request_session(pull, pin).await;
         };
         // A push moves the worktree under the agent, so it waits for the
         // turn on the old head to end.
@@ -372,7 +354,9 @@ impl super::Scheduler {
         pull: &PullRequest,
         live: &[AgentSession],
     ) -> anyhow::Result<()> {
-        let owed = pull.state != "open" && pull.cleaned_at.is_none();
+        // An ended request of mine owes the cleanup its author's side
+        // records (`end_kept_request`); here only the review is taken down.
+        let owed = pull.state != "open" && pull.cleaned_at.is_none() && pull.role != "author";
         if live.is_empty() && !self.launcher.pull_request_worktree_exists(pull) && !owed {
             return Ok(());
         }
@@ -380,7 +364,7 @@ impl super::Scheduler {
         match self.launcher.end_pull_request_sessions(pull).await {
             Ok(()) => {
                 self.pull_request_cleanup_retry.remove(&pull.id);
-                if pull.state != "open" {
+                if pull.state != "open" && pull.role != "author" {
                     self.store.mark_pull_request_cleaned(&pull.id).await?;
                 }
                 Ok(())
@@ -403,4 +387,10 @@ impl super::Scheduler {
             })
             .await?)
     }
+}
+
+/// Whether a task is done with its request: finished, cancelled, or failed.
+/// A failed task is retried by a person, whose retry opens another request.
+fn ends_its_work(task: &Task) -> bool {
+    task.status().is_terminal() || task.status() == TaskStatus::Failed
 }

@@ -67,14 +67,16 @@ interface OutsideSessionFilters {
 export const qk = {
   pullRequests: {
     lists: () => ["pull-requests", "list"] as const,
-    list: (filters?: { repo?: string; role?: string; state?: string }) =>
+    list: (filters?: { repo?: string; role?: string; requested?: boolean; state?: string }) =>
       ["pull-requests", "list", filters ?? {}] as const,
     detail: (id: string) => ["pull-requests", "detail", id] as const,
     search: (repo: string, q: string) => ["pull-requests", "search", { repo, q }] as const,
   },
   issues: {
     list: (repository: string, assigned: "me" | "all") =>
-      ["issues", "list", { repository, assigned }] as const,
+      ["issues", "list", repository, { assigned }] as const,
+    /** Both assignment filters of one repository's issues. */
+    ofRepository: (repository: string) => ["issues", "list", repository] as const,
   },
   goals: {
     all: () => ["goals"] as const,

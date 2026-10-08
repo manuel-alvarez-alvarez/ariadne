@@ -1,4 +1,6 @@
-//! Pull request ledger commands.
+//! Pull request ledger commands: the open requests of the enabled
+//! repositories, narrowed to the user's own or to the ones that ask for
+//! their review (026, 029), as the desktop's Pull requests tab narrows them.
 use super::{
     follow, query_path,
     resolve::{self, Kind},
@@ -15,7 +17,7 @@ const COLUMNS: &[Column] = &[
     col("repository", 26),
     col("number", UNCAPPED),
     col("title", 48).title(),
-    col("role", 12),
+    col("author", 20),
     col("tracked by", 10),
     col("draft", 6),
     col("checks", 10),
@@ -25,12 +27,17 @@ const COLUMNS: &[Column] = &[
 ];
 #[derive(Subcommand)]
 pub(crate) enum PrCommand {
-    /// List tracked pull requests
+    /// List the open pull requests: every one, yours, or the ones that ask for your review
     Ls {
         #[arg(long)]
         repo: Option<String>,
-        #[arg(long, value_parser = ["author", "reviewer"])]
-        role: Option<String>,
+        /// Only your own requests
+        #[arg(long, conflicts_with = "review_requests")]
+        mine: bool,
+        /// Only the requests that ask for your review
+        #[arg(long)]
+        review_requests: bool,
+        /// Include closed and merged requests
         #[arg(long)]
         all: bool,
         #[arg(long)]
@@ -38,13 +45,13 @@ pub(crate) enum PrCommand {
     },
     /// Show every field of a pull request
     Inspect { id: String },
-    /// Search open requests of an enabled repository
+    /// Search the open requests of an enabled repository that are not yours
     Search {
         #[arg(long)]
         repo: String,
         query: String,
     },
-    /// Track a pull request by URL
+    /// Track a pull request that asks for your review, by URL
     Add { url: String },
     /// Remove a request tracked by hand
     Rm { id: String },
@@ -91,7 +98,10 @@ async fn list(client: &Client, path: &str, format: Format) -> Result<()> {
                 r.repository_id.clone(),
                 r.number.to_string(),
                 r.title.clone(),
-                r.role.clone(),
+                match r.role.as_str() {
+                    "author" => "you".to_string(),
+                    _ => r.author_login.clone(),
+                },
                 r.tracked_by.clone(),
                 r.draft.to_string(),
                 r.checks.clone(),
@@ -107,13 +117,22 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
     match command {
         PrCommand::Ls {
             repo,
-            role,
+            mine,
+            review_requests,
             all,
             watch,
         } => {
+            // Every open request with neither flag, as the desktop's All.
+            let (role, requested) = match (mine, review_requests) {
+                (true, _) => (Some("author".into()), None),
+                (_, true) => (Some("reviewer".into()), Some(true)),
+                _ => (None, None),
+            };
             let query = PullRequestListQuery {
                 repo: repository(client, repo).await?,
                 role,
+                task: None,
+                requested,
                 state: all.then(|| "all".into()),
             };
             let path = query_path("/v1/pull-requests", &query)?;
@@ -150,7 +169,6 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
                     col("number", UNCAPPED).id(),
                     col("title", 48).title(),
                     col("author", 24),
-                    col("role", 12),
                     col("tracked", 8),
                     col("url", 60),
                 ],
@@ -159,7 +177,6 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
                         r.number.to_string(),
                         r.title.clone(),
                         r.author_login.clone(),
-                        r.role.clone(),
                         r.tracked.to_string(),
                         r.url.clone(),
                     ]
@@ -245,6 +262,21 @@ mod tests {
         };
         axum::Json(payload).into_response()
     }
+    /// `--mine` and `--review-requests` are two narrowings of one list, so
+    /// asking for both is refused rather than answered with nothing.
+    #[test]
+    fn mine_and_review_requests_do_not_combine() {
+        #[derive(clap::Parser)]
+        struct Pr {
+            #[command(subcommand)]
+            command: PrCommand,
+        }
+        let parse = |argv: &[&str]| <Pr as clap::Parser>::try_parse_from(argv);
+        assert!(parse(&["pr", "ls", "--mine", "--review-requests"]).is_err());
+        assert!(parse(&["pr", "ls", "--mine"]).is_ok());
+        assert!(parse(&["pr", "ls", "--review-requests", "--all"]).is_ok());
+    }
+
     #[tokio::test]
     async fn pr_commands_use_the_ledger_routes_and_preserve_search_text() {
         let calls: Calls = Arc::default();
@@ -261,8 +293,23 @@ mod tests {
         for command in [
             PrCommand::Ls {
                 repo: Some("/work/widgets".into()),
-                role: Some("author".into()),
+                mine: false,
+                review_requests: true,
                 all: true,
+                watch: false,
+            },
+            PrCommand::Ls {
+                repo: None,
+                mine: true,
+                review_requests: false,
+                all: false,
+                watch: false,
+            },
+            PrCommand::Ls {
+                repo: None,
+                mine: false,
+                review_requests: false,
+                all: false,
                 watch: false,
             },
             PrCommand::Inspect {
@@ -287,7 +334,18 @@ mod tests {
         server.abort();
         let calls = calls.lock().unwrap();
         assert!(calls.iter().any(|(method, path, _)| method == "GET"
-            && path == "/v1/pull-requests?repo=repo-1&role=author&state=all"));
+            && path == "/v1/pull-requests?repo=repo-1&role=reviewer&requested=true&state=all"));
+        assert!(
+            calls
+                .iter()
+                .any(|(method, path, _)| method == "GET" && path == "/v1/pull-requests?role=author")
+        );
+        assert!(
+            calls
+                .iter()
+                .any(|(method, path, _)| method == "GET" && path == "/v1/pull-requests"),
+            "neither flag lists every open request"
+        );
         assert!(
             calls
                 .iter()

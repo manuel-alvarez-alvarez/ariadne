@@ -58,7 +58,7 @@ it("shows the navigation in full until it is folded away", () => {
   expect(screen.getByRole("link", { name: "Repositories" }).textContent).toBe("Repositories")
 })
 
-it("ends the navigation with stats, right after repositories and permissions", () => {
+it("ends the navigation with stats, and lists Forge beside the other screens", () => {
   mountShell()
 
   // Scoped to the navigation, so a link anywhere else in the shell cannot
@@ -69,15 +69,15 @@ it("ends the navigation with stats, right after repositories and permissions", (
     .map((link) => link.getAttribute("aria-label"))
   expect(links).toEqual([
     "Goals",
-    "Pull requests",
-    "Issues",
     "Sessions",
+    "Forge",
     "Skills",
     "Agents",
     "Permissions",
     "Repositories",
     "Stats",
   ])
+  expect(screen.getByRole("link", { name: "Forge" }).getAttribute("href")).toBe("/forge")
   expect(screen.getByRole("link", { name: "Stats" }).getAttribute("href")).toBe("/stats")
   expect(screen.getByRole("link", { name: "Repositories" }).getAttribute("href")).toBe(
     "/repositories",

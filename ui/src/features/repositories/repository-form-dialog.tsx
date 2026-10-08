@@ -8,11 +8,11 @@
  * goal is still agreed with the user there, not here — this is only the
  * default that choice starts from.
  *
- * Editing a repository whose remote is on GitHub or GitLab also shows the
- * forge the daemon detected there, and the integration with it (spec 025):
- * only what changed of it is sent, since an absent field is one the daemon
- * leaves alone. Registering shows none of it — nothing is detected until the
- * daemon has opened the checkout.
+ * Editing a repository whose remote is on GitHub or GitLab also shows one
+ * switch for the integration with that forge (spec 025), sent only when it
+ * moved, since an absent field is one the daemon leaves alone. Registering
+ * shows none of it — nothing is detected until the daemon has opened the
+ * checkout — and neither does a checkout with no such remote.
  *
  * The client only catches what it can know on its own: a missing or relative
  * path. Everything else is the daemon's to say — it opens the checkout and
@@ -22,8 +22,6 @@
  */
 
 import { zodResolver } from "@hookform/resolvers/zod"
-import { useQuery } from "@tanstack/react-query"
-import { XIcon } from "lucide-react"
 import { useEffect } from "react"
 import {
   type Control,
@@ -34,10 +32,9 @@ import {
 import { toast } from "sonner"
 import { z } from "zod"
 
-import { ApiError, type ForgeDto, type ModelDto, type RepositoryDto } from "@/api"
+import { ApiError, type ForgeDto, type RepositoryDto } from "@/api"
 import { FormDialog, FormDialogBody, FormDialogContent } from "@/components/form-dialog"
 import { FormSelect } from "@/components/form-select"
-import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
@@ -49,13 +46,10 @@ import {
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
-import { PinPicker } from "@/features/models/pin-picker"
-import { modelsQueryOptions } from "@/features/models/queries"
 import { describeError, LANDING_ITEMS } from "@/lib/format"
-import { forgeChanges, forgeKindLabel, forgeRepositoryLabel, forgeValues } from "./forge"
+import { forgeCliName, forgeKindLabel, forgeRepositoryLabel } from "./forge"
 import { PERMISSION_MODES } from "./permission-modes"
 import { useCreateRepository, useUpdateRepository } from "./queries"
-import { WebhookStatus } from "./webhook-status"
 
 const PERMISSION_ITEMS = PERMISSION_MODES.map(({ value, label }) => ({ value, label }))
 
@@ -70,10 +64,6 @@ const formSchema = z.object({
   permission_mode: z.enum(["auto", "ask", "learn", "ai"]),
   default_landing: z.enum(["merge", "pull_request", "none", "feature_branch"]),
   forge_enabled: z.boolean(),
-  babysit_model: z.string(),
-  babysit_effort: z.string(),
-  review_model: z.string(),
-  review_effort: z.string(),
 })
 
 type RepositoryFormValues = z.infer<typeof formSchema>
@@ -84,7 +74,7 @@ const EMPTY_VALUES: RepositoryFormValues = {
   description: "",
   permission_mode: "auto",
   default_landing: "merge",
-  ...forgeValues(null),
+  forge_enabled: false,
 }
 
 export function RepositoryFormDialog({
@@ -102,8 +92,6 @@ export function RepositoryFormDialog({
   const updateRepository = useUpdateRepository()
   const saving = createRepository.isPending || updateRepository.isPending
   const forge = repository?.forge
-  // The catalog the two role pickers offer, read only where they show.
-  const models = useQuery({ ...modelsQueryOptions(), enabled: open && Boolean(forge) })
 
   const form = useForm<RepositoryFormValues>({
     resolver: zodResolver(formSchema),
@@ -123,7 +111,7 @@ export function RepositoryFormDialog({
         description: repository.description ?? "",
         permission_mode: repository.permission_mode,
         default_landing: repository.default_landing,
-        ...forgeValues(repository.forge),
+        forge_enabled: repository.forge?.enabled ?? false,
       })
       return
     }
@@ -136,7 +124,7 @@ export function RepositoryFormDialog({
     const description = values.description.trim()
     try {
       if (repository) {
-        const forgeUpdate = repository.forge ? forgeChanges(repository.forge, values) : null
+        const forgeMoved = repository.forge && values.forge_enabled !== repository.forge.enabled
         await updateRepository.mutateAsync({
           id: repository.id,
           body: {
@@ -148,7 +136,7 @@ export function RepositoryFormDialog({
             description,
             permission_mode: values.permission_mode,
             default_landing: values.default_landing,
-            ...(forgeUpdate ? { forge: forgeUpdate } : {}),
+            ...(forgeMoved ? { forge: { enabled: values.forge_enabled } } : {}),
           },
         })
         toast.success("Repository updated", { description: path })
@@ -179,8 +167,7 @@ export function RepositoryFormDialog({
    * daemon's own CLI-flavoured words. A refusal to enable the forge — its CLI
    * is not signed in, or another registration of the checkout holds it — is
    * the switch's. A 409 about the pair goes above the buttons instead — no
-   * field of this form is what it is about, and neither is a pin the daemon
-   * refused, which could be either role's.
+   * field of this form is what it is about.
    */
   function showFailure(error: unknown): void {
     if (
@@ -188,10 +175,6 @@ export function RepositoryFormDialog({
       (error.code.startsWith("forge_") || /forge integration/.test(error.message))
     ) {
       setError("forge_enabled", { message: describeError(error) })
-      return
-    }
-    if (ApiError.is(error) && error.status === 400 && /model|effort|agent/i.test(error.message)) {
-      setError("root", { message: describeError(error) })
       return
     }
     if (ApiError.is(error) && error.status === 400) {
@@ -346,13 +329,8 @@ export function RepositoryFormDialog({
             )}
           </Field>
 
-          {editing ? (
-            <ForgeSection
-              forge={forge}
-              control={control}
-              models={models.data}
-              enabledError={formState.errors.forge_enabled}
-            />
+          {forge ? (
+            <ForgeSwitch forge={forge} control={control} error={formState.errors.forge_enabled} />
           ) : null}
         </FormDialogBody>
       </FormDialogContent>
@@ -360,140 +338,52 @@ export function RepositoryFormDialog({
   )
 }
 
-/** The two roles, as the form names their fields and the screen names them. */
-const ROLES = [
-  {
-    model: "babysit_model",
-    effort: "babysit_effort",
-    label: "Babysitter runs on",
-    id: "forge-babysit-pin",
-    meaning: "Watches a published request: answers its comments and fixes its checks.",
-  },
-  {
-    model: "review_model",
-    effort: "review_effort",
-    label: "Reviewer runs on",
-    id: "forge-review-pin",
-    meaning: "Reviews a request on the forge.",
-  },
-] as const
-
 /**
- * The Forge section (spec 025): the remote the daemon detected, read-only, the
- * switch that enables the integration, and what each of its two roles runs on.
- * Enabling asks the forge's own CLI whether it is signed in to the host, so a
- * refusal comes back in the CLI's words and lands on the switch. A role left
- * without a model is allowed: it starts no session.
+ * The integration with the forge the daemon detected on the remote (spec 025),
+ * as one switch. Enabling asks the forge's own CLI whether it is signed in to
+ * the host, so a refusal comes back in the CLI's words and lands here.
  */
-function ForgeSection({
+function ForgeSwitch({
   forge,
   control,
-  models,
-  enabledError,
+  error,
 }: {
-  forge: ForgeDto | null | undefined
+  forge: ForgeDto
   control: Control<RepositoryFormValues>
-  models: ModelDto[] | undefined
-  enabledError: FormFieldError | undefined
+  error: FormFieldError | undefined
 }) {
-  if (!forge) {
-    return (
-      <Field>
-        <FieldLabel>Forge</FieldLabel>
-        <FieldDescription>
-          No GitHub or GitLab remote detected. Ariadne reads <code>origin</code>, or the only remote
-          where there is no <code>origin</code>.
-        </FieldDescription>
-      </Field>
-    )
-  }
+  const label = `${forgeKindLabel(forge.kind)} integration`
   return (
-    <fieldset className="flex flex-col gap-4 rounded-lg border p-3">
-      <legend className="px-1 text-sm font-medium">Forge</legend>
-      <p className="text-xs text-muted-foreground" data-testid="forge-remote">
-        {forgeKindLabel(forge.kind)}{" "}
-        <span className="font-mono text-foreground">{forgeRepositoryLabel(forge)}</span> via{" "}
-        <span className="font-mono">{forge.remote}</span>
-        {forge.enabled && forge.login ? ` · signed in as ${forge.login}` : null}
-      </p>
-
-      <WebhookStatus webhook={forge.webhook} />
-
-      <Field data-invalid={enabledError ? true : undefined} orientation="horizontal">
+    <Field data-invalid={error ? true : undefined}>
+      {/* The switch leads the row: its hit area reaches past its edge, and at
+          the row's far end that is past the scrolling body's, which then
+          scrolls sideways by that much. */}
+      <div className="flex items-center gap-3">
         <Controller
           control={control}
           name="forge_enabled"
           render={({ field }) => (
             <Switch
               id="forge-enabled"
-              aria-label="Enabled"
+              aria-label={label}
               checked={field.value}
               onCheckedChange={(checked) => field.onChange(checked)}
-              aria-invalid={enabledError ? true : undefined}
+              aria-invalid={error ? true : undefined}
             />
           )}
         />
-        <FieldLabel htmlFor="forge-enabled">Enabled</FieldLabel>
-      </Field>
-      {enabledError ? (
-        <FieldError errors={[enabledError]} />
+        <FieldLabel htmlFor="forge-enabled">{label}</FieldLabel>
+      </div>
+      {error ? (
+        <FieldError errors={[error]} />
       ) : (
-        <FieldDescription>
-          Needs <code>{forge.kind === "github" ? "gh" : "glab"}</code> signed in to {forge.host}.
+        <FieldDescription data-testid="forge-remote">
+          <span className="font-mono">{forgeRepositoryLabel(forge)}</span>, via{" "}
+          <code>{forgeCliName(forge.kind)}</code>
+          {forge.enabled && forge.login ? `, signed in as ${forge.login}` : ""}. Lists its pull
+          requests and issues, and keeps them up to date.
         </FieldDescription>
       )}
-
-      {ROLES.map((role) => (
-        <Field key={role.model}>
-          <FieldLabel htmlFor={role.id}>{role.label}</FieldLabel>
-          <Controller
-            control={control}
-            name={role.model}
-            render={({ field }) => (
-              <Controller
-                control={control}
-                name={role.effort}
-                render={({ field: effort }) => (
-                  <div className="flex items-center gap-2">
-                    <PinPicker
-                      id={role.id}
-                      label={role.label}
-                      model={field.value}
-                      effort={effort.value}
-                      onChange={(pin) => {
-                        field.onChange(pin.model)
-                        effort.onChange(pin.effort)
-                      }}
-                      models={models}
-                      className="flex-1"
-                    />
-                    {field.value ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label={`Clear: ${role.label}`}
-                        onClick={() => {
-                          field.onChange("")
-                          effort.onChange("")
-                        }}
-                      >
-                        <XIcon />
-                      </Button>
-                    ) : null}
-                  </div>
-                )}
-              />
-            )}
-          />
-          <FieldDescription>
-            {role.meaning} {NO_PIN_HINT}
-          </FieldDescription>
-        </Field>
-      ))}
-    </fieldset>
+    </Field>
   )
 }
-
-/** The rule every role shares, said once under each picker. */
-const NO_PIN_HINT = "No model starts no session."

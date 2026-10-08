@@ -44,64 +44,15 @@ impl News {
 
 /// The news of `pull`, given the comments its session has not been told of.
 pub fn of(pull: &PullRequest, untold: &[PullRequestComment]) -> News {
-    let mut lines = Vec::new();
-    for comment in untold {
-        let what = match comment.kind.as_str() {
-            "review" => "Review",
-            _ => "Comment",
-        };
-        let place = match (&comment.path, comment.line) {
-            (Some(path), Some(line)) => format!("on {path}:{line}"),
-            (Some(path), None) => format!("on {path}"),
-            _ => "on the conversation".to_string(),
-        };
-        lines.push(format!(
-            "- {what} {} by {} {place}: {}",
-            comment.id,
-            comment.author_login,
-            first_line(&comment.body)
-        ));
-    }
-    let told_checks: Vec<String> = serde_json::from_str(&pull.told_checks).unwrap_or_default();
-    let check_state = pull.told_check_state.as_deref().unwrap_or("none");
-    let decision = pull.told_review_decision.as_deref().unwrap_or("none");
-    let state = pull.told_state.as_deref().unwrap_or("open");
-    let before = PullRequestTold {
-        checks: told_checks.clone(),
-        behind_base: pull.told_behind_base,
-        review_decision: decision.to_string(),
-        state: state.to_string(),
-        check_state: check_state.to_string(),
-        head_sha: pull.told_head_sha.clone().unwrap_or_default(),
-    };
     // A request the user reviews is told of a push and of the replies in
     // its own threads alone (029): its checks and its state are the
     // author's to watch.
     if pull.role == "reviewer" {
-        if pull
-            .told_head_sha
-            .as_deref()
-            .is_some_and(|told| told != pull.head_sha)
-        {
-            let reviewed = match &pull.reviewed_sha {
-                Some(sha) => format!("The last sha you reviewed is {sha}."),
-                None => "You reviewed no sha yet.".to_string(),
-            };
-            lines.push(format!(
-                "- New commits: the head moved to {}. {reviewed} Review the commits since it.",
-                pull.head_sha
-            ));
-        }
-        return News {
-            lines,
-            comment_ids: untold.iter().map(|c| c.id.clone()).collect(),
-            told: PullRequestTold {
-                head_sha: pull.head_sha.clone(),
-                ..before.clone()
-            },
-            before,
-        };
+        return of_review(pull, untold);
     }
+    let mut lines = comment_lines(untold);
+    let before = told_before(pull);
+    let told_checks = before.checks.clone();
     let failed: Vec<FailedCheck> = serde_json::from_str(&pull.failed_checks).unwrap_or_default();
     for check in failed.iter().filter(|c| !told_checks.contains(&c.name)) {
         let at = match check.url.is_empty() {
@@ -119,16 +70,16 @@ pub fn of(pull: &PullRequest, untold: &[PullRequestComment]) -> News {
     // What a ready report is decided on: approvals and the rolled-up checks.
     // Checks that finished green after an approval, or went back to pending
     // after a ready report, are news, since the session cannot look itself.
-    if pull.checks != check_state {
+    if pull.checks != before.check_state {
         lines.push(format!("- The checks now read {}.", pull.checks));
     }
-    if pull.review_decision != decision {
+    if pull.review_decision != before.review_decision {
         lines.push(format!(
             "- The review decision is now {}.",
             pull.review_decision
         ));
     }
-    if pull.state != state {
+    if pull.state != before.state {
         lines.push(format!("- The request is now {}.", pull.state));
     }
     News {
@@ -148,12 +99,96 @@ pub fn of(pull: &PullRequest, untold: &[PullRequestComment]) -> News {
     }
 }
 
-/// The news of the request `pull`, read off the store: `login` is the
-/// integration's, whose own comments are no news.
-pub async fn untold(store: &Store, pull: &PullRequest, login: &str) -> ariadne_store::Result<News> {
-    let reviewer = pull.role == "reviewer";
+/// The news a review session hears (029): a push to the head, and the
+/// replies `untold` holds.
+fn of_review(pull: &PullRequest, untold: &[PullRequestComment]) -> News {
+    let mut lines = comment_lines(untold);
+    let before = told_before(pull);
+    if pull
+        .told_head_sha
+        .as_deref()
+        .is_some_and(|told| told != pull.head_sha)
+    {
+        let reviewed = match &pull.reviewed_sha {
+            Some(sha) => format!("The last sha you reviewed is {sha}."),
+            None => "You reviewed no sha yet.".to_string(),
+        };
+        lines.push(format!(
+            "- New commits: the head moved to {}. {reviewed} Review the commits since it.",
+            pull.head_sha
+        ));
+    }
+    News {
+        lines,
+        comment_ids: untold.iter().map(|c| c.id.clone()).collect(),
+        told: PullRequestTold {
+            head_sha: pull.head_sha.clone(),
+            ..before.clone()
+        },
+        before,
+    }
+}
+
+/// One line per comment a session has not been told of, naming its id.
+fn comment_lines(untold: &[PullRequestComment]) -> Vec<String> {
+    untold
+        .iter()
+        .map(|comment| {
+            let what = match comment.kind.as_str() {
+                "review" => "Review",
+                _ => "Comment",
+            };
+            let place = match (&comment.path, comment.line) {
+                (Some(path), Some(line)) => format!("on {path}:{line}"),
+                (Some(path), None) => format!("on {path}"),
+                _ => "on the conversation".to_string(),
+            };
+            format!(
+                "- {what} {} by {} {place}: {}",
+                comment.id,
+                comment.author_login,
+                first_line(&comment.body)
+            )
+        })
+        .collect()
+}
+
+/// What the row says its sessions were last told. A NULL mark is the
+/// baseline a fresh row starts from: no failed check, `none`, `open`.
+fn told_before(pull: &PullRequest) -> PullRequestTold {
+    PullRequestTold {
+        checks: serde_json::from_str(&pull.told_checks).unwrap_or_default(),
+        behind_base: pull.told_behind_base,
+        review_decision: pull
+            .told_review_decision
+            .clone()
+            .unwrap_or_else(|| "none".into()),
+        state: pull.told_state.clone().unwrap_or_else(|| "open".into()),
+        check_state: pull
+            .told_check_state
+            .clone()
+            .unwrap_or_else(|| "none".into()),
+        head_sha: pull.told_head_sha.clone().unwrap_or_default(),
+    }
+}
+
+/// The news of the request `pull` for a session of `seat`, read off the
+/// store: `login` is the integration's, whose own comments are no news.
+///
+/// A review session on a request of mine (029) hears of a push alone: the
+/// comments on it are its author's news, and each is told once (005).
+pub async fn untold(
+    store: &Store,
+    pull: &PullRequest,
+    login: &str,
+    seat: Option<ariadne_core::Seat>,
+) -> ariadne_store::Result<News> {
+    let reviewing = seat == Some(ariadne_core::Seat::Reviewer);
+    if reviewing && pull.role == "author" {
+        return Ok(of_review(pull, &[]));
+    }
     let untold = store
-        .untold_pull_request_comments(&pull.id, login, reviewer)
+        .untold_pull_request_comments(&pull.id, login, pull.role == "reviewer")
         .await?;
     Ok(of(pull, &untold))
 }
@@ -214,6 +249,11 @@ mod tests {
             reviewed_sha: None,
             told_head_sha: None,
             review_requested: true,
+            review_asked: false,
+            body: String::new(),
+            review_model: None,
+            review_effort: None,
+            review_skills_json: "[]".into(),
         }
     }
 

@@ -3,7 +3,7 @@ use super::Github;
 use crate::forge::pulls::ForgePullRequest;
 use serde::Deserialize;
 
-const FIELDS: &str = "number,url,title,author,state,isDraft,headRefName,headRefOid,headRepository,headRepositoryOwner,baseRefName,statusCheckRollup,reviewDecision,createdAt";
+const FIELDS: &str = "number,url,title,body,author,state,isDraft,headRefName,headRefOid,headRepository,headRepositoryOwner,baseRefName,statusCheckRollup,reviewDecision,createdAt";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -11,6 +11,8 @@ struct Pull {
     number: i64,
     url: String,
     title: String,
+    #[serde(default)]
+    body: Option<String>,
     author: Login,
     state: String,
     is_draft: bool,
@@ -83,6 +85,7 @@ impl Pull {
             number: self.number,
             url: self.url,
             title: self.title,
+            body: self.body.unwrap_or_default(),
             author_login: self.author.login,
             state: self.state.to_lowercase(),
             draft: self.is_draft,
@@ -126,15 +129,20 @@ impl Github {
         &self,
         repo: &str,
         login: &str,
-    ) -> Result<Vec<ForgePullRequest>, String> {
-        let mut rows = self.pulls(repo, &["--author", login]).await?;
-        rows.extend(
-            self.pulls(repo, &["--search", &format!("review-requested:{login}")])
-                .await?,
-        );
-        rows.sort_by_key(|p| p.number);
-        rows.dedup_by_key(|p| p.number);
-        Ok(rows)
+    ) -> Result<crate::forge::pulls::Listed, String> {
+        let mut open = self.pulls(repo, &[]).await?;
+        let requested = self
+            .pulls(repo, &["--search", &format!("review-requested:{login}")])
+            .await?;
+        let numbers = requested.iter().map(|p| p.number).collect();
+        // A request the open list missed while it paged is still open.
+        open.extend(requested);
+        open.sort_by_key(|p| p.number);
+        open.dedup_by_key(|p| p.number);
+        Ok(crate::forge::pulls::Listed {
+            open,
+            requested: numbers,
+        })
     }
     pub(crate) async fn search_pull_requests(
         &self,

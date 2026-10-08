@@ -14,13 +14,13 @@
  * says "bad request" over a form that looks fine.
  */
 
-import { screen, waitFor, within } from "@testing-library/react"
+import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import type { ModelDto, RepositoryDto } from "@/api"
-import { aForge, aModel, aRepository } from "@/test/fixtures"
-import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
+import type { RepositoryDto } from "@/api"
+import { aForge, aRepository } from "@/test/fixtures"
+import { daemonFetch, errorResponse, renderScreen } from "@/test/harness"
 import { RepositoryFormDialog } from "./repository-form-dialog"
 
 const REPOSITORY: RepositoryDto = aRepository({
@@ -39,12 +39,6 @@ interface Recorded {
     forge?: Record<string, unknown>
   } | null
 }
-
-/** The catalog the forge's two role pickers offer. */
-const CATALOG: ModelDto[] = [
-  aModel({ id: "codex-acp:gpt-5.3-codex", agent_id: "codex-acp" }),
-  aModel({ id: "claude-agent-acp:claude-opus-5", agent_id: "claude-agent-acp" }),
-]
 
 let requests: Recorded[] = []
 
@@ -65,7 +59,6 @@ function stubDaemon(failure?: { status: number; code: string; message: string })
     const body = raw.length > 0 ? JSON.parse(raw) : null
     requests.push({ method: request.method, path: pathname, body })
 
-    if (pathname === "/v1/models") return jsonResponse(CATALOG)
     if (failure) {
       const { status, code, message } = failure
       return errorResponse(status, code, message)
@@ -412,70 +405,35 @@ describe("dismissing the dialog", () => {
 })
 
 /**
- * The forge the daemon detected on the remote, and the integration with it
- * (spec 025): read-only where it is the daemon's, and sent back only where the
- * user changed it.
+ * The integration with the forge the daemon detected on the remote (spec
+ * 025): one switch, shown only where there is a forge, and sent back only
+ * where the user moved it.
  */
 describe("the forge integration", () => {
-  it("shows every webhook field without editable controls", () => {
-    renderDialog({
-      ...REPOSITORY,
-      forge: aForge({
-        webhook: {
-          state: "failed",
-          url: "https://hooks.example/webhooks/github/repo",
-          error: "HTTP 403: needs admin rights",
-          last_delivery_at: "2026-10-07T10:00:00Z",
-        },
-      }),
-    })
-    expect(screen.getByText("failed")).toBeDefined()
-    expect(screen.getByText("https://hooks.example/webhooks/github/repo")).toBeDefined()
-    expect(screen.getByText("HTTP 403: needs admin rights")).toBeDefined()
-    expect(screen.getByText("2026-10-07T10:00:00Z")).toBeDefined()
-    expect(screen.queryByRole("textbox", { name: /webhook/i })).toBeNull()
-  })
-
   const ON_GITHUB: RepositoryDto = { ...REPOSITORY, forge: aForge() }
 
-  /** Pins one role to a catalog model, through the role's own picker. */
-  async function pin(user: ReturnType<typeof userEvent.setup>, role: string, model: string) {
-    await user.click(screen.getByRole("button", { name: role }))
-    const models = await screen.findByRole("listbox", { name: "Models" })
-    await user.click(within(models).getByText(model))
-    await user.keyboard("{Escape}")
-  }
-
-  it("shows the detected remote, and enables the forge with both pins", async () => {
+  it("shows the detected remote, and enables the forge with its one switch", async () => {
     const user = userEvent.setup()
     renderDialog(ON_GITHUB)
 
     expect(screen.getByTestId("forge-remote").textContent).toContain(
-      "GitHub github.com/acme/widgets via origin",
+      "github.com/acme/widgets, via gh",
     )
-    await user.click(screen.getByRole("switch", { name: "Enabled" }))
-    await pin(user, "Babysitter runs on", "codex-acp:gpt-5.3-codex")
-    await pin(user, "Reviewer runs on", "claude-agent-acp:claude-opus-5")
+    // The webhook is the table's to show, and the role pins are the CLI's.
+    expect(screen.queryByText(/Webhook/)).toBeNull()
+    expect(screen.queryByText(/runs on/)).toBeNull()
+    await user.click(screen.getByRole("switch", { name: "GitHub integration" }))
     await user.click(screen.getByRole("button", { name: "Save changes" }))
 
     await waitFor(() => {
       expect(lastWrite()).toBeDefined()
     })
-    expect(lastWrite()?.body?.forge).toEqual({
-      enabled: true,
-      babysit_model: "codex-acp:gpt-5.3-codex",
-      babysit_effort: "",
-      review_model: "claude-agent-acp:claude-opus-5",
-      review_effort: "",
-    })
+    expect(lastWrite()?.body?.forge).toEqual({ enabled: true })
   })
 
-  it("sends nothing of the forge where nothing of it changed", async () => {
+  it("sends nothing of the forge where the switch did not move", async () => {
     const user = userEvent.setup()
-    renderDialog({
-      ...REPOSITORY,
-      forge: aForge({ enabled: true, login: "octocat", review_model: "codex-acp:gpt-5.3-codex" }),
-    })
+    renderDialog({ ...REPOSITORY, forge: aForge({ enabled: true, login: "octocat" }) })
 
     expect(screen.getByTestId("forge-remote").textContent).toContain("signed in as octocat")
     await user.type(screen.getByLabelText("Description"), " Now on GitHub.")
@@ -485,19 +443,6 @@ describe("the forge integration", () => {
       expect(lastWrite()).toBeDefined()
     })
     expect(lastWrite()?.body).not.toHaveProperty("forge")
-  })
-
-  it("clears a role's pin with the empty model the daemon spells it as", async () => {
-    const user = userEvent.setup()
-    renderDialog({ ...REPOSITORY, forge: aForge({ review_model: "codex-acp:gpt-5.3-codex" }) })
-
-    await user.click(screen.getByRole("button", { name: "Clear: Reviewer runs on" }))
-    await user.click(screen.getByRole("button", { name: "Save changes" }))
-
-    await waitFor(() => {
-      expect(lastWrite()).toBeDefined()
-    })
-    expect(lastWrite()?.body?.forge).toEqual({ review_model: "", review_effort: "" })
   })
 
   it("puts a refusal to enable on the switch, in the CLI's own words", async () => {
@@ -510,7 +455,7 @@ describe("the forge integration", () => {
     })
     renderDialog(ON_GITHUB, onOpenChange)
 
-    await user.click(screen.getByRole("switch", { name: "Enabled" }))
+    await user.click(screen.getByRole("switch", { name: "GitHub integration" }))
     await user.click(screen.getByRole("button", { name: "Save changes" }))
 
     const message = await screen.findByText(/You are not logged into any GitHub hosts/)
@@ -518,17 +463,15 @@ describe("the forge integration", () => {
     expect(onOpenChange).not.toHaveBeenCalled()
   })
 
-  it("says where no remote was detected, and offers nothing to enable", () => {
+  it("offers no switch where no GitHub or GitLab remote was detected", () => {
     renderDialog(REPOSITORY)
 
-    expect(screen.getByText(/No GitHub or GitLab remote detected/)).toBeDefined()
-    expect(screen.queryByRole("switch", { name: "Enabled" })).toBeNull()
+    expect(screen.queryByRole("switch")).toBeNull()
   })
 
   it("shows no forge while registering: nothing is detected before the daemon opens the checkout", () => {
     renderDialog(null)
 
-    expect(screen.queryByText("Forge")).toBeNull()
-    expect(screen.queryByRole("switch", { name: "Enabled" })).toBeNull()
+    expect(screen.queryByRole("switch")).toBeNull()
   })
 })

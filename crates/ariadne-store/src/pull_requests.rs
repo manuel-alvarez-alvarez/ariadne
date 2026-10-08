@@ -10,6 +10,8 @@ pub struct NewPullRequest {
     pub number: i64,
     pub url: String,
     pub title: String,
+    /// The request's description.
+    pub body: String,
     pub author_login: String,
     pub tracked_by: String,
     pub state: String,
@@ -45,6 +47,10 @@ pub struct PullRequestFilter {
     pub repository_id: Option<String>,
     pub role: Option<String>,
     pub state: Option<String>,
+    /// The task that opened the request: its author keeps it (005).
+    pub origin_task_id: Option<String>,
+    /// Whether the request asks for the user's review (029).
+    pub review_requested: Option<bool>,
 }
 
 impl Store {
@@ -77,12 +83,13 @@ impl Store {
         let id = new_id();
         let ts = now();
         let row: PullRequest = sqlx::query_as(
-            "INSERT INTO pull_requests (id, repository_id, number, url, title, author_login, tracked_by, state, draft, head_branch, head_sha, head_repo, base_branch, checks, review_decision, unanswered_comments, origin_task_id, opened_at, role, ready, last_seen_at, created_at, updated_at, cleaned_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            "INSERT INTO pull_requests (id, repository_id, number, url, title, body, author_login, tracked_by, state, draft, head_branch, head_sha, head_repo, base_branch, checks, review_decision, unanswered_comments, origin_task_id, opened_at, role, ready, last_seen_at, created_at, updated_at, cleaned_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     CASE WHEN ? = 'open' THEN NULL ELSE ? END)
             ON CONFLICT (repository_id, number) DO UPDATE SET
                 url = excluded.url,
                 title = excluded.title,
+                body = excluded.body,
                 author_login = excluded.author_login,
                 tracked_by = CASE WHEN pull_requests.tracked_by = 'user' THEN 'user' ELSE excluded.tracked_by END,
                 state = excluded.state,
@@ -105,6 +112,7 @@ impl Store {
             .bind(new.number)
             .bind(&new.url)
             .bind(&new.title)
+            .bind(&new.body)
             .bind(&new.author_login)
             .bind(&new.tracked_by)
             .bind(&new.state)
@@ -138,9 +146,11 @@ impl Store {
     }
 
     pub async fn list_pull_requests(&self, filter: PullRequestFilter) -> Result<Vec<PullRequest>> {
-        Ok(sqlx::query_as("SELECT * FROM pull_requests WHERE (? IS NULL OR repository_id = ?) AND (? IS NULL OR role = ?) AND (? IS NULL OR state = ?) ORDER BY updated_at DESC, id DESC")
+        Ok(sqlx::query_as("SELECT * FROM pull_requests WHERE (? IS NULL OR repository_id = ?) AND (? IS NULL OR role = ?) AND (? IS NULL OR state = ?) AND (? IS NULL OR origin_task_id = ?) AND (? IS NULL OR review_requested = ?) ORDER BY updated_at DESC, id DESC")
             .bind(&filter.repository_id).bind(&filter.repository_id)
             .bind(&filter.role).bind(&filter.role).bind(&filter.state).bind(&filter.state)
+            .bind(&filter.origin_task_id).bind(&filter.origin_task_id)
+            .bind(filter.review_requested).bind(filter.review_requested)
             .fetch_all(self.r()).await?)
     }
 
@@ -173,12 +183,27 @@ impl Store {
         Ok(row)
     }
 
+    /// The request a task opened, where it opened one the ledger holds.
+    pub async fn pull_request_of_task(&self, task_id: &str) -> Result<Option<PullRequest>> {
+        Ok(sqlx::query_as(
+            "SELECT * FROM pull_requests WHERE origin_task_id = ?
+              ORDER BY created_at DESC, id DESC LIMIT 1",
+        )
+        .bind(task_id)
+        .fetch_optional(self.r())
+        .await?)
+    }
+
     /// Close open rows only while the integration is disabled or absent.
+    ///
+    /// A request a task opened stays open: nobody closed it, and its task's
+    /// author keeps it (005). The fetch reads it again once the integration
+    /// is enabled again.
     pub async fn close_disabled_pull_requests(
         &self,
         repository_id: &str,
     ) -> Result<Vec<PullRequest>> {
-        let rows: Vec<PullRequest> = sqlx::query_as("UPDATE pull_requests SET state = 'closed', updated_at = ? WHERE repository_id = ? AND state = 'open' AND NOT EXISTS (SELECT 1 FROM forge_integrations WHERE repository_id = ? AND enabled = 1) RETURNING *")
+        let rows: Vec<PullRequest> = sqlx::query_as("UPDATE pull_requests SET state = 'closed', updated_at = ? WHERE repository_id = ? AND state = 'open' AND origin_task_id IS NULL AND NOT EXISTS (SELECT 1 FROM forge_integrations WHERE repository_id = ? AND enabled = 1) RETURNING *")
             .bind(now()).bind(repository_id).bind(repository_id).fetch_all(self.w()).await?;
         for row in &rows {
             self.publish(Change::PullRequestUpdated(row.clone()));
@@ -258,6 +283,32 @@ impl Store {
             .fetch_optional(self.w())
             .await?
             .ok_or_else(|| not_found("pull_request", id))
+    }
+
+    /// Ask Ariadne to review a request of the user's own on `pin` with
+    /// `skills` beside `pr-reviewer`, or stop asking with None (029).
+    /// Publishes the row.
+    pub async fn set_pull_request_review_asked(
+        &self,
+        id: &str,
+        asked: Option<(&crate::AgentPin, &[String])>,
+    ) -> Result<PullRequest> {
+        let skills = asked.map_or_else(Vec::new, |(_, skills)| skills.to_vec());
+        let row: PullRequest = sqlx::query_as(
+            "UPDATE pull_requests SET review_asked = ?, review_model = ?, review_effort = ?,
+              review_skills = ?, updated_at = ? WHERE id = ? RETURNING *",
+        )
+        .bind(asked.is_some())
+        .bind(asked.map(|(p, _)| p.model.clone()))
+        .bind(asked.and_then(|(p, _)| p.effort.clone()))
+        .bind(serde_json::to_string(&skills).unwrap_or_else(|_| "[]".into()))
+        .bind(now())
+        .bind(id)
+        .fetch_optional(self.w())
+        .await?
+        .ok_or_else(|| not_found("pull_request", id))?;
+        self.publish(Change::PullRequestUpdated(row.clone()));
+        Ok(row)
     }
 
     /// Record the head a reviewer session posted its review on (029).

@@ -195,10 +195,7 @@ async fn a_pin_must_be_a_catalog_model_and_a_role_may_have_none() {
 
     let refused = h
         .error(
-            edit(
-                &repo.id,
-                json!({"forge": {"babysit_model": "nosuch:model"}}),
-            ),
+            edit(&repo.id, json!({"forge": {"review_model": "nosuch:model"}})),
             StatusCode::BAD_REQUEST,
         )
         .await;
@@ -212,15 +209,25 @@ async fn a_pin_must_be_a_catalog_model_and_a_role_may_have_none() {
         .json(
             edit(
                 &repo.id,
-                json!({"forge": {"babysit_model": "stub:test-model"}}),
+                json!({"forge": {"review_model": "stub:test-model"}}),
             ),
             StatusCode::OK,
         )
         .await;
     let forge = pinned.forge.unwrap();
-    assert_eq!(forge.babysit_model.as_deref(), Some("stub:test-model"));
-    assert_eq!(forge.review_model, None, "a role with no pin is allowed");
-    assert_eq!(forge.review_effort, None);
+    assert_eq!(forge.review_model.as_deref(), Some("stub:test-model"));
+    assert_eq!(forge.review_effort, None, "a pin with no effort is allowed");
+    let cleared: RepositoryDto = h
+        .json(
+            edit(&repo.id, json!({"forge": {"review_model": ""}})),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(
+        cleared.forge.unwrap().review_model,
+        None,
+        "a role may have no pin"
+    );
 }
 
 #[tokio::test]

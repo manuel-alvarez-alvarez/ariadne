@@ -11,7 +11,7 @@ tests:
   - crates/ariadne-daemon/tests/it/adapters.rs
   - crates/ariadne-daemon/tests/it/prompts.rs
   - crates/ariadne-daemon/tests/it/unreviewed_tasks.rs
-  - crates/ariadne-daemon/tests/it/pull_request_sessions.rs
+  - crates/ariadne-daemon/tests/it/kept_requests.rs
   - crates/ariadne-daemon/tests/it/pull_request_reviews.rs
 ---
 
@@ -102,8 +102,8 @@ written into the system prompt (006), and the lifecycle the seats sit in
    cannot be staffed on a skill nothing answers to.
 10. A skill has a seat, read off its name and stored in no column
     (`Skill::seat`): `orchestration` is the orchestrator's, `pr-babysit` and
-    `pr-reviewer` a pull request session's, and every other skill a task
-    agent's. The store refuses a task agent staffed on any of those three,
+    `pr-reviewer` are loaded by the daemon itself, and every other skill a
+    task agent's. The store refuses a task agent staffed on any of those three,
     and `list_skills` lists none of them (013). The launcher loads the orchestrator's
     skill from the store for
     every orchestrator session — indexed and written to disk the way a task
@@ -131,13 +131,14 @@ written into the system prompt (006), and the lifecycle the seats sit in
     `switch_session` (013), rather than leave the task to fail.
 13. Every user-facing skill action exists in both the CLI (`ariadne skill`)
     and the desktop app, per the parity rule of spec 015.
-14. A pull request session is staffed by the daemon, on the repository's
-    `babysit_model` and `babysit_effort` (025), never by an orchestrator
-    (026). The author of a request of the user loads `pr-babysit`, named in
-    code as the orchestrator's skill is, and indexed and written to disk the
-    way a task agent's skills are. A reviewer pull request session runs on
-    the repository's `review_model` and `review_effort` (025), and loads
-    `pr-reviewer` the same way (029).
+14. The daemon loads `pr-babysit` for every author of a task that lands by
+    request — a task of a `pull_request` goal, or the final task of a
+    `feature_branch` goal — beside the skills the orchestrator staffed it on
+    (005, 026). It is named in code as the orchestrator's skill is, and
+    indexed and written to disk the way a task agent's skills are; no
+    orchestrator staffs it. A review session (029) is staffed by the daemon
+    on the repository's `review_model` and `review_effort` (025), and loads
+    `pr-reviewer` the same way.
 
 ## Acceptance criteria
 
@@ -160,12 +161,12 @@ written into the system prompt (006), and the lifecycle the seats sit in
   (`store.rs::a_task_agent_cannot_be_staffed_on_the_orchestrators_skill`),
   nor on `pr-babysit`
   (`store.rs::a_task_agent_cannot_be_staffed_on_the_pull_request_skill`).
-- A pull request session is staffed on the babysit pin and indexes
-  `pr-babysit`
-  (`pull_request_sessions.rs::an_open_request_of_mine_gets_one_session_on_the_babysit_pin`),
+- The author of a task that lands by request indexes `pr-babysit`
+  (`landing_lifecycle.rs::opening_a_pull_request_runs_the_forge_cli_once_and_keeps_the_task_until_the_merge`,
+  `final_tasks.rs::the_final_task_waits_then_lands_the_goal_branch_on_the_base`),
   and the skill is fed by the daemon and ends its turn
   (`defaults.rs::the_pr_babysit_skill_is_fed_by_the_daemon_and_ends_its_turn`).
-- A reviewer pull request session is staffed on the review pin and indexes
+- A review session is staffed on the review pin and indexes
   `pr-reviewer`
   (`pull_request_reviews.rs::an_open_request_i_review_gets_one_session_detached_at_its_head`),
   and the skill ranks its findings and never approves

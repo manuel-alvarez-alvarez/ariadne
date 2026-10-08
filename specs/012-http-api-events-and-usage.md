@@ -306,6 +306,15 @@ See [026](026-pull-requests.md) for identity, routes, and event tests.
 The daemon publishes it on each switch write and each tunnel state change. It has no goal or task routing scope.
 See [027](027-webhooks-and-tunnel.md) for the tunnel rules and the event test.
 
+## Issue events (028)
+
+| Event | Payload |
+| --- | --- |
+| `issues_changed` | `{repository_id}`: the repository whose open issues moved on its forge since its fetch last read them. |
+
+Issues are not stored, so the event carries no issue: a client reads them again. It has no goal or task routing scope.
+See [028](028-issues-and-goals.md) for the rule and the event tests.
+
 ## Acceptance criteria
 
 - Each `GET /v1/stats/<family>` answers its DTO and is in the OpenAPI

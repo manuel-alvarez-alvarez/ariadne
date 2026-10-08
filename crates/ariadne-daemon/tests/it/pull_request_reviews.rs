@@ -21,6 +21,8 @@ const PIN: &str = "stub:review-model";
 /// its head, whether the list of requests that ask for my review holds it,
 /// and the events about me on its timeline, oldest first.
 struct Shown<'a> {
+    /// Who opened it: `other`, or `me` for a request of mine.
+    author: &'a str,
     state: &'a str,
     draft: bool,
     head: &'a str,
@@ -31,6 +33,7 @@ struct Shown<'a> {
 impl Shown<'_> {
     fn open(head: &str) -> Shown<'_> {
         Shown {
+            author: "other",
             state: "OPEN",
             draft: false,
             head,
@@ -44,7 +47,7 @@ impl Shown<'_> {
 /// review: the lists, its own read, its details, and the review it posts.
 fn script(shown: &Shown) -> Value {
     let read = json!({"number": 1, "url": "https://github.com/acme/widgets/pull/1",
-        "title": "Add widgets", "author": {"login": "other"}, "state": shown.state,
+        "title": "Add widgets", "author": {"login": shown.author}, "state": shown.state,
         "isDraft": shown.draft, "headRefName": "fix", "headRefOid": shown.head,
         "headRepository": {"url": "https://github.com/acme/widgets"},
         "baseRefName": "main", "statusCheckRollup": [], "reviewDecision": "",
@@ -56,9 +59,9 @@ fn script(shown: &Shown) -> Value {
     let threads =
         json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
     let review_comments = json!([
-        {"id": 501, "body": "P0: An empty list panics.", "path": "src/lib.rs", "line": 3,
+        {"id": 501, "body": "**[P0] Empty list**\n\nAn empty list panics.", "path": "src/lib.rs", "line": 3,
          "created_at": "2026-10-02T00:00:00Z"},
-        {"id": 502, "body": "P1: No test covers the empty list.", "path": "tests/it.rs",
+        {"id": 502, "body": "**[P1] Untested**\n\nNo test covers the empty list.", "path": "tests/it.rs",
          "line": 9, "created_at": "2026-10-02T00:00:00Z"}
     ]);
     let timeline: Vec<Value> = shown
@@ -463,10 +466,10 @@ async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
                 &reviews,
                 &session.id,
                 json!({"event": "request_changes", "body": "Two findings.", "comments": [
-                    {"path": "src/lib.rs", "line": 3, "body": "An empty list panics.",
-                     "priority": "P0"},
-                    {"path": "tests/it.rs", "line": 9, "body": "No test covers the empty list.",
-                     "priority": "P1"}
+                    {"path": "src/lib.rs", "line": 3, "title": "Empty list",
+                     "body": "An empty list panics.", "priority": "P0"},
+                    {"path": "tests/it.rs", "line": 9, "title": "Untested",
+                     "body": "No test covers the empty list.", "priority": "P1"}
                 ]}),
             ),
             StatusCode::CREATED,
@@ -475,6 +478,33 @@ async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
     let posts = review_posts(&stub);
     assert_eq!(posts.len(), 1, "{posts:?}");
     let call = &posts[0];
+    // A change request with no P0 inline is refused: the findings are the
+    // comments, not a list in the summary.
+    h.error(
+        as_session(
+            &reviews,
+            &session.id,
+            json!({"event": "request_changes", "body": "P0 on src/lib.rs:3: it panics."}),
+        ),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+    h.error(
+        as_session(
+            &reviews,
+            &session.id,
+            json!({"event": "comment", "body": "One finding.", "comments": [
+                {"path": "src/lib.rs", "line": 3, "body": "No title.", "priority": "P2"}
+            ]}),
+        ),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+    assert_eq!(
+        review_posts(&stub).len(),
+        1,
+        "a refused review reaches no forge"
+    );
     assert_eq!(call[1], "repos/acme/widgets/pulls/1/reviews");
     for field in [
         "event=REQUEST_CHANGES",
@@ -482,10 +512,10 @@ async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
         &format!("commit_id={head}"),
         "comments[][path]=src/lib.rs",
         "comments[][line]=3",
-        "comments[][body]=P0: An empty list panics.",
+        "comments[][body]=**[P0] Empty list**\n\nAn empty list panics.",
         "comments[][path]=tests/it.rs",
         "comments[][line]=9",
-        "comments[][body]=P1: No test covers the empty list.",
+        "comments[][body]=**[P1] Untested**\n\nNo test covers the empty list.",
     ] {
         assert!(call.iter().any(|a| a == field), "{field}: {call:?}");
     }
@@ -494,8 +524,8 @@ async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
         bodies,
         [
             "Two findings.",
-            "P0: An empty list panics.",
-            "P1: No test covers the empty list."
+            "**[P0] Empty list**\n\nAn empty list panics.",
+            "**[P1] Untested**\n\nNo test covers the empty list."
         ]
     );
     assert!(stored.iter().all(|c| c["author_login"] == "me"));
@@ -726,4 +756,176 @@ async fn a_request_withdrawn_after_my_review_ends_its_review() {
             .unwrap()
             .review_requested
     );
+}
+
+/// A request of mine gets no review session until the user asks Ariadne for
+/// one, on the model they pick (029). Then it gets one on that pin — not the
+/// repository's — detached at its head, whose review is posted as a comment
+/// whatever it found: no forge takes a change request from a request's own
+/// author. Asking no more takes the session down.
+#[tokio::test]
+async fn a_request_of_mine_is_reviewed_once_asked_and_its_review_is_a_comment() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown {
+        author: "me",
+        ..Shown::open(&head)
+    }));
+    // No repository review pin: a request of mine runs on the one asked.
+    let repo = repository(&h, &path, None).await;
+    let mut rows: Vec<Value> = Vec::new();
+    eventually(TIMEOUT, "the request to be recorded", async || {
+        rows = h.get("/v1/pull-requests?state=all").await;
+        rows.len() == 1
+    })
+    .await;
+    assert_eq!(rows[0]["role"], "author");
+    assert_eq!(rows[0]["review_asked"], false);
+    let id = rows[0]["id"].as_str().unwrap().to_string();
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    h.flush_scheduler().await;
+    assert!(
+        sessions(&h, &id).await.is_empty(),
+        "nobody asked for a review"
+    );
+
+    let ask = |asked: bool| {
+        axum::http::Request::builder()
+            .method("PUT")
+            .uri(format!("/v1/pull-requests/{id}/ariadne-review"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({"asked": asked, "model": asked.then_some(PIN),
+                    "skills": ["pr-reviewer", "code-review"]})
+                .to_string(),
+            ))
+            .unwrap()
+    };
+    let asked: Value = h.json(ask(true), StatusCode::OK).await;
+    assert_eq!(asked["review_asked"], true);
+    assert_eq!(asked["review_model"], PIN);
+    let session = idle_session(&h, &id).await;
+    assert_eq!(session.seat.as_deref(), Some("reviewer"));
+    assert_eq!(
+        session.model, PIN,
+        "the review runs on the pin the user picked"
+    );
+    assert_eq!(asked["review_skills"], json!(["code-review"]));
+    let launch = h.launch_file(&session.id).expect("a launch file");
+    for skill in ["- pr-reviewer: ", "- code-review: "] {
+        assert!(
+            launch.system_prompt.contains(skill),
+            "{skill}: {}",
+            launch.system_prompt
+        );
+    }
+    let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
+    assert_eq!(sh(&worktree, "git rev-parse HEAD"), head);
+
+    let _: Vec<Value> = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/reviews"),
+                &session.id,
+                json!({"event": "request_changes", "body": "One finding.", "comments": [
+                    {"path": "src/lib.rs", "line": 3, "title": "Empty list",
+                     "body": "An empty list panics.", "priority": "P0"}
+                ]}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let posts = review_posts(&stub);
+    assert_eq!(posts.len(), 1, "{posts:?}");
+    assert!(
+        posts[0].iter().any(|a| a == "event=COMMENT"),
+        "{:?}",
+        posts[0]
+    );
+
+    let _: Value = h.json(ask(false), StatusCode::OK).await;
+    eventually(TIMEOUT, "the review to end", async || {
+        sessions(&h, &id)
+            .await
+            .iter()
+            .all(|s| !s.status().is_live())
+    })
+    .await;
+}
+
+/// Asking needs a model the catalog holds, and a request that asks for my
+/// review takes no asking: it has a review session of its own already.
+#[tokio::test]
+async fn asking_needs_a_model_and_a_request_of_mine() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown {
+        author: "me",
+        ..Shown::open(&head)
+    }));
+    repository(&h, &path, None).await;
+    let mut rows: Vec<Value> = Vec::new();
+    eventually(TIMEOUT, "the request to be recorded", async || {
+        rows = h.get("/v1/pull-requests?state=all").await;
+        rows.len() == 1
+    })
+    .await;
+    let id = rows[0]["id"].as_str().unwrap().to_string();
+    let ask = |body: Value| {
+        axum::http::Request::builder()
+            .method("PUT")
+            .uri(format!("/v1/pull-requests/{id}/ariadne-review"))
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    };
+    h.error(ask(json!({"asked": true})), StatusCode::BAD_REQUEST)
+        .await;
+    h.error(
+        ask(json!({"asked": true, "model": "nosuch:model"})),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+    h.error(
+        ask(json!({"asked": true, "model": PIN, "skills": ["orchestration"]})),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+    let row: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
+    assert_eq!(row["review_asked"], false, "a refusal asks nothing");
+
+    let reviewing = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            existing_id: None,
+            repository_id: rows[0]["repository_id"].as_str().unwrap().into(),
+            number: 2,
+            url: "https://github.com/acme/widgets/pull/2".into(),
+            title: "Theirs".into(),
+            body: String::new(),
+            author_login: "other".into(),
+            tracked_by: "forge".into(),
+            state: "open".into(),
+            draft: false,
+            head_branch: "theirs".into(),
+            head_sha: head.clone(),
+            head_repo: None,
+            base_branch: "main".into(),
+            checks: "none".into(),
+            review_decision: "none".into(),
+            origin_task_id: None,
+            opened_at: "2026-10-01T00:00:00Z".into(),
+        })
+        .await
+        .unwrap()
+        .0;
+    let ask = axum::http::Request::builder()
+        .method("PUT")
+        .uri(format!("/v1/pull-requests/{}/ariadne-review", reviewing.id))
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"asked": true, "model": PIN}).to_string()))
+        .unwrap();
+    h.error(ask, StatusCode::CONFLICT).await;
 }

@@ -12,7 +12,7 @@ tests:
   - crates/ariadne-cli/src/commands/repo.rs
   - crates/ariadne-cli/src/commands/forge.rs
   - ui/src/features/repositories/repositories-page.test.tsx
-  - ui/src/features/repositories/repository-form-dialog.test.tsx
+  - ui/src/components/settings-dialog.test.tsx
   - ui/src/events/dispatch.test.ts
 ---
 
@@ -98,10 +98,16 @@ The session task's tests prove that rule for a prompt.
    Replacement or repository deletion removes the old hook using its original forge coordinates.
    A cleanup failure logs an error; it cannot authorize old deliveries against the new identity.
    Each changed hook status or delivery timestamp emits `repository_updated` under [012](012-http-api-events-and-usage.md).
-10. `ForgeDto.webhook` contains `state`, `url`, `error`, and `last_delivery_at`.
-    The repository table and form show all four fields read-only.
-    `repo inspect` prints the same fields.
-    Missing values appear as `-`.
+10. `ForgeDto.webhook` contains `state`, `url`, `error`, `last_delivery_at`, and `fetch_error`.
+    `fetch_error` is why the last fetch of the repository's requests failed, and null once one works.
+    The poll worker writes it after every fetch, and only a change publishes `repository_updated`.
+    `repo inspect` prints the same fields, and missing values appear as `-`.
+    The repositories table's Webhook column shows one pill per enabled integration.
+    With the tunnel switched on the pill reads `localtunnel`: green while the hook is `live` and the last fetch worked,
+    red otherwise, with the tunnel, hook and fetch errors in its tooltip, or the hook URL while green.
+    With the tunnel switched off it reads `polling`: green while the last fetch worked, with how to turn the tunnel on
+    in Settings in its tooltip, and red with the fetch error otherwise.
+    A disabled integration shows `-`. The repository form shows none of the webhook.
 
 | State | Enabled repository fetch mode |
 | --- | --- |
@@ -156,7 +162,8 @@ A disabled integration has no worker, regardless of its retained hook status.
     Each switch write and each state change publishes `forge_settings_updated` with the same DTO (012).
 20. `ariadne forge tunnel` prints the tunnel, and `ariadne forge tunnel on` and `off` set the switch.
     `repo inspect` prints a `tunnel` line under the webhook block.
-    The repositories screen shows the tunnel state and the switch in its header actions, through `PageHeader`.
+    The desktop settings dialog shows the switch, a description of what the tunnel does, and its state: up with the
+    URL, down with the error, or off. The switch is written when flipped, not on the dialog's Save.
 21. The shutdown signal closes the tunnel and the webhook listener at once.
     The HTTP drain, which an open event stream can hold, comes after.
 
@@ -197,10 +204,14 @@ A disabled integration has no worker, regardless of its retained hook status.
   `store.rs::webhook_migration_preserves_existing_integrations_and_a_recoverable_backup`.
 - CLI inspection includes the webhook block:
   `repo.rs::tests::repo_inspect_prints_the_forge_block_with_the_login`.
-- The table shows all four facts:
-  `repositories-page.test.tsx::shows webhook state URL error and last delivery`.
-- The form shows all four facts read-only:
-  `repository-form-dialog.test.tsx::shows every webhook field without editable controls`.
+- The table shows `localtunnel` green with the URL, and red with the error:
+  `repositories-page.test.tsx::shows localtunnel green while the hook is live, and red with the error when it is not`.
+  With the tunnel off it shows `polling`, green with how to turn the tunnel on and red with the fetch error:
+  `repositories-page.test.tsx::shows polling with the tunnel off: green with how to turn it on, red with the fetch error`.
+- The last fetch error is written only when it changes:
+  `store.rs::the_last_fetch_error_is_written_only_when_it_changes`.
+  The form shows none of the webhook:
+  `repository-form-dialog.test.tsx::the forge integration > shows the detected remote, and enables the forge with its one switch`.
 - With one enabled integration, the switch on and no public URL, the tunnel opens to the stand-in at the random
   listener port, and the hook is created with the stand-in's URL. A signed delivery to that URL reaches the listener
   and triggers one fetch:
@@ -232,8 +243,9 @@ A disabled integration has no worker, regardless of its retained hook status.
   `forge.rs::tests::forge_tunnel_on_and_off_set_the_switch`.
 - `repo inspect` prints the tunnel line:
   `repo.rs::tests::repo_inspect_prints_the_forge_block_with_the_login`.
-- The screen shows the state, and its switch sets it:
-  `repositories-page.test.tsx::shows the tunnel state, and its switch turns the tunnel off and on`.
+- The settings dialog describes the tunnel, shows its state, and its switch sets it:
+  `settings-dialog.test.tsx::SettingsDialog > says what the tunnel is for, shows its state, and its switch turns it off and on`,
+  `::says why a tunnel that is on is down`.
 - `forge_settings_updated` replaces the cached tunnel:
   `dispatch.test.ts::replaces the cached tunnel whole, so a screen that read up reads off`.
 

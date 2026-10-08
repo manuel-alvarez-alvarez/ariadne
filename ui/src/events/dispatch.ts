@@ -170,8 +170,17 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       break
     }
     case "forge_settings_updated": {
-      // One row, no list: the tunnel the repositories screen reads.
+      // One row, no list: the tunnel the settings dialog and the repositories screen read.
       queryClient.setQueryData(qk.forge.tunnel(), event.data)
+      break
+    }
+    case "issues_changed": {
+      // Issues are read off the forge, not stored: the event carries no
+      // issue, only the repository whose open issues moved, so its lists are
+      // read again — both assignment filters.
+      void queryClient.invalidateQueries({
+        queryKey: qk.issues.ofRepository(event.data.repository_id),
+      })
       break
     }
     default: {

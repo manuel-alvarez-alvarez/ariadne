@@ -8,11 +8,11 @@ use super::{
 use crate::forge::pulls::{DraftComment, ReviewDraft};
 use crate::forge::{ForgeClient, PullRequestRef, pulls};
 use ariadne_api::pull_requests::{
-    AddPullRequestRequest, PullRequestCommentDto, PullRequestCommentQuery, PullRequestDiffQuery,
-    PullRequestDto, PullRequestListQuery, PullRequestMatchDto, ReplyCommentRequest,
-    ReportPullRequestRequest, SubmitReviewRequest,
+    AddPullRequestRequest, AskReviewRequest, PullRequestCommentDto, PullRequestCommentQuery,
+    PullRequestDiffQuery, PullRequestDto, PullRequestListQuery, PullRequestMatchDto,
+    ReplyCommentRequest, ReportPullRequestRequest, SubmitReviewRequest,
 };
-use ariadne_core::AttentionReason;
+use ariadne_core::{AttentionReason, Seat};
 use ariadne_store::{
     AgentSession, ForgeIntegration, NewPullRequestComment, PullRequest, PullRequestFilter,
 };
@@ -62,6 +62,8 @@ pub(super) async fn list(
             repository_id: q.repo,
             role: q.role,
             state: (selected != "all").then(|| selected.to_owned()),
+            origin_task_id: q.task,
+            review_requested: q.requested,
         })
         .await?;
     let mut dtos = Vec::with_capacity(rows.len());
@@ -113,6 +115,16 @@ pub(super) async fn add(
     if pull.number != number {
         return Err(forge_error(
             "the forge returned another request number".into(),
+        ));
+    }
+    // A request of the user's own is the task's that opened it, and its
+    // author keeps it (005). By hand, Ariadne takes only a request it is to
+    // review.
+    if pulls::role(&pull.author_login, &forge) == "author" {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "pull_request_is_yours",
+            "this request is yours: Ariadne tracks by hand only a request that asks for your              review, and the task that opened a request of yours keeps it",
         ));
     }
     let (row, created) = pulls::record(&state.store, &forge, pull, "user", None, None)
@@ -199,9 +211,12 @@ pub(super) async fn search(
                 "the forge returned a request outside this repository".into(),
             ));
         };
+        // A request of the user's own is no request to add by hand (005).
+        if pulls::role(&pull.author_login, &forge) == "author" {
+            continue;
+        }
         result.push(PullRequestMatchDto {
             number: reference.number,
-            role: pulls::role(&pull.author_login, &forge).into(),
             url: pull.url,
             title: pull.title,
             author_login: pull.author_login,
@@ -212,17 +227,26 @@ pub(super) async fn search(
 }
 
 /// The session a call came from, refused unless it is the request's own: a
-/// request is answered for by the session the daemon started on it alone.
+/// request is answered for by the review session the daemon started on it
+/// (029), or, for a request a task opened, by that task's author, which
+/// keeps it (005).
 async fn own_session(
     state: &AppState,
     headers: &HeaderMap,
     pull: &PullRequest,
 ) -> ApiResult<AgentSession> {
     let ctx = call_ctx(&state.store, headers).await?;
+    let keeps = |session: &AgentSession| {
+        pull.role == "author"
+            && session.seat() == Some(Seat::Author)
+            && session.task_id.is_some()
+            && session.task_id == pull.origin_task_id
+    };
     match ctx.session {
         Some(session) if session.pull_request_id.as_deref() == Some(pull.id.as_str()) => {
             Ok(session)
         }
+        Some(session) if keeps(&session) => Ok(session),
         Some(session) => Err(ApiError::forbidden(format!(
             "session {} does not watch pull request {}",
             session.id, pull.id
@@ -376,9 +400,9 @@ pub(super) async fn report(
     // A review posted on a new head is the user's to act on: the approval
     // is theirs to give (029). The same sha again raises nothing.
     if let Some(sha) = req.reviewed_sha.as_deref() {
-        if pull.role != "reviewer" {
+        if pull.role != "reviewer" && !pull.review_asked {
             return Err(ApiError::bad_request(
-                "only a request you review takes a reviewed_sha",
+                "only a request Ariadne reviews takes a reviewed_sha",
             ));
         }
         if !is_sha(sha) {
@@ -471,7 +495,7 @@ pub(super) async fn submit_review(
 ) -> ApiResult<(StatusCode, Json<Vec<PullRequestCommentDto>>)> {
     let pull = state.store.get_pull_request(&id).await?;
     own_session(&state, &headers, &pull).await?;
-    let request_changes = match req.event.as_str() {
+    let asked = match req.event.as_str() {
         "request_changes" => true,
         "comment" => false,
         other => {
@@ -480,15 +504,19 @@ pub(super) async fn submit_review(
             )));
         }
     };
-    if pull.role != "reviewer" {
+    if pull.role != "reviewer" && !pull.review_asked {
         return Err(ApiError::conflict(
-            "only a request you review takes a review",
+            "only a request Ariadne reviews takes a review",
         ));
     }
+    // A forge takes no change request on a request of its own author's: the
+    // review of a request of mine is a comment, whatever it found (029).
+    let request_changes = asked && pull.role == "reviewer";
     let body = req.body.trim().to_string();
     if body.is_empty() && req.comments.is_empty() {
         return Err(ApiError::bad_request("a review needs a body or a comment"));
     }
+    let req_has_p0 = req.comments.iter().any(|c| c.priority == "P0");
     let mut comments = Vec::with_capacity(req.comments.len());
     for comment in req.comments {
         if !matches!(comment.priority.as_str(), "P0" | "P1" | "P2") {
@@ -497,16 +525,34 @@ pub(super) async fn submit_review(
                 comment.priority
             )));
         }
-        if comment.path.trim().is_empty() || comment.line < 1 || comment.body.trim().is_empty() {
+        if comment.path.trim().is_empty()
+            || comment.line < 1
+            || comment.title.trim().is_empty()
+            || comment.body.trim().is_empty()
+        {
             return Err(ApiError::bad_request(
-                "a comment needs a path, a line from 1 and a body",
+                "a comment needs a path, a line from 1, a title and a body",
             ));
         }
+        // Each finding opens on its priority and its title, then says what
+        // goes wrong and how to fix it.
         comments.push(DraftComment {
             path: comment.path,
             line: comment.line,
-            body: format!("{}: {}", comment.priority, comment.body.trim()),
+            body: format!(
+                "**[{}] {}**\n\n{}",
+                comment.priority,
+                comment.title.trim(),
+                comment.body.trim()
+            ),
         });
+    }
+    // A change request is its P0 findings, each on its own line of code:
+    // one with none inline is a summary that asks for changes it never shows.
+    if request_changes && !req_has_p0 {
+        return Err(ApiError::bad_request(
+            "a change request carries each P0 finding as an inline comment on its line",
+        ));
     }
     let forge = integration(&state, &pull.repository_id).await?;
     let login = forge.login.clone().unwrap_or_default();
@@ -534,4 +580,79 @@ pub(super) async fn submit_review(
         .collect();
     state.notify_scheduler_pull_request(&pull.id);
     Ok((StatusCode::CREATED, Json(stored)))
+}
+
+/// Ask Ariadne to review a request of the user's own on the model the user
+/// picks, or stop asking (029): a review session runs on that pin while the
+/// request is open and out of draft, and posts one review as a comment in
+/// the user's name. A request that asks for the user's review has one
+/// already, on the repository's review pin, and takes no asking.
+#[utoipa::path(put, path = "/v1/pull-requests/{id}/ariadne-review", tag = "pull-requests",
+    params(("id" = String, Path)),
+    request_body = AskReviewRequest,
+    responses((status = 200, body = PullRequestDto), (status = 404), (status = 409)))]
+pub(super) async fn ask_review(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<AskReviewRequest>,
+) -> ApiResult<Json<PullRequestDto>> {
+    let pull = state.store.get_pull_request(&id).await?;
+    if pull.role != "author" {
+        return Err(ApiError::conflict(
+            "Ariadne reviews a request that asks for your review on its own: ask only on a \
+             request of yours",
+        ));
+    }
+    let pin = match req.asked {
+        false => None,
+        true => {
+            if pull.state != "open" {
+                return Err(ApiError::conflict(format!(
+                    "the request is {}: Ariadne reviews an open request",
+                    pull.state
+                )));
+            }
+            integration(&state, &pull.repository_id).await?;
+            let Some(model) = req.model.as_deref().filter(|m| !m.trim().is_empty()) else {
+                return Err(ApiError::bad_request(
+                    "a review runs on a model: pick one, as agent:model",
+                ));
+            };
+            let pin = super::pins::chosen(
+                &state.store,
+                &state.agent_registry,
+                Some(model),
+                req.effort.as_deref(),
+            )
+            .await?;
+            // Each a skill a task agent is staffed on (017); `pr-reviewer`
+            // is loaded anyway, so it is not stored twice.
+            let mut skills: Vec<String> = Vec::new();
+            for name in &req.skills {
+                if name == ariadne_store::defaults::PR_REVIEWER_SKILL || skills.contains(name) {
+                    continue;
+                }
+                let skill = state.store.get_skill(name).await?;
+                if skill.seat() != ariadne_store::SkillSeat::Task {
+                    return Err(ApiError::bad_request(format!(
+                        "skill {name} is no reviewer's to load"
+                    )));
+                }
+                skills.push(name.clone());
+            }
+            Some((pin, skills))
+        }
+    };
+    let row = state
+        .store
+        .set_pull_request_review_asked(
+            &pull.id,
+            pin.as_ref().map(|(pin, skills)| (pin, skills.as_slice())),
+        )
+        .await?;
+    // The session is the scheduler's to start, and the details its news is
+    // read from the fetch's.
+    state.forge_poll.wake(&row.repository_id);
+    state.notify_scheduler_pull_request(&row.id);
+    Ok(Json(pull_request_dto_of(&state.store, row).await?))
 }

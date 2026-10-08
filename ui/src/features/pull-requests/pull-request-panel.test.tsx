@@ -1,79 +1,180 @@
 // @vitest-environment jsdom
-import { screen, waitFor } from "@testing-library/react"
+
+/**
+ * The panel over one pull request: its facts read as a person reads them,
+ * its description rendered, its sessions, and what can be done to it — an
+ * Ariadne review of a request of the user's own, on the model and skills
+ * they pick, and the removal of one added by hand.
+ */
+
+import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { expect, it, vi } from "vitest"
+
+import type { PullRequestDto } from "@/api"
+import { aModel, aSession, aSessionPage } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { pull } from "@/test/pull-request"
 import { PullRequestPanel } from "./pull-request-panel"
 
-it("shows every inspect field and removes a user row", async () => {
+const SKILLS = ["code-review", "debugging", "pr-reviewer", "orchestration"].map((name) => ({
+  name,
+  seat:
+    name === "orchestration" ? "orchestrator" : name === "pr-reviewer" ? "pull_request" : "task",
+  summary: `${name} summary`,
+  builtin: true,
+  document: "",
+  document_is_default: true,
+  created_at: "2026-10-01T00:00:00Z",
+  updated_at: "2026-10-01T00:00:00Z",
+}))
+
+/** A daemon answering the request as `row`, and recording every write. */
+function daemon(row: () => PullRequestDto, writes: Request[] = []) {
+  daemonFetch.mockImplementation(async (input) => {
+    const request = input as Request
+    const path = new URL(request.url).pathname
+    if (request.method !== "GET") writes.push(request.clone())
+    if (request.method === "DELETE") return new Response(null, { status: 204 })
+    if (path === "/v1/models") return jsonResponse([aModel({ id: "stub:review-model" })])
+    if (path === "/v1/skills") return jsonResponse(SKILLS)
+    if (path === "/v1/sessions") return jsonResponse({ sessions: [], next_cursor: null })
+    if (path === "/v1/repositories") return jsonResponse([])
+    return jsonResponse(row())
+  })
+}
+
+it("reads its facts by name, renders its description, links the forge, and removes a hand-added row", async () => {
   const close = vi.fn()
-  daemonFetch.mockImplementation(async (input) =>
-    (input as Request).method === "DELETE"
-      ? new Response(null, { status: 204 })
-      : jsonResponse(pull),
-  )
+  daemon(() => ({ ...pull, body: "## Summary\n\n- Fixes **widgets** on an empty list." }))
   renderScreen(<PullRequestPanel id="pull-42" onClose={close} />)
-  await screen.findByText("head_sha")
-  for (const label of [
-    "id",
-    "repository_id",
-    "number",
-    "url",
-    "title",
-    "author_login",
-    "role",
-    "tracked_by",
-    "state",
-    "draft",
-    "head_branch",
-    "head_sha",
-    "head_repo",
-    "base_branch",
-    "checks",
-    "review_decision",
-    "unanswered_comments",
-    "failed_checks",
-    "behind_base",
-    "session_id",
-    "ready",
-    "origin_task_id",
-    "opened_at",
-    "last_seen_at",
-    "created_at",
-    "updated_at",
-  ]) {
+
+  await screen.findByText("#42 Fix widgets")
+  for (const label of ["Repository", "Author", "Branches", "Head", "Unanswered comments"]) {
     expect(screen.getByText(label)).toBeTruthy()
   }
-  expect(screen.getByText("abc123")).toBeTruthy()
-  expect(screen.getByText("task-1")).toBeTruthy()
+  expect(screen.queryByText("head_sha")).toBeNull()
+  expect(screen.getByRole("heading", { name: "Summary" })).toBeTruthy()
+  expect(screen.getByText("widgets").tagName).toBe("STRONG")
+  const forge = screen.getByRole("link", { name: /#42 on the forge/ })
+  expect(forge.getAttribute("href")).toBe(pull.url)
+
   await userEvent.click(screen.getByRole("button", { name: "Remove" }))
   await waitFor(() => expect(close).toHaveBeenCalledOnce())
 })
 
-it("links each failed check to its run and the session to its own panel", async () => {
-  daemonFetch.mockImplementation(async () =>
-    jsonResponse({
-      ...pull,
-      behind_base: true,
-      session_id: "01JSESS00000000000000PULL1",
-      failed_checks: [
-        { name: "lint", url: "https://ci.example/lint", conclusion: "failure" },
-        { name: "deploy", url: "", conclusion: "cancelled" },
-      ],
-    }),
-  )
-  const { location } = renderScreen(<PullRequestPanel id="pull-42" onClose={() => {}} />, {
-    route: "/pull-requests?pr=pull-42",
+it("links each failed check to its run, and lists the request's review sessions", async () => {
+  const asked: string[] = []
+  daemon(() => ({
+    ...pull,
+    behind_base: true,
+    failed_checks: [
+      { name: "lint", url: "https://ci.example/lint", conclusion: "failure" },
+      { name: "deploy", url: "", conclusion: "cancelled" },
+    ],
+  }))
+  const fetch = daemonFetch.getMockImplementation()
+  daemonFetch.mockImplementation(async (input) => {
+    asked.push((input as Request).url)
+    return fetch?.(input)
+  })
+  renderScreen(<PullRequestPanel id="pull-42" onClose={() => {}} />, {
+    route: "/forge/pull-requests?pr=pull-42",
   })
   const lint = await screen.findByRole("link", { name: "lint" })
   expect(lint.getAttribute("href")).toBe("https://ci.example/lint")
-  expect(lint.getAttribute("target")).toBe("_blank")
-  expect(screen.getByText("(failure)")).toBeTruthy()
-  // A check the forge names no run for is its name alone.
   expect(screen.getByText("deploy")).toBeTruthy()
   expect(screen.queryByRole("link", { name: "deploy" })).toBeNull()
-  expect(screen.getByText("behind_base").nextElementSibling?.textContent).toBe("true")
-  await userEvent.click(screen.getByRole("link", { name: "01JSESS00000000000000PULL1" }))
-  expect(location.url).toBe("/pull-requests?session=01JSESS00000000000000PULL1")
+  expect(screen.getByText("Ahead of the head")).toBeTruthy()
+
+  await userEvent.click(screen.getByRole("tab", { name: "Sessions" }))
+  expect(await screen.findByText("No Ariadne review of this request yet")).toBeTruthy()
+  expect(asked.some((url) => new URL(url).searchParams.get("pull_request") === "pull-42")).toBe(
+    true,
+  )
+})
+
+it("starts an Ariadne review of a request of mine on the model and skills picked, opens its console, and stops it", async () => {
+  const user = userEvent.setup()
+  let row: PullRequestDto = { ...pull, role: "author", author_login: "me", tracked_by: "forge" }
+  const review = aSession({
+    id: "01JSESS0000000000000REVIEW",
+    seat: "reviewer",
+    goal_id: null,
+    task_id: null,
+    pull_request_id: "pull-42",
+  })
+  const writes: Request[] = []
+  daemon(() => row, writes)
+  const update = daemonFetch.getMockImplementation()
+  daemonFetch.mockImplementation(async (input) => {
+    const request = input as Request
+    const path = new URL(request.url).pathname
+    if (request.method === "PUT") {
+      const body = (await request.clone().json()) as { asked: boolean; skills?: string[] }
+      row = { ...row, review_asked: body.asked, review_skills: body.skills ?? [] }
+    }
+    // The daemon starts the review session a moment after the ask.
+    if (path === "/v1/sessions" && row.review_asked) return jsonResponse(aSessionPage([review]))
+    if (path === `/v1/sessions/${review.id}`) return jsonResponse(review)
+    return update?.(input)
+  })
+  const { location } = renderScreen(<PullRequestPanel id="pull-42" onClose={() => {}} />, {
+    route: "/forge/pull-requests?pr=pull-42",
+  })
+
+  await user.click(await screen.findByRole("button", { name: "Start review" }))
+  const dialog = await screen.findByRole("dialog", { name: "Start an Ariadne review" })
+  const start = within(dialog).getByRole("button", { name: "Start review" })
+  expect(start.hasAttribute("disabled")).toBe(true)
+
+  await user.click(within(dialog).getByRole("button", { name: "Model" }))
+  const models = await screen.findByRole("listbox", { name: "Models" })
+  await user.click(within(models).getByText("stub:review-model"))
+  await user.keyboard("{Escape}")
+  const skills = within(dialog).getByRole("group", { name: "Skills" })
+  const playbook = within(skills).getByRole("button", { name: "pr-reviewer" })
+  expect(playbook.getAttribute("aria-pressed")).toBe("true")
+  expect(playbook.hasAttribute("disabled")).toBe(true)
+  // Nothing beside the playbook is picked to start with.
+  expect(
+    within(skills).getByRole("button", { name: "code-review" }).getAttribute("aria-pressed"),
+  ).toBe("false")
+  expect(within(skills).queryByRole("button", { name: "orchestration" })).toBeNull()
+  await user.click(within(skills).getByRole("button", { name: "code-review" }))
+  await user.click(within(skills).getByRole("button", { name: "debugging" }))
+  await user.click(within(dialog).getByRole("button", { name: "Start review" }))
+
+  await waitFor(() => expect(writes).toHaveLength(1))
+  expect(await writes[0]?.json()).toEqual({
+    asked: true,
+    model: "stub:review-model",
+    skills: ["code-review", "debugging"],
+  })
+  // The dialog closes, and the panel opens the review's session once it is up.
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Start an Ariadne review" })).toBeNull(),
+  )
+  await waitFor(() => expect(location.url).toContain(`session=${review.id}`), { timeout: 4000 })
+  expect(location.url).toContain("tab=sessions")
+
+  // Back on the request, the review can be stopped. The session's header
+  // replaces the one its loading showed, breadcrumb and all, so the click
+  // is made on whichever one is on screen until it takes.
+  await waitFor(async () => {
+    const back = within(screen.getByRole("navigation", { name: "Breadcrumb" }))
+    await user.click(back.getByRole("button", { name: /#42 Fix widgets/ }))
+    expect(location.url).not.toContain("session=")
+  })
+  await user.click(await screen.findByRole("button", { name: "Stop review" }, { timeout: 4000 }))
+  await waitFor(() => expect(writes).toHaveLength(2))
+  expect(await writes[1]?.json()).toEqual({ asked: false })
+})
+
+it("offers no Ariadne review on a request that asks for my review", async () => {
+  daemon(() => pull)
+  renderScreen(<PullRequestPanel id="pull-42" onClose={() => {}} />)
+  await screen.findByText("#42 Fix widgets")
+  expect(screen.queryByRole("button", { name: "Start review" })).toBeNull()
+  expect(screen.getByText("someone")).toBeTruthy()
 })

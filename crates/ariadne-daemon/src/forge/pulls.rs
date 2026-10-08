@@ -67,6 +67,8 @@ pub struct ForgePullRequest {
     pub number: i64,
     pub url: String,
     pub title: String,
+    /// The request's description; empty where it has none.
+    pub body: String,
     pub author_login: String,
     pub state: String,
     pub draft: bool,
@@ -77,6 +79,14 @@ pub struct ForgePullRequest {
     pub checks: String,
     pub review_decision: String,
     pub opened_at: String,
+}
+
+/// What a repository fetch lists: every open request, and the numbers of
+/// the ones that ask for the user's review (029).
+#[derive(Debug, Clone, Default)]
+pub struct Listed {
+    pub open: Vec<ForgePullRequest>,
+    pub requested: std::collections::HashSet<i64>,
 }
 
 pub(crate) fn role(author: &str, integration: &ForgeIntegration) -> &'static str {
@@ -109,6 +119,7 @@ pub(crate) async fn record(
             number: reference.number,
             url: pull.url,
             title: pull.title,
+            body: pull.body,
             author_login: pull.author_login,
             tracked_by: tracked_by.into(),
             state: pull.state,

@@ -1,171 +1,253 @@
+/**
+ * The open pull requests of the enabled repositories (026, 029), the first
+ * tab of the Forge screen: every one, the user's own, or the ones that ask
+ * for their review. The author of the task that opened a request of the
+ * user's keeps it (005).
+ *
+ * A row is the request and what it waits on: its checks, its review decision
+ * and the threads nobody answered, then the session that works on it. The
+ * repository, the author and the branches are the request's second line, so
+ * the table reads at a glance without a column for each. The row holds no
+ * button: a click opens the request's panel, which is where everything that
+ * can be done to it is — an Ariadne review of a request of the user's among
+ * it. Nothing is added by hand on this screen: the forge's lists are the list.
+ */
+
 import { useMutation, useQuery } from "@tanstack/react-query"
-import { useState } from "react"
+import { RefreshCwIcon } from "lucide-react"
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom"
-import { api, qk, unwrap } from "@/api"
+
+import { api, type PullRequestDto, unwrap } from "@/api"
 import { DataTable } from "@/components/data-table"
+import { EmptyState } from "@/components/empty-state"
+import { ErrorState } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
+import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
+import { ButtonGroup } from "@/components/ui/button-group"
 import { TableCell, TableRow } from "@/components/ui/table"
+import { When } from "@/components/when"
+import {
+  ForgeFilters,
+  forgeName,
+  matchesText,
+  useSearchFilter,
+} from "@/features/forge/forge-filters"
 import { repositoriesQueryOptions } from "@/features/repositories/queries"
 import { paths, sessionPanelFrom } from "@/routes/paths"
-import { AddPullRequestDialog } from "./add-pull-request-dialog"
-import { useRemovePullRequest } from "./queries"
+
+import { pullRequestsQueryOptions } from "./queries"
+import { ARIADNE_REVIEWING, CHECKS, REVIEW } from "./status"
+
+/**
+ * Whose requests the list holds: every open one of the repositories, the
+ * user's own, or the ones that ask for their review.
+ */
+const WHOSE = [
+  { value: null, label: "All", query: {} },
+  { value: "author", label: "Mine", query: { role: "author" } },
+  { value: "reviewer", label: "Review requests", query: { role: "reviewer", requested: true } },
+] as const
 
 const COLUMNS = [
-  "Repository",
-  "Request",
-  "Role",
-  "Tracked by",
-  "Draft",
-  "Checks",
-  "Review decision",
-  "Unanswered comments",
-  "Session",
-  "Updated",
-  "Actions",
-].map((header) => ({ header }))
+  { header: "Request", className: "min-w-72" },
+  { header: "Checks" },
+  { header: "Review" },
+  { header: "Unanswered", className: "text-right" },
+  { header: "Session" },
+  { header: "Updated" },
+]
+
 export function PullRequestsPage() {
-  const [search, setSearch] = useSearchParams()
+  const [search] = useSearchParams()
   const navigate = useNavigate()
   const { pathname } = useLocation()
-  const [adding, setAdding] = useState(false)
-  const filters = {
-    repo: search.get("repo") || undefined,
-    role: search.get("role") || undefined,
-    state: search.get("state") || undefined,
-  }
-  const rows = useQuery({
-    queryKey: qk.pullRequests.list(filters),
-    queryFn: () => unwrap(api().GET("/v1/pull-requests", { params: { query: filters } })),
-  })
+  const [repo, setRepo] = useSearchFilter("repo")
+  const [role, setRole] = useSearchFilter("role")
+  const whose = WHOSE.find((each) => each.value === role) ?? WHOSE[0]
+  const [text, setText] = useSearchFilter("q")
+  const filters = { repo: repo ?? undefined, ...whose.query }
+  const rows = useQuery(pullRequestsQueryOptions(filters))
   const repositories = useQuery(repositoriesQueryOptions())
-  const remove = useRemovePullRequest()
+  const enabled = repositories.data?.filter((each) => each.forge?.enabled) ?? []
   const refresh = useMutation({
     mutationFn: () =>
       unwrap(
         api().POST("/v1/pull-requests/refresh", { params: { query: { repo: filters.repo } } }),
       ),
   })
-  function filter(key: string, value: string) {
-    const next = new URLSearchParams(search)
-    if (value) next.set(key, value)
-    else next.delete(key)
-    setSearch(next)
-  }
+
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Pull requests"
-        description="Your authored, requested, and manually tracked pull requests."
+        description="The open pull requests of your repositories: yours, and the ones that ask for your review. A request a task opened is kept by that task's author."
         actions={
-          <>
-            <Button variant="outline" disabled={refresh.isPending} onClick={() => refresh.mutate()}>
-              Refresh
-            </Button>
-            <Button onClick={() => setAdding(true)}>Add pull request</Button>
-          </>
+          <Button variant="outline" pending={refresh.isPending} onClick={() => refresh.mutate()}>
+            <RefreshCwIcon />
+            Refresh
+          </Button>
         }
       />
-      <div className="flex flex-wrap items-center gap-3">
-        <label htmlFor="pr-repository">Repository</label>
-        <select
-          id="pr-repository"
-          value={filters.repo ?? ""}
-          onChange={(e) => filter("repo", e.target.value)}
-        >
-          <option value="">All repositories</option>
-          {repositories.data?.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.forge ? `${r.forge.owner}/${r.forge.name}` : r.path}
-            </option>
+      <ForgeFilters
+        repositories={enabled}
+        repository={repo}
+        onRepository={setRepo}
+        query={text}
+        onQuery={setText}
+        placeholder="Filter by title or description"
+      >
+        <ButtonGroup aria-label="Whose requests">
+          {WHOSE.map((each) => (
+            <Button
+              key={each.label}
+              variant={each === whose ? "secondary" : "outline"}
+              aria-pressed={each === whose}
+              onClick={() => setRole(each.value)}
+            >
+              {each.label}
+            </Button>
           ))}
-        </select>
-        <label htmlFor="pr-role">Role</label>
-        <select
-          id="pr-role"
-          value={filters.role ?? ""}
-          onChange={(e) => filter("role", e.target.value)}
-        >
-          <option value="">All roles</option>
-          <option value="author">Author</option>
-          <option value="reviewer">Reviewer</option>
-        </select>
-        <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={filters.state === "all"}
-            onChange={(e) => filter("state", e.target.checked ? "all" : "")}
-          />
-          Include closed and merged
-        </label>
-      </div>
-      {(refresh.error || remove.error) && (
-        <p role="alert">{refresh.error?.message ?? remove.error?.message}</p>
-      )}
+        </ButtonGroup>
+      </ForgeFilters>
+      {refresh.error ? <ErrorState title="Could not refresh" error={refresh.error} /> : null}
       <DataTable
-        query={rows}
+        query={{
+          ...rows,
+          data: rows.data?.filter((row) =>
+            matchesText(text, [
+              `#${row.number}`,
+              row.title,
+              row.body,
+              row.author_login,
+              row.head_branch,
+            ]),
+          ),
+        }}
         errorTitle="Could not load pull requests"
         columns={COLUMNS}
-        empty={<p>No pull requests.</p>}
+        empty={
+          <EmptyState
+            emphasis="quiet"
+            className="border-0 py-10"
+            title={
+              whose.value === "author"
+                ? "You have no open pull requests"
+                : whose.value === "reviewer"
+                  ? "No pull requests ask for your review"
+                  : "No open pull requests"
+            }
+            description="The open requests of the repositories with their forge enabled show up here."
+          />
+        }
         rowKey={(row) => row.id}
-        renderRow={(row) => {
-          const repo = repositories.data?.find((r) => r.id === row.repository_id)
-          const inspect = () => navigate(paths.pullRequest(row.id, search))
-          return (
-            <TableRow onClick={inspect} className="cursor-pointer">
-              <TableCell>
-                {repo?.forge ? `${repo.forge.owner}/${repo.forge.name}` : row.repository_id}
-              </TableCell>
-              <TableCell>
-                <a
-                  href={row.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  #{row.number} {row.title}
-                </a>
-              </TableCell>
-              <TableCell>{row.role}</TableCell>
-              <TableCell>{row.tracked_by}</TableCell>
-              <TableCell>{String(row.draft)}</TableCell>
-              <TableCell>{row.checks}</TableCell>
-              <TableCell>{row.review_decision}</TableCell>
-              <TableCell>{row.unanswered_comments}</TableCell>
-              {/* The newest session the daemon started on the request: its
-                  own panel, over this screen. */}
-              <TableCell onClick={(e) => e.stopPropagation()}>
-                {row.session_id ? (
-                  <Link
-                    to={sessionPanelFrom(pathname, search, row.session_id)}
-                    aria-label={`Open the session of #${row.number}`}
-                  >
-                    Session
-                  </Link>
-                ) : (
-                  "—"
-                )}
-              </TableCell>
-              <TableCell>{row.updated_at}</TableCell>
-              <TableCell onClick={(e) => e.stopPropagation()}>
-                <Button variant="ghost" aria-label={`Inspect #${row.number}`} onClick={inspect}>
-                  Inspect
-                </Button>
-                {row.tracked_by === "user" && (
-                  <Button
-                    variant="ghost"
-                    disabled={remove.isPending}
-                    onClick={() => remove.mutate(row.id)}
-                  >
-                    Remove
-                  </Button>
-                )}
-              </TableCell>
-            </TableRow>
-          )
-        }}
+        renderRow={(row) => (
+          <PullRequestRow
+            row={row}
+            repository={forgeName(repositories.data?.find((r) => r.id === row.repository_id))}
+            sessionTo={row.session_id ? sessionPanelFrom(pathname, search, row.session_id) : null}
+            onInspect={() => navigate(paths.pullRequest(row.id, search))}
+          />
+        )}
       />
-      <AddPullRequestDialog open={adding} onOpenChange={setAdding} />
     </div>
+  )
+}
+
+function PullRequestRow({
+  row,
+  repository,
+  sessionTo,
+  onInspect,
+}: {
+  row: PullRequestDto
+  repository: string
+  sessionTo: ReturnType<typeof sessionPanelFrom> | null
+  onInspect: () => void
+}) {
+  const checks = CHECKS[row.checks]
+  const review = REVIEW[row.review_decision]
+  return (
+    <TableRow
+      onClick={onInspect}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" && event.target === event.currentTarget) onInspect()
+      }}
+      tabIndex={0}
+      aria-label={`Open #${row.number} ${row.title}`}
+      className="cursor-pointer"
+    >
+      <TableCell className="max-w-md whitespace-normal">
+        <div className="flex flex-col gap-0.5">
+          <span className="flex flex-wrap items-center gap-2">
+            <a
+              href={row.url}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(event) => event.stopPropagation()}
+              className="font-medium underline-offset-3 hover:underline"
+            >
+              #{row.number} {row.title}
+            </a>
+            {row.draft ? <StatusBadge size="sm" box="outlined" label="Draft" /> : null}
+            {row.review_asked ? (
+              <StatusBadge
+                size="sm"
+                label={ARIADNE_REVIEWING.label}
+                tone={ARIADNE_REVIEWING.tone}
+              />
+            ) : null}
+          </span>
+          <span className="text-xs text-muted-foreground">
+            <span className="font-mono">{repository || row.repository_id}</span> ·{" "}
+            {row.role === "author" ? "by you" : `by ${row.author_login}`} ·{" "}
+            <span className="font-mono">{row.head_branch}</span> →{" "}
+            <span className="font-mono">{row.base_branch}</span>
+            {row.tracked_by === "user" ? " · added by hand" : ""}
+          </span>
+        </div>
+      </TableCell>
+      <TableCell>
+        {checks ? (
+          <StatusBadge size="sm" label={checks.label} tone={checks.tone} dot={checks.dot} />
+        ) : (
+          <span className="text-muted-foreground">-</span>
+        )}
+      </TableCell>
+      <TableCell>
+        {review ? (
+          <StatusBadge size="sm" label={review.label} tone={review.tone} />
+        ) : (
+          <span className="text-muted-foreground">-</span>
+        )}
+      </TableCell>
+      <TableCell
+        className={
+          row.unanswered_comments > 0
+            ? "text-right font-medium tabular-nums"
+            : "text-right text-muted-foreground tabular-nums"
+        }
+      >
+        {row.unanswered_comments}
+      </TableCell>
+      {/* The session that works on the request: its own panel, over this
+          screen. */}
+      <TableCell onClick={(event) => event.stopPropagation()}>
+        {sessionTo ? (
+          <Link
+            to={sessionTo}
+            aria-label={`Open the session of #${row.number}`}
+            className="text-sm underline-offset-3 hover:underline"
+          >
+            Open
+          </Link>
+        ) : (
+          <span className="text-muted-foreground">-</span>
+        )}
+      </TableCell>
+      <TableCell className="text-muted-foreground">
+        <When at={row.updated_at} format="age" label="updated" />
+      </TableCell>
+    </TableRow>
   )
 }

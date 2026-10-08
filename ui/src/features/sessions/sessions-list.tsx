@@ -74,6 +74,7 @@ function byLastActivity(sessions: SessionDto[]): SessionDto[] {
  */
 function emptyTitle(filters: SessionListFilters): string {
   if (filters.seat) return `No ${seatLabel(filters.seat).toLowerCase()} session yet`
+  if (filters.pull_request) return "No Ariadne review of this request yet"
   if (filters.task) return "No sessions yet for this task"
   if (filters.goal) return "No sessions yet for this goal"
   return "No sessions yet"

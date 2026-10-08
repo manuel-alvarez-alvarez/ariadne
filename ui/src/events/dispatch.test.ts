@@ -336,6 +336,25 @@ describe("forge settings events", () => {
   })
 })
 
+describe("issue events", () => {
+  it("refetches both assignment filters of the repository whose issues moved, and no other", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    for (const key of [
+      qk.issues.list("repo-1", "me"),
+      qk.issues.list("repo-1", "all"),
+      qk.issues.list("repo-2", "me"),
+    ]) {
+      queryClient.setQueryData(key, [])
+    }
+
+    dispatch(queryClient, { event: "issues_changed", data: { repository_id: "repo-1" } })
+
+    expect(stale(queryClient, qk.issues.list("repo-1", "me"))).toBe(true)
+    expect(stale(queryClient, qk.issues.list("repo-1", "all"))).toBe(true)
+    expect(stale(queryClient, qk.issues.list("repo-2", "me"))).toBe(false)
+  })
+})
+
 describe("learned permission events", () => {
   const learned = aLearnedPermission({
     repository_id: REPOSITORY.id,

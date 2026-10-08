@@ -16,7 +16,7 @@ import { useQuery } from "@tanstack/react-query"
 import { PencilIcon, PlusIcon, Trash2Icon } from "lucide-react"
 import { useState } from "react"
 
-import type { RepositoryDto } from "@/api"
+import type { ForgeTunnelDto, RepositoryDto } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { DataTable, RowAction } from "@/components/data-table"
 import { PageHeader } from "@/components/page-header"
@@ -27,17 +27,16 @@ import { DeleteRepositoryDialog } from "./delete-repository-dialog"
 import { forgeKindLabel, forgeRepositoryLabel } from "./forge"
 import { NoRepositories as SharedNoRepositories } from "./no-repositories"
 import { permissionModeLabel } from "./permission-modes"
-import { repositoriesQueryOptions } from "./queries"
+import { repositoriesQueryOptions, tunnelQueryOptions } from "./queries"
 import { RepositoryFormDialog } from "./repository-form-dialog"
-import { TunnelSwitch } from "./tunnel-switch"
-import { WebhookStatus } from "./webhook-status"
+import { WebhookPill } from "./webhook-pill"
 
 const COLUMNS = [
   { header: "Path" },
   { header: "Base branch" },
   { header: "Permissions" },
   { header: "Forge" },
-  { header: "Webhook" },
+  { header: "Webhook", className: "w-28" },
   // Wide enough to be a sentence rather than a word per line: what made the
   // rows of this table 130px tall was a description with nothing to wrap in.
   { header: "Description", className: "min-w-48" },
@@ -53,6 +52,8 @@ export function RepositoriesPage() {
   const [deleting, setDeleting] = useState<RepositoryDto | null>(null)
 
   const repositories = useQuery(repositoriesQueryOptions())
+  // Whether a polling hook is the tunnel being off or a hook that failed.
+  const tunnel = useQuery(tunnelQueryOptions())
 
   function openCreate() {
     setEditing(null)
@@ -75,13 +76,10 @@ export function RepositoriesPage() {
         title="Repositories"
         description="The git checkouts goals are created against. Each one is a path, the branch task worktrees are cut from, how its agents' permission requests are answered, the forge its remote is on, and what it is for."
         actions={
-          <>
-            <TunnelSwitch />
-            <Button onClick={openCreate}>
-              <PlusIcon />
-              Register repository
-            </Button>
-          </>
+          <Button onClick={openCreate}>
+            <PlusIcon />
+            Register repository
+          </Button>
         }
       />
 
@@ -94,6 +92,7 @@ export function RepositoriesPage() {
         renderRow={(repository) => (
           <RepositoryRow
             repository={repository}
+            tunnel={tunnel.data}
             onEdit={() => openEdit(repository)}
             onDelete={() => openDelete(repository)}
           />
@@ -112,10 +111,12 @@ export function RepositoriesPage() {
 
 function RepositoryRow({
   repository,
+  tunnel,
   onEdit,
   onDelete,
 }: {
   repository: RepositoryDto
+  tunnel: ForgeTunnelDto | undefined
   onEdit: () => void
   onDelete: () => void
 }) {
@@ -139,21 +140,27 @@ function RepositoryRow({
       <TableCell className="text-xs">{permissionModeLabel(repository.permission_mode)}</TableCell>
       <TableCell className="text-xs">
         {repository.forge ? (
-          <span title={forgeRepositoryLabel(repository.forge)}>
-            {forgeKindLabel(repository.forge.kind)}{" "}
-            <span className="font-mono">
+          <span className="flex flex-col" title={forgeRepositoryLabel(repository.forge)}>
+            <span>
+              {forgeKindLabel(repository.forge.kind)}
+              {repository.forge.enabled ? null : (
+                <span className="text-muted-foreground"> · off</span>
+              )}
+            </span>
+            <span className="font-mono text-muted-foreground">
               {repository.forge.owner}/{repository.forge.name}
-            </span>{" "}
-            <span className={repository.forge.enabled ? "" : "text-muted-foreground"}>
-              {repository.forge.enabled ? "on" : "off"}
             </span>
           </span>
         ) : (
           <span className="text-muted-foreground">none</span>
         )}
       </TableCell>
-      <TableCell className="max-w-64 whitespace-normal">
-        {repository.forge ? <WebhookStatus webhook={repository.forge.webhook} /> : "-"}
+      <TableCell className="text-xs">
+        {repository.forge ? (
+          <WebhookPill forge={repository.forge} tunnel={tunnel} />
+        ) : (
+          <span className="text-muted-foreground">-</span>
+        )}
       </TableCell>
       <TableCell className="min-w-48 whitespace-normal text-muted-foreground">
         {repository.description ?? <span className="italic">no description</span>}

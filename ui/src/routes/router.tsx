@@ -23,6 +23,7 @@ import { createHashRouter, Navigate, type RouteObject, useParams } from "react-r
 
 import { AppShell, type PageHandle } from "@/components/app-shell"
 import { AgentsPage } from "@/features/agents/agents-page"
+import { ForgePage } from "@/features/forge/forge-page"
 import { GoalsListPage } from "@/features/goals/goals-list-page"
 import { IssuesPage } from "@/features/issues/issues-page"
 import { PermissionsPage } from "@/features/permissions/permissions-page"
@@ -48,12 +49,18 @@ function TaskPanelRedirect() {
 const routes: RouteObject[] = [
   { index: true, element: <Navigate to={paths.goals()} replace /> },
   { path: "goals", element: <GoalsListPage />, handle: { title: "Goals" } satisfies PageHandle },
+  // Forge: what the GitHub or GitLab integration of an enabled repository
+  // reads, one screen with a tab each. The screen's title is the parent's.
   {
-    path: "pull-requests",
-    element: <PullRequestsPage />,
-    handle: { title: "Pull requests" } satisfies PageHandle,
+    path: "forge",
+    element: <ForgePage />,
+    handle: { title: "Forge" } satisfies PageHandle,
+    children: [
+      { index: true, element: <Navigate to={paths.pullRequests()} replace /> },
+      { path: "pull-requests", element: <PullRequestsPage /> },
+      { path: "issues", element: <IssuesPage /> },
+    ],
   },
-  { path: "issues", element: <IssuesPage />, handle: { title: "Issues" } satisfies PageHandle },
   { path: "goals/:goalId", element: <GoalPanelRedirect /> },
   { path: "tasks", element: <Navigate to={paths.goals()} replace /> },
   { path: "tasks/:taskId", element: <TaskPanelRedirect /> },

@@ -41,20 +41,13 @@ pub(crate) enum Switch {
 }
 
 /// The forge integration of a repository (025): the switch, and the pin of
-/// each of its two roles.
+/// the session that reviews a request asking for the user's review (029).
 #[derive(Args, Debug, Default)]
 pub(crate) struct ForgeArgs {
     /// Work with the forge the repository's remote is on: on needs `gh` or
     /// `glab` signed in to its host
     #[arg(long, value_enum)]
     forge: Option<Switch>,
-    /// What the session that watches a published request runs on:
-    /// AGENT:MODEL, or "" for no such session
-    #[arg(long, value_name = "MODEL", value_parser = parse_pin_model, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
-    babysit_model: Option<String>,
-    /// The effort that model is run at, or "default"
-    #[arg(long, value_name = "EFFORT", value_parser = parse_effort_or_default, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::efforts))]
-    babysit_effort: Option<String>,
     /// What the session that reviews a request runs on: AGENT:MODEL, or ""
     /// for no such session
     #[arg(long, value_name = "MODEL", value_parser = parse_pin_model, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
@@ -69,14 +62,10 @@ impl ForgeArgs {
     fn update(self) -> Option<ForgeUpdate> {
         let update = ForgeUpdate {
             enabled: self.forge.map(|switch| switch == Switch::On),
-            babysit_model: self.babysit_model,
-            babysit_effort: self.babysit_effort,
             review_model: self.review_model,
             review_effort: self.review_effort,
         };
         let given = update.enabled.is_some()
-            || update.babysit_model.is_some()
-            || update.babysit_effort.is_some()
             || update.review_model.is_some()
             || update.review_effort.is_some();
         given.then_some(update)
@@ -338,6 +327,15 @@ fn inspect_rows(r: &RepositoryDto, tunnel: Option<&ForgeTunnelDto>) -> Vec<(&'st
                     .into(),
             ),
             (
+                "fetch error",
+                forge
+                    .webhook
+                    .fetch_error
+                    .clone()
+                    .unwrap_or_else(|| "-".into())
+                    .into(),
+            ),
+            (
                 "tunnel",
                 tunnel
                     .map_or_else(|| "-".into(), super::forge::label)
@@ -350,14 +348,6 @@ fn inspect_rows(r: &RepositoryDto, tunnel: Option<&ForgeTunnelDto>) -> Vec<(&'st
             (
                 "forge login",
                 forge.login.clone().unwrap_or_else(|| "-".into()).into(),
-            ),
-            (
-                "babysit",
-                role_pin(
-                    forge.babysit_model.as_deref(),
-                    forge.babysit_effort.as_deref(),
-                )
-                .into(),
             ),
             (
                 "review",
@@ -416,6 +406,7 @@ mod tests {
                 url: Some("https://hooks.example/webhooks/github/repo".into()),
                 error: None,
                 last_delivery_at: Some("2026-10-07T10:00:00Z".into()),
+                fetch_error: Some("gh: HTTP 502".into()),
             },
             kind: ariadne_core::ForgeKind::Github,
             host: "github.com".into(),
@@ -424,10 +415,8 @@ mod tests {
             remote: "origin".into(),
             enabled,
             login: login.map(Into::into),
-            babysit_model: Some("stub:test-model".into()),
-            babysit_effort: Some("high".into()),
-            review_model: None,
-            review_effort: None,
+            review_model: Some("stub:test-model".into()),
+            review_effort: Some("high".into()),
         }
     }
 
@@ -455,25 +444,34 @@ mod tests {
             "01R",
             "--forge",
             "on",
-            "--babysit-model",
-            "stub:test-model",
-            "--babysit-effort",
-            "high",
             "--review-model",
-            "",
+            "stub:test-model",
+            "--review-effort",
+            "high",
         ])
         .expect("the forge flags were given");
         assert_eq!(update.enabled, Some(true));
-        assert_eq!(update.babysit_model.as_deref(), Some("stub:test-model"));
-        assert_eq!(update.babysit_effort.as_deref(), Some("high"));
-        assert_eq!(update.review_model.as_deref(), Some(""));
-        assert_eq!(update.review_effort, None);
+        assert_eq!(update.review_model.as_deref(), Some("stub:test-model"));
+        assert_eq!(update.review_effort.as_deref(), Some("high"));
+        let cleared = forge_of(&["repo", "update", "01R", "--review-model", ""]).expect("given");
+        assert_eq!(cleared.review_model.as_deref(), Some(""));
+        assert!(
+            <Repo as clap::Parser>::try_parse_from([
+                "repo",
+                "update",
+                "01R",
+                "--babysit-model",
+                "x"
+            ])
+            .is_err(),
+            "a request of the user's own runs on its task's author, not on a pin"
+        );
 
         let off = forge_of(&["repo", "add", "/r", "--forge", "off"]).expect("given");
         assert_eq!(off.enabled, Some(false));
         assert!(forge_of(&["repo", "add", "/r"]).is_none());
         assert!(
-            <Repo as clap::Parser>::try_parse_from(["repo", "add", "/r", "--babysit-model", "x"])
+            <Repo as clap::Parser>::try_parse_from(["repo", "add", "/r", "--review-model", "x"])
                 .is_err(),
             "a model names its agent"
         );
@@ -539,14 +537,20 @@ mod tests {
             "{block}"
         );
         assert!(block.contains("webhook error"), "{block}");
-        assert!(block.contains("2026-10-07T10:00:00Z"), "{block}");
-        assert!(block.contains("stub:test-model @ high"), "{block}");
         assert!(
             block
                 .lines()
-                .any(|l| l.starts_with("review") && l.trim_end().ends_with('-')),
-            "a role with no pin reads as a dash: {block}"
+                .any(|l| l.starts_with("fetch error") && l.contains("gh: HTTP 502")),
+            "{block}"
         );
+        assert!(block.contains("2026-10-07T10:00:00Z"), "{block}");
+        assert!(
+            block
+                .lines()
+                .any(|l| l.starts_with("review") && l.contains("stub:test-model @ high")),
+            "{block}"
+        );
+        assert!(!block.contains("babysit"), "{block}");
 
         let none = fixtures::repository("01B", "/repos/local", "main");
         let block =

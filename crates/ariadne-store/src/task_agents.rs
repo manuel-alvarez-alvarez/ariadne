@@ -108,11 +108,13 @@ impl Store {
                         "skill {name} is the orchestrator's; a task agent cannot load it"
                     )));
                 }
-                // A pull request session is staffed by the daemon, never by
-                // an orchestrator (017).
+                // The daemon loads these itself, never an orchestrator (017):
+                // `pr-babysit` onto the author of a task that lands by
+                // request, `pr-reviewer` onto a review session.
                 SkillSeat::PullRequest => {
                     return Err(StoreError::Conflict(format!(
-                        "skill {name} is a pull request session's; a task agent cannot load it"
+                        "skill {name} is loaded by Ariadne itself, where a request is kept or \
+                         reviewed; staff it on no task agent"
                     )));
                 }
                 SkillSeat::Task => {}

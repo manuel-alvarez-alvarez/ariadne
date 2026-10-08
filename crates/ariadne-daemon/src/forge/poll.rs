@@ -42,11 +42,15 @@ fn wake_scheduler(scheduler: &Waker, pull_request_id: &str) {
 }
 
 /// What a fetch hands its changed rows on to (026): how long a detail fetch
-/// may take, and the scheduler to report to.
+/// may take, and the scheduler to report to; and where a move of the open
+/// issues is published (028), with what each repository's last read of them
+/// held.
 #[derive(Clone)]
 struct Handoff {
     details: Duration,
     scheduler: Waker,
+    bus: EventBus,
+    issues_seen: Arc<std::sync::Mutex<HashMap<String, u64>>>,
 }
 struct Worker {
     identity: (String, String, String, String),
@@ -106,6 +110,8 @@ pub fn start(
     let handoff = Handoff {
         details,
         scheduler: scheduler.clone(),
+        bus: events.clone(),
+        issues_seen: Arc::default(),
     };
     let webhook_url = crate::webhooks::WebhookUrl::new(cfg.webhook_public_url.clone());
     let mut urls = webhook_url.subscribe();
@@ -296,8 +302,16 @@ async fn worker(
     mut mode: watch::Receiver<Mode>,
 ) {
     loop {
-        if let Err(error) = fetch(&store, &cfg, &handoff, &id).await {
+        let fetched = fetch(&store, &cfg, &handoff, &id).await;
+        if let Err(error) = &fetched {
             warn!(%error, repository = id, "cannot fetch pull requests");
+        }
+        // What says polling works, where no hook is live (026).
+        if let Err(error) = store
+            .set_forge_fetch_error(&id, fetched.err().as_deref())
+            .await
+        {
+            warn!(%error, repository = id, "cannot record how the fetch went");
         }
         loop {
             let timer = *mode.borrow_and_update() == Mode::Timer;
@@ -324,7 +338,13 @@ async fn fetch(store: &Store, cfg: &Config, handoff: &Handoff, id: &str) -> Resu
         "{}/{}/{}",
         integration.host, integration.owner, integration.name
     );
-    let listed = client
+    // Every open request of the repository, and which of them ask for the
+    // user's review. A request of the user's a task opened is that task's
+    // author's to keep (005); any other is listed, and nobody keeps it.
+    let pulls::Listed {
+        open: listed,
+        requested,
+    } = client
         .list_open_pull_requests(&slug, integration.login.as_deref().unwrap_or_default())
         .await?;
     let numbers: HashSet<_> = listed.iter().map(|p| p.number).collect();
@@ -345,10 +365,15 @@ async fn fetch(store: &Store, cfg: &Config, handoff: &Handoff, id: &str) -> Resu
         if !still_enabled(store, &integration).await? {
             return Ok(());
         }
-        let row = pulls::record(store, &integration, pull, "forge", None, None)
-            .await?
-            .0;
-        changed.push(note_review_request(store, &client, &integration, row, true).await?);
+        let asks = requested.contains(&pull.number);
+        let (row, created) = pulls::record(store, &integration, pull, "forge", None, None).await?;
+        let row = match (asks, created) {
+            (true, _) => note_review_request(store, &client, &integration, row, true).await?,
+            // Born of the open list alone: it never asked for my review.
+            (false, true) => mark_not_requested(store, row).await?,
+            (false, false) => note_review_request(store, &client, &integration, row, false).await?,
+        };
+        changed.push(row);
     }
     for number in reads {
         if !still_enabled(store, &integration).await? {
@@ -371,7 +396,38 @@ async fn fetch(store: &Store, cfg: &Config, handoff: &Handoff, id: &str) -> Resu
         changed.push(note_review_request(store, &client, &integration, row, false).await?);
     }
     after_fetch(store, handoff, &integration, &client, &slug, &changed).await;
+    issues_moved(handoff, &integration, &client).await;
     Ok(())
+}
+
+/// Read the repository's open issues, and publish `issues_changed` where
+/// they moved since the last read (028): the desktop's issues come from the
+/// forge on every read, so this is what tells it to read them again. A read
+/// that fails tells nothing, and the next fetch reads them again.
+async fn issues_moved(handoff: &Handoff, integration: &ForgeIntegration, client: &ForgeClient) {
+    use std::hash::{Hash, Hasher};
+    let repository = format!("{}/{}", integration.owner, integration.name);
+    let issues = match client.list_open_issues(&repository, None).await {
+        Ok(issues) => issues,
+        Err(error) => {
+            warn!(%error, repository = %integration.repository_id, "cannot read the open issues");
+            return;
+        }
+    };
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    serde_json::to_string(&issues)
+        .unwrap_or_default()
+        .hash(&mut hasher);
+    let seen = hasher.finish();
+    let moved = handoff
+        .issues_seen
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(integration.repository_id.clone(), seen)
+        != Some(seen);
+    if moved {
+        handoff.bus.issues_changed(&integration.repository_id);
+    }
 }
 
 async fn still_enabled(store: &Store, expected: &ForgeIntegration) -> Result<bool, String> {
@@ -388,24 +444,40 @@ async fn still_enabled(store: &Store, expected: &ForgeIntegration) -> Result<boo
         }))
 }
 
-/// Whether the request `row` wants a session: an open request of mine, in a
-/// repository whose integration names a `babysit_model` (026), or an open
-/// request out of draft that asks for my review, in a repository whose
-/// integration names a `review_model` (029).
+/// Whether the request `row` wants a review session of its own: an open
+/// request out of draft, in a repository whose integration names a
+/// `review_model`, that asks for my review — or one of mine whose review the
+/// user asked Ariadne for (029). The author of the task that opened a
+/// request of mine keeps it in its own session (005).
 pub(crate) fn wants_session(row: &PullRequest, integration: &ForgeIntegration) -> bool {
-    let pin = match row.role.as_str() {
-        "author" => integration.babysit_model.is_some(),
-        _ => integration.review_model.is_some() && !row.draft && row.review_requested,
+    // A request that asks for my review runs on the repository's review
+    // pin; one of mine runs on the pin the user picked when asking.
+    let pinned = match row.role.as_str() {
+        "reviewer" => row.review_requested && integration.review_model.is_some(),
+        _ => row.review_asked && row.review_model.is_some(),
     };
-    row.state == "open" && integration.enabled && pin
+    pinned && row.state == "open" && integration.enabled && !row.draft
 }
 
-/// Record whether a request I review asks for my review (029). A list
-/// fetch that holds it says yes. An open request no list holds is asked of
-/// the forge (`ForgeClient::review_still_requested`): GitHub drops a request
-/// from the list once I reviewed it, and a request withdrawn after that is
-/// told apart only by its timeline. A request tracked by hand is left as it
-/// is, since no list ever holds it. Where the forge cannot answer, the flag
+/// A request the open list holds and nothing ever asked my review on: no
+/// timeline is read for it, since it never asked.
+async fn mark_not_requested(store: &Store, row: PullRequest) -> Result<PullRequest, String> {
+    if row.role != "reviewer" || row.tracked_by != "forge" || !row.review_requested {
+        return Ok(row);
+    }
+    store
+        .set_pull_request_review_requested(&row.id, false)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Record whether a request I review asks for my review (029). The list of
+/// review requests that holds it says yes. One it no longer holds and that
+/// asked before is asked of the forge (`ForgeClient::review_still_requested`):
+/// GitHub drops a request from the list once I reviewed it, and a request
+/// withdrawn after that is told apart only by its timeline. One that never
+/// asked is not asked about. A request tracked by hand is left as it is,
+/// since no list ever holds it. Where the forge cannot answer, the flag
 /// stays as it was, and the next fetch asks again.
 async fn note_review_request(
     store: &Store,
@@ -415,6 +487,9 @@ async fn note_review_request(
     listed: bool,
 ) -> Result<PullRequest, String> {
     if row.role != "reviewer" || row.tracked_by != "forge" {
+        return Ok(row);
+    }
+    if !listed && row.state == "open" && !row.review_requested {
         return Ok(row);
     }
     let requested = match listed || row.state != "open" {
@@ -447,8 +522,9 @@ async fn note_review_request(
 }
 
 /// The hand-off after a repository fetch (026): read the details of every
-/// open row that has a session or wants one, store its comments and checks,
-/// and tell the scheduler about every row the fetch changed.
+/// open row that has a session or wants one, and of every open row a task
+/// opened, whose author keeps it (005); store its comments and checks, and
+/// tell the scheduler about every row the fetch changed.
 ///
 /// A detail fetch that fails leaves the row as the list fetch wrote it:
 /// the next fetch reads it again.
@@ -470,7 +546,8 @@ async fn after_fetch(
             })
             .await
             .is_ok_and(|live| !live.is_empty());
-        if !has_session && !wants_session(row, integration) {
+        let kept_by_task = row.role == "author" && row.origin_task_id.is_some();
+        if !has_session && !kept_by_task && !wants_session(row, integration) {
             continue;
         }
         if let Err(error) = details(store, handoff, integration, client, slug, row, login).await {

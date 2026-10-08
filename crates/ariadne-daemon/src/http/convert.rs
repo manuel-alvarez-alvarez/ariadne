@@ -74,9 +74,9 @@ pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
             url: f.webhook_url,
             error: f.webhook_error,
             last_delivery_at: f.webhook_last_delivery_at,
+            fetch_error: f.fetch_error,
         },
-        .. host, owner, name, remote, enabled, login, babysit_model, babysit_effort,
-           review_model, review_effort
+        .. host, owner, name, remote, enabled, login, review_model, review_effort
     }
 
     /// `repos` are the goal's repositories and `usage` its rollup, both of
@@ -447,13 +447,24 @@ pub(crate) async fn pull_request_dto_of(
     store: &Store,
     row: ariadne_store::PullRequest,
 ) -> Result<ariadne_api::pull_requests::PullRequestDto, StoreError> {
-    let session_id = store
-        .list_sessions(SessionFilter {
+    // A request a task opened is its author's (005); any other has a
+    // session of its own (029).
+    let filter = match &row.origin_task_id {
+        Some(task_id) if row.role == "author" => SessionFilter {
+            task_id: Some(task_id.clone()),
+            ..Default::default()
+        },
+        _ => SessionFilter {
             pull_request_id: Some(row.id.clone()),
             ..Default::default()
-        })
+        },
+    };
+    let session_id = store
+        .list_sessions(filter)
         .await?
-        .pop()
+        .into_iter()
+        .rev()
+        .find(|session| row.role != "author" || session.seat() == Some(Seat::Author))
         .map(|session| session.id);
     Ok(pull_request_dto(row, session_id))
 }
@@ -466,6 +477,12 @@ pub(crate) fn pull_request_dto(
     ariadne_api::pull_requests::PullRequestDto {
         failed_checks: serde_json::from_str(&row.failed_checks).unwrap_or_default(),
         behind_base: row.behind_base,
+        review_asked: row.review_asked,
+        review_model: row.review_model,
+        review_effort: row.review_effort.clone(),
+        review_skills: serde_json::from_str(&row.review_skills_json).unwrap_or_default(),
+        review_requested: row.review_requested,
+        body: row.body,
         session_id,
         id: row.id,
         repository_id: row.repository_id,

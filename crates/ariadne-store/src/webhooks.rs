@@ -59,6 +59,28 @@ impl Store {
         Ok(changed)
     }
 
+    /// Record how the last fetch of an enabled integration's requests went:
+    /// the error, or None for a fetch that worked. Only a change is written
+    /// and published, so a timer fetch that keeps working is silent.
+    pub async fn set_forge_fetch_error(&self, id: &str, error: Option<&str>) -> Result<bool> {
+        let changed = sqlx::query(
+            "UPDATE forge_integrations SET fetch_error = ?, updated_at = ?
+             WHERE repository_id = ? AND enabled = 1 AND fetch_error IS NOT ?",
+        )
+        .bind(error)
+        .bind(now())
+        .bind(id)
+        .bind(error)
+        .execute(self.w())
+        .await?
+        .rows_affected()
+            > 0;
+        if changed {
+            self.publish(Change::RepositoryUpdated(self.get_repository(id).await?));
+        }
+        Ok(changed)
+    }
+
     /// Record an authenticated delivery only while its integration and secret remain active.
     pub async fn webhook_delivered(&self, id: &str, secret: &str) -> Result<bool> {
         let changed = sqlx::query("UPDATE forge_integrations SET webhook_last_delivery_at = ?, updated_at = ? WHERE repository_id = ? AND enabled = 1 AND webhook_secret = ?")

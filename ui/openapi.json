@@ -1289,10 +1289,35 @@
           {
             "name": "role",
             "in": "query",
+            "description": "`reviewer` for the requests that ask for the user's review, `author`\nfor the ones a task opened.",
             "required": false,
             "schema": {
               "type": [
                 "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "description": "The task that opened the request.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "requested",
+            "in": "query",
+            "description": "True for the requests that ask for the user's review (029), false\nfor the ones that do not.",
+            "required": false,
+            "schema": {
+              "type": [
+                "boolean",
                 "null"
               ]
             }
@@ -1450,6 +1475,53 @@
         "responses": {
           "204": {
             "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/pull-requests/{id}/ariadne-review": {
+      "put": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "Ask Ariadne to review a request of the user's own on the model the user\npicks, or stop asking (029): a review session runs on that pin while the\nrequest is open and out of draft, and posts one review as a comment in\nthe user's name. A request that asks for the user's review has one\nalready, on the repository's review pin, and takes no asking.",
+        "operationId": "ask_review",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullRequestDto"
+                }
+              }
+            }
           },
           "404": {
             "description": ""
@@ -3530,7 +3602,7 @@
             "description": "not an author session"
           },
           "409": {
-            "description": "the task is not approved, has no forge, is not authenticated, or is not pushed"
+            "description": "the task is not approved, has no forge or its integration is off, is not authenticated, or is not pushed"
           }
         }
       }
@@ -4112,6 +4184,40 @@
             "description": "Whether the checkpoints of the last good install are on disk."
           }
         }
+      },
+      "AskReviewRequest": {
+        "type": "object",
+        "description": "Body of `PUT /v1/pull-requests/{id}/ariadne-review`: whether Ariadne\nreviews a request of the user's own (029).",
+        "required": [
+          "asked"
+        ],
+        "properties": {
+          "asked": {
+            "type": "boolean"
+          },
+          "effort": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The effort that model runs at; none for the agent's own."
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The model the review runs on, `agent:model`: required to ask, and\nchecked against the catalog as any pin is."
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The skills the review loads beside `pr-reviewer`, which every review\nsession loads; skills a task agent is staffed on."
+          }
+        },
+        "additionalProperties": false
       },
       "AttentionFlagDto": {
         "type": "object",
@@ -5031,6 +5137,26 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "The open issues of one repository moved on its forge (028): read them\nagain from `GET /v1/repositories/{id}/issues`.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/IssuesChangedDto",
+                "description": "The open issues of one repository moved on its forge (028): read them\nagain from `GET /v1/repositories/{id}/issues`."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "issues_changed"
+                ]
+              }
+            }
           }
         ],
         "description": "One domain event. Serialized as `{\"event\": \"<kind>\", \"data\": <payload>}`;\non the SSE wire the kind becomes the `event:` field and the payload alone\nthe `data:` field."
@@ -5137,19 +5263,6 @@
           "enabled"
         ],
         "properties": {
-          "babysit_effort": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "babysit_model": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The pin of the session that watches a published request; null starts\nnone."
-          },
           "enabled": {
             "type": "boolean"
           },
@@ -5252,18 +5365,6 @@
         "type": "object",
         "description": "A change to the forge integration; absent fields stay unchanged. A model\nwritten empty clears that role's pin and its effort.",
         "properties": {
-          "babysit_effort": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "babysit_model": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "enabled": {
             "type": [
               "boolean",
@@ -5546,6 +5647,18 @@
             "type": "string"
           },
           "url": {
+            "type": "string"
+          }
+        }
+      },
+      "IssuesChangedDto": {
+        "type": "object",
+        "description": "Payload of `issues_changed`: the repository whose open issues moved.",
+        "required": [
+          "repository_id"
+        ],
+        "properties": {
+          "repository_id": {
             "type": "string"
           }
         }
@@ -6441,6 +6554,10 @@
             "type": "boolean",
             "description": "Whether the base branch has commits the head does not."
           },
+          "body": {
+            "type": "string",
+            "description": "The request's description, as the forge holds it."
+          },
           "checks": {
             "type": "string"
           },
@@ -6494,8 +6611,36 @@
           "repository_id": {
             "type": "string"
           },
+          "review_asked": {
+            "type": "boolean",
+            "description": "Whether the user asked Ariadne to review this request of their own\n(029)."
+          },
           "review_decision": {
             "type": "string"
+          },
+          "review_effort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "review_model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The pin the user picked for that review."
+          },
+          "review_requested": {
+            "type": "boolean",
+            "description": "Whether the request asks for the user's review (029)."
+          },
+          "review_skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The skills that review loads beside `pr-reviewer`."
           },
           "role": {
             "type": "string"
@@ -6505,7 +6650,7 @@
               "string",
               "null"
             ],
-            "description": "The newest session the daemon started on this request, if any."
+            "description": "The newest session on this request, if any: the review session of a\nrequest that asks for the user's review (029), or the author of the\ntask that opened it (005)."
           },
           "state": {
             "type": "string"
@@ -6530,12 +6675,12 @@
       },
       "PullRequestMatchDto": {
         "type": "object",
+        "description": "An open request a search found that is not the user's own: a request of\nthe user's own is kept by the task that opened it (005), and is no\nrequest to add by hand.",
         "required": [
           "number",
           "url",
           "title",
           "author_login",
-          "role",
           "tracked"
         ],
         "properties": {
@@ -6545,9 +6690,6 @@
           "number": {
             "type": "integer",
             "format": "int64"
-          },
-          "role": {
-            "type": "string"
           },
           "title": {
             "type": "string"
@@ -8250,6 +8392,13 @@
               "string",
               "null"
             ]
+          },
+          "fetch_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the last fetch of the repository's requests failed, or null once\none works: what says polling works, where no hook is live."
           },
           "last_delivery_at": {
             "type": [

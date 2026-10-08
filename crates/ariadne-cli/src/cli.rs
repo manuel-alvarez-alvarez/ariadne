@@ -345,9 +345,10 @@ pub(crate) enum Command {
     },
     /// Track pull requests
     ///
-    /// Follow your authored requests, requested reviews, and requests added by hand.
+    /// Follow the open requests of your repositories: yours, the ones that ask
+    /// for your review, and the ones added by hand.
     #[command(
-        after_help = "Examples:\n  ariadne pr ls --watch\n  ariadne pr add https://github.com/owner/repo/pull/42\n  ariadne pr refresh"
+        after_help = "Examples:\n  ariadne pr ls --watch\n  ariadne pr ls --mine\n  ariadne pr ls --review-requests\n  ariadne pr add https://github.com/owner/repo/pull/42\n  ariadne pr refresh"
     )]
     Pr {
         #[command(subcommand)]

@@ -15,14 +15,17 @@ use ariadne_api::tasks::TaskDto;
 use ariadne_core::{Actor, ForgeKind, GoalStatus, Landing, MessageKind, Seat, TaskStatus};
 use ariadne_store::{Goal, NewTask, NewTaskAgent, Repository, SetForgeIntegration, Task};
 
-use common::forge::{answer, stub_forge_cli};
+use common::forge::{answer, opened_pull, stub_forge_cli};
 use common::{Harness, TIMEOUT, as_session, harness, post_json, sh, test_pin};
 
-/// `gh` signed in to github.com, and a `pr create` that answers with `url`.
-fn forge_script(url: &str) -> serde_json::Value {
+/// `gh` signed in to github.com, a `pr create` that answers with `url`, and
+/// the request it opened from `head` read back.
+fn forge_script(url: &str, head: &str) -> serde_json::Value {
     serde_json::json!([
         answer(&["auth", "status"], 0, ""),
         answer(&["pr", "create"], 0, url),
+        answer(&["pr", "view"], 0, &opened_pull(url, head).to_string()),
+        answer(&["pr", "list"], 0, "[]"),
     ])
 }
 
@@ -157,7 +160,9 @@ async fn a_task_created_after_finalize_joins_the_final_task() {
 #[tokio::test]
 async fn the_final_task_waits_then_lands_the_goal_branch_on_the_base() {
     const URL: &str = "https://github.com/acme/widgets/pull/9";
-    let cli = stub_forge_cli(forge_script(URL));
+    // Every request this test reads is the goal branch's, whose name is the
+    // goal's: the stub is written once the goal exists.
+    let cli = stub_forge_cli(forge_script(URL, "fix"));
     let h = harness()
         .scheduler()
         .discover_agents()
@@ -185,16 +190,15 @@ async fn the_final_task_waits_then_lands_the_goal_branch_on_the_base() {
             owner: "acme".into(),
             name: "widgets".into(),
             remote: "origin".into(),
-            enabled: false,
-            login: None,
-            babysit_model: None,
-            babysit_effort: None,
+            enabled: true,
+            login: Some("me".into()),
             review_model: None,
             review_effort: None,
         })
         .await
         .unwrap();
     let goal = feature_goal(&h, &repo).await;
+    cli.reprogram(forge_script(URL, &goal_branch(&goal)));
     let first = task(&h, &goal, &repo, "First change", 1, vec![]).await;
     let last = task(
         &h,
@@ -326,21 +330,53 @@ async fn the_final_task_waits_then_lands_the_goal_branch_on_the_base() {
         cli.invocations()
     );
 
-    // The task ends once the request is open and pushed — nothing merges the
-    // goal branch onto the base, and the goal branch stays.
+    // Its author keeps the request with the skill the daemon loaded for it,
+    // and the task stays approved until a human merges it: nothing merges
+    // the goal branch onto the base.
+    let launch = h.launch_file(&author.id).expect("a launch file");
+    assert!(
+        launch.system_prompt.contains("- pr-babysit: "),
+        "{}",
+        launch.system_prompt
+    );
+    assert_eq!(h.status(&last.id).await, TaskStatus::Approved);
+    let refused = h.error(finish(&tip), StatusCode::CONFLICT).await;
+    assert!(
+        refused.error.message.contains("is not merged"),
+        "{}",
+        refused.error.message
+    );
+    let kept = h
+        .store
+        .pull_request_of_task(&last.id)
+        .await
+        .unwrap()
+        .expect("the ledger holds the task's request");
+    h.store
+        .set_pull_request_state(&kept.id, "merged")
+        .await
+        .unwrap();
     let finished: TaskDto = h.json(finish(&tip), StatusCode::OK).await;
     assert_eq!(finished.status, TaskStatus::Finished);
     assert_eq!(finished.merge_commit.as_deref(), Some(tip.as_str()));
     let main_before_cleanup = sh(&path, "git rev-parse main");
-    h.launcher.cleanup_task(&last.id, true, true).await.unwrap();
+
+    // The task over and its request merged, the daemon deletes the goal
+    // branch, local and remote (026); nothing of it merged the goal branch
+    // onto the base itself.
+    common::eventually(TIMEOUT, "the goal branch to go", async || {
+        h.flush_scheduler().await;
+        !sh(&path, "git branch --list").contains(&branch)
+    })
+    .await;
     assert_eq!(
         sh(&path, "git rev-parse main"),
         main_before_cleanup,
         "nothing merged the goal branch onto the base"
     );
     assert!(
-        sh(&path, "git branch --list").contains(&branch),
-        "the goal branch stays"
+        !sh(&remote, "git branch --list").contains(&branch),
+        "the goal branch is gone from the remote too"
     );
 }
 

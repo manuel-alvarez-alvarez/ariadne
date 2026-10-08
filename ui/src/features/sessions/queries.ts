@@ -49,6 +49,8 @@ import { isLiveStatus, sessionAttention } from "./session-display"
 export interface SessionListFilters {
   goal?: string
   task?: string
+  /** The review sessions of one pull request (029). */
+  pull_request?: string
   status?: SessionStatus
   /**
    * Applied here rather than by the daemon: `GET /v1/sessions` takes no seat.

@@ -37,10 +37,11 @@ fn unresolved(e: impl std::fmt::Display) -> ApiError {
 /// the branch tip: the branch being an ancestor of the base is the whole of it,
 /// and no sha has to be taken on trust.
 ///
-/// `pull_request` ends once the request is open: the task has a `pr_url`,
-/// and the branch it was opened from is still what the remote has for it.
-/// What happens to the request from there — its comments, its checks, its
-/// merge — is not this task's to wait on any more.
+/// `pull_request` ends once a human merged the request: the author keeps it
+/// until then (005), and the ledger row the daemon reads off the forge is
+/// what says it merged. The daemon never merges it itself, so no sha is
+/// asked onto the base branch: the head branch may be gone from the remote
+/// by then, which the forge does on a merge where it is told to.
 pub(super) async fn verify_merged(
     state: &AppState,
     task: &Task,
@@ -97,32 +98,21 @@ pub(super) async fn verify_merged(
             }
         }
         Landing::PullRequest => {
-            let Some(_) = &task.pr_url else {
+            let Some(url) = &task.pr_url else {
                 return Err(ApiError::conflict(
                     "merge not verified: no pull request is open for this task — call \
                      `open_pull_request` first",
                 ));
             };
-            let remote = repo
-                .forge
-                .as_ref()
-                .map_or("origin", |forge| forge.remote.as_str());
-            let branch = state
-                .launcher
-                .review_branch(task, task.picked_agent_id.as_deref())
-                .await
-                .map_err(unresolved)?
-                .unwrap_or_else(|| task.branch.clone());
-            if !state
-                .launcher
-                .git
-                .remote_has_branch_tip(&repo_path, remote, &branch)
-                .await
-                .map_err(unresolved)?
-            {
+            let merged = state
+                .store
+                .pull_request_of_task(&task.id)
+                .await?
+                .is_some_and(|pull| pull.state == "merged");
+            if !merged {
                 return Err(ApiError::conflict(format!(
-                    "merge not verified: {branch} is not on {remote} in {}",
-                    repo.path
+                    "merge not verified: {url} is not merged — a human merges it, and Ariadne \
+                     tells you when they do"
                 )));
             }
         }
@@ -147,8 +137,9 @@ pub(super) async fn verify_merged(
     responses(
         (status = 200, body = TaskDto),
         (status = 403, description = "not an author session"),
-        (status = 409, description = "the task is not approved, has no forge, \
-                                       is not authenticated, or is not pushed")
+        (status = 409, description = "the task is not approved, has no forge or \
+                                       its integration is off, is not authenticated, \
+                                       or is not pushed")
     ))]
 pub(super) async fn open_pull_request(
     State(state): State<AppState>,
@@ -184,6 +175,22 @@ pub(super) async fn open_pull_request(
             "no forge was detected for this repository",
         ));
     };
+    // The author keeps the request it opens, and the integration is what
+    // reads the forge and tells it the request's news (005, 026): with it
+    // off, nobody would.
+    if !state
+        .store
+        .forge_integration(&task.repo_id)
+        .await?
+        .is_some_and(|integration| integration.enabled)
+    {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "forge_disabled",
+            "the forge integration of this repository is off: a person turns it on, so Ariadne \
+             can tell you the news of the request you open",
+        ));
+    }
     let client = ForgeClient::for_repository(&state.launcher.cfg, forge);
     let refused =
         |message: String| ApiError::new(StatusCode::CONFLICT, "forge_unauthenticated", message);

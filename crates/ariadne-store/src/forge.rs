@@ -25,8 +25,6 @@ pub struct SetForgeIntegration {
     pub remote: String,
     pub enabled: bool,
     pub login: Option<String>,
-    pub babysit_model: Option<String>,
-    pub babysit_effort: Option<String>,
     pub review_model: Option<String>,
     pub review_effort: Option<String>,
 }
@@ -65,9 +63,8 @@ pub(crate) async fn write_forge(
     sqlx::query(
         "INSERT INTO forge_integrations
              (repository_id, kind, host, owner, name, remote, enabled, login,
-              babysit_model, babysit_effort, review_model, review_effort,
-              detected_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              review_model, review_effort, detected_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (repository_id) DO UPDATE SET
              webhook_id = CASE
                  WHEN kind = excluded.kind AND host = excluded.host AND owner = excluded.owner AND name = excluded.name
@@ -93,8 +90,7 @@ pub(crate) async fn write_forge(
                  THEN detected_at ELSE excluded.detected_at END,
              kind = excluded.kind, host = excluded.host, owner = excluded.owner,
              name = excluded.name, remote = excluded.remote, enabled = excluded.enabled,
-             login = excluded.login, babysit_model = excluded.babysit_model,
-             babysit_effort = excluded.babysit_effort, review_model = excluded.review_model,
+             login = excluded.login, review_model = excluded.review_model,
              review_effort = excluded.review_effort, updated_at = excluded.updated_at",
     )
     .bind(&set.repository_id)
@@ -105,8 +101,6 @@ pub(crate) async fn write_forge(
     .bind(&set.remote)
     .bind(set.enabled)
     .bind(&set.login)
-    .bind(&set.babysit_model)
-    .bind(&set.babysit_effort)
     .bind(&set.review_model)
     .bind(&set.review_effort)
     .bind(&ts)

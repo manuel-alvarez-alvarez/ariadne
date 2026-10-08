@@ -36,14 +36,18 @@ export const SKILL_PARAM = "skill"
 const FOCUS_PARAM = "focus"
 
 export const paths = {
-  pullRequests: () => "/pull-requests",
+  /** The Forge screen, which opens on its pull requests tab. */
+  forge: () => "/forge",
+  /** The requests that ask for the user's review, Forge's first tab (029). */
+  pullRequests: () => "/forge/pull-requests",
   pullRequest: (id: string, current = new URLSearchParams()) => {
     const next = new URLSearchParams(current)
     for (const key of ["task", "goal", "session", "tab"]) next.delete(key)
     next.set("pr", id)
-    return `/pull-requests?${next.toString()}`
+    return `/forge/pull-requests?${next.toString()}`
   },
-  issues: () => "/issues",
+  /** The open issues of the enabled repositories, Forge's second tab (028). */
+  issues: () => "/forge/issues",
   goals: () => "/goals",
   /** The goals board with this goal's panel open. */
   goal: (goalId: string) => `/goals?goal=${goalId}`,

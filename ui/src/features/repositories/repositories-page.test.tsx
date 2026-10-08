@@ -44,11 +44,8 @@ const SANDBOX: RepositoryDto = aRepository({
 /** `DELETE /v1/repositories/{id}` answers this instead of 204, when set. */
 let deleteFailure: { status: number; code: string; message: string } | null = null
 
-/** What `GET /v1/forge/tunnel` answers; a `PUT` moves its switch. */
+/** What `GET /v1/forge/tunnel` answers: the tunnel is up unless a test says otherwise. */
 let tunnel: ForgeTunnelDto
-
-/** The bodies of every `PUT /v1/forge/tunnel`. */
-let tunnelWrites: unknown[] = []
 
 function aTunnel(overrides: Partial<ForgeTunnelDto> = {}): ForgeTunnelDto {
   return {
@@ -65,17 +62,9 @@ function aTunnel(overrides: Partial<ForgeTunnelDto> = {}): ForgeTunnelDto {
 function stubDaemon(repositories: RepositoryDto[]) {
   deleteFailure = null
   tunnel = aTunnel()
-  tunnelWrites = []
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(String(input), init)
-    if (new URL(request.url).pathname === "/v1/forge/tunnel") {
-      if (request.method === "PUT") {
-        const body = (await request.json()) as { enabled: boolean }
-        tunnelWrites.push(body)
-        tunnel = body.enabled ? aTunnel() : aTunnel({ enabled: false, state: "off", url: null })
-      }
-      return jsonResponse(tunnel)
-    }
+    if (new URL(request.url).pathname === "/v1/forge/tunnel") return jsonResponse(tunnel)
     if (request.method === "DELETE") {
       if (!deleteFailure) return new Response(null, { status: 204 })
       const { status, code, message } = deleteFailure
@@ -115,47 +104,87 @@ describe("RepositoriesPage", () => {
     expect(screen.queryByText("2 repositories")).toBeNull()
   })
 
-  it("shows webhook state URL error and last delivery", async () => {
+  it("shows localtunnel green while the hook is live, and red with the error when it is not", async () => {
+    const user = userEvent.setup()
     stubDaemon([
       {
         ...ARIADNE,
         forge: aForge({
+          enabled: true,
+          webhook: {
+            state: "live",
+            url: "https://amber-104233.loca.lt/webhooks/github/repo",
+            error: null,
+            last_delivery_at: "2026-10-07T10:00:00Z",
+            fetch_error: null,
+          },
+        }),
+      },
+      {
+        ...SANDBOX,
+        forge: aForge({
+          enabled: true,
+          name: "sandbox",
           webhook: {
             state: "failed",
-            url: "https://hooks.example/webhooks/github/repo",
+            url: null,
             error: "HTTP 403: needs admin rights",
-            last_delivery_at: "2026-10-07T10:00:00Z",
+            last_delivery_at: null,
+            fetch_error: null,
           },
         }),
       },
     ])
     renderScreen(<RepositoriesPage />)
-    expect(await screen.findByText("failed")).toBeDefined()
-    expect(screen.getByText("https://hooks.example/webhooks/github/repo")).toBeDefined()
-    expect(screen.getByText("HTTP 403: needs admin rights")).toBeDefined()
-    expect(screen.getByText("2026-10-07T10:00:00Z")).toBeDefined()
+
+    const working = await screen.findByRole("img", { name: "localtunnel: working" })
+    expect(working.textContent).toBe("localtunnel")
+    expect(working.className).toContain("bg-status-done-soft")
+    expect(screen.queryByText("2026-10-07T10:00:00Z")).toBeNull()
+    await user.hover(working)
+    expect(
+      await screen.findByText("https://amber-104233.loca.lt/webhooks/github/repo"),
+    ).toBeDefined()
+
+    const failing = screen.getByRole("img", { name: "localtunnel: not working" })
+    expect(failing.className).toContain("bg-status-danger-soft")
+    await user.hover(failing)
+    expect(await screen.findByText("Webhook: HTTP 403: needs admin rights")).toBeDefined()
   })
 
-  it("shows the tunnel state, and its switch turns the tunnel off and on", async () => {
+  it("shows polling with the tunnel off: green with how to turn it on, red with the fetch error", async () => {
     const user = userEvent.setup()
+    stubDaemon([
+      { ...ARIADNE, forge: aForge({ enabled: true }) },
+      {
+        ...SANDBOX,
+        forge: aForge({
+          enabled: true,
+          name: "sandbox",
+          webhook: {
+            state: "polling",
+            url: null,
+            error: "tunnel off",
+            last_delivery_at: null,
+            fetch_error: "gh: HTTP 502",
+          },
+        }),
+      },
+    ])
+    tunnel = aTunnel({ enabled: false, state: "off", url: null })
     renderScreen(<RepositoriesPage />)
 
-    expect(await screen.findByText("Tunnel up")).toBeDefined()
-    const toggle = screen.getByRole("switch", { name: "Webhook tunnel" })
-    expect(toggle.getAttribute("aria-checked")).toBe("true")
+    const working = await screen.findByRole("img", { name: "polling: working" })
+    expect(working.textContent).toBe("polling")
+    await user.hover(working)
+    expect(await screen.findByText(/turn on the webhook tunnel in Settings/i)).toBeDefined()
 
-    await user.click(toggle)
-    expect(await screen.findByText("Tunnel off")).toBeDefined()
-    expect(
-      screen.getByRole("switch", { name: "Webhook tunnel" }).getAttribute("aria-checked"),
-    ).toBe("false")
-
-    await user.click(screen.getByRole("switch", { name: "Webhook tunnel" }))
-    expect(await screen.findByText("Tunnel up")).toBeDefined()
-    expect(tunnelWrites).toEqual([{ enabled: false }, { enabled: true }])
+    await user.hover(screen.getByRole("img", { name: "polling: not working" }))
+    expect(await screen.findByText("gh: HTTP 502")).toBeDefined()
+    expect(screen.queryByRole("img", { name: /localtunnel/ })).toBeNull()
   })
 
-  it("shows the forge each remote is on, and whether it is enabled", async () => {
+  it("shows the forge each remote is on over two lines, and whether it is enabled", async () => {
     stubDaemon([
       { ...ARIADNE, forge: aForge({ enabled: true, login: "octocat" }) },
       { ...SANDBOX, forge: aForge({ kind: "gitlab", host: "gitlab.com", name: "sandbox" }) },
@@ -164,10 +193,16 @@ describe("RepositoriesPage", () => {
     renderScreen(<RepositoriesPage />)
 
     expect(await screen.findByRole("columnheader", { name: "Forge" })).toBeDefined()
-    const enabled = (await screen.findByTitle("github.com/acme/widgets")).closest("td")
-    expect(enabled?.textContent).toBe("GitHub acme/widgets on")
-    const off = screen.getByTitle("gitlab.com/acme/sandbox").closest("td")
-    expect(off?.textContent).toBe("GitLab acme/sandbox off")
+    const enabled = await screen.findByTitle("github.com/acme/widgets")
+    expect([...enabled.children].map((line) => line.textContent)).toEqual([
+      "GitHub",
+      "acme/widgets",
+    ])
+    const off = screen.getByTitle("gitlab.com/acme/sandbox")
+    expect([...off.children].map((line) => line.textContent)).toEqual([
+      "GitLab · off",
+      "acme/sandbox",
+    ])
     const none = (await screen.findByTitle("/home/me/dev/local")).closest("tr")
     expect(none?.textContent).toContain("none")
   })

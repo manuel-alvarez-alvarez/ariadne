@@ -3784,9 +3784,9 @@ async fn a_task_agent_cannot_be_staffed_on_the_orchestrators_skill() {
     );
 }
 
-/// A pull request session is staffed by the daemon, never by an
-/// orchestrator (017, 026): no task agent loads `pr-babysit`, at creation or
-/// by a later edit.
+/// The daemon loads `pr-babysit` itself, onto the author of a task that
+/// lands by request, never an orchestrator (005, 017): no staffing names it,
+/// at creation or by a later edit.
 #[tokio::test]
 async fn a_task_agent_cannot_be_staffed_on_the_pull_request_skill() {
     let (store, _dir) = test_store().await;
@@ -3805,7 +3805,7 @@ async fn a_task_agent_cannot_be_staffed_on_the_pull_request_skill() {
         })
         .await;
     let message = format!("{:?}", refused.expect_err("the pull request skill"));
-    assert!(message.contains("pull request session"), "{message}");
+    assert!(message.contains("loaded by Ariadne itself"), "{message}");
     let task = seed_task(&store, &goal, &repo, vec![]).await;
     let author = store.task_author(&task.id).await.unwrap();
     assert!(matches!(
@@ -4843,11 +4843,55 @@ fn widgets(repository_id: &str) -> SetForgeIntegration {
         remote: "origin".into(),
         enabled: false,
         login: None,
-        babysit_model: None,
-        babysit_effort: None,
         review_model: None,
         review_effort: None,
     }
+}
+
+/// How the last fetch went is written only on a change (026): a failure and
+/// its error, then the fetch that works again. A fetch that works on and on
+/// writes nothing, so a timer fetch every 5 minutes publishes nothing. A
+/// disabled integration fetches nothing, and records nothing.
+#[tokio::test]
+async fn the_last_fetch_error_is_written_only_when_it_changes() {
+    let (store, _dir) = test_store().await;
+    let repo = seed_repository(&store).await;
+    store
+        .set_forge_integration(widgets(&repo.id))
+        .await
+        .unwrap();
+    assert!(
+        !store
+            .set_forge_fetch_error(&repo.id, Some("gh: HTTP 502"))
+            .await
+            .unwrap()
+    );
+    store
+        .set_forge_integration(SetForgeIntegration {
+            enabled: true,
+            login: Some("me".into()),
+            ..widgets(&repo.id)
+        })
+        .await
+        .unwrap();
+    assert!(
+        store
+            .set_forge_fetch_error(&repo.id, Some("gh: HTTP 502"))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !store
+            .set_forge_fetch_error(&repo.id, Some("gh: HTTP 502"))
+            .await
+            .unwrap()
+    );
+    let read = store.forge_integration(&repo.id).await.unwrap().unwrap();
+    assert_eq!(read.fetch_error.as_deref(), Some("gh: HTTP 502"));
+    assert!(store.set_forge_fetch_error(&repo.id, None).await.unwrap());
+    assert!(!store.set_forge_fetch_error(&repo.id, None).await.unwrap());
+    let read = store.forge_integration(&repo.id).await.unwrap().unwrap();
+    assert_eq!(read.fetch_error, None);
 }
 
 /// The forge row is read with its repository, lower-cased, in every list a
@@ -4963,8 +5007,6 @@ async fn pull_requests_keep_identity_user_tracking_and_detail_fields() {
             remote: "origin".into(),
             enabled: true,
             login: Some("me".into()),
-            babysit_model: None,
-            babysit_effort: None,
             review_model: None,
             review_effort: None,
         })
@@ -4977,6 +5019,7 @@ async fn pull_requests_keep_identity_user_tracking_and_detail_fields() {
         number: 42,
         url: "https://github.com/acme/widgets/pull/42".into(),
         title: "Fix the bug".into(),
+        body: String::new(),
         author_login: "me".into(),
         tracked_by: "forge".into(),
         state: "open".into(),
@@ -5135,8 +5178,6 @@ async fn store_with_my_pull_request() -> (Store, tempfile::TempDir, PullRequest)
             remote: "origin".into(),
             enabled: true,
             login: Some("me".into()),
-            babysit_model: None,
-            babysit_effort: None,
             review_model: None,
             review_effort: None,
         })
@@ -5149,6 +5190,7 @@ async fn store_with_my_pull_request() -> (Store, tempfile::TempDir, PullRequest)
             number: 7,
             url: "https://github.com/acme/widgets/pull/7".into(),
             title: "Fix widgets".into(),
+            body: String::new(),
             author_login: "me".into(),
             tracked_by: "forge".into(),
             state: "open".into(),
@@ -5456,6 +5498,90 @@ async fn a_reviewed_sha_moves_once_and_a_reviewer_hears_of_its_own_threads() {
     );
 }
 
+/// A task's author keeps the request it opened (005), so the migration that
+/// says so takes away what an older release gave a request of the user's
+/// own: the session of its own, the row of a request no task opened, and the
+/// pin that session ran on. A request a task opened, a request the user
+/// reviews and its session, and every other forge setting stay.
+#[tokio::test]
+async fn the_migration_that_gives_requests_to_their_authors_keeps_task_and_review_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let old_migrations = dir.path().join("migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations")).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_name().to_string_lossy().as_ref() < "0012" {
+            std::fs::copy(entry.path(), old_migrations.join(entry.file_name())).unwrap();
+        }
+    }
+    let path = dir.path().join("old.db");
+    let db = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations.as_path())
+        .await
+        .unwrap()
+        .run(&db)
+        .await
+        .unwrap();
+    for statement in [
+        "INSERT INTO repositories (id,path,base_branch,created_at,updated_at) VALUES ('r','/work/widgets','main','2026-10-01','2026-10-01')",
+        "INSERT INTO forge_integrations (repository_id,kind,host,owner,name,remote,enabled,login,babysit_model,review_model,detected_at,updated_at) VALUES ('r','github','github.com','acme','widgets','origin',1,'me','stub:m','stub:r','2026-10-01','2026-10-01')",
+        "INSERT INTO goals (id,title,description,created_at,updated_at,model) VALUES ('g','Ship','Body','2026-10-01','2026-10-01','stub:m')",
+        "INSERT INTO tasks (id,goal_id,repo_id,title,description,branch,created_at,updated_at) VALUES ('t','g','r','Fix','Body','ariadne/fix','2026-10-01','2026-10-01')",
+        "INSERT INTO pull_requests (id,repository_id,number,url,title,author_login,tracked_by,state,draft,head_branch,head_sha,base_branch,checks,review_decision,unanswered_comments,origin_task_id,opened_at,role,ready,last_seen_at,created_at,updated_at) VALUES ('mine','r',1,'https://github.com/acme/widgets/pull/1','Fix','me','forge','open',0,'fix-1','abc','main','none','none',0,NULL,'2026-10-01','author',0,'2026-10-01','2026-10-01','2026-10-01')",
+        "INSERT INTO pull_requests (id,repository_id,number,url,title,author_login,tracked_by,state,draft,head_branch,head_sha,base_branch,checks,review_decision,unanswered_comments,origin_task_id,opened_at,role,ready,last_seen_at,created_at,updated_at) VALUES ('tasks','r',2,'https://github.com/acme/widgets/pull/2','Fix','me','forge','open',0,'fix-2','abc','main','none','none',0,'t','2026-10-01','author',0,'2026-10-01','2026-10-01','2026-10-01')",
+        "INSERT INTO pull_requests (id,repository_id,number,url,title,author_login,tracked_by,state,draft,head_branch,head_sha,base_branch,checks,review_decision,unanswered_comments,origin_task_id,opened_at,role,ready,last_seen_at,created_at,updated_at) VALUES ('review','r',3,'https://github.com/acme/widgets/pull/3','Fix','someone','forge','open',0,'fix-3','abc','main','none','none',0,NULL,'2026-10-01','reviewer',0,'2026-10-01','2026-10-01','2026-10-01')",
+        "INSERT INTO agent_sessions (id,model,status,created_at,seat,pull_request_id) VALUES ('babysit','stub:m','idle','2026-10-01','author','tasks')",
+        "INSERT INTO agent_sessions (id,model,status,created_at,seat,pull_request_id) VALUES ('reviewing','stub:r','idle','2026-10-01','reviewer','review')",
+    ] {
+        sqlx::query(statement).execute(&db).await.unwrap();
+    }
+    db.close().await;
+
+    let upgraded = Store::open(&path).await.unwrap();
+    assert!(matches!(
+        upgraded.get_pull_request("mine").await,
+        Err(StoreError::NotFound { .. })
+    ));
+    let kept = upgraded.get_pull_request("tasks").await.unwrap();
+    assert_eq!(kept.origin_task_id.as_deref(), Some("t"));
+    assert_eq!(
+        upgraded
+            .pull_request_of_task("t")
+            .await
+            .unwrap()
+            .map(|p| p.id),
+        Some("tasks".to_string())
+    );
+    assert_eq!(
+        upgraded.get_pull_request("review").await.unwrap().role,
+        "reviewer"
+    );
+    assert!(matches!(
+        upgraded.get_session("babysit").await,
+        Err(StoreError::NotFound { .. })
+    ));
+    assert_eq!(
+        upgraded
+            .get_session("reviewing")
+            .await
+            .unwrap()
+            .pull_request_id
+            .as_deref(),
+        Some("review")
+    );
+    let forge = upgraded.forge_integration("r").await.unwrap().unwrap();
+    assert!(forge.enabled);
+    assert_eq!(forge.review_model.as_deref(), Some("stub:r"));
+    upgraded.close().await;
+}
+
 /// The pull request session migration adds beside what is there: an old
 /// session keeps every value and reads no request, an old request reads no
 /// failed check and a head level with its base, and the copy taken before
@@ -5489,8 +5615,8 @@ async fn pull_request_session_migration_preserves_sessions_and_requests() {
     for statement in [
         "INSERT INTO repositories (id,path,base_branch,created_at,updated_at) VALUES ('r','/work/widgets','main','2026-10-01','2026-10-01')",
         "INSERT INTO agent_sessions (id,model,status,created_at,worktree_path) VALUES ('s','stub:m','exited','2026-10-01','/work/wt')",
-        "INSERT INTO pull_requests (id,repository_id,number,url,title,author_login,tracked_by,state,draft,head_branch,head_sha,base_branch,checks,review_decision,unanswered_comments,opened_at,role,ready,last_seen_at,created_at,updated_at) VALUES ('p','r',1,'https://github.com/acme/widgets/pull/1','Fix','me','forge','open',0,'fix','abc','main','none','none',2,'2026-10-01','author',0,'2026-10-01','2026-10-01','2026-10-01')",
-        "INSERT INTO pull_requests (id,repository_id,number,url,title,author_login,tracked_by,state,draft,head_branch,head_sha,base_branch,checks,review_decision,unanswered_comments,opened_at,role,ready,last_seen_at,created_at,updated_at) VALUES ('q','r',2,'https://github.com/acme/widgets/pull/2','Old','me','forge','merged',0,'old','abd','main','none','none',0,'2026-09-01','author',0,'2026-09-01','2026-09-01','2026-09-02')",
+        "INSERT INTO pull_requests (id,repository_id,number,url,title,author_login,tracked_by,state,draft,head_branch,head_sha,base_branch,checks,review_decision,unanswered_comments,opened_at,role,ready,last_seen_at,created_at,updated_at) VALUES ('p','r',1,'https://github.com/acme/widgets/pull/1','Fix','someone','forge','open',0,'fix','abc','main','none','none',2,'2026-10-01','reviewer',0,'2026-10-01','2026-10-01','2026-10-01')",
+        "INSERT INTO pull_requests (id,repository_id,number,url,title,author_login,tracked_by,state,draft,head_branch,head_sha,base_branch,checks,review_decision,unanswered_comments,opened_at,role,ready,last_seen_at,created_at,updated_at) VALUES ('q','r',2,'https://github.com/acme/widgets/pull/2','Old','someone','forge','merged',0,'old','abd','main','none','none',0,'2026-09-01','reviewer',0,'2026-09-01','2026-09-01','2026-09-02')",
     ] {
         sqlx::query(statement).execute(&db).await.unwrap();
     }

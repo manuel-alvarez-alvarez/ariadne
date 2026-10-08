@@ -33,6 +33,10 @@ pub struct WebhookDto {
     pub url: Option<String>,
     pub error: Option<String>,
     pub last_delivery_at: Option<String>,
+    /// Why the last fetch of the repository's requests failed, or null once
+    /// one works: what says polling works, where no hook is live.
+    #[serde(default)]
+    pub fetch_error: Option<String>,
 }
 
 /// Where the webhook tunnel stands (027).
@@ -88,10 +92,6 @@ pub struct ForgeDto {
     pub enabled: bool,
     /// The account the forge CLI is signed in as, stored on enable.
     pub login: Option<String>,
-    /// The pin of the session that watches a published request; null starts
-    /// none.
-    pub babysit_model: Option<String>,
-    pub babysit_effort: Option<String>,
     /// The pin of the session that reviews a request; null starts none.
     pub review_model: Option<String>,
     pub review_effort: Option<String>,
@@ -104,10 +104,6 @@ pub struct ForgeDto {
 pub struct ForgeUpdate {
     #[serde(default)]
     pub enabled: Option<bool>,
-    #[serde(default)]
-    pub babysit_model: Option<String>,
-    #[serde(default)]
-    pub babysit_effort: Option<String>,
     #[serde(default)]
     pub review_model: Option<String>,
     #[serde(default)]

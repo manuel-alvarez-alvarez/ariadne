@@ -231,13 +231,6 @@ async fn forge_asked(
              `origin`, or the only remote where there is no `origin`",
         ));
     };
-    (row.babysit_model, row.babysit_effort) = pinned(
-        state,
-        (row.babysit_model, row.babysit_effort),
-        update.babysit_model.as_deref(),
-        update.babysit_effort.as_deref(),
-    )
-    .await?;
     (row.review_model, row.review_effort) = pinned(
         state,
         (row.review_model, row.review_effort),
@@ -269,11 +262,7 @@ async fn forge_asked(
 }
 
 fn asks_anything(update: &ForgeUpdate) -> bool {
-    update.enabled.is_some()
-        || update.babysit_model.is_some()
-        || update.babysit_effort.is_some()
-        || update.review_model.is_some()
-        || update.review_effort.is_some()
+    update.enabled.is_some() || update.review_model.is_some() || update.review_effort.is_some()
 }
 
 /// One role's pin after a request: a model is checked as a goal's is, an

@@ -113,9 +113,9 @@ automatically.
 <td width="50%" valign="top">
 <h4>🔀 GitHub and GitLab, hands off</h4>
 Enable a registered repository's forge and Ariadne reads <code>gh</code> or <code>glab</code> for
-you: a <code>pr-babysit</code> session answers every comment and clears every check on your own
-requests, a <code>pr-reviewer</code> session posts findings by priority on the ones you are asked
-to review, and neither ever approves or merges in your name.
+you: the author of a task keeps the request it opened with <code>pr-babysit</code>, answering every
+comment and clearing every check until you merge it, a <code>pr-reviewer</code> session posts findings
+by priority on the ones you are asked to review, and none ever approves or merges in your name.
 </td>
 </tr>
 </table>

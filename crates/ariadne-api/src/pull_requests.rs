@@ -9,6 +9,9 @@ pub struct PullRequestDto {
     pub number: i64,
     pub url: String,
     pub title: String,
+    /// The request's description, as the forge holds it.
+    #[serde(default)]
+    pub body: String,
     pub author_login: String,
     pub tracked_by: String,
     pub state: String,
@@ -34,7 +37,24 @@ pub struct PullRequestDto {
     /// Whether the base branch has commits the head does not.
     #[serde(default)]
     pub behind_base: bool,
-    /// The newest session the daemon started on this request, if any.
+    /// Whether the request asks for the user's review (029).
+    #[serde(default)]
+    pub review_requested: bool,
+    /// Whether the user asked Ariadne to review this request of their own
+    /// (029).
+    #[serde(default)]
+    pub review_asked: bool,
+    /// The pin the user picked for that review.
+    #[serde(default)]
+    pub review_model: Option<String>,
+    #[serde(default)]
+    pub review_effort: Option<String>,
+    /// The skills that review loads beside `pr-reviewer`.
+    #[serde(default)]
+    pub review_skills: Vec<String>,
+    /// The newest session on this request, if any: the review session of a
+    /// request that asks for the user's review (029), or the author of the
+    /// task that opened it (005).
     #[serde(default)]
     pub session_id: Option<String>,
 }
@@ -131,15 +151,45 @@ pub struct ReviewCommentRequest {
     pub path: String,
     /// The line in the new version of the file.
     pub line: i64,
+    /// A short title of the defect; the comment opens on `[P0] Title`.
+    #[serde(default)]
+    pub title: String,
+    /// What goes wrong, and how to fix it.
     pub body: String,
     /// `P0`, `P1` or `P2`.
     pub priority: String,
 }
 
+/// Body of `PUT /v1/pull-requests/{id}/ariadne-review`: whether Ariadne
+/// reviews a request of the user's own (029).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AskReviewRequest {
+    pub asked: bool,
+    /// The model the review runs on, `agent:model`: required to ask, and
+    /// checked against the catalog as any pin is.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// The effort that model runs at; none for the agent's own.
+    #[serde(default)]
+    pub effort: Option<String>,
+    /// The skills the review loads beside `pr-reviewer`, which every review
+    /// session loads; skills a task agent is staffed on.
+    #[serde(default)]
+    pub skills: Vec<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, IntoParams)]
 pub struct PullRequestListQuery {
     pub repo: Option<String>,
+    /// `reviewer` for the requests that ask for the user's review, `author`
+    /// for the ones a task opened.
     pub role: Option<String>,
+    /// The task that opened the request.
+    pub task: Option<String>,
+    /// True for the requests that ask for the user's review (029), false
+    /// for the ones that do not.
+    pub requested: Option<bool>,
     /// Open by default; `all` includes closed and merged requests.
     pub state: Option<String>,
 }
@@ -152,12 +202,14 @@ pub struct AddPullRequestRequest {
     pub url: Option<String>,
 }
 
+/// An open request a search found that is not the user's own: a request of
+/// the user's own is kept by the task that opened it (005), and is no
+/// request to add by hand.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PullRequestMatchDto {
     pub number: i64,
     pub url: String,
     pub title: String,
     pub author_login: String,
-    pub role: String,
     pub tracked: bool,
 }

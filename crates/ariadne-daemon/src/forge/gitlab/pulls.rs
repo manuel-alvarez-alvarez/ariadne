@@ -10,6 +10,8 @@ struct Pull {
     source_project_id: Option<i64>,
     web_url: String,
     title: String,
+    #[serde(default)]
+    description: Option<String>,
     author: User,
     state: String,
     #[serde(default)]
@@ -51,6 +53,7 @@ impl Pull {
             number: self.iid,
             url: self.web_url,
             title: self.title,
+            body: self.description.unwrap_or_default(),
             author_login: self.author.username,
             state: if self.state == "opened" {
                 "open".into()
@@ -115,12 +118,17 @@ impl Gitlab {
         &self,
         repo: &str,
         login: &str,
-    ) -> Result<Vec<ForgePullRequest>, String> {
-        let mut rows = self.pulls(repo, &["--author", login]).await?;
-        rows.extend(self.pulls(repo, &["--reviewer", login]).await?);
-        rows.sort_by_key(|p| p.number);
-        rows.dedup_by_key(|p| p.number);
-        Ok(rows)
+    ) -> Result<crate::forge::pulls::Listed, String> {
+        let mut open = self.pulls(repo, &[]).await?;
+        let requested = self.pulls(repo, &["--reviewer", login]).await?;
+        let numbers = requested.iter().map(|p| p.number).collect();
+        open.extend(requested);
+        open.sort_by_key(|p| p.number);
+        open.dedup_by_key(|p| p.number);
+        Ok(crate::forge::pulls::Listed {
+            open,
+            requested: numbers,
+        })
     }
     pub(crate) async fn search_pull_requests(
         &self,

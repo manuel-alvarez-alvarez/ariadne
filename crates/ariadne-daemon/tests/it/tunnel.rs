@@ -265,12 +265,12 @@ async fn other_repository(h: &Harness) -> String {
     repo["id"].as_str().unwrap().into()
 }
 
-/// Fetches so far: each one lists authored requests once.
+/// Fetches so far: each one lists the review requests once.
 fn fetches(stub: &StubForgeCli) -> usize {
     stub.invocations()
         .iter()
         .filter(|call| call.args.starts_with(&["pr".into(), "list".into()]))
-        .filter(|call| call.args.iter().any(|a| a == "--author"))
+        .filter(|call| call.args.iter().any(|a| a.starts_with("review-requested:")))
         .count()
 }
 
@@ -293,7 +293,7 @@ fn fetches_after_the_last_hook_call(stub: &StubForgeCli) -> usize {
     calls[last..]
         .iter()
         .filter(|call| call.args.starts_with(&["pr".into(), "list".into()]))
-        .filter(|call| call.args.iter().any(|a| a == "--author"))
+        .filter(|call| call.args.iter().any(|a| a.starts_with("review-requested:")))
         .count()
 }
 

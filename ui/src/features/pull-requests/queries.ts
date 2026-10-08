@@ -13,6 +13,21 @@ export function pullRequestQueryOptions(id: string) {
   })
 }
 
+/**
+ * `GET /v1/pull-requests` under `filters`: the list the Forge screen's tab
+ * reads, kept live by the dispatcher's `pullRequests.lists()` invalidations.
+ */
+export function pullRequestsQueryOptions(filters: {
+  repo?: string
+  role?: string
+  requested?: boolean
+}) {
+  return queryOptions({
+    queryKey: qk.pullRequests.list(filters),
+    queryFn: () => unwrap(api().GET("/v1/pull-requests", { params: { query: filters } })),
+  })
+}
+
 export function useRemovePullRequest(onRemoved?: () => void) {
   const client = useQueryClient()
   return useMutation({
@@ -22,6 +37,37 @@ export function useRemovePullRequest(onRemoved?: () => void) {
       client.removeQueries({ queryKey: qk.pullRequests.detail(id) })
       void client.invalidateQueries({ queryKey: qk.pullRequests.lists() })
       onRemoved?.()
+    },
+  })
+}
+
+/**
+ * `PUT /v1/pull-requests/{id}/ariadne-review` — ask Ariadne to review a
+ * request of the user's own, or stop asking (029). The row comes back and
+ * the `pull_request_updated` event follows; both land in the cache.
+ */
+export function useAskReview() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      id,
+      ...body
+    }: {
+      id: string
+      asked: boolean
+      model?: string
+      effort?: string
+      skills?: string[]
+    }) =>
+      unwrap(
+        api().PUT("/v1/pull-requests/{id}/ariadne-review", {
+          params: { path: { id } },
+          body,
+        }),
+      ),
+    onSuccess: (row) => {
+      client.setQueryData(qk.pullRequests.detail(row.id), row)
+      void client.invalidateQueries({ queryKey: qk.pullRequests.lists() })
     },
   })
 }

@@ -107,9 +107,11 @@ async fn enable(h: &crate::common::Harness, gitlab: bool) -> String {
 }
 
 fn fetches(stub: &StubForgeCli) -> usize {
-    // Each repository fetch lists authored requests and review requests.
+    // Each repository fetch lists the open requests and the review
+    // requests; its read of the open issues is no request list.
     stub.invocations()
         .iter()
+        .filter(|call| call.args.first().is_some_and(|a| a == "pr" || a == "mr"))
         .filter(|call| call.args.get(1).is_some_and(|a| a == "list"))
         .count()
         / 2
@@ -630,8 +632,6 @@ async fn startup_checks_a_stored_hook_without_creating_another_and_fetches_once(
                 remote: "origin".into(),
                 enabled: true,
                 login: Some("me".into()),
-                babysit_model: None,
-                babysit_effort: None,
                 review_model: None,
                 review_effort: None,
             }),

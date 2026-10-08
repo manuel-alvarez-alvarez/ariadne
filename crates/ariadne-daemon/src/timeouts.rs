@@ -96,7 +96,7 @@ impl Default for Timeouts {
             transcript_poll: Duration::from_secs(15),
             session_wake: Duration::from_millis(250),
             full_reconcile: Duration::from_secs(5),
-            forge_poll: Duration::from_secs(60),
+            forge_poll: Duration::from_secs(300),
             tunnel_connect: Duration::from_secs(15),
             tunnel_retry: Duration::from_secs(1),
             forge_details: Duration::from_secs(30),
