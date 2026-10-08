@@ -48,6 +48,9 @@ enum Reason {
     /// A pull request session's `waiting_user` (026): every approval and
     /// check of the request reads green, and the merge is the user's.
     ReadyToMerge,
+    /// A reviewer pull request session's `waiting_user` (029): its review
+    /// is posted, and the approval is the user's to give.
+    ReviewPosted,
     AgentError,
     Disconnected,
     Exhausted,
@@ -63,6 +66,7 @@ impl Reason {
             Reason::WaitingInput => "waiting for input",
             Reason::WaitingUser => "waiting for you",
             Reason::ReadyToMerge => "ready to merge",
+            Reason::ReviewPosted => "review posted, approve yourself",
             Reason::AgentError => "agent error",
             Reason::Disconnected => "disconnected",
             Reason::Exhausted => "exhausted",
@@ -119,7 +123,10 @@ pub(crate) fn reason_label(reason: AttentionReason) -> &'static str {
 fn session_reason(session: &SessionDto) -> Option<Reason> {
     match session.attention_reason {
         Some(AttentionReason::WaitingUser) if session.pull_request_id.is_some() => {
-            Some(Reason::ReadyToMerge)
+            match session.seat {
+                Some(ariadne_core::Seat::Reviewer) => Some(Reason::ReviewPosted),
+                _ => Some(Reason::ReadyToMerge),
+            }
         }
         reason => reason.map(Into::into),
     }
@@ -365,6 +372,17 @@ pub(crate) mod tests {
         };
         assert_eq!(session_reason(&ready), Some(Reason::ReadyToMerge));
         assert_eq!(Reason::ReadyToMerge.label(), "ready to merge");
+        // A reviewer session waiting on the user has posted its review, and
+        // the approval is the user's to give (029).
+        let reviewed = SessionDto {
+            seat: Some(ariadne_core::Seat::Reviewer),
+            ..ready
+        };
+        assert_eq!(session_reason(&reviewed), Some(Reason::ReviewPosted));
+        assert_eq!(
+            Reason::ReviewPosted.label(),
+            "review posted, approve yourself"
+        );
 
         // Dead with nothing owed to it — the daemon deliberately raises no
         // flag for a reviewer that exited after voting — so it is not here.

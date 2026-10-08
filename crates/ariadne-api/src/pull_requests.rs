@@ -100,6 +100,40 @@ pub struct ReportPullRequestRequest {
     pub ready: Option<bool>,
     /// `open`, `merged` or `closed`.
     pub state: Option<String>,
+    /// The head a reviewer session posted its review on (029).
+    #[serde(default)]
+    pub reviewed_sha: Option<String>,
+}
+
+/// Query of `GET /v1/pull-requests/{id}/diff` (029).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, IntoParams)]
+pub struct PullRequestDiffQuery {
+    /// Read the diff from this sha to the head, not from the base.
+    pub since: Option<String>,
+}
+
+/// Body of `POST /v1/pull-requests/{id}/reviews` (029): one review, posted
+/// in the name of the integration login.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SubmitReviewRequest {
+    /// `request_changes` or `comment`. Every other event is refused.
+    pub event: String,
+    pub body: String,
+    #[serde(default)]
+    pub comments: Vec<ReviewCommentRequest>,
+}
+
+/// One inline comment of a review (029).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewCommentRequest {
+    pub path: String,
+    /// The line in the new version of the file.
+    pub line: i64,
+    pub body: String,
+    /// `P0`, `P1` or `P2`.
+    pub priority: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, IntoParams)]

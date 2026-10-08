@@ -10,8 +10,8 @@ use ariadne_core::{
 };
 
 use crate::defaults::{
-    ORCHESTRATION_SKILL, PR_BABYSIT_SKILL, default_landing_prompt, default_skill_document,
-    skill_summary,
+    ORCHESTRATION_SKILL, PR_BABYSIT_SKILL, PR_REVIEWER_SKILL, default_landing_prompt,
+    default_skill_document, skill_summary,
 };
 
 /// The typed reading of a TEXT column that holds a core enum. The accessor
@@ -137,7 +137,7 @@ impl SkillSeat {
     pub fn of(name: &str) -> Self {
         match name {
             ORCHESTRATION_SKILL => Self::Orchestrator,
-            PR_BABYSIT_SKILL => Self::PullRequest,
+            PR_BABYSIT_SKILL | PR_REVIEWER_SKILL => Self::PullRequest,
             _ => Self::Task,
         }
     }
@@ -673,6 +673,13 @@ pub struct PullRequest {
     /// When the daemon took the work of an ended request down; None while
     /// that is still owed, on an ended author row.
     pub cleaned_at: Option<String>,
+    /// The head a reviewer session last posted a review on (029).
+    pub reviewed_sha: Option<String>,
+    /// The head the request's session was last told of (029).
+    pub told_head_sha: Option<String>,
+    /// Whether the last repository fetch listed the request as asking for
+    /// the user's review (029).
+    pub review_requested: bool,
 }
 
 /// One comment on a pull request, as the daemon stored it from the forge

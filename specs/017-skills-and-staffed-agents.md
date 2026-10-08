@@ -12,6 +12,7 @@ tests:
   - crates/ariadne-daemon/tests/it/prompts.rs
   - crates/ariadne-daemon/tests/it/unreviewed_tasks.rs
   - crates/ariadne-daemon/tests/it/pull_request_sessions.rs
+  - crates/ariadne-daemon/tests/it/pull_request_reviews.rs
 ---
 
 # Skills and staffed agents
@@ -50,12 +51,12 @@ written into the system prompt (006), and the lifecycle the seats sit in
    unreviewed only when nothing can be tested whole, such as a release or a
    report. That task is approved as soon as its author asks (001). A task
    with several authors needs at least one reviewer, to pick the winner.
-4. Ariadne ships a catalog of fourteen skills, in four scopes:
+4. Ariadne ships a catalog of fifteen skills, in four scopes:
    - **orchestrate** — `orchestration`, the orchestrator's own playbook;
    - **produce** — `spec-writing`, `coding`, `debugging`, `refactoring`,
      `documentation`, `research`;
    - **review** — `code-review`, `spec-review`, `performance-review`,
-     `architecture-review`;
+     `architecture-review`, `pr-reviewer`;
    - **operate** — `migration`, `conflict-resolution`, `pr-babysit`.
 
    `pull-request` left the catalog once opening a request became the
@@ -100,10 +101,10 @@ written into the system prompt (006), and the lifecycle the seats sit in
 9. A skill still loaded by a staffed agent cannot be deleted, and an agent
    cannot be staffed on a skill nothing answers to.
 10. A skill has a seat, read off its name and stored in no column
-    (`Skill::seat`): `orchestration` is the orchestrator's, `pr-babysit` a
-    pull request session's, and every other skill a task agent's. The store
-    refuses a task agent staffed on either of the first two, and
-    `list_skills` lists neither (013). The launcher loads the orchestrator's
+    (`Skill::seat`): `orchestration` is the orchestrator's, `pr-babysit` and
+    `pr-reviewer` a pull request session's, and every other skill a task
+    agent's. The store refuses a task agent staffed on any of those three,
+    and `list_skills` lists none of them (013). The launcher loads the orchestrator's
     skill from the store for
     every orchestrator session — indexed and written to disk the way a task
     agent's skills are (006, 007) — so an edit or a reset of it reaches the
@@ -134,7 +135,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
     `babysit_model` and `babysit_effort` (025), never by an orchestrator
     (026). The author of a request of the user loads `pr-babysit`, named in
     code as the orchestrator's skill is, and indexed and written to disk the
-    way a task agent's skills are.
+    way a task agent's skills are. A reviewer pull request session runs on
+    the repository's `review_model` and `review_effort` (025), and loads
+    `pr-reviewer` the same way (029).
 
 ## Acceptance criteria
 
@@ -162,6 +165,11 @@ written into the system prompt (006), and the lifecycle the seats sit in
   (`pull_request_sessions.rs::an_open_request_of_mine_gets_one_session_on_the_babysit_pin`),
   and the skill is fed by the daemon and ends its turn
   (`defaults.rs::the_pr_babysit_skill_is_fed_by_the_daemon_and_ends_its_turn`).
+- A reviewer pull request session is staffed on the review pin and indexes
+  `pr-reviewer`
+  (`pull_request_reviews.rs::an_open_request_i_review_gets_one_session_detached_at_its_head`),
+  and the skill ranks its findings and never approves
+  (`defaults.rs::the_pr_reviewer_skill_ranks_its_findings_and_never_approves`).
 - A new shipped skill reaches an existing database on its next open, and
   nothing the database held is touched
   (`store.rs::a_new_shipped_skill_reaches_an_existing_database_on_reopen`,
@@ -218,7 +226,7 @@ written into the system prompt (006), and the lifecycle the seats sit in
 `crates/ariadne-store/skills/` (the shipped documents),
 `crates/ariadne-store/src/skills.rs`, `crates/ariadne-store/src/task_agents.rs`,
 `crates/ariadne-store/src/defaults.rs` (`BUILTIN_SKILLS`,
-`ORCHESTRATION_SKILL`, `PR_BABYSIT_SKILL`),
+`ORCHESTRATION_SKILL`, `PR_BABYSIT_SKILL`, `PR_REVIEWER_SKILL`),
 `crates/ariadne-store/src/entities.rs`
 (`Skill::seat`), `crates/ariadne-daemon/src/launcher.rs` (the orchestrator's
 skill), `crates/ariadne-core/src/lib.rs` (`Seat`).

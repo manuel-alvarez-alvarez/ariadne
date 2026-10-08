@@ -661,6 +661,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/pull-requests/{id}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The change under review, read in the reviewer session's worktree (029):
+         *     `git diff <base>...HEAD`, or `git diff <since>..HEAD` where `since` is
+         *     given. The base is the remote's copy of the base branch where the
+         *     checkout holds one, else the local branch.
+         */
+        get: operations["pull-requests_diff"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/pull-requests/{id}/report": {
         parameters: {
             query?: never;
@@ -676,6 +698,29 @@ export interface paths {
          *     session, and a `state` a human moved it to.
          */
         post: operations["pull-requests_report"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pull-requests/{id}/reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post one review of a request the user reviews, in the user's name
+         *     (029): `request_changes` or `comment`, with inline comments each led by
+         *     its priority. Any other event is refused, an approval above all: the
+         *     user gives every approval. The daemon stores what it posted as comments
+         *     of the integration login.
+         */
+        post: operations["pull-requests_submit_review"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2629,6 +2674,8 @@ export interface components {
         ReportPullRequestRequest: {
             /** @description Every required approval and check reads green. */
             ready?: boolean | null;
+            /** @description The head a reviewer session posted its review on (029). */
+            reviewed_sha?: string | null;
             /** @description `open`, `merged` or `closed`. */
             state?: string | null;
         };
@@ -2668,6 +2715,18 @@ export interface components {
              * @description Events this connection lost. Informational: they cannot be recovered.
              */
             missed: number;
+        };
+        /** @description One inline comment of a review (029). */
+        ReviewCommentRequest: {
+            body: string;
+            /**
+             * Format: int64
+             * @description The line in the new version of the file.
+             */
+            line: number;
+            path: string;
+            /** @description `P0`, `P1` or `P2`. */
+            priority: string;
         };
         /**
          * @description Where an agent sits: the orchestrator of a goal, or the author or a
@@ -2967,6 +3026,16 @@ export interface components {
             status: string;
             /** Format: double */
             total_secs: number;
+        };
+        /**
+         * @description Body of `POST /v1/pull-requests/{id}/reviews` (029): one review, posted
+         *     in the name of the integration login.
+         */
+        SubmitReviewRequest: {
+            body: string;
+            comments?: components["schemas"]["ReviewCommentRequest"][];
+            /** @description `request_changes` or `comment`. Every other event is refused. */
+            event: string;
         };
         /**
          * @description Switch a session to another model or agent: the old session ends, and a
@@ -4683,6 +4752,54 @@ export interface operations {
             };
         };
     };
+    "pull-requests_diff": {
+        parameters: {
+            query?: {
+                /** @description Read the diff from this sha to the head, not from the base. */
+                since?: string | null;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     "pull-requests_report": {
         parameters: {
             query?: never;
@@ -4719,6 +4836,61 @@ export interface operations {
                 content?: never;
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_submit_review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubmitReviewRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestCommentDto"][];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

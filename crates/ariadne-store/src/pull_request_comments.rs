@@ -131,18 +131,27 @@ impl Store {
 
     /// The comments the request's session has not been told of: by another
     /// login than `login`, in a thread nobody resolved, and not answered yet.
+    /// With `opened_by_login`, only those of a thread `login` opened: what a
+    /// reviewer session hears of (029).
     pub async fn untold_pull_request_comments(
         &self,
         pull_request_id: &str,
         login: &str,
+        opened_by_login: bool,
     ) -> Result<Vec<PullRequestComment>> {
         Ok(sqlx::query_as(
-            "SELECT * FROM pull_request_comments
-              WHERE pull_request_id = ? AND told_at IS NULL AND answered = 0 AND resolved = 0
-                AND lower(author_login) <> lower(?)
-              ORDER BY created_at, id",
+            "SELECT * FROM pull_request_comments c
+              WHERE c.pull_request_id = ? AND c.told_at IS NULL AND c.answered = 0
+                AND c.resolved = 0 AND lower(c.author_login) <> lower(?)
+                AND (? = 0 OR lower((SELECT o.author_login FROM pull_request_comments o
+                                      WHERE o.pull_request_id = c.pull_request_id
+                                        AND o.thread_id = c.thread_id
+                                      ORDER BY o.created_at, o.id LIMIT 1)) = lower(?))
+              ORDER BY c.created_at, c.id",
         )
         .bind(pull_request_id)
+        .bind(login)
+        .bind(opened_by_login)
         .bind(login)
         .fetch_all(self.r())
         .await?)
@@ -171,7 +180,8 @@ impl Store {
                              WHERE id = ? AND told_checks = ? AND told_behind_base = ?
                                AND COALESCE(told_review_decision, 'none') = ?
                                AND COALESCE(told_state, 'open') = ?
-                               AND COALESCE(told_check_state, 'none') = ?)",
+                               AND COALESCE(told_check_state, 'none') = ?
+                               AND COALESCE(told_head_sha, '') = ?)",
         )
         .bind(pull_request_id)
         .bind(serde_json::to_string(&before.checks).unwrap_or_else(|_| "[]".into()))
@@ -179,6 +189,7 @@ impl Store {
         .bind(&before.review_decision)
         .bind(&before.state)
         .bind(&before.check_state)
+        .bind(&before.head_sha)
         .fetch_one(&mut *tx)
         .await?;
         if !unmoved {
@@ -284,7 +295,8 @@ pub(crate) async fn write_told(
 ) -> Result<()> {
     sqlx::query(
         "UPDATE pull_requests SET told_checks = ?, told_behind_base = ?,
-                told_review_decision = ?, told_state = ?, told_check_state = ?
+                told_review_decision = ?, told_state = ?, told_check_state = ?,
+                told_head_sha = NULLIF(?, '')
           WHERE id = ?",
     )
     .bind(serde_json::to_string(&told.checks).unwrap_or_else(|_| "[]".into()))
@@ -292,6 +304,7 @@ pub(crate) async fn write_told(
     .bind(&told.review_decision)
     .bind(&told.state)
     .bind(&told.check_state)
+    .bind(&told.head_sha)
     .bind(pull_request_id)
     .execute(&mut **tx)
     .await?;

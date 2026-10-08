@@ -78,11 +78,16 @@ pub(crate) fn system_prompt(seat: Seat, skills: &[Skill], skills_dir: Option<&Pa
     with_skills(default_system_prompt(seat), skills, skills_dir)
 }
 
-/// The system layer of a pull request session (026): its own seat text,
-/// then the index of its skill, as [`system_prompt`] builds a task seat's.
-pub(crate) fn pull_request_system_prompt(skills: &[Skill], skills_dir: Option<&Path>) -> String {
+/// The system layer of a pull request session of `seat` (026, 029): its
+/// own seat text, then the index of its skill, as [`system_prompt`] builds a
+/// task seat's.
+pub(crate) fn pull_request_system_prompt(
+    seat: Seat,
+    skills: &[Skill],
+    skills_dir: Option<&Path>,
+) -> String {
     with_skills(
-        ariadne_store::defaults::pull_request_system_prompt(),
+        ariadne_store::defaults::pull_request_system_prompt(seat),
         skills,
         skills_dir,
     )
@@ -339,6 +344,11 @@ pub(crate) fn pull_request_briefing(
             ("head_branch", &pull.head_branch),
             ("base_branch", &pull.base_branch),
             ("login", login),
+            ("head_sha", &pull.head_sha),
+            (
+                "reviewed_sha",
+                pull.reviewed_sha.as_deref().unwrap_or("none"),
+            ),
         ],
     )
 }
@@ -587,8 +597,15 @@ mod tests {
             told_check_state: None,
             news_told_at: None,
             cleaned_at: None,
+            reviewed_sha: None,
+            told_head_sha: None,
+            review_requested: true,
         };
-        for template in [pull_request_briefing_prompt(), pull_request_news_prompt()] {
+        for template in [
+            pull_request_briefing_prompt(Seat::Author),
+            pull_request_briefing_prompt(Seat::Reviewer),
+            pull_request_news_prompt(),
+        ] {
             let mut rest = template;
             while let Some(open) = rest.find('{') {
                 let name = &rest[open + 1..rest[open..].find('}').unwrap() + open];
@@ -599,8 +616,21 @@ mod tests {
                 rest = &rest[open + 1..];
             }
         }
+        let review = pull_request_briefing(
+            pull_request_briefing_prompt(Seat::Reviewer),
+            &PullRequest {
+                reviewed_sha: Some("abd".into()),
+                ..pull.clone()
+            },
+            &repo(),
+            "/worktrees/pr-01pr",
+            "me",
+        );
+        for value in ["/worktrees/pr-01pr, at abc", "Last reviewed sha: abd"] {
+            assert!(review.contains(value), "{value}: {review}");
+        }
         let briefing = pull_request_briefing(
-            pull_request_briefing_prompt(),
+            pull_request_briefing_prompt(Seat::Author),
             &pull,
             &repo(),
             "/worktrees/pr-01pr",
@@ -622,7 +652,7 @@ mod tests {
             &["- The request is now merged.".to_string()],
         );
         assert!(news.contains("\n- The request is now merged.\n"), "{news}");
-        for text in [briefing, news] {
+        for text in [briefing, review, news] {
             assert!(!text.contains('{'), "{text}");
         }
     }

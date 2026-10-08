@@ -345,11 +345,10 @@ async fn fetch(store: &Store, cfg: &Config, handoff: &Handoff, id: &str) -> Resu
         if !still_enabled(store, &integration).await? {
             return Ok(());
         }
-        changed.push(
-            pulls::record(store, &integration, pull, "forge", None, None)
-                .await?
-                .0,
-        );
+        let row = pulls::record(store, &integration, pull, "forge", None, None)
+            .await?
+            .0;
+        changed.push(note_review_request(store, &client, &integration, row, true).await?);
     }
     for number in reads {
         if !still_enabled(store, &integration).await? {
@@ -366,11 +365,10 @@ async fn fetch(store: &Store, cfg: &Config, handoff: &Handoff, id: &str) -> Resu
         if !still_enabled(store, &integration).await? {
             return Ok(());
         }
-        changed.push(
-            pulls::record(store, &integration, pull, "forge", None, existing_id)
-                .await?
-                .0,
-        );
+        let row = pulls::record(store, &integration, pull, "forge", None, existing_id)
+            .await?
+            .0;
+        changed.push(note_review_request(store, &client, &integration, row, false).await?);
     }
     after_fetch(store, handoff, &integration, &client, &slug, &changed).await;
     Ok(())
@@ -390,13 +388,62 @@ async fn still_enabled(store: &Store, expected: &ForgeIntegration) -> Result<boo
         }))
 }
 
-/// Whether the request `row` wants a session (026): an open request of
-/// mine, in a repository whose integration names a `babysit_model`.
+/// Whether the request `row` wants a session: an open request of mine, in a
+/// repository whose integration names a `babysit_model` (026), or an open
+/// request out of draft that asks for my review, in a repository whose
+/// integration names a `review_model` (029).
 pub(crate) fn wants_session(row: &PullRequest, integration: &ForgeIntegration) -> bool {
-    row.state == "open"
-        && row.role == "author"
-        && integration.enabled
-        && integration.babysit_model.is_some()
+    let pin = match row.role.as_str() {
+        "author" => integration.babysit_model.is_some(),
+        _ => integration.review_model.is_some() && !row.draft && row.review_requested,
+    };
+    row.state == "open" && integration.enabled && pin
+}
+
+/// Record whether a request I review asks for my review (029). A list
+/// fetch that holds it says yes. An open request no list holds is asked of
+/// the forge (`ForgeClient::review_still_requested`): GitHub drops a request
+/// from the list once I reviewed it, and a request withdrawn after that is
+/// told apart only by its timeline. A request tracked by hand is left as it
+/// is, since no list ever holds it. Where the forge cannot answer, the flag
+/// stays as it was, and the next fetch asks again.
+async fn note_review_request(
+    store: &Store,
+    client: &ForgeClient,
+    integration: &ForgeIntegration,
+    row: PullRequest,
+    listed: bool,
+) -> Result<PullRequest, String> {
+    if row.role != "reviewer" || row.tracked_by != "forge" {
+        return Ok(row);
+    }
+    let requested = match listed || row.state != "open" {
+        true => listed,
+        false => {
+            let slug = format!(
+                "{}/{}/{}",
+                integration.host, integration.owner, integration.name
+            );
+            let login = integration.login.as_deref().unwrap_or_default();
+            match client
+                .review_still_requested(&slug, row.number, login)
+                .await
+            {
+                Ok(requested) => requested,
+                Err(error) => {
+                    warn!(%error, pull_request = %row.id, "cannot read whether my review is still asked");
+                    return Ok(row);
+                }
+            }
+        }
+    };
+    if row.review_requested == requested {
+        return Ok(row);
+    }
+    store
+        .set_pull_request_review_requested(&row.id, requested)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// The hand-off after a repository fetch (026): read the details of every

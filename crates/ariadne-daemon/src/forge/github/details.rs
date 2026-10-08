@@ -101,7 +101,7 @@ pub(crate) fn issue_comment_id(id: i64) -> String {
     format!("ic-{id}")
 }
 
-fn review_id(id: i64) -> String {
+pub(crate) fn review_id(id: i64) -> String {
     format!("rv-{id}")
 }
 

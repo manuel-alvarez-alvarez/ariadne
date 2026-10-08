@@ -26,6 +26,10 @@ pub(crate) enum McpSeat {
     /// `ARIADNE_PULL_REQUEST_ID` set, which works for a request of the user
     /// rather than for a task.
     PullRequestAuthor,
+    /// The reviewer seat of a pull request session (029): a session with
+    /// `ARIADNE_PULL_REQUEST_ID` set and seat `reviewer`, which reviews a
+    /// request that asks for the user's review.
+    PullRequestReviewer,
 }
 
 impl McpSeat {
@@ -35,6 +39,7 @@ impl McpSeat {
             McpSeat::Author => "author",
             McpSeat::Reviewer => "reviewer",
             McpSeat::PullRequestAuthor => "pull request author",
+            McpSeat::PullRequestReviewer => "pull request reviewer",
         }
     }
 
@@ -81,6 +86,16 @@ impl McpSeat {
                 "get_pull_request",
                 "list_comments",
                 "reply_comment",
+                "report_pull_request",
+            ],
+            // The same, with the diff and one review beside them. No tool
+            // approves: the user gives every approval (029).
+            McpSeat::PullRequestReviewer => &[
+                "get_pull_request",
+                "get_diff",
+                "list_comments",
+                "reply_comment",
+                "submit_review",
                 "report_pull_request",
             ],
         }
@@ -227,18 +242,19 @@ fn ask_rule(seat: &McpSeat) -> &'static str {
             "Work alone. Ask only where the task cannot go on without an \
              answer."
         }
-        McpSeat::PullRequestAuthor => {
+        McpSeat::PullRequestAuthor | McpSeat::PullRequestReviewer => {
             "Work alone. Ask only where the request cannot go on without \
              an answer."
         }
     }
 }
 
-/// The seat a session's environment names: `ARIADNE_SEAT`, read as the
-/// author seat of a pull request where `ARIADNE_PULL_REQUEST_ID` is set.
+/// The seat a session's environment names: `ARIADNE_SEAT`, read as a seat
+/// of a pull request where `ARIADNE_PULL_REQUEST_ID` is set.
 fn mcp_seat(seat: &str, pull_request: bool) -> Result<McpSeat> {
     Ok(match (seat, pull_request) {
         ("author", true) => McpSeat::PullRequestAuthor,
+        ("reviewer", true) => McpSeat::PullRequestReviewer,
         ("orchestrator", false) => McpSeat::Orchestrator,
         ("author", false) => McpSeat::Author,
         ("reviewer", false) => McpSeat::Reviewer,
@@ -375,15 +391,19 @@ pub(crate) async fn serve() -> Result<()> {
 pub(crate) mod tests {
     use super::*;
 
-    const SEATS: [McpSeat; 4] = [
+    const SEATS: [McpSeat; 5] = [
         McpSeat::Orchestrator,
         McpSeat::Author,
         McpSeat::Reviewer,
         McpSeat::PullRequestAuthor,
+        McpSeat::PullRequestReviewer,
     ];
 
     pub(crate) fn server_at(seat: McpSeat, client: Client) -> AriadneMcp {
-        let pull_request = seat == McpSeat::PullRequestAuthor;
+        let pull_request = matches!(
+            seat,
+            McpSeat::PullRequestAuthor | McpSeat::PullRequestReviewer
+        );
         AriadneMcp {
             client: std::sync::Arc::new(client),
             seat,
@@ -458,6 +478,17 @@ pub(crate) mod tests {
                     "report_pull_request",
                 ][..],
             ),
+            (
+                McpSeat::PullRequestReviewer,
+                &[
+                    "get_pull_request",
+                    "get_diff",
+                    "list_comments",
+                    "reply_comment",
+                    "submit_review",
+                    "report_pull_request",
+                ][..],
+            ),
         ] {
             assert_eq!(seat.tools(), tools, "the tools of the {seat:?}");
         }
@@ -486,6 +517,7 @@ pub(crate) mod tests {
             "request_review",
             "retry_task",
             "send_message",
+            "submit_review",
             "submit_verdict",
             "switch_session",
             "update_task",
@@ -508,7 +540,7 @@ pub(crate) mod tests {
             McpSeat::PullRequestAuthor
         );
         assert_eq!(mcp_seat("author", false).unwrap(), McpSeat::Author);
-        assert!(mcp_seat("reviewer", true).is_err());
+        assert!(mcp_seat("orchestrator", true).is_err());
         let mcp = server_at(
             McpSeat::PullRequestAuthor,
             Client::resolve(Some("http://127.0.0.1:1"), None),
@@ -536,6 +568,59 @@ pub(crate) mod tests {
         let instructions = mcp.get_info().instructions.expect("instructions");
         assert!(instructions.contains("pull request 01PR"), "{instructions}");
         assert!(!instructions.contains("goal"), "{instructions}");
+    }
+
+    /// A reviewer pull request session (029) is listed six tools: the
+    /// request, its diff, its comments, a reply, one review and the
+    /// report. It has no task tool and no message tool, and nothing it is
+    /// listed approves, merges or resolves.
+    #[test]
+    fn the_pull_request_reviewer_seat_lists_its_six_tools_and_no_task_or_message_tool() {
+        assert_eq!(
+            mcp_seat("reviewer", true).unwrap(),
+            McpSeat::PullRequestReviewer
+        );
+        assert_eq!(mcp_seat("reviewer", false).unwrap(), McpSeat::Reviewer);
+        let mcp = server_at(
+            McpSeat::PullRequestReviewer,
+            Client::resolve(Some("http://127.0.0.1:1"), None),
+        );
+        let mut listed: Vec<String> = mcp
+            .listed_tools()
+            .into_iter()
+            .map(|t| t.name.to_string())
+            .collect();
+        listed.sort();
+        assert_eq!(
+            listed,
+            [
+                "get_diff",
+                "get_pull_request",
+                "list_comments",
+                "reply_comment",
+                "report_pull_request",
+                "submit_review",
+            ],
+            "the pull request reviewer is listed six tools"
+        );
+        for tool in [
+            "get_task",
+            "submit_verdict",
+            "pick_winner",
+            "send_message",
+            "read_messages",
+        ] {
+            assert!(!mcp.allows(tool), "{tool} is not its tool");
+        }
+        for word in ["approve", "merge", "resolve"] {
+            assert!(listed.iter().all(|name| !name.contains(word)), "{word}");
+        }
+        let instructions = mcp.get_info().instructions.expect("instructions");
+        assert!(
+            instructions.contains("pull request reviewer session"),
+            "{instructions}"
+        );
+        assert!(instructions.contains("pull request 01PR"), "{instructions}");
     }
 
     /// The tools of the three seats together, deduplicated and sorted.

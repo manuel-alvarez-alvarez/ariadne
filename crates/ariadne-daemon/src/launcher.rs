@@ -169,7 +169,7 @@ impl Launcher {
             }
         };
         let system_prompt = match session.pull_request_id {
-            Some(_) => prompts::pull_request_system_prompt(&skills, skills_dir.as_deref()),
+            Some(_) => prompts::pull_request_system_prompt(seat, &skills, skills_dir.as_deref()),
             None => prompts::system_prompt(seat, &skills, skills_dir.as_deref()),
         };
         if session.goal_id.is_none() && session.pull_request_id.is_none() {
@@ -1895,12 +1895,23 @@ impl std::fmt::Display for HeadBranchOccupied {
 
 impl std::error::Error for HeadBranchOccupied {}
 
-/// The skill a pull request session of `seat` loads (026): `pr-babysit` for
-/// the author of the request. A reviewer's is another task's to write.
+/// The skill a pull request session of `seat` loads: `pr-babysit` for the
+/// author of the request (026), `pr-reviewer` for a requested reviewer
+/// (029).
 pub(crate) fn pull_request_skill(seat: Seat) -> Option<&'static str> {
     match seat {
         Seat::Author => Some(ariadne_store::defaults::PR_BABYSIT_SKILL),
-        Seat::Orchestrator | Seat::Reviewer => None,
+        Seat::Reviewer => Some(ariadne_store::defaults::PR_REVIEWER_SKILL),
+        Seat::Orchestrator => None,
+    }
+}
+
+/// The seat of a session on `pull`: `reviewer` where the user is a
+/// requested reviewer of it (029), else `author` (026).
+pub(crate) fn pull_request_seat(pull: &PullRequest) -> Seat {
+    match pull.role.as_str() {
+        "reviewer" => Seat::Reviewer,
+        _ => Seat::Author,
     }
 }
 
@@ -1927,6 +1938,9 @@ impl Launcher {
         pull: &PullRequest,
         repo: &Repository,
     ) -> Result<PathBuf> {
+        if pull_request_seat(pull) == Seat::Reviewer {
+            return self.review_worktree(pull, repo).await;
+        }
         let worktree = self.pull_request_worktree_path(pull);
         if worktree.is_dir() {
             return Ok(worktree);
@@ -1966,6 +1980,57 @@ impl Launcher {
         }
         self.git
             .add_worktree(&repo_path, &worktree, &pull.head_branch, &pull.base_branch)
+            .await?;
+        Ok(worktree)
+    }
+
+    /// The worktree of a request the user reviews (029), detached at the
+    /// request's head as a task reviewer's is at its branch tip: created on
+    /// the first spawn, and moved to the head on every later call. A head the
+    /// checkout lacks is fetched into `FETCH_HEAD` alone, from the head
+    /// repository of a fork, else from the repository's own remote: the head
+    /// branch may share its name with a branch of the checkout.
+    pub(crate) async fn review_worktree(
+        &self,
+        pull: &PullRequest,
+        repo: &Repository,
+    ) -> Result<PathBuf> {
+        let worktree = self.pull_request_worktree_path(pull);
+        let repo_path = PathBuf::from(&repo.path);
+        if !self.git.has_commit(&repo_path, &pull.head_sha).await? {
+            let from = pull.head_repo.clone().unwrap_or_else(|| {
+                repo.forge
+                    .as_ref()
+                    .map_or_else(|| "origin".to_string(), |forge| forge.remote.clone())
+            });
+            self.git
+                .fetch_head_of(&repo_path, &from, &pull.head_branch)
+                .await
+                .with_context(|| {
+                    format!(
+                        "fetching the head {} of pull request {}",
+                        pull.head_sha, pull.id
+                    )
+                })?;
+            if !self.git.has_commit(&repo_path, &pull.head_sha).await? {
+                anyhow::bail!(
+                    "{} of {from} does not hold the head {} of pull request {}",
+                    pull.head_branch,
+                    pull.head_sha,
+                    pull.id
+                );
+            }
+        }
+        if worktree.is_dir() {
+            self.git
+                .checkout_detached(&worktree, &pull.head_sha)
+                .await?;
+            return Ok(worktree);
+        }
+        std::fs::create_dir_all(&self.cfg.worktree_root)?;
+        self.git.prune_worktrees(&repo_path).await.ok();
+        self.git
+            .add_detached_worktree(&repo_path, &worktree, &pull.head_sha)
             .await?;
         Ok(worktree)
     }
@@ -2115,7 +2180,7 @@ impl Launcher {
             .and_then(|forge| forge.login.clone())
             .unwrap_or_default();
         prompts::pull_request_briefing(
-            ariadne_store::defaults::pull_request_briefing_prompt(),
+            ariadne_store::defaults::pull_request_briefing_prompt(pull_request_seat(pull)),
             pull,
             repo,
             &worktree.display().to_string(),

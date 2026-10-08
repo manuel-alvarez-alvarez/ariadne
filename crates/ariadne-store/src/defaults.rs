@@ -65,6 +65,11 @@ pub const ORCHESTRATION_SKILL: &str = "orchestration";
 /// staffs it. Its seat is a fact of the name, as the orchestrator's is.
 pub const PR_BABYSIT_SKILL: &str = "pr-babysit";
 
+/// The skill of a reviewer pull request session (029): the daemon loads it
+/// for every session it starts on an open request that asks for the user's
+/// review. Its seat is a fact of the name, as `pr-babysit`'s is.
+pub const PR_REVIEWER_SKILL: &str = "pr-reviewer";
+
 /// The skills a fresh database is seeded with, grouped by what they are for:
 /// orchestrating a goal, producing work, reviewing it, and operating what it
 /// produced.
@@ -73,7 +78,7 @@ pub const PR_BABYSIT_SKILL: &str = "pr-babysit";
 /// adding a kind of work Ariadne knows how to staff. One skill is nobody's to
 /// staff: [`ORCHESTRATION_SKILL`] belongs to the orchestrator's seat, and the
 /// store refuses a task agent staffed on it.
-pub const BUILTIN_SKILLS: [BuiltinSkill; 14] = [
+pub const BUILTIN_SKILLS: [BuiltinSkill; 15] = [
     // Orchestrating.
     builtin(
         ORCHESTRATION_SKILL,
@@ -111,6 +116,10 @@ pub const BUILTIN_SKILLS: [BuiltinSkill; 14] = [
     builtin(
         "architecture-review",
         include_str!("../skills/architecture-review/SKILL.md"),
+    ),
+    builtin(
+        PR_REVIEWER_SKILL,
+        include_str!("../skills/pr-reviewer/SKILL.md"),
     ),
     // Operating.
     builtin("migration", include_str!("../skills/migration/SKILL.md")),
@@ -204,17 +213,24 @@ pub fn default_prompt_text(kind: PromptKind) -> &'static str {
     }
 }
 
-/// The system prompt of a pull request session (026): what the seat owes,
-/// as [`default_system_prompt`] says it for a task's seats. The work itself
-/// is the [`PR_BABYSIT_SKILL`] document.
-pub fn pull_request_system_prompt() -> &'static str {
-    PULL_REQUEST_SYSTEM_PROMPT
+/// The system prompt of a pull request session of `seat` (026, 029): what
+/// the seat owes, as [`default_system_prompt`] says it for a task's seats.
+/// The work itself is the [`PR_BABYSIT_SKILL`] document for the author, and
+/// the [`PR_REVIEWER_SKILL`] document for a reviewer.
+pub fn pull_request_system_prompt(seat: Seat) -> &'static str {
+    match seat {
+        Seat::Reviewer => PULL_REQUEST_REVIEW_SYSTEM_PROMPT,
+        Seat::Author | Seat::Orchestrator => PULL_REQUEST_SYSTEM_PROMPT,
+    }
 }
 
-/// The briefing a pull request session starts on: the request, and the
-/// values its commands act on.
-pub fn pull_request_briefing_prompt() -> &'static str {
-    PULL_REQUEST_BRIEFING
+/// The briefing a pull request session of `seat` starts on: the request,
+/// and the values its commands act on.
+pub fn pull_request_briefing_prompt(seat: Seat) -> &'static str {
+    match seat {
+        Seat::Reviewer => PULL_REQUEST_REVIEW_BRIEFING,
+        Seat::Author | Seat::Orchestrator => PULL_REQUEST_BRIEFING,
+    }
 }
 
 /// The prompt the daemon wakes a pull request session with: one line per
@@ -226,7 +242,7 @@ pub fn pull_request_news_prompt() -> &'static str {
 /// The placeholders [`pull_request_briefing_prompt`] and
 /// [`pull_request_news_prompt`] are rendered with, by the daemon's
 /// `prompts` builders.
-pub const PULL_REQUEST_PLACEHOLDERS: [&str; 8] = [
+pub const PULL_REQUEST_PLACEHOLDERS: [&str; 10] = [
     "title",
     "url",
     "repo_path",
@@ -235,6 +251,8 @@ pub const PULL_REQUEST_PLACEHOLDERS: [&str; 8] = [
     "base_branch",
     "login",
     "news",
+    "head_sha",
+    "reviewed_sha",
 ];
 
 /// The whole procedure that ends a task on `landing`, which is what its
@@ -326,6 +344,23 @@ const PULL_REQUEST_BRIEFING: &str = r#"# Pull request: {title}
 - Your login: {login}
 
 Ariadne reads the forge and wakes you with the news of this request."#;
+
+/// Seat text of a reviewer pull request session (029).
+const PULL_REQUEST_REVIEW_SYSTEM_PROMPT: &str = r#"You review one open pull or merge request where the user is a requested reviewer. Work only in your worktree, detached at the head of the request. Commit nothing and push nothing. Ariadne wakes you with the request and its news. Review it as your skill says. Then end your turn."#;
+
+/// Initial briefing of a reviewer pull request session (029).
+const PULL_REQUEST_REVIEW_BRIEFING: &str = r#"# Review pull request: {title}
+
+{url}
+
+## Context
+- Repo: {repo_path}
+- Worktree (your cwd): {worktree_path}, at {head_sha}
+- Branch: {head_branch} onto {base_branch}
+- Your login: {login}
+- Last reviewed sha: {reviewed_sha}
+
+Review this request."#;
 
 /// What a pull request session is woken with: the news since it was last
 /// told, one line each.
@@ -672,15 +707,23 @@ mod tests {
     }
 
     /// The texts of a pull request session, named for a failure.
-    fn pull_request_texts() -> [(String, &'static str); 3] {
+    fn pull_request_texts() -> [(String, &'static str); 5] {
         [
             (
                 "pull request system prompt".into(),
-                pull_request_system_prompt(),
+                pull_request_system_prompt(Seat::Author),
             ),
             (
                 "pull request briefing".into(),
-                pull_request_briefing_prompt(),
+                pull_request_briefing_prompt(Seat::Author),
+            ),
+            (
+                "pull request review system prompt".into(),
+                pull_request_system_prompt(Seat::Reviewer),
+            ),
+            (
+                "pull request review briefing".into(),
+                pull_request_briefing_prompt(Seat::Reviewer),
             ),
             ("pull request news".into(), pull_request_news_prompt()),
         ]
@@ -958,9 +1001,10 @@ mod tests {
                 text.len()
             );
         }
+        // Raised from 700 for the reviewer's seat text and briefing (029).
         assert!(
-            pull_request <= 700,
-            "the pull request texts total {pull_request} characters, over 700"
+            pull_request <= 1300,
+            "the pull request texts total {pull_request} characters, over 1300"
         );
 
         let grand: usize = all_defaults().iter().map(|(_, text)| text.len()).sum();
@@ -1728,6 +1772,58 @@ mod tests {
         assert_eq!(SkillSeat::of(PR_BABYSIT_SKILL), SkillSeat::PullRequest);
     }
 
+    /// The reviewer session is fed by the daemon too (029), and the user
+    /// gives every approval and lands every request: the skill names no
+    /// approve, merge, resolve, sleep, poll or forge CLI. It names the three
+    /// priorities, and asks for changes only where a P0 stands.
+    #[test]
+    fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
+        let doc = default_skill_document(PR_REVIEWER_SKILL).expect("the pr-reviewer skill");
+        let words: Vec<String> = doc
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .map(str::to_lowercase)
+            .collect();
+        for gone in [
+            "approve", "merge", "resolve", "sleep", "poll", "polling", "gh", "glab",
+        ] {
+            assert!(
+                !words.iter().any(|word| word == gone),
+                "the pr-reviewer skill names {gone}"
+            );
+        }
+        let doc = unwrapped(doc);
+        for priority in ["P0: ", "P1: ", "P2: "] {
+            assert!(
+                doc.contains(priority),
+                "the pr-reviewer skill has no {priority}"
+            );
+        }
+        for sentence in ste::sentences(&doc) {
+            if sentence.contains("`request_changes`") {
+                assert!(
+                    sentence.contains("P0"),
+                    "`request_changes` without a P0: {sentence}"
+                );
+            }
+        }
+        for step in [
+            "`get_pull_request`",
+            "`get_diff`",
+            "`since`",
+            "`submit_review` once",
+            "`comment`",
+            "`report_pull_request` with `reviewed_sha`",
+            "`reply_comment` once",
+            "in the foreground",
+            "End your turn when the review is posted.",
+            "## Do not tell yourself",
+            "## Done",
+        ] {
+            assert!(doc.contains(step), "the pr-reviewer skill has no {step}");
+        }
+        assert_eq!(SkillSeat::of(PR_REVIEWER_SKILL), SkillSeat::PullRequest);
+    }
+
     /// Every rule an agent is briefed with is written down once.
     ///
     /// The briefings are one prompt system — a nudge, a resume and a wake
@@ -2265,7 +2361,9 @@ mod tests {
         // Raised from 36_600 for the pr-babysit skill (026), which a pull
         // request session loads: the daemon feeds it the forge's news, so it
         // states how to answer it and nothing of how to fetch it.
-        const TOTAL: usize = 39_200;
+        // Raised from 39_200 for the pr-reviewer skill (029), which a
+        // reviewer pull request session loads.
+        const TOTAL: usize = 42_200;
         let cap = |name: &str| match name {
             // The orchestration playbook grew a step-4 choice — one author
             // for most tasks, several where the reviewers pick a winner —
@@ -2290,6 +2388,9 @@ mod tests {
             // rules no other skill has: leave every thread to a human, and
             // reach the forge only through the session's tools.
             PR_BABYSIT_SKILL => 2600,
+            // Ten steps: the read, the checks, the hunt, the three
+            // priorities, the one review, the report and the later round.
+            PR_REVIEWER_SKILL => 3000,
             _ => 2400,
         };
 

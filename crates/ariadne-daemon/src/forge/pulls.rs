@@ -23,6 +23,28 @@ pub struct FailedCheck {
     pub conclusion: String,
 }
 
+/// One review a reviewer session posts in the name of the integration
+/// login (029): its verdict, its body and its inline comments. The forge
+/// takes no approval from it: the user gives every approval.
+#[derive(Debug, Clone)]
+pub struct ReviewDraft {
+    /// Ask for changes; else the review is a comment.
+    pub request_changes: bool,
+    pub body: String,
+    /// The head the review is on.
+    pub head_sha: String,
+    pub comments: Vec<DraftComment>,
+}
+
+/// One inline comment of a [`ReviewDraft`], its body already led by its
+/// priority.
+#[derive(Debug, Clone)]
+pub struct DraftComment {
+    pub path: String,
+    pub line: i64,
+    pub body: String,
+}
+
 /// The thread every comment on a request's conversation is in: a comment
 /// on the request and a review body are flat on both forges, so a reply to
 /// any of them answers the conversation.

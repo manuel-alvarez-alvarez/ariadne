@@ -1572,6 +1572,61 @@
         }
       }
     },
+    "/v1/pull-requests/{id}/diff": {
+      "get": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "The change under review, read in the reviewer session's worktree (029):\n`git diff <base>...HEAD`, or `git diff <since>..HEAD` where `since` is\ngiven. The base is the remote's copy of the base branch where the\ncheckout holds one, else the local branch.",
+        "operationId": "diff",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Read the diff from this sha to the head, not from the base.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/pull-requests/{id}/report": {
       "post": {
         "tags": [
@@ -1617,6 +1672,65 @@
             "description": ""
           },
           "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/pull-requests/{id}/reviews": {
+      "post": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "Post one review of a request the user reviews, in the user's name\n(029): `request_changes` or `comment`, with inline comments each led by\nits priority. Any other event is refused, an approval above all: the\nuser gives every approval. The daemon stores what it posted as comments\nof the integration login.",
+        "operationId": "submit_review",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PullRequestCommentDto"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          },
+          "502": {
             "description": ""
           }
         }
@@ -6499,6 +6613,13 @@
             ],
             "description": "Every required approval and check reads green."
           },
+          "reviewed_sha": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The head a reviewer session posted its review on (029)."
+          },
           "state": {
             "type": [
               "string",
@@ -6595,6 +6716,34 @@
             "minimum": 0
           }
         }
+      },
+      "ReviewCommentRequest": {
+        "type": "object",
+        "description": "One inline comment of a review (029).",
+        "required": [
+          "path",
+          "line",
+          "body",
+          "priority"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The line in the new version of the file."
+          },
+          "path": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "string",
+            "description": "`P0`, `P1` or `P2`."
+          }
+        },
+        "additionalProperties": false
       },
       "Seat": {
         "type": "string",
@@ -7265,6 +7414,30 @@
             "format": "double"
           }
         }
+      },
+      "SubmitReviewRequest": {
+        "type": "object",
+        "description": "Body of `POST /v1/pull-requests/{id}/reviews` (029): one review, posted\nin the name of the integration login.",
+        "required": [
+          "event",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "comments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReviewCommentRequest"
+            }
+          },
+          "event": {
+            "type": "string",
+            "description": "`request_changes` or `comment`. Every other event is refused."
+          }
+        },
+        "additionalProperties": false
       },
       "SwitchSessionRequest": {
         "type": "object",

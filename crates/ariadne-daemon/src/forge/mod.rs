@@ -399,6 +399,39 @@ impl ForgeClient {
         }
     }
 
+    /// Post one review of request `number` in the name of `login`, and
+    /// answer what it posted, as comments of that login (029). The review
+    /// asks for changes or comments; no call here approves.
+    pub async fn submit_review(
+        &self,
+        repository: &str,
+        number: i64,
+        review: &pulls::ReviewDraft,
+        login: &str,
+    ) -> Result<Vec<ariadne_store::NewPullRequestComment>, String> {
+        match self {
+            Self::Github(cli) => cli.submit_review(repository, number, review, login).await,
+            Self::Gitlab(cli) => cli.submit_review(repository, number, review, login).await,
+        }
+    }
+
+    /// Whether request `number`, which no list holds now, still asks for
+    /// the review of `login` (029). GitHub reads the request's timeline,
+    /// since it stops listing a request once the reviewer reviewed it.
+    /// GitLab keeps a reviewer listed after a review, so its list is the
+    /// whole answer, and a request it does not list asks for nothing.
+    pub async fn review_still_requested(
+        &self,
+        repository: &str,
+        number: i64,
+        login: &str,
+    ) -> Result<bool, String> {
+        match self {
+            Self::Github(cli) => cli.review_still_requested(repository, number, login).await,
+            Self::Gitlab(_) => Ok(false),
+        }
+    }
+
     pub async fn list_open_issues(
         &self,
         repository: &str,

@@ -1,0 +1,183 @@
+---
+id: reviewing-a-request
+status: current
+updated: 2026-10-08
+areas: [store, api, daemon, cli, mcp, prompts, ui]
+commits: []
+tests:
+  - crates/ariadne-daemon/tests/it/pull_request_reviews.rs
+  - crates/ariadne-daemon/src/forge/news.rs
+  - crates/ariadne-daemon/src/agents/prompts.rs
+  - crates/ariadne-store/tests/store.rs
+  - crates/ariadne-store/src/defaults.rs
+  - crates/ariadne-cli/src/commands/mcp.rs
+  - crates/ariadne-cli/src/commands/mcp/tools.rs
+  - crates/ariadne-cli/src/commands/attention.rs
+  - ui/src/features/goals/attention.test.tsx
+---
+
+# Reviewing a request
+
+Every open request where the user is a requested reviewer gets a session of
+its own. The daemon wakes it with the request and with each push. It posts
+one review in the user's name, and the approval stays the user's.
+
+## Scope
+
+In: which reviewer rows want a session, its worktree, its news, its tools and
+routes, the verdict policy, and the attention it raises.
+
+Out: the ledger, the fetch, the comments table and the PR session kind
+([026](026-pull-requests.md)); the skill catalog and staffing
+([017](017-skills-and-staffed-agents.md)); the tool surface as a whole
+([013](013-mcp-tool-surface.md)).
+
+## Behavior
+
+1. A row with role `reviewer` wants one live session when it is `open`, not a
+   draft, still asks for the user's review, and its repository's integration
+   is enabled and names a `review_model`. The daemon staffs it on
+   `review_model` and `review_effort` (025), with seat `reviewer` and the
+   `pr-reviewer` skill (017). A repository with no `review_model` starts
+   nothing, and its reviewer rows get no detail fetch.
+2. A draft starts nothing. When the request leaves draft, the next fetch
+   starts the session. A request that goes back to draft ends it.
+3. `pull_requests.review_requested` records whether the request still asks
+   for the user's review. A repository fetch that lists it says yes. For an
+   open forge-tracked row that no list holds, the fetch asks the forge
+   (`ForgeClient::review_still_requested`). GitHub stops listing a request
+   once the user reviewed it, and writes no removal event for that. So it
+   reads the request's timeline: the last review request or removed request
+   for the login decides. A review decides nothing, so a review posted after a
+   withdrawal does not ask again. GitLab keeps a reviewer listed after a review,
+   so a request it does not list asks for nothing. A review of the user's own
+   keeps nothing alive. Where the forge cannot answer, the flag stays as it
+   was. A request tracked by hand keeps the flag it has.
+4. The worktree is `worktree_root/pr-<id>`, detached at `head_sha`
+   (`Launcher::review_worktree`), as a task reviewer's is at its branch tip
+   (004). A head the checkout lacks is fetched into `FETCH_HEAD` from
+   `head_repo`, else from the integration's remote: the head branch may share
+   its name with a branch of the checkout. No local branch is written.
+5. The briefing names the repository, the worktree and its head, the
+   branches, the login, and the last `reviewed_sha`, or `none`. The seat text
+   says to work only in the detached worktree, and to commit and push
+   nothing.
+6. `pull_requests.told_head_sha` is the head the session was last told of.
+   Each start and resume writes it to `head_sha`, since the briefing names
+   that head.
+7. The news of a reviewer row (`forge/news.rs`) is a push and the replies in
+   the threads the integration login opened, each told once (026 rule 18).
+   A push is a `head_sha` that differs from `told_head_sha`. Its line names
+   the new head and the last `reviewed_sha`, and asks for a review of the
+   commits since it. Checks, the base, the review decision and the state are
+   no news to a reviewer.
+8. A push waits for the session to be idle. Then the daemon moves the
+   worktree to the new head (`checkout_detached`) and hands the news in one
+   prompt. A fetch with the same head hands nothing.
+9. A row that turns `merged` or `closed`, goes back to draft, or loses the
+   user's review request has its sessions killed and its worktree removed. No
+   branch is touched. An ended row records `cleaned_at` (026 rule 23).
+
+## Tools and routes
+
+10. The reviewer PR seat lists `get_pull_request`, `get_diff`,
+    `list_comments`, `reply_comment`, `submit_review` and
+    `report_pull_request`, and no task tool and no message tool (013). The
+    user reaches the session through its console (008).
+11. `GET /v1/pull-requests/{id}/diff?since=` answers `git diff <base>...HEAD`
+    in the session's worktree, or `git diff <since>..HEAD` where `since` is
+    given. The base is `<remote>/<base_branch>` where the checkout holds it,
+    else the local base branch. A `since` that is no hex sha of a commit in
+    the worktree answers 400.
+12. `POST /v1/pull-requests/{id}/reviews` takes `event`, `body` and
+    `comments` of `path`, `line`, `body` and `priority` (`P0`, `P1` or
+    `P2`). The daemon prefixes each inline body with its priority, as
+    `P0: …`.
+    - GitHub: one `gh api repos/<owner>/<name>/pulls/<n>/reviews` call with
+      `REQUEST_CHANGES` or `COMMENT`, the head as `commit_id`, and every
+      inline comment. The daemon then reads the review's comments back.
+    - GitLab: one discussion per inline comment on the merge request's diff,
+      through `glab api`, then one summary note. GitLab has no review verdict,
+      so the note starts with "Request changes" where the review asks for
+      changes.
+    The daemon stores the posted body and comments as comments of the
+    integration login, and answers them with 201.
+13. Every `event` but `request_changes` and `comment` answers 400 before the
+    forge sees a call. An approval is refused above all: the user gives it.
+    No route approves, merges or resolves a thread.
+14. `report_pull_request` takes `reviewed_sha`, a hex sha, on a reviewer row
+    alone. It writes `pull_requests.reviewed_sha`. A sha that moves it raises
+    `waiting_user` on the session again; the same sha raises nothing.
+15. Diffs, reviews and reports are accepted from the request's own session
+    alone. Another session, or a call with no session, gets 403.
+
+## Verdict and attention
+
+16. `pr-reviewer` asks for changes when a P0 finding exists, and comments
+    otherwise. P0 breaks behavior, data or security and must change before
+    the request lands; P1 is a defect or a missing proof that will bite; P2
+    is worth fixing.
+17. `waiting_user` on a reviewer PR session reads "review posted, approve
+    yourself" in `ariadne attention` and "Review posted, approve yourself" in
+    the desktop app. The approval and the merge stay the user's.
+
+## Acceptance criteria
+
+- An open request out of draft gets one live session on the review pin, seat
+  `reviewer`, detached at `head_sha`, with `pr-reviewer` indexed:
+  `pull_request_reviews.rs::an_open_request_i_review_gets_one_session_detached_at_its_head`.
+- A draft gets none until it leaves draft:
+  `pull_request_reviews.rs::a_draft_starts_no_review_until_it_leaves_draft`.
+- A repository with no `review_model` gets none:
+  `pull_request_reviews.rs::a_repository_with_no_review_model_starts_no_review`.
+- A push moves the worktree and hands one prompt that names the last
+  `reviewed_sha`; the same head again hands nothing:
+  `pull_request_reviews.rs::a_push_moves_the_worktree_and_is_told_once_with_the_last_reviewed_sha`,
+  `news.rs::tests::a_push_to_a_request_i_review_is_told_once_with_the_last_reviewed_sha`.
+- `get_diff` answers the diff against the base, and `since` narrows it:
+  `pull_request_reviews.rs::the_diff_reads_the_worktree_against_its_base_and_since_narrows_it`.
+- A review with `request_changes` and two comments runs the forge's review
+  call with `REQUEST_CHANGES`, both comments and their priorities, and stores
+  them; `approve` answers 400 and the forge sees no call:
+  `pull_request_reviews.rs::a_review_posts_its_findings_by_priority_and_an_approval_is_refused`.
+- A `reviewed_sha` is stored and raises `waiting_user`; a later sha raises it
+  again:
+  `pull_request_reviews.rs::a_reviewed_sha_raises_waiting_user_and_a_later_one_raises_it_again`,
+  `store.rs::a_reviewed_sha_moves_once_and_a_reviewer_hears_of_its_own_threads`.
+- A merged, closed or withdrawn request ends the session and removes the
+  worktree:
+  `pull_request_reviews.rs::a_merged_request_ends_its_review`,
+  `::a_closed_request_ends_its_review`,
+  `::a_withdrawn_review_request_ends_its_review`,
+  `::a_request_withdrawn_after_my_review_ends_its_review`,
+  `::a_review_posted_after_a_withdrawal_does_not_keep_the_review`.
+- A request the forge stops listing after my review keeps its session while
+  its timeline ends on my review:
+  `pull_request_reviews.rs::a_request_the_forge_stops_listing_after_my_review_keeps_its_review`.
+- The reviewer briefing fills every placeholder it names:
+  `prompts.rs::tests::the_pull_request_texts_fill_every_placeholder_they_name`.
+- The reviewer PR seat lists its six tools and no task or message tool, and
+  its tools call the routes of its request:
+  `mcp.rs::tests::the_pull_request_reviewer_seat_lists_its_six_tools_and_no_task_or_message_tool`,
+  `tools.rs::tests::the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request`.
+- The skill is within its caps, names the three priorities, names
+  `request_changes` only beside P0, and names no approve, merge, resolve,
+  sleep, poll, `gh` or `glab`:
+  `defaults.rs::tests::the_pr_reviewer_skill_ranks_its_findings_and_never_approves`,
+  `::skill_size_caps_hold`.
+- The attention text says the review is posted and the approval is the
+  user's:
+  `attention.rs::tests::a_session_is_reported_for_the_reason_the_ui_would_give`,
+  `attention.test.tsx::carries a reviewer pull request session's waiting_user as review posted`.
+
+## Sources
+
+`crates/ariadne-store/migrations/0011_pull_request_reviews.sql`,
+`crates/ariadne-store/skills/pr-reviewer/SKILL.md`,
+`crates/ariadne-daemon/src/scheduler/pull_requests.rs`,
+`crates/ariadne-daemon/src/forge/news.rs`, `crates/ariadne-daemon/src/forge/poll.rs`,
+`crates/ariadne-daemon/src/forge/github/reviews.rs`,
+`crates/ariadne-daemon/src/forge/gitlab/reviews.rs`,
+`crates/ariadne-daemon/src/http/pull_requests.rs`,
+`crates/ariadne-daemon/src/launcher.rs`,
+`crates/ariadne-cli/src/commands/mcp.rs`, `crates/ariadne-cli/src/commands/mcp/tools.rs`.

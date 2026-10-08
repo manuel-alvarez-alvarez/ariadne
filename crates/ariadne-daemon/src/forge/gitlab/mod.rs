@@ -5,6 +5,7 @@ mod details;
 mod hooks;
 mod open;
 mod pulls;
+mod reviews;
 
 use super::Cli;
 mod issues;

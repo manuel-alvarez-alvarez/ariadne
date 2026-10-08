@@ -8,6 +8,9 @@
 //! change is told once (009 rule 4): a comment carries `told_at`, and the row
 //! carries a told mark for the rest. The ACP driver writes both right before
 //! the prompt goes out, and gives them back where it never did (018).
+//!
+//! A request the user reviews hears of less (029): a push to its head, and
+//! a reply in a thread its session opened.
 use ariadne_store::{PullRequest, PullRequestComment, PullRequestTold, Store};
 
 use super::pulls::FailedCheck;
@@ -59,8 +62,47 @@ pub fn of(pull: &PullRequest, untold: &[PullRequestComment]) -> News {
             first_line(&comment.body)
         ));
     }
-    let failed: Vec<FailedCheck> = serde_json::from_str(&pull.failed_checks).unwrap_or_default();
     let told_checks: Vec<String> = serde_json::from_str(&pull.told_checks).unwrap_or_default();
+    let check_state = pull.told_check_state.as_deref().unwrap_or("none");
+    let decision = pull.told_review_decision.as_deref().unwrap_or("none");
+    let state = pull.told_state.as_deref().unwrap_or("open");
+    let before = PullRequestTold {
+        checks: told_checks.clone(),
+        behind_base: pull.told_behind_base,
+        review_decision: decision.to_string(),
+        state: state.to_string(),
+        check_state: check_state.to_string(),
+        head_sha: pull.told_head_sha.clone().unwrap_or_default(),
+    };
+    // A request the user reviews is told of a push and of the replies in
+    // its own threads alone (029): its checks and its state are the
+    // author's to watch.
+    if pull.role == "reviewer" {
+        if pull
+            .told_head_sha
+            .as_deref()
+            .is_some_and(|told| told != pull.head_sha)
+        {
+            let reviewed = match &pull.reviewed_sha {
+                Some(sha) => format!("The last sha you reviewed is {sha}."),
+                None => "You reviewed no sha yet.".to_string(),
+            };
+            lines.push(format!(
+                "- New commits: the head moved to {}. {reviewed} Review the commits since it.",
+                pull.head_sha
+            ));
+        }
+        return News {
+            lines,
+            comment_ids: untold.iter().map(|c| c.id.clone()).collect(),
+            told: PullRequestTold {
+                head_sha: pull.head_sha.clone(),
+                ..before.clone()
+            },
+            before,
+        };
+    }
+    let failed: Vec<FailedCheck> = serde_json::from_str(&pull.failed_checks).unwrap_or_default();
     for check in failed.iter().filter(|c| !told_checks.contains(&c.name)) {
         let at = match check.url.is_empty() {
             true => String::new(),
@@ -77,18 +119,15 @@ pub fn of(pull: &PullRequest, untold: &[PullRequestComment]) -> News {
     // What a ready report is decided on: approvals and the rolled-up checks.
     // Checks that finished green after an approval, or went back to pending
     // after a ready report, are news, since the session cannot look itself.
-    let check_state = pull.told_check_state.as_deref().unwrap_or("none");
     if pull.checks != check_state {
         lines.push(format!("- The checks now read {}.", pull.checks));
     }
-    let decision = pull.told_review_decision.as_deref().unwrap_or("none");
     if pull.review_decision != decision {
         lines.push(format!(
             "- The review decision is now {}.",
             pull.review_decision
         ));
     }
-    let state = pull.told_state.as_deref().unwrap_or("open");
     if pull.state != state {
         lines.push(format!("- The request is now {}.", pull.state));
     }
@@ -103,21 +142,19 @@ pub fn of(pull: &PullRequest, untold: &[PullRequestComment]) -> News {
             review_decision: pull.review_decision.clone(),
             state: pull.state.clone(),
             check_state: pull.checks.clone(),
+            head_sha: before.head_sha.clone(),
         },
-        before: PullRequestTold {
-            checks: told_checks,
-            behind_base: pull.told_behind_base,
-            review_decision: decision.to_string(),
-            state: state.to_string(),
-            check_state: check_state.to_string(),
-        },
+        before,
     }
 }
 
 /// The news of the request `pull`, read off the store: `login` is the
 /// integration's, whose own comments are no news.
 pub async fn untold(store: &Store, pull: &PullRequest, login: &str) -> ariadne_store::Result<News> {
-    let untold = store.untold_pull_request_comments(&pull.id, login).await?;
+    let reviewer = pull.role == "reviewer";
+    let untold = store
+        .untold_pull_request_comments(&pull.id, login, reviewer)
+        .await?;
     Ok(of(pull, &untold))
 }
 
@@ -174,6 +211,9 @@ mod tests {
             told_check_state: None,
             news_told_at: None,
             cleaned_at: None,
+            reviewed_sha: None,
+            told_head_sha: None,
+            review_requested: true,
         }
     }
 
@@ -185,6 +225,7 @@ mod tests {
             told_review_decision: Some(news.told.review_decision.clone()),
             told_state: Some(news.told.state.clone()),
             told_check_state: Some(news.told.check_state.clone()),
+            told_head_sha: Some(news.told.head_sha.clone()).filter(|sha| !sha.is_empty()),
             ..pull.clone()
         }
     }
@@ -247,6 +288,41 @@ mod tests {
             ],
             "a check that fails again and a head behind again are news again"
         );
+    }
+
+    /// A request I review is told a push once, by the sha it last
+    /// reviewed, and nothing of its checks or its review decision (029).
+    #[test]
+    fn a_push_to_a_request_i_review_is_told_once_with_the_last_reviewed_sha() {
+        let pushed = PullRequest {
+            role: "reviewer".into(),
+            told_head_sha: Some("abc".into()),
+            head_sha: "def".into(),
+            reviewed_sha: Some("abc".into()),
+            failed_checks: r#"[{"name":"lint","url":"","conclusion":"failure"}]"#.into(),
+            review_decision: "changes_requested".into(),
+            ..pull()
+        };
+        let news = of(&pushed, &[]);
+        assert_eq!(
+            news.lines,
+            [
+                "- New commits: the head moved to def. The last sha you reviewed is abc. \
+              Review the commits since it."
+            ]
+        );
+        assert!(
+            of(&told(&pushed, &news), &[]).is_empty(),
+            "a push is told once"
+        );
+
+        let unbriefed = PullRequest {
+            told_head_sha: None,
+            ..pushed
+        };
+        let news = of(&unbriefed, &[]);
+        assert!(news.is_empty(), "a head no session was told of is no news");
+        assert_eq!(news.recovered().map(|t| t.head_sha.as_str()), Some("def"));
     }
 
     /// An approval that lands while checks still run is told, and so is the

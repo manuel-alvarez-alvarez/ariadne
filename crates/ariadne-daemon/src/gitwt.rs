@@ -265,6 +265,37 @@ impl GitManager {
         Ok(())
     }
 
+    /// Whether `reference` names a commit the repository holds: the head of
+    /// a request under review, before it is fetched (029). A reference git
+    /// cannot read as one is `false`.
+    pub(crate) async fn has_commit(&self, repo: &Path, reference: &str) -> Result<bool> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["rev-parse", "--verify", "--quiet", "--end-of-options"])
+            .arg(format!("{reference}^{{commit}}"))
+            .output()
+            .await
+            .context("git could not start")?;
+        Ok(output.status.success())
+    }
+
+    /// Fetch `branch` from `from` — a remote name or a clone URL — into
+    /// `FETCH_HEAD` alone: the head of a request the user reviews, which may
+    /// share its name with a branch of the checkout (029).
+    pub(crate) async fn fetch_head_of(&self, repo: &Path, from: &str, branch: &str) -> Result<()> {
+        self.git(repo, &["fetch", from, &format!("refs/heads/{branch}")])
+            .await?;
+        Ok(())
+    }
+
+    /// The diff of `HEAD` in `worktree` from the commit `since`:
+    /// `git diff <since>..HEAD` (029).
+    pub(crate) async fn diff_since(&self, worktree: &Path, since: &str) -> Result<String> {
+        self.git(worktree, &["diff", &format!("{since}..HEAD")])
+            .await
+    }
+
     /// Delete `branch` on `remote`: the goal branch a merged request took
     /// onto its base (026). A branch the remote no longer holds is already
     /// what was asked for.

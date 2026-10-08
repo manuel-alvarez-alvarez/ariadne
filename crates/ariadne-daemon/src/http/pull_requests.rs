@@ -5,10 +5,12 @@ use super::{
     convert::{pull_request_comment_dto, pull_request_dto_of},
     error::{ApiError, ApiResult, Json},
 };
+use crate::forge::pulls::{DraftComment, ReviewDraft};
 use crate::forge::{ForgeClient, PullRequestRef, pulls};
 use ariadne_api::pull_requests::{
-    AddPullRequestRequest, PullRequestCommentDto, PullRequestCommentQuery, PullRequestDto,
-    PullRequestListQuery, PullRequestMatchDto, ReplyCommentRequest, ReportPullRequestRequest,
+    AddPullRequestRequest, PullRequestCommentDto, PullRequestCommentQuery, PullRequestDiffQuery,
+    PullRequestDto, PullRequestListQuery, PullRequestMatchDto, ReplyCommentRequest,
+    ReportPullRequestRequest, SubmitReviewRequest,
 };
 use ariadne_core::AttentionReason;
 use ariadne_store::{
@@ -371,6 +373,165 @@ pub(super) async fn report(
     if let Some(next) = req.state.as_deref() {
         pull = state.store.set_pull_request_state(&pull.id, next).await?;
     }
+    // A review posted on a new head is the user's to act on: the approval
+    // is theirs to give (029). The same sha again raises nothing.
+    if let Some(sha) = req.reviewed_sha.as_deref() {
+        if pull.role != "reviewer" {
+            return Err(ApiError::bad_request(
+                "only a request you review takes a reviewed_sha",
+            ));
+        }
+        if !is_sha(sha) {
+            return Err(ApiError::bad_request(format!("{sha} is no commit sha")));
+        }
+        let (row, moved) = state.store.set_pull_request_reviewed(&pull.id, sha).await?;
+        pull = row;
+        if moved {
+            if session.attention_reason() == Some(AttentionReason::WaitingUser) {
+                state.store.clear_session_attention(&session.id).await?;
+            }
+            state
+                .store
+                .set_session_attention(&session.id, AttentionReason::WaitingUser)
+                .await?;
+        }
+    }
     state.notify_scheduler_pull_request(&pull.id);
     Ok(Json(pull_request_dto_of(&state.store, pull).await?))
+}
+
+/// Whether `text` reads as a commit sha, whole or abbreviated: what a
+/// reviewer session names a head by, and nothing git would read as an
+/// option.
+fn is_sha(text: &str) -> bool {
+    (4..=64).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// The change under review, read in the reviewer session's worktree (029):
+/// `git diff <base>...HEAD`, or `git diff <since>..HEAD` where `since` is
+/// given. The base is the remote's copy of the base branch where the
+/// checkout holds one, else the local branch.
+#[utoipa::path(get, path = "/v1/pull-requests/{id}/diff", tag = "pull-requests",
+    params(("id" = String, Path), PullRequestDiffQuery),
+    responses((status = 200, content_type = "text/plain", body = String), (status = 400), (status = 403), (status = 404), (status = 409)))]
+pub(super) async fn diff(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<PullRequestDiffQuery>,
+    headers: HeaderMap,
+) -> ApiResult<String> {
+    let pull = state.store.get_pull_request(&id).await?;
+    let session = own_session(&state, &headers, &pull).await?;
+    let worktree = session
+        .worktree_path
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_dir())
+        .ok_or_else(|| ApiError::conflict("the session has no worktree"))?;
+    let git = &state.launcher.git;
+    let failed = |e: anyhow::Error| ApiError::conflict(format!("{e:#}"));
+    if let Some(since) = q.since.as_deref() {
+        if !is_sha(since) || !git.has_commit(&worktree, since).await.map_err(failed)? {
+            return Err(ApiError::bad_request(format!(
+                "{since} names no commit of the worktree"
+            )));
+        }
+        return git.diff_since(&worktree, since).await.map_err(failed);
+    }
+    let repo = state.store.get_repository(&pull.repository_id).await?;
+    let remote = repo
+        .forge
+        .as_ref()
+        .map_or_else(|| "origin".to_string(), |forge| forge.remote.clone());
+    let tracking = format!("{remote}/{}", pull.base_branch);
+    let base = match git
+        .has_commit(&worktree, &format!("refs/remotes/{tracking}"))
+        .await
+        .map_err(failed)?
+    {
+        true => tracking,
+        false => pull.base_branch.clone(),
+    };
+    git.diff(&worktree, &base, "HEAD").await.map_err(failed)
+}
+
+/// Post one review of a request the user reviews, in the user's name
+/// (029): `request_changes` or `comment`, with inline comments each led by
+/// its priority. Any other event is refused, an approval above all: the
+/// user gives every approval. The daemon stores what it posted as comments
+/// of the integration login.
+#[utoipa::path(post, path = "/v1/pull-requests/{id}/reviews", tag = "pull-requests",
+    params(("id" = String, Path)),
+    request_body = SubmitReviewRequest,
+    responses((status = 201, body = [PullRequestCommentDto]), (status = 400), (status = 403), (status = 404), (status = 409), (status = 502)))]
+pub(super) async fn submit_review(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(req): Json<SubmitReviewRequest>,
+) -> ApiResult<(StatusCode, Json<Vec<PullRequestCommentDto>>)> {
+    let pull = state.store.get_pull_request(&id).await?;
+    own_session(&state, &headers, &pull).await?;
+    let request_changes = match req.event.as_str() {
+        "request_changes" => true,
+        "comment" => false,
+        other => {
+            return Err(ApiError::bad_request(format!(
+                "a review is request_changes or comment, not {other}: the user gives every approval"
+            )));
+        }
+    };
+    if pull.role != "reviewer" {
+        return Err(ApiError::conflict(
+            "only a request you review takes a review",
+        ));
+    }
+    let body = req.body.trim().to_string();
+    if body.is_empty() && req.comments.is_empty() {
+        return Err(ApiError::bad_request("a review needs a body or a comment"));
+    }
+    let mut comments = Vec::with_capacity(req.comments.len());
+    for comment in req.comments {
+        if !matches!(comment.priority.as_str(), "P0" | "P1" | "P2") {
+            return Err(ApiError::bad_request(format!(
+                "a priority is P0, P1 or P2, not {}",
+                comment.priority
+            )));
+        }
+        if comment.path.trim().is_empty() || comment.line < 1 || comment.body.trim().is_empty() {
+            return Err(ApiError::bad_request(
+                "a comment needs a path, a line from 1 and a body",
+            ));
+        }
+        comments.push(DraftComment {
+            path: comment.path,
+            line: comment.line,
+            body: format!("{}: {}", comment.priority, comment.body.trim()),
+        });
+    }
+    let forge = integration(&state, &pull.repository_id).await?;
+    let login = forge.login.clone().unwrap_or_default();
+    let draft = ReviewDraft {
+        request_changes,
+        body,
+        head_sha: pull.head_sha.clone(),
+        comments,
+    };
+    let posted = ForgeClient::for_repository(&state.launcher.cfg, &forge)
+        .submit_review(&slug(&forge), pull.number, &draft, &login)
+        .await
+        .map_err(forge_error)?;
+    state
+        .store
+        .upsert_pull_request_comments(&pull.id, &posted, &login)
+        .await?;
+    let stored = state
+        .store
+        .list_pull_request_comments(&pull.id, false, &login)
+        .await?
+        .into_iter()
+        .filter(|c| posted.iter().any(|p| p.forge_id == c.forge_id))
+        .map(pull_request_comment_dto)
+        .collect();
+    state.notify_scheduler_pull_request(&pull.id);
+    Ok((StatusCode::CREATED, Json(stored)))
 }

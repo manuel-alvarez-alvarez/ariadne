@@ -42,7 +42,7 @@ Every open request of the user gets a session of its own, fed by the daemon.
 In: request identity, persistence, forge reads, fetch modes, HTTP, events, CLI, and desktop views.
 Also in: the request's session, its comments and checks, the detail fetch, the news, the tools, and the cleanup.
 
-Out: webhook delivery, and sessions on requests where the user is a reviewer (a later task).
+Out: webhook delivery, and sessions on requests where the user is a reviewer ([029](029-reviewing-a-request.md)).
 Forge detection and integration settings belong to [025](025-forge-integration.md).
 Task completion belongs to [005](005-how-a-task-ends.md).
 
@@ -115,7 +115,7 @@ Task completion belongs to [005](005-how-a-task-ends.md).
     A session whose agent went away is resumed on its own row, as an author's is (009 rule 23), and is briefed again.
     A last launch that died on arrival spawns a fresh row, within the spawn-retry budget.
     A head branch checked out in another worktree is waited for: no row is written and no attempt is spent until it is free.
-    Rows with role `reviewer` belong to a later task: nothing here starts, tells or takes down anything of them.
+    Rows with role `reviewer` follow [029](029-reviewing-a-request.md): rules 9 to 11 and 23 to 25 start, tell and take down nothing of them.
 12. The scheduler reconciles requests on every full pass, on every request change, and on every event of a request's session (`scheduler/pull_requests.rs`).
     An idle request session waits on the forge: it is never nudged, flagged or relaunched for sitting idle (009 rule 41).
 

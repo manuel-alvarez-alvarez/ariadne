@@ -66,6 +66,7 @@ mod transcript_usage;
 mod unknown_fields;
 mod unreviewed_tasks;
 
+mod pull_request_reviews;
 mod pull_request_sessions;
 mod pull_requests;
 

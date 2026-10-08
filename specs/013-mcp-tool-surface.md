@@ -42,7 +42,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    orchestrator's user answers in the console, one question at a time, and the
    orchestrator then waits; an author or reviewer works alone, and asks only
    where the task cannot go on without the answer, and a pull request author
-   where the request cannot. The rule names no channel —
+   or reviewer where the request cannot. The rule names no channel —
    the seat's own playbook already says how to ask.
 4. Tools are filtered by seat both in the listing and on the call, so a tool a
    seat may not use is one it never sees:
@@ -86,6 +86,16 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      naming it in `McpSeat::PullRequestAuthor`'s list beside its `#[tool]`
      in `tools.rs`; each one calls a route under `/v1/pull-requests/{id}`
      that the daemon accepts from the request's own session alone.
+   - **pull request reviewer** — a session with `ARIADNE_PULL_REQUEST_ID`
+     set and seat `reviewer` (029): `get_pull_request`, `get_diff` (on a
+     request it reads `/v1/pull-requests/{id}/diff`, and `since` narrows it
+     to the commits after that sha), `list_comments`, `reply_comment`,
+     `submit_review` (an `event` of `request_changes` or `comment`, a
+     `body`, and `comments` of `path`, `line`, `body` and a `priority` of
+     `P0`, `P1` or `P2`) and `report_pull_request` (which takes
+     `reviewed_sha` beside `ready` and `state`). Six tools, and no task tool
+     and no message tool, as for the pull request author. No tool approves,
+     merges or resolves: the user does.
 5. A call to a tool outside the seat's list is refused by name rather than
    forwarded.
 6. A tool with no task in scope takes the session's own task, and refuses with
@@ -157,6 +167,11 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`mcp.rs::the_pull_request_author_seat_lists_its_four_tools_and_no_task_or_message_tool`);
   its tools call the routes of the session's request
   (`tools.rs::the_pull_request_tools_call_the_routes_of_the_sessions_request`).
+- The pull request reviewer seat lists its six tools and no task or message
+  tool
+  (`mcp.rs::the_pull_request_reviewer_seat_lists_its_six_tools_and_no_task_or_message_tool`);
+  its diff, review and report call the routes of the session's request
+  (`tools.rs::the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request`).
 - A pull request session's MCP server is told the request and no goal or
   task
   (`adapters.rs::a_pull_request_session_tells_its_mcp_server_the_request_and_no_goal`).

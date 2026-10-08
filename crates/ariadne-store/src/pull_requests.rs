@@ -36,6 +36,8 @@ pub struct PullRequestTold {
     /// The rolled-up state of the checks: `pending`, `success`, `failure`
     /// or `none`. A change of it is what a ready report is decided on.
     pub check_state: String,
+    /// The head a reviewer session was told of (029); empty where none was.
+    pub head_sha: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -229,6 +231,59 @@ impl Store {
             .execute(self.w())
             .await?;
         Ok(())
+    }
+
+    /// Point the told head of a reviewer row at `head_sha`: what its
+    /// session is briefed on when it starts, so only a later push is news
+    /// (029).
+    pub async fn set_pull_request_told_head(&self, id: &str, head_sha: &str) -> Result<()> {
+        sqlx::query("UPDATE pull_requests SET told_head_sha = ? WHERE id = ?")
+            .bind(head_sha)
+            .bind(id)
+            .execute(self.w())
+            .await?;
+        Ok(())
+    }
+
+    /// Record whether the last repository fetch listed the request as one
+    /// that asks for the user's review (029). Answers the row.
+    pub async fn set_pull_request_review_requested(
+        &self,
+        id: &str,
+        requested: bool,
+    ) -> Result<PullRequest> {
+        sqlx::query_as("UPDATE pull_requests SET review_requested = ? WHERE id = ? RETURNING *")
+            .bind(requested)
+            .bind(id)
+            .fetch_optional(self.w())
+            .await?
+            .ok_or_else(|| not_found("pull_request", id))
+    }
+
+    /// Record the head a reviewer session posted its review on (029).
+    /// Answers the row, and whether the sha moved.
+    pub async fn set_pull_request_reviewed(
+        &self,
+        id: &str,
+        reviewed_sha: &str,
+    ) -> Result<(PullRequest, bool)> {
+        let changed: Option<PullRequest> = sqlx::query_as(
+            "UPDATE pull_requests SET reviewed_sha = ?, updated_at = ?
+              WHERE id = ? AND reviewed_sha IS NOT ? RETURNING *",
+        )
+        .bind(reviewed_sha)
+        .bind(now())
+        .bind(id)
+        .bind(reviewed_sha)
+        .fetch_optional(self.w())
+        .await?;
+        match changed {
+            Some(row) => {
+                self.publish(Change::PullRequestUpdated(row.clone()));
+                Ok((row, true))
+            }
+            None => Ok((self.get_pull_request(id).await?, false)),
+        }
     }
 
     /// Set whether the request's session reports it ready to merge. Answers

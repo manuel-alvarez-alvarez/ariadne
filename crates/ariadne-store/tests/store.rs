@@ -5107,7 +5107,7 @@ async fn unanswered_comments_count_the_threads_another_login_spoke_last_in() {
     assert_eq!(updated.unanswered_comments, 1);
 
     let untold = store
-        .untold_pull_request_comments(&row.id, "me")
+        .untold_pull_request_comments(&row.id, "me", false)
         .await
         .unwrap();
     assert_eq!(
@@ -5144,6 +5144,7 @@ async fn unanswered_comments_count_the_threads_another_login_spoke_last_in() {
         review_decision: "approved".into(),
         state: "open".into(),
         check_state: "failure".into(),
+        head_sha: String::new(),
     };
     let before = PullRequestTold {
         checks: Vec::new(),
@@ -5151,6 +5152,7 @@ async fn unanswered_comments_count_the_threads_another_login_spoke_last_in() {
         review_decision: "none".into(),
         state: "open".into(),
         check_state: "none".into(),
+        head_sha: String::new(),
     };
     // A claim whose prompt never went out is given back whole: the comment
     // is untold again and the row takes back the mark it had.
@@ -5182,7 +5184,7 @@ async fn unanswered_comments_count_the_threads_another_login_spoke_last_in() {
     assert!(!released.told_behind_base);
     assert_eq!(
         store
-            .untold_pull_request_comments(&row.id, "me")
+            .untold_pull_request_comments(&row.id, "me", false)
             .await
             .unwrap()
             .len(),
@@ -5218,7 +5220,7 @@ async fn unanswered_comments_count_the_threads_another_login_spoke_last_in() {
     assert_eq!(again.unanswered_comments, 1);
     assert!(
         store
-            .untold_pull_request_comments(&row.id, "me")
+            .untold_pull_request_comments(&row.id, "me", false)
             .await
             .unwrap()
             .is_empty(),
@@ -5290,6 +5292,69 @@ async fn a_pull_request_reports_ready_once_and_takes_its_state() {
         store.set_pull_request_state(&row.id, "gone").await,
         Err(StoreError::Invalid(_))
     ));
+}
+
+/// A reviewer row keeps the head its session last reviewed, and says once
+/// whether that moved (029). A reviewer session hears only of the threads
+/// its login opened.
+#[tokio::test]
+async fn a_reviewed_sha_moves_once_and_a_reviewer_hears_of_its_own_threads() {
+    let (store, _dir, row) = store_with_my_pull_request().await;
+    assert!(row.review_requested, "a new row asks for a review");
+    assert_eq!(row.reviewed_sha, None);
+    let (reviewed, moved) = store
+        .set_pull_request_reviewed(&row.id, "abc")
+        .await
+        .unwrap();
+    assert!(moved);
+    assert_eq!(reviewed.reviewed_sha.as_deref(), Some("abc"));
+    let (_, moved) = store
+        .set_pull_request_reviewed(&row.id, "abc")
+        .await
+        .unwrap();
+    assert!(!moved, "the same sha moves nothing");
+    let (_, moved) = store
+        .set_pull_request_reviewed(&row.id, "def")
+        .await
+        .unwrap();
+    assert!(moved, "a later sha moves it again");
+    let withdrawn = store
+        .set_pull_request_review_requested(&row.id, false)
+        .await
+        .unwrap();
+    assert!(!withdrawn.review_requested);
+
+    let fetched = [
+        comment("1", "mine", "me", "2026-10-02T00:00:00Z"),
+        comment("1r", "mine", "alice", "2026-10-03T00:00:00Z"),
+        comment("2", "theirs", "bob", "2026-10-02T00:00:00Z"),
+    ];
+    store
+        .upsert_pull_request_comments(&row.id, &fetched, "me")
+        .await
+        .unwrap();
+    let forge_ids = |comments: Vec<ariadne_store::PullRequestComment>| -> Vec<String> {
+        comments.into_iter().map(|c| c.forge_id).collect()
+    };
+    assert_eq!(
+        forge_ids(
+            store
+                .untold_pull_request_comments(&row.id, "me", true)
+                .await
+                .unwrap()
+        ),
+        ["1r"],
+        "a reviewer hears of the reply in its own thread alone"
+    );
+    assert_eq!(
+        forge_ids(
+            store
+                .untold_pull_request_comments(&row.id, "me", false)
+                .await
+                .unwrap()
+        ),
+        ["2", "1r"]
+    );
 }
 
 /// The pull request session migration adds beside what is there: an old

@@ -80,11 +80,13 @@ export function SessionStatusBadge({
 /**
  * Why a session is waiting on a person: the `attention_reason` the daemon
  * raised for it, plus `ready_to_merge` — the name a pull request session's
- * `waiting_user` goes by (026), since what it waits on is the user's merge.
- * Named rather than used bare because the attention strip has task reasons of
- * its own under the same word.
+ * `waiting_user` goes by (026), since what it waits on is the user's merge —
+ * and `review_posted`, the name it goes by on a reviewer's session (029),
+ * since what that waits on is the user's approval. Named rather than used
+ * bare because the attention strip has task reasons of its own under the
+ * same word.
  */
-export type SessionAttention = AttentionReason | "ready_to_merge"
+export type SessionAttention = AttentionReason | "ready_to_merge" | "review_posted"
 
 interface SessionAttentionMeta {
   label: string
@@ -134,6 +136,12 @@ export const SESSION_ATTENTION_META: Record<SessionAttention, SessionAttentionMe
     badge: "bg-status-warn-soft text-status-warn-fg",
     border: "border-status-warn/40",
   },
+  review_posted: {
+    label: "Review posted, approve yourself",
+    hint: "The review of the pull request is posted: the approval is yours to give.",
+    badge: "bg-status-warn-soft text-status-warn-fg",
+    border: "border-status-warn/40",
+  },
   agent_error: {
     label: "Agent error",
     hint: "The agent reported an error.",
@@ -162,14 +170,15 @@ export const SESSION_ATTENTION_META: Record<SessionAttention, SessionAttentionMe
 
 /**
  * The reason a session's badge shows: the daemon's own, with a pull request
- * session's `waiting_user` read as `ready_to_merge` — the CLI's `ariadne
- * attention` words it the same way.
+ * session's `waiting_user` read as `ready_to_merge`, or as `review_posted`
+ * on a reviewer's — the CLI's `ariadne attention` words it the same way.
  */
 export function shownAttention(
-  session: Pick<SessionDto, "attention_reason" | "pull_request_id">,
+  session: Pick<SessionDto, "attention_reason" | "pull_request_id" | "seat">,
 ): SessionAttention | null {
   const reason = session.attention_reason ?? null
-  return reason === "waiting_user" && session.pull_request_id ? "ready_to_merge" : reason
+  if (reason !== "waiting_user" || !session.pull_request_id) return reason
+  return session.seat === "reviewer" ? "review_posted" : "ready_to_merge"
 }
 
 /**

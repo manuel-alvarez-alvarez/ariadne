@@ -137,6 +137,7 @@ impl AppState {
         issues::list, issues::get,
         pull_requests::list, pull_requests::get, pull_requests::add, pull_requests::delete, pull_requests::refresh, pull_requests::search,
         pull_requests::comments, pull_requests::reply, pull_requests::report,
+        pull_requests::diff, pull_requests::submit_review,
         permissions::get, permissions::update, permissions::refresh,
         permissions::list_learned, permissions::get_learned, permissions::delete_learned,
         permissions::update_learned,
@@ -216,6 +217,11 @@ pub fn router(state: AppState) -> Router {
             post(pull_requests::reply),
         )
         .route("/v1/pull-requests/{id}/report", post(pull_requests::report))
+        .route("/v1/pull-requests/{id}/diff", get(pull_requests::diff))
+        .route(
+            "/v1/pull-requests/{id}/reviews",
+            post(pull_requests::submit_review),
+        )
         .route("/v1/health", get(health))
         .route("/v1/version", get(version))
         .route("/v1/doctor", get(doctor::report))

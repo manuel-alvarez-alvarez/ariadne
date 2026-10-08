@@ -6,7 +6,7 @@ import { createElement, type ReactNode } from "react"
 import { describe, expect, it } from "vitest"
 
 import type { GoalDto, SessionDto, TaskDto } from "@/api"
-import { sessionAttention } from "@/features/sessions/session-display"
+import { SESSION_ATTENTION_META, sessionAttention } from "@/features/sessions/session-display"
 import { paths } from "@/routes/paths"
 import { aGoal, aSession, aSessionPage, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse } from "@/test/harness"
@@ -169,6 +169,20 @@ describe("attention", () => {
     expect(params.get("session")).toBe(session.id)
     expect(params.get("goal")).toBe("g1")
     expect(params.get("task")).toBe("t1")
+  })
+
+  it("carries a reviewer pull request session's waiting_user as review posted", () => {
+    const session = aSession({
+      id: "s1",
+      goal_id: null,
+      task_id: null,
+      task_agent_id: null,
+      seat: "reviewer",
+      pull_request_id: "pull-42",
+      attention_reason: "waiting_user",
+    })
+    expect(sessionAttention(session)).toBe("review_posted")
+    expect(SESSION_ATTENTION_META.review_posted.label).toBe("Review posted, approve yourself")
   })
 
   it("carries a pull request session's waiting_user as ready to merge, opening its session panel", async () => {

@@ -15,7 +15,9 @@ use rmcp::{ErrorData as McpError, schemars, tool, tool_router};
 
 use ariadne_api::goals::{CompleteGoalRequest, FinalizePlanRequest};
 use ariadne_api::messages::SendMessageRequest;
-use ariadne_api::pull_requests::{ReplyCommentRequest, ReportPullRequestRequest};
+use ariadne_api::pull_requests::{
+    ReplyCommentRequest, ReportPullRequestRequest, ReviewCommentRequest, SubmitReviewRequest,
+};
 use ariadne_api::sessions::SwitchSessionRequest;
 use ariadne_api::skills::{SkillDto, SkillSeat};
 use ariadne_api::tasks::{
@@ -196,6 +198,9 @@ pub(super) struct GetDiffReq {
     /// The id of the author whose branch to read, from `get_task`. Omit it
     /// where the task has one author.
     pub author: Option<String>,
+    /// On a pull request, the sha to read the diff from. Omit it for the
+    /// whole change.
+    pub since: Option<String>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -266,6 +271,59 @@ pub(super) struct ReportPullRequestReq {
     pub ready: Option<bool>,
     /// The state a human moved the request to.
     pub state: Option<PullRequestState>,
+    /// The head sha your posted review is on.
+    pub reviewed_sha: Option<String>,
+}
+
+/// The two events a review takes. The user gives every approval.
+#[derive(Clone, Copy, Debug, serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+#[serde(rename_all = "snake_case")]
+pub(super) enum ReviewEvent {
+    RequestChanges,
+    Comment,
+}
+
+impl ReviewEvent {
+    fn as_str(self) -> &'static str {
+        match self {
+            ReviewEvent::RequestChanges => "request_changes",
+            ReviewEvent::Comment => "comment",
+        }
+    }
+}
+
+/// How much a finding costs.
+#[derive(Clone, Copy, Debug, serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(super) enum Priority {
+    P0,
+    P1,
+    P2,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(super) struct ReviewFinding {
+    /// The file, from the root of the worktree.
+    pub path: String,
+    /// The line in the new version of the file.
+    pub line: i64,
+    /// The input and the failure it causes.
+    pub body: String,
+    pub priority: Priority,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(super) struct SubmitReviewReq {
+    /// `request_changes` when a P0 finding exists. Else `comment`.
+    pub event: ReviewEvent,
+    /// The summary of the review.
+    pub body: String,
+    /// One inline comment per finding.
+    #[serde(default)]
+    pub comments: Vec<ReviewFinding>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -701,16 +759,28 @@ impl AriadneMcp {
     // ---- reviewer ----
 
     #[tool(
-        description = "Read the diff of the branch under review against its base branch. On a task with several authors, pass `author` to say whose branch."
+        description = "Read the diff of the change under review against its base branch. On a task with several authors, pass `author` to say whose branch. On a pull request, pass `since` to read only the commits after that sha."
     )]
     async fn get_diff(
         &self,
         Parameters(req): Parameters<GetDiffReq>,
     ) -> Result<CallToolResult, McpError> {
-        let mut path = self.task_path(None, "/diff")?;
-        if let Some(author) = req.author {
-            path.push_str(&format!("?agent={author}"));
-        }
+        let path = match self.pull_request_id {
+            Some(_) => {
+                let mut path = self.pull_request_path("/diff")?;
+                if let Some(since) = req.since {
+                    path.push_str(&format!("?since={since}"));
+                }
+                path
+            }
+            None => {
+                let mut path = self.task_path(None, "/diff")?;
+                if let Some(author) = req.author {
+                    path.push_str(&format!("?agent={author}"));
+                }
+                path
+            }
+        };
         // Plain-text endpoint: no JSON decoding.
         let diff = self.client.get_text(&path).await.map_err(to_mcp_err)?;
         Ok(CallToolResult::success(vec![ContentBlock::text(diff)]))
@@ -811,15 +881,15 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Report your pull request. Set `ready` to true once every required approval and check reads green, and to false on a change back. Set `state` once a human merged or closed it."
+        description = "Report your pull request. Set `ready` to true once every required approval and check reads green, and to false on a change back. Set `state` once a human merged or closed it. Set `reviewed_sha` after you post a review."
     )]
     async fn report_pull_request(
         &self,
         Parameters(req): Parameters<ReportPullRequestReq>,
     ) -> Result<CallToolResult, McpError> {
-        if req.ready.is_none() && req.state.is_none() {
+        if req.ready.is_none() && req.state.is_none() && req.reviewed_sha.is_none() {
             return Err(McpError::invalid_params(
-                "report `ready`, `state` or both",
+                "report `ready`, `state` or `reviewed_sha`",
                 None,
             ));
         }
@@ -829,6 +899,39 @@ impl AriadneMcp {
                 &ReportPullRequestRequest {
                     ready: req.ready,
                     state: req.state.map(|s| s.as_str().to_string()),
+                    reviewed_sha: req.reviewed_sha,
+                },
+            )
+            .await?,
+        )
+    }
+
+    // ---- pull request reviewer ----
+
+    #[tool(
+        description = "Post one review of the pull request in the name of the user. Set `event` to `request_changes` when a P0 finding exists, else to `comment`. Give each finding its file, line and priority."
+    )]
+    async fn submit_review(
+        &self,
+        Parameters(req): Parameters<SubmitReviewReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let comments = req
+            .comments
+            .into_iter()
+            .map(|c| ReviewCommentRequest {
+                path: c.path,
+                line: c.line,
+                body: c.body,
+                priority: format!("{:?}", c.priority),
+            })
+            .collect();
+        json_result(
+            self.post(
+                &self.pull_request_path("/reviews")?,
+                &SubmitReviewRequest {
+                    event: req.event.as_str().to_string(),
+                    body: req.body,
+                    comments,
                 },
             )
             .await?,
@@ -1002,6 +1105,7 @@ mod tests {
         mcp.report_pull_request(Parameters(ReportPullRequestReq {
             ready: Some(true),
             state: Some(PullRequestState::Merged),
+            reviewed_sha: None,
         }))
         .await
         .expect("report");
@@ -1033,8 +1137,68 @@ mod tests {
         let report: serde_json::Value = serde_json::from_str(&seen[5].body).expect("json");
         assert_eq!(
             report,
-            serde_json::json!({"ready": true, "state": "merged"})
+            serde_json::json!({"ready": true, "state": "merged", "reviewed_sha": null})
         );
+    }
+
+    /// The tools of a reviewer pull request session reach the routes of its
+    /// own request (029): the diff from a sha, one review with its findings
+    /// and their priorities, and the report of the reviewed sha.
+    #[tokio::test]
+    async fn the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request() {
+        let (endpoint, seen) = recording_daemon().await;
+        let mcp = server_at(
+            McpSeat::PullRequestReviewer,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        mcp.get_diff(Parameters(GetDiffReq {
+            author: None,
+            since: Some("abc".into()),
+        }))
+        .await
+        .expect("read the diff");
+        mcp.submit_review(Parameters(SubmitReviewReq {
+            event: ReviewEvent::RequestChanges,
+            body: "One P0.".into(),
+            comments: vec![ReviewFinding {
+                path: "src/lib.rs".into(),
+                line: 3,
+                body: "An empty list panics.".into(),
+                priority: Priority::P0,
+            }],
+        }))
+        .await
+        .expect("post the review");
+        mcp.report_pull_request(Parameters(ReportPullRequestReq {
+            ready: None,
+            state: None,
+            reviewed_sha: Some("abc".into()),
+        }))
+        .await
+        .expect("report");
+
+        let seen = seen.lock().expect("lock").clone();
+        let calls: Vec<(String, String)> = seen
+            .iter()
+            .map(|s| (s.method.clone(), s.path.clone()))
+            .collect();
+        assert_eq!(
+            calls,
+            [
+                ("GET".into(), "/v1/pull-requests/01PR/diff?since=abc".into()),
+                ("POST".into(), "/v1/pull-requests/01PR/reviews".into()),
+                ("POST".into(), "/v1/pull-requests/01PR/report".into()),
+            ]
+        );
+        let review: serde_json::Value = serde_json::from_str(&seen[1].body).expect("json");
+        assert_eq!(
+            review,
+            serde_json::json!({"event": "request_changes", "body": "One P0.", "comments": [
+                {"path": "src/lib.rs", "line": 3, "body": "An empty list panics.", "priority": "P0"}
+            ]})
+        );
+        let report: serde_json::Value = serde_json::from_str(&seen[2].body).expect("json");
+        assert_eq!(report["reviewed_sha"], "abc");
     }
 
     /// The orchestrator is never offered a model it cannot staff an agent on.
