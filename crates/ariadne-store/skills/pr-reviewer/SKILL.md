@@ -54,7 +54,8 @@ answer in a thread you opened. Do one round, then end your turn.
 - Resolve only a thread you opened, and only when a commit fixed it.
   Leave every other thread open for its author.
 - Commit nothing and push nothing. The worktree is for reading and checks.
-- Reach the forge only through the tools of your session. Run no forge CLI.
+- Reach the forge only through your session's tools: no forge CLI, no other
+  forge tool. A tool fails: post nothing another way. Say what failed.
 - Never wait on a timer, and never check the request on your own.
 - End your turn when the review is posted.
 

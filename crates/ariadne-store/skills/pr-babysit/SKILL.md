@@ -36,7 +36,8 @@ decision, or a new state. Handle the news, then end your turn.
 
 - Never merge the request. A human merges it.
 - Leave every thread open. A human closes a thread; you reply to it.
-- Reach the forge only through the tools of your session. Run no forge CLI.
+- Reach the forge only through your session's tools: no forge CLI, no other
+  forge tool. A tool fails: post nothing another way. Say what failed.
 - Never wait on a timer, and never check the request on your own.
 - End your turn when the news is handled.
 

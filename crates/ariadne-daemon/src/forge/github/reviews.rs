@@ -88,7 +88,7 @@ impl Github {
             self.cli.answer(&args).await
         };
         let output = match post(None).await {
-            Err(e) if e.to_lowercase().contains("body") => post(Some(POINTER)).await?,
+            Err(e) if refused_for_its_body(&e) => post(Some(POINTER)).await?,
             answered => answered?,
         };
         let posted: Posted = serde_json::from_str(&output)
@@ -222,4 +222,41 @@ fn read_comment(output: &str) -> Result<(String, String), String> {
     let comment: Comment = serde_json::from_str(output)
         .map_err(|e| format!("cannot read the comment GitHub stored: {e}"))?;
     Ok((issue_comment_id(comment.id), comment.created_at))
+}
+
+/// Whether GitHub refused a review for having no body: what its own answer
+/// says, `{"message": ..., "errors": [...]}`. The command line the error also
+/// carries names a body in every comment, so it is never read for this.
+fn refused_for_its_body(error: &str) -> bool {
+    error.match_indices("{\"message\"").any(|(at, _)| {
+        serde_json::Deserializer::from_str(&error[at..])
+            .into_iter::<serde_json::Value>()
+            .next()
+            .and_then(Result::ok)
+            .is_some_and(|answer| answer.to_string().to_lowercase().contains("body"))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::refused_for_its_body;
+
+    /// A review is posted again with a body only where GitHub said the body
+    /// is what it lacks: the command line names `comments[][body]` in every
+    /// error, so it decides nothing.
+    #[test]
+    fn a_review_is_retried_with_a_body_only_when_github_asks_for_one() {
+        let command = "`gh api repos/a/b/pulls/1/reviews -f comments[][body]=x`: gh: Unprocessable Entity (HTTP 422)";
+        assert!(!refused_for_its_body(command));
+        let line = format!(
+            "{command} — {}",
+            r#"{"message":"Validation Failed","errors":["Line could not be resolved"],"status":"422"}"#
+        );
+        assert!(!refused_for_its_body(&line));
+        let body = format!(
+            "{command} — {}",
+            r#"{"message":"Unprocessable Entity","errors":["Body is required"],"status":"422"}"#
+        );
+        assert!(refused_for_its_body(&body));
+    }
 }

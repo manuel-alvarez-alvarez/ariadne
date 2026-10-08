@@ -2421,7 +2421,10 @@ mod tests {
             // Seven steps, one per kind of news and the report, and the two
             // rules no other skill has: leave every thread to a human, and
             // reach the forge only through the session's tools.
-            PR_BABYSIT_SKILL => 2600,
+            // A tool that fails is said, not worked around through another
+            // forge tool: a review posted around the daemon keeps none of its
+            // marks.
+            PR_BABYSIT_SKILL => 2700,
             // Eleven steps: the read, the checks, the hunt, the three
             // priorities, one inline comment per finding with its title and
             // its fix, the summary with no line in it, the one review, the

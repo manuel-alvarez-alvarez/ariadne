@@ -591,10 +591,17 @@ impl Cli {
         if output.status.success() {
             return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
         }
-        let said = match output.stderr.is_empty() {
-            true => String::from_utf8_lossy(&output.stdout),
-            false => String::from_utf8_lossy(&output.stderr),
-        };
+        // `gh api` writes the forge's own answer — `{"message": ..., "errors":
+        // [...]}`, which says why it refused — to stdout, and only a line
+        // such as "gh: Unprocessable Entity (HTTP 422)" to stderr: both are
+        // kept, or the reason is lost.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let said = [stderr.trim(), stdout.trim()]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(" — ");
         let said = said.trim();
         Err(match said.is_empty() {
             true => format!(

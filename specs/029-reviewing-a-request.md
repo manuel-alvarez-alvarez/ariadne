@@ -153,8 +153,11 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     lines.
     - GitHub: one `gh api repos/<owner>/<name>/pulls/<n>/reviews` call with
       `REQUEST_CHANGES` or `COMMENT`, the head as `commit_id`, every inline
-      comment and no body; a forge that refuses a review with no body takes
-      it again with one line that points at the summary. The daemon then
+      comment and no body; a forge whose own answer says the review lacks a
+      body takes it again with one line that points at the summary. A forge
+      that refuses answers 502 with its own reason — GitHub's
+      `{"message", "errors"}` beside the CLI's line — so the session can act
+      on it, and the skill says the failure rather than posting another way. The daemon then
       reads the review's comments back. The summary is an issue comment,
       `.../issues/<n>/comments`, edited with `PATCH
       .../issues/comments/<id>`.
