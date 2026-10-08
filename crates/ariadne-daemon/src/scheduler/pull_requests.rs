@@ -447,12 +447,14 @@ impl super::Scheduler {
             .as_deref()
             .is_some_and(|told| told != pull.head_sha);
         let idle = session.status() == SessionStatus::Idle;
-        if pushed && idle {
-            let repo = self.store.get_repository(&pull.repository_id).await?;
-            self.launcher.review_worktree(pull, &repo).await?;
-        }
-        if !pushed || idle {
-            self.tell_pull_request(&session, pull, &login).await?;
+        if self.review_news_settled(pull, &login, &session).await? {
+            if pushed && idle {
+                let repo = self.store.get_repository(&pull.repository_id).await?;
+                self.launcher.review_worktree(pull, &repo).await?;
+            }
+            if !pushed || idle {
+                self.tell_pull_request(&session, pull, &login).await?;
+            }
         }
         if session.status() == SessionStatus::Running {
             let repo = self.store.get_repository(&pull.repository_id).await?;
@@ -466,6 +468,37 @@ impl super::Scheduler {
                 .await?;
         }
         Ok(())
+    }
+
+    /// Whether the news a review session waits on has stood still for
+    /// `review_news_settle` (029): a push or a reply that comes while it
+    /// waits changes what the news holds and starts the wait again, so a
+    /// burst of activity is told in one prompt rather than one each. No news
+    /// is settled at once, and forgets the wait.
+    async fn review_news_settled(
+        &mut self,
+        pull: &PullRequest,
+        login: &str,
+        session: &AgentSession,
+    ) -> anyhow::Result<bool> {
+        let news = news::untold(&self.store, pull, login, session.seat()).await?;
+        if news.is_empty() {
+            self.review_news.remove(&pull.id);
+            return Ok(true);
+        }
+        let holds = format!("{} {}", pull.head_sha, news.comment_ids.join(","));
+        let now = Instant::now();
+        let since = match self.review_news.get(&pull.id) {
+            Some((held, since)) if *held == holds => *since,
+            _ => {
+                self.review_news.insert(pull.id.clone(), (holds, now));
+                now
+            }
+        };
+        // Kept until the news is told: a settled news the session could not
+        // take yet, mid-turn, is handed over on the next pass without a new
+        // wait.
+        Ok(now.duration_since(since) >= self.review_news_settle)
     }
 
     /// A request I review that wants no session: merged, closed, back in

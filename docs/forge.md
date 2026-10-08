@@ -103,8 +103,10 @@ too, and nobody keeps it.
 A request that asks for your review, once it leaves draft, gets a session
 of its own, staffed on the review pin, in a worktree detached at the
 request's head rather than a branch of its own. The daemon wakes it with the
-request, then again with every later push and with a reply in a thread it
-opened.
+request, then again with later pushes and replies in the threads it
+opened. Those wait until the request has been quiet for five minutes, and
+each new push or reply starts the wait again, so a burst of activity
+reaches the reviewer as one prompt rather than one each.
 
 You can ask for the same on a request of your own: open it in the desktop
 app's Pull requests tab and press **Start review** in its panel. The dialog

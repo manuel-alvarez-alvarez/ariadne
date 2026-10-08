@@ -195,6 +195,12 @@ pub(crate) struct Scheduler {
     /// Exhausted switches the task's orchestrator has not received yet.
     exhausted_notices: HashMap<String, ExhaustedNotice>,
     pull_request_cleanup_retry: HashMap<String, std::time::Instant>,
+    /// The news a review session waits on, per request: what it holds —
+    /// the head and the untold comments — and when that last changed. It is
+    /// handed over once it has stood still for `review_news_settle` (029).
+    /// In memory: a daemon that restarts waits once more.
+    review_news: HashMap<String, (String, std::time::Instant)>,
+    review_news_settle: std::time::Duration,
     /// Held while any session is live, so the machine does not idle-sleep
     /// out from under a working agent.
     sleep: SleepInhibitor,
@@ -227,6 +233,8 @@ pub fn start(
         review_briefed: HashSet::new(),
         exhausted_notices: HashMap::new(),
         pull_request_cleanup_retry: HashMap::new(),
+        review_news: HashMap::new(),
+        review_news_settle: timeouts.review_news_settle,
         sleep: SleepInhibitor::new(),
         prevent_sleep,
     };
