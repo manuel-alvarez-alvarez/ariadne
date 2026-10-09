@@ -17,16 +17,24 @@ const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 pub struct GitManager;
 
 impl GitManager {
-    pub(crate) async fn committed_clean(
+    /// Whether `branch` holds a commit `base` does not, and the worktree is
+    /// clean.
+    ///
+    /// A `base` nobody has committed to yet is unborn, and no range can be
+    /// cut from it (`rev-list base..branch` fails): the count is of `branch`
+    /// alone then, since every commit on it is one `base` does not have.
+    pub async fn committed_clean(
         &self,
         repo: &Path,
         worktree: &Path,
         base: &str,
         branch: &str,
     ) -> Result<bool> {
-        let ahead = self
-            .git(repo, &["rev-list", "--count", &format!("{base}..{branch}")])
-            .await?;
+        let range = match self.has_commit(repo, base).await? {
+            true => format!("{base}..{branch}"),
+            false => branch.to_string(),
+        };
+        let ahead = self.git(repo, &["rev-list", "--count", &range]).await?;
         let status = self.git(worktree, &["status", "--porcelain"]).await?;
         Ok(ahead.trim().parse::<u64>()? > 0 && status.trim().is_empty())
     }

@@ -211,3 +211,35 @@ async fn a_worktree_is_cut_from_a_base_branch_with_no_commits() {
 
     git.remove_worktree(&repo, &wt).await.unwrap();
 }
+
+/// The committed gate on a task cut from a base nobody has committed to: the
+/// base is unborn, so there is no range to count the task branch's commits
+/// in against it, and the first commit of the branch must still pass.
+#[tokio::test]
+async fn the_committed_gate_passes_a_first_commit_on_an_unborn_base() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    sh(
+        &repo,
+        "git init -q -b main && git config user.email t@t && git config user.name t",
+    );
+    let git = GitManager;
+    let wt = dir.path().join("wt-eng");
+    git.add_worktree(&repo, &wt, "first-task-aaa111", "main")
+        .await
+        .unwrap();
+    sh(
+        &wt,
+        "echo v1 > file.txt && git add . && git commit -qm first",
+    );
+
+    assert!(
+        git.committed_clean(&repo, &wt, "main", "first-task-aaa111")
+            .await
+            .unwrap(),
+        "the first commit on an unborn base passes the gate"
+    );
+
+    git.remove_worktree(&repo, &wt).await.unwrap();
+}
