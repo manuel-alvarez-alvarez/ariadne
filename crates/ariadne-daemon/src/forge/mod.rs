@@ -535,6 +535,9 @@ impl ForgeClient {
 pub struct Cli {
     configured: Option<String>,
     program: &'static str,
+    /// How long one call may take, its input written and its output read:
+    /// [`CLI_TIMEOUT`].
+    timeout: Duration,
 }
 
 impl Cli {
@@ -542,6 +545,7 @@ impl Cli {
         Cli {
             configured: configured.map(str::to_string),
             program,
+            timeout: CLI_TIMEOUT,
         }
     }
 
@@ -565,7 +569,11 @@ impl Cli {
     }
 
     /// Run the CLI to completion, bounded by [`CLI_TIMEOUT`], with `input`
-    /// on its standard input where there is one.
+    /// on its standard input where there is one. The input is written while
+    /// the output is read, under the same deadline: a CLI that stalls before
+    /// it reads an input larger than the pipe holds would otherwise block
+    /// the write past any deadline, and one that writes much before it reads
+    /// would deadlock against it. A call that runs out kills the CLI.
     async fn run(&self, args: &[&str], input: Option<&str>) -> Result<Output, String> {
         use tokio::io::AsyncWriteExt;
         let binary = self.binary()?;
@@ -581,20 +589,24 @@ impl Cli {
             .kill_on_drop(true)
             .spawn();
         let mut child = spawned.map_err(|e| format!("cannot run `{}`: {e}", binary.display()))?;
-        if let (Some(input), Some(mut pipe)) = (input, child.stdin.take()) {
-            pipe.write_all(input.as_bytes())
-                .await
-                .map_err(|e| format!("cannot write to `{}`: {e}", binary.display()))?;
-        }
-        let child = child.wait_with_output();
-        match tokio::time::timeout(CLI_TIMEOUT, child).await {
-            Ok(Ok(output)) => Ok(output),
-            Ok(Err(e)) => Err(format!("cannot run `{}`: {e}", binary.display())),
+        let pipe = child.stdin.take();
+        let write = async move {
+            if let (Some(input), Some(mut pipe)) = (input, pipe) {
+                pipe.write_all(input.as_bytes()).await?;
+                // Dropped here: the CLI reads the end of its input.
+            }
+            Ok::<(), std::io::Error>(())
+        };
+        let work = async { tokio::join!(write, child.wait_with_output()) };
+        match tokio::time::timeout(self.timeout, work).await {
+            Ok((Err(e), _)) => Err(format!("cannot write to `{}`: {e}", binary.display())),
+            Ok((Ok(()), Ok(output))) => Ok(output),
+            Ok((Ok(()), Err(e))) => Err(format!("cannot run `{}`: {e}", binary.display())),
             Err(_) => Err(format!(
                 "`{} {}` did not answer in {} seconds",
                 self.program,
                 args.join(" "),
-                CLI_TIMEOUT.as_secs()
+                self.timeout.as_secs_f64()
             )),
         }
     }
@@ -695,6 +707,30 @@ mod tests {
 
     /// A refusal is read for what the forge said, never for the command:
     /// a summary whose text says "HTTP 404" is no 404 from the forge.
+    /// A CLI that stalls before it reads an input larger than the pipe holds
+    /// is stopped by the deadline, the write with it, and its call answers
+    /// that it did not answer.
+    #[tokio::test]
+    async fn a_cli_that_reads_no_input_is_stopped_by_the_deadline() {
+        let cli = Cli {
+            configured: Some("/bin/sleep".into()),
+            program: "gh",
+            timeout: Duration::from_millis(500),
+        };
+        let input = "x".repeat(1024 * 1024);
+        let started = std::time::Instant::now();
+        let refused = cli
+            .call_with_input(&["30"], Some(&input))
+            .await
+            .expect_err("a stalled CLI answers nothing");
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
+        assert!(refused.to_string().contains("did not answer"), "{refused}");
+    }
+
     #[test]
     fn a_refusal_is_missing_only_where_the_forge_said_404() {
         // What a refused edit of a summary titled "P1: Handle HTTP 404
