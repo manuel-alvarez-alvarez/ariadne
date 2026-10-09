@@ -463,7 +463,15 @@ async fn a_loose_console_serves_history_takes_input_and_cancels() {
     let delta = common::expect_sse(&mut stream, "event").await;
     assert_eq!(delta["kind"], "user_prompt_submit");
     assert_eq!(delta["payload"]["text"], "continue here");
-    let changed = common::expect_sse(&mut domain, "agent_event").await;
+    // The turn also moves the session between statuses, each a
+    // `session_updated` domain frame interleaved with the `agent_event`
+    // ones; skip those to reach the next agent event.
+    let changed = loop {
+        let (name, payload) = common::parse_sse(&common::next_sse_message(&mut domain).await);
+        if name == "agent_event" {
+            break payload;
+        }
+    };
     assert_eq!(changed["session_id"], session.id);
     assert!(changed["task_id"].is_null());
     assert!(stub.prompts_for(&session.id)[0].ends_with("continue here"));
