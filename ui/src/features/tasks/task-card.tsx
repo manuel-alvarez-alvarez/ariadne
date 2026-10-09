@@ -35,7 +35,7 @@ import { GitBranchIcon, LayersIcon, TriangleAlertIcon } from "lucide-react"
 import { useId } from "react"
 import { Link } from "react-router-dom"
 
-import type { TaskDto } from "@/api"
+import type { TaskDto, WorkflowStepDto } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { StatusBadge } from "@/components/status-badge"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -61,10 +61,17 @@ const NOT_A_STOP = -1
 export function TaskCard({
   task,
   showStatus = false,
+  step,
   attention,
 }: {
   task: TaskDto
   showStatus?: boolean
+  /**
+   * The workflow column the task sits in, on a goal a workflow runs. A
+   * stepped task is `in_progress` from its first column to its last, so the
+   * column is what its status badge names instead.
+   */
+  step?: WorkflowStepDto
   /**
    * Why one of this task's sessions wants a person, when one does — the flag
    * the daemon raised, handed down by whoever is holding the sessions list
@@ -76,7 +83,7 @@ export function TaskCard({
    */
   attention?: SessionAttention | null
 }) {
-  const status = TASK_STATUS_META[primaryStatus(task.status)]
+  const status = cardStatus(task, step)
   const sub = subStatus(task.status)
   const terminal = task.status === "cancelled"
   // `to.replace` is set exactly when a goal panel is open — the card's own
@@ -195,6 +202,19 @@ export function TaskCard({
       </div>
     </div>
   )
+}
+
+/**
+ * What the card's status badge says: the status, or for a stepped task under
+ * way the column it is in — its title, its description as the hint.
+ */
+function cardStatus(
+  task: TaskDto,
+  step: WorkflowStepDto | undefined,
+): { label: string; hint: string; badge: string } {
+  const status = TASK_STATUS_META[primaryStatus(task.status)]
+  if (!step || primaryStatus(task.status) !== "in_progress") return status
+  return { ...status, label: step.title, hint: step.description || status.hint }
 }
 
 /**

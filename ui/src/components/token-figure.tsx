@@ -193,3 +193,16 @@ export function taskUsageRows(usage: TaskUsage): UsageRow[] {
     })),
   ]
 }
+
+/**
+ * The breakdown of a stepped task's total: one line per workflow column, named
+ * by the column, for every agent that has spent anything there. `title` turns
+ * a column id into the name the goal gives it.
+ */
+export function stepUsageRows(usage: TaskUsage, title: (step: string) => string): UsageRow[] {
+  return usage.agents.map((agent) => ({
+    key: agent.agent_id,
+    label: agent.step ? title(agent.step) : shortId(agent.agent_id),
+    usage: agent.usage,
+  }))
+}

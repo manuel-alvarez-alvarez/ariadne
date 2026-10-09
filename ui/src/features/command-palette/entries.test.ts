@@ -112,6 +112,25 @@ describe("buildPaletteEntries", () => {
     })
   })
 
+  it("names a step agent's session after the workflow column it staffs", () => {
+    const goal = aGoal({
+      ...GOAL,
+      steps: [{ id: "review", title: "Review", description: "", skills: [] }],
+    })
+    const task = aTask({
+      ...TASK,
+      agents: [{ id: "agent-review", seat: "agent", step: "review", skills: [], model: "a:b" }],
+    })
+    const session = aSession({ ...SESSION, seat: "agent", task_agent_id: "agent-review" })
+    const [entry] = buildPaletteEntries({
+      ...SOURCE,
+      goals: [goal],
+      tasks: [task],
+      sessions: [session],
+    }).sessions
+    expect(entry?.label).toBe("Review · Add the command palette")
+  })
+
   it("falls back to the session's id when neither goal nor task is loaded", () => {
     const [entry] = buildPaletteEntries({ ...SOURCE, goals: [], tasks: [] }).sessions
     expect(entry?.label).toBe("Author")

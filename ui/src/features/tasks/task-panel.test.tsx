@@ -191,6 +191,102 @@ async function hint(label: string): Promise<HTMLElement> {
   return popup
 }
 
+/** A goal a workflow runs: three columns, each staffed by an agent of its own. */
+const STEPPED_GOAL = aGoal({
+  id: TASK.goal_id,
+  workflow: "develop-review-merge",
+  steps: [
+    { id: "develop", title: "Develop", description: "Build the task.", skills: ["coding"] },
+    { id: "review", title: "Review", description: "Judge the change.", skills: ["code-review"] },
+    { id: "merge", title: "Merge", description: "Land the change.", skills: ["merge"] },
+  ],
+})
+
+const STEPPED_TASK: TaskDto = {
+  ...TASK,
+  step: "review",
+  agents: [
+    {
+      id: "01AGENTDEVELOP",
+      seat: "agent",
+      step: "develop",
+      skills: ["coding"],
+      model: "codex-acp:gpt-5",
+      session_id: "01JSESS000000000000000DEV",
+    },
+    {
+      id: "01AGENTREVIEW",
+      seat: "agent",
+      step: "review",
+      skills: ["code-review"],
+      model: "claude-agent-acp:claude-sonnet-5",
+      effort: "high",
+      session_id: "01JSESS000000000000000REV",
+    },
+    { id: "01AGENTMERGE", seat: "agent", step: "merge", skills: ["merge"], model: "codex-acp:o3" },
+  ],
+}
+
+function mountStepped(task: TaskDto = STEPPED_TASK) {
+  return renderScreen(<TaskPanel taskId={task.id} onClose={() => {}} />, {
+    seed: (client) => {
+      client.setQueryData(qk.tasks.detail(task.id), task)
+      client.setQueryData(qk.goals.detail(STEPPED_GOAL.id), STEPPED_GOAL)
+    },
+  })
+}
+
+it("shows a stepped task's columns as a strip, the current one highlighted", async () => {
+  mountStepped()
+
+  const strip = await screen.findByRole("list", { name: "Workflow steps" })
+  const segments = within(strip).getAllByRole("listitem")
+  expect(segments.map((segment) => segment.textContent)).toEqual(["Develop", "Review", "Merge"])
+  expect(segments.map((segment) => segment.dataset.state)).toEqual(["done", "current", "ahead"])
+  expect(segments[1]?.getAttribute("aria-current")).toBe("step")
+})
+
+it("gives each segment of the strip its column's description as the hint", async () => {
+  mountStepped()
+
+  const strip = await screen.findByRole("list", { name: "Workflow steps" })
+  const review = within(strip)
+    .getByText("Review")
+    .closest<HTMLElement>("[data-slot='tooltip-trigger']")
+  review?.focus()
+  expect(await screen.findByText("Judge the change.")).toBeDefined()
+})
+
+it("lists one agent per column, with its skills, its pin and a link to its session", async () => {
+  mountStepped()
+
+  await screen.findByRole("list", { name: "Workflow steps" })
+  const agents = fact("Agents")
+  expect(agents).toContain("Develop")
+  expect(agents).toContain("codex-acp:gpt-5")
+  expect(agents).toContain("Review")
+  expect(agents).toContain("claude-agent-acp:claude-sonnet-5 @ high")
+  expect(agents).toContain("Merge")
+  const link = screen.getByRole("link", {
+    name: `session ${shortId("01JSESS000000000000000REV")}`,
+  })
+  expect(link.getAttribute("href")).toContain("session=01JSESS000000000000000REV")
+})
+
+it("says nothing of an author or a reviewer on a stepped task", async () => {
+  mountStepped()
+
+  await screen.findByRole("list", { name: "Workflow steps" })
+  expect(screen.queryByText("Author")).toBeNull()
+  expect(screen.queryByText("Reviewers")).toBeNull()
+})
+
+it("draws no strip for a task with no workflow", () => {
+  mount()
+
+  expect(screen.queryByRole("list", { name: "Workflow steps" })).toBeNull()
+})
+
 it("shows the author's pin as it was staffed", () => {
   mount()
 

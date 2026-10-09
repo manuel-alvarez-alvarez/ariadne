@@ -60,6 +60,7 @@ import { goalsQueryOptions } from "@/features/goals/queries"
 import { parseModelRef, pinLabel } from "@/features/models/model-ref"
 import { PullRequestLink } from "@/features/pull-requests/pull-request-link"
 import { taskListQueryOptions } from "@/features/tasks/queries"
+import { sessionColumn } from "@/features/tasks/steps"
 import { cn, describeError, SEAT_LABELS, shortId } from "@/lib/format"
 import { paths, sessionPanelFrom, sessionTerminalFrom } from "@/routes/paths"
 import {
@@ -514,6 +515,15 @@ function SessionsTable({
                   ? tasksById.get(row.session.task_id)?.title
                   : undefined
               }
+              column={
+                row.kind === "ariadne"
+                  ? sessionColumn(
+                      row.session,
+                      tasksById.get(row.session.task_id ?? ""),
+                      goalsById.get(row.session.goal_id ?? ""),
+                    )
+                  : undefined
+              }
               resuming={resumingKey === rowKey(row)}
               onSelect={() => onSelect(row)}
               onScope={onScope}
@@ -567,6 +577,7 @@ function SessionRow({
   title,
   goalTitle,
   taskTitle,
+  column,
   resuming,
   onSelect,
   onScope,
@@ -575,6 +586,8 @@ function SessionRow({
   title: string
   goalTitle: string | undefined
   taskTitle: string | undefined
+  /** The workflow column a step agent staffs, which names it in place of its seat. */
+  column: string | undefined
   resuming: boolean
   onSelect: () => void
   /** Narrow the table to a goal or a task picked in the row. */
@@ -635,6 +648,7 @@ function SessionRow({
             session={row.session}
             goalTitle={goalTitle}
             taskTitle={taskTitle}
+            column={column}
             onScope={onScope}
           />
         ) : (
@@ -665,7 +679,8 @@ function RowAttention({ session }: { session: SessionDto }) {
 
 /**
  * What an Ariadne session works on, in one cell: the seat it holds, the goal
- * it is under, and the task under that. The seat is a badge of one width, so
+ * it is under, and the task under that — a step agent's seat named by the
+ * workflow column it staffs. The seat is a badge of one width, so
  * the goals and tasks of every row line up beside it. Picking the goal or the
  * task narrows the table to its sessions, the way the chips above it do. A
  * pull request session has neither: its request stands in their place, by
@@ -676,11 +691,13 @@ function WorkCell({
   session,
   goalTitle,
   taskTitle,
+  column,
   onScope,
 }: {
   session: SessionDto
   goalTitle: string | undefined
   taskTitle: string | undefined
+  column: string | undefined
   onScope: (param: FilterParam, id: string) => void
 }) {
   const { goal_id: goalId, task_id: taskId, seat, pull_request_id: pullRequestId } = session
@@ -688,8 +705,11 @@ function WorkCell({
   return (
     <div className="flex min-w-0 items-start gap-2 text-xs">
       {seat ? (
-        <Badge variant="outline" className="w-22 shrink-0 font-normal text-muted-foreground">
-          {SEAT_LABELS[seat]}
+        <Badge
+          variant="outline"
+          className="w-22 shrink-0 truncate font-normal text-muted-foreground"
+        >
+          {column ?? SEAT_LABELS[seat]}
         </Badge>
       ) : null}
       <div className="flex min-w-0 flex-col gap-0.5 pt-px">

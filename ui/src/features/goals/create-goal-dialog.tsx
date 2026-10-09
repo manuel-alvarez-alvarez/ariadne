@@ -12,10 +12,13 @@
  * and the effort that model is run at. A model is required and the empty effort
  * uses the model's default effort.
  *
- * How the goal's tasks end is picked here too, and starts out as the first
- * repository's own default: a preselect the dialog makes, not the user, so it
- * must not be what makes an otherwise untouched form ask about walking away.
- * Picking the landing by hand before or after that stands.
+ * The workflow the goal's tasks move through is picked here too, and starts
+ * out as the first repository's own default: a preselect the dialog makes,
+ * not the user, so it must not be what makes an otherwise untouched form ask
+ * about walking away. Picking the workflow by hand before or after that
+ * stands. The workflow says how a task ends, so the dialog sends no landing:
+ * a goal with no workflow ends its tasks the way its repository's default
+ * landing says.
  *
  * Everything else the daemon still validates: the client only catches what it
  * can know on its own (empty title, nothing picked) and shows the daemon's
@@ -40,7 +43,6 @@ import {
   useClearErrorOnEdit,
   useResetOnOpen,
 } from "@/components/form-dialog"
-import { FormSelect } from "@/components/form-select"
 import { MarkdownField } from "@/components/markdown-field"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
@@ -51,7 +53,7 @@ import { PinPicker } from "@/features/models/pin-picker"
 import { modelsQueryOptions } from "@/features/models/queries"
 import { NoRepositories as SharedNoRepositories } from "@/features/repositories/no-repositories"
 import { repositoriesQueryOptions } from "@/features/repositories/queries"
-import { LANDING_ITEMS } from "@/lib/format"
+import { pickedWorkflow, WorkflowSelect } from "@/features/workflows/workflow-select"
 import { paths } from "@/routes/paths"
 
 import { useCreateGoal } from "./queries"
@@ -67,7 +69,8 @@ const formSchema = z.object({
   // whatever the agent runs it at.
   effort: z.string(),
   repository_ids: z.array(z.string()).min(1, "Pick at least one repository."),
-  landing: z.enum(["merge", "pull_request", "none", "feature_branch"]),
+  // A workflow's name, or empty for none.
+  workflow: z.string(),
 })
 
 type CreateGoalForm = z.infer<typeof formSchema>
@@ -78,7 +81,7 @@ const DEFAULT_VALUES: CreateGoalForm = {
   model: "",
   effort: "",
   repository_ids: [],
-  landing: "merge",
+  workflow: "",
 }
 
 export function CreateGoalDialog({
@@ -121,25 +124,25 @@ export function CreateGoalDialog({
   // the model: one control, two fields.
   const chosenEffort = form.watch("effort")
 
-  // The landing starts out as the first picked repository's own default — a
-  // preselect the dialog makes once per open, not a sync kept up with every
-  // repository swap, so a landing the user already picked by hand is never
-  // taken back.
+  // The workflow starts out as the first picked repository's own default — a
+  // preselect the dialog makes, not a sync kept up past a pick by hand, so a
+  // workflow the user already picked is never taken back.
   const firstRepositoryId = form.watch("repository_ids")[0]
-  const landingPicked = useRef(false)
+  const workflowPicked = useRef(false)
   useEffect(() => {
-    if (open) landingPicked.current = false
+    if (open) workflowPicked.current = false
   }, [open])
   useEffect(() => {
-    if (!firstRepositoryId || landingPicked.current) return
+    if (!firstRepositoryId || workflowPicked.current) return
     const repository = repositories.data?.find((one) => one.id === firstRepositoryId)
     if (!repository) return
-    form.setValue("landing", repository.default_landing, { shouldDirty: false })
+    form.setValue("workflow", repository.default_workflow ?? "", { shouldDirty: false })
   }, [firstRepositoryId, repositories.data, form])
 
   async function onSubmit(values: CreateGoalForm) {
     const model = values.model.trim()
     const effort = values.effort.trim()
+    const workflow = pickedWorkflow(values.workflow)
     const body: CreateGoalRequest = {
       title: values.title.trim(),
       description: values.description,
@@ -147,7 +150,7 @@ export function CreateGoalDialog({
       model,
       ...(effort.length > 0 ? { effort } : {}),
       repository_ids: values.repository_ids,
-      landing: values.landing,
+      ...(workflow ? { workflow } : {}),
     }
     try {
       const goal = await createGoal.mutateAsync(body)
@@ -243,24 +246,21 @@ export function CreateGoalDialog({
             )}
           />
 
-          <Field data-invalid={errors.landing ? "" : undefined}>
-            <FieldLabel htmlFor="goal-landing">Landing</FieldLabel>
-            <FormSelect
+          <Field>
+            <FieldLabel htmlFor="goal-workflow">Workflow</FieldLabel>
+            <WorkflowSelect
               control={form.control}
-              name="landing"
-              id="goal-landing"
-              options={LANDING_ITEMS}
+              name="workflow"
+              id="goal-workflow"
+              enabled={open}
               onValueChange={() => {
-                landingPicked.current = true
+                workflowPicked.current = true
               }}
             />
-            {errors.landing ? (
-              <FieldError>{errors.landing.message}</FieldError>
-            ) : (
-              <FieldDescription>
-                How every task of this goal ends. Starts from the first repository picked above.
-              </FieldDescription>
-            )}
+            <FieldDescription>
+              The columns every task of this goal moves through, one agent each. Starts from the
+              first repository picked above.
+            </FieldDescription>
           </Field>
 
           <Field data-invalid={errors.model ? "" : undefined}>

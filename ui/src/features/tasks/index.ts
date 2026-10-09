@@ -11,7 +11,6 @@ export { STALLED_META, StalledBadge } from "./stalled"
 export {
   BOARD_STATUSES,
   compareByAttention,
-  OFF_BOARD_STATUSES,
   primaryStatus,
   TASK_STATUS_META,
 } from "./status"

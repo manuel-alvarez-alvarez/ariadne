@@ -34,6 +34,29 @@ const CATALOG: ModelDto[] = [
 
 let writes: unknown[]
 let writePaths: string[]
+/** What `GET /v1/goals/{id}` answers, which an edit reads its goal's columns off. */
+let goalDetail: GoalDto
+
+/** A goal a workflow runs: two columns, each preferring a rank of model. */
+const STEPPED_GOAL: GoalDto = aGoal({
+  workflow: "develop-review-merge",
+  steps: [
+    {
+      id: "develop",
+      title: "Develop",
+      description: "Build it.",
+      skills: ["coding"],
+      rank: "balanced",
+    },
+    {
+      id: "review",
+      title: "Review",
+      description: "Judge it.",
+      skills: ["code-review", "security-review"],
+      rank: "frontier",
+    },
+  ],
+})
 
 const TASK: TaskDto = aTask({
   goal_id: GOAL.id,
@@ -52,6 +75,7 @@ const TASK: TaskDto = aTask({
 beforeEach(() => {
   writes = []
   writePaths = []
+  goalDetail = GOAL
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(String(input), init)
     const { pathname } = new URL(request.url)
@@ -63,6 +87,7 @@ beforeEach(() => {
     if (pathname === "/v1/models") return jsonResponse(CATALOG)
     if (pathname === "/v1/tasks") return jsonResponse([])
     if (request.method === "PATCH" && pathname === `/v1/tasks/${TASK.id}`) return jsonResponse(TASK)
+    if (pathname === `/v1/goals/${GOAL.id}`) return jsonResponse(goalDetail)
     if (pathname === `/v1/goals/${GOAL.id}/tasks`) {
       return jsonResponse({
         id: "01JTASK0000000000000000001",
@@ -89,8 +114,8 @@ beforeEach(() => {
   })
 })
 
-function renderDialog() {
-  renderScreen(<CreateTaskDialog goal={GOAL} open onOpenChange={vi.fn()} />)
+function renderDialog(goal: GoalDto = GOAL) {
+  renderScreen(<CreateTaskDialog goal={goal} open onOpenChange={vi.fn()} />)
 }
 
 function renderEdit(task: TaskDto = TASK, onOpenChange = vi.fn()) {
@@ -209,13 +234,14 @@ describe("editing a pending task", () => {
         return jsonResponse(CATALOG)
       }
       if (pathname === "/v1/tasks") return jsonResponse([])
+      if (pathname === `/v1/goals/${GOAL.id}`) return jsonResponse(GOAL)
       if (request.method === "PATCH" && pathname === `/v1/tasks/${TASK.id}`)
         return jsonResponse(TASK)
       return new Response("not stubbed", { status: 404 })
     })
     renderEdit()
 
-    await user.type(screen.getByLabelText("Title"), "!")
+    await user.type(await screen.findByLabelText("Title"), "!")
     releaseCatalog()
     await waitFor(() => expect(catalogAnswered).toBe(true))
     await user.click(screen.getByRole("button", { name: "Save changes" }))
@@ -233,6 +259,99 @@ describe("editing a pending task", () => {
     await user.keyboard("{Control>}{Enter}{/Control}")
 
     await waitFor(() => expect(writePaths).toEqual([`PATCH /v1/tasks/${TASK.id}`]))
+  })
+})
+
+describe("staffing a task on a goal a workflow runs", () => {
+  it("offers one row per column, prefilled with the column's skills and its preferred rank", async () => {
+    renderDialog(STEPPED_GOAL)
+
+    expect(((await screen.findByLabelText("Develop skills")) as HTMLInputElement).value).toBe(
+      "coding",
+    )
+    expect((screen.getByLabelText("Review skills") as HTMLInputElement).value).toBe(
+      "code-review, security-review",
+    )
+    expect(screen.getByText("prefers balanced")).toBeDefined()
+    expect(screen.getByText("prefers frontier")).toBeDefined()
+    expect(screen.queryByLabelText("Author skills")).toBeNull()
+    expect(screen.queryByText("Reviewers")).toBeNull()
+  })
+
+  it("sends one agent per column, seat agent, with the column's step", async () => {
+    const user = userEvent.setup()
+    renderDialog(STEPPED_GOAL)
+
+    await user.type(screen.getByLabelText("Title"), "Walk the columns")
+    const submit = screen.getByRole("button", { name: "Create task" }) as HTMLButtonElement
+    await pickModel(user, "Develop", "codex-acp:gpt-5.6")
+    expect(submit.disabled).toBe(true)
+    await pickModel(user, "Review", "claude-agent-acp:claude-sonnet-5")
+    await user.click(submit)
+
+    await waitFor(() => expect(writePaths).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
+    expect(writes[0]).toMatchObject({
+      title: "Walk the columns",
+      agents: [
+        { seat: "agent", step: "develop", skills: ["coding"], model: "codex-acp:gpt-5.6" },
+        {
+          seat: "agent",
+          step: "review",
+          skills: ["code-review", "security-review"],
+          model: "claude-agent-acp:claude-sonnet-5",
+        },
+      ],
+    })
+  })
+
+  it("replaces the whole list on edit, starting from each column's staffed agent", async () => {
+    goalDetail = STEPPED_GOAL
+    const stepped: TaskDto = {
+      ...TASK,
+      agents: [
+        {
+          id: "01AGENTDEV",
+          seat: "agent",
+          step: "develop",
+          skills: ["coding", "testing"],
+          model: "codex-acp:gpt-5.6",
+        },
+        {
+          id: "01AGENTREV",
+          seat: "agent",
+          step: "review",
+          skills: ["code-review"],
+          model: "claude-agent-acp:claude-sonnet-5",
+          effort: "high",
+        },
+      ],
+    }
+    const user = userEvent.setup()
+    renderEdit(stepped)
+
+    const develop = (await screen.findByLabelText("Develop skills")) as HTMLInputElement
+    expect(develop.value).toBe("coding, testing")
+    await user.click(screen.getByRole("button", { name: "Save changes" }))
+
+    await waitFor(() => expect(writePaths).toEqual([`PATCH /v1/tasks/${TASK.id}`]))
+    expect(writes[0]).toMatchObject({
+      agents: [
+        {
+          seat: "agent",
+          step: "develop",
+          skills: ["coding", "testing"],
+          model: "codex-acp:gpt-5.6",
+        },
+        {
+          seat: "agent",
+          step: "review",
+          skills: ["code-review"],
+          model: "claude-agent-acp:claude-sonnet-5",
+          effort: "high",
+        },
+      ],
+    })
+    expect(writes[0]).not.toHaveProperty("reviewers")
   })
 })
 

@@ -164,6 +164,74 @@ it("lays the pipeline out in five columns", async () => {
   ])
 })
 
+/** The column headings one lane draws, in order. */
+function laneColumnsOf(title: string): string[] {
+  const lane = screen.getByText(title).closest("section")
+  if (!lane) throw new Error(`no lane for "${title}"`)
+  return within(lane)
+    .getAllByRole("heading", { level: 2 })
+    .map((heading) => heading.textContent ?? "")
+}
+
+it("draws each goal's own columns", async () => {
+  const stepped: GoalDto = aGoal({
+    id: "01JGOAL00000000000000STEP",
+    title: "Run through the workflow",
+    workflow: "develop-review-merge",
+    steps: [
+      { id: "develop", title: "Develop", description: "Build it.", skills: ["coding"] },
+      { id: "review", title: "Review", description: "Judge it.", skills: ["code-review"] },
+      { id: "merge", title: "Merge", description: "Land it.", skills: ["merge"] },
+    ],
+  })
+  const plain: GoalDto = { ...GOAL, title: "Run through the pipeline" }
+  const inReview: TaskDto = aTask({
+    id: "01JTASK00000000000000REVW",
+    goal_id: stepped.id,
+    title: "Waiting on its reviewer",
+    status: "in_progress",
+    step: "review",
+  })
+  const done: TaskDto = aTask({
+    id: "01JTASK00000000000000DONE",
+    goal_id: stepped.id,
+    title: "Landed already",
+    status: "finished",
+    step: null,
+  })
+  stubDaemon({ tasks: [inReview, done, { ...TASK, goal_id: plain.id }] })
+  renderBoard([stepped, plain])
+
+  await screen.findByText(inReview.title)
+  expect(laneColumnsOf(stepped.title)).toEqual(["Pending", "Develop", "Review", "Merge", "Done"])
+  expect(laneColumnsOf(plain.title)).toEqual([
+    "Pending",
+    "In progress",
+    "Under review",
+    "Approved",
+    "Finished",
+  ])
+  // Each card sits in the column of its step: Review is the third, after
+  // Pending and Develop; a finished task sits in Done, the last.
+  expect(cellOf(screen.getByText(inReview.title)).column).toBe(2)
+  expect(cellOf(screen.getByText(done.title)).column).toBe(4)
+})
+
+it("draws the five columns for a goal from a daemon that sends no steps", async () => {
+  const older = { ...GOAL, steps: undefined } as unknown as GoalDto
+  stubDaemon({ tasks: [TASK] })
+  renderBoard(older)
+
+  await screen.findByText(TASK.title)
+  expect(laneColumnsOf(older.title)).toEqual([
+    "Pending",
+    "In progress",
+    "Under review",
+    "Approved",
+    "Finished",
+  ])
+})
+
 it("puts a ready task in the Pending column, badged with the status it is really in", async () => {
   const blocked: TaskDto = { ...TASK, id: `${TASK.id}P`, title: "Waiting on a dependency" }
   blocked.status = "pending"

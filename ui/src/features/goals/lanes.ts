@@ -12,8 +12,92 @@
  */
 
 import type { GoalDto, TaskDto, TaskStatus } from "@/api"
+import { BOARD_STATUSES, primaryStatus, TASK_STATUS_META } from "@/features/tasks"
+import { isStepped } from "@/features/tasks/steps"
 import { plural } from "@/lib/format"
-import { isTerminalGoalStatus } from "./status"
+import { isStillPlanning, isTerminalGoalStatus } from "./status"
+
+/** One column of a lane: what its header says, and the key its cards are filed under. */
+interface LaneColumn {
+  key: string
+  label: string
+  /** What the column means, for its header's tooltip. */
+  hint: string
+  /** Solid dot classes, from the status ramp. */
+  dot: string
+}
+
+/** Where a stepped lane files the tasks that sit in a column, apart from the status keys. */
+function stepKey(id: string): string {
+  return `step:${id}`
+}
+
+/**
+ * The columns a goal's lane draws, in order.
+ *
+ * A goal with no workflow draws the five pipeline columns. A goal run by a
+ * workflow draws its own: Pending, one column per step, then Done — its tasks
+ * stay `in_progress` from the first step to the last, so the status alone
+ * cannot say where one is.
+ */
+export function laneColumns(goal: Pick<GoalDto, "steps">): LaneColumn[] {
+  if (!isStepped(goal)) {
+    return BOARD_STATUSES.map((status) => ({
+      key: status,
+      label: TASK_STATUS_META[status].label,
+      hint: TASK_STATUS_META[status].hint,
+      dot: TASK_STATUS_META[status].dot,
+    }))
+  }
+  return [
+    {
+      key: "pending",
+      label: TASK_STATUS_META.pending.label,
+      hint: TASK_STATUS_META.pending.hint,
+      dot: TASK_STATUS_META.pending.dot,
+    },
+    ...goal.steps.map((step) => ({
+      key: stepKey(step.id),
+      label: step.title,
+      hint: step.description || step.title,
+      dot: TASK_STATUS_META.in_progress.dot,
+    })),
+    {
+      key: "finished",
+      label: "Done",
+      hint: TASK_STATUS_META.finished.hint,
+      dot: TASK_STATUS_META.finished.dot,
+    },
+  ]
+}
+
+/**
+ * The key of the column a task's card sits in, or null for a task off the
+ * board (cancelled).
+ *
+ * A goal still being planned holds all of its tasks in the first column,
+ * `pending` and `ready` alike: nothing under it has been handed to an
+ * agent, so a card further along would say a task is moving when it is
+ * waiting on the orchestrator.
+ *
+ * A failed task lands in that first column too, whatever the goal is doing:
+ * the one thing anybody does with a failure is retry it, and a retry puts it
+ * back exactly there. Its card is outlined in danger and badged `Failed`.
+ *
+ * On a stepped goal, a task under way sits in the column of its `step`; one
+ * whose step the goal does not list sits in the first step's column.
+ */
+export function laneColumnOf(
+  task: TaskDto,
+  goal: Pick<GoalDto, "status" | "steps">,
+): string | null {
+  if (task.status === "cancelled") return null
+  if (task.status === "failed" || isStillPlanning(goal.status)) return "pending"
+  const status = primaryStatus(task.status)
+  if (!isStepped(goal) || status === "pending" || status === "finished") return status
+  const step = goal.steps.find((one) => one.id === task.step) ?? goal.steps[0]
+  return step ? stepKey(step.id) : status
+}
 
 /**
  * Which band a lane belongs to, lowest first: what is asking for a person,

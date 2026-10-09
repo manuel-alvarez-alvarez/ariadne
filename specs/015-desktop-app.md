@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-10-05
+updated: 2026-10-09
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, ced9f4f8, c11241f3]
 tests:
@@ -544,6 +544,34 @@ Out: the daemon endpoints themselves (012).
     focus and wired as its accessible description (023).
 38. Toasts show at the bottom left, clear of the header and the pane
     (`ui/src/components/ui/sonner.test.tsx::renders toasts at the bottom left`).
+39. A goal a workflow runs (030) is shown by its columns. Its lane on the
+    goals board draws its own column row: Pending (pending, ready, and failed
+    outlined in danger), one column per step in order, titled by the step,
+    then Done (finished); cancelled stays off the board. A card sits in the
+    column of its task's `step`. A lane of a goal with no steps draws the five
+    pipeline columns. Each lane carries its own column row, and its grid takes
+    as many columns as it has, at the same width floors; the board scrolls
+    sideways to its widest lane. A card whose status shows names the step
+    where the status said `in progress`.
+40. The task panel of a stepped task draws a step strip under its facts: one
+    segment per column, the current one highlighted, the ones behind it
+    marked done, each segment's hint the column's description. Its Agents
+    fact lists one row per column — the column, the skills, the pin and a
+    link to its live session — and no author or reviewer fact. The history
+    names a step move by its `from_step` and `to_step` columns.
+41. The task form on a stepped goal shows one row per column, prefilled with
+    the column's skills, with the column's preferred rank beside the pin
+    picker. It sends `agents`, seat `agent` and the column's `step` each, on
+    create and on edit, where an edit replaces the whole list. A goal with no
+    steps keeps the author and reviewer rows.
+42. The goal dialog has a workflow picker over the catalog, defaulted to the
+    first picked repository's `default_workflow`, and sends `workflow` in
+    place of a landing; it has no landing select. The repository dialog has a
+    default workflow picker and sends `default_workflow` — an empty string
+    clears it on edit — and has no default landing select.
+43. A session of seat `agent` is named by the column its agent staffs: its
+    badge on the sessions screen, the attention list and the palette. The
+    sessions screen's role filter offers the seat.
 
 - Goal details float over the board without a modal dialog, and a click on
   the scrim closes them
@@ -728,11 +756,11 @@ Out: the daemon endpoints themselves (012).
   a dirty skill, too`, `::asks before a route to another screen leaves a
   dirty skill, too`, `::leaves a clean skill with no prompt`).
 - The repository dialog is a path, a base branch, a description, a
-  permission mode and a default landing — not the merge-strategy or
-  landing-briefing fields that used to sit there
+  permission mode and a default workflow — not the default landing,
+  merge-strategy or landing-briefing fields that used to sit there
   (`ui/src/features/repositories/repository-form-dialog.test.tsx::takes a
   path, a base branch, a description, a permission mode and a default
-  landing`).
+  workflow`).
 - The repository dialog sends the permission mode picked for a new
   repository, starts an edit from the stored one, and the repositories
   screen shows each one's
@@ -1035,22 +1063,48 @@ Out: the daemon endpoints themselves (012).
   among the permission modes, and sends it as ai`,
   `::puts an ai_disabled refusal on the permission mode field, pointing at
   the Permissions screen`).
-- The repository dialog sends the default landing picked for a new
-  repository, and starts an edit from the stored one
+- The repository dialog sends the default workflow picked for a new
+  repository, starts an edit from the stored one, and clears it with the
+  empty string
   (`ui/src/features/repositories/repository-form-dialog.test.tsx::sends the
-  default landing picked for it`,
-  `::starts from the stored default landing, and sends a new one`).
-- The goal dialog's landing starts at the first repository's own default
-  once one is picked, stands once chosen by hand even if a different
-  repository becomes first, and is sent whichever way it was settled
-  (`ui/src/features/goals/create-goal-dialog.test.tsx::starts out at merge,
-  before any repository is picked`,
-  `::preselects the first picked repository's own default landing`,
-  `::keeps the merge default where the first picked repository uses it`,
-  `::sends the preselected landing on submit`,
-  `::sends a landing picked by hand instead of the repository's default`,
-  `::keeps a hand-picked landing once a different repository becomes the
-  first`).
+  default workflow picked for it`,
+  `::starts from the stored default workflow, and sends a new one`,
+  `::clears the default workflow with the empty string the daemon spells it as`).
+- The goal dialog has no landing select; its workflow starts at the first
+  repository's own default, a pick by hand replaces it, and the workflow is
+  sent in place of a landing, or nothing where none is picked
+  (`ui/src/features/goals/create-goal-dialog.test.tsx::has no landing select`,
+  `::preselects the first picked repository's own default workflow`,
+  `::sends the preselected workflow and no landing`,
+  `::sends a workflow picked by hand instead of the repository's default`,
+  `::sends no workflow where none is picked`).
+- A lane of a stepped goal draws Pending, its columns and Done, and puts each
+  card in its step's column; a lane without steps draws the five columns
+  (`ui/src/features/goals/goal-swimlanes.test.tsx::draws each goal's own columns`,
+  `::draws the five columns for a goal from a daemon that sends no steps`).
+- A card whose status shows names the column of a stepped task in progress
+  (`ui/src/features/tasks/task-card.test.tsx::names the workflow column a stepped task is in where its status would say in progress`).
+- The task panel of a stepped task shows the step strip with the current
+  column highlighted and each column's description as its hint, one agent
+  per column with its session link, no author or reviewer, and step moves in
+  the history
+  (`ui/src/features/tasks/task-panel.test.tsx::shows a stepped task's columns as a strip, the current one highlighted`,
+  `::gives each segment of the strip its column's description as the hint`,
+  `::lists one agent per column, with its skills, its pin and a link to its session`,
+  `::says nothing of an author or a reviewer on a stepped task`,
+  `::draws no strip for a task with no workflow`,
+  `ui/src/features/tasks/task-history.test.tsx::names a step move by the columns it went between`).
+- The task form sends one agent per column with seat `agent`, prefilled with
+  the column's skills and showing its preferred rank, and an edit replaces
+  the whole list
+  (`ui/src/features/tasks/task-form-dialog.test.tsx::staffing a task on a goal a workflow runs`,
+  `ui/src/features/tasks/task-form-values.test.ts::a task on a goal a workflow runs`).
+- A session of seat `agent` is named by its column on the sessions screen, in
+  the attention list and in the palette, and the role filter offers the seat
+  (`ui/src/features/sessions/sessions-page.test.tsx::names a step agent's seat by the workflow column it staffs`,
+  `::offers the step agent's seat among the role filters`,
+  `ui/src/features/goals/attention.test.tsx::names a waiting step agent by the workflow column it staffs`,
+  `ui/src/features/command-palette/entries.test.ts::names a step agent's session after the workflow column it staffs`).
 - The goal panel's facts show the goal's landing, and name each repository by
   its folder with its base branch bracketed after it and a feature-branch
   goal's own branch after that once the plan has cut one — the full path

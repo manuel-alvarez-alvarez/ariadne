@@ -27,15 +27,20 @@
  * The reviewers can be none: most work is worth a second pair of eyes and the
  * form starts with one, but a task with nothing to review — a release, say —
  * is approved as soon as its author asks.
+ *
+ * A goal a workflow runs has no author and no reviewers. The form shows one row
+ * per column instead — its skills, prefilled with the column's, and what the
+ * agent runs on, with the rank the column prefers beside it — and sends them
+ * as `agents`, seat `agent`, on create and on edit alike.
  */
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useQuery } from "@tanstack/react-query"
 import { PlusIcon, XIcon } from "lucide-react"
 import { useMemo } from "react"
-import { Controller, useFieldArray, useForm } from "react-hook-form"
+import { Controller, type UseFormReturn, useFieldArray, useForm } from "react-hook-form"
 import { toast } from "sonner"
-import { ApiError, type GoalDto, type TaskDto } from "@/api"
+import { ApiError, type GoalDto, type ModelDto, type TaskDto, type WorkflowStepDto } from "@/api"
 import {
   FormDialog,
   FormDialogBody,
@@ -46,9 +51,11 @@ import {
 } from "@/components/form-dialog"
 import { FormSelect } from "@/components/form-select"
 import { MarkdownField } from "@/components/markdown-field"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { goalQueryOptions } from "@/features/goals/queries"
 import { PinPicker } from "@/features/models/pin-picker"
 import { modelsQueryOptions } from "@/features/models/queries"
 import { skillsQueryOptions } from "@/features/skills/queries"
@@ -90,13 +97,7 @@ export function EditTaskDialog({
   return <TaskFormDialog editing={task} open={open} onOpenChange={onOpenChange} />
 }
 
-function TaskFormDialog({
-  goal,
-  editing,
-  open,
-  onOpenChange,
-  onCreated,
-}: {
+interface TaskFormDialogProps {
   /** Create mode: the goal the task goes into. */
   goal?: GoalDto
   /** Edit mode: the pending/ready task whose fields the form starts from. */
@@ -104,8 +105,33 @@ function TaskFormDialog({
   open: boolean
   onOpenChange: (open: boolean) => void
   onCreated?: (task: TaskDto) => void
-}) {
+}
+
+/**
+ * The form waits for its goal's columns: an edit is handed the task alone,
+ * and its goal's columns are the goal's detail — which the task panel behind
+ * this dialog has already read. A goal out of reach opens the form as one
+ * with no columns.
+ */
+function TaskFormDialog(props: TaskFormDialogProps) {
+  const { goal, editing, open } = props
   const goalId = goal?.id ?? editing?.goal_id ?? ""
+  const goalDetail = useQuery({ ...goalQueryOptions(goalId), enabled: open && !goal })
+  const steps = (goal ?? goalDetail.data)?.steps
+  if (steps === undefined && !goalDetail.isError) return null
+  return <TaskForm {...props} steps={steps ?? []} />
+}
+
+function TaskForm({
+  goal,
+  editing,
+  open,
+  onOpenChange,
+  onCreated,
+  steps,
+}: TaskFormDialogProps & { steps: WorkflowStepDto[] }) {
+  const goalId = goal?.id ?? editing?.goal_id ?? ""
+  const stepped = steps.length > 0
   // The catalog behind the skill boxes: a suggestion, not a gate — the daemon
   // is what refuses a name no skill answers to.
   const skills = useQuery({ ...skillsQueryOptions(), enabled: open })
@@ -119,12 +145,12 @@ function TaskFormDialog({
 
   const multiRepo = (goal?.repos.length ?? 0) > 1
   const formSchema = useMemo(
-    () => makeTaskFormSchema({ creating: !editing, requireRepo: multiRepo }),
-    [editing, multiRepo],
+    () => makeTaskFormSchema({ creating: !editing, requireRepo: multiRepo, stepped }),
+    [editing, multiRepo, stepped],
   )
-  // Nothing async goes into the seeding any more: an agent's pin is simply
-  // its pin, so what the form starts from is the task and nothing else.
-  const defaultValues = useMemo(() => taskToFormValues(editing), [editing])
+  // What the form starts from is the task and its goal's columns: an agent's
+  // pin is simply its pin.
+  const defaultValues = useMemo(() => taskToFormValues(editing, steps), [editing, steps])
 
   const form = useForm<TaskFormValues>({
     resolver: zodResolver(formSchema),
@@ -153,9 +179,11 @@ function TaskFormDialog({
   // model: one control, two fields.
   const authorEffort = form.watch("author_effort")
   const reviewerRowValues = form.watch("reviewers")
-  const hasModel =
-    form.watch("author_model").trim().length > 0 &&
-    reviewerRowValues.every((reviewer) => reviewer.model.trim().length > 0)
+  const stepRowValues = form.watch("step_agents")
+  const hasModel = stepped
+    ? stepRowValues.every((row) => row.model.trim().length > 0)
+    : form.watch("author_model").trim().length > 0 &&
+      reviewerRowValues.every((reviewer) => reviewer.model.trim().length > 0)
   /**
    * Every skill name a task agent can be staffed with, as the boxes suggest
    * them — the orchestrator's own playbook is not a task staffing choice.
@@ -202,9 +230,13 @@ function TaskFormDialog({
         className="sm:max-w-2xl"
         title={editing ? "Edit task" : "New task"}
         description={
-          editing
-            ? "Editable while the task is still waiting; reviewers and dependencies replace the current lists. The author's skills and the repository are fixed at creation — the model it runs on is not."
-            : "A unit of work an author takes from branch to merge, reviewed by the reviewers in the order given."
+          stepped
+            ? editing
+              ? "Editable while the task is still waiting; the agents and dependencies replace the current lists. The repository is fixed at creation."
+              : "A unit of work that moves through the goal's workflow, one agent per column."
+            : editing
+              ? "Editable while the task is still waiting; reviewers and dependencies replace the current lists. The author's skills and the repository are fixed at creation — the model it runs on is not."
+              : "A unit of work an author takes from branch to merge, reviewed by the reviewers in the order given."
         }
         onSubmit={form.handleSubmit(onSubmit)}
         error={
@@ -251,132 +283,138 @@ function TaskFormDialog({
             )}
           />
 
-          {!editing ? (
-            <Field data-invalid={form.formState.errors.author_skills ? "" : undefined}>
-              <FieldLabel htmlFor="task-author-skills">Author skills</FieldLabel>
-              <SkillsInput
-                control={form.control}
-                name="author_skills"
-                id="task-author-skills"
-                suggestions={skillNames}
-              />
-              {form.formState.errors.author_skills ? (
-                <FieldError>{form.formState.errors.author_skills.message}</FieldError>
-              ) : (
-                <FieldDescription>
-                  Comma-separated, in the order they reach the agent. They are the whole of what it
-                  can do.
-                </FieldDescription>
-              )}
-            </Field>
-          ) : null}
+          {stepped ? (
+            <StepAgentRows steps={steps} form={form} models={models.data} skillNames={skillNames} />
+          ) : (
+            <>
+              {!editing ? (
+                <Field data-invalid={form.formState.errors.author_skills ? "" : undefined}>
+                  <FieldLabel htmlFor="task-author-skills">Author skills</FieldLabel>
+                  <SkillsInput
+                    control={form.control}
+                    name="author_skills"
+                    id="task-author-skills"
+                    suggestions={skillNames}
+                  />
+                  {form.formState.errors.author_skills ? (
+                    <FieldError>{form.formState.errors.author_skills.message}</FieldError>
+                  ) : (
+                    <FieldDescription>
+                      Comma-separated, in the order they reach the agent. They are the whole of what
+                      it can do.
+                    </FieldDescription>
+                  )}
+                </Field>
+              ) : null}
 
-          {/* Editable in both modes, unlike the skills beside it: a task keeps
+              {/* Editable in both modes, unlike the skills beside it: a task keeps
               the author it started with, but the daemon takes a pin on `PATCH`
               too, for as long as the task waits. */}
-          <Field data-invalid={form.formState.errors.author_model ? "" : undefined}>
-            <FieldLabel htmlFor="task-author-pin">Author runs on</FieldLabel>
-            <Controller
-              control={form.control}
-              name="author_model"
-              render={({ field }) => (
-                <PinPicker
-                  id="task-author-pin"
-                  label="Author runs on"
-                  model={field.value}
-                  effort={authorEffort}
-                  onChange={(pin) => {
-                    field.onChange(pin.model)
-                    form.setValue("author_effort", pin.effort, { shouldDirty: true })
-                  }}
-                  models={models.data}
-                  invalid={form.formState.errors.author_model ? true : undefined}
+              <Field data-invalid={form.formState.errors.author_model ? "" : undefined}>
+                <FieldLabel htmlFor="task-author-pin">Author runs on</FieldLabel>
+                <Controller
+                  control={form.control}
+                  name="author_model"
+                  render={({ field }) => (
+                    <PinPicker
+                      id="task-author-pin"
+                      label="Author runs on"
+                      model={field.value}
+                      effort={authorEffort}
+                      onChange={(pin) => {
+                        field.onChange(pin.model)
+                        form.setValue("author_effort", pin.effort, { shouldDirty: true })
+                      }}
+                      models={models.data}
+                      invalid={form.formState.errors.author_model ? true : undefined}
+                    />
+                  )}
                 />
-              )}
-            />
-            {form.formState.errors.author_model ? (
-              <FieldError>{form.formState.errors.author_model.message}</FieldError>
-            ) : (
-              <FieldDescription>
-                The agent and, after a <code>:</code>, the model of it.
-              </FieldDescription>
-            )}
-          </Field>
+                {form.formState.errors.author_model ? (
+                  <FieldError>{form.formState.errors.author_model.message}</FieldError>
+                ) : (
+                  <FieldDescription>
+                    The agent and, after a <code>:</code>, the model of it.
+                  </FieldDescription>
+                )}
+              </Field>
 
-          <Field>
-            {/* A row is one reviewer: the skills it reviews with, and what it
+              <Field>
+                {/* A row is one reviewer: the skills it reviews with, and what it
                 runs on. */}
-            <FieldLabel>Reviewers</FieldLabel>
-            <div className="flex flex-col gap-2">
-              {reviewerRows.fields.map((row, index) => {
-                const error = form.formState.errors.reviewers?.[index]?.skills
-                const modelError = form.formState.errors.reviewers?.[index]?.model
-                return (
-                  <div key={row.id} className="flex flex-col gap-1">
-                    {/* The skills and what they run on, side by side: one row
+                <FieldLabel>Reviewers</FieldLabel>
+                <div className="flex flex-col gap-2">
+                  {reviewerRows.fields.map((row, index) => {
+                    const error = form.formState.errors.reviewers?.[index]?.skills
+                    const modelError = form.formState.errors.reviewers?.[index]?.model
+                    return (
+                      <div key={row.id} className="flex flex-col gap-1">
+                        {/* The skills and what they run on, side by side: one row
                         is one reviewer, and both belong to that agent. */}
-                    <div className="flex items-start gap-2">
-                      <SkillsInput
-                        control={form.control}
-                        name={`reviewers.${index}.skills`}
-                        ariaLabel={`Reviewer ${index + 1} skills`}
-                        invalid={error ? true : undefined}
-                        className="flex-1"
-                        suggestions={skillNames}
-                      />
-                      <Controller
-                        control={form.control}
-                        name={`reviewers.${index}.model`}
-                        render={({ field }) => (
-                          <PinPicker
-                            label={`Reviewer ${index + 1} runs on`}
-                            model={field.value}
-                            effort={reviewerRowValues?.[index]?.effort ?? ""}
-                            onChange={(pin) => {
-                              field.onChange(pin.model)
-                              form.setValue(`reviewers.${index}.effort`, pin.effort, {
-                                shouldDirty: true,
-                              })
-                            }}
-                            models={models.data}
-                            invalid={modelError ? true : undefined}
+                        <div className="flex items-start gap-2">
+                          <SkillsInput
+                            control={form.control}
+                            name={`reviewers.${index}.skills`}
+                            ariaLabel={`Reviewer ${index + 1} skills`}
+                            invalid={error ? true : undefined}
                             className="flex-1"
+                            suggestions={skillNames}
                           />
-                        )}
-                      />
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        aria-label={`Remove reviewer ${index + 1}`}
-                        onClick={() => reviewerRows.remove(index)}
-                      >
-                        <XIcon />
-                      </Button>
-                    </div>
-                    <FieldError>{error?.message ?? modelError?.message}</FieldError>
-                  </div>
-                )
-              })}
-            </div>
-            <div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => reviewerRows.append({ skills: "", model: "", effort: "" })}
-              >
-                <PlusIcon />
-                Add reviewer
-              </Button>
-            </div>
-            <FieldDescription>
-              The task is reviewed by each of these, top to bottom, every round. Leave it empty only
-              where there is nothing to review: the task is then approved as soon as its author
-              asks.
-            </FieldDescription>
-            <FieldError>{form.formState.errors.reviewers?.root?.message}</FieldError>
-          </Field>
+                          <Controller
+                            control={form.control}
+                            name={`reviewers.${index}.model`}
+                            render={({ field }) => (
+                              <PinPicker
+                                label={`Reviewer ${index + 1} runs on`}
+                                model={field.value}
+                                effort={reviewerRowValues?.[index]?.effort ?? ""}
+                                onChange={(pin) => {
+                                  field.onChange(pin.model)
+                                  form.setValue(`reviewers.${index}.effort`, pin.effort, {
+                                    shouldDirty: true,
+                                  })
+                                }}
+                                models={models.data}
+                                invalid={modelError ? true : undefined}
+                                className="flex-1"
+                              />
+                            )}
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`Remove reviewer ${index + 1}`}
+                            onClick={() => reviewerRows.remove(index)}
+                          >
+                            <XIcon />
+                          </Button>
+                        </div>
+                        <FieldError>{error?.message ?? modelError?.message}</FieldError>
+                      </div>
+                    )
+                  })}
+                </div>
+                <div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => reviewerRows.append({ skills: "", model: "", effort: "" })}
+                  >
+                    <PlusIcon />
+                    Add reviewer
+                  </Button>
+                </div>
+                <FieldDescription>
+                  The task is reviewed by each of these, top to bottom, every round. Leave it empty
+                  only where there is nothing to review: the task is then approved as soon as its
+                  author asks.
+                </FieldDescription>
+                <FieldError>{form.formState.errors.reviewers?.root?.message}</FieldError>
+              </Field>
+            </>
+          )}
 
           {multiRepo ? (
             <Field data-invalid={form.formState.errors.repo_id ? "" : undefined}>
@@ -449,5 +487,79 @@ function TaskFormDialog({
         </FormDialogBody>
       </FormDialogContent>
     </FormDialog>
+  )
+}
+
+/**
+ * One row per workflow column, in the column's order: the column's title, the
+ * skills its agent loads, and what that agent runs on, with the rank the
+ * column prefers beside the picker. The rows are the workflow's, so none is
+ * added or removed here.
+ */
+function StepAgentRows({
+  steps,
+  form,
+  models,
+  skillNames,
+}: {
+  steps: WorkflowStepDto[]
+  form: UseFormReturn<TaskFormValues>
+  models: ModelDto[] | undefined
+  skillNames: string[]
+}) {
+  const rows = form.watch("step_agents")
+  return (
+    <Field>
+      <FieldLabel>Agents</FieldLabel>
+      <div className="flex flex-col gap-3">
+        {steps.map((step, index) => {
+          const errors = form.formState.errors.step_agents?.[index]
+          return (
+            <div key={step.id} className="flex flex-col gap-1">
+              <span className="text-xs font-medium">{step.title}</span>
+              <div className="flex items-start gap-2">
+                <SkillsInput
+                  control={form.control}
+                  name={`step_agents.${index}.skills`}
+                  ariaLabel={`${step.title} skills`}
+                  className="flex-1"
+                  suggestions={skillNames}
+                />
+                <Controller
+                  control={form.control}
+                  name={`step_agents.${index}.model`}
+                  render={({ field }) => (
+                    <PinPicker
+                      label={`${step.title} runs on`}
+                      model={field.value}
+                      effort={rows?.[index]?.effort ?? ""}
+                      onChange={(pin) => {
+                        field.onChange(pin.model)
+                        form.setValue(`step_agents.${index}.effort`, pin.effort, {
+                          shouldDirty: true,
+                        })
+                      }}
+                      models={models}
+                      invalid={errors?.model ? true : undefined}
+                      className="flex-1"
+                    />
+                  )}
+                />
+                {step.rank ? (
+                  <Badge variant="outline" className="mt-2 shrink-0 font-normal">
+                    prefers {step.rank}
+                  </Badge>
+                ) : null}
+              </div>
+              <FieldError>{errors?.model?.message}</FieldError>
+            </div>
+          )
+        })}
+      </div>
+      <FieldDescription>
+        One agent per column of the goal's workflow. Skills start from the column's own; left empty,
+        the column's own are used.
+      </FieldDescription>
+    </Field>
   )
 }

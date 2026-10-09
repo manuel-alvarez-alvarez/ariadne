@@ -27,9 +27,9 @@ import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { useLocation } from "react-router-dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import type { ModelDto, RepositoryDto } from "@/api"
+import type { ModelDto, RepositoryDto, WorkflowDto } from "@/api"
 import { paths } from "@/routes/paths"
-import { aModel, anEffort, aRepository } from "@/test/fixtures"
+import { aModel, anEffort, aRepository, aWorkflow } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { CreateGoalDialog } from "./create-goal-dialog"
 
@@ -71,8 +71,13 @@ const SANDBOX: RepositoryDto = aRepository({
   path: "/home/me/dev/sandbox",
   base_branch: "trunk",
   description: null,
-  default_landing: "feature_branch",
+  default_workflow: "develop-review-pr",
 })
+
+const WORKFLOWS: WorkflowDto[] = [
+  aWorkflow(),
+  aWorkflow({ name: "develop-review-pr", document: "workflow develop-review-pr" }),
+]
 
 interface Recorded {
   method: string
@@ -83,6 +88,7 @@ interface Recorded {
     model?: string
     effort?: string
     landing?: string
+    workflow?: string
   } | null
 }
 
@@ -112,6 +118,7 @@ function stubDaemon(repositories: RepositoryDto[]) {
 
     if (pathname === "/v1/repositories") return jsonResponse(repositories)
     if (pathname === "/v1/models") return jsonResponse(CATALOG)
+    if (pathname === "/v1/workflows") return jsonResponse(WORKFLOWS)
     if (pathname === "/v1/goals" && request.method === "POST") {
       return jsonResponse(
         { ...body, id: "01JGOAL0000000000000NEW", repos: repositories, status: "planning" },
@@ -141,7 +148,10 @@ function renderDialog() {
 
 /** The field itself, which is what the popup hangs off. */
 async function repositoryBox(): Promise<HTMLElement> {
-  return await screen.findByRole("combobox", { name: "Repositories" })
+  // The box waits on the repositories request. The first test of the file
+  // also pays for the dialog's cold mount, which a loaded machine stretches
+  // past the default second.
+  return await screen.findByRole("combobox", { name: "Repositories" }, { timeout: 4000 })
 }
 
 /** The list of repositories, which lives in a portal outside the dialog. */
@@ -249,7 +259,6 @@ describe("picking the goal's repositories", () => {
       description: "",
       model: "codex-acp:gpt-5.3-codex",
       repository_ids: [ARIADNE.id],
-      landing: "merge",
     })
     expect(screen.queryByLabelText("Max tasks")).toBeNull()
     expect(screen.queryByLabelText("Approvals")).toBeNull()
@@ -305,21 +314,22 @@ describe("picking the goal's repositories", () => {
 })
 
 /**
- * How the goal's tasks end, preselected from the first repository picked and
- * overridable by hand — never both at once for the same submit.
+ * The workflow the goal's tasks move through, preselected from the first
+ * repository picked and overridable by hand. It is sent in place of a
+ * landing: the dialog has no landing any more.
  */
-describe("choosing the landing", () => {
-  function landingBox(): HTMLElement {
-    return screen.getByRole("combobox", { name: "Landing" })
+describe("choosing the workflow", () => {
+  function workflowBox(): HTMLElement {
+    return screen.getByRole("combobox", { name: "Workflow" })
   }
 
-  it("starts out at merge, before any repository is picked", () => {
+  it("has no landing select", () => {
     renderDialog()
 
-    expect(landingBox().textContent).toContain("Merge onto the base branch")
+    expect(screen.queryByRole("combobox", { name: "Landing" })).toBeNull()
   })
 
-  it("preselects the first picked repository's own default landing", async () => {
+  it("preselects the first picked repository's own default workflow", async () => {
     const user = userEvent.setup()
     renderDialog()
 
@@ -327,29 +337,55 @@ describe("choosing the landing", () => {
     await user.click(row(list, SANDBOX))
 
     await waitFor(() => {
-      expect(landingBox().textContent).toContain("Land on a feature branch")
+      expect(workflowBox().textContent).toContain("develop-review-pr")
     })
   })
 
-  it("keeps the merge default where the first picked repository uses it", async () => {
+  it("sends the preselected workflow and no landing", async () => {
     const user = userEvent.setup()
     renderDialog()
 
+    await user.type(screen.getByLabelText("Title"), "Workflow")
+    const list = await openList(user)
+    await user.click(row(list, SANDBOX))
+    await user.keyboard("{Escape}")
+    await chooseModel(user)
+    await user.click(screen.getByRole("button", { name: "Create goal" }))
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()?.body?.workflow).toBe("develop-review-pr")
+    expect(lastWrite()?.body).not.toHaveProperty("landing")
+  })
+
+  it("sends a workflow picked by hand instead of the repository's default", async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    await user.type(screen.getByLabelText("Title"), "Workflow")
+    const list = await openList(user)
+    await user.click(row(list, SANDBOX))
+    await user.keyboard("{Escape}")
+    await chooseModel(user)
+
+    await user.click(workflowBox())
+    await user.click(await screen.findByRole("option", { name: "develop-review-merge" }))
+    await user.click(screen.getByRole("button", { name: "Create goal" }))
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()?.body?.workflow).toBe("develop-review-merge")
+  })
+
+  it("sends no workflow where none is picked", async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    await user.type(screen.getByLabelText("Title"), "Workflow")
     const list = await openList(user)
     await user.click(row(list, ARIADNE))
-
-    await waitFor(() => {
-      expect(landingBox().textContent).toContain("Merge onto the base branch")
-    })
-  })
-
-  it("sends the preselected landing on submit", async () => {
-    const user = userEvent.setup()
-    renderDialog()
-
-    await user.type(screen.getByLabelText("Title"), "Landing")
-    const list = await openList(user)
-    await user.click(row(list, SANDBOX))
     await user.keyboard("{Escape}")
     await chooseModel(user)
     await user.click(screen.getByRole("button", { name: "Create goal" }))
@@ -357,48 +393,7 @@ describe("choosing the landing", () => {
     await waitFor(() => {
       expect(lastWrite()).toBeDefined()
     })
-    expect(lastWrite()?.body?.landing).toBe("feature_branch")
-  })
-
-  it("sends a landing picked by hand instead of the repository's default", async () => {
-    const user = userEvent.setup()
-    renderDialog()
-
-    await user.type(screen.getByLabelText("Title"), "Landing")
-    const list = await openList(user)
-    await user.click(row(list, SANDBOX))
-    await user.keyboard("{Escape}")
-    await chooseModel(user)
-
-    await user.click(landingBox())
-    await user.click(await screen.findByRole("option", { name: "Land nothing" }))
-    await user.click(screen.getByRole("button", { name: "Create goal" }))
-
-    await waitFor(() => {
-      expect(lastWrite()).toBeDefined()
-    })
-    expect(lastWrite()?.body?.landing).toBe("none")
-  })
-
-  it("keeps a hand-picked landing once a different repository becomes the first", async () => {
-    const user = userEvent.setup()
-    renderDialog()
-
-    const list = await openList(user)
-    await user.click(row(list, SANDBOX))
-    await waitFor(() => {
-      expect(landingBox().textContent).toContain("Land on a feature branch")
-    })
-
-    await user.click(landingBox())
-    await user.click(await screen.findByRole("option", { name: "Land nothing" }))
-
-    // Taking the preselected repository back off and picking the other one
-    // makes it first; the landing the user already chose must survive that.
-    await user.click(screen.getByRole("button", { name: `Remove ${SANDBOX.path}` }))
-    await user.click(row(await openList(user), ARIADNE))
-
-    expect(landingBox().textContent).toContain("Land nothing")
+    expect(lastWrite()?.body).not.toHaveProperty("workflow")
   })
 })
 

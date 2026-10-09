@@ -209,3 +209,16 @@ it("keeps the branch pill inside the card", () => {
   const pill = screen.getByTitle(TASK.branch).closest("span.max-w-full")
   expect(pill?.contains(screen.getByRole("button", { name: "Copy branch" }))).toBe(true)
 })
+
+it("names the workflow column a stepped task is in where its status would say in progress", () => {
+  renderScreen(
+    <TaskCard
+      task={aTask({ status: "in_progress", step: "review" })}
+      showStatus
+      step={{ id: "review", title: "Review", description: "Judge it.", skills: [] }}
+    />,
+  )
+
+  expect(screen.getByText("Review")).toBeDefined()
+  expect(screen.queryByText("In progress")).toBeNull()
+})

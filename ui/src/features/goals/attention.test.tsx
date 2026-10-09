@@ -12,6 +12,7 @@ import { aGoal, aSession, aSessionPage, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse } from "@/test/harness"
 
 import {
+  attentionDetail,
   attentionSubject,
   attentionTarget,
   taskAttentionReason,
@@ -210,6 +211,33 @@ describe("attention", () => {
     expect(attentionTarget(item, new URLSearchParams(), paths.goals())).toEqual({
       search: "?session=s1",
     })
+  })
+
+  it("names a waiting step agent by the workflow column it staffs", async () => {
+    const goal = aGoal({
+      steps: [{ id: "review", title: "Review", description: "", skills: ["code-review"] }],
+    })
+    const task = aTask({
+      goal_id: goal.id,
+      agents: [{ id: "agent-review", seat: "agent", step: "review", skills: [], model: "a:b" }],
+    })
+    const session = aSession({
+      goal_id: goal.id,
+      task_id: task.id,
+      seat: "agent",
+      task_agent_id: "agent-review",
+      status: "idle",
+      attention_reason: "waiting_permission",
+      attention_since: "2026-01-02T00:00:00Z",
+    })
+    stubLists({ goals: [goal], tasks: [task], sessions: [session] })
+
+    const { result } = renderAttention(useAttention)
+
+    await waitFor(() => expect(result.current.items).toHaveLength(1))
+    const [item] = result.current.items
+    if (!item) throw new Error("no row")
+    expect(attentionDetail(item)).toMatch(/^Review · /)
   })
 
   it("keeps a pull request session off the board, having no card and no lane", async () => {

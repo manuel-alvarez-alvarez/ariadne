@@ -226,11 +226,6 @@ export const LANDING_LABELS: Record<Landing, string> = {
   feature_branch: "Land on a feature branch",
 }
 
-/** `LANDING_LABELS`, as a picker's items: every landing, in enum order. */
-export const LANDING_ITEMS: { value: Landing; label: string }[] = (
-  Object.keys(LANDING_LABELS) as Landing[]
-).map((value) => ({ value, label: LANDING_LABELS[value] }))
-
 // ── Failures ──────────────────────────────────────────────────────────────
 
 /**

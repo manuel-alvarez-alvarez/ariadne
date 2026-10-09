@@ -12,11 +12,11 @@ import { GitBranchIcon, GitCommitHorizontalIcon, GitPullRequestIcon } from "luci
 import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
 
-import type { TaskAgentDto, TaskDto } from "@/api"
+import type { TaskAgentDto, TaskDto, WorkflowStepDto } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { Fact, FactList } from "@/components/fact-list"
 import { StatusBadge } from "@/components/status-badge"
-import { TokenFigure, taskUsageRows } from "@/components/token-figure"
+import { stepUsageRows, TokenFigure, taskUsageRows } from "@/components/token-figure"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { AgentSummary } from "@/features/models/agent-summary"
 import { SkillName } from "@/features/skills/skill-name"
@@ -26,11 +26,16 @@ import { taskAuthor, taskAuthors, taskReviewers } from "./agents"
 
 import { taskQueryOptions } from "./queries"
 import { primaryStatus, TASK_STATUS_META } from "./status"
+import { stepTitle } from "./steps"
+import { SessionLink } from "./task-sessions"
 
-export function TaskFacts({ task }: { task: TaskDto }) {
+export function TaskFacts({ task, steps }: { task: TaskDto; steps?: WorkflowStepDto[] }) {
   const author = taskAuthor(task)
   const authors = taskAuthors(task)
   const reviewers = taskReviewers(task)
+  // A goal a workflow runs staffs one agent per column, and has no author or
+  // reviewer to name: the agents are listed by the column each one staffs.
+  const stepped = steps !== undefined && steps.length > 0
 
   return (
     // Dense, like the goal and session panels' own top facts: a branch and a
@@ -51,64 +56,76 @@ export function TaskFacts({ task }: { task: TaskDto }) {
           <Muted>not created yet</Muted>
         )}
       </Fact>
-      <Fact label={authors.length > 1 ? "Authors" : "Author"}>
-        {authors.length === 0 ? (
-          <Muted>none staffed</Muted>
-        ) : author && authors.length === 1 ? (
-          <AgentSummary
-            skills={author.skills}
-            model={author.model}
-            effort={author.effort}
-            className="text-xs"
-          />
-        ) : (
-          // Several authors write the task side by side, each its own block:
-          // its skills, its model, the branch it owns and its own pick status
-          // — the same facts, and the same order, as `ariadne task inspect`'s
-          // `author` line. A clear gap between blocks is what lets a reader
-          // see three candidates as three, not one run-on list.
-          <span className="flex flex-col gap-3 text-xs">
-            {authors.map((author) => (
-              <AuthorRow key={author.id} task={task} author={author} />
-            ))}
-          </span>
-        )}
-      </Fact>
-      <Fact label="Reviewers">
-        {reviewers.length > 0 ? (
-          // Two lines each — the skills, then the model below them — with a
-          // gap between reviewers clear enough that a reviewer's own model
-          // does not read as the next reviewer's. Each agent carries its own
-          // pin, so two reviewers on the same skills can still read differently.
-          <span className="flex flex-col gap-2 text-xs">
-            {reviewers.map((reviewer) => (
+      {stepped ? (
+        <Fact label="Agents">
+          <StepAgents task={task} steps={steps} />
+        </Fact>
+      ) : (
+        <>
+          <Fact label={authors.length > 1 ? "Authors" : "Author"}>
+            {authors.length === 0 ? (
+              <Muted>none staffed</Muted>
+            ) : author && authors.length === 1 ? (
               <AgentSummary
-                key={reviewer.id}
-                skills={reviewer.skills}
-                model={reviewer.model}
-                effort={reviewer.effort}
+                skills={author.skills}
+                model={author.model}
+                effort={author.effort}
+                className="text-xs"
               />
-            ))}
-          </span>
-        ) : (
-          <Muted>none staffed</Muted>
-        )}
-      </Fact>
-      {/* Only a task staffed with several authors has a pick to show: a
+            ) : (
+              // Several authors write the task side by side, each its own block:
+              // its skills, its model, the branch it owns and its own pick status
+              // — the same facts, and the same order, as `ariadne task inspect`'s
+              // `author` line. A clear gap between blocks is what lets a reader
+              // see three candidates as three, not one run-on list.
+              <span className="flex flex-col gap-3 text-xs">
+                {authors.map((author) => (
+                  <AuthorRow key={author.id} task={task} author={author} />
+                ))}
+              </span>
+            )}
+          </Fact>
+          <Fact label="Reviewers">
+            {reviewers.length > 0 ? (
+              // Two lines each — the skills, then the model below them — with a
+              // gap between reviewers clear enough that a reviewer's own model
+              // does not read as the next reviewer's. Each agent carries its own
+              // pin, so two reviewers on the same skills can still read differently.
+              <span className="flex flex-col gap-2 text-xs">
+                {reviewers.map((reviewer) => (
+                  <AgentSummary
+                    key={reviewer.id}
+                    skills={reviewer.skills}
+                    model={reviewer.model}
+                    effort={reviewer.effort}
+                  />
+                ))}
+              </span>
+            ) : (
+              <Muted>none staffed</Muted>
+            )}
+          </Fact>
+          {/* Only a task staffed with several authors has a pick to show: a
           one-author task is approved the moment its author asks, and prints
           exactly what it always did (parity with `task inspect`'s own
           `picks` line, which is likewise left out below one author). */}
-      {authors.length > 1 ? (
-        <Fact label="Picks">
-          <Picks task={task} />
-        </Fact>
-      ) : null}
+          {authors.length > 1 ? (
+            <Fact label="Picks">
+              <Picks task={task} />
+            </Fact>
+          ) : null}
+        </>
+      )}
       <Fact label="Tokens">
         {/* Every agent that has run this task, the reviewers included, with
             the hint breaking the same total down by who spent it. */}
         <TokenFigure
           usage={task.usage.total}
-          rows={taskUsageRows(task.usage)}
+          rows={
+            stepped
+              ? stepUsageRows(task.usage, (step) => stepTitle(steps, step))
+              : taskUsageRows(task.usage)
+          }
           className="text-xs"
         />
       </Fact>
@@ -164,6 +181,33 @@ export function TaskFacts({ task }: { task: TaskDto }) {
         </Fact>
       ) : null}
     </FactList>
+  )
+}
+
+/**
+ * One row per workflow column, in the column's order: the column, the skills
+ * and the pin of the agent that staffs it, and a link to its live session.
+ */
+function StepAgents({ task, steps }: { task: TaskDto; steps: WorkflowStepDto[] }) {
+  return (
+    <ul className="flex flex-col gap-2 text-xs">
+      {steps.map((step) => {
+        const agent = task.agents.find((candidate) => candidate.step === step.id)
+        return (
+          <li key={step.id} className="flex min-w-0 flex-col gap-0.5">
+            <span className="flex items-center gap-2">
+              <span className="font-medium">{step.title}</span>
+              {agent?.session_id ? <SessionLink sessionId={agent.session_id} /> : null}
+            </span>
+            {agent ? (
+              <AgentSummary skills={agent.skills} model={agent.model} effort={agent.effort} />
+            ) : (
+              <Muted>none staffed</Muted>
+            )}
+          </li>
+        )
+      })}
+    </ul>
   )
 }
 

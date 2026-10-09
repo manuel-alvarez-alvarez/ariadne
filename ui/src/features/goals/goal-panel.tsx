@@ -231,6 +231,7 @@ function GoalView({
           <TabsContent value="tasks" className="pt-3">
             <GoalTasks
               goalId={goal.id}
+              steps={goal.steps}
               onNewTask={canCreateTask ? () => setNewTaskOpen(true) : undefined}
             />
           </TabsContent>

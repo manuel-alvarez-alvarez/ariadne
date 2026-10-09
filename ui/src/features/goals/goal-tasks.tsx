@@ -16,19 +16,24 @@ import { useQuery } from "@tanstack/react-query"
 import { PlusIcon } from "lucide-react"
 import { useMemo } from "react"
 
+import type { WorkflowStepDto } from "@/api"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { compareByAttention, TaskCard, taskListQueryOptions } from "@/features/tasks"
+import { findStep } from "@/features/tasks/steps"
 
 import { useBoardAttention } from "./attention"
 
 export function GoalTasks({
   goalId,
+  steps,
   onNewTask,
 }: {
   goalId: string
+  /** The goal's workflow columns, which a stepped card names its status by. */
+  steps?: WorkflowStepDto[]
   /** Opens the create-task dialog; absent when the goal no longer takes one. */
   onNewTask?: () => void
 }) {
@@ -83,7 +88,12 @@ export function GoalTasks({
     <ul className="flex flex-col gap-2">
       {ordered.map((task) => (
         <li key={task.id}>
-          <TaskCard task={task} showStatus attention={attention.byTask.get(task.id)} />
+          <TaskCard
+            task={task}
+            showStatus
+            step={findStep(steps, task.step)}
+            attention={attention.byTask.get(task.id)}
+          />
         </li>
       ))}
     </ul>

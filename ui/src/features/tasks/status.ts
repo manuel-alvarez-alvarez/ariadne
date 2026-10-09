@@ -23,16 +23,6 @@ export const BOARD_STATUSES = [
 ] as const satisfies readonly TaskStatus[]
 
 /**
- * Statuses that leave the pipeline; shown apart from the board.
- *
- * A failure is *not* one of them any more: it is a retry candidate, so it
- * belongs where the retry would put it — the Pending column, outlined in
- * danger (see {@link StatusMeta.border}). Only a cancelled task is genuinely
- * off the pipeline: nobody is coming back to it.
- */
-export const OFF_BOARD_STATUSES = ["cancelled"] as const satisfies readonly TaskStatus[]
-
-/**
  * The daemon statuses the UI folds into a primary one: `ready` is a phase of
  * `pending` and `changes_requested` a phase of `in_progress`. The raw status
  * stays visible as a sub-status badge.

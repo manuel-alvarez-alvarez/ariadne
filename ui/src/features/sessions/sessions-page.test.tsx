@@ -628,6 +628,47 @@ it("shows the seat, the goal and the task of an Ariadne row together, in one Wor
   expect(headers).not.toContain("Task")
 })
 
+it("names a step agent's seat by the workflow column it staffs", async () => {
+  const goal = aGoal({
+    workflow: "develop-review-merge",
+    steps: [
+      { id: "develop", title: "Develop", description: "", skills: ["coding"] },
+      { id: "review", title: "Review", description: "", skills: ["code-review"] },
+    ],
+  })
+  const task = aTask({
+    goal_id: goal.id,
+    title: "Walk the columns",
+    agents: [
+      { id: "01JAGENT00000000000000DEV", seat: "agent", step: "develop", skills: [], model: "a:b" },
+      { id: "01JAGENT00000000000000REV", seat: "agent", step: "review", skills: [], model: "a:b" },
+    ],
+  })
+  const reviewing = aSession({
+    goal_id: goal.id,
+    task_id: task.id,
+    seat: "agent",
+    task_agent_id: "01JAGENT00000000000000REV",
+  })
+  stubDaemon({ sessions: [reviewing], outside: [], goals: [goal], tasks: [task] })
+  renderPage()
+
+  const cells = within(await waitFor(() => row(task.title)))
+  expect(await cells.findByText("Review")).toBeTruthy()
+  expect(cells.queryByText(SEAT_LABELS.agent)).toBeNull()
+})
+
+it("offers the step agent's seat among the role filters", async () => {
+  const user = userEvent.setup()
+  const seen = renderPage()
+  await waitFor(() => row(TASK.title))
+
+  await user.click(screen.getByRole("button", { name: "Filter by role" }))
+  await user.click(await screen.findByRole("menuitemradio", { name: SEAT_LABELS.agent }))
+
+  await waitFor(() => expect(seen.url).toBe("/sessions?seat=agent"))
+})
+
 it("names a pull request session by its request, linked to the forge, and says it is ready to merge", async () => {
   const session = aSession({
     id: "01JSESS00000000000000PULL1",

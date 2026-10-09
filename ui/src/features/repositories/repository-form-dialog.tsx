@@ -3,10 +3,10 @@
  * differ only in where they post and in what an omitted base branch means.
  *
  * A repository is a checkout, a base branch, how its agents' permission
- * requests are answered, and the landing a new goal against it uses where the
- * goal's own request leaves landing out. How work ends for a given task or
- * goal is still agreed with the user there, not here — this is only the
- * default that choice starts from.
+ * requests are answered, and the workflow a new goal against it runs where the
+ * goal's own request names none. Which workflow a given goal runs is still
+ * agreed with the user there, not here — this is only the default that choice
+ * starts from.
  *
  * Editing a repository whose remote is on GitHub or GitLab also shows one
  * switch for the integration with that forge (spec 025), sent only when it
@@ -34,7 +34,6 @@ import { z } from "zod"
 
 import { ApiError, type ForgeDto, type RepositoryDto } from "@/api"
 import { FormDialog, FormDialogBody, FormDialogContent } from "@/components/form-dialog"
-import { FormSelect } from "@/components/form-select"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
@@ -46,7 +45,8 @@ import {
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
-import { describeError, LANDING_ITEMS } from "@/lib/format"
+import { pickedWorkflow, WorkflowSelect } from "@/features/workflows/workflow-select"
+import { describeError } from "@/lib/format"
 import { forgeCliName, forgeKindLabel, forgeRepositoryLabel } from "./forge"
 import { PERMISSION_MODES } from "./permission-modes"
 import { useCreateRepository, useUpdateRepository } from "./queries"
@@ -62,7 +62,8 @@ const formSchema = z.object({
   base_branch: z.string().trim(),
   description: z.string(),
   permission_mode: z.enum(["auto", "ask", "learn", "ai"]),
-  default_landing: z.enum(["merge", "pull_request", "none", "feature_branch"]),
+  // A workflow's name, or empty for none.
+  default_workflow: z.string(),
   forge_enabled: z.boolean(),
 })
 
@@ -73,7 +74,7 @@ const EMPTY_VALUES: RepositoryFormValues = {
   base_branch: "",
   description: "",
   permission_mode: "auto",
-  default_landing: "merge",
+  default_workflow: "",
   forge_enabled: false,
 }
 
@@ -110,7 +111,7 @@ export function RepositoryFormDialog({
         base_branch: repository.base_branch,
         description: repository.description ?? "",
         permission_mode: repository.permission_mode,
-        default_landing: repository.default_landing,
+        default_workflow: repository.default_workflow ?? "",
         forge_enabled: repository.forge?.enabled ?? false,
       })
       return
@@ -122,6 +123,7 @@ export function RepositoryFormDialog({
     const path = values.path.trim()
     const branch = values.base_branch.trim()
     const description = values.description.trim()
+    const workflow = pickedWorkflow(values.default_workflow)
     try {
       if (repository) {
         const forgeMoved = repository.forge && values.forge_enabled !== repository.forge.enabled
@@ -135,7 +137,8 @@ export function RepositoryFormDialog({
             // Empty is how the daemon spells "clear the description".
             description,
             permission_mode: values.permission_mode,
-            default_landing: values.default_landing,
+            // Empty is how the daemon spells "no default workflow".
+            default_workflow: workflow ?? "",
             ...(forgeMoved ? { forge: { enabled: values.forge_enabled } } : {}),
           },
         })
@@ -147,7 +150,7 @@ export function RepositoryFormDialog({
           base_branch: branch || null,
           description: description || null,
           permission_mode: values.permission_mode,
-          default_landing: values.default_landing,
+          default_workflow: workflow,
         })
         toast.success("Repository registered", { description: created.path })
       }
@@ -311,22 +314,17 @@ export function RepositoryFormDialog({
             )}
           </Field>
 
-          <Field data-invalid={formState.errors.default_landing ? true : undefined}>
-            <FieldLabel htmlFor="repository-default-landing">Default landing</FieldLabel>
-            <FormSelect
+          <Field>
+            <FieldLabel htmlFor="repository-default-workflow">Default workflow</FieldLabel>
+            <WorkflowSelect
               control={control}
-              name="default_landing"
-              id="repository-default-landing"
-              options={LANDING_ITEMS}
+              name="default_workflow"
+              id="repository-default-workflow"
+              enabled={open}
             />
-            {formState.errors.default_landing ? (
-              <FieldError errors={[formState.errors.default_landing]} />
-            ) : (
-              <FieldDescription>
-                How a new goal against this repository ends, where the goal's own request leaves
-                landing out.
-              </FieldDescription>
-            )}
+            <FieldDescription>
+              The workflow a new goal against this repository runs, where the goal names none.
+            </FieldDescription>
           </Field>
 
           {forge ? (

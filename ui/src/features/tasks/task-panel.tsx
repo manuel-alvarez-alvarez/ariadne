@@ -42,6 +42,7 @@ import { paths, usePanelSessionNavigation } from "@/routes/paths"
 import { taskMessagesQueryOptions, taskQueryOptions } from "./queries"
 import { StalledBadge } from "./stalled"
 import { primaryStatus, subStatus, TASK_STATUS_META } from "./status"
+import { StepStrip } from "./step-strip"
 import { TaskActions } from "./task-actions"
 import { TaskDiff } from "./task-diff"
 import { TaskFacts } from "./task-facts"
@@ -71,6 +72,13 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
   // would be two cache entries and two requests.
   const sessions = useQuery(sessionsQueryOptions({ task: taskId }))
   const messages = useQuery(taskMessagesQueryOptions(taskId))
+  // The goal's workflow columns, which a stepped task is drawn and named by:
+  // the same detail entry the header's breadcrumb reads.
+  const goal = useQuery({
+    ...goalQueryOptions(task.data?.goal_id ?? ""),
+    enabled: task.data !== undefined,
+  })
+  const steps = goal.data?.steps ?? []
 
   function setTab(next: Tab) {
     const params = new URLSearchParams(search)
@@ -119,7 +127,8 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
         <>
           <TaskHeader task={task.data} />
           <PaneBody>
-            <TaskFacts task={task.data} />
+            <TaskFacts task={task.data} steps={steps} />
+            {steps.length > 0 ? <StepStrip task={task.data} steps={steps} /> : null}
 
             <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
               <TabsList>
@@ -149,7 +158,7 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
                 <TaskMessages taskId={taskId} />
               </TabsContent>
               <TabsContent value="history" className="pt-3">
-                <TaskHistory taskId={taskId} />
+                <TaskHistory taskId={taskId} steps={steps} />
               </TabsContent>
               <TabsContent value="diff" className="pt-3">
                 <TaskDiff taskId={taskId} />

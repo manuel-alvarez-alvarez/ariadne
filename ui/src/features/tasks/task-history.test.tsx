@@ -16,7 +16,7 @@
 import { screen } from "@testing-library/react"
 import { expect, it } from "vitest"
 
-import { qk, type TaskTransitionDto } from "@/api"
+import { qk, type TaskTransitionDto, type WorkflowStepDto } from "@/api"
 import { renderScreen } from "@/test/harness"
 import { TaskHistory } from "./task-history"
 
@@ -35,8 +35,8 @@ function aTransition(overrides: Partial<TaskTransitionDto> = {}): TaskTransition
   }
 }
 
-function mount(transitions: TaskTransitionDto[]) {
-  renderScreen(<TaskHistory taskId={TASK_ID} />, {
+function mount(transitions: TaskTransitionDto[], steps?: WorkflowStepDto[]) {
+  renderScreen(<TaskHistory taskId={TASK_ID} steps={steps} />, {
     seed: (client) => client.setQueryData(qk.tasks.transitions(TASK_ID), transitions),
   })
 }
@@ -63,4 +63,38 @@ it("says so when the task has not moved at all", () => {
   mount([])
 
   expect(screen.getByText("The task has not moved yet")).toBeDefined()
+})
+
+it("names a step move by the columns it went between", () => {
+  const steps: WorkflowStepDto[] = [
+    { id: "develop", title: "Develop", description: "", skills: [] },
+    { id: "review", title: "Review", description: "", skills: [] },
+  ]
+  mount(
+    [
+      aTransition({
+        id: "1",
+        from_status: "in_progress",
+        to_status: "in_progress",
+        from_step: "develop",
+        to_step: "review",
+        reason: "Committed the change.",
+      }),
+      aTransition({
+        id: "2",
+        from_status: "in_progress",
+        to_status: "in_progress",
+        from_step: "review",
+        to_step: "develop",
+        reason: "Rename the helper.",
+      }),
+    ],
+    steps,
+  )
+
+  const rows = screen.getAllByRole("listitem").map((row) => row.textContent)
+  expect(rows[0]).toContain("Develop")
+  expect(rows[0]).toContain("Review")
+  expect(rows[1]).toContain("Rename the helper.")
+  expect(screen.queryByText("In progress")).toBeNull()
 })

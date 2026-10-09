@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from "vitest"
 
-import type { TaskAgentDto, TaskDto } from "@/api"
+import type { TaskAgentDto, TaskDto, WorkflowStepDto } from "@/api"
 import { aTask } from "@/test/fixtures"
 
 import {
@@ -41,6 +41,7 @@ const BLANK: TaskFormValues = {
   author_model: "codex-acp:gpt-5.6",
   author_effort: "",
   reviewers: [{ skills: "code-review", model: "codex-acp:gpt-5.6", effort: "" }],
+  step_agents: [],
   repo_id: "",
   depends_on: [],
 }
@@ -178,5 +179,64 @@ describe("updating a task", () => {
       { seat: "reviewer", skills: ["code-review"], model: "claude-agent-acp:claude-sonnet-5" },
       { seat: "reviewer", skills: ["performance-review"], model: "codex-acp:gpt-5.6" },
     ])
+  })
+})
+
+describe("a task on a goal a workflow runs", () => {
+  const STEPS: WorkflowStepDto[] = [
+    { id: "develop", title: "Develop", description: "", skills: ["coding"] },
+    { id: "review", title: "Review", description: "", skills: ["code-review"] },
+  ]
+
+  it("seeds one row per column, prefilled with the column's skills", () => {
+    const values = taskToFormValues(undefined, STEPS)
+    expect(values.step_agents).toEqual([
+      { step: "develop", skills: "coding", model: "", effort: "" },
+      { step: "review", skills: "code-review", model: "", effort: "" },
+    ])
+    expect(values.reviewers).toEqual([])
+  })
+
+  it("seeds each row from the agent staffed on its column", () => {
+    const values = taskToFormValues(
+      task([
+        {
+          id: "01AGENTREV",
+          seat: "agent",
+          step: "review",
+          skills: ["security-review"],
+          model: "codex-acp:o3",
+          effort: "high",
+        },
+      ]),
+      STEPS,
+    )
+    expect(values.step_agents).toEqual([
+      { step: "develop", skills: "coding", model: "", effort: "" },
+      { step: "review", skills: "security-review", model: "codex-acp:o3", effort: "high" },
+    ])
+  })
+
+  const STAFFED: TaskFormValues = {
+    ...BLANK,
+    reviewers: [],
+    step_agents: [
+      { step: "develop", skills: "coding", model: "codex-acp:gpt-5.6", effort: "" },
+      { step: "review", skills: "", model: "codex-acp:o3", effort: "high" },
+    ],
+  }
+
+  it("creates one agent per column, seat agent, and no author or reviewer", () => {
+    expect(toCreateTaskRequest(STAFFED, null).agents).toEqual([
+      { seat: "agent", step: "develop", skills: ["coding"], model: "codex-acp:gpt-5.6" },
+      { seat: "agent", step: "review", skills: [], model: "codex-acp:o3", effort: "high" },
+    ])
+  })
+
+  it("replaces the whole list on edit, sending no author pin and no reviewers", () => {
+    const body = toUpdateTaskRequest(STAFFED, { model: "", effort: "" })
+    expect(body.agents).toHaveLength(2)
+    expect(body).not.toHaveProperty("reviewers")
+    expect(body).not.toHaveProperty("model")
   })
 })

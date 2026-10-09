@@ -13,9 +13,15 @@
  */
 
 import type { GoalDto, RepositoryDto, SessionDto, SkillDto, TaskDto, WorkflowDto } from "@/api"
-import { type AttentionItem, attentionSubject, attentionTarget } from "@/features/goals/attention"
+import {
+  type AttentionItem,
+  agentLabel,
+  attentionSubject,
+  attentionTarget,
+} from "@/features/goals/attention"
 import { SESSION_ATTENTION_META, seatLabel } from "@/features/sessions/session-display"
 import { STALLED_META, TASK_STATUS_META } from "@/features/tasks"
+import { sessionColumn } from "@/features/tasks/steps"
 import { folderName, shortId } from "@/lib/format"
 import { paths, taskPanelFrom, taskSessionPanelFrom } from "@/routes/paths"
 
@@ -87,6 +93,8 @@ export function buildPaletteEntries({
 }: PaletteSource): PaletteEntries {
   const goalTitles = new Map((goals ?? []).map((goal) => [goal.id, goal.title]))
   const taskTitles = new Map((tasks ?? []).map((task) => [task.id, task.title]))
+  const tasksById = new Map((tasks ?? []).map((task) => [task.id, task]))
+  const goalsById = new Map((goals ?? []).map((goal) => [goal.id, goal]))
 
   return {
     goals: (goals ?? []).map((goal) => ({
@@ -116,7 +124,13 @@ export function buildPaletteEntries({
       const of =
         (session.task_id ? taskTitles.get(session.task_id) : undefined) ??
         goalTitles.get(session.goal_id ?? "")
-      const seat = seatLabel(session.seat)
+      // A step agent is named by the workflow column it staffs.
+      const seat =
+        sessionColumn(
+          session,
+          tasksById.get(session.task_id ?? ""),
+          goalsById.get(session.goal_id ?? ""),
+        ) ?? seatLabel(session.seat)
       return {
         value: `${seat} ${of ?? ""} ${shortId(session.id)}`,
         label: of ? `${seat} · ${of}` : seat,
@@ -228,7 +242,7 @@ export function attentionEntries(items: AttentionItem[]): PaletteEntry[] {
       item.session?.id ?? "",
       item.taskReason ?? "",
       item.sessionReason ?? "",
-      item.session ? seatLabel(item.session.seat) : "",
+      agentLabel(item),
       item.task?.branch ?? "",
       item.goal?.title ?? "",
     ],

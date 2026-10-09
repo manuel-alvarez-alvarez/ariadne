@@ -18,14 +18,19 @@ import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import type { RepositoryDto } from "@/api"
-import { aForge, aRepository } from "@/test/fixtures"
-import { daemonFetch, errorResponse, renderScreen } from "@/test/harness"
+import type { RepositoryDto, WorkflowDto } from "@/api"
+import { aForge, aRepository, aWorkflow } from "@/test/fixtures"
+import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { RepositoryFormDialog } from "./repository-form-dialog"
 
 const REPOSITORY: RepositoryDto = aRepository({
   id: "01JREPO00000000000000ARI",
 })
+
+const WORKFLOWS: WorkflowDto[] = [
+  aWorkflow(),
+  aWorkflow({ name: "develop-review-pr", document: "workflow develop-review-pr" }),
+]
 
 interface Recorded {
   method: string
@@ -36,6 +41,7 @@ interface Recorded {
     description?: string | null
     permission_mode?: string
     default_landing?: string
+    default_workflow?: string | null
     forge?: Record<string, unknown>
   } | null
 }
@@ -59,6 +65,7 @@ function stubDaemon(failure?: { status: number; code: string; message: string })
     const body = raw.length > 0 ? JSON.parse(raw) : null
     requests.push({ method: request.method, path: pathname, body })
 
+    if (pathname === "/v1/workflows") return jsonResponse(WORKFLOWS)
     if (failure) {
       const { status, code, message } = failure
       return errorResponse(status, code, message)
@@ -101,7 +108,7 @@ describe("registering a repository", () => {
       base_branch: null,
       description: null,
       permission_mode: "auto",
-      default_landing: "merge",
+      default_workflow: null,
     })
   })
 
@@ -120,19 +127,20 @@ describe("registering a repository", () => {
     expect(lastWrite()?.body?.permission_mode).toBe("learn")
   })
 
-  it("sends the default landing picked for it", async () => {
+  it("sends the default workflow picked for it", async () => {
     const user = userEvent.setup()
     renderDialog(null)
 
     await user.type(screen.getByLabelText("Path"), "/home/me/dev/new")
-    await user.click(screen.getByRole("combobox", { name: "Default landing" }))
-    await user.click(await screen.findByRole("option", { name: "Land nothing" }))
+    await user.click(screen.getByRole("combobox", { name: "Default workflow" }))
+    await user.click(await screen.findByRole("option", { name: "develop-review-pr" }))
     await user.click(screen.getByRole("button", { name: "Register repository" }))
 
     await waitFor(() => {
       expect(lastWrite()).toBeDefined()
     })
-    expect(lastWrite()?.body?.default_landing).toBe("none")
+    expect(lastWrite()?.body?.default_workflow).toBe("develop-review-pr")
+    expect(lastWrite()?.body).not.toHaveProperty("default_landing")
   })
 
   it("offers AI among the permission modes, and sends it as ai", async () => {
@@ -238,25 +246,26 @@ describe("registering a repository", () => {
 
 /**
  * A repository is a checkout, a base branch, a permission mode and a default
- * landing — not the merge strategy or landing briefing fields that used to sit
- * here, nor anything about how any one task or goal actually ends.
+ * workflow — not the landing, merge strategy or landing briefing fields that
+ * used to sit here, nor anything about how any one task or goal actually ends.
  */
 describe("what a repository is", () => {
-  it("takes a path, a base branch, a description, a permission mode and a default landing", async () => {
+  it("takes a path, a base branch, a description, a permission mode and a default workflow", async () => {
     renderDialog(null)
 
     expect(await screen.findByLabelText("Path")).toBeDefined()
     expect(screen.getByLabelText("Base branch")).toBeDefined()
     expect(screen.getByLabelText("Description")).toBeDefined()
     expect(screen.getByRole("combobox", { name: "Permission requests" })).toBeDefined()
-    expect(screen.getByRole("combobox", { name: "Default landing" })).toBeDefined()
+    expect(screen.getByRole("combobox", { name: "Default workflow" })).toBeDefined()
 
+    expect(screen.queryByRole("combobox", { name: "Default landing" })).toBeNull()
     expect(screen.queryByLabelText("Merge strategy")).toBeNull()
     expect(screen.queryByLabelText("Landing briefing")).toBeNull()
     expect(screen.queryByRole("button", { name: "Reset to default" })).toBeNull()
   })
 
-  it("asks the daemon for nothing but the repositories", async () => {
+  it("asks the daemon for nothing but the repositories and the workflows", async () => {
     renderDialog(null)
     await screen.findByLabelText("Path")
 
@@ -289,25 +298,39 @@ describe("editing a repository", () => {
       base_branch: "main",
       description: "The orchestrator itself. Now with repositories.",
       permission_mode: "auto",
-      default_landing: "merge",
+      default_workflow: "",
     })
   })
 
-  it("starts from the stored default landing, and sends a new one", async () => {
+  it("starts from the stored default workflow, and sends a new one", async () => {
     const user = userEvent.setup()
-    renderDialog({ ...REPOSITORY, default_landing: "pull_request" })
+    renderDialog({ ...REPOSITORY, default_workflow: "develop-review-merge" })
 
-    const picker = screen.getByRole("combobox", { name: "Default landing" })
-    expect(picker.textContent).toContain("Open a request and see it through")
+    const picker = screen.getByRole("combobox", { name: "Default workflow" })
+    expect(picker.textContent).toContain("develop-review-merge")
 
     await user.click(picker)
-    await user.click(await screen.findByRole("option", { name: "Land on a feature branch" }))
+    await user.click(await screen.findByRole("option", { name: "develop-review-pr" }))
     await user.click(screen.getByRole("button", { name: "Save changes" }))
 
     await waitFor(() => {
       expect(lastWrite()).toBeDefined()
     })
-    expect(lastWrite()?.body?.default_landing).toBe("feature_branch")
+    expect(lastWrite()?.body?.default_workflow).toBe("develop-review-pr")
+  })
+
+  it("clears the default workflow with the empty string the daemon spells it as", async () => {
+    const user = userEvent.setup()
+    renderDialog({ ...REPOSITORY, default_workflow: "develop-review-merge" })
+
+    await user.click(screen.getByRole("combobox", { name: "Default workflow" }))
+    await user.click(await screen.findByRole("option", { name: "No workflow" }))
+    await user.click(screen.getByRole("button", { name: "Save changes" }))
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()?.body?.default_workflow).toBe("")
   })
 
   it("starts from the stored permission mode, and sends a new one", async () => {
