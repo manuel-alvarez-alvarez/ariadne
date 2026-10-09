@@ -29,6 +29,17 @@ impl ApiError {
         Self::new(StatusCode::BAD_REQUEST, "invalid_request", message)
     }
 
+    pub(crate) fn bad_request_with_details(
+        code: &str,
+        message: impl Into<String>,
+        details: serde_json::Value,
+    ) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            body: ErrorBody::with_details(code, message, details),
+        }
+    }
+
     pub(crate) fn conflict(message: impl Into<String>) -> Self {
         Self::new(StatusCode::CONFLICT, "conflict", message)
     }

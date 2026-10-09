@@ -39,6 +39,7 @@ test that proves it.
 | 027 | [Webhooks and tunnel](027-webhooks-and-tunnel.md) | separate signed ingress, hook lifecycle, public URL handle, fetch modes, and the tunnel with its switch |
 | 028 | [Issues and goals](028-issues-and-goals.md) | live forge issues and goals created from them |
 | 029 | [Reviewing a request](029-reviewing-a-request.md) | the reviewer session on a request that asks for the user's review, its detached worktree, its news, one review by priority, and no approval |
+| 030 | [Workflows](030-workflows.md) | the workflow document's syntax, the catalog Ariadne ships, and the routes over it |
 
 ## Writing one
 

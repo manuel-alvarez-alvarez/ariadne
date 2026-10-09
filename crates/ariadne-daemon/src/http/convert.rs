@@ -18,7 +18,9 @@ use ariadne_api::tasks::{
     AgentUsageDto, TaskAgentDto, TaskDto, TaskPickDto, TaskTransitionDto, TaskUsageDto,
 };
 use ariadne_api::usage::TokenUsageDto;
+use ariadne_api::workflows::{WorkflowDto, WorkflowStepDto};
 use ariadne_core::models::agent_of;
+use ariadne_core::workflow::WorkflowStep;
 use ariadne_core::{Actor, MessageKind, Seat, TokenUsage};
 use ariadne_store::{self as store, AgentUsage, SessionFilter, Store, StoreError};
 
@@ -58,6 +60,17 @@ dto! {
         document_is_default: s.document_is_default(),
         builtin: s.is_builtin(),
         .. name, created_at, updated_at
+    }
+
+    pub(crate) fn workflow_dto(w: store::Workflow) -> WorkflowDto {
+        document: w.document_text().to_string(),
+        builtin: w.is_builtin(),
+        steps: w.steps().into_iter().map(workflow_step_dto).collect(),
+        .. name, created_at, updated_at
+    }
+
+    pub(crate) fn workflow_step_dto(s: WorkflowStep) -> WorkflowStepDto {
+        .. id, title, description, skills, rank, gate
     }
 
 pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {

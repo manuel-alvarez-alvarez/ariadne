@@ -30,6 +30,7 @@ mod task_agents;
 mod tasks;
 mod usage;
 mod webhooks;
+mod workflows;
 
 pub use ai_permissions::AiPermissionSettingsUpdate;
 pub use change::Change;
@@ -53,6 +54,7 @@ pub use stats::{
 pub use task_agents::NewTaskAgent;
 pub use tasks::{NewTask, TaskFilter, TaskUpdate, author_branch};
 pub use usage::{AgentUsage, SeatUsage};
+pub use workflows::NewWorkflow;
 
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
@@ -235,6 +237,7 @@ impl Store {
             event_order: Arc::default(),
         };
         store.seed_builtin_skills().await?;
+        store.seed_builtin_workflows().await?;
         Ok(store)
     }
 

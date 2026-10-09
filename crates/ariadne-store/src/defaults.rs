@@ -79,7 +79,7 @@ pub const PR_REVIEWER_SKILL: &str = "pr-reviewer";
 /// adding a kind of work Ariadne knows how to staff. One skill is nobody's to
 /// staff: [`ORCHESTRATION_SKILL`] belongs to the orchestrator's seat, and the
 /// store refuses a task agent staffed on it.
-pub const BUILTIN_SKILLS: [BuiltinSkill; 15] = [
+pub const BUILTIN_SKILLS: [BuiltinSkill; 16] = [
     // Orchestrating.
     builtin(
         ORCHESTRATION_SKILL,
@@ -132,6 +132,9 @@ pub const BUILTIN_SKILLS: [BuiltinSkill; 15] = [
         PR_BABYSIT_SKILL,
         include_str!("../skills/pr-babysit/SKILL.md"),
     ),
+    // The `merge` column of the shipped `develop-review-merge` workflow
+    // staffs this: land an approved task on the base branch itself.
+    builtin("merge", include_str!("../skills/merge/SKILL.md")),
 ];
 
 const fn builtin(name: &'static str, document: &'static str) -> BuiltinSkill {
@@ -160,6 +163,41 @@ pub fn default_skill_document(name: &str) -> Option<&'static str> {
         .iter()
         .find(|s| s.name == name)
         .map(|s| s.document)
+}
+
+/// A workflow Ariadne ships: a linear kanban of columns, parsed by
+/// [`ariadne_core::workflow::parse`]. Stored the same way a [`BuiltinSkill`]
+/// is: a `NULL` document while it runs on the text here, so a rewording
+/// reaches every database without a migration.
+pub struct BuiltinWorkflow {
+    pub name: &'static str,
+    pub document: &'static str,
+}
+
+const fn builtin_workflow(name: &'static str, document: &'static str) -> BuiltinWorkflow {
+    BuiltinWorkflow { name, document }
+}
+
+/// The two workflows Ariadne ships: one that lands a task on the base branch
+/// itself, and one that lands it by a request a human merges or closes.
+pub const BUILTIN_WORKFLOWS: [BuiltinWorkflow; 2] = [
+    builtin_workflow(
+        "develop-review-merge",
+        include_str!("../workflows/develop-review-merge.workflow"),
+    ),
+    builtin_workflow(
+        "develop-review-pr",
+        include_str!("../workflows/develop-review-pr.workflow"),
+    ),
+];
+
+/// The document Ariadne ships under `name`, or `None` where it ships none —
+/// which is every workflow the user wrote, and those carry their own text.
+pub fn default_workflow_document(name: &str) -> Option<&'static str> {
+    BUILTIN_WORKFLOWS
+        .iter()
+        .find(|w| w.name == name)
+        .map(|w| w.document)
 }
 
 /// The one-line `description` of a `SKILL.md`, which is what the index in an

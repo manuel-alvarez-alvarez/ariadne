@@ -11,7 +11,7 @@ use ariadne_core::{
 
 use crate::defaults::{
     ORCHESTRATION_SKILL, PR_BABYSIT_SKILL, PR_REVIEWER_SKILL, default_landing_prompt,
-    default_skill_document, skill_summary,
+    default_skill_document, default_workflow_document, skill_summary,
 };
 
 /// The typed reading of a TEXT column that holds a core enum. The accessor
@@ -141,6 +141,58 @@ impl SkillSeat {
             PR_BABYSIT_SKILL | PR_REVIEWER_SKILL => Self::PullRequest,
             _ => Self::Task,
         }
+    }
+}
+
+/// A workflow: a linear kanban of columns that stages an author and reviewer
+/// agent through a task. Its name is its identity, and the document is the
+/// whole of the syntax `ariadne_core::workflow::parse` reads.
+///
+/// A `NULL` document is a built-in still on the text Ariadne ships, the same
+/// way a [`Skill`]'s is.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct Workflow {
+    pub name: String,
+    /// The document set on this workflow, or NULL while a built-in runs on
+    /// the text Ariadne ships. Read through [`Workflow::document_text`].
+    pub document: Option<String>,
+    pub builtin: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl Workflow {
+    /// Whether Ariadne ships this workflow, and so whether it has a default
+    /// to be reset to and refuses deletion.
+    pub fn is_builtin(&self) -> bool {
+        self.builtin != 0
+    }
+
+    /// The document that stages an agent: the one set on it, or the text
+    /// Ariadne ships under its name.
+    pub fn document_text(&self) -> &str {
+        self.document
+            .as_deref()
+            .or_else(|| default_workflow_document(&self.name))
+            .unwrap_or("")
+    }
+
+    /// Whether [`Workflow::document_text`] is the shipped text rather than
+    /// one somebody wrote.
+    pub fn document_is_default(&self) -> bool {
+        self.document.is_none()
+    }
+
+    /// The columns [`Workflow::document_text`] parses into.
+    ///
+    /// A row only ever holds a document a save already proved valid
+    /// ([`crate::Store::create_workflow`], [`crate::Store::set_workflow_document`]),
+    /// so a row that fails to parse is a schema violation rather than an
+    /// input error.
+    pub fn steps(&self) -> Vec<ariadne_core::workflow::WorkflowStep> {
+        ariadne_core::workflow::parse(self.document_text())
+            .unwrap_or_else(|e| panic!("invalid workflow document in db: {e}"))
+            .steps
     }
 }
 

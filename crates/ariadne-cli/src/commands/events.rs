@@ -393,6 +393,14 @@ fn domain_line(event: &DomainEvent) -> Line {
             session: None,
             status: None,
         },
+        DomainEvent::WorkflowCreated(w) | DomainEvent::WorkflowUpdated(w) => Line {
+            at: w.updated_at.clone(),
+            kind,
+            subject: w.name.clone(),
+            detail: format!("{} steps", w.steps.len()),
+            session: None,
+            status: None,
+        },
         DomainEvent::RepositoryCreated(r) | DomainEvent::RepositoryUpdated(r) => Line {
             at: now(),
             kind,
@@ -437,6 +445,7 @@ fn domain_line(event: &DomainEvent) -> Line {
         },
         DomainEvent::GoalDeleted(DeletedDto { id })
         | DomainEvent::SkillDeleted(DeletedDto { id })
+        | DomainEvent::WorkflowDeleted(DeletedDto { id })
         | DomainEvent::RepositoryDeleted(DeletedDto { id }) => Line {
             at: now(),
             kind,

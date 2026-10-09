@@ -1509,6 +1509,84 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workflows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List every workflow, shipped and written, by name. */
+        get: operations["workflows_list"];
+        put?: never;
+        /**
+         * Create a workflow of the user's own. It carries its own document: nothing
+         *     Ariadne ships answers to its name, so there is nothing behind it to fall
+         *     back to.
+         */
+        post: operations["workflows_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workflows/parse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Parse a document without saving it anywhere: the picker a workflow editor
+         *     checks a draft against before it writes one.
+         */
+        post: operations["workflows_parse"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workflows/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one workflow by name. */
+        get: operations["workflows_get"];
+        /** Write a new document over a workflow's. */
+        put: operations["workflows_update"];
+        post?: never;
+        /** Delete a workflow of the user's own (409 for a built-in). */
+        delete: operations["workflows_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workflows/{name}/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Put a built-in workflow back on the document Ariadne ships. */
+        post: operations["workflows_reset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1925,6 +2003,18 @@ export interface components {
             repo_id?: string | null;
             title: string;
         };
+        CreateWorkflowRequest: {
+            /**
+             * @description The whole workflow document. Its `workflow <name>` line must equal
+             *     `name`.
+             */
+            document: string;
+            /**
+             * @description Kebab-case, and free: a name Ariadne already ships is refused.
+             * @example my-workflow
+             */
+            name: string;
+        };
         /** @description The daemon's own environment, as `ariadne doctor` renders it. */
         DaemonReportDto: {
             /**
@@ -2042,6 +2132,18 @@ export interface components {
             data: components["schemas"]["DeletedDto"];
             /** @enum {string} */
             event: "skill_deleted";
+        } | {
+            data: components["schemas"]["WorkflowDto"];
+            /** @enum {string} */
+            event: "workflow_created";
+        } | {
+            data: components["schemas"]["WorkflowDto"];
+            /** @enum {string} */
+            event: "workflow_updated";
+        } | {
+            data: components["schemas"]["DeletedDto"];
+            /** @enum {string} */
+            event: "workflow_deleted";
         } | {
             data: components["schemas"]["RepositoryDto"];
             /** @enum {string} */
@@ -2596,6 +2698,17 @@ export interface components {
             draft?: boolean;
             /** @description Titled by the repository's own commit conventions. */
             title: string;
+        };
+        ParseWorkflowRequest: {
+            document: string;
+        };
+        /**
+         * @description Response of `POST /v1/workflows/parse`: a document's name and columns,
+         *     read without saving it anywhere.
+         */
+        ParsedWorkflowDto: {
+            name: string;
+            steps: components["schemas"]["WorkflowStepDto"][];
         };
         /** @description A file or directory the daemon depends on. */
         PathStateDto: {
@@ -3186,6 +3299,12 @@ export interface components {
             total_secs: number;
         };
         /**
+         * @description What a step waits for before the next one may start: the author's commit,
+         *     a push, a merge onto the base, or a request merged by a human.
+         * @enum {string}
+         */
+        StepGate: "committed" | "pushed" | "merged" | "request_merged";
+        /**
          * @description Body of `POST /v1/pull-requests/{id}/reviews` (029): one review, posted
          *     in the name of the integration login.
          */
@@ -3560,6 +3679,14 @@ export interface components {
             reviewers?: components["schemas"]["AgentAssignment"][] | null;
             title?: string | null;
         };
+        /** @description Partial update; absent fields stay unchanged. */
+        UpdateWorkflowRequest: {
+            /**
+             * @description The new document. Absent = unchanged; putting a built-in back on the
+             *     text Ariadne ships is `POST /v1/workflows/{name}/reset`.
+             */
+            document?: string | null;
+        };
         /** @description Response of `GET /v1/version`. */
         VersionResponse: {
             /** @example ariadned */
@@ -3683,6 +3810,42 @@ export interface components {
              * @default 0
              */
             tasks_finished: number;
+        };
+        WorkflowDto: {
+            /**
+             * @description Whether Ariadne ships this workflow. A built-in is reset rather than
+             *     deleted; a workflow of the user's own is deleted rather than reset.
+             */
+            builtin: boolean;
+            created_at: string;
+            /** @description The effective document: the override, or the text Ariadne ships. */
+            document: string;
+            /**
+             * @description Kebab-case; named on the document's first line.
+             * @example develop-review-merge
+             */
+            name: string;
+            /** @description `document`, parsed into its columns. */
+            steps: components["schemas"]["WorkflowStepDto"][];
+            updated_at: string;
+        };
+        /** @description One column of a workflow. */
+        WorkflowStepDto: {
+            description: string;
+            gate?: null | components["schemas"]["StepGate"];
+            /**
+             * @description Kebab-case, unique within the workflow.
+             * @example develop
+             */
+            id: string;
+            rank?: null | components["schemas"]["ModelRank"];
+            /** @description The skills an agent on this step loads. */
+            skills: string[];
+            /**
+             * @description The display title.
+             * @example Develop
+             */
+            title: string;
         };
     };
     responses: never;
@@ -6617,6 +6780,217 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["VersionResponse"];
                 };
+            };
+        };
+    };
+    workflows_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowDto"][];
+                };
+            };
+        };
+    };
+    workflows_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateWorkflowRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowDto"];
+                };
+            };
+            /** @description name already exists, or the document is invalid */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    workflows_parse: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ParseWorkflowRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParsedWorkflowDto"];
+                };
+            };
+            /** @description workflow_invalid, with details.line */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    workflows_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workflow name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    workflows_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workflow name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateWorkflowRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    workflows_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workflow name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    workflows_reset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workflow name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

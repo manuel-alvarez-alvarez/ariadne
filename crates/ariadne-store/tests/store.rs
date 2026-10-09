@@ -5719,3 +5719,178 @@ async fn forge_settings_migration_turns_the_tunnel_on_and_keeps_the_first_subdom
     assert!(!settings.tunnel_enabled);
     assert_eq!(settings.tunnel_subdomain.as_deref(), Some("amber-104233"));
 }
+
+/// Every shipped workflow is seeded into a fresh database on the text
+/// Ariadne ships, storing none of it, the same way a skill is.
+#[tokio::test]
+async fn a_fresh_database_is_seeded_with_every_shipped_workflow_on_its_own_text() {
+    let (store, _dir) = test_store().await;
+
+    let workflows = store.list_workflows().await.unwrap();
+    assert_eq!(
+        workflows.len(),
+        ariadne_store::defaults::BUILTIN_WORKFLOWS.len()
+    );
+    assert!(
+        workflows
+            .iter()
+            .all(|w| w.is_builtin() && w.document_is_default()),
+        "every seeded workflow runs on the shipped text"
+    );
+
+    let merge = store.get_workflow("develop-review-merge").await.unwrap();
+    assert_eq!(merge.steps().len(), 3);
+    assert_eq!(merge.steps()[0].id, "develop");
+
+    let pr = store.get_workflow("develop-review-pr").await.unwrap();
+    assert_eq!(pr.steps().len(), 3);
+    assert_eq!(pr.steps()[2].id, "pr");
+}
+
+/// Seeding a workflow is by name and overwrites no document the database
+/// holds: an edit survives a reopen, and nothing is seeded back over it.
+#[tokio::test]
+async fn a_reopen_reseeds_no_workflow_row_the_database_already_holds() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+
+    let edited =
+        "workflow develop-review-merge\n  solo[Solo]\n    Do it all.\n    skills: coding\n";
+    let store = Store::open(&path).await.unwrap();
+    store
+        .set_workflow_document("develop-review-merge", edited)
+        .await
+        .unwrap();
+    store
+        .create_workflow(NewWorkflow {
+            name: "api-design".into(),
+            document: "workflow api-design\n  build[Build]\n    Do the work.\n    skills: coding\n"
+                .into(),
+        })
+        .await
+        .unwrap();
+    store.delete_workflow("api-design").await.unwrap();
+    drop(store);
+
+    let store = Store::open(&path).await.unwrap();
+    let reopened = store.get_workflow("develop-review-merge").await.unwrap();
+    assert!(
+        !reopened.document_is_default(),
+        "the edit survived the reopen"
+    );
+    assert_eq!(reopened.steps()[0].id, "solo");
+    assert!(
+        matches!(
+            store.get_workflow("api-design").await,
+            Err(StoreError::NotFound { .. })
+        ),
+        "a deleted workflow of the user's own stays deleted"
+    );
+}
+
+/// A workflow is created, read, written over and deleted by name; a built-in
+/// is reset rather than deleted, and a workflow of the user's own is deleted
+/// rather than reset — there is nothing behind it to go back to.
+#[tokio::test]
+async fn workflow_crud_and_the_two_refusals_that_tell_them_apart() {
+    let (store, _dir) = test_store().await;
+
+    let shipped = store.get_workflow("develop-review-merge").await.unwrap();
+    assert!(shipped.is_builtin());
+    assert!(shipped.document_is_default());
+
+    let mine = store
+        .create_workflow(NewWorkflow {
+            name: "api-design".into(),
+            document: "workflow api-design\n  build[Build]\n    Do the work.\n    skills: coding\n"
+                .into(),
+        })
+        .await
+        .unwrap();
+    assert!(!mine.is_builtin());
+
+    assert!(matches!(
+        store
+            .create_workflow(NewWorkflow {
+                name: "develop-review-merge".into(),
+                document: "workflow develop-review-merge\n  a[A]\n    Do it.\n    skills: coding\n"
+                    .into(),
+            })
+            .await,
+        Err(StoreError::Conflict(_))
+    ));
+
+    assert!(matches!(
+        store.delete_workflow("develop-review-merge").await,
+        Err(StoreError::Conflict(_))
+    ));
+    assert!(matches!(
+        store.reset_workflow("api-design").await,
+        Err(StoreError::Conflict(_))
+    ));
+    store.delete_workflow("api-design").await.unwrap();
+    assert!(matches!(
+        store.get_workflow("api-design").await,
+        Err(StoreError::NotFound { .. })
+    ));
+
+    let edited = store
+        .set_workflow_document(
+            "develop-review-merge",
+            "workflow develop-review-merge\n  solo[Solo]\n    Do it all.\n    skills: coding\n",
+        )
+        .await
+        .unwrap();
+    assert!(!edited.document_is_default());
+    let reset = store.reset_workflow("develop-review-merge").await.unwrap();
+    assert!(reset.document_is_default());
+    assert_eq!(reset.steps()[0].id, "develop");
+}
+
+/// A workflow column can only name a skill that exists: the name is a
+/// reference, and the refusal says which name it was.
+#[tokio::test]
+async fn a_workflow_save_refuses_an_unknown_skill_naming_it() {
+    let (store, _dir) = test_store().await;
+    let refused = store
+        .create_workflow(NewWorkflow {
+            name: "api-design".into(),
+            document:
+                "workflow api-design\n  build[Build]\n    Do the work.\n    skills: telepathy\n"
+                    .into(),
+        })
+        .await;
+    let message = format!("{:?}", refused.expect_err("no such skill"));
+    assert!(message.contains("telepathy"), "{message}");
+}
+
+/// A workflow column cannot staff the orchestrator's skill or the one a
+/// reviewer pull request session loads; `pr-babysit` is allowed, since the
+/// shipped `develop-review-pr` workflow stages it on its last column.
+#[tokio::test]
+async fn a_workflow_save_refuses_the_orchestrators_skill_and_the_reviewer_sessions_skill() {
+    let (store, _dir) = test_store().await;
+
+    for forbidden in ["orchestration", "pr-reviewer"] {
+        let refused = store
+            .create_workflow(NewWorkflow {
+                name: "api-design".into(),
+                document: format!(
+                    "workflow api-design\n  build[Build]\n    Do the work.\n    skills: {forbidden}\n"
+                ),
+            })
+            .await;
+        let message = format!("{:?}", refused.expect_err("forbidden skill"));
+        assert!(message.contains(forbidden), "{message}");
+    }
+
+    store
+        .create_workflow(NewWorkflow {
+            name: "api-design".into(),
+            document:
+                "workflow api-design\n  pr[Pull request]\n    Keep it.\n    skills: pr-babysit\n"
+                    .into(),
+        })
+        .await
+        .unwrap();
+}

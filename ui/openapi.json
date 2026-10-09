@@ -3835,6 +3835,244 @@
           }
         }
       }
+    },
+    "/v1/workflows": {
+      "get": {
+        "tags": [
+          "workflows"
+        ],
+        "summary": "List every workflow, shipped and written, by name.",
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WorkflowDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "workflows"
+        ],
+        "summary": "Create a workflow of the user's own. It carries its own document: nothing\nAriadne ships answers to its name, so there is nothing behind it to fall\nback to.",
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWorkflowRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "name already exists, or the document is invalid"
+          }
+        }
+      }
+    },
+    "/v1/workflows/parse": {
+      "post": {
+        "tags": [
+          "workflows"
+        ],
+        "summary": "Parse a document without saving it anywhere: the picker a workflow editor\nchecks a draft against before it writes one.",
+        "operationId": "parse",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ParseWorkflowRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParsedWorkflowDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "workflow_invalid, with details.line"
+          }
+        }
+      }
+    },
+    "/v1/workflows/{name}": {
+      "get": {
+        "tags": [
+          "workflows"
+        ],
+        "summary": "Get one workflow by name.",
+        "operationId": "get",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "workflow name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "workflows"
+        ],
+        "summary": "Write a new document over a workflow's.",
+        "operationId": "update",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "workflow name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateWorkflowRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "workflows"
+        ],
+        "summary": "Delete a workflow of the user's own (409 for a built-in).",
+        "operationId": "delete",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "workflow name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/workflows/{name}/reset": {
+      "post": {
+        "tags": [
+          "workflows"
+        ],
+        "summary": "Put a built-in workflow back on the document Ariadne ships.",
+        "operationId": "reset",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "workflow name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
     }
   },
   "components": {
@@ -4644,6 +4882,25 @@
         },
         "additionalProperties": false
       },
+      "CreateWorkflowRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "document"
+        ],
+        "properties": {
+          "document": {
+            "type": "string",
+            "description": "The whole workflow document. Its `workflow <name>` line must equal\n`name`."
+          },
+          "name": {
+            "type": "string",
+            "description": "Kebab-case, and free: a name Ariadne already ships is refused.",
+            "example": "my-workflow"
+          }
+        },
+        "additionalProperties": false
+      },
       "DaemonReportDto": {
         "type": "object",
         "description": "The daemon's own environment, as `ariadne doctor` renders it.",
@@ -4996,6 +5253,60 @@
                 "type": "string",
                 "enum": [
                   "skill_deleted"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/WorkflowDto"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "workflow_created"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/WorkflowDto"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "workflow_updated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/DeletedDto"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "workflow_deleted"
                 ]
               }
             }
@@ -6198,6 +6509,37 @@
           }
         },
         "additionalProperties": false
+      },
+      "ParseWorkflowRequest": {
+        "type": "object",
+        "required": [
+          "document"
+        ],
+        "properties": {
+          "document": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ParsedWorkflowDto": {
+        "type": "object",
+        "description": "Response of `POST /v1/workflows/parse`: a document's name and columns,\nread without saving it anywhere.",
+        "required": [
+          "name",
+          "steps"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowStepDto"
+            }
+          }
+        }
       },
       "PathStateDto": {
         "type": "object",
@@ -7591,6 +7933,16 @@
           }
         }
       },
+      "StepGate": {
+        "type": "string",
+        "description": "What a step waits for before the next one may start: the author's commit,\na push, a merge onto the base, or a request merged by a human.",
+        "enum": [
+          "committed",
+          "pushed",
+          "merged",
+          "request_merged"
+        ]
+      },
       "SubmitReviewRequest": {
         "type": "object",
         "description": "Body of `POST /v1/pull-requests/{id}/reviews` (029): one review, posted\nin the name of the integration login.",
@@ -8397,6 +8749,20 @@
         },
         "additionalProperties": false
       },
+      "UpdateWorkflowRequest": {
+        "type": "object",
+        "description": "Partial update; absent fields stay unchanged.",
+        "properties": {
+          "document": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The new document. Absent = unchanged; putting a built-in back on the\ntext Ariadne ships is `POST /v1/workflows/{name}/reset`."
+          }
+        },
+        "additionalProperties": false
+      },
       "VersionResponse": {
         "type": "object",
         "description": "Response of `GET /v1/version`.",
@@ -8571,6 +8937,99 @@
             "default": 0
           }
         }
+      },
+      "WorkflowDto": {
+        "type": "object",
+        "required": [
+          "name",
+          "document",
+          "builtin",
+          "steps",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "builtin": {
+            "type": "boolean",
+            "description": "Whether Ariadne ships this workflow. A built-in is reset rather than\ndeleted; a workflow of the user's own is deleted rather than reset."
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "document": {
+            "type": "string",
+            "description": "The effective document: the override, or the text Ariadne ships."
+          },
+          "name": {
+            "type": "string",
+            "description": "Kebab-case; named on the document's first line.",
+            "example": "develop-review-merge"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowStepDto"
+            },
+            "description": "`document`, parsed into its columns."
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "WorkflowStepDto": {
+        "type": "object",
+        "description": "One column of a workflow.",
+        "required": [
+          "id",
+          "title",
+          "description",
+          "skills"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "gate": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/StepGate",
+                "description": "What the step waits for before the next one starts, where the\ndocument named one."
+              }
+            ]
+          },
+          "id": {
+            "type": "string",
+            "description": "Kebab-case, unique within the workflow.",
+            "example": "develop"
+          },
+          "rank": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ModelRank",
+                "description": "The model rank the step prefers, where the document named one."
+              }
+            ]
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The skills an agent on this step loads."
+          },
+          "title": {
+            "type": "string",
+            "description": "The display title.",
+            "example": "Develop"
+          }
+        }
       }
     }
   },
@@ -8590,6 +9049,10 @@
     {
       "name": "skills",
       "description": "The documents an agent loads to do one kind of work"
+    },
+    {
+      "name": "workflows",
+      "description": "The kanban of columns a task is staged through"
     },
     {
       "name": "repositories",

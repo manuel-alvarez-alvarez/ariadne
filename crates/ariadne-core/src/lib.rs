@@ -10,6 +10,7 @@ pub mod id;
 pub mod models;
 pub mod probe;
 pub mod state_machine;
+pub mod workflow;
 
 pub use models::TokenUsage;
 pub use probe::{
