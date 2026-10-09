@@ -28,6 +28,11 @@ fn catalog_script(models: &[&str]) -> Value {
         },
         option("effort-id", "thought_level", "low"),
     ]);
+    // An in-place model switch keeps the session id and resumes it on the
+    // new pin rather than opening a fresh one; without this, the resume is
+    // of a session the stub never heard of, and it refuses with a plain
+    // protocol error instead of running the turn the switched model owes.
+    value["stored_sessions"] = json!(["stub-session"]);
     value
 }
 
@@ -37,7 +42,11 @@ fn agent_script(error: Value, models: &[&str]) -> Value {
 
 fn prompt_script(prompt: Value, models: &[&str]) -> Value {
     let mut value = catalog_script(models);
-    value["prompts"][0] = prompt;
+    // Two turns, not one: an in-place switch keeps the same stub process and
+    // its queued prompts, so the model that takes over is given the retried
+    // prompt out of the same list. One entry would let that retry succeed,
+    // which recovers the session instead of exhausting it again.
+    value["prompts"] = json!([prompt.clone(), prompt]);
     value
 }
 
@@ -128,10 +137,16 @@ async fn world_with_prompt(prompt: Value, auto_switch: bool, agents: &[&str]) ->
     }
 }
 
+/// One write, not several: the scheduler is already running and can wake on
+/// its own — an agent's own trailing events reach it independent of a test's
+/// `wake` — so a rank set one row at a time would let that wake land between
+/// two of the writes and switch on a table only partly ranked.
 async fn rank(h: &Harness, entries: &[(&str, ModelRank)]) {
-    for (model, rank) in entries {
-        h.store.set_model_rank(model, Some(*rank)).await.unwrap();
-    }
+    let entries: Vec<_> = entries
+        .iter()
+        .map(|(model, rank)| (*model, Some(*rank)))
+        .collect();
+    h.store.set_model_ranks(&entries).await.unwrap();
 }
 
 async fn wake(world: &World) {
@@ -139,6 +154,17 @@ async fn wake(world: &World) {
         .scheduler
         .send(SchedEvent::SessionEvent(world.author.id.clone()))
         .unwrap();
+}
+
+/// How many `session.error` events a session carries so far.
+async fn count_errors(h: &Harness, session: &AgentSession) -> usize {
+    h.store
+        .list_session_events(&session.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|event| event.kind == "session.error")
+        .count()
 }
 
 async fn successor(h: &Harness, old: &AgentSession) -> AgentSession {
@@ -461,6 +487,14 @@ async fn a_chain_never_revisits_a_model_and_stops_at_the_budget() {
 #[tokio::test]
 async fn an_in_place_switch_does_not_return_to_the_exhausted_model() {
     let world = world(codex_error(), true, &[]).await;
+    // Before the first `wake`: the switch, the resume on the new pin and its
+    // own exhaustion can all run inside that one wake's reconcile, with
+    // nothing here scheduled in between to catch them apart. Counted from
+    // here, the one `session.error` of the first exhaustion (raised while
+    // `world` was still building) is on hand to compare against regardless
+    // of how much of the rest that reconcile gets through before anything
+    // below runs again.
+    let errors_so_far = count_errors(&world.h, &world.author).await;
     rank(
         &world.h,
         &[
@@ -471,16 +505,24 @@ async fn an_in_place_switch_does_not_return_to_the_exhausted_model() {
     .await;
     wake(&world).await;
     assert_eq!(successor(&world.h, &world.author).await.model, "codex:same");
-    eventually(TIMEOUT, "the in-place successor to end", || async {
-        world.h.session_status(&world.author).await == SessionStatus::Exited
+    // The retried prompt fails the same way on the model that took over
+    // (`prompt_script`'s second turn), so the session is exhausted again
+    // through the same classification as the first failure, with nothing
+    // here having to fake that state.
+    //
+    // Waited for as a second `session.error`, not as the attention flag
+    // turning `Exhausted`: the switch clears the first exhaustion and the
+    // scheduler can resume and re-exhaust the session before this ever
+    // polls, both inside the reconcile the switch itself ran in, so the
+    // flag can read `Exhausted` the whole time without the clear ever
+    // being caught in between — and `SessionStatus::Exited` fares no
+    // better, true of the *old* exhaustion until that resume runs. A
+    // second error row is instead something no poll can catch mid-flight:
+    // once written, it stays.
+    eventually(TIMEOUT, "the switched model to exhaust in turn", || async {
+        count_errors(&world.h, &world.author).await > errors_so_far
     })
     .await;
-    world
-        .h
-        .store
-        .set_session_attention(&world.author.id, AttentionReason::Exhausted)
-        .await
-        .unwrap();
     wake(&world).await;
     scheduler::flush_for_test(&world.scheduler).await;
     let session = world.h.store.get_session(&world.author.id).await.unwrap();
