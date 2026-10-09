@@ -128,6 +128,17 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       void queryClient.invalidateQueries({ queryKey: qk.skills.lists() })
       break
     }
+    case "workflow_created":
+    case "workflow_updated": {
+      queryClient.setQueryData(qk.workflows.detail(event.data.name), event.data)
+      void queryClient.invalidateQueries({ queryKey: qk.workflows.lists() })
+      break
+    }
+    case "workflow_deleted": {
+      queryClient.removeQueries({ queryKey: qk.workflows.detail(event.data.id) })
+      void queryClient.invalidateQueries({ queryKey: qk.workflows.lists() })
+      break
+    }
     case "repository_created": {
       queryClient.setQueryData(qk.repositories.detail(event.data.id), event.data)
       void queryClient.invalidateQueries({ queryKey: qk.repositories.lists() })

@@ -72,6 +72,7 @@ it("ends the navigation with stats, and lists Forge beside the other screens", (
     "Sessions",
     "Forge",
     "Skills",
+    "Workflows",
     "Agents",
     "Permissions",
     "Repositories",

@@ -27,6 +27,7 @@ import type {
   SessionEntryDto,
   SkillDto,
   TaskDto,
+  WorkflowDto,
 } from "@/api"
 import type { OutsideSessionDto } from "@/features/sessions/queries"
 
@@ -42,6 +43,27 @@ const AUTHOR_ID = "01JAGENT0000000000000AUTH"
 const REVIEWER_ID = "01JAGENT0000000000000REVW"
 const REPO_ID = "01JREPO0000000000000000001"
 const LEARNED_ID = "01JLEARNED000000000000001"
+
+export function aWorkflow(overrides: Partial<WorkflowDto> = {}): WorkflowDto {
+  return {
+    name: "develop-review-merge",
+    document: "workflow develop-review-merge\n  develop[Develop]\n    Build the task.",
+    builtin: true,
+    steps: [
+      {
+        id: "develop",
+        title: "Develop",
+        description: "Build the task.",
+        skills: ["coding"],
+        rank: "balanced",
+        gate: "committed",
+      },
+    ],
+    created_at: STAMP,
+    updated_at: STAMP,
+    ...overrides,
+  }
+}
 
 /** A row nobody has reported tokens for, which is how every fixture starts. */
 const NO_TOKENS = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 }

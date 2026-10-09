@@ -41,6 +41,7 @@ import {
   aRepository,
   aSession,
   aTask,
+  aWorkflow,
 } from "@/test/fixtures"
 import { dispatchDomainEvent, invalidateEverything } from "./dispatch"
 
@@ -433,5 +434,24 @@ describe("stats", () => {
 
       expect(stale(queryClient, models)).toBe(true)
     }
+  })
+})
+
+describe("workflow events", () => {
+  it("patches created and updated workflows, then drops a deleted workflow", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const workflow = aWorkflow()
+    queryClient.setQueryData(qk.workflows.list(), [workflow])
+
+    dispatch(queryClient, { event: "workflow_created", data: workflow })
+    expect(queryClient.getQueryData(qk.workflows.detail(workflow.name))).toEqual(workflow)
+    expect(stale(queryClient, qk.workflows.list())).toBe(true)
+
+    const updated = { ...workflow, document: `${workflow.document}\n  done[Done]` }
+    dispatch(queryClient, { event: "workflow_updated", data: updated })
+    expect(queryClient.getQueryData(qk.workflows.detail(workflow.name))).toEqual(updated)
+
+    dispatch(queryClient, { event: "workflow_deleted", data: { id: workflow.name } })
+    expect(queryClient.getQueryData(qk.workflows.detail(workflow.name))).toBeUndefined()
   })
 })

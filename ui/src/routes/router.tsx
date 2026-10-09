@@ -31,6 +31,7 @@ import { PullRequestsPage } from "@/features/pull-requests/pull-requests-page"
 import { RepositoriesPage } from "@/features/repositories/repositories-page"
 import { SessionsPage } from "@/features/sessions/sessions-page"
 import { SkillsPage } from "@/features/skills/skills-page"
+import { WorkflowsPage } from "@/features/workflows/workflows-page"
 import { RouteErrorPage } from "@/routes/error-page"
 import { NotFoundPage } from "@/routes/not-found-page"
 import { paths } from "@/routes/paths"
@@ -66,6 +67,7 @@ const routes: RouteObject[] = [
   { path: "tasks/:taskId", element: <TaskPanelRedirect /> },
   { path: "sessions", element: <SessionsPage />, handle: { title: "Sessions" } },
   { path: "skills", element: <SkillsPage />, handle: { title: "Skills" } },
+  { path: "workflows", element: <WorkflowsPage />, handle: { title: "Workflows" } },
   { path: "agents", element: <AgentsPage />, handle: { title: "Agents" } },
   // The models were folded into the agents screen; the address outlives it.
   { path: "models", element: <Navigate to={paths.agents()} replace /> },

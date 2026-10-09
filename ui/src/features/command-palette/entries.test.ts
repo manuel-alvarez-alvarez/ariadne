@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest"
 
-import type { GoalDto, RepositoryDto, SessionDto, SkillDto, TaskDto } from "@/api"
+import type { GoalDto, RepositoryDto, SessionDto, SkillDto, TaskDto, WorkflowDto } from "@/api"
 import { type AttentionItem, attentionTarget } from "@/features/goals/attention"
-import { aGoal, aRepository, aSession, aSkill, aTask } from "@/test/fixtures"
+import { aGoal, aRepository, aSession, aSkill, aTask, aWorkflow } from "@/test/fixtures"
 import { attentionEntries, buildPaletteEntries, paletteTargetTo } from "./entries"
 
 const GOAL: GoalDto = aGoal({
@@ -42,6 +42,7 @@ const REPOSITORY: RepositoryDto = aRepository({
   id: "01JREPO00000000000000PLT",
   path: "/home/me/dev/ariadne",
 })
+const WORKFLOW: WorkflowDto = aWorkflow()
 
 const SOURCE = {
   goals: [GOAL],
@@ -49,6 +50,7 @@ const SOURCE = {
   sessions: [SESSION, PLANNER_SESSION],
   skills: [SKILL],
   repositories: [REPOSITORY],
+  workflows: [WORKFLOW],
 }
 
 describe("buildPaletteEntries", () => {
@@ -59,8 +61,16 @@ describe("buildPaletteEntries", () => {
       sessions: undefined,
       skills: undefined,
       repositories: undefined,
+      workflows: undefined,
     })
-    expect(entries).toEqual({ goals: [], tasks: [], sessions: [], skills: [], repositories: [] })
+    expect(entries).toEqual({
+      goals: [],
+      tasks: [],
+      sessions: [],
+      skills: [],
+      repositories: [],
+      workflows: [],
+    })
   })
 
   it("makes a goal findable by its title and by its id", () => {
@@ -125,6 +135,15 @@ describe("buildPaletteEntries", () => {
     expect(entry?.keywords).toContain(REPOSITORY.id)
     expect(entry?.keywords).toContain(REPOSITORY.path)
     expect(entry?.target).toEqual({ kind: "page", path: "/repositories" })
+  })
+
+  it("lists a workflow by name, opening its editor", () => {
+    const [entry] = buildPaletteEntries(SOURCE).workflows
+    expect(entry?.label).toBe(WORKFLOW.name)
+    expect(entry?.target).toEqual({
+      kind: "page",
+      path: "/workflows?workflow=develop-review-merge",
+    })
   })
 })
 

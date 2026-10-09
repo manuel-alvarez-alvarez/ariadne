@@ -69,8 +69,12 @@ Out: the daemon endpoints themselves (012).
    outside conversation an ACP agent stored on its own, merged into one
    listing, each shown in its console — skills, repositories, the agents of
    the daemon's ACP registry with their launch flags and the models each may
-   be staffed on, Permissions — the AI permission model's settings behind the
-   `ai` permission mode (022) — Stats (rule 37), and a daemon-logs drawer.
+   be staffed on, Workflows — shipped and user workflows grouped separately,
+   with a document editor and parsed kanban preview — Permissions — the AI
+   permission model's settings behind the `ai` permission mode (022) — Stats
+   (rule 37), and a daemon-logs drawer. `workflows-page.test.tsx`,
+   `workflow-editor.test.tsx`, and `workflow-preview.test.tsx` prove the
+   workflow screen rules.
 4. Types are generated from the daemon's OpenAPI document, so a DTO change
    that is not reflected here fails the typecheck rather than the app.
 5. One SSE connection serves the whole app, with a dispatcher and reconnect

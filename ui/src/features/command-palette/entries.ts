@@ -12,7 +12,7 @@
  * the live search params.
  */
 
-import type { GoalDto, RepositoryDto, SessionDto, SkillDto, TaskDto } from "@/api"
+import type { GoalDto, RepositoryDto, SessionDto, SkillDto, TaskDto, WorkflowDto } from "@/api"
 import { type AttentionItem, attentionSubject, attentionTarget } from "@/features/goals/attention"
 import { SESSION_ATTENTION_META, seatLabel } from "@/features/sessions/session-display"
 import { STALLED_META, TASK_STATUS_META } from "@/features/tasks"
@@ -64,6 +64,7 @@ interface PaletteSource {
   sessions: SessionDto[] | undefined
   skills: SkillDto[] | undefined
   repositories: RepositoryDto[] | undefined
+  workflows: WorkflowDto[] | undefined
 }
 
 /** One group of rows per entity, in the order the palette lists them. */
@@ -73,6 +74,7 @@ export interface PaletteEntries {
   sessions: PaletteEntry[]
   skills: PaletteEntry[]
   repositories: PaletteEntry[]
+  workflows: PaletteEntry[]
 }
 
 export function buildPaletteEntries({
@@ -81,6 +83,7 @@ export function buildPaletteEntries({
   sessions,
   skills,
   repositories,
+  workflows,
 }: PaletteSource): PaletteEntries {
   const goalTitles = new Map((goals ?? []).map((goal) => [goal.id, goal.title]))
   const taskTitles = new Map((tasks ?? []).map((task) => [task.id, task.title]))
@@ -136,6 +139,14 @@ export function buildPaletteEntries({
       // The one entity with no panel of its own: the screen opens on it,
       // so the pick is carried there rather than dropped at `/skills`.
       target: { kind: "page", path: paths.skill(skill.name) },
+    })),
+
+    workflows: (workflows ?? []).map((workflow) => ({
+      value: workflow.name,
+      label: workflow.name,
+      detail: workflow.steps.map((step) => step.title).join(" · "),
+      keywords: [workflow.name, workflow.builtin ? "shipped" : "yours"],
+      target: { kind: "page", path: paths.workflow(workflow.name) },
     })),
 
     // A repository has no panel either, and no screen of its own to open on
