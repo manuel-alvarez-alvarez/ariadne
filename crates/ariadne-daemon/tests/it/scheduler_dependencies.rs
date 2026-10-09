@@ -280,20 +280,12 @@ async fn a_task_retried_before_its_dependency_finished_waits_for_it() {
     .await;
 
     // The dependency lands, and the task behind it starts.
-    for (status, actor) in [
-        (TaskStatus::UnderReview, Actor::Author),
-        (TaskStatus::Approved, Actor::Daemon),
-    ] {
-        let _ = w
-            .store
-            .transition_task(&w.first.id, status, actor, None, None)
-            .await;
-    }
+    w.advance_to(&w.first, "merge").await;
     w.store
         .transition_task(
             &w.first.id,
             TaskStatus::Finished,
-            Actor::Author,
+            Actor::Daemon,
             None,
             Some("abc123"),
         )

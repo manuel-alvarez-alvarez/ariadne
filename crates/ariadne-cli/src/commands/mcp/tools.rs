@@ -554,7 +554,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Start a failed task again, from its first column. Rewrite it with `update_task` first where it failed on how it was written. A task with a column nobody staffs is refused: staff it first. A task with an unfinished dependency waits for it. Retry a task failed by its dependency with that dependency. Do not cancel and recreate it."
+        description = "Start a failed task again, from its first column. Rewrite it with `update_task` first where it failed on how it was written. A task with a column nobody staffs is refused: staff it first. A task with an unfinished dependency waits for it; retry it with that dependency, not cancel and recreate."
     )]
     async fn retry_task(
         &self,

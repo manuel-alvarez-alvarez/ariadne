@@ -102,6 +102,9 @@ async fn a_relaunched_agent_stays_on_the_model_its_session_started_on() {
         "the launch asked for the pinned model"
     );
     heard(&h, &first).await;
+    // Its entry briefing, which a live reconcile sends right behind the
+    // launch: what makes its conversation one a relaunch may resume.
+    h.reports(&first, "user_prompt_submit").await;
 
     // The column is entered again on the same pin: the same session, on the
     // conversation it was having.
@@ -290,6 +293,9 @@ async fn every_launch_of_a_session_reports_under_a_new_id() {
         mcp_env_of(&h, &first.id)
     );
     heard(&h, &first).await;
+    // Its entry briefing, which a live reconcile sends right behind the
+    // launch: what makes its conversation one a relaunch may resume.
+    h.reports(&first, "user_prompt_submit").await;
 
     h.launcher.kill_session(&first.id).await.unwrap();
     let resumed = start_develop(&h, &cast).await;
@@ -448,31 +454,24 @@ async fn relaunching_a_columns_agent_reuses_its_session_across_entries() {
 
 /// A relaunch that died before its first prompt — a model pin refused while
 /// the account was rate limited — named a conversation the agent never
-/// saved. The review feedback goes to the conversation that holds the work,
-/// the older session, and not to that name, which the agent answers with
-/// "Resource not found".
+/// saved. A resume of the column goes to the conversation that holds the
+/// work, the older session, and not to that name, which the agent answers
+/// with "Resource not found".
 #[tokio::test]
 async fn a_resume_passes_over_a_launch_that_never_had_a_prompt() {
     let h = harness().await;
-    let (cast, worked) = h.resumable_author().await;
-    let dead = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    let (cast, worked) = resumable_in_progress(&h).await;
+    let dead = h.agent_session(&cast, "develop").await;
     h.store
         .set_session_internal_id(&dead.id, "never-saved")
         .await
         .unwrap();
     h.set_status(&dead, SessionStatus::Exited).await;
 
-    let resumed = h
-        .launcher
-        .resume_author(&cast.task.id, "Please fix things.")
-        .await
-        .unwrap();
+    let resumed = start_develop(&h, &cast).await;
     assert_eq!(resumed.id, worked.id, "the session with the work came back");
     let launch = h.launch_file(&resumed.id).expect("a launch file");
     assert_eq!(launch.resume_session_id.as_deref(), Some("uuid-1234"));
-    assert_eq!(launch.initial_prompt.as_deref(), Some("Please fix things."));
 }
 
 /// What an agent is told has no size limit on its way there: a briefing of a

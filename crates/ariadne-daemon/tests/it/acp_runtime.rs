@@ -262,9 +262,9 @@ async fn spawned_idle(h: &Harness, cast: &Cast) -> ariadne_store::AgentSession {
     session
 }
 
-/// An author pinned to `model` on the stub `scripted`, launched and through
-/// its first turn: the session, and the `session.pin_fallback` its launch
-/// recorded, if any.
+/// The develop column's agent pinned to `model` on the stub `scripted`,
+/// launched and through its first turn: the session, and the
+/// `session.pin_fallback` its launch recorded, if any.
 async fn pinned_launch(
     scripted: Value,
     model: &str,
@@ -277,7 +277,10 @@ async fn pinned_launch(
         model: model.into(),
         effort: None,
     };
-    h.store.set_agent_pin(&cast.author.id, &pin).await.unwrap();
+    h.store
+        .set_agent_pin(&cast.develop().id, &pin)
+        .await
+        .unwrap();
     let session = spawned_idle(&h, &cast).await;
     let events: Vec<AgentEventDto> = h.get(&format!("/v1/events?session={}", session.id)).await;
     assert!(
