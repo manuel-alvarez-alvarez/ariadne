@@ -882,6 +882,47 @@ async fn a_step_agent_opens_its_request_and_completion_reads_the_forge_now() {
     );
 }
 
+/// Completing the request column with a reason alone — what `call` above
+/// sends, and what the `pr-babysit` skill sends — still records the forge's
+/// own merge commit rather than none: the diff route reads it once cleanup
+/// has deleted the branch.
+#[tokio::test]
+async fn completing_the_request_column_without_a_merge_commit_records_the_forges() {
+    use crate::common::forge::{answer, opened_pull, stub_forge_cli};
+    let url = "https://github.com/acme/widgets/pull/1";
+    let forge = stub_forge_cli(json!([]));
+    let h = harness().forge_cli(&forge).await;
+    let (task, session) = gated_task(&h, "request-merged").await;
+    let repo = h.store.get_repository(&task.repo_id).await.unwrap();
+    with_forge(&h, &repo).await;
+    sh(
+        std::path::Path::new(session.worktree_path.as_deref().unwrap()),
+        "git push -q origin HEAD",
+    );
+    let mut pull = opened_pull(url, &task.branch);
+    forge.reprogram(json!([
+        answer(&["auth", "status"], 0, ""),
+        answer(&["pr", "create"], 0, url),
+        answer(&["pr", "view"], 0, &pull.to_string())
+    ]));
+    h.json::<Value>(
+        as_session(
+            &format!("/v1/tasks/{}/pull-request", task.id),
+            &session.id,
+            json!({"title":"feat: add a change", "body":"Build the change."}),
+        ),
+        StatusCode::OK,
+    )
+    .await;
+    pull["state"] = json!("MERGED");
+    pull["mergeCommit"] = json!({"oid": "merge-sha-123"});
+    forge.reprogram(json!([answer(&["pr", "view"], 0, &pull.to_string())]));
+
+    let finished = call(&h, &task, &session, "complete", "The request merged.").await;
+    assert_eq!(finished["status"], "finished");
+    assert_eq!(finished["merge_commit"], "merge-sha-123");
+}
+
 #[tokio::test]
 async fn any_column_can_fail_the_task_and_usage_and_facts_name_the_column() {
     let h = harness().scheduler().await;

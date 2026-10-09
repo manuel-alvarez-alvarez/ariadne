@@ -59,6 +59,12 @@ pub(super) async fn complete(
         .transpose()
         .map_err(|_| gate_failed("the stored column has an invalid gate"))?;
     let git = &state.launcher.git;
+    // The request gate's own merge commit, read off the forge rather than
+    // taken from the agent: a column that completes the request itself, as
+    // the `pr-babysit` skill does, sends a reason alone, and a commit the
+    // finished task does not carry is a diff the next cleanup leaves
+    // nowhere to read.
+    let mut verified_merge_commit = None;
     match gate {
         Some(StepGate::Committed) => {
             let worktree = task
@@ -115,13 +121,13 @@ pub(super) async fn complete(
                 .pr_url
                 .as_deref()
                 .ok_or_else(|| gate_failed("open the task request before completing this step"))?;
-            if channel::request_state(&state, &task, url)
+            let pull = channel::request(&state, &task, url)
                 .await
-                .map_err(|_| gate_failed("the request gate could not read the forge"))?
-                != "merged"
-            {
+                .map_err(|_| gate_failed("the request gate could not read the forge"))?;
+            if pull.state != "merged" {
                 return Err(gate_failed("the task request must be merged"));
             }
+            verified_merge_commit = Some(pull.merge_sha.unwrap_or(pull.head_sha));
         }
         None => {}
     }
@@ -138,7 +144,9 @@ pub(super) async fn complete(
                 &steps[at].id,
                 TaskStatus::Finished,
                 &req.reason,
-                req.merge_commit.as_deref(),
+                verified_merge_commit
+                    .as_deref()
+                    .or(req.merge_commit.as_deref()),
             )
             .await?
     };

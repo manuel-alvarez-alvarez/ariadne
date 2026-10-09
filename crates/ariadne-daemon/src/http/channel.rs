@@ -158,9 +158,14 @@ async fn record_opened_pull_request(state: &AppState, task: &Task, url: &str) ->
     Ok(())
 }
 
-/// The state the forge gives the request a task opened at `url`, read now
-/// (030): `open`, `merged` or `closed`.
-pub(super) async fn request_state(state: &AppState, task: &Task, url: &str) -> ApiResult<String> {
+/// The request a task opened at `url`, read off the forge now (030): its
+/// state (`open`, `merged` or `closed`), and the merge and head commits a
+/// gate that confirms the merge records against the task.
+pub(super) async fn request(
+    state: &AppState,
+    task: &Task,
+    url: &str,
+) -> ApiResult<crate::forge::pulls::ForgePullRequest> {
     let forge = state
         .store
         .forge_integration(&task.repo_id)
@@ -169,11 +174,10 @@ pub(super) async fn request_state(state: &AppState, task: &Task, url: &str) -> A
     let reference = crate::forge::PullRequestRef::parse(url, &forge)
         .ok_or_else(|| ApiError::conflict("the pull request URL does not match the repository"))?;
     let slug = format!("{}/{}/{}", forge.host, forge.owner, forge.name);
-    let pull = ForgeClient::for_repository(&state.launcher.cfg, &forge)
+    ForgeClient::for_repository(&state.launcher.cfg, &forge)
         .pull_request(&slug, reference.number)
         .await
-        .map_err(unresolved)?;
-    Ok(pull.state)
+        .map_err(unresolved)
 }
 
 /// The messages of a task: what its agents have said to each other.
