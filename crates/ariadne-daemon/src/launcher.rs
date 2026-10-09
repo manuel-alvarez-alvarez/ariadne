@@ -428,37 +428,60 @@ impl Launcher {
     }
 
     /// The session of `seat` on this task there is something to resume, and the
-    /// agent conversation it left behind: the most recent one with a captured
-    /// internal id.
+    /// agent conversation it left behind: the most recent one with a
+    /// conversation in it ([`Self::has_conversation`]).
     ///
-    /// An agent reports its own at `session_start`, so a session that never
-    /// got going may have none, and that is nothing to resume — the caller
-    /// spawns afresh instead. `agent_id` tells a task's reviewers apart, which
-    /// is the only thing that does; every other seat has one session per task.
+    /// A session that never got going has none, and that is nothing to resume
+    /// — the caller spawns afresh instead. `agent_id` tells a task's reviewers
+    /// apart, which is the only thing that does; every other seat has one
+    /// session per task.
     async fn resumable_session(
         &self,
         task_id: &str,
         seat: Seat,
         agent_id: Option<&str>,
     ) -> Result<Option<(AgentSession, String)>> {
-        let found = self
+        let sessions = self
             .store
             .list_sessions(SessionFilter {
                 task_id: Some(task_id.to_string()),
                 ..Default::default()
             })
+            .await?;
+        for s in sessions.into_iter().rev() {
+            if s.seat() == Some(seat)
+                && agent_id.is_none_or(|wanted| s.task_agent_id.as_deref() == Some(wanted))
+                && let Some(internal) = self.has_conversation(&s).await?
+            {
+                return Ok(Some((s, internal)));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The agent conversation a resume of `session` reopens: its captured
+    /// internal id, where its agent is still up or a prompt ever went out on
+    /// it.
+    ///
+    /// An agent names its conversation at `session/new`, but one that dies
+    /// before its first turn — a model pin refused while it is rate limited —
+    /// may have saved nothing under that name, and claude-acp does not. A
+    /// resume of it fails on "Resource not found", and the briefing it
+    /// carried is lost, while the conversation that holds the work is an
+    /// older session of the same seat.
+    async fn has_conversation(&self, session: &AgentSession) -> Result<Option<String>> {
+        let Some(internal) = session.internal_session_id.clone() else {
+            return Ok(None);
+        };
+        if session.status().is_live() {
+            return Ok(Some(internal));
+        }
+        let prompted = self
+            .store
+            .count_session_events(&session.id, "user_prompt_submit")
             .await?
-            .into_iter()
-            .rev()
-            .find(|s| {
-                s.seat() == Some(seat)
-                    && agent_id.is_none_or(|wanted| s.task_agent_id.as_deref() == Some(wanted))
-                    && s.internal_session_id.is_some()
-            });
-        Ok(found.map(|session| {
-            let internal = session.internal_session_id.clone().expect("filtered above");
-            (session, internal)
-        }))
+            > 0;
+        Ok(prompted.then_some(internal))
     }
 
     /// The tail every resume shares, once the row has been put back on its
@@ -570,25 +593,27 @@ impl Launcher {
     ) -> Result<AgentSession> {
         let repos = self.store.list_goal_repositories(goal_id).await?;
         let repo = repos.first().context("goal has no repos")?;
-        let previous = self
+        let sessions = self
             .store
             .list_sessions(SessionFilter {
                 goal_id: Some(goal_id.to_string()),
                 ..Default::default()
             })
-            .await?
-            .into_iter()
-            .rev()
-            .find(|s| s.seat() == Some(Seat::Orchestrator) && s.internal_session_id.is_some());
-        let Some(previous) = previous else {
+            .await?;
+        let mut found = None;
+        for s in sessions.into_iter().rev() {
+            if s.seat() == Some(Seat::Orchestrator)
+                && let Some(internal) = self.has_conversation(&s).await?
+            {
+                found = Some((s, internal));
+                break;
+            }
+        }
+        let Some((previous, internal)) = found else {
             return self.spawn_orchestrator(goal_id).await;
         };
         self.assert_no_live_session(goal_id, None, Seat::Orchestrator, None)
             .await?;
-        let internal = previous
-            .internal_session_id
-            .clone()
-            .expect("filtered above");
         let session = self.store.restart_session(&previous.id, None).await?;
         self.launch_resumed(&session, PathBuf::from(&repo.path), &internal, instruction)
             .await

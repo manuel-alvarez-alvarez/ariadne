@@ -584,10 +584,8 @@ async fn a_contested_review_survives_a_failed_resume_of_its_first_reviewer() {
     let seeded = h
         .session(&c.goal, Some(&c.task), Seat::Reviewer, &c.reviewer.id)
         .await;
-    h.store
-        .set_session_internal_id(&seeded.id, "seeded-reviewer-session")
-        .await
-        .unwrap();
+    h.seed_conversation(&seeded.id, "seeded-reviewer-session")
+        .await;
 
     h.activate(&c.goal).await;
     h.notify(&c.task.id);
@@ -701,10 +699,8 @@ async fn a_pick_ask_survives_a_failed_resume_of_its_reviewer() {
     let seeded = h
         .session(&c.goal, Some(&c.task), Seat::Reviewer, &c.reviewer.id)
         .await;
-    h.store
-        .set_session_internal_id(&seeded.id, "seeded-reviewer-session")
-        .await
-        .unwrap();
+    h.seed_conversation(&seeded.id, "seeded-reviewer-session")
+        .await;
 
     h.activate(&c.goal).await;
     h.notify(&c.task.id);

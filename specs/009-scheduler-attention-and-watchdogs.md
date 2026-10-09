@@ -45,7 +45,11 @@ the ACP runtime that takes a prompt (021).
    orchestrator whose agent went away — a daemon restart takes every agent
    down — is resumed in its own row, on the conversation it left behind. A
    fresh one is spawned only where there is no conversation to resume, or
-   where the last launch died on arrival (rule 27).
+   where the last launch died on arrival (rule 27). For every seat, a
+   conversation is the internal id of a session whose agent is still up or
+   that a prompt went out on. A launch that died before its first prompt
+   named a conversation the agent never saved, so a resume passes over it
+   to the older session of the seat that holds the work.
 4. The orchestrator is the agent the daemon tells when a task needs a
    decision: a task that failed, or a goal with nothing left running. It is
    told once per situation. Running work is what it delegated, and it is not
@@ -322,6 +326,9 @@ the ACP runtime that takes a prompt (021).
 - An orchestrator whose agent went away is resumed in its own row, on its
   conversation, with no new row beside it
   (`::an_orchestrator_whose_agent_went_away_is_resumed_in_its_own_row`).
+- A resume passes over a newer launch that never had a prompt, and reopens
+  the session that holds the work
+  (`resume.rs::a_resume_passes_over_a_launch_that_never_had_a_prompt`).
 - A burst of 100 events for one session costs a fixed 2 reconciles, whatever
   the size of the burst, and one event on its own is reconciled where it
   lands (`scheduler/coalesce.rs::a_burst_of_a_hundred_events_costs_two_reconciles`,

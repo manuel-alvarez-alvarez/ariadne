@@ -993,10 +993,8 @@ async fn a_review_request_survives_a_failed_resume_of_its_first_reviewer() {
             &cast.reviewer.id,
         )
         .await;
-    h.store
-        .set_session_internal_id(&seeded.id, "seeded-reviewer-session")
-        .await
-        .unwrap();
+    h.seed_conversation(&seeded.id, "seeded-reviewer-session")
+        .await;
 
     h.notify(&cast.task.id);
     // Waited out rather than slept past: the flush answers only once the

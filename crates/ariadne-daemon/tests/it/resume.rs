@@ -429,6 +429,35 @@ async fn resuming_the_author_reuses_its_session_across_reviews() {
     }
 }
 
+/// A relaunch that died before its first prompt — a model pin refused while
+/// the account was rate limited — named a conversation the agent never
+/// saved. The review feedback goes to the conversation that holds the work,
+/// the older session, and not to that name, which the agent answers with
+/// "Resource not found".
+#[tokio::test]
+async fn a_resume_passes_over_a_launch_that_never_had_a_prompt() {
+    let h = harness().await;
+    let (cast, worked) = h.resumable_author().await;
+    let dead = h
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
+        .await;
+    h.store
+        .set_session_internal_id(&dead.id, "never-saved")
+        .await
+        .unwrap();
+    h.set_status(&dead, SessionStatus::Exited).await;
+
+    let resumed = h
+        .launcher
+        .resume_author(&cast.task.id, "Please fix things.")
+        .await
+        .unwrap();
+    assert_eq!(resumed.id, worked.id, "the session with the work came back");
+    let launch = h.launch_file(&resumed.id).expect("a launch file");
+    assert_eq!(launch.resume_session_id.as_deref(), Some("uuid-1234"));
+    assert_eq!(launch.initial_prompt.as_deref(), Some("Please fix things."));
+}
+
 /// What an agent is told has no size limit on its way there: a briefing of a
 /// hundred kilobytes reaches the agent whole, as the prompt of the turn it
 /// is resumed into.

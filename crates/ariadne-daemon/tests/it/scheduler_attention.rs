@@ -738,10 +738,7 @@ async fn an_orchestrator_whose_agent_went_away_is_resumed_in_its_own_row() {
     let goal = h.planning_goal().await;
     std::fs::create_dir_all(h.dir.path().join("repo")).unwrap();
     let session = h.orchestrator_session(&goal).await;
-    h.store
-        .set_session_internal_id(&session.id, "uuid-1234")
-        .await
-        .unwrap();
+    h.seed_conversation(&session.id, "uuid-1234").await;
     h.set_status(&session, SessionStatus::Exited).await;
     h.raise(&session, AttentionReason::Disconnected).await;
 
@@ -1191,10 +1188,7 @@ async fn a_reviewer_heard_from_once_that_cannot_be_started_again_fails_its_task(
     let reviewer = w
         .session(&w.goal, Some(&w.task), Seat::Reviewer, &w.reviewer)
         .await;
-    w.store
-        .set_session_internal_id(&reviewer.id, "uuid-1234")
-        .await
-        .unwrap();
+    w.seed_conversation(&reviewer.id, "uuid-1234").await;
     w.launched_ago(&reviewer, 60).await;
     w.store.touch_session(&reviewer.id).await.unwrap();
     w.set_status(&reviewer, SessionStatus::Exited).await;
@@ -1794,10 +1788,8 @@ async fn an_idle_orchestrator_stays_up_for_the_whole_goal() {
     std::fs::create_dir_all(w.dir.path().join("repo")).unwrap();
     let orchestrator = w.orchestrator_session(&w.goal).await;
     w.agent_runs(&orchestrator).await;
-    w.store
-        .set_session_internal_id(&orchestrator.id, "uuid-orchestrator")
-        .await
-        .unwrap();
+    w.seed_conversation(&orchestrator.id, "uuid-orchestrator")
+        .await;
     w.set_status(&orchestrator, SessionStatus::Idle).await;
 
     let sched = w.scheduler();
@@ -2379,10 +2371,7 @@ async fn pull_request_session(h: &Harness, number: i64) -> AgentSession {
         })
         .await
         .unwrap();
-    h.store
-        .set_session_internal_id(&session.id, "uuid-1234")
-        .await
-        .unwrap();
+    h.seed_conversation(&session.id, "uuid-1234").await;
     h.agent_runs(&session).await;
     session
 }

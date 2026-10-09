@@ -1222,10 +1222,19 @@ impl Harness {
             .set_task_worktree(&task.id, Some(&worktree))
             .await
             .unwrap();
+        self.seed_conversation(&session.id, "uuid-1234").await;
+    }
+
+    /// A conversation the session's agent can reopen: the id it named it by,
+    /// and a prompt that went out on it. An id with no prompt is a launch
+    /// that died before its first turn, which a resume passes over.
+    pub(crate) async fn seed_conversation(&self, session_id: &str, internal: &str) {
         self.store
-            .set_session_internal_id(&session.id, "uuid-1234")
+            .set_session_internal_id(session_id, internal)
             .await
             .unwrap();
+        let session = self.store.get_session(session_id).await.unwrap();
+        self.reports(&session, "user_prompt_submit").await;
     }
 
     /// Walk a fresh task up to the status a test wants to watch it in, from
