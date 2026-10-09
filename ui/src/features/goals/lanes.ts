@@ -12,8 +12,7 @@
  */
 
 import type { GoalDto, TaskDto, TaskStatus } from "@/api"
-import { BOARD_STATUSES, primaryStatus, TASK_STATUS_META } from "@/features/tasks"
-import { isStepped } from "@/features/tasks/steps"
+import { TASK_STATUS_META } from "@/features/tasks"
 import { plural } from "@/lib/format"
 import { isStillPlanning, isTerminalGoalStatus } from "./status"
 
@@ -35,20 +34,9 @@ function stepKey(id: string): string {
 /**
  * The columns a goal's lane draws, in order.
  *
- * A goal with no workflow draws the five pipeline columns. A goal run by a
- * workflow draws its own: Pending, one column per step, then Done — its tasks
- * stay `in_progress` from the first step to the last, so the status alone
- * cannot say where one is.
+ * Every goal draws Pending, its workflow columns, then Done.
  */
 export function laneColumns(goal: Pick<GoalDto, "steps">): LaneColumn[] {
-  if (!isStepped(goal)) {
-    return BOARD_STATUSES.map((status) => ({
-      key: status,
-      label: TASK_STATUS_META[status].label,
-      hint: TASK_STATUS_META[status].hint,
-      dot: TASK_STATUS_META[status].dot,
-    }))
-  }
   return [
     {
       key: "pending",
@@ -93,8 +81,8 @@ export function laneColumnOf(
 ): string | null {
   if (task.status === "cancelled") return null
   if (task.status === "failed" || isStillPlanning(goal.status)) return "pending"
-  const status = primaryStatus(task.status)
-  if (!isStepped(goal) || status === "pending" || status === "finished") return status
+  if (task.status === "pending" || task.status === "ready") return "pending"
+  if (task.status === "finished") return "finished"
   const step = goal.steps.find((one) => one.id === task.step) ?? goal.steps[0]
   return step ? stepKey(step.id) : status
 }

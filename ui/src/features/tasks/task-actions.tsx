@@ -39,11 +39,7 @@ import { EditTaskDialog } from "./task-form-dialog"
  * places it is ever said. The dialog that used to say it is gone: retry keeps
  * everything, so there is nothing to confirm.
  */
-const RETRY_HINT = "Back to ready, same branch and worktree, fresh author"
-
-/** The same for a task a workflow runs, which has no author: it starts again at its first column. */
-const STEP_RETRY_HINT =
-  "Back to ready, same branch and worktree, starting again at the first column"
+const RETRY_HINT = "Back to ready, same branch and worktree, at the first column"
 
 export function TaskActions({ task }: { task: TaskDto }) {
   const cancel = useCancelTask(task.id)
@@ -53,9 +49,7 @@ export function TaskActions({ task }: { task: TaskDto }) {
   const showEdit = canEdit(task.status)
   const showCancel = canCancel(task.status)
   const showRetry = canRetry(task.status)
-  const retryHint = task.agents.some((agent) => agent.seat === "agent")
-    ? STEP_RETRY_HINT
-    : RETRY_HINT
+  const retryHint = RETRY_HINT
   // Cancelling is optimistic, so by the time the request is in flight the task
   // is already `cancelled` and neither button applies any more. Returning null
   // here would take the open dialog — its spinner, and the refusal it may be

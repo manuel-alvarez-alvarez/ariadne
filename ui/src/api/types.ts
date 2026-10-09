@@ -26,7 +26,6 @@ export type SetTunnelRequest = Schemas["SetTunnelRequest"]
 export type PermissionMode = Schemas["PermissionMode"]
 
 export type TaskDto = Schemas["TaskDto"]
-export type TaskAgentDto = Schemas["TaskAgentDto"]
 export type AgentAssignment = Schemas["AgentAssignment"]
 export type TaskUsage = Schemas["TaskUsageDto"]
 export type TaskStatus = Schemas["TaskStatus"]
@@ -58,10 +57,6 @@ export type ParsedWorkflowDto = Schemas["ParsedWorkflowDto"]
 export type CreateWorkflowRequest = Schemas["CreateWorkflowRequest"]
 export type UpdateWorkflowRequest = Schemas["UpdateWorkflowRequest"]
 export type Seat = Schemas["Seat"]
-export type Landing = Schemas["Landing"]
-export type Actor = Schemas["Actor"]
-export type MessageDto = Schemas["MessageDto"]
-export type MessageKind = Schemas["MessageKind"]
 export type ModelDto = Schemas["ModelDto"]
 export type WorkStatsDto = Schemas["WorkStatsDto"]
 export type WorkBucketDto = Schemas["WorkBucketDto"]
@@ -94,11 +89,9 @@ export type UpdateLearnedPermissionRequest = Schemas["UpdateLearnedPermissionReq
 /**
  * Every domain event carried by `GET /v1/events/stream`, as a tagged union.
  *
- * Minus the kinds starting `memo`: the generated schema still lists them and
- * the app no longer reads them. Drop the `Exclude` when the schema is
- * regenerated without them.
+ * This stays a tagged union so the event dispatcher is exhaustive.
  */
-export type DomainEvent = Exclude<Schemas["DomainEvent"], { event: `memo${string}` }>
+export type DomainEvent = Schemas["DomainEvent"]
 /** `"goal_updated" | "task_updated" | ...` */
 export type DomainEventKind = DomainEvent["event"]
 

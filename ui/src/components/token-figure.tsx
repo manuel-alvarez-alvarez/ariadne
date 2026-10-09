@@ -169,8 +169,11 @@ function NamedHalves({ usage }: { usage: TokenUsage }) {
 export function goalUsageRows(usage: GoalUsage): UsageRow[] {
   return [
     { key: "orchestrator", label: "Orchestrator", usage: usage.orchestrator },
-    { key: "authors", label: "Authors", usage: usage.authors },
-    { key: "reviewers", label: "Reviewers", usage: usage.reviewers },
+    ...usage.agents.map((agent) => ({
+      key: agent.agent_id,
+      label: agent.step ?? shortId(agent.agent_id),
+      usage: agent.usage,
+    })),
   ]
 }
 
@@ -181,19 +184,6 @@ export function goalUsageRows(usage: GoalUsage): UsageRow[] {
  * still in the total above it; the daemon sends the name it ran under, and the
  * tail of its profile id stands in where it sent none.
  */
-export function taskUsageRows(usage: TaskUsage): UsageRow[] {
-  return [
-    { key: "author", label: "Author", usage: usage.author },
-    ...usage.reviewers.map((reviewer) => ({
-      key: reviewer.agent_id,
-      // An agent has no name: its skills are what identifies it, and its id
-      // is the fallback for one the task no longer staffs.
-      label: reviewer.skills.join(", ") || shortId(reviewer.agent_id),
-      usage: reviewer.usage,
-    })),
-  ]
-}
-
 /**
  * The breakdown of a stepped task's total: one line per workflow column, named
  * by the column, for every agent that has spent anything there. `title` turns

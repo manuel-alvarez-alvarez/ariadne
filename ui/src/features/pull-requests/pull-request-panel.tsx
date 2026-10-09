@@ -391,9 +391,9 @@ function PullRequestSessions({
       </section>
       {pull.origin_task_id ? (
         <section className="flex flex-col gap-2">
-          <h3 className="text-sm font-medium">The task's author</h3>
+          <h3 className="text-sm font-medium">Task workflow</h3>
           <SessionsList
-            filters={{ task: pull.origin_task_id, seat: "author" }}
+            filters={{ task: pull.origin_task_id, seat: "agent" }}
             onSelect={(session) => onSelect(session.id)}
           />
         </section>

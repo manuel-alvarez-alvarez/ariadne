@@ -14,43 +14,6 @@
 import type { TaskDto, TaskStatus } from "@/api"
 
 /** Pipeline columns, in the order a task moves through them. */
-export const BOARD_STATUSES = [
-  "pending",
-  "in_progress",
-  "under_review",
-  "approved",
-  "finished",
-] as const satisfies readonly TaskStatus[]
-
-/**
- * The daemon statuses the UI folds into a primary one: `ready` is a phase of
- * `pending` and `changes_requested` a phase of `in_progress`. The raw status
- * stays visible as a sub-status badge.
- *
- * `ready` is folded because the daemon spawns the author in the same
- * reconcile pass that made the task ready — nothing queues there, so a column
- * of its own was empty by design. A task that *does* linger in it (paused
- * goal, daemon down, author spawn failing, a failure just retried) is
- * exactly what the badge on the Pending card says.
- *
- * `approved` is not folded: it is the whole of the landing stage now, and a
- * task sits in it for as long as its author takes to squash the change onto
- * the base branch — or for as long as a published request waits on a human.
- */
-const SUB_STATUS_OF = {
-  ready: "pending",
-  changes_requested: "in_progress",
-} as const satisfies Partial<Record<TaskStatus, TaskStatus>>
-
-/** The column a status belongs to: itself, unless it is a sub-status. */
-export function primaryStatus(status: TaskStatus): TaskStatus {
-  return (SUB_STATUS_OF as Partial<Record<TaskStatus, TaskStatus>>)[status] ?? status
-}
-
-/** The refining meta ("Ready", …) when `status` is a sub-status, else undefined. */
-export function subStatus(status: TaskStatus): StatusMeta | undefined {
-  return status in SUB_STATUS_OF ? TASK_STATUS_META[status] : undefined
-}
 
 interface StatusMeta {
   label: string
@@ -70,56 +33,31 @@ interface StatusMeta {
 }
 
 /**
- * Which step of the ramp each status takes. The pipeline reads left to right —
- * pending grey, in progress accent, review violet, approved teal-green,
- * finished green — with the folded sub-statuses on the step of the column they
- * sit in (`ready` teal, one shade off its grey column, because a task parked
- * there is not simply waiting). Approved takes the step between the review and
- * the merge it is on its way to, which is what the last active stage of the
- * pipeline should look like. The two statuses that mean "something is wrong"
- * (changes requested, failed) are the only warm ones, so a stalled task is
- * never mistaken for a waiting one.
+ * The workflow owns columns, while status says whether the task has started,
+ * completed, stopped, or failed.
  */
 export const TASK_STATUS_META: Record<TaskStatus, StatusMeta> = {
   pending: {
     label: "Pending",
-    hint: "Not started yet: waiting for its dependencies to finish, or ready and waiting for an author session.",
+    hint: "Waiting for its dependencies or workflow.",
     badge: "bg-status-pending-soft text-status-pending-fg",
     dot: "bg-status-pending",
   },
   ready: {
     label: "Ready",
-    hint: "Dependencies finished, and still waiting for an author session — the daemon normally starts one at once, so a task sitting here means its goal is paused, the daemon is down, the spawn is failing, or it was just retried.",
+    hint: "Ready for its workflow to start.",
     badge: "bg-status-ready-soft text-status-ready-fg",
     dot: "bg-status-ready",
   },
   in_progress: {
     label: "In progress",
-    hint: "An author session is working on the task: implementing, or applying review feedback.",
+    hint: "A workflow column is running.",
     badge: "bg-status-active-soft text-status-active-fg",
     dot: "bg-status-active",
   },
-  under_review: {
-    label: "Under review",
-    hint: "Review requested: reviewer sessions are reading the branch and voting on it.",
-    badge: "bg-status-review-soft text-status-review-fg",
-    dot: "bg-status-review",
-  },
-  changes_requested: {
-    label: "Changes requested",
-    hint: "A reviewer asked for changes this round.",
-    badge: "bg-status-warn-soft text-status-warn-fg",
-    dot: "bg-status-warn",
-  },
-  approved: {
-    label: "Approved",
-    hint: "Enough approvals collected; its author is ending it — squashing it onto the base branch, or waiting on the pull request it published to be merged.",
-    badge: "bg-status-approved-soft text-status-approved-fg",
-    dot: "bg-status-approved",
-  },
   finished: {
     label: "Finished",
-    hint: "The work is done and what it produced is where it belongs: a change landed on the base branch, a request published, a report filed, a release out.",
+    hint: "The workflow completed.",
     badge: "bg-status-done-soft text-status-done-fg",
     dot: "bg-status-done",
   },
@@ -141,23 +79,16 @@ export const TASK_STATUS_META: Record<TaskStatus, StatusMeta> = {
 /**
  * How loudly each status asks for a person, lowest first.
  *
- * A failure is waiting for a decision, so it leads. Approved comes next
- * because it is the one stage whose next step can be a *person's*: an
- * author that published the change as a pull request has done all it can
- * itself, and the task sits there until somebody merges it. Then what the
- * agents are still working on, then what has not started, then what is done
- * with.
+ * A failure is waiting for a decision, then active workflow work, then tasks
+ * that have not started, and finally completed work.
  */
 const ATTENTION_RANK = {
   failed: 0,
-  approved: 1,
-  changes_requested: 2,
-  under_review: 3,
-  in_progress: 4,
-  ready: 5,
-  pending: 6,
-  finished: 7,
-  cancelled: 8,
+  in_progress: 1,
+  ready: 2,
+  pending: 3,
+  finished: 4,
+  cancelled: 5,
 } as const satisfies Record<TaskStatus, number>
 
 /**
@@ -192,7 +123,7 @@ export function canRetry(status: TaskStatus): boolean {
   return status === "failed"
 }
 
-/** Editing (title, description, reviewers, dependencies) is pre-start only. */
+/** Editing is available before workflow work begins. */
 export function canEdit(status: TaskStatus): boolean {
   return status === "pending" || status === "ready"
 }

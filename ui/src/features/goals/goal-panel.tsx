@@ -42,7 +42,7 @@ import { taskListQueryOptions } from "@/features/tasks"
 import { CreateTaskDialog } from "@/features/tasks/task-form-dialog"
 import { useFocusReturn } from "@/hooks/use-focus-return"
 import { goalCopyEntries } from "@/lib/clipboard"
-import { folderName, LANDING_LABELS } from "@/lib/format"
+import { folderName } from "@/lib/format"
 import { paths, taskPanelTo, usePanelSessionNavigation } from "@/routes/paths"
 import { GoalActions } from "./goal-actions"
 import { GoalSessions, GoalSessionView } from "./goal-sessions"
@@ -277,10 +277,6 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
             breaking the same total down by the seat that spent it. */}
         <TokenFigure usage={goal.usage.total} rows={goalUsageRows(goal.usage)} />
       </Fact>
-      <Fact label="Landing">
-        {/* Chosen once, at creation, and followed by every task of the goal. */}
-        <span>{LANDING_LABELS[goal.landing]}</span>
-      </Fact>
       {goal.issue_url && (
         <Fact label="Issue">
           <a href={goal.issue_url} target="_blank" rel="noreferrer">
@@ -299,11 +295,7 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
             <li key={repo.id} className="min-w-0">
               <CopyableId
                 value={repo.path}
-                display={() =>
-                  `${folderName(repo.path)} [${repo.base_branch}]${
-                    repo.goal_branch ? ` · ${repo.goal_branch}` : ""
-                  }`
-                }
+                display={() => `${folderName(repo.path)} [${repo.base_branch}]`}
                 label="repository path"
                 to={paths.repositories()}
               />

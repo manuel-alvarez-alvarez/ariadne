@@ -23,15 +23,6 @@ export function stepTitle(steps: readonly WorkflowStepDto[] | undefined, id: str
 }
 
 /**
- * Whether a task runs through workflow columns rather than an author and
- * reviewers. A daemon older than workflows sends no `steps` at all, and its
- * goals are drawn as goals with none.
- */
-export function isStepped(goal: Pick<GoalDto, "steps"> | undefined): boolean {
-  return (goal?.steps?.length ?? 0) > 0
-}
-
-/**
  * The column a session of seat `agent` staffs, by title — what a step agent is
  * called wherever a seat would name an author or a reviewer. Undefined for any
  * other seat, and where the task is not at hand to say which column it is.

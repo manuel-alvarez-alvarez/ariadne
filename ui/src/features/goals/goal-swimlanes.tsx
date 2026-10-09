@@ -26,7 +26,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { type SessionAttention, SessionAttentionBadge } from "@/features/sessions/session-display"
-import { BOARD_STATUSES, TaskCard, taskListQueryOptions } from "@/features/tasks"
+import { TaskCard, taskListQueryOptions } from "@/features/tasks"
 import { findStep } from "@/features/tasks/steps"
 import { useHorizontalOverflow } from "@/hooks/use-scroll-overflow"
 import { cn, folderName, formatAbsolute } from "@/lib/format"
@@ -125,7 +125,7 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
   )
   // Every lane draws its own columns now, so the board is as wide as the
   // lane with the most of them.
-  const widest = Math.max(BOARD_STATUSES.length, ...goals.map((goal) => laneColumns(goal).length))
+  const widest = Math.max(3, ...goals.map((goal) => laneColumns(goal).length))
 
   if (tasks.error) {
     return (
@@ -386,22 +386,22 @@ export function BoardSkeleton() {
   return (
     <div className={BOARD_FRAME} aria-hidden>
       <div className={cn(BOARD_BOX, "overflow-hidden")}>
-        <div className={BOARD_WIDTH} style={columnCount("--board-columns", BOARD_STATUSES.length)}>
+        <div className={BOARD_WIDTH} style={columnCount("--board-columns", 3)}>
           {[0, 1, 2].map((lane) => (
             <div
               key={lane}
               className="border-b px-3 pt-2.5 pb-2.5 last:border-b-0"
-              style={columnCount("--lane-columns", BOARD_STATUSES.length)}
+              style={columnCount("--lane-columns", 3)}
             >
               <Skeleton className="h-4 w-48" />
               <div className={cn(COLUMNS_GRID, "pt-3")}>
-                {BOARD_STATUSES.map((status) => (
-                  <Skeleton key={status} className="h-3 w-20" />
+                {[0, 1, 2].map((column) => (
+                  <Skeleton key={column} className="h-3 w-20" />
                 ))}
               </div>
               <div className={cn(COLUMNS_GRID, "pt-2")}>
-                {BOARD_STATUSES.map((status, column) => (
-                  <div key={status}>
+                {[0, 1, 2].map((column) => (
+                  <div key={column}>
                     {(lane + column) % 2 === 0 ? <Skeleton className="h-14 w-full" /> : null}
                   </div>
                 ))}
