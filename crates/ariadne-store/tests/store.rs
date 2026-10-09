@@ -616,7 +616,7 @@ async fn walk_to(store: &Store, task_id: &str, upto: TaskStatus) -> Task {
         .expect("a task in progress is in one of its goal's columns");
     for next in &steps[at + 1..] {
         store
-            .move_step(task_id, &next.id, Actor::Agent, "done here")
+            .move_step(task_id, &next.id, Actor::Agent, "done here", None)
             .await
             .unwrap();
     }
@@ -1143,14 +1143,14 @@ async fn task_happy_path_to_finished() {
     assert_eq!(started.step.as_deref(), Some("develop"));
 
     let reviewing = store
-        .move_step(&w.task.id, "review", Actor::Agent, "committed")
+        .move_step(&w.task.id, "review", Actor::Agent, "committed", None)
         .await
         .unwrap();
     assert_eq!(reviewing.status(), TaskStatus::InProgress);
     assert_eq!(reviewing.step.as_deref(), Some("review"));
 
     let merging = store
-        .move_step(&w.task.id, "merge", Actor::Agent, "passed")
+        .move_step(&w.task.id, "merge", Actor::Agent, "passed", None)
         .await
         .unwrap();
     assert_eq!(merging.status(), TaskStatus::InProgress);
@@ -1286,25 +1286,25 @@ async fn illegal_transitions_are_rejected_and_unaudited() {
     ));
     assert!(matches!(
         store
-            .move_step(&task.id, "merge", Actor::Agent, "skip the review")
+            .move_step(&task.id, "merge", Actor::Agent, "skip the review", None)
             .await,
         Err(StoreError::Conflict(_))
     ));
     assert!(matches!(
         store
-            .move_step(&task.id, "review", Actor::Agent, "   ")
+            .move_step(&task.id, "review", Actor::Agent, "   ", None)
             .await,
         Err(StoreError::Conflict(_))
     ));
     assert!(matches!(
         store
-            .move_step(&task.id, "review", Actor::User, "I say so")
+            .move_step(&task.id, "review", Actor::User, "I say so", None)
             .await,
         Err(StoreError::Conflict(_))
     ));
     assert!(matches!(
         store
-            .move_step(&task.id, "nowhere", Actor::Agent, "lost")
+            .move_step(&task.id, "nowhere", Actor::Agent, "lost", None)
             .await,
         Err(StoreError::Invalid(_))
     ));
@@ -2209,6 +2209,7 @@ async fn an_ended_task_carries_the_reason_the_transition_that_ended_it_gave() {
             "review",
             Actor::Agent,
             "the first pass, with a test per lane",
+            None,
         )
         .await
         .unwrap();

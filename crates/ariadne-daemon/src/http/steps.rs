@@ -134,7 +134,13 @@ pub(super) async fn complete(
     let task = if let Some(next) = steps.get(at + 1) {
         state
             .store
-            .move_step(&id, &next.id, Actor::Agent, &req.reason)
+            .move_step(
+                &id,
+                &next.id,
+                Actor::Agent,
+                &req.reason,
+                verified_merge_commit.as_deref(),
+            )
             .await?
     } else {
         state
@@ -181,7 +187,7 @@ pub(super) async fn fail(
     } else {
         state
             .store
-            .move_step(&id, &steps[at - 1].id, Actor::Agent, &req.reason)
+            .move_step(&id, &steps[at - 1].id, Actor::Agent, &req.reason, None)
             .await?
     };
     state.notify_scheduler(&id);

@@ -302,7 +302,7 @@ impl super::Scheduler {
         let advanced = match next_step.as_deref() {
             Some(next) => {
                 self.store
-                    .move_step(&task.id, next, Actor::Daemon, &reason)
+                    .move_step(&task.id, next, Actor::Daemon, &reason, Some(&merge_commit))
                     .await
             }
             None => {

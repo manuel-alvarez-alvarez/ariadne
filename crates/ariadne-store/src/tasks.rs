@@ -294,12 +294,19 @@ impl Store {
     }
 
     /// Move between adjacent columns without changing the task status.
+    ///
+    /// `merge_commit` carries the request column's own verified commit
+    /// forward, where the request column is not the last one: a later
+    /// column's own completion has none of its own to give the task when it
+    /// finishes, and cleanup leaves no branch for the diff route to read
+    /// instead.
     pub async fn move_step(
         &self,
         task_id: &str,
         to_step: &str,
         actor: Actor,
         reason: &str,
+        merge_commit: Option<&str>,
     ) -> Result<Task> {
         let mut tx = self.w().begin().await?;
         let task: Task = Self::fetch_by_in_tx(&mut tx, "task", "tasks", task_id).await?;
@@ -340,12 +347,16 @@ impl Store {
             to_step: Some(to_step.into()),
             created_at: now(),
         };
-        sqlx::query("UPDATE tasks SET step = ?, updated_at = ? WHERE id = ?")
-            .bind(to_step)
-            .bind(&transition.created_at)
-            .bind(task_id)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "UPDATE tasks SET step = ?, merge_commit = COALESCE(?, merge_commit), updated_at = ?
+             WHERE id = ?",
+        )
+        .bind(to_step)
+        .bind(merge_commit)
+        .bind(&transition.created_at)
+        .bind(task_id)
+        .execute(&mut *tx)
+        .await?;
         sqlx::query("INSERT INTO task_transitions (id, task_id, from_status, to_status, actor, reason, from_step, to_step, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
             .bind(&transition.id).bind(task_id).bind(&transition.from_status).bind(&transition.to_status)
             .bind(&transition.actor).bind(reason).bind(&transition.from_step).bind(to_step).bind(&transition.created_at)

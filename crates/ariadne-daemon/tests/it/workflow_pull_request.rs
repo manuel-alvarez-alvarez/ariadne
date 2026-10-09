@@ -577,4 +577,54 @@ async fn a_quiet_pr_agent_advances_to_the_column_after_the_merge() {
         )
         .await;
     assert_eq!(finished["status"], "finished");
+    assert_eq!(finished["merge_commit"], merge);
+}
+
+/// The request column is not always the task's last: the agent completes
+/// it itself once the forge says merged, moving the task on to the column
+/// after it rather than finishing the task there. The merge commit the
+/// gate read off the forge must survive that move, since the column it
+/// moves to has none of its own to give the task when it finally finishes.
+#[tokio::test]
+async fn completing_the_request_column_by_hand_carries_its_merge_commit_onward() {
+    let request = request_column(true, true).await;
+    let merge = merge_request(&request);
+    let mut merged = script("MERGED", &request.task.branch, &[], &[]);
+    for entry in merged.as_array_mut().unwrap() {
+        if entry["args"] == json!(["pr", "view"]) {
+            let mut pull = opened_pull(URL, &request.task.branch);
+            pull["state"] = json!("MERGED");
+            pull["mergeCommit"] = json!({"oid": merge});
+            entry["stdout"] = json!(pull.to_string());
+        }
+    }
+    request.forge.reprogram(merged);
+
+    let moved: Value = request
+        .h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/step/complete", request.task.id),
+                &request.agent.id,
+                json!({"reason": "The request merged."}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(moved["step"], "deploy");
+
+    let deploy = session_at(&request.h, &request.task, "deploy").await;
+    let finished: Value = request
+        .h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/step/complete", request.task.id),
+                &deploy.id,
+                json!({"reason": "Deployment finished."}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(finished["status"], "finished");
+    assert_eq!(finished["merge_commit"], merge);
 }

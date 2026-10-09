@@ -1297,6 +1297,7 @@ impl Harness {
                     &steps[at + 1].id,
                     Actor::Daemon,
                     "the test moved the task on",
+                    None,
                 )
                 .await
                 .unwrap();
