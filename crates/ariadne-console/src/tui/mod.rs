@@ -880,6 +880,15 @@ impl Console {
     /// pane's top row for it — and no draw repaints more than the cells that
     /// changed.
     pub fn show<B: Screen>(&mut self, terminal: &mut Terminal<Anchored<B>>) -> Result<()> {
+        self.show_at(terminal, Instant::now())
+    }
+
+    /// [`Console::show`], with the turn clock read at `now`.
+    pub(crate) fn show_at<B: Screen>(
+        &mut self,
+        terminal: &mut Terminal<Anchored<B>>,
+        now: Instant,
+    ) -> Result<()> {
         if terminal.backend().lost() {
             return Ok(());
         }
@@ -894,7 +903,7 @@ impl Console {
         let written = self.unfinished(from, size.width, room, asking).len();
         let over = (finished + written).saturating_sub(usize::from(room));
         self.emit(terminal, pieces, over.min(finished))?;
-        terminal.draw(|frame| self.render_with_question(frame, asking))?;
+        terminal.draw(|frame| self.render_with_question(frame, asking, now))?;
         Ok(())
     }
 

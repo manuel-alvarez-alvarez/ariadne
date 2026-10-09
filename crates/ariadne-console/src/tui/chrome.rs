@@ -11,6 +11,7 @@ use ratatui::Frame as Draw;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
+use tokio::time::Instant;
 
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::usage::TokenUsageDto;
@@ -97,10 +98,20 @@ impl Console {
     /// Draw the viewport: what is being written, the status row, the
     /// suggestion list while it is open, the box and the footer.
     pub fn render(&self, frame: &mut Draw) {
-        self.render_with_question(frame, self.question());
+        self.render_at(frame, Instant::now());
     }
 
-    pub(super) fn render_with_question(&self, frame: &mut Draw, asking: Option<usize>) {
+    /// [`Console::render`], with the turn clock read at `now`.
+    pub(crate) fn render_at(&self, frame: &mut Draw, now: Instant) {
+        self.render_with_question(frame, self.question(), now);
+    }
+
+    pub(super) fn render_with_question(
+        &self,
+        frame: &mut Draw,
+        asking: Option<usize>,
+        now: Instant,
+    ) {
         let area = frame.area();
         let suggested = self.suggestion_rows(area.width, area.height);
         let [live, pinned] = Layout::vertical([
@@ -117,7 +128,7 @@ impl Console {
         .areas(pinned);
 
         self.draw_live(frame, live, asking);
-        self.draw_status(frame, status);
+        self.draw_status(frame, status, now);
         self.draw_suggestions(frame, suggestions);
         self.input.draw(frame, input, self.hint());
         self.draw_footer(frame, footer);
@@ -209,9 +220,9 @@ impl Console {
         frame.render_widget(Paragraph::new(Text::from(lines)), tail);
     }
 
-    fn draw_status(&self, frame: &mut Draw, area: Rect) {
+    fn draw_status(&self, frame: &mut Draw, area: Rect, now: Instant) {
         let room = usize::from(area.width).saturating_sub(2 * MARGIN.len());
-        let mut parts = self.status();
+        let mut parts = self.status(now);
         fit(&mut parts, |parts| width(parts) <= room);
         let mut line = vec![Span::raw(MARGIN)];
         line.extend(spans(parts));
@@ -221,7 +232,7 @@ impl Console {
     /// The status row: who is answering, on what, and what it is doing. The
     /// session's status goes last as the row narrows, then what the turn is
     /// doing, its clock, the seat and the model.
-    fn status(&self) -> Vec<Part> {
+    fn status(&self, now: Instant) -> Vec<Part> {
         let mut parts = vec![
             Part::new(
                 2,
@@ -264,7 +275,10 @@ impl Console {
             parts.push(Part::new(
                 3,
                 " ",
-                vec![Span::styled(clock(since.elapsed()), DIM)],
+                vec![Span::styled(
+                    clock(now.saturating_duration_since(since)),
+                    DIM,
+                )],
             ));
         }
         parts
