@@ -19,6 +19,7 @@ import {
   cacheRow,
   dropRow,
   qk,
+  type SetTunnelRequest,
   type UpdateRepositoryRequest,
   unwrap,
 } from "@/api"
@@ -61,5 +62,22 @@ export function useDeleteRepository() {
     mutationFn: (id: string) =>
       unwrap(api().DELETE("/v1/repositories/{id}", { params: { path: { id } } })),
     onSuccess: (_result, id) => dropRow(queryClient, qk.repositories, id),
+  })
+}
+
+/** `GET /v1/forge/tunnel` — the webhook tunnel's switch, state and bound listener. */
+export function tunnelQueryOptions() {
+  return queryOptions({
+    queryKey: qk.forge.tunnel(),
+    queryFn: () => unwrap(api().GET("/v1/forge/tunnel")),
+  })
+}
+
+/** `PUT /v1/forge/tunnel` — turn the tunnel on or off. */
+export function useSetTunnel() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: SetTunnelRequest) => unwrap(api().PUT("/v1/forge/tunnel", { body })),
+    onSuccess: (tunnel) => queryClient.setQueryData(qk.forge.tunnel(), tunnel),
   })
 }

@@ -3,6 +3,7 @@
 use anyhow::Result;
 use clap::Subcommand;
 
+use ariadne_api::pull_requests::PullRequestDto;
 use ariadne_api::sessions::{
     ConsoleInputRequest, NewSessionRequest, SessionDto, SessionEntryDto, SessionKind,
     SessionPageDto, SessionPageQuery, SwitchSessionRequest,
@@ -485,6 +486,7 @@ fn sessions_path(options: &ListOptions, cursor: Option<&str>) -> Result<String> 
             agent: options.agent.clone(),
             goal: options.goal.clone(),
             task: options.task.clone(),
+            pull_request: None,
             status: one_of(&options.statuses),
             seat: options.seat,
             attention: options.attention.then_some(true),
@@ -606,10 +608,26 @@ fn session_row(session: &SessionEntryDto, now: chrono::DateTime<chrono::Utc>) ->
 }
 
 async fn render_page(client: &Client, options: &ListOptions, format: Format) -> Result<()> {
-    let page = fetch_sessions(client, options).await?;
+    let mut page = fetch_sessions(client, options).await?;
     if format == Format::Json {
         return crate::output::print_json(&page);
     }
+    // Each request a row names, read off the forge: what Ariadne still
+    // works on. One it stopped working on keeps the title it has.
+    let mut ids: Vec<String> = page
+        .sessions
+        .iter()
+        .filter_map(|s| s.pull_request_id.clone())
+        .collect();
+    ids.sort();
+    ids.dedup();
+    let mut pulls: Vec<PullRequestDto> = Vec::new();
+    for id in ids {
+        if let Ok(pull) = client.get_json(&format!("/v1/pull-requests/{id}")).await {
+            pulls.push(pull);
+        }
+    }
+    link_pull_requests(&mut page, &pulls);
     print_list(
         format,
         &page.sessions,
@@ -627,6 +645,21 @@ async fn render_page(client: &Client, options: &ListOptions, format: Format) -> 
         }
     }
     Ok(())
+}
+
+/// Title each pull request session by its request, with the request's URL
+/// beside it (026): what the session works on, and where to read it.
+fn link_pull_requests(page: &mut SessionPageDto, pulls: &[PullRequestDto]) {
+    for session in &mut page.sessions {
+        let Some(pull) = session
+            .pull_request_id
+            .as_deref()
+            .and_then(|id| pulls.iter().find(|p| p.id.as_deref() == Some(id)))
+        else {
+            continue;
+        };
+        session.title = Some(format!("{} ({})", pull.title, pull.url));
+    }
 }
 
 fn session_path(id: &str) -> String {
@@ -698,6 +731,7 @@ fn inspect_pairs(s: &SessionDto) -> Vec<(&'static str, Kv)> {
         ("id", Kv::id(s.id.clone())),
         ("goal", Kv::id(dash(s.goal_id.as_deref()))),
         ("task", Kv::id(dash(s.task_id.as_deref()))),
+        ("pull request", Kv::id(dash(s.pull_request_id.as_deref()))),
         ("seat", s.seat.map_or("-", |seat| seat.as_str()).into()),
         ("agent id", Kv::id(dash(s.task_agent_id.as_deref()))),
         ("agent", agent_of(&s.model).into()),
@@ -740,6 +774,13 @@ fn inspect_pairs(s: &SessionDto) -> Vec<(&'static str, Kv)> {
 /// Whose agent it is: a session has no title, and the seat and the piece
 /// of work it was spawned for are what stand in for one.
 fn what_for(s: &SessionDto) -> String {
+    if let Some(pull) = &s.pull_request_id {
+        return format!(
+            "{} of pull request {}",
+            s.seat.map_or("-", |seat| seat.as_str()),
+            short_id(pull)
+        );
+    }
     match &s.task_id {
         Some(task) => format!(
             "{} on task {}",
@@ -817,6 +858,7 @@ mod tests {
             context_size: None,
             created_at: None,
             ended_at: None,
+            pull_request_id: None,
         }
     }
 
@@ -1107,6 +1149,41 @@ mod tests {
         assert_eq!(
             session_count(&page(&["one", "two"], Some("more"), 17)),
             "2 of 17 sessions"
+        );
+    }
+
+    /// A pull request session is titled by its request, with the request's
+    /// URL beside the title; every other session keeps the title it has.
+    #[test]
+    fn a_pull_request_session_shows_the_request_title_and_url() {
+        let mut pr_session = ariadne("01PRS", SessionStatus::Idle);
+        pr_session.pull_request_id = Some("01PR".into());
+        pr_session.title = Some("Fix widgets".into());
+        let mut listing = SessionPageDto {
+            sessions: vec![pr_session, outside("outside-id")],
+            next_cursor: None,
+            total: 2,
+            snapshot_at: "2026-09-12T12:00:00Z".into(),
+        };
+        let pull: PullRequestDto = serde_json::from_value(serde_json::json!({
+            "id": "01PR", "repository_id": "01R", "number": 42,
+            "url": "https://github.com/acme/widgets/pull/42", "title": "Fix widgets",
+            "author_login": "me", "state": "open", "draft": false,
+            "head_branch": "fix", "head_sha": "abc", "head_repo": null, "base_branch": "main",
+            "checks": "none", "review_decision": "none", "unanswered_comments": 1,
+            "origin_task_id": null, "opened_at": "", "role": "author", "ready": false,
+            "updated_at": "", "failed_checks": [],
+            "behind_base": false, "session_id": "01PRS"
+        }))
+        .unwrap();
+        link_pull_requests(&mut listing, &[pull]);
+        assert_eq!(
+            listing.sessions[0].title.as_deref(),
+            Some("Fix widgets (https://github.com/acme/widgets/pull/42)")
+        );
+        assert_eq!(
+            listing.sessions[1].title.as_deref(),
+            Some("Prompt for outside-id")
         );
     }
 

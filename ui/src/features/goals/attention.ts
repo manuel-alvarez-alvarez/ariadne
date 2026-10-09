@@ -286,6 +286,8 @@ function collectBoardAttention(sessions: SessionDto[] | undefined): BoardAttenti
     // A session with no task is an orchestrator's, and lands on its goal's lane.
     const index = session.task_id ? byTask : byGoal
     const key = session.task_id ?? session.goal_id ?? ""
+    // A pull request's session, or a loose one, has no card and no lane.
+    if (!key) continue
     const held = index.get(key)
     if (!held || held.at.localeCompare(at) < 0) index.set(key, { reason, at })
   }
@@ -314,7 +316,9 @@ function reasons(index: Map<string, Flagged>): Map<string, SessionAttention> {
  *
  * Everything else lands where it always did — the task's panel for a row that
  * is about a task, the session's for one that is only about a session — since
- * a death or a stall is something to read rather than something to answer.
+ * a death or a stall is something to read rather than something to answer. A
+ * pull request that is ready to merge is one of the latter: its session's
+ * panel links to the request, where the merge is done.
  *
  * The screen it is answered *from* matters as well as its params: the list
  * carries onto every screen (`attention-alerts.tsx`), and the sessions one
@@ -347,6 +351,11 @@ export function attentionTarget(
 export function attentionSubject(item: AttentionItem): string {
   if (item.task) return item.task.title
   if (item.taskId) return `Task ${shortId(item.taskId)}`
+  // A pull request's session works for no goal: the request is its subject.
+  const pullRequestId = item.session?.pull_request_id
+  if (pullRequestId) {
+    return `Pull request · ${item.session?.title ?? shortId(pullRequestId)}`
+  }
   return item.session
     ? `${seatLabel(item.session.seat)} · ${item.goal?.title ?? `Goal ${shortId(item.goalId)}`}`
     : `Goal ${shortId(item.goalId)}`

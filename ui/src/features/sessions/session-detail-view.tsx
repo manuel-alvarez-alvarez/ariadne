@@ -62,6 +62,7 @@ import { When } from "@/components/when"
 import { goalQueryOptions } from "@/features/goals/queries"
 import { SeatSummary } from "@/features/models/agent-summary"
 import { ModelPin } from "@/features/models/model-pin"
+import { PullRequestLink } from "@/features/pull-requests/pull-request-link"
 import { taskQueryOptions } from "@/features/tasks/queries"
 import { sessionCopyEntries } from "@/lib/clipboard"
 import { formatTokens } from "@/lib/format"
@@ -70,7 +71,12 @@ import { paths, usePanelSessionTo, useTaskPanelTo, useTerminalFocusRequest } fro
 import { SessionActions } from "./session-actions"
 import { SessionActivity } from "./session-activity"
 import { SessionBlockedBanner } from "./session-blocked-banner"
-import { SessionAttentionBadge, SessionStatusBadge, sessionHeading } from "./session-display"
+import {
+  SessionAttentionBadge,
+  SessionStatusBadge,
+  sessionHeading,
+  shownAttention,
+} from "./session-display"
 import { SessionTerminal } from "./session-terminal"
 
 /**
@@ -99,6 +105,7 @@ export function SessionPanelHeader({
     ...goalQueryOptions(session.goal_id ?? ""),
     enabled: Boolean(session.goal_id),
   })
+  const attention = shownAttention(session)
   return (
     <PanelHeader
       breadcrumb={breadcrumb}
@@ -117,9 +124,7 @@ export function SessionPanelHeader({
           {/* Next to the status rather than instead of it: the two are
               orthogonal — an agent blocked on a permission prompt is still
               running — and the pair is what says what to do about it. */}
-          {session.attention_reason ? (
-            <SessionAttentionBadge attention={session.attention_reason} />
-          ) : null}
+          {attention ? <SessionAttentionBadge attention={attention} /> : null}
         </>
       }
       id={
@@ -248,6 +253,13 @@ export function SessionDetailView({
                 </Link>
               </Fact>
             )}
+            {/* A pull request session works for no goal and no task: the
+                request it watches is what it is about, linked to the forge. */}
+            {session.pull_request_id ? (
+              <Fact label="Pull request">
+                <PullRequestLink id={session.pull_request_id} title={session.title} />
+              </Fact>
+            ) : null}
             {/* One fact, not two: what the agent runs on is the tail of this line
                 (`claude-agent-acp:claude-opus-5`), and a Model row under it repeated
                 that tail with the agent half taken off. The session's own snapshot,

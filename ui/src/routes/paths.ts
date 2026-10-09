@@ -36,6 +36,18 @@ export const SKILL_PARAM = "skill"
 const FOCUS_PARAM = "focus"
 
 export const paths = {
+  /** The Forge screen, which opens on its pull requests tab. */
+  forge: () => "/forge",
+  /** The requests that ask for the user's review, Forge's first tab (029). */
+  pullRequests: () => "/forge/pull-requests",
+  pullRequest: (id: string, current = new URLSearchParams()) => {
+    const next = new URLSearchParams(current)
+    for (const key of ["task", "goal", "session", "tab"]) next.delete(key)
+    next.set("pr", id)
+    return `/forge/pull-requests?${next.toString()}`
+  },
+  /** The open issues of the enabled repositories, Forge's second tab (028). */
+  issues: () => "/forge/issues",
   goals: () => "/goals",
   /** The goals board with this goal's panel open. */
   goal: (goalId: string) => `/goals?goal=${goalId}`,
@@ -103,7 +115,8 @@ interface PanelTarget {
  */
 export function taskPanelTo(current: URLSearchParams, taskId: string): PanelTarget {
   const next = withoutArrival(current)
-  const replace = next.has("goal")
+  const replace = next.has("goal") || next.has("pr")
+  next.delete("pr")
   next.set("task", taskId)
   next.delete("tab")
   next.delete("session")
@@ -161,6 +174,7 @@ export function sessionPanelFrom(
 ): { search: string } {
   const next = withoutArrival(current)
   next.set("session", sessionId)
+  next.delete("pr")
   // The panel's own tab belongs to whichever session was open before this one.
   next.delete("tab")
   if (pathname !== paths.sessions()) {

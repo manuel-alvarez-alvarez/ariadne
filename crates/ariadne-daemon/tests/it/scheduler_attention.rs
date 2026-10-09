@@ -51,7 +51,7 @@ use ariadne_store::{AgentSession, Goal, NewTaskAgent, SessionFilter, Task};
 
 #[cfg(unix)]
 use common::sh;
-use common::{Harness, eventually, harness, test_pin};
+use common::{Harness, QUIET, eventually, harness, test_pin};
 
 /// The budget the goal's orchestrator spends: how many attempts starting one is
 /// worth, as the scheduler has it.
@@ -1880,18 +1880,16 @@ async fn a_wedged_agent_flagged_for_the_user_keeps_the_flag_and_is_relaunched() 
     );
 }
 
-/// And the flag comes back up for an author that was never carrying it, on
-/// the one thing a restart cannot settle: a task published as a request.
+/// A task with a request open raises no attention, and a resumed author
+/// carries none either, while nothing reported the request ready.
 ///
-/// The chain this is about is the whole of an approved task's ending. The
-/// author opens the request, tells the user it is theirs to merge, and stops
-/// — it has nothing left to do until they do. Its agent going away is read as
-/// a disconnect, since landing the change is still the author's turn, and the
-/// resume that answers the disconnect wipes the row clean. Nothing in any of
-/// that merged anything, so the task must still say who it is waiting for
-/// afterwards.
+/// The author keeps the request until a human merges it (005): the open
+/// request alone is no stretch where the user is owed anything. An approved
+/// task whose author's agent went away is read as a disconnect the way any
+/// other is, and the resume that answers it puts the author back on the task
+/// with nothing carried forward.
 #[tokio::test]
-async fn a_published_task_still_says_the_merge_is_the_users_after_its_author_is_resumed() {
+async fn an_open_pull_request_raises_no_attention() {
     let w = World::active().await;
     w.advance(&w.task, TaskStatus::UnderReview).await;
     // Live in the database with no agent process under it: the agent that
@@ -1906,10 +1904,6 @@ async fn a_published_task_still_says_the_merge_is_the_users_after_its_author_is_
         .unwrap();
     w.store
         .set_task_pull_request(&w.task.id, "https://example.test/pull/1")
-        .await
-        .unwrap();
-    w.store
-        .set_task_pull_request_ready(&w.task.id, true)
         .await
         .unwrap();
 
@@ -1930,16 +1924,134 @@ async fn a_published_task_still_says_the_merge_is_the_users_after_its_author_is_
     )
     .await;
     sched.task(&w.task);
-    eventually(
-        TIMEOUT,
-        "the request to still be the user's to merge",
-        async || w.attention(&session).await == Some(AttentionReason::WaitingUser),
-    )
-    .await;
+    tokio::time::sleep(QUIET).await;
+    assert_eq!(
+        w.attention(&session).await,
+        None,
+        "an open request raises nothing for the daemon to keep saying"
+    );
     assert!(
         !w.store.get_task(&w.task.id).await.unwrap().is_stalled(),
-        "and what the user is owed is not the task stalling"
+        "and the open request is not the task stalling either"
     );
+}
+
+/// The world of [`an_open_pull_request_raises_no_attention`], with the
+/// request in the ledger, kept by the task's author, its repository's
+/// integration on: an approved task whose author's agent went away, and the
+/// row of its open request. Answers the author's session and the row's id.
+async fn approved_with_a_kept_request(w: &World) -> (AgentSession, String) {
+    w.advance(&w.task, TaskStatus::UnderReview).await;
+    let session = w
+        .session(&w.goal, Some(&w.task), Seat::Author, &w.author)
+        .await;
+    w.make_resumable(&w.task, &session).await;
+    w.store
+        .transition_task(&w.task.id, TaskStatus::Approved, Actor::Daemon, None, None)
+        .await
+        .unwrap();
+    const URL: &str = "https://github.com/acme/widgets/pull/1";
+    w.store
+        .set_task_pull_request(&w.task.id, URL)
+        .await
+        .unwrap();
+    w.store
+        .set_forge_integration(ariadne_store::SetForgeIntegration {
+            repository_id: w.task.repo_id.clone(),
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+            review_model: None,
+            review_effort: None,
+        })
+        .await
+        .unwrap();
+    let (pull, _) = w
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: w.task.repo_id.clone(),
+            number: 1,
+            url: URL.into(),
+            role: "author".into(),
+            origin_task_id: Some(w.task.id.clone()),
+        })
+        .await
+        .unwrap();
+    // Quiet: nothing on it is news the author was not told.
+    crate::common::forge::seed_live(&w.h, &pull, "me", &w.task.branch, "abc", false);
+    (session, pull.id)
+}
+
+/// An author whose open request last read ready to merge is owed the user
+/// again when its agent comes back (005 rule 9): the restart is no answer to
+/// a person who still has the request to merge. It is picked up with the
+/// keep-request briefing, not the landing one: the request is open already.
+#[tokio::test]
+async fn an_author_whose_open_request_reads_ready_is_owed_the_user_again_on_its_restart() {
+    let w = World::active().await;
+    let (session, pull) = approved_with_a_kept_request(&w).await;
+    w.store.set_pull_request_ready(&pull, true).await.unwrap();
+
+    let sched = w.scheduler();
+    sched.task(&w.task);
+    eventually(
+        TIMEOUT,
+        "the author to be put back on the task",
+        async || w.relaunched(&session, &None).await,
+    )
+    .await;
+    eventually(TIMEOUT, "the user to be owed again", async || {
+        w.attention(&session).await == Some(AttentionReason::WaitingUser)
+    })
+    .await;
+    let back = w.launch_file(&session.id).expect("a launch file");
+    let told = back.initial_prompt.unwrap_or_default();
+    assert!(told.contains("# Keep request:"), "{told}");
+    assert!(!told.contains("`open_pull_request`"), "{told}");
+}
+
+/// An idle author on an approved task whose request is open waits on the
+/// forge (005 rule 8, 009 rule 41): however long it sits idle it is never
+/// nudged and never relaunched.
+#[tokio::test]
+async fn an_idle_author_keeping_its_open_request_is_never_nudged() {
+    let w = World::active().await;
+    let (session, _) = approved_with_a_kept_request(&w).await;
+    let sched = w.scheduler();
+    sched.task(&w.task);
+    eventually(
+        TIMEOUT,
+        "the author to be put back on the task",
+        async || w.relaunched(&session, &None).await,
+    )
+    .await;
+    eventually(TIMEOUT, "the author's turn to end", async || {
+        w.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    let told = w.prompts_to(&session).len();
+
+    // Silent long past the nudge since its launch: what an author waiting
+    // on the forge looks like.
+    w.idle_for(&session, NUDGE_SECS + 60).await;
+    w.backdate(&["launched_at"], &session, NUDGE_SECS + 60)
+        .await;
+    let launched = w.launched_at(&session).await;
+    sched.task(&w.task);
+    tokio::time::sleep(QUIET).await;
+    sched.task(&w.task);
+    tokio::time::sleep(QUIET).await;
+    assert_eq!(
+        w.prompts_to(&session).len(),
+        told,
+        "an idle author on an open request is not nudged past {NUDGE_SECS} s"
+    );
+    assert_eq!(w.launched_at(&session).await, launched, "nor relaunched");
+    assert_eq!(w.attention(&session).await, None, "nor flagged stalled");
 }
 
 /// A task that failed is a decision no author can make: retry it, rewrite it,
@@ -2211,4 +2323,111 @@ async fn a_burst_that_queues_behind_a_slow_reconcile_still_costs_two_reconciles(
         "the burst costs the pass it arrived during and one more, whatever \
          the pass cost"
     );
+}
+
+/// A pull request that asks for my review on an enabled repository with a
+/// review pin, and a review session on it with the stub agent running, as
+/// the launcher leaves one (029). `number` tells two of them apart.
+async fn pull_request_session(h: &Harness, number: i64) -> AgentSession {
+    let repo = match h.store.list_repositories().await.unwrap().pop() {
+        Some(repo) => repo,
+        None => {
+            let repo = h.repository(&h.at("widgets")).await;
+            h.store
+                .set_forge_integration(ariadne_store::SetForgeIntegration {
+                    repository_id: repo.id.clone(),
+                    kind: ariadne_core::ForgeKind::Github,
+                    host: "github.com".into(),
+                    owner: "acme".into(),
+                    name: "widgets".into(),
+                    remote: "origin".into(),
+                    enabled: true,
+                    login: Some("me".into()),
+                    review_model: Some(test_pin().model),
+                    review_effort: None,
+                })
+                .await
+                .unwrap();
+            repo
+        }
+    };
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number,
+            url: format!("https://github.com/acme/widgets/pull/{number}"),
+            role: "reviewer".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    crate::common::forge::seed_live(h, &pull, "someone", &format!("fix-{number}"), "abc", true);
+    let worktree = h.at(&format!("wt-pr-{number}"));
+    std::fs::create_dir_all(&worktree).unwrap();
+    let session = h
+        .store
+        .create_session(ariadne_store::NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: Some(Seat::Reviewer),
+            task_agent_id: None,
+            model: test_pin().model,
+            effort: None,
+            worktree_path: Some(worktree.display().to_string()),
+            pull_request_id: Some(pull.id),
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_session_internal_id(&session.id, "uuid-1234")
+        .await
+        .unwrap();
+    h.agent_runs(&session).await;
+    session
+}
+
+/// An idle pull request session is waiting on the forge, as an idle
+/// planning orchestrator waits on the user (009 rule 41): however long it
+/// sits idle it is never nudged, never flagged and never relaunched. A
+/// second one stuck mid-turn just as long is relaunched, which is also what
+/// says the pass over the first ran.
+#[tokio::test]
+async fn an_idle_pull_request_session_is_waiting_on_the_forge_and_a_wedged_one_is_relaunched() {
+    let h = harness().await;
+    let idle = pull_request_session(&h, 1).await;
+    let wedged = pull_request_session(&h, 2).await;
+    h.idle_for(&idle, RELAUNCH_SECS + 60).await;
+    h.launched_ago(&wedged, RELAUNCH_SECS + 60).await;
+    let idle_launched = h.launched_at(&idle).await;
+    let wedged_launched = h.launched_at(&wedged).await;
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    for session in [&idle, &wedged] {
+        sched
+            .send(SchedEvent::PullRequestChanged(
+                session.pull_request_id.clone().unwrap(),
+            ))
+            .unwrap();
+    }
+    eventually(TIMEOUT, "the wedged session to be relaunched", async || {
+        h.relaunched(&wedged, &wedged_launched).await
+    })
+    .await;
+    let back = h.launch_file(&wedged.id).expect("a launch file");
+    assert_eq!(back.resume_session_id.as_deref(), Some("uuid-1234"));
+    assert!(
+        back.initial_prompt
+            .unwrap_or_default()
+            .contains("# Review pull request: Fix widgets 2"),
+        "a relaunched request session is briefed on its request again"
+    );
+
+    assert_eq!(
+        h.prompts_to(&idle).len(),
+        0,
+        "an idle request session is not nudged past {NUDGE_SECS} s"
+    );
+    assert_eq!(h.launched_at(&idle).await, idle_launched, "nor relaunched");
+    assert_eq!(h.attention(&idle).await, None, "nor flagged stalled");
 }

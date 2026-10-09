@@ -15,10 +15,13 @@ use rmcp::{ErrorData as McpError, schemars, tool, tool_router};
 
 use ariadne_api::goals::{CompleteGoalRequest, FinalizePlanRequest};
 use ariadne_api::messages::SendMessageRequest;
+use ariadne_api::pull_requests::{
+    ReplyCommentRequest, ReportPullRequestRequest, ReviewCommentRequest, SubmitReviewRequest,
+};
 use ariadne_api::sessions::SwitchSessionRequest;
 use ariadne_api::skills::{SkillDto, SkillSeat};
 use ariadne_api::tasks::{
-    AgentAssignment, CreateTaskRequest, PickWinnerRequest, RecordPullRequestRequest,
+    AgentAssignment, CreateTaskRequest, OpenPullRequestRequest, PickWinnerRequest,
     TransitionRequest, UpdateTaskRequest,
 };
 use ariadne_core::{Actor, MessageKind, Seat, TaskStatus};
@@ -155,14 +158,14 @@ pub(super) struct FinishTaskReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub(super) struct RecordPullRequestReq {
-    /// The URL of the pull request, as `gh pr create` or `glab mr create`
-    /// printed it.
-    pub url: String,
-    /// True once every required approval and check reads green. Ariadne
-    /// tells the user only on this change, and only once.
+pub(super) struct OpenPullRequestReq {
+    /// Titled by the repository's own commit conventions.
+    pub title: String,
+    /// Filled from the repository's own request template.
+    pub body: String,
+    /// Opens the request as a draft.
     #[serde(default)]
-    pub ready: bool,
+    pub draft: bool,
 }
 
 /// The two verdicts a review round ends in, as the one verdict tool takes
@@ -195,6 +198,9 @@ pub(super) struct GetDiffReq {
     /// The id of the author whose branch to read, from `get_task`. Omit it
     /// where the task has one author.
     pub author: Option<String>,
+    /// On a pull request, the sha to read the diff from. Omit it for the
+    /// whole change.
+    pub since: Option<String>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -219,6 +225,103 @@ pub(super) struct SendMessageReq {
     pub body: String,
     /// The task it is about. Omit it for your own task.
     pub task_id: Option<String>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(super) struct ListCommentsReq {
+    /// List only the threads that wait on your answer.
+    pub unanswered_only: Option<bool>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(super) struct ReplyCommentReq {
+    /// The `id` of the comment, as the news or `list_comments` gives it.
+    pub comment_id: String,
+    /// What you changed, or why the code stays.
+    pub body: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(super) struct GetCommentReq {
+    /// The `id` of the comment, as the news or `list_comments` gives it.
+    pub comment_id: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(super) struct ResolveThreadReq {
+    /// The `id` of a comment of the thread, as `list_comments` gives it.
+    pub comment_id: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(super) struct ReportPullRequestReq {
+    /// True once every required approval and check reads green. False when
+    /// a later change turns one back.
+    pub ready: Option<bool>,
+    /// The head sha your posted review is on.
+    pub reviewed_sha: Option<String>,
+}
+
+/// The two events a review takes. The user gives every approval.
+#[derive(Clone, Copy, Debug, serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+#[serde(rename_all = "snake_case")]
+pub(super) enum ReviewEvent {
+    RequestChanges,
+    Comment,
+}
+
+impl ReviewEvent {
+    fn as_str(self) -> &'static str {
+        match self {
+            ReviewEvent::RequestChanges => "request_changes",
+            ReviewEvent::Comment => "comment",
+        }
+    }
+}
+
+/// How much a finding costs.
+#[derive(Clone, Copy, Debug, serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(super) enum Priority {
+    P0,
+    P1,
+    P2,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(super) struct ReviewFinding {
+    /// The file, from the root of the worktree.
+    pub path: String,
+    /// The line of the defect in the new version of the file.
+    pub line: i64,
+    /// A short title of the defect, in a few words.
+    pub title: String,
+    /// What goes wrong: the input and the failure it causes. Then how to
+    /// fix it.
+    pub body: String,
+    pub priority: Priority,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(super) struct SubmitReviewReq {
+    /// `request_changes` while a P0 finding is open. Else `comment`.
+    pub event: ReviewEvent,
+    /// The whole summary of the review as it stands now: the commit range
+    /// you reviewed, the state, and each open finding by priority and title.
+    /// Ariadne keeps one summary comment and replaces its text with this.
+    pub body: String,
+    /// One inline comment per new finding, on the line of the defect. Leave
+    /// it empty in a round with no new finding.
+    #[serde(default)]
+    pub comments: Vec<ReviewFinding>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -404,7 +507,7 @@ impl AriadneMcp {
                 None,
             ));
         }
-        let path = format!("/v1/goals/{}/tasks", self.goal_id);
+        let path = format!("/v1/goals/{}/tasks", self.goal()?);
         let body = CreateTaskRequest {
             title: req.title,
             description: req.description,
@@ -507,7 +610,7 @@ impl AriadneMcp {
         &self,
         Parameters(_): Parameters<Empty>,
     ) -> Result<CallToolResult, McpError> {
-        let path = format!("/v1/goals/{}/finalize", self.goal_id);
+        let path = format!("/v1/goals/{}/finalize", self.goal()?);
         json_result(self.post(&path, &FinalizePlanRequest {}).await?)
     }
 
@@ -518,7 +621,7 @@ impl AriadneMcp {
         &self,
         Parameters(_): Parameters<Empty>,
     ) -> Result<CallToolResult, McpError> {
-        let path = format!("/v1/tasks?goal_id={}", self.goal_id);
+        let path = format!("/v1/tasks?goal_id={}", self.goal()?);
         json_result(self.get::<serde_json::Value>(&path).await?)
     }
 
@@ -578,7 +681,7 @@ impl AriadneMcp {
         &self,
         Parameters(_): Parameters<Empty>,
     ) -> Result<CallToolResult, McpError> {
-        let path = format!("/v1/goals/{}/complete", self.goal_id);
+        let path = format!("/v1/goals/{}/complete", self.goal()?);
         json_result(self.post(&path, &CompleteGoalRequest {}).await?)
     }
 
@@ -631,19 +734,20 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Report the pull or merge request you opened. Set `ready` once every required approval and check is green."
+        description = "Open the pull or merge request your task lands by. Ariadne runs the forge CLI and answers the URL. A second call on the same task answers that URL again and opens nothing."
     )]
-    async fn record_pull_request(
+    async fn open_pull_request(
         &self,
-        Parameters(req): Parameters<RecordPullRequestReq>,
+        Parameters(req): Parameters<OpenPullRequestReq>,
     ) -> Result<CallToolResult, McpError> {
         let path = self.task_path(None, "/pull-request")?;
         json_result(
             self.post(
                 &path,
-                &RecordPullRequestRequest {
-                    url: req.url,
-                    ready: req.ready,
+                &OpenPullRequestRequest {
+                    title: req.title,
+                    body: req.body,
+                    draft: req.draft,
                 },
             )
             .await?,
@@ -653,16 +757,28 @@ impl AriadneMcp {
     // ---- reviewer ----
 
     #[tool(
-        description = "Read the diff of the branch under review against its base branch. On a task with several authors, pass `author` to say whose branch."
+        description = "Read the diff of the change under review against its base branch. On a task with several authors, pass `author` to say whose branch. On a pull request, pass `since` to read only the commits after that sha."
     )]
     async fn get_diff(
         &self,
         Parameters(req): Parameters<GetDiffReq>,
     ) -> Result<CallToolResult, McpError> {
-        let mut path = self.task_path(None, "/diff")?;
-        if let Some(author) = req.author {
-            path.push_str(&format!("?agent={author}"));
-        }
+        let path = match self.pull_request_id {
+            Some(_) => {
+                let mut path = self.pull_request_path("/diff").await?;
+                if let Some(since) = req.since {
+                    path.push_str(&format!("?since={since}"));
+                }
+                path
+            }
+            None => {
+                let mut path = self.task_path(None, "/diff")?;
+                if let Some(author) = req.author {
+                    path.push_str(&format!("?agent={author}"));
+                }
+                path
+            }
+        };
         // Plain-text endpoint: no JSON decoding.
         let diff = self.client.get_text(&path).await.map_err(to_mcp_err)?;
         Ok(CallToolResult::success(vec![ContentBlock::text(diff)]))
@@ -700,6 +816,154 @@ impl AriadneMcp {
         )
     }
 
+    // ---- pull request author ----
+
+    #[tool(
+        description = "Read your pull request off the forge now: its description, state, branches, checks and failed checks, and whether the head is behind its base. It also gives your worktree, the repository path and your login."
+    )]
+    async fn get_pull_request(
+        &self,
+        Parameters(_): Parameters<Empty>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut pull: serde_json::Value = self.get(&self.pull_request_path("").await?).await?;
+        let repository: serde_json::Value = self
+            .get(&format!(
+                "/v1/repositories/{}",
+                pull["repository_id"].as_str().unwrap_or_default()
+            ))
+            .await?;
+        let session: serde_json::Value = self
+            .get(&format!("/v1/sessions/{}", self.session_id))
+            .await?;
+        pull["worktree_path"] = session["worktree_path"].clone();
+        pull["repository_path"] = repository["path"].clone();
+        pull["login"] = repository["forge"]["login"].clone();
+        json_result(pull)
+    }
+
+    #[tool(
+        description = "List the comments of your pull request, read off the forge now, with every field. Set `unanswered_only` for the threads that wait on your answer."
+    )]
+    async fn list_comments(
+        &self,
+        Parameters(req): Parameters<ListCommentsReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut path = self.pull_request_path("/comments").await?;
+        if req.unanswered_only.unwrap_or(false) {
+            path.push_str("?unanswered_only=true");
+        }
+        json_result(self.get::<serde_json::Value>(&path).await?)
+    }
+
+    #[tool(
+        description = "Read one comment of your pull request off the forge now, with every field."
+    )]
+    async fn get_comment(
+        &self,
+        Parameters(req): Parameters<GetCommentReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let path = self
+            .pull_request_path(&format!("/comments/{}", req.comment_id))
+            .await?;
+        json_result(self.get::<serde_json::Value>(&path).await?)
+    }
+
+    #[tool(
+        description = "Reply once to one comment of your pull request. Ariadne posts the reply on the forge."
+    )]
+    async fn reply_comment(
+        &self,
+        Parameters(req): Parameters<ReplyCommentReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let body = req.body.trim();
+        if body.is_empty() {
+            return Err(McpError::invalid_params("a reply needs a body", None));
+        }
+        let path = self
+            .pull_request_path(&format!("/comments/{}/reply", req.comment_id))
+            .await?;
+        json_result(
+            self.post(
+                &path,
+                &ReplyCommentRequest {
+                    body: body.to_string(),
+                },
+            )
+            .await?,
+        )
+    }
+
+    #[tool(
+        description = "Resolve the thread of one of your own review comments once a push fixed it. Ariadne resolves it on the forge. A thread somebody else opened is refused: its author resolves it."
+    )]
+    async fn resolve_thread(
+        &self,
+        Parameters(req): Parameters<ResolveThreadReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let path = self
+            .pull_request_path(&format!("/comments/{}/resolve", req.comment_id))
+            .await?;
+        json_result(self.post(&path, &serde_json::json!({})).await?)
+    }
+
+    #[tool(
+        description = "Report your pull request. Set `ready` to true once every required approval and check reads green, and to false on a change back. Set `reviewed_sha` after you post a review."
+    )]
+    async fn report_pull_request(
+        &self,
+        Parameters(req): Parameters<ReportPullRequestReq>,
+    ) -> Result<CallToolResult, McpError> {
+        if req.ready.is_none() && req.reviewed_sha.is_none() {
+            return Err(McpError::invalid_params(
+                "report `ready` or `reviewed_sha`",
+                None,
+            ));
+        }
+        json_result(
+            self.post(
+                &self.pull_request_path("/report").await?,
+                &ReportPullRequestRequest {
+                    ready: req.ready,
+                    reviewed_sha: req.reviewed_sha,
+                },
+            )
+            .await?,
+        )
+    }
+
+    // ---- pull request reviewer ----
+
+    #[tool(
+        description = "Post one round of your review in the name of the user. Give each new finding its file, line and priority. The body replaces the text of your one summary comment. Set `event` to `request_changes` while a P0 is open, else to `comment`."
+    )]
+    async fn submit_review(
+        &self,
+        Parameters(req): Parameters<SubmitReviewReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let comments = req
+            .comments
+            .into_iter()
+            .map(|c| ReviewCommentRequest {
+                path: c.path,
+                line: c.line,
+                title: c.title,
+                body: c.body,
+                priority: format!("{:?}", c.priority),
+            })
+            .collect();
+        json_result(
+            self.post(
+                &self.pull_request_path("/reviews").await?,
+                &SubmitReviewRequest {
+                    event: req.event.as_str().to_string(),
+                    body: req.body,
+                    comments,
+                },
+            )
+            .await?,
+        )
+    }
+
     // ---- everyone ----
 
     #[tool(
@@ -720,7 +984,7 @@ impl AriadneMcp {
         &self,
         Parameters(req): Parameters<ReadMessagesReq>,
     ) -> Result<CallToolResult, McpError> {
-        let path = self.channel_path(req.task_id, "/messages");
+        let path = self.channel_path(req.task_id, "/messages")?;
         let path = match req.all.unwrap_or(false) {
             true => path,
             // A default read is a delivery: the daemon narrows it to this
@@ -827,7 +1091,194 @@ mod tests {
     use ariadne_client::Client;
 
     use crate::commands::mcp::McpSeat;
-    use crate::commands::mcp::tests::{recording_daemon, recording_daemon_answering, server_at};
+    use crate::commands::mcp::tests::{
+        recording_daemon, recording_daemon_answering, recording_daemon_answering_in_turn, server_at,
+    };
+
+    /// The request tools of an author reach the routes of the request its
+    /// task opened (005): each call finds that request through the ledger,
+    /// then reads it with the worktree, repository path and login beside it,
+    /// lists its comments, posts one reply, and reports.
+    #[tokio::test]
+    async fn the_authors_request_tools_call_the_routes_of_the_request_its_task_opened() {
+        let found = r#"[{"id":"01PR"}]"#.to_string();
+        let row = r#"{"id":"01PR","repository_id":"01R","path":"/repos/widgets","forge":{"login":"me"},"worktree_path":"/wt/task"}"#.to_string();
+        let (endpoint, seen) = recording_daemon_answering_in_turn(vec![
+            found.clone(),
+            row.clone(),
+            row.clone(),
+            row,
+            found.clone(),
+            "[]".into(),
+            found.clone(),
+            "{}".into(),
+            found,
+            "{}".into(),
+        ])
+        .await;
+        let mcp = server_at(
+            McpSeat::Author,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let read = mcp
+            .get_pull_request(Parameters(Empty {}))
+            .await
+            .expect("read the request");
+        let ContentBlock::Text(text) = &read.content[0] else {
+            panic!("the request came back as something other than text");
+        };
+        let read: serde_json::Value = serde_json::from_str(&text.text).expect("json");
+        assert_eq!(read["worktree_path"], "/wt/task");
+        assert_eq!(read["repository_path"], "/repos/widgets");
+        assert_eq!(read["login"], "me");
+        mcp.list_comments(Parameters(ListCommentsReq {
+            unanswered_only: Some(true),
+        }))
+        .await
+        .expect("list the comments");
+        mcp.reply_comment(Parameters(ReplyCommentReq {
+            comment_id: "01C".into(),
+            body: "Renamed it.".into(),
+        }))
+        .await
+        .expect("reply");
+        mcp.report_pull_request(Parameters(ReportPullRequestReq {
+            ready: Some(true),
+            reviewed_sha: None,
+        }))
+        .await
+        .expect("report");
+
+        let seen = seen.lock().expect("lock").clone();
+        let calls: Vec<(String, String)> = seen
+            .iter()
+            .map(|s| (s.method.clone(), s.path.clone()))
+            .collect();
+        let find = (
+            "GET".to_string(),
+            "/v1/pull-requests?task=01TASK&role=author".to_string(),
+        );
+        assert_eq!(
+            calls,
+            [
+                find.clone(),
+                ("GET".into(), "/v1/pull-requests/01PR".into()),
+                ("GET".into(), "/v1/repositories/01R".into()),
+                ("GET".into(), "/v1/sessions/01SESSION".into()),
+                find.clone(),
+                (
+                    "GET".into(),
+                    "/v1/pull-requests/01PR/comments?unanswered_only=true".into()
+                ),
+                find.clone(),
+                (
+                    "POST".into(),
+                    "/v1/pull-requests/01PR/comments/01C/reply".into()
+                ),
+                find,
+                ("POST".into(), "/v1/pull-requests/01PR/report".into()),
+            ]
+        );
+        let reply: serde_json::Value = serde_json::from_str(&seen[7].body).expect("json");
+        assert_eq!(reply, serde_json::json!({"body": "Renamed it."}));
+        let report: serde_json::Value = serde_json::from_str(&seen[9].body).expect("json");
+        assert_eq!(
+            report,
+            serde_json::json!({"ready": true, "reviewed_sha": null})
+        );
+    }
+
+    /// An author whose task opened no request yet is told to open one, and
+    /// no request route is called.
+    #[tokio::test]
+    async fn an_author_with_no_request_is_told_to_open_one() {
+        let (endpoint, seen) = recording_daemon_answering("[]").await;
+        let mcp = server_at(
+            McpSeat::Author,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let refused = mcp
+            .list_comments(Parameters(ListCommentsReq {
+                unanswered_only: None,
+            }))
+            .await
+            .expect_err("no request yet");
+        assert!(
+            refused.message.contains("`open_pull_request`"),
+            "{refused:?}"
+        );
+        assert_eq!(seen.lock().expect("lock").len(), 1);
+    }
+
+    /// The tools of a reviewer pull request session reach the routes of its
+    /// own request (029): the diff from a sha, one review with its findings
+    /// and their priorities, and the report of the reviewed sha.
+    #[tokio::test]
+    async fn the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request() {
+        let (endpoint, seen) = recording_daemon().await;
+        let mcp = server_at(
+            McpSeat::PullRequestReviewer,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        mcp.get_diff(Parameters(GetDiffReq {
+            author: None,
+            since: Some("abc".into()),
+        }))
+        .await
+        .expect("read the diff");
+        mcp.submit_review(Parameters(SubmitReviewReq {
+            event: ReviewEvent::RequestChanges,
+            body: "One P0.".into(),
+            comments: vec![ReviewFinding {
+                path: "src/lib.rs".into(),
+                line: 3,
+                title: "An empty list panics".into(),
+                body: "An empty list panics.".into(),
+                priority: Priority::P0,
+            }],
+        }))
+        .await
+        .expect("post the review");
+        mcp.report_pull_request(Parameters(ReportPullRequestReq {
+            ready: None,
+            reviewed_sha: Some("abc".into()),
+        }))
+        .await
+        .expect("report");
+        mcp.resolve_thread(Parameters(ResolveThreadReq {
+            comment_id: "01C".into(),
+        }))
+        .await
+        .expect("resolve");
+
+        let seen = seen.lock().expect("lock").clone();
+        let calls: Vec<(String, String)> = seen
+            .iter()
+            .map(|s| (s.method.clone(), s.path.clone()))
+            .collect();
+        assert_eq!(
+            calls,
+            [
+                ("GET".into(), "/v1/pull-requests/01PR/diff?since=abc".into()),
+                ("POST".into(), "/v1/pull-requests/01PR/reviews".into()),
+                ("POST".into(), "/v1/pull-requests/01PR/report".into()),
+                (
+                    "POST".into(),
+                    "/v1/pull-requests/01PR/comments/01C/resolve".into()
+                ),
+            ]
+        );
+        let review: serde_json::Value = serde_json::from_str(&seen[1].body).expect("json");
+        assert_eq!(
+            review,
+            serde_json::json!({"event": "request_changes", "body": "One P0.", "comments": [
+                {"path": "src/lib.rs", "line": 3, "title": "An empty list panics",
+                 "body": "An empty list panics.", "priority": "P0"}
+            ]})
+        );
+        let report: serde_json::Value = serde_json::from_str(&seen[2].body).expect("json");
+        assert_eq!(report["reviewed_sha"], "abc");
+    }
 
     /// The orchestrator is never offered a model it cannot staff an agent on.
     ///
@@ -985,6 +1436,40 @@ mod tests {
         assert_eq!(
             sent["reason"],
             serde_json::json!("Rewrote the parser; cargo test green.")
+        );
+    }
+
+    /// Opening a request posts the title and the body to the task's own
+    /// pull-request endpoint, which is where the daemon runs the forge CLI:
+    /// the tool carries only what the author cannot read off the task or the
+    /// repository itself.
+    #[tokio::test]
+    async fn opening_a_pull_request_posts_the_title_and_the_body() {
+        let (endpoint, seen) = recording_daemon().await;
+        let mcp = server_at(
+            McpSeat::Author,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        mcp.open_pull_request(Parameters(OpenPullRequestReq {
+            title: "feat(cli): add the repo inspect command".into(),
+            body: "## Summary\n- adds `ariadne repo inspect`".into(),
+            draft: false,
+        }))
+        .await
+        .expect("open the pull request");
+
+        let seen = seen.lock().expect("lock").clone();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert_eq!(seen[0].method, "POST");
+        assert_eq!(seen[0].path, "/v1/tasks/01TASK/pull-request");
+        let sent: serde_json::Value = serde_json::from_str(&seen[0].body).expect("json");
+        assert_eq!(
+            sent,
+            serde_json::json!({
+                "title": "feat(cli): add the repo inspect command",
+                "body": "## Summary\n- adds `ariadne repo inspect`",
+                "draft": false,
+            })
         );
     }
 

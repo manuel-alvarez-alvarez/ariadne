@@ -22,6 +22,7 @@ pub(crate) const NOW: &str = "2026-08-18T10:00:00Z";
 
 pub(crate) fn goal(id: &str, title: &str) -> GoalDto {
     GoalDto {
+        issue_url: None,
         id: id.into(),
         title: title.into(),
         description: String::new(),
@@ -90,6 +91,7 @@ pub(crate) fn session(id: &str, goal_id: &str, task_id: Option<&str>) -> Session
         ended_at: None,
         title: None,
         switched_from: None,
+        pull_request_id: None,
     }
 }
 
@@ -130,6 +132,7 @@ pub(crate) fn repository(id: &str, path: &str, base_branch: &str) -> RepositoryD
         description: None,
         permission_mode: PermissionMode::Auto,
         default_landing: Landing::Merge,
+        forge: None,
         created_at: NOW.into(),
         updated_at: NOW.into(),
     }

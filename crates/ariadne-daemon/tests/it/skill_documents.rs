@@ -14,8 +14,7 @@ use axum::http::StatusCode;
 use ariadne_api::skills::{SkillDto, SkillSeat};
 use ariadne_core::{Landing, Seat};
 use ariadne_store::defaults::{
-    BUILTIN_SKILLS, ORCHESTRATION_SKILL, PULL_REQUEST_SKILL, default_skill_document,
-    default_system_prompt, skill_text,
+    BUILTIN_SKILLS, ORCHESTRATION_SKILL, default_skill_document, default_system_prompt, skill_text,
 };
 
 use common::{delete, get, harness, post, post_json, put_json};
@@ -205,15 +204,23 @@ async fn an_edited_orchestration_skill_reaches_the_next_launch() {
     );
 }
 
-/// An author whose task lands by pull request reads the `pull-request`
-/// skill from its first launch, though nobody staffed it on the task: the
-/// launcher adds it on its own, beside the skills the task was staffed
-/// with.
+/// `pull-request` left the catalog: opening a request is the daemon's own
+/// tool now, behind `open_pull_request`, so no author reads a skill for it
+/// — not even one whose task lands by pull request.
+///
+/// An old staffing on it is the kept-row case any dropped skill leaves
+/// ([`crate::common::Harness::stage_dropped_skill`]): the row stays because
+/// the author still names it, and it reads as empty since nothing ships
+/// under the name any more, so the copy written to the author's run
+/// directory is blank.
 #[tokio::test]
-async fn an_author_landing_by_pull_request_reads_the_pull_request_skill() {
+async fn an_old_staffing_on_pull_request_reads_as_empty() {
     let h = harness().await;
     h.git_repo("repo");
     let cast = h.active_cast_ending_in(Landing::PullRequest).await;
+    h.stage_dropped_skill(&cast.author.id, "pull-request", 2)
+        .await;
+
     let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
 
     let document = h
@@ -222,76 +229,12 @@ async fn an_author_landing_by_pull_request_reads_the_pull_request_skill() {
         .run_dir
         .join(&session.id)
         .join("skills")
-        .join(PULL_REQUEST_SKILL)
+        .join("pull-request")
         .join("SKILL.md");
-    assert!(
-        document.exists(),
-        "the pull-request skill was not written for the author"
-    );
     assert_eq!(
         std::fs::read_to_string(&document).unwrap(),
-        skill_text(default_skill_document(PULL_REQUEST_SKILL).unwrap()),
-    );
-
-    let system = h
-        .launch_file(&session.id)
-        .expect("a launch file")
-        .system_prompt;
-    assert_eq!(
-        system.matches(&format!("- {PULL_REQUEST_SKILL}: ")).count(),
-        1,
-        "the index names the skill exactly once: {system}"
-    );
-}
-
-/// An author whose task is staffed on the skill already is not handed two
-/// copies of it: the launcher checks what the task already carries before
-/// it adds its own.
-#[tokio::test]
-async fn an_author_already_staffed_on_it_gets_no_second_copy() {
-    let h = harness().await;
-    h.git_repo("repo");
-    let cast = h.active_cast_ending_in(Landing::PullRequest).await;
-    h.store
-        .set_agent_skills(
-            &cast.author.id,
-            &["coding".to_string(), PULL_REQUEST_SKILL.to_string()],
-        )
-        .await
-        .unwrap();
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
-
-    let system = h
-        .launch_file(&session.id)
-        .expect("a launch file")
-        .system_prompt;
-    assert_eq!(
-        system.matches(&format!("- {PULL_REQUEST_SKILL}: ")).count(),
-        1,
-        "the skill is indexed once, not twice: {system}"
-    );
-}
-
-/// An author of a task that lands by merge reads nothing of the
-/// pull-request skill: there is no request for it to own.
-#[tokio::test]
-async fn an_author_landing_by_merge_reads_no_pull_request_skill() {
-    let h = harness().await;
-    h.git_repo("repo");
-    let cast = h.active_cast_ending_in(Landing::Merge).await;
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
-
-    let document = h
-        .launcher
-        .cfg
-        .run_dir
-        .join(&session.id)
-        .join("skills")
-        .join(PULL_REQUEST_SKILL)
-        .join("SKILL.md");
-    assert!(
-        !document.exists(),
-        "a merge-landing author was handed the pull-request skill"
+        "",
+        "an old staffing on pull-request does not read the removed skill"
     );
 }
 

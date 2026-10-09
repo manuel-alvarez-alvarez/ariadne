@@ -43,11 +43,20 @@ src/
     goals/         the goals board (swimlanes, attention strip), the goal panel,
                    and the attention count the shell shows everywhere else
     tasks/         the task panel: facts, diff, reviews, history
+    forge/         the Forge screen: one sidebar entry, its two tabs the
+                   pull requests and issues routes below it
+    pull-requests/ the Forge tab of the open pull requests — every one, the
+                   user's own, or the ones that ask for their review — and the
+                   pane over one
+    issues/        the Forge tab of open issues from an enabled repository's
+                   forge, and filling a goal dialog from one
     sessions/      the sessions screen, the session panel and its console: a
                    terminal pane on the daemon's terminal socket
     models/        the pin picker, the model catalog and the agent summary
     skills/        skills screen: the catalog, and the document each one is
-    repositories/  the registered checkouts goals are created against
+    repositories/  the registered checkouts goals are created against, their
+                   forge integration, and the webhook tunnel switch
+                   the settings dialog shows
     agents/        agents screen: the flags each registry agent is launched with
     permissions/   the Permissions screen: Learned (every approval a `learn`
                    or `ai` repository has kept, and one added by hand) and AI
@@ -110,7 +119,9 @@ write a key literal. Every key is `[entity, "list" | "detail", ...]`:
 ["repositories", "list", filters]   ["repositories", "detail", id]
 ["agents",       "list", {}]        ["models",   "list", {}]
 ["agent-events", "list", filters]
-["permissions",  "detail", "ai"]
+["permissions",  "detail", "ai"]  ["forge",    "detail", "tunnel"]
+["issues",       "list", repository, { assigned }]
+["pull-requests", "list", filters]  ["pull-requests", "detail", id | "repository:number"]
 ["learned-permissions", "list", filters] ["learned-permissions", "detail", id]
 ["stats",        "list", family, filter]
 ```
@@ -120,8 +131,9 @@ write a key literal. Every key is `[entity, "list" | "detail", ...]`:
 read through `qk.stats.<family>(filter)`: a task or a session that moves can
 be a fact of any family, so the dispatcher invalidates `qk.stats.all()` whole.
 
-`permissions.ai()` is the one key with no list beside it: there is one AI
-permission model settings row, `GET /v1/permissions/ai`, not a collection.
+`permissions.ai()` and `forge.tunnel()` are the keys with no list beside
+them: each is one settings row (`GET /v1/permissions/ai`,
+`GET /v1/forge/tunnel`), not a collection.
 
 The outside-sessions list is the one key with no detail beside it, and the one
 list the daemon pages: its cursor stays out of the key, because the pages of
@@ -160,8 +172,8 @@ the query cache and it stays live.
 | `task_created` | patch `tasks.detail`, invalidate `tasks.lists` |
 | `task_updated` | patch `tasks.detail`, invalidate `tasks.lists` and `stats.all`, and `tasks.transitions` when the event carries a transition |
 | `message_sent` | invalidate `tasks.messages` for the task it is about; a message about the goal itself belongs to no task's channel |
-| `session_created` | patch `sessions.detail`, invalidate `sessions.lists` and `outsideSessions.lists` — a resume adopts an outside row |
-| `session_updated` | patch `sessions.detail`, invalidate `sessions.lists` and `stats.all` |
+| `session_created` | patch `sessions.detail`, invalidate `sessions.lists` and `outsideSessions.lists` — a resume adopts an outside row; a session with a `pull_request_id` also invalidates that `pullRequests.detail` and `pullRequests.list`, for its `session_id` |
+| `session_updated` | patch `sessions.detail`, invalidate `sessions.lists` and `stats.all`; a session with a `pull_request_id` also invalidates that `pullRequests.detail` and `pullRequests.list` |
 | `agent_event` | invalidate `agentEvents.lists` |
 | `skill_created`, `skill_updated` | patch `skills.detail`, invalidate `skills.lists` |
 | `skill_deleted` | remove `skills.detail`, invalidate `skills.lists` |
@@ -169,6 +181,9 @@ the query cache and it stays live.
 | `repository_updated` | the same, plus every goal key — goals carry their repositories inline |
 | `repository_deleted` | remove `repositories.detail`, invalidate `repositories.lists` |
 | `ai_permissions_updated` | patch `permissions.ai()` whole — the one settings row, no list beside it |
+| `forge_settings_updated` | patch `forge.tunnel()` whole — the tunnel switch and state, no list beside it |
+| `pull_requests_changed` | invalidate every `pullRequests` key — requests are read live off the forge, so the event carries none |
+| `issues_changed` | invalidate `issues.ofRepository(id)` — both assignment filters of the repository whose open issues moved; issues are read off the forge, so the event carries none |
 | `learned_permission_created`, `learned_permission_updated` | patch `learnedPermissions.detail`, invalidate `learnedPermissions.lists` |
 | `learned_permission_deleted` | remove `learnedPermissions.detail`, invalidate `learnedPermissions.lists` |
 
@@ -251,8 +266,9 @@ one line, and a file that mounted one said less about its feature than the line
 it held. What the header calls a screen rides on the route's own `handle`.
 
 Screens with URLs of their own — `#/goals`, `#/sessions`, `#/skills`,
-`#/agents`, `#/permissions`, `#/repositories` and `#/stats` — and `#/`
-redirects onto the board. The Stats screen is `src/routes/stats.tsx`, and
+`#/agents`, `#/permissions`, `#/repositories`, `#/stats`, and the Forge
+screen's two tabs, `#/forge/pull-requests` and `#/forge/issues` (`#/forge`
+opens the first) — and `#/` redirects onto the board. The Stats screen is `src/routes/stats.tsx`, and
 each stat family is a section of it, `src/components/stats/<family>-section.tsx`,
 drawn through the shared `StatSection`, `StatTiles`, `StatTable`,
 `StatTimeChart` and `StatBarChart` beside it.

@@ -15,5 +15,6 @@ reads.
 | [Stats](stats.md) | what the work did, in six questions: the filters, `ariadne stats` and the Stats screen |
 | [Resuming a session](resuming-sessions.md) | listing every session and continuing one, live, ended, or started outside Ariadne |
 | [How Ariadne works](how-it-works.md) | a goal from planning to landing, task lifecycle, and ACP sessions |
+| [The forge integration](forge.md) | enabling GitHub or GitLab, the pull request and review sessions, webhooks and the tunnel, issues |
 
 Ariadne Desktop has its own page: [`ui/README.md`](../ui/README.md).

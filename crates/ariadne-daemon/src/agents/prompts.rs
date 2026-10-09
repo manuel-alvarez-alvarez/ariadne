@@ -23,7 +23,7 @@ use std::path::Path;
 
 use ariadne_core::{PromptKind, Seat};
 use ariadne_store::defaults::{default_prompt_text, default_system_prompt};
-use ariadne_store::{Goal, Message, Repository, Skill, Task};
+use ariadne_store::{Goal, Message, PullRequest, Repository, Skill, Task};
 
 /// The template `kind` is rendered from: the built-in text of that kind,
 /// which every launch and every resume reads straight from the code.
@@ -75,7 +75,21 @@ pub(crate) fn render(template: &str, values: &[(&str, &str)]) -> String {
 /// ([`write_skills`](super::write_skills)); each line names the file, so an
 /// agent opens the one it needs itself.
 pub(crate) fn system_prompt(seat: Seat, skills: &[Skill], skills_dir: Option<&Path>) -> String {
-    let mut prompt = default_system_prompt(seat).trim().to_string();
+    with_skills(default_system_prompt(seat), skills, skills_dir)
+}
+
+/// The system layer of a review session (029): its own seat text, then the
+/// index of its skill, as [`system_prompt`] builds a task seat's.
+pub(crate) fn pull_request_system_prompt(skills: &[Skill], skills_dir: Option<&Path>) -> String {
+    with_skills(
+        ariadne_store::defaults::pull_request_system_prompt(),
+        skills,
+        skills_dir,
+    )
+}
+
+fn with_skills(seat_text: &str, skills: &[Skill], skills_dir: Option<&Path>) -> String {
+    let mut prompt = seat_text.trim().to_string();
     if skills.is_empty() {
         return prompt;
     }
@@ -126,7 +140,7 @@ pub(crate) fn orchestrator_briefing(template: &str, goal: &Goal, repos: &[Reposi
         })
         .collect::<Vec<_>>()
         .join("\n");
-    render(
+    let briefing = render(
         template,
         &[
             ("goal_title", &goal.title),
@@ -134,7 +148,13 @@ pub(crate) fn orchestrator_briefing(template: &str, goal: &Goal, repos: &[Reposi
             ("landing", goal.landing().as_str()),
             ("repositories", &repo_lines),
         ],
-    )
+    );
+    match &goal.issue_url {
+        Some(url) => format!(
+            "{briefing}\n\nThis goal comes from {url}. Every request an author opens must say `Closes {url}` in its body."
+        ),
+        None => briefing,
+    }
 }
 
 /// What an orchestrator that has gone quiet is nudged with.
@@ -334,6 +354,44 @@ pub(crate) fn landing_briefing(
     )
 }
 
+/// Initial prompt for a pull request session (026): the request, the
+/// checkout and worktree its commands act on, its two branches and the
+/// login whose request it is.
+pub(crate) fn pull_request_briefing(
+    template: &str,
+    pull: &PullRequest,
+    repo: &Repository,
+    worktree: &str,
+    login: &str,
+) -> String {
+    render(
+        template,
+        &[
+            ("title", &pull.title),
+            ("url", &pull.url),
+            ("repo_path", &repo.path),
+            ("worktree_path", worktree),
+            ("head_branch", &pull.head_branch),
+            ("base_branch", &pull.base_branch),
+            ("login", login),
+            ("head_sha", &pull.head_sha),
+            (
+                "reviewed_sha",
+                pull.reviewed_sha.as_deref().unwrap_or("none"),
+            ),
+        ],
+    )
+}
+
+/// What a pull request session is woken with: the request, and the lines
+/// `forge::news` wrote about what it has not been told.
+pub(crate) fn pull_request_news(template: &str, pull: &PullRequest, news: &[String]) -> String {
+    render(
+        template,
+        &[("title", &pull.title), ("news", &news.join("\n"))],
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,6 +402,7 @@ mod tests {
 
     fn goal() -> Goal {
         Goal {
+            issue_url: None,
             id: "01goalxxxxxxxxxxxxxxxxxxxx".into(),
             title: "Ship the UI".into(),
             description: "The board needs swimlanes.".into(),
@@ -367,6 +426,7 @@ mod tests {
             updated_at: "2026-01-01T00:00:00Z".into(),
             permission_mode: "auto".into(),
             default_landing: "merge".into(),
+            forge: None,
         }
     }
 
@@ -401,7 +461,6 @@ mod tests {
             stalled: 0,
             merge_commit: None,
             pr_url: None,
-            pr_ready: 0,
             picked_agent_id: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
@@ -528,6 +587,100 @@ mod tests {
             !rendered.contains('{'),
             "the landing briefing left a placeholder of its own unfilled: {rendered}"
         );
+    }
+
+    /// The two texts of a pull request session name only the placeholders
+    /// their builders fill in, and the builders fill every one of them: the
+    /// briefing a session starts on and the news it is woken with reach it
+    /// with no raw `{token}` left (026).
+    #[test]
+    fn the_pull_request_texts_fill_every_placeholder_they_name() {
+        use ariadne_store::defaults::{
+            PULL_REQUEST_PLACEHOLDERS, pull_request_briefing_prompt, pull_request_news_prompt,
+        };
+        let pull = PullRequest {
+            id: "01pr".into(),
+            repository_id: "01repoxxxxxxxxxxxxxxxxxxxx".into(),
+            number: 7,
+            url: "https://github.com/acme/widgets/pull/7".into(),
+            title: "Fix widgets".into(),
+            author_login: "me".into(),
+            state: "open".into(),
+            draft: false,
+            head_branch: "fix".into(),
+            head_sha: "abc".into(),
+            head_repo: None,
+            base_branch: "main".into(),
+            checks: "none".into(),
+            review_decision: "none".into(),
+            unanswered_comments: 0,
+            origin_task_id: None,
+            opened_at: String::new(),
+            role: "reviewer".into(),
+            ready: false,
+            forge_updated_at: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            failed_checks: "[]".into(),
+            behind_base: false,
+            told_checks: "[]".into(),
+            told_behind_base: false,
+            told_review_decision: None,
+            told_state: None,
+            told_check_state: None,
+            news_told_at: None,
+            reviewed_sha: None,
+            told_head_sha: None,
+            review_requested: true,
+            review_asked: false,
+            body: String::new(),
+            review_model: None,
+            review_effort: None,
+            review_skills_json: "[]".into(),
+            merge_sha: None,
+            summary_comment_id: None,
+        };
+        for template in [pull_request_briefing_prompt(), pull_request_news_prompt()] {
+            let mut rest = template;
+            while let Some(open) = rest.find('{') {
+                let name = &rest[open + 1..rest[open..].find('}').unwrap() + open];
+                assert!(
+                    PULL_REQUEST_PLACEHOLDERS.contains(&name),
+                    "{{{name}}} is no placeholder of a pull request text"
+                );
+                rest = &rest[open + 1..];
+            }
+        }
+        let review = pull_request_briefing(
+            pull_request_briefing_prompt(),
+            &PullRequest {
+                reviewed_sha: Some("abd".into()),
+                ..pull.clone()
+            },
+            &repo(),
+            "/worktrees/pr-01pr",
+            "me",
+        );
+        for value in [
+            "Fix widgets",
+            "https://github.com/acme/widgets/pull/7",
+            "/repos/ariadne",
+            "/worktrees/pr-01pr, at abc",
+            "fix onto main",
+            "Your login: me",
+            "Last reviewed sha: abd",
+        ] {
+            assert!(review.contains(value), "{value}: {review}");
+        }
+        let news = pull_request_news(
+            pull_request_news_prompt(),
+            &pull,
+            &["- The request is now merged.".to_string()],
+        );
+        assert!(news.contains("\n- The request is now merged.\n"), "{news}");
+        for text in [review, news] {
+            assert!(!text.contains('{'), "{text}");
+        }
     }
 
     /// One kind's rendering: what its briefing produced, and the values it was
@@ -795,10 +948,7 @@ mod tests {
             &repo,
             &repo.base_branch,
         );
-        assert!(
-            published.to_lowercase().contains("pull-request` skill"),
-            "{published}"
-        );
+        assert!(published.contains("`open_pull_request`"), "{published}");
         assert!(!published.contains("reset --soft"), "{published}");
         assert!(!published.contains("gh pr"), "{published}");
 

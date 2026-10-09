@@ -35,12 +35,16 @@ pub struct NewSession {
     /// Effort to run that model at; None = whatever the agent runs it at.
     pub effort: Option<String>,
     pub worktree_path: Option<String>,
+    /// The pull request a pull request session watches (026); None for every
+    /// other session.
+    pub pull_request_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct SessionFilter {
     pub goal_id: Option<String>,
     pub task_id: Option<String>,
+    pub pull_request_id: Option<String>,
     pub status: Option<SessionStatus>,
     /// Only sessions in a live status (starting/running/idle).
     pub live_only: bool,
@@ -104,8 +108,8 @@ impl Store {
         sqlx::query(
             "INSERT INTO agent_sessions (id, goal_id, task_id, seat, task_agent_id, model,
                                          effort, worktree_path, status, created_at,
-                                         switched_from)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?)",
+                                         switched_from, pull_request_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.goal_id)
@@ -117,6 +121,7 @@ impl Store {
         .bind(&new.worktree_path)
         .bind(now())
         .bind(switched_from)
+        .bind(&new.pull_request_id)
         .execute(self.w())
         .await?;
         let session = self.get_session(&id).await?;
@@ -132,6 +137,7 @@ impl Store {
         Filtered::new("agent_sessions")
             .maybe(" AND goal_id = ?", filter.goal_id)
             .maybe(" AND task_id = ?", filter.task_id)
+            .maybe(" AND pull_request_id = ?", filter.pull_request_id)
             .maybe(" AND status = ?", filter.status.map(|s| s.as_str()))
             .flag(LIVE_STATUSES, filter.live_only)
             .flag(" AND attention_reason IS NOT NULL", filter.attention_only)
@@ -362,25 +368,6 @@ impl Store {
     /// Drop any attention flag from a session (the agent moved on).
     pub async fn clear_session_attention(&self, id: &str) -> Result<()> {
         let cleared = self.clear_attention(id, "", &[]).await?;
-        self.announce_clear(id, cleared).await
-    }
-
-    /// Take `waiting_user` down because the readiness it announced is no
-    /// longer true: a new change or a failed check invalidated it.
-    ///
-    /// The one clear allowed to take `waiting_user` itself down: the regular
-    /// agent clears (`clear_agent_attention`, `clear_attention_after_idle`)
-    /// hold it up on purpose, since nothing about an agent working again
-    /// says the request stopped being ready. This one is the author's own
-    /// report that it did.
-    pub async fn clear_pull_request_ready_attention(&self, id: &str) -> Result<()> {
-        let cleared = self
-            .clear_attention(
-                id,
-                " AND attention_reason = ?",
-                &[AttentionReason::WaitingUser.as_str()],
-            )
-            .await?;
         self.announce_clear(id, cleared).await
     }
 

@@ -45,6 +45,12 @@ enum Reason {
     WaitingPermission,
     WaitingInput,
     WaitingUser,
+    /// A pull request session's `waiting_user` (026): every approval and
+    /// check of the request reads green, and the merge is the user's.
+    ReadyToMerge,
+    /// A reviewer pull request session's `waiting_user` (029): its review
+    /// is posted, and the approval is the user's to give.
+    ReviewPosted,
     AgentError,
     Disconnected,
     Exhausted,
@@ -59,6 +65,8 @@ impl Reason {
             Reason::WaitingPermission => "waiting for permission",
             Reason::WaitingInput => "waiting for input",
             Reason::WaitingUser => "waiting for you",
+            Reason::ReadyToMerge => "ready to merge",
+            Reason::ReviewPosted => "review posted, approve yourself",
             Reason::AgentError => "agent error",
             Reason::Disconnected => "disconnected",
             Reason::Exhausted => "exhausted",
@@ -113,7 +121,15 @@ pub(crate) fn reason_label(reason: AttentionReason) -> &'static str {
 /// exited after voting is finished, not stuck — and reading `status` here
 /// would put it back on the list the daemon kept it off.
 fn session_reason(session: &SessionDto) -> Option<Reason> {
-    session.attention_reason.map(Into::into)
+    match session.attention_reason {
+        Some(AttentionReason::WaitingUser) if session.pull_request_id.is_some() => {
+            match session.seat {
+                Some(ariadne_core::Seat::Reviewer) => Some(Reason::ReviewPosted),
+                _ => Some(Reason::ReadyToMerge),
+            }
+        }
+        reason => reason.map(Into::into),
+    }
 }
 
 /// When this session's row last moved: when its reason was raised, else the
@@ -345,6 +361,28 @@ pub(crate) mod tests {
                 flag.as_str()
             );
         }
+
+        // A pull request session waiting on the user has a request that is
+        // the user's to merge.
+        let ready = SessionDto {
+            goal_id: None,
+            task_id: None,
+            pull_request_id: Some("01PR".into()),
+            ..flagged("01S", "01GA", AttentionReason::WaitingUser)
+        };
+        assert_eq!(session_reason(&ready), Some(Reason::ReadyToMerge));
+        assert_eq!(Reason::ReadyToMerge.label(), "ready to merge");
+        // A reviewer session waiting on the user has posted its review, and
+        // the approval is the user's to give (029).
+        let reviewed = SessionDto {
+            seat: Some(ariadne_core::Seat::Reviewer),
+            ..ready
+        };
+        assert_eq!(session_reason(&reviewed), Some(Reason::ReviewPosted));
+        assert_eq!(
+            Reason::ReviewPosted.label(),
+            "review posted, approve yourself"
+        );
 
         // Dead with nothing owed to it — the daemon deliberately raises no
         // flag for a reviewer that exited after voting — so it is not here.

@@ -242,18 +242,19 @@ pub struct PickWinnerRequest {
     pub author_agent_id: String,
 }
 
-/// The author reporting the pull or merge request it opened for a task, so
-/// the user has somewhere to go and read it: taken off `gh pr create`'s output
-/// and recorded on the task.
+/// The author asking the daemon to open the pull or merge request its task
+/// lands by. The daemon runs the forge's own CLI, so this carries only what
+/// the author cannot read off the task or the repository itself.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
-pub struct RecordPullRequestRequest {
-    /// The request's URL, e.g. `https://github.com/owner/repo/pull/12`.
-    pub url: String,
-    /// Whether every required approval and check last read green. Defaults
-    /// to false, which records the URL without announcing it to the user.
+pub struct OpenPullRequestRequest {
+    /// Titled by the repository's own commit conventions.
+    pub title: String,
+    /// Filled from the repository's own request template.
+    pub body: String,
+    /// Opens the request as a draft. Defaults to false.
     #[serde(default)]
-    pub ready: bool,
+    pub draft: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

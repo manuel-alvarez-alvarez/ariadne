@@ -25,9 +25,10 @@ use axum::http::StatusCode;
 use ariadne_api::goals::GoalDto;
 use ariadne_api::messages::MessageDto;
 use ariadne_api::tasks::TaskDto;
-use ariadne_core::{Actor, AttentionReason, Landing, MessageKind, Seat, TaskStatus};
-use ariadne_store::{AgentSession, NewTaskAgent, Repository, Task};
+use ariadne_core::{Actor, ForgeKind, Landing, MessageKind, Seat, TaskStatus};
+use ariadne_store::{AgentSession, NewTaskAgent, Repository, SetForgeIntegration, Task};
 
+use common::forge::{answer, opened_pull, stub_forge_cli};
 use common::{Cast, Harness, as_session, get, harness, patch_json, post_json, sh, test_pin};
 
 /// How long a test waits for the scheduler to reach a state.
@@ -48,6 +49,53 @@ fn repo_path(repo: &Repository) -> PathBuf {
     PathBuf::from(&repo.path)
 }
 
+/// `gh` signed in to github.com, and a `pr create` that answers with `url`.
+fn forge_script(url: &str) -> serde_json::Value {
+    serde_json::json!([
+        answer(&["auth", "status"], 0, ""),
+        answer(&["pr", "create"], 0, url),
+        answer(&["pr", "view"], 0, &opened_pull(url, "fix").to_string()),
+        answer(&["pr", "list"], 0, "[]"),
+    ])
+}
+
+/// A bare remote for `repo` named `origin`, and a forge row the daemon can
+/// call `gh` through — independent of the real git remote, since the CLI is
+/// stubbed and only the push and `ls-remote` the daemon runs need to be real.
+/// The integration is on: an author keeps the request it opens, and the
+/// integration is what reads it for the author (005).
+pub(crate) async fn with_forge(h: &Harness, repo: &Repository) {
+    with_forge_enabled(h, repo, true).await
+}
+
+async fn with_forge_enabled(h: &Harness, repo: &Repository, enabled: bool) {
+    let remote = h.at("remote.git");
+    let path = repo_path(repo);
+    sh(
+        &path,
+        &format!(
+            "git init -q --bare '{}' && git remote add origin '{}'",
+            remote.display(),
+            remote.display()
+        ),
+    );
+    h.store
+        .set_forge_integration(SetForgeIntegration {
+            repository_id: repo.id.clone(),
+            kind: ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled,
+            login: enabled.then(|| "me".into()),
+            review_model: None,
+            review_effort: None,
+        })
+        .await
+        .unwrap();
+}
+
 /// The author asks for review and the reviewer approves it.
 async fn approve(h: &Harness, task: &Task, reviewer: &str) {
     let task = h
@@ -63,7 +111,11 @@ async fn approve(h: &Harness, task: &Task, reviewer: &str) {
 /// something, the reviewer approves, the scheduler does the rest. Returns the
 /// author's worktree — which it never gave up — and the session that has
 /// been briefed to land the change.
-async fn walk_to_approved(h: &Harness, task: &Task, reviewer: &str) -> (PathBuf, AgentSession) {
+pub(crate) async fn walk_to_approved(
+    h: &Harness,
+    task: &Task,
+    reviewer: &str,
+) -> (PathBuf, AgentSession) {
     let heading = format!("# Land task: {}", task.title);
     walk_to_landing(h, task, reviewer, &heading).await
 }
@@ -311,7 +363,7 @@ async fn a_pull_request_goal_briefs_every_task_to_land_by_pull_request() {
         let (_worktree, author) = walk_to_approved(&h, &task, &reviewer.id).await;
         let told = h.told(&author.id);
         assert!(
-            told.to_lowercase().contains("pull-request` skill"),
+            told.contains("`open_pull_request`"),
             "{} is not briefed to open a request: {told}",
             task.title
         );
@@ -439,23 +491,41 @@ async fn a_feature_branch_goal_lands_its_tasks_like_merge() {
 /// where a task being landed sits.
 #[tokio::test]
 async fn a_revision_of_a_published_request_goes_back_to_the_reviewers() {
-    let (h, cast) = seeded(Landing::Merge).await;
+    const URL: &str = "https://github.com/acme/widgets/pull/12";
+    let cli = stub_forge_cli(forge_script(URL));
+    let h = harness()
+        .scheduler()
+        .discover_agents()
+        .forge_cli(&cli)
+        .await;
+    h.git_repo("repo");
+    let cast = h.active_cast_ending_in(Landing::Merge).await;
+    with_forge(&h, &cast.repo).await;
     let task = cast.task.clone();
-    let (_worktree, author) = walk_to_approved(&h, &task, &cast.reviewer.id).await;
+    let (worktree, author) = walk_to_approved(&h, &task, &cast.reviewer.id).await;
+    sh(&worktree, "git push origin HEAD");
 
-    // The request it published is recorded by the author, and only by it.
-    const URL: &str = "https://github.com/owner/repo/pull/12";
+    // The request it opened is recorded by the author, and only by it.
     let published: TaskDto = h
         .json(
             as_session(
                 &format!("/v1/tasks/{}/pull-request", task.id),
                 &author.id,
-                serde_json::json!({"url": URL}),
+                serde_json::json!({"title": "feat: ship it", "body": "Ships it."}),
             ),
             StatusCode::OK,
         )
         .await;
     assert_eq!(published.pr_url.as_deref(), Some(URL));
+    assert_eq!(
+        h.store
+            .pull_request_of_task(&task.id)
+            .await
+            .unwrap()
+            .and_then(|pull| pull.origin_task_id),
+        Some(task.id.clone()),
+        "the ledger holds the request with its task as origin"
+    );
 
     let reviewer_session = h
         .session(&cast.goal, Some(&task), Seat::Reviewer, &cast.reviewer.id)
@@ -464,10 +534,10 @@ async fn a_revision_of_a_published_request_goes_back_to_the_reviewers() {
         .send(as_session(
             &format!("/v1/tasks/{}/pull-request", task.id),
             &reviewer_session.id,
-            serde_json::json!({"url": URL}),
+            serde_json::json!({"title": "feat: ship it", "body": "Ships it."}),
         ))
         .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "only its author records it");
+    assert_eq!(status, StatusCode::FORBIDDEN, "only its author opens it");
     let refusal = String::from_utf8_lossy(&refusal);
     assert!(refusal.contains("only the author"), "{refusal}");
 
@@ -493,7 +563,7 @@ async fn a_revision_of_a_published_request_goes_back_to_the_reviewers() {
     );
 
     // The reviewers judge it, and the approval hands it back to the author
-    // to finish landing.
+    // to push the revision and keep its request: it opens no second one.
     h.verdict(
         &task,
         &cast.reviewer.id,
@@ -509,7 +579,7 @@ async fn a_revision_of_a_published_request_goes_back_to_the_reviewers() {
             h.status(&task.id).await == TaskStatus::Approved
                 && h.running_session(&task.id, Seat::Author)
                     .await
-                    .is_some_and(|s| h.told(&s.id).contains("# Land task:"))
+                    .is_some_and(|s| h.told(&s.id).contains("# Keep request:"))
         },
     )
     .await;
@@ -534,116 +604,243 @@ async fn a_revision_of_a_published_request_goes_back_to_the_reviewers() {
     );
 }
 
-/// A request the forge squashed leaves no branch on the base at all, so what
-/// the daemon checks there is the other half of the author's last step: the
-/// sha it reports is on the base branch of the primary checkout.
+/// Opening a request runs `gh pr create` once, with the pushed branch, the
+/// base, the title and the body; a second call answers the same URL and
+/// opens nothing. An unpushed branch is refused. The task stays approved,
+/// its author keeps the request with the `pr-babysit` skill, and the task
+/// finishes only once a human merged the request.
 #[tokio::test]
-async fn a_squashed_request_lands_on_the_sha_the_author_fast_forwarded_to() {
-    let (h, cast) = seeded(Landing::PullRequest).await;
+async fn opening_a_pull_request_runs_the_forge_cli_once_and_keeps_the_task_until_the_merge() {
+    const URL: &str = "https://github.com/acme/widgets/pull/12";
+    let cli = stub_forge_cli(forge_script(URL));
+    let h = harness()
+        .scheduler()
+        .discover_agents()
+        .forge_cli(&cli)
+        .await;
+    h.git_repo("repo");
+    let cast = h.active_cast_ending_in(Landing::PullRequest).await;
+    with_forge(&h, &cast.repo).await;
     let task = cast.task.clone();
     let (worktree, author) = walk_to_approved(&h, &task, &cast.reviewer.id).await;
 
     // The briefing is the publishing procedure, and only that: no squash onto
-    // the base for the author to run by mistake.
-    let argv = h.told(&author.id);
-    assert!(
-        argv.to_lowercase().contains("pull-request` skill"),
-        "the author was not briefed to publish it: {argv}"
-    );
-    for squashed in [
+    // the base for the author to run by mistake, and no forge CLI named.
+    let told = h.told(&author.id);
+    assert!(told.contains("`open_pull_request`"), "{told}");
+    for named in [
         "reset --soft".to_string(),
         format!("merge --ff-only {}", task.branch),
+        "`gh`".to_string(),
+        "`glab`".to_string(),
+    ] {
+        assert!(!told.contains(&named), "{named}: {told}");
+    }
+
+    let open = |title: &str, body: &str| {
+        as_session(
+            &format!("/v1/tasks/{}/pull-request", task.id),
+            &author.id,
+            serde_json::json!({"title": title, "body": body}),
+        )
+    };
+
+    // An unpushed branch is refused with 409 that says to push first.
+    let refusal = h
+        .error(open("feat: ship it", "Ships it."), StatusCode::CONFLICT)
+        .await;
+    assert!(
+        refusal.error.message.contains("push"),
+        "{}",
+        refusal.error.message
+    );
+
+    // Pushed, the daemon opens the request itself and stores the URL.
+    sh(&worktree, "git push origin HEAD");
+    let published: TaskDto = h
+        .json(open("feat: ship it", "Ships it."), StatusCode::OK)
+        .await;
+    assert_eq!(published.pr_url.as_deref(), Some(URL));
+    let creates: Vec<_> = cli
+        .invocations()
+        .into_iter()
+        .filter(|call| {
+            call.args
+                .starts_with(&["pr".to_string(), "create".to_string()])
+        })
+        .collect();
+    assert_eq!(creates.len(), 1, "{creates:?}");
+    for value in [
+        "github.com/acme/widgets",
+        task.branch.as_str(),
+        "main",
+        "feat: ship it",
+        "Ships it.",
     ] {
         assert!(
-            !argv.contains(&squashed),
-            "the published landing briefing names {squashed}: {argv}"
+            creates[0].args.iter().any(|a| a == value),
+            "{value}: {:?}",
+            creates[0].args
         );
     }
 
-    // Publishing it is the author's next step, but publication alone is not
-    // readiness: nothing says the strip is the user's yet.
-    const URL: &str = "https://github.com/owner/repo/pull/12";
-    assert_eq!(
-        h.attention(&author).await,
-        None,
-        "an author that has published nothing yet is nobody's to answer"
-    );
-    let published: TaskDto = h
-        .json(
-            as_session(
-                &format!("/v1/tasks/{}/pull-request", task.id),
-                &author.id,
-                serde_json::json!({"url": URL}),
-            ),
-            StatusCode::OK,
-        )
+    // One request per task: a second call answers the same URL and the stub
+    // sees no second create.
+    let again: TaskDto = h
+        .json(open("feat: ship it", "Ships it."), StatusCode::OK)
         .await;
-    assert_eq!(published.pr_url.as_deref(), Some(URL));
+    assert_eq!(again.pr_url.as_deref(), Some(URL));
     assert_eq!(
-        h.attention(&author).await,
-        None,
-        "publication alone does not announce readiness"
+        cli.invocations()
+            .iter()
+            .filter(|call| call
+                .args
+                .starts_with(&["pr".to_string(), "create".to_string()]))
+            .count(),
+        1,
+        "a second call opened another request"
     );
 
-    // Readiness is what hands the task to a human: nobody but them can
-    // merge a request, so the strip has to say so once the author reports
-    // every check and approval green.
-    let ready: TaskDto = h
-        .json(
-            as_session(
-                &format!("/v1/tasks/{}/pull-request", task.id),
-                &author.id,
-                serde_json::json!({"url": URL, "ready": true}),
-            ),
-            StatusCode::OK,
-        )
-        .await;
-    assert_eq!(ready.pr_url.as_deref(), Some(URL));
-    assert_eq!(
-        h.attention(&author).await,
-        Some(AttentionReason::WaitingUser),
-        "a ready request is the user's to merge, and the strip says so"
+    // The author keeps the request: the skill is loaded for it, and the
+    // task stays approved until a human merges the request.
+    let launch = h.launch_file(&author.id).expect("a launch file");
+    assert!(
+        launch.system_prompt.contains("- pr-babysit: "),
+        "{}",
+        launch.system_prompt
     );
-
-    // And it stays up while the author polls: what it reports is the agent
-    // working, which was never what the flag was about.
-    h.store
-        .clear_agent_attention(&author.id)
+    assert_eq!(h.status(&task.id).await, TaskStatus::Approved);
+    let tip = sh(&worktree, "git rev-parse HEAD");
+    let finish = || {
+        as_session(
+            &format!("/v1/tasks/{}/transitions", task.id),
+            &author.id,
+            serde_json::json!({"to": "finished", "merge_commit": tip}),
+        )
+    };
+    let refused = h.error(finish(), StatusCode::CONFLICT).await;
+    assert!(
+        refused.error.message.contains("is not merged"),
+        "{}",
+        refused.error.message
+    );
+    let kept = h
+        .store
+        .pull_request_of_task(&task.id)
         .await
-        .expect("an agent event that changes nothing is not an error");
-    assert_eq!(
-        h.attention(&author).await,
-        Some(AttentionReason::WaitingUser),
-        "the agent polling its own request does not answer for the user"
-    );
+        .unwrap()
+        .expect("the ledger holds the task's request");
+    // A human merges it: the forge says so, which is what `finish_task`
+    // reads (005).
+    assert_eq!(kept.role, "author");
+    let mut merged = opened_pull(URL, "fix");
+    merged["state"] = serde_json::json!("MERGED");
+    cli.reprogram(serde_json::json!([
+        answer(&["auth", "status"], 0, ""),
+        answer(&["pr", "view"], 0, &merged.to_string()),
+        answer(&["pr", "list"], 0, "[]"),
+    ]));
+    let finished: TaskDto = h.json(finish(), StatusCode::OK).await;
+    assert_eq!(finished.status, TaskStatus::Finished);
+    assert_eq!(finished.merge_commit.as_deref(), Some(tip.as_str()));
+}
 
-    // What a squash merge on the forge leaves behind, reproduced with git: a
-    // commit on the base that no branch points at, and a task branch that is
-    // not its ancestor.
-    let repo = repo_path(&cast.repo);
-    sh(
-        &repo,
-        &format!(
-            "git merge -q --squash {} && \
-             git -c user.email=t@t -c user.name=t commit -qm 'feat(board): render it (#12)'",
-            task.branch
-        ),
-    );
-    let sha = sh(&repo, "git rev-parse main");
-    assert_ne!(sha, sh(&worktree, "git rev-parse HEAD"));
+/// A task of a repository whose forge integration is off is refused with
+/// 409, and opens nothing: nothing would read the request for its author.
+#[tokio::test]
+async fn opening_a_pull_request_refuses_with_the_integration_off() {
+    let cli = stub_forge_cli(forge_script("https://github.com/acme/widgets/pull/12"));
+    let h = harness()
+        .scheduler()
+        .discover_agents()
+        .forge_cli(&cli)
+        .await;
+    h.git_repo("repo");
+    let cast = h.active_cast_ending_in(Landing::PullRequest).await;
+    with_forge_enabled(&h, &cast.repo, false).await;
+    let task = cast.task.clone();
+    let (worktree, author) = walk_to_approved(&h, &task, &cast.reviewer.id).await;
+    sh(&worktree, "git push origin HEAD");
 
-    let landed: TaskDto = h
-        .json(
+    let refusal = h
+        .error(
             as_session(
-                &format!("/v1/tasks/{}/transitions", task.id),
+                &format!("/v1/tasks/{}/pull-request", task.id),
                 &author.id,
-                serde_json::json!({"to": "finished", "merge_commit": sha}),
+                serde_json::json!({"title": "feat: ship it", "body": "Ships it."}),
             ),
-            StatusCode::OK,
+            StatusCode::CONFLICT,
         )
         .await;
-    assert_eq!(landed.status, TaskStatus::Finished);
-    assert_eq!(landed.merge_commit.as_deref(), Some(sha.as_str()));
+    assert_eq!(refusal.error.code, "forge_disabled");
+    assert!(
+        !cli.invocations().iter().any(|call| call
+            .args
+            .starts_with(&["pr".to_string(), "create".to_string()])),
+        "nothing was opened"
+    );
+}
+
+/// A task of a repository with no detected forge is refused with 409.
+#[tokio::test]
+async fn opening_a_pull_request_refuses_with_no_forge_detected() {
+    let (h, cast) = seeded(Landing::PullRequest).await;
+    let task = cast.task.clone();
+    let (_worktree, author) = walk_to_approved(&h, &task, &cast.reviewer.id).await;
+
+    let refusal = h
+        .error(
+            as_session(
+                &format!("/v1/tasks/{}/pull-request", task.id),
+                &author.id,
+                serde_json::json!({"title": "feat: ship it", "body": "Ships it."}),
+            ),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    assert!(
+        refusal.error.message.contains("no forge"),
+        "{}",
+        refusal.error.message
+    );
+}
+
+/// A CLI whose `auth status` exits 1 is refused with 409 and the probe's own
+/// message.
+#[tokio::test]
+async fn opening_a_pull_request_refuses_an_unauthenticated_cli() {
+    let cli = stub_forge_cli(serde_json::json!([answer(
+        &["auth", "status"],
+        1,
+        "not logged in"
+    )]));
+    let h = harness()
+        .scheduler()
+        .discover_agents()
+        .forge_cli(&cli)
+        .await;
+    h.git_repo("repo");
+    let cast = h.active_cast_ending_in(Landing::PullRequest).await;
+    with_forge(&h, &cast.repo).await;
+    let task = cast.task.clone();
+    let (worktree, author) = walk_to_approved(&h, &task, &cast.reviewer.id).await;
+    sh(&worktree, "git push origin HEAD");
+
+    let refusal = h
+        .error(
+            as_session(
+                &format!("/v1/tasks/{}/pull-request", task.id),
+                &author.id,
+                serde_json::json!({"title": "feat: ship it", "body": "Ships it."}),
+            ),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    assert!(
+        refusal.error.message.contains("not logged in"),
+        "{}",
+        refusal.error.message
+    );
 }
 
 /// An approval that lands while the author's agent is still coming up is not
@@ -776,6 +973,7 @@ async fn feature_tasks_land_on_the_goal_branch_and_keep_the_base_unchanged() {
     let goal = h
         .store
         .create_goal(ariadne_store::NewGoal {
+            issue_url: None,
             title: "Ship feature".into(),
             description: String::new(),
             repository_ids: vec![repo.id.clone(), spare.id.clone()],

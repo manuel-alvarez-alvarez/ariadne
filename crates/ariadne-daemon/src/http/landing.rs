@@ -9,14 +9,15 @@ use serde_json::json;
 use tracing::warn;
 
 use ariadne_api::messages::{MessageDto, MessageListQuery, SendMessageRequest};
-use ariadne_api::tasks::{PickWinnerRequest, RecordPullRequestRequest, TaskDto};
-use ariadne_core::{Actor, AttentionReason, Landing, Seat, TaskStatus};
+use ariadne_api::tasks::{OpenPullRequestRequest, PickWinnerRequest, TaskDto};
+use ariadne_core::{Actor, Landing, Seat, TaskStatus};
 use ariadne_store::{MessageFilter, NewMessage, Repository, SessionFilter, Task};
 
 use super::AppState;
 use super::caller::{CallCtx, call_ctx, ensure_task_scope};
 use super::convert::{message_dto, task_dto_of};
 use super::error::{ApiError, ApiResult, Json};
+use crate::forge::ForgeClient;
 use crate::stats::session_fact;
 
 /// Git could not answer about the task's branch: a conflict, since what the
@@ -36,14 +37,11 @@ fn unresolved(e: impl std::fmt::Display) -> ApiError {
 /// the branch tip: the branch being an ancestor of the base is the whole of it,
 /// and no sha has to be taken on trust.
 ///
-/// `pull_request` is squashed by the forge, which writes a commit no branch
-/// points at — the task branch is deliberately *not* an ancestor of the base
-/// afterwards. What can be checked here is the other half of the author's
-/// last step: it fetches and fast-forwards the local base onto the merge, and
-/// the sha it reports has to be on that base branch. Until it is, the change is
-/// not on this machine and the task is not finished. Asking the forge instead
-/// would be the daemon watching a request again, which is what this release
-/// stopped doing.
+/// `pull_request` ends once a human merged the request: the author keeps it
+/// until then (005), and the ledger row the daemon reads off the forge is
+/// what says it merged. The daemon never merges it itself, so no sha is
+/// asked onto the base branch: the head branch may be gone from the remote
+/// by then, which the forge does on a merge where it is told to.
 pub(super) async fn verify_merged(
     state: &AppState,
     task: &Task,
@@ -60,8 +58,8 @@ pub(super) async fn verify_merged(
             .await
             .map_err(unresolved)
     };
-    // The final task of a feature branch goal is squashed onto the base by
-    // its request, as a published task is.
+    // The final task of a feature branch goal is published by its request,
+    // the same as a published task is.
     let landing = match task.landing() {
         Landing::FeatureBranch if state.store.works_on_goal_branch(task).await? => {
             Landing::PullRequest
@@ -100,17 +98,18 @@ pub(super) async fn verify_merged(
             }
         }
         Landing::PullRequest => {
-            let Some(sha) = reported else {
+            let Some(url) = &task.pr_url else {
                 return Err(ApiError::conflict(
-                    "merge not verified: a published request is squashed by the forge, \
-                     so report the sha it landed as (`git rev-parse <base>`)",
+                    "merge not verified: no pull request is open for this task — call \
+                     `open_pull_request` first",
                 ));
             };
-            if !on_the_base(sha).await? {
+            // Read off the forge now: nothing stored says a request merged.
+            let merged = request_state(state, task, url).await? == "merged";
+            if !merged {
                 return Err(ApiError::conflict(format!(
-                    "merge not verified: {sha} is not on {} in {} — fetch the remote \
-                     and fast-forward the base branch first",
-                    base_branch, repo.path
+                    "merge not verified: {url} is not merged — a human merges it, and Ariadne \
+                     tells you when they do"
                 )));
             }
         }
@@ -118,52 +117,40 @@ pub(super) async fn verify_merged(
     Ok(())
 }
 
-/// Record the pull or merge request the author opened for a task, and
-/// whether it currently reads ready to merge.
+/// Open the pull or merge request a task lands by, through the repository's
+/// own forge CLI, and answer its URL.
 ///
-/// The URL travels as a tool call, so a published task is either one the UI
-/// and the CLI can point at or one that was never reported. Publication
-/// alone is not readiness: a request nobody can merge yet is not a human's
-/// to act on, so `ready` is what the pull-request skill reports once its own
-/// poll of the forge finds every required approval and check green.
+/// The daemon runs the forge call, never the agent: `gh` or `glab` only ever
+/// run here, with the authentication the user already set up for them
+/// ([`crate::forge`]). The author supplies only what the daemon cannot read
+/// off the task or the repository — the title and the body — and gets the
+/// URL back to show the user.
 ///
-/// This is the moment the task becomes the user's: a request ready to merge
-/// but a human is exactly what `waiting_user` says, so it goes up here, on
-/// the session that reported it — the console they answer in, and the one
-/// place the request can be traced back to. It is raised only on the
-/// transition into ready, so a poll that finds nothing changed raises
-/// nothing twice, and it comes back down the moment a later poll reports
-/// `ready: false` — a new change or a failed check that undid an earlier
-/// ready read.
-///
-/// Once raised that way it stays up until the user acts: an agent's own
-/// events never take `waiting_user` down (`clear_agent_attention`), and the
-/// author polling its request is exactly such an agent.
-/// `Scheduler::keep_waiting_user` puts it back on whatever comes up when
-/// that author is restarted while the request still reads ready, which is
-/// what makes the two halves one flag rather than two.
+/// One request per task: a task that already has a `pr_url` answers it again
+/// and opens nothing, so a retried call never opens a second request.
 #[utoipa::path(post, path = "/v1/tasks/{id}/pull-request", tag = "tasks",
-    request_body = RecordPullRequestRequest,
+    request_body = OpenPullRequestRequest,
     params(("id" = String, Path, description = "task id")),
     responses(
         (status = 200, body = TaskDto),
-        (status = 400, description = "empty URL"),
         (status = 403, description = "not an author session"),
-        (status = 409, description = "the task is not approved")
+        (status = 409, description = "the task is not approved, has no forge or \
+                                       its integration is off, is not authenticated, \
+                                       or is not pushed")
     ))]
-pub(super) async fn record_pull_request(
+pub(super) async fn open_pull_request(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
-    Json(req): Json<RecordPullRequestRequest>,
+    Json(req): Json<OpenPullRequestRequest>,
 ) -> ApiResult<Json<TaskDto>> {
     let ctx = call_ctx(&state.store, &headers).await?;
     ensure_task_scope(&ctx, &id)?;
-    let Some(author) = ctx.session.filter(|s| s.seat() == Some(Seat::Author)) else {
+    if ctx.session.as_ref().and_then(|s| s.seat()) != Some(Seat::Author) {
         return Err(ApiError::forbidden(
-            "only the author of a task may record its pull request",
+            "only the author of a task may open its pull request",
         ));
-    };
+    }
     let task = state.store.get_task(&id).await?;
     if task.status() != TaskStatus::Approved {
         return Err(ApiError::conflict(format!(
@@ -171,32 +158,124 @@ pub(super) async fn record_pull_request(
             task.status
         )));
     }
-    let url = req.url.trim();
-    if url.is_empty() {
-        return Err(ApiError::bad_request(
-            "pass the URL `gh pr create` or `glab mr create` printed, e.g. \
-             https://github.com/owner/repo/pull/12",
+    // One request per task: a second call answers the same URL.
+    if let Some(url) = task.pr_url.as_deref() {
+        record_opened_pull_request(&state, &task, url).await?;
+        return Ok(Json(task_dto_of(&state.store, task).await?));
+    }
+
+    let repo = state.store.get_repository(&task.repo_id).await?;
+    let Some(forge) = repo.forge.as_ref() else {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "forge_unavailable",
+            "no forge was detected for this repository",
+        ));
+    };
+    // The author keeps the request it opens, and the integration is what
+    // reads the forge and tells it the request's news (005, 026): with it
+    // off, nobody would.
+    if !state
+        .store
+        .forge_integration(&task.repo_id)
+        .await?
+        .is_some_and(|integration| integration.enabled)
+    {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "forge_disabled",
+            "the forge integration of this repository is off: a person turns it on, so Ariadne \
+             can tell you the news of the request you open",
         ));
     }
-    state.store.set_task_pull_request(&id, url).await?;
-    let became_ready = state
-        .store
-        .set_task_pull_request_ready(&id, req.ready)
-        .await?;
-    if req.ready && became_ready {
-        state
-            .store
-            .set_session_attention(&author.id, AttentionReason::WaitingUser)
-            .await?;
-    } else if !req.ready && became_ready {
-        state
-            .store
-            .clear_pull_request_ready_attention(&author.id)
-            .await?;
+    let client = ForgeClient::for_repository(&state.launcher.cfg, forge);
+    let refused =
+        |message: String| ApiError::new(StatusCode::CONFLICT, "forge_unauthenticated", message);
+    client.auth_status(&forge.host).await.map_err(refused)?;
+
+    // The branch that lands is the picked winner's, on a task staffed with
+    // several authors; the task's own everywhere else.
+    let branch = state
+        .launcher
+        .review_branch(&task, task.picked_agent_id.as_deref())
+        .await
+        .map_err(unresolved)?
+        .unwrap_or_else(|| task.branch.clone());
+    let repo_path = std::path::PathBuf::from(&repo.path);
+    let pushed = state
+        .launcher
+        .git
+        .remote_has_branch_tip(&repo_path, &forge.remote, &branch)
+        .await
+        .map_err(unresolved)?;
+    if !pushed {
+        return Err(ApiError::conflict(format!(
+            "push {branch} to {} first",
+            forge.remote
+        )));
     }
-    state.notify_scheduler(&id);
+
+    let base = state.store.task_landing_branch(&task, &repo).await?;
+    // The host rides along: a repository on an enterprise host is opened
+    // there, not on the CLI's default one.
+    let slug = format!("{}/{}/{}", forge.host, forge.owner, forge.name);
+    let url = client
+        .open(&slug, &branch, &base, &req.title, &req.body, req.draft)
+        .await
+        .map_err(unresolved)?;
+
+    state.store.set_task_pull_request(&id, &url).await?;
+    record_opened_pull_request(&state, &task, &url).await?;
     let task = state.store.get_task(&id).await?;
     Ok(Json(task_dto_of(&state.store, task).await?))
+}
+
+async fn record_opened_pull_request(state: &AppState, task: &Task, url: &str) -> ApiResult<()> {
+    let Some(forge) = state
+        .store
+        .forge_integration(&task.repo_id)
+        .await?
+        .filter(|f| f.enabled)
+    else {
+        return Ok(());
+    };
+    let reference = crate::forge::PullRequestRef::parse(url, &forge)
+        .ok_or_else(|| ApiError::conflict("the pull request URL does not match the repository"))?;
+    let slug = format!("{}/{}/{}", forge.host, forge.owner, forge.name);
+    let pull = ForgeClient::for_repository(&state.launcher.cfg, &forge)
+        .pull_request(&slug, reference.number)
+        .await
+        .map_err(unresolved)?;
+    if pull.number != reference.number {
+        return Err(ApiError::conflict(
+            "the forge returned another request number",
+        ));
+    }
+    let (row, _) =
+        crate::forge::pulls::start_work(&state.store, &forge, &pull, Some(task.id.clone()))
+            .await
+            .map_err(unresolved)?;
+    state.launcher.live.set_pull(&row.id, pull, false);
+    state.notify_scheduler_pull_request(&row.id);
+    Ok(())
+}
+
+/// The state the forge gives the request a task opened at `url`, read now
+/// (005): `open`, `merged` or `closed`.
+async fn request_state(state: &AppState, task: &Task, url: &str) -> ApiResult<String> {
+    let forge = state
+        .store
+        .forge_integration(&task.repo_id)
+        .await?
+        .ok_or_else(|| ApiError::conflict("the repository has no forge integration"))?;
+    let reference = crate::forge::PullRequestRef::parse(url, &forge)
+        .ok_or_else(|| ApiError::conflict("the pull request URL does not match the repository"))?;
+    let slug = format!("{}/{}/{}", forge.host, forge.owner, forge.name);
+    let pull = ForgeClient::for_repository(&state.launcher.cfg, &forge)
+        .pull_request(&slug, reference.number)
+        .await
+        .map_err(unresolved)?;
+    Ok(pull.state)
 }
 
 /// The messages of a task: what its agents have said to each other.

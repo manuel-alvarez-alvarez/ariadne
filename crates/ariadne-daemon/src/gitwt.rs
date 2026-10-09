@@ -249,9 +249,142 @@ impl GitManager {
         ))))
     }
 
+    /// Whether `reference` names a commit the repository holds: the head of
+    /// a request under review, before it is fetched (029). A reference git
+    /// cannot read as one is `false`.
+    pub(crate) async fn has_commit(&self, repo: &Path, reference: &str) -> Result<bool> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["rev-parse", "--verify", "--quiet", "--end-of-options"])
+            .arg(format!("{reference}^{{commit}}"))
+            .output()
+            .await
+            .context("git could not start")?;
+        Ok(output.status.success())
+    }
+
+    /// Fetch `branch` from `from` — a remote name or a clone URL — into
+    /// `FETCH_HEAD` alone: the head of a request the user reviews, which may
+    /// share its name with a branch of the checkout (029).
+    pub(crate) async fn fetch_head_of(&self, repo: &Path, from: &str, branch: &str) -> Result<()> {
+        self.git(repo, &["fetch", from, &format!("refs/heads/{branch}")])
+            .await?;
+        Ok(())
+    }
+
+    /// The tip `branch` has on `from` — a remote name or a clone URL — as a
+    /// full sha, fetched into `FETCH_HEAD` alone: the base a request merged
+    /// into, which the checkout's own branch may not have caught up with
+    /// (005).
+    pub(crate) async fn fetched_tip(
+        &self,
+        repo: &Path,
+        from: &str,
+        branch: &str,
+    ) -> Result<String> {
+        self.fetch_head_of(repo, from, branch).await?;
+        self.git(repo, &["rev-parse", "--verify", "FETCH_HEAD^{commit}"])
+            .await
+    }
+
+    /// Move the local `branch` forward to `to`, a commit already in the
+    /// repository, and only forward (005): a branch that already holds `to`
+    /// is left as it is, one with commits `to` lacks is refused, and a
+    /// missing one is created at `to`. Where a
+    /// worktree has the branch checked out, `git merge --ff-only` runs in
+    /// it, which refuses to overwrite a local change; elsewhere the ref is
+    /// moved with `update-ref`, guarded by its old value.
+    pub(crate) async fn fast_forward(&self, repo: &Path, branch: &str, to: &str) -> Result<()> {
+        if !self.branch_exists(repo, branch).await? {
+            // No local branch yet: it starts where the remote's is.
+            self.git(repo, &["update-ref", &format!("refs/heads/{branch}"), to])
+                .await?;
+            return Ok(());
+        }
+        let tip = self.branch_tip(repo, branch).await?;
+        if self.is_ancestor(repo, to, &tip).await? {
+            return Ok(());
+        }
+        if !self.is_ancestor(repo, &tip, to).await? {
+            bail!("{branch} has commits that {to} lacks: it cannot be fast-forwarded");
+        }
+        let listed = self.git(repo, &["worktree", "list", "--porcelain"]).await?;
+        let wanted = format!("branch refs/heads/{branch}");
+        let mut path = None;
+        let mut checked_out = None;
+        for line in listed.lines() {
+            if let Some(at) = line.strip_prefix("worktree ") {
+                path = Some(at.to_string());
+            } else if line == wanted {
+                checked_out = path.clone();
+            }
+        }
+        match checked_out {
+            Some(worktree) => {
+                self.git(Path::new(&worktree), &["merge", "--ff-only", "--quiet", to])
+                    .await?;
+            }
+            None => {
+                self.git(
+                    repo,
+                    &["update-ref", &format!("refs/heads/{branch}"), to, &tip],
+                )
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The diff of `HEAD` in `worktree` from the commit `since`:
+    /// `git diff <since>..HEAD` (029).
+    pub(crate) async fn diff_since(&self, worktree: &Path, since: &str) -> Result<String> {
+        self.git(worktree, &["diff", &format!("{since}..HEAD")])
+            .await
+    }
+
+    /// Delete `branch` on `remote`: the goal branch a merged request took
+    /// onto its base (026). A branch the remote no longer holds is already
+    /// what was asked for.
+    pub(crate) async fn delete_remote_branch(
+        &self,
+        repo: &Path,
+        remote: &str,
+        branch: &str,
+    ) -> Result<()> {
+        // Asked of the push itself, not of `ls-remote`: a remote can push
+        // somewhere other than where it fetches from.
+        match self.git(repo, &["push", remote, "--delete", branch]).await {
+            Ok(_) => Ok(()),
+            Err(error) if error.to_string().contains("remote ref does not exist") => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
     pub async fn delete_branch(&self, repo: &Path, branch: &str) -> Result<()> {
         self.git(repo, &["branch", "-D", branch]).await?;
         Ok(())
+    }
+
+    /// Whether `branch`'s local tip is also what `remote` has for it, read
+    /// with `git ls-remote` rather than a fetch: the push check before the
+    /// daemon opens a request, and the merge verification before it accepts
+    /// `finish_task` for one.
+    pub async fn remote_has_branch_tip(
+        &self,
+        repo: &Path,
+        remote: &str,
+        branch: &str,
+    ) -> Result<bool> {
+        let local = self.git(repo, &["rev-parse", branch]).await?;
+        let refs = self
+            .git(repo, &["ls-remote", "--heads", remote, branch])
+            .await?;
+        Ok(refs
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().next())
+            .is_some_and(|sha| sha == local))
     }
 
     /// True when `ancestor` is reachable from `descendant` — the merge

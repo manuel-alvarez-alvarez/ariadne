@@ -65,6 +65,21 @@ interface OutsideSessionFilters {
 }
 
 export const qk = {
+  pullRequests: {
+    all: () => ["pull-requests"] as const,
+    lists: () => ["pull-requests", "list"] as const,
+    list: (filters?: { repo?: string; role?: string; requested?: boolean }) =>
+      ["pull-requests", "list", filters ?? {}] as const,
+    /** By Ariadne's id of a request it works on, or by `repository:number`. */
+    detail: (id: string) => ["pull-requests", "detail", id] as const,
+    search: (repo: string, q: string) => ["pull-requests", "search", { repo, q }] as const,
+  },
+  issues: {
+    list: (repository: string, assigned: "me" | "all") =>
+      ["issues", "list", repository, { assigned }] as const,
+    /** Both assignment filters of one repository's issues. */
+    ofRepository: (repository: string) => ["issues", "list", repository] as const,
+  },
   goals: {
     all: () => ["goals"] as const,
     lists: () => ["goals", "list"] as const,
@@ -154,6 +169,13 @@ export const qk = {
    */
   permissions: {
     ai: () => ["permissions", "detail", "ai"] as const,
+  },
+  /**
+   * The webhook tunnel's switch and state (`GET /v1/forge/tunnel`). One row,
+   * so a detail key and no list.
+   */
+  forge: {
+    tunnel: () => ["forge", "detail", "tunnel"] as const,
   },
   /**
    * The aggregates of the stats ledger (`GET /v1/stats/<family>`), one list

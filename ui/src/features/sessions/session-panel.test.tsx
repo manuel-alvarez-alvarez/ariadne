@@ -6,6 +6,7 @@ import { beforeEach, expect, it, vi } from "vitest"
 
 import { aGoal, aSession, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
+import { pull } from "@/test/pull-request"
 import { FakeWebSocket, latestSocket, stubWebSocket } from "@/test/web-socket"
 
 import { SessionPanel } from "./session-panel"
@@ -146,4 +147,40 @@ it("keeps modal Escape separate from the pane close", async () => {
   // The pane's own name is the session's heading, rendered by the shared
   // header now rather than left sr-only behind it.
   expect(screen.getByRole("region", { name: "Author session" })).toBeDefined()
+})
+
+// A pull request session works for no goal and no task: the request it
+// watches takes their place, by its title, linked to the forge.
+it("shows a pull request session's request, linked to the forge, in place of a goal and a task", async () => {
+  const session = aSession({
+    id: SESSION_ID,
+    goal_id: null,
+    task_id: null,
+    task_agent_id: null,
+    seat: "author",
+    title: pull.title,
+    pull_request_id: pull.id,
+    status: "idle",
+    attention_reason: "waiting_user",
+  })
+  daemonFetch.mockImplementation((input: Request | string | URL) => {
+    const url = new URL(
+      typeof input === "string" ? input : input instanceof URL ? input : input.url,
+    )
+    const body = url.pathname.startsWith("/v1/sessions")
+      ? session
+      : url.pathname === `/v1/pull-requests/${pull.id}`
+        ? pull
+        : []
+    return Promise.resolve(jsonResponse(body))
+  })
+  renderScreen(<SessionPanel sessionId={SESSION_ID} onClose={() => {}} />)
+
+  const link = await screen.findByRole("link", { name: pull.title })
+  expect(link.getAttribute("href")).toBe(pull.url)
+  expect(link.getAttribute("target")).toBe("_blank")
+  expect(screen.getByText("Pull request")).toBeTruthy()
+  expect(screen.queryByText("Goal")).toBeNull()
+  expect(screen.queryByText("Task")).toBeNull()
+  expect(screen.getByText("Ready to merge")).toBeTruthy()
 })

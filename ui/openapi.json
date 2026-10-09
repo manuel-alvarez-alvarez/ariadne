@@ -312,6 +312,56 @@
         }
       }
     },
+    "/v1/forge/tunnel": {
+      "get": {
+        "tags": [
+          "repositories"
+        ],
+        "summary": "The tunnel switch, the tunnel state and the bound listener address.",
+        "operationId": "get_tunnel",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForgeTunnelDto"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "repositories"
+        ],
+        "summary": "Turn the tunnel on or off. Off closes it, and every integration fetches on\nits timer; the hooks stay registered.",
+        "operationId": "set_tunnel",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetTunnelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForgeTunnelDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/goals": {
       "get": {
         "tags": [
@@ -1218,6 +1268,527 @@
         }
       }
     },
+    "/v1/pull-requests": {
+      "get": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "The open requests of the enabled repositories, read live off the forge\n(026): every one, or with `role` and `requested` the user's own or the\nones that ask for their review, each with what Ariadne keeps of it where\nit works on it. With `task`, the request a task opened, which its author\nkeeps (005).",
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "role",
+            "in": "query",
+            "description": "`reviewer` for the requests of others, `author` for the user's own.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "description": "The task that opened the request.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "requested",
+            "in": "query",
+            "description": "True for the requests that ask for the user's review (029), false\nfor the ones that do not.",
+            "required": false,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PullRequestDto"
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/pull-requests/refresh": {
+      "post": {
+        "tags": [
+          "pull-requests"
+        ],
+        "operationId": "refresh",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/pull-requests/{id}": {
+      "get": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "A request Ariadne works on, read off the forge now.",
+        "operationId": "get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullRequestDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          },
+          "502": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/pull-requests/{id}/comments": {
+      "get": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "The comments of a request Ariadne works on, read off the forge now, with\nthe marks beside them; with `unanswered_only`, the threads that wait on\nthe integration login.",
+        "operationId": "comments",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "unanswered_only",
+            "in": "query",
+            "description": "Only the threads that wait on an answer from the integration login.",
+            "required": false,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PullRequestCommentDto"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "502": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/pull-requests/{id}/comments/{comment_id}": {
+      "get": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "One comment of a request Ariadne works on, read off the forge now.",
+        "operationId": "comment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "comment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullRequestCommentDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "502": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/pull-requests/{id}/comments/{comment_id}/reply": {
+      "post": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "Reply to one comment. The daemon posts the reply through the forge CLI,\nmarks it the review's where a review session posts it (029), and reads\nthe request again.",
+        "operationId": "reply",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "comment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplyCommentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullRequestCommentDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          },
+          "502": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/pull-requests/{id}/comments/{comment_id}/resolve": {
+      "post": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "Resolve the thread of one comment, once a push fixed what it found\n(029). Only a review session resolves, and only a thread it opened under\nthe integration login: the threads of anyone else stay open for the\nperson who wrote them.",
+        "operationId": "resolve",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "comment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullRequestCommentDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          },
+          "502": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/pull-requests/{id}/diff": {
+      "get": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "The change under review, read in the reviewer session's worktree (029):\n`git diff <base>...HEAD`, or `git diff <since>..HEAD` where `since` is\ngiven. The base is the remote's copy of the base branch where the\ncheckout holds one, else the local branch.",
+        "operationId": "diff",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Read the diff from this sha to the head, not from the base.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/pull-requests/{id}/report": {
+      "post": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "What the request's session says of it: `ready` once every required\napproval and check reads green, which raises `waiting_user` on the\nsession, and the head a review session posted its review on.",
+        "operationId": "report",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportPullRequestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullRequestDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/pull-requests/{id}/reviews": {
+      "post": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "Post one round of a review of a request, in the user's name (029): its\nnew findings as one review of inline comments, each led by its priority,\nand its summary, written into the one summary comment the review keeps\non the request — posted on the first round, edited on every later one. A\nround with no new finding posts no review. `request_changes` stands only\non a P0 finding, new or still open. Any other event is refused, an\napproval above all: the user gives every approval. What it posted is\nmarked as the review's.",
+        "operationId": "submit_review",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PullRequestCommentDto"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          },
+          "502": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/repositories": {
       "get": {
         "tags": [
@@ -1269,10 +1840,10 @@
             }
           },
           "400": {
-            "description": "not an absolute path, not a git work tree, or an unknown branch"
+            "description": "not an absolute path, not a git work tree, an unknown branch, or a forge pin that is no catalog model"
           },
           "409": {
-            "description": "this path and base branch are already registered, or `ai` was asked for while the AI permission model is off"
+            "description": "this path and base branch are already registered, `ai` was asked for while the AI permission model is off, or the forge integration cannot be enabled"
           }
         }
       }
@@ -1350,13 +1921,13 @@
             }
           },
           "400": {
-            "description": "not an absolute path, not a git work tree, or an unknown branch"
+            "description": "not an absolute path, not a git work tree, an unknown branch, or a forge pin that is no catalog model"
           },
           "404": {
             "description": ""
           },
           "409": {
-            "description": "this path and base branch are already registered, or `ai` was asked for while the AI permission model is off"
+            "description": "this path and base branch are already registered, `ai` was asked for while the AI permission model is off, or the forge integration cannot be enabled"
           }
         }
       },
@@ -1382,6 +1953,248 @@
             "description": ""
           },
           "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/repositories/{id}/issues": {
+      "get": {
+        "tags": [
+          "issues"
+        ],
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "assigned",
+            "in": "query",
+            "description": "`me` filters to the forge login; `all` reads all open issues.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/IssueDto"
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/repositories/{id}/issues/{number}": {
+      "get": {
+        "tags": [
+          "issues"
+        ],
+        "operationId": "get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/repositories/{id}/pull-requests/search": {
+      "get": {
+        "tags": [
+          "pull-requests"
+        ],
+        "operationId": "search",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PullRequestMatchDto"
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/repositories/{id}/pull-requests/{number}": {
+      "get": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "One open request of a repository, read off the forge now (026): its\nown read, its checks and its comments, with what Ariadne keeps of it\nwhere it works on it. What the desktop's panel shows.",
+        "operationId": "get_by_number",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullRequestDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": ""
+          },
+          "502": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/repositories/{id}/pull-requests/{number}/ariadne-review": {
+      "put": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "Ask Ariadne to review a request of the user's own on the model the user\npicks, or stop asking (029): a review session runs on that pin while the\nrequest is open and out of draft, and posts each round as a comment in\nthe user's name. Asking starts Ariadne's work on the request; stopping\nends it, where no task keeps the request. A request that asks for the\nuser's review has a review already, on the repository's review pin, and\ntakes no asking.",
+        "operationId": "ask_review",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullRequestDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          },
+          "502": {
             "description": ""
           }
         }
@@ -1439,6 +2252,18 @@
             "name": "task",
             "in": "query",
             "description": "Filter by task id. No outside session has one.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "pull_request",
+            "in": "query",
+            "description": "Filter by pull request id. No outside session has one.",
             "required": false,
             "schema": {
               "type": [
@@ -2827,9 +3652,9 @@
         "tags": [
           "tasks"
         ],
-        "summary": "Record the pull or merge request the author opened for a task, and\nwhether it currently reads ready to merge.",
-        "description": "The URL travels as a tool call, so a published task is either one the UI\nand the CLI can point at or one that was never reported. Publication\nalone is not readiness: a request nobody can merge yet is not a human's\nto act on, so `ready` is what the pull-request skill reports once its own\npoll of the forge finds every required approval and check green.\n\nThis is the moment the task becomes the user's: a request ready to merge\nbut a human is exactly what `waiting_user` says, so it goes up here, on\nthe session that reported it — the console they answer in, and the one\nplace the request can be traced back to. It is raised only on the\ntransition into ready, so a poll that finds nothing changed raises\nnothing twice, and it comes back down the moment a later poll reports\n`ready: false` — a new change or a failed check that undid an earlier\nready read.\n\nOnce raised that way it stays up until the user acts: an agent's own\nevents never take `waiting_user` down (`clear_agent_attention`), and the\nauthor polling its request is exactly such an agent.\n`Scheduler::keep_waiting_user` puts it back on whatever comes up when\nthat author is restarted while the request still reads ready, which is\nwhat makes the two halves one flag rather than two.",
-        "operationId": "record_pull_request",
+        "summary": "Open the pull or merge request a task lands by, through the repository's\nown forge CLI, and answer its URL.",
+        "description": "The daemon runs the forge call, never the agent: `gh` or `glab` only ever\nrun here, with the authentication the user already set up for them\n([`crate::forge`]). The author supplies only what the daemon cannot read\noff the task or the repository — the title and the body — and gets the\nURL back to show the user.\n\nOne request per task: a task that already has a `pr_url` answers it again\nand opens nothing, so a retried call never opens a second request.",
+        "operationId": "open_pull_request",
         "parameters": [
           {
             "name": "id",
@@ -2845,7 +3670,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RecordPullRequestRequest"
+                "$ref": "#/components/schemas/OpenPullRequestRequest"
               }
             }
           },
@@ -2862,14 +3687,11 @@
               }
             }
           },
-          "400": {
-            "description": "empty URL"
-          },
           "403": {
             "description": "not an author session"
           },
           "409": {
-            "description": "the task is not approved"
+            "description": "the task is not approved, has no forge or its integration is off, is not authenticated, or is not pushed"
           }
         }
       }
@@ -3427,6 +4249,40 @@
           }
         }
       },
+      "AskReviewRequest": {
+        "type": "object",
+        "description": "Body of `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-review`:\nwhether Ariadne\nreviews a request of the user's own (029).",
+        "required": [
+          "asked"
+        ],
+        "properties": {
+          "asked": {
+            "type": "boolean"
+          },
+          "effort": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The effort that model runs at; none for the agent's own."
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The model the review runs on, `agent:model`: required to ask, and\nchecked against the catalog as any pin is."
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The skills the review loads beside `pr-reviewer`, which every review\nsession loads; skills a task agent is staffed on."
+          }
+        },
+        "additionalProperties": false
+      },
       "AttentionFlagDto": {
         "type": "object",
         "required": [
@@ -3637,6 +4493,12 @@
             "description": "The reasoning effort to run that model at, one of the efforts `GET\n/v1/models` lists for it; anything else is refused. Omitted (or\n\"default\") = whatever the agent runs the model at.",
             "example": "high"
           },
+          "issue_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "landing": {
             "oneOf": [
               {
@@ -3694,6 +4556,17 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "forge": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ForgeUpdate",
+                "description": "The forge integration to set up once the remote is detected."
+              }
             ]
           },
           "path": {
@@ -4254,6 +5127,66 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "The forge settings or the tunnel state moved (027).",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/ForgeTunnelDto",
+                "description": "The forge settings or the tunnel state moved (027)."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "forge_settings_updated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The open issues of one repository moved on its forge (028): read them\nagain from `GET /v1/repositories/{id}/issues`.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/IssuesChangedDto",
+                "description": "The open issues of one repository moved on its forge (028): read them\nagain from `GET /v1/repositories/{id}/issues`."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "issues_changed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The requests of one repository moved: on its forge, or in what\nAriadne keeps of them (026). Read them again; they are the forge's.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/PullRequestsChangedDto",
+                "description": "The requests of one repository moved: on its forge, or in what\nAriadne keeps of them (026). Read them again; they are the forge's."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "pull_requests_changed"
+                ]
+              }
+            }
           }
         ],
         "description": "One domain event. Serialized as `{\"event\": \"<kind>\", \"data\": <payload>}`;\non the SSE wire the kind becomes the `event:` field and the payload alone\nthe `data:` field."
@@ -4291,6 +5224,28 @@
           "desc"
         ]
       },
+      "FailedCheckDto": {
+        "type": "object",
+        "description": "One check that failed on a request's head.",
+        "required": [
+          "name",
+          "url",
+          "conclusion"
+        ],
+        "properties": {
+          "conclusion": {
+            "type": "string",
+            "description": "The forge's own word for how it ended: `failure`, `cancelled` and\nthe like."
+          },
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "description": "Where the forge shows the check's run; empty where it names none."
+          }
+        }
+      },
       "FinalizePlanRequest": {
         "type": "object",
         "description": "Body of `POST /v1/goals/{id}/finalize`: the orchestrator ends planning and\nexecution starts. The orchestrator's call, not the user's, and it carries\nnothing — the plan is the tasks it wrote.",
@@ -4325,6 +5280,142 @@
           }
         }
       },
+      "ForgeDto": {
+        "type": "object",
+        "description": "The forge a repository's remote is on, and whether Ariadne works with it.",
+        "required": [
+          "webhook",
+          "kind",
+          "host",
+          "owner",
+          "name",
+          "remote",
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "host": {
+            "type": "string",
+            "description": "Lower-cased, like `owner` and `name`.",
+            "example": "github.com"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ForgeKind"
+          },
+          "login": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The account the forge CLI is signed in as, stored on enable."
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "remote": {
+            "type": "string",
+            "description": "The remote it was read off, `origin` where there is one."
+          },
+          "review_effort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "review_model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The pin of the session that reviews a request; null starts none."
+          },
+          "webhook": {
+            "$ref": "#/components/schemas/WebhookDto"
+          }
+        }
+      },
+      "ForgeKind": {
+        "type": "string",
+        "description": "The forge a repository's remote is on (025): which CLI speaks to it.",
+        "enum": [
+          "github",
+          "gitlab"
+        ]
+      },
+      "ForgeTunnelDto": {
+        "type": "object",
+        "description": "The forge settings and the tunnel state, as `GET /v1/forge/tunnel` and\n`forge_settings_updated` carry them (027).",
+        "required": [
+          "enabled",
+          "state",
+          "since"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "The switch: whether the daemon opens a tunnel."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the last attempt failed, while the tunnel is down."
+          },
+          "listen": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The bound webhook listener address the tunnel forwards to.",
+            "example": "127.0.0.1:49152"
+          },
+          "since": {
+            "type": "string",
+            "description": "When the tunnel entered its state."
+          },
+          "state": {
+            "$ref": "#/components/schemas/TunnelState"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The public URL while the tunnel is up."
+          }
+        }
+      },
+      "ForgeUpdate": {
+        "type": "object",
+        "description": "A change to the forge integration; absent fields stay unchanged. A model\nwritten empty clears that role's pin and its effort.",
+        "properties": {
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "review_effort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "review_model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "GoalDto": {
         "type": "object",
         "required": [
@@ -4357,6 +5448,12 @@
           },
           "id": {
             "type": "string"
+          },
+          "issue_url": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "landing": {
             "$ref": "#/components/schemas/Landing",
@@ -4539,6 +5636,60 @@
           "version": {
             "type": "string",
             "description": "The daemon's version, as `GET /v1/version` reports it."
+          }
+        }
+      },
+      "IssueDto": {
+        "type": "object",
+        "required": [
+          "number",
+          "title",
+          "body",
+          "url",
+          "labels",
+          "assignees",
+          "updated_at"
+        ],
+        "properties": {
+          "assignees": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "body": {
+            "type": "string"
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "number": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "IssuesChangedDto": {
+        "type": "object",
+        "description": "Payload of `issues_changed`: the repository whose open issues moved.",
+        "required": [
+          "repository_id"
+        ],
+        "properties": {
+          "repository_id": {
+            "type": "string"
           }
         }
       },
@@ -5025,6 +6176,29 @@
         },
         "additionalProperties": false
       },
+      "OpenPullRequestRequest": {
+        "type": "object",
+        "description": "The author asking the daemon to open the pull or merge request its task\nlands by. The daemon runs the forge's own CLI, so this carries only what\nthe author cannot read off the task or the repository itself.",
+        "required": [
+          "title",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "Filled from the repository's own request template."
+          },
+          "draft": {
+            "type": "boolean",
+            "description": "Opens the request as a draft. Defaults to false."
+          },
+          "title": {
+            "type": "string",
+            "description": "Titled by the repository's own commit conventions."
+          }
+        },
+        "additionalProperties": false
+      },
       "PathStateDto": {
         "type": "object",
         "description": "A file or directory the daemon depends on.",
@@ -5287,6 +6461,283 @@
         },
         "additionalProperties": false
       },
+      "PullRequestCommentDto": {
+        "type": "object",
+        "description": "One comment on a request, as the forge holds it now, read live (026),\nwith the marks Ariadne keeps of it.",
+        "required": [
+          "id",
+          "pull_request_id",
+          "thread_id",
+          "kind",
+          "author_login",
+          "author_is_bot",
+          "body",
+          "created_at",
+          "answered",
+          "resolved"
+        ],
+        "properties": {
+          "answered": {
+            "type": "boolean",
+            "description": "A later comment in the thread is by the integration login."
+          },
+          "author_is_bot": {
+            "type": "boolean"
+          },
+          "author_login": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "from_review": {
+            "type": "boolean",
+            "description": "An Ariadne review session posted it (029)."
+          },
+          "id": {
+            "type": "string",
+            "description": "The forge's id of the comment, `rc-<n>`, `ic-<n>`, `rv-<n>` or\n`note-<n>`: what `reply` and `resolve` take."
+          },
+          "in_reply_to": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "description": "`review_comment`, `issue_comment` or `review`."
+          },
+          "line": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pull_request_id": {
+            "type": "string"
+          },
+          "resolved": {
+            "type": "boolean",
+            "description": "The forge reports the thread resolved."
+          },
+          "thread_id": {
+            "type": "string",
+            "description": "The forge's thread or discussion; the conversation of the request\nis one thread."
+          },
+          "told_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When the request's session was told of it."
+          }
+        }
+      },
+      "PullRequestDto": {
+        "type": "object",
+        "description": "A pull request as the forge holds it now, read live (026), with what\nAriadne keeps of it where Ariadne works on it: the request a task opened,\none that asks for the user's review on a repository with a review pin,\nor one of the user's they asked Ariadne to review.",
+        "required": [
+          "repository_id",
+          "number",
+          "url",
+          "title",
+          "author_login",
+          "state",
+          "draft",
+          "head_branch",
+          "head_sha",
+          "base_branch",
+          "checks",
+          "review_decision",
+          "opened_at",
+          "updated_at",
+          "role"
+        ],
+        "properties": {
+          "author_login": {
+            "type": "string"
+          },
+          "base_branch": {
+            "type": "string"
+          },
+          "behind_base": {
+            "type": "boolean",
+            "description": "Whether the base branch has commits the head does not."
+          },
+          "body": {
+            "type": "string",
+            "description": "The request's description."
+          },
+          "checks": {
+            "type": "string",
+            "description": "The rolled-up checks: `pending`, `success`, `failure` or `none`."
+          },
+          "draft": {
+            "type": "boolean"
+          },
+          "failed_checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FailedCheckDto"
+            },
+            "description": "The checks that failed on the head, read as `unanswered_comments` is."
+          },
+          "head_branch": {
+            "type": "string"
+          },
+          "head_repo": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "head_sha": {
+            "type": "string"
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Ariadne's id of the request while it works on it; null on a request\nnobody works on, which the forge alone holds."
+          },
+          "number": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "opened_at": {
+            "type": "string"
+          },
+          "origin_task_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The task that opened the request: its author keeps it (005)."
+          },
+          "ready": {
+            "type": "boolean",
+            "description": "Whether the request's session reported it ready to merge."
+          },
+          "repository_id": {
+            "type": "string"
+          },
+          "review_asked": {
+            "type": "boolean",
+            "description": "Whether the user asked Ariadne to review this request of their own\n(029)."
+          },
+          "review_decision": {
+            "type": "string"
+          },
+          "review_effort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "review_model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The pin the user picked for that review."
+          },
+          "review_requested": {
+            "type": "boolean",
+            "description": "Whether the request asks for the user's review (029)."
+          },
+          "review_skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The skills that review loads beside `pr-reviewer`."
+          },
+          "role": {
+            "type": "string",
+            "description": "`author` for a request of the user's, `reviewer` for any other."
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The newest session on this request, if any: its review session\n(029), or the author of the task that opened it (005)."
+          },
+          "state": {
+            "type": "string",
+            "description": "`open`, `merged` or `closed`."
+          },
+          "title": {
+            "type": "string"
+          },
+          "unanswered_comments": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The threads that wait on the user's login. Read where Ariadne works\non the request, or where the request is read on its own; 0 on a row\nof a list nobody works on."
+          },
+          "updated_at": {
+            "type": "string",
+            "description": "When the forge last saw the request move."
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "PullRequestMatchDto": {
+        "type": "object",
+        "description": "An open request a search found that is not the user's own.",
+        "required": [
+          "number",
+          "url",
+          "title",
+          "author_login",
+          "tracked"
+        ],
+        "properties": {
+          "author_login": {
+            "type": "string"
+          },
+          "number": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "title": {
+            "type": "string"
+          },
+          "tracked": {
+            "type": "boolean",
+            "description": "Whether Ariadne works on it."
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "PullRequestsChangedDto": {
+        "type": "object",
+        "description": "Payload of `pull_requests_changed`: the repository whose requests moved.",
+        "required": [
+          "repository_id"
+        ],
+        "properties": {
+          "repository_id": {
+            "type": "string"
+          }
+        }
+      },
       "PythonDto": {
         "type": "object",
         "description": "The Python interpreter the daemon found, as it answered `--version`.",
@@ -5316,20 +6767,36 @@
           }
         }
       },
-      "RecordPullRequestRequest": {
+      "ReplyCommentRequest": {
         "type": "object",
-        "description": "The author reporting the pull or merge request it opened for a task, so\nthe user has somewhere to go and read it: taken off `gh pr create`'s output\nand recorded on the task.",
+        "description": "Body of `POST /v1/pull-requests/{id}/comments/{comment_id}/reply`.",
         "required": [
-          "url"
+          "body"
         ],
         "properties": {
+          "body": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReportPullRequestRequest": {
+        "type": "object",
+        "description": "Body of `POST /v1/pull-requests/{id}/report`: what the request's session\nsays of it.",
+        "properties": {
           "ready": {
-            "type": "boolean",
-            "description": "Whether every required approval and check last read green. Defaults\nto false, which records the URL without announcing it to the user."
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Every required approval and check reads green."
           },
-          "url": {
-            "type": "string",
-            "description": "The request's URL, e.g. `https://github.com/owner/repo/pull/12`."
+          "reviewed_sha": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The head a reviewer session posted its review on (029)."
           }
         },
         "additionalProperties": false
@@ -5360,6 +6827,17 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "forge": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ForgeDto",
+                "description": "The forge its remote is on, or null where the checkout has no usable\nremote (025)."
+              }
             ]
           },
           "id": {
@@ -5409,6 +6887,39 @@
             "minimum": 0
           }
         }
+      },
+      "ReviewCommentRequest": {
+        "type": "object",
+        "description": "One inline comment of a review (029).",
+        "required": [
+          "path",
+          "line",
+          "body",
+          "priority"
+        ],
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "What goes wrong, and how to fix it."
+          },
+          "line": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The line in the new version of the file."
+          },
+          "path": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "string",
+            "description": "`P0`, `P1` or `P2`."
+          },
+          "title": {
+            "type": "string",
+            "description": "A short title of the defect; the comment opens on `[P0] Title`."
+          }
+        },
+        "additionalProperties": false
       },
       "Seat": {
         "type": "string",
@@ -5535,6 +7046,13 @@
           "model": {
             "type": "string",
             "description": "Model requested at launch, `<agent>:<model>`: the registry agent the\nsession runs on, and the model of it."
+          },
+          "pull_request_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The pull request this session watches (026); null for every other\nsession."
           },
           "seat": {
             "oneOf": [
@@ -5689,6 +7207,13 @@
               "null"
             ],
             "description": "Model requested at launch, `<agent>:<model>`; None on an outside row."
+          },
+          "pull_request_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The pull request this session watches; None for every other session."
           },
           "seat": {
             "oneOf": [
@@ -5846,6 +7371,19 @@
           }
         }
       },
+      "SetTunnelRequest": {
+        "type": "object",
+        "description": "`PUT /v1/forge/tunnel`: turn the tunnel on or off.",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
       "SkillDto": {
         "type": "object",
         "required": [
@@ -5897,7 +7435,8 @@
         "description": "Where a skill is used: by the orchestrator, or to staff a task agent.",
         "enum": [
           "orchestrator",
-          "task"
+          "task",
+          "pull_request"
         ]
       },
       "SpendBucketDto": {
@@ -6051,6 +7590,31 @@
             "format": "double"
           }
         }
+      },
+      "SubmitReviewRequest": {
+        "type": "object",
+        "description": "Body of `POST /v1/pull-requests/{id}/reviews` (029): one review, posted\nin the name of the integration login.",
+        "required": [
+          "event",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "The review's summary as it stands now: the daemon writes it into the\none summary comment the review keeps on the request."
+          },
+          "comments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReviewCommentRequest"
+            }
+          },
+          "event": {
+            "type": "string",
+            "description": "`request_changes` or `comment`. Every other event is refused."
+          }
+        },
+        "additionalProperties": false
       },
       "SwitchSessionRequest": {
         "type": "object",
@@ -6602,6 +8166,15 @@
         },
         "additionalProperties": false
       },
+      "TunnelState": {
+        "type": "string",
+        "description": "Where the webhook tunnel stands (027).",
+        "enum": [
+          "up",
+          "down",
+          "off"
+        ]
+      },
       "UpdateAgentConfigRequest": {
         "type": "object",
         "description": "Body of `PUT /v1/agents/{id}`: the whole new flag list, empty included.",
@@ -6714,6 +8287,17 @@
               "null"
             ],
             "description": "New description, or empty to clear it. Absent = unchanged."
+          },
+          "forge": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ForgeUpdate",
+                "description": "Absent = unchanged."
+              }
+            ]
           },
           "path": {
             "type": [
@@ -6828,6 +8412,43 @@
           "version": {
             "type": "string",
             "example": "0.1.0"
+          }
+        }
+      },
+      "WebhookDto": {
+        "type": "object",
+        "description": "Public hook status. The hook secret is never serialized.",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fetch_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the last fetch of the repository's requests failed, or null once\none works: what says polling works, where no hook is live."
+          },
+          "last_delivery_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": "string"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -6981,6 +8602,14 @@
     {
       "name": "goals",
       "description": "Goals and their plans"
+    },
+    {
+      "name": "pull-requests",
+      "description": "The tracked pull request ledger"
+    },
+    {
+      "name": "issues",
+      "description": "Open issues read from enabled forges"
     },
     {
       "name": "tasks",

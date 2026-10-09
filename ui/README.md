@@ -87,7 +87,7 @@ are unaffected.
 | `⌘,` / `Ctrl+,` | settings |
 | `N` | new goal, from any screen |
 | `[` | fold the sidebar down to an icon rail, and back |
-| `G` then `G`/`S`/`P`/`A`/`R` | goals, sessions, profiles, agents, repositories |
+| `G` then `G`/`S`/`K`/`A`/`R` | goals, sessions, skills, agents, repositories |
 | `?` | the cheat sheet: this table, in the app |
 | `Escape` | closes the palette, then the topmost panel |
 

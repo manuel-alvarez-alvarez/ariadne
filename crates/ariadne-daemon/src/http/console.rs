@@ -903,6 +903,7 @@ mod tests {
             .unwrap();
         let goal = store
             .create_goal(ariadne_store::NewGoal {
+                issue_url: None,
                 landing: None,
                 title: "probe".into(),
                 description: String::new(),
@@ -923,6 +924,7 @@ mod tests {
                 model: "stub:test-model".into(),
                 effort: None,
                 worktree_path: None,
+                pull_request_id: None,
             })
             .await
             .unwrap()

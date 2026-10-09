@@ -9,6 +9,7 @@ pub(crate) mod values;
 use crate::commands::agent::AgentCommand;
 use crate::commands::completions::CompletionsCommand;
 use crate::commands::goal::GoalCommand;
+use crate::commands::issue::IssueCommand;
 use crate::commands::models::ModelsCommand;
 use crate::commands::permissions::PermissionsCommand;
 use crate::commands::repo::RepoCommand;
@@ -342,6 +343,17 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: SkillCommand,
     },
+    /// Track pull requests
+    ///
+    /// Follow the open requests of your repositories: yours, the ones that ask
+    /// for your review, and the ones added by hand.
+    #[command(
+        after_help = "Examples:\n  ariadne pr ls --watch\n  ariadne pr ls --mine\n  ariadne pr ls --review-requests\n  ariadne pr add https://github.com/owner/repo/pull/42\n  ariadne pr refresh"
+    )]
+    Pr {
+        #[command(subcommand)]
+        command: crate::commands::pr::PrCommand,
+    },
     /// Manage repositories
     ///
     /// The checkouts goals may work in. A repository is registered once —
@@ -352,6 +364,16 @@ pub(crate) enum Command {
     Repo {
         #[command(subcommand)]
         command: RepoCommand,
+    },
+    /// Show and switch the webhook tunnel of the forge integrations (027)
+    Forge {
+        #[command(subcommand)]
+        command: crate::commands::forge::ForgeCommand,
+    },
+    /// List open issues from an enabled repository forge
+    Issue {
+        #[command(subcommand)]
+        command: IssueCommand,
     },
     /// Manage the AI permission model behind the `ai` permission mode (022)
     ///
@@ -515,6 +537,8 @@ const NO_FORMAT: &[&[&str]] = &[
 /// global so `ariadne -o wide task ls` works; that is also what would
 /// otherwise advertise `--columns` on `task cancel`.
 const LISTINGS: &[&str] = &[
+    "pr ls",
+    "pr search",
     "agent ls",
     "agent refresh",
     "attention",
@@ -580,7 +604,7 @@ const PAGED: &[&str] = &["session logs", "task diff", "task logs", "task message
 /// with on every other command. Test-only: nothing at runtime hides the flag
 /// on the caller's behalf, so nothing at runtime needs the list.
 #[cfg(test)]
-const WATCHED: &[&str] = &["attention", "goal ls", "session ls", "task ls"];
+const WATCHED: &[&str] = &["attention", "goal ls", "session ls", "task ls", "pr ls"];
 
 /// The clap command, with each global flag hidden wherever it does nothing.
 ///

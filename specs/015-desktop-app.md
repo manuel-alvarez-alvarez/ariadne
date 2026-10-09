@@ -33,7 +33,7 @@ Out: the daemon endpoints themselves (012).
    that lands in one is not finished until it is in the other.
 2. The shell is a sidebar, ending in the daemon connection status, and a main
    area under one header bar — the screen's name as its only `h1`, and a
-   screen's own actions at the header's end. Goal, task and session details
+   screen's own actions at the header's end. Goal, task, session, and pull request (026) details
    occupy one pane that floats over the screen at its right edge. The URL
    selects its contents. The screen keeps its full width and layout behind
    the pane, under a scrim. A click on the scrim closes the pane, the same

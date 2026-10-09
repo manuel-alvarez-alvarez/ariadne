@@ -22,20 +22,27 @@ each task author works in its own git worktree.
    reviewers choose the result to land.
 5. The goal's landing decides how its tasks reach the base branch. `none`
    lands nothing. `merge` fast-forwards a squash of each task onto the base
-   branch. `pull_request` opens a request per task, makes it green, answers
-   every comment, then waits: a human merges it, never Ariadne. `feature_branch`
-   branches every task from a goal branch, one per repository, and merges it
-   there; the one task that depends on every other task of that repository
-   then opens the pull request from the goal branch to the base branch, makes
-   it green, waits for a human to merge it, and deletes the goal branch. The
-   daemon removes completed worktrees according to its configuration.
-6. Opening and defending a request is one skill, `pull-request`, that the
-   author of either kind of task above reads on its own: nobody has to staff
-   it. Publishing a request is not the same as it being ready to merge — the
-   skill reports the URL once and reports readiness only once every required
-   approval and check is green, which is what puts the task on `ariadne
-   attention` as waiting for you. A later change or a failed check takes that
-   notice back down until the skill reports ready again.
+   branch. `pull_request` rebases, pushes the branch, and opens a request
+   through the daemon's own call to the forge — never a command the author
+   runs itself — and the author keeps the request until a human merges it.
+   `feature_branch` branches every task from a
+   goal branch, one per repository, and merges it there; the one task that
+   depends on every other task of that repository then opens the pull
+   request from the goal branch to the base branch the same way and keeps
+   it, and the daemon deletes the goal branch once that request merges. The daemon removes completed
+   worktrees according to its configuration.
+6. A request's task stays approved while its request is open. Its author
+   keeps the request with the `pr-babysit` skill: the daemon reads the forge
+   and prompts the author with each new comment, failed check or moved base,
+   and every fix goes through the task's reviewers before it is pushed. Once
+   a human merges the request the task finishes and its author's agent
+   stops; a close fails it. A request asking for your review gets a `pr-reviewer` session, and so
+   does a request of yours you ask Ariadne to review. None approves or
+   merges anything. Publishing a request is not the same as it being ready
+   to merge: `ariadne attention` carries the author as waiting on you only
+   once every required approval and check reads green, and a later change or
+   a failed check takes that back down until it reports ready again. See
+   [The forge integration](forge.md).
 
 ## Sessions and attention
 

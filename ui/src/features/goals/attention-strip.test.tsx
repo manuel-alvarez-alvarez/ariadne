@@ -224,6 +224,29 @@ it("names an orchestrator session by its seat and the goal it is planning", asyn
   ).not.toBeNull()
 })
 
+// A pull request session works for no goal: the request names the row, and the
+// row opens the session, whose panel links to the request.
+it("lists a pull request ready to merge by its title and opens its session panel", async () => {
+  const session = aSession({
+    id: "01JSESS00000000000000PULL1",
+    goal_id: null,
+    task_id: null,
+    task_agent_id: null,
+    title: "Fix widgets",
+    pull_request_id: "pull-42",
+    status: "idle",
+    attention_reason: "waiting_user",
+    attention_since: "2026-01-01T03:00:00Z",
+  })
+  stubDaemon({ sessions: [session] })
+  renderStrip()
+
+  expect(await screen.findByText("Pull request · Fix widgets")).not.toBeNull()
+  expect(screen.getByText("Ready to merge")).not.toBeNull()
+  expect(screen.queryByText("Waiting for you")).toBeNull()
+  expect(await hrefs()).toEqual([`/goals?status=active&session=${session.id}`])
+})
+
 it("names a task session by the task, even when the task list has not got it", async () => {
   stubDaemon({
     sessions: [

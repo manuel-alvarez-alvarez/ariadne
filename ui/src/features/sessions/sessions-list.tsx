@@ -42,7 +42,12 @@ import { sessionCopyEntries } from "@/lib/clipboard"
 import { cn, shortId } from "@/lib/format"
 
 import { type SessionListFilters, sessionsQueryOptions } from "./queries"
-import { SessionAttentionBadge, SessionStatusBadge, seatLabel } from "./session-display"
+import {
+  SessionAttentionBadge,
+  SessionStatusBadge,
+  seatLabel,
+  shownAttention,
+} from "./session-display"
 
 /**
  * The rows in the order the table shows them: whatever moved last, first.
@@ -69,6 +74,7 @@ function byLastActivity(sessions: SessionDto[]): SessionDto[] {
  */
 function emptyTitle(filters: SessionListFilters): string {
   if (filters.seat) return `No ${seatLabel(filters.seat).toLowerCase()} session yet`
+  if (filters.pull_request) return "No Ariadne review of this request yet"
   if (filters.task) return "No sessions yet for this task"
   if (filters.goal) return "No sessions yet for this goal"
   return "No sessions yet"
@@ -147,6 +153,7 @@ function SessionRow({
   selected: boolean
   onSelect: () => void
 }) {
+  const attention = shownAttention(session)
   return (
     <TableRow
       className="cursor-pointer"
@@ -194,9 +201,7 @@ function SessionRow({
       <TableCell>
         <div className="flex flex-wrap items-center gap-1.5">
           <SessionStatusBadge status={session.status} />
-          {session.attention_reason ? (
-            <SessionAttentionBadge attention={session.attention_reason} />
-          ) : null}
+          {attention ? <SessionAttentionBadge attention={attention} /> : null}
         </div>
       </TableCell>
       {/* The compact age is the column's text — the heading says what it is

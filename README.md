@@ -71,7 +71,7 @@ request resumes the author with the feedback.
 <td width="50%" valign="top">
 <h4>🚢 Four ways a goal can land</h4>
 <code>none</code> lands nothing, <code>merge</code> squashes onto the base branch,
-<code>pull_request</code> opens a request and sees it through the forge, and
+<code>pull_request</code> opens a request through the forge and ends there, and
 <code>feature_branch</code> lands every task on a goal branch, then opens one pull
 request per repository.
 </td>
@@ -99,7 +99,8 @@ markdown as it streams, a picker for permissions, Escape to cancel a turn.
 <h4>⚡ Nothing polls</h4>
 The daemon streams: events, agent consoles and its own log, over a REST API with OpenAPI at
 <code>/api-docs/openapi.json</code> and SSE at <code>/v1/events/stream</code>. A session's
-console is also served as terminal bytes over a WebSocket, for a terminal emulator.
+console is also served as terminal bytes over a WebSocket, for a terminal emulator. A signed
+forge webhook wakes the same way, and a fallback timer is the one thing that still polls.
 </td>
 </tr>
 <tr>
@@ -110,6 +111,11 @@ what the old session knew, and the seat follows. When a model exhausts its quota
 automatically.
 </td>
 <td width="50%" valign="top">
+<h4>🔀 GitHub and GitLab, hands off</h4>
+Enable a registered repository's forge and Ariadne reads <code>gh</code> or <code>glab</code> for
+you: the author of a task keeps the request it opened with <code>pr-babysit</code>, answering every
+comment and clearing every check until you merge it, a <code>pr-reviewer</code> session posts findings
+by priority on the ones you are asked to review, and none ever approves or merges in your name.
 </td>
 </tr>
 </table>
@@ -201,6 +207,7 @@ ui/              Ariadne Desktop (Tauri 2 + React): a REST/SSE client of the dae
 | [Permission modes](docs/permissions.md) | automatic, prompted, and remembered ACP permission answers |
 | [Resuming a session](docs/resuming-sessions.md) | listing every session and continuing one, live, ended, or started outside Ariadne |
 | [How Ariadne works](docs/how-it-works.md) | planning, authoring, review, landing, and ACP sessions |
+| [The forge integration](docs/forge.md) | enabling GitHub or GitLab, the pull request and review sessions, webhooks and the tunnel, issues |
 | [Ariadne Desktop](ui/README.md) | running the desktop app |
 
 ## Development

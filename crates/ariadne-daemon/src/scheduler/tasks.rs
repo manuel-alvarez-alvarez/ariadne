@@ -436,6 +436,12 @@ impl super::Scheduler {
                     .await?;
             }
             TaskStatus::Approved => {
+                // The author's own turns are this task's events, not its
+                // request's: a merge it has just read is the request's to
+                // act on, which ends the task (005).
+                if task.pr_url.is_some() && Box::pin(self.merge_ended(&task)).await? {
+                    return Ok(());
+                }
                 // Landing the change is the author's last turn, and the
                 // session that wrote it is still there to take it: nothing
                 // took the worktree away. What it has not had is the briefing
@@ -1162,6 +1168,15 @@ impl super::Scheduler {
         // author is up and has said something, rather than at the launch that
         // started it: a launch that worked is not yet an agent that runs.
         self.spent_on_a_dead_launch(&task.id, &task.id, agent);
+        // An author that keeps an open request waits on the forge between
+        // its news (005): idle there is not quiet, and it is never nudged
+        // for it (009 rule 41). Only a turn that never ends is watched.
+        if task.status() == TaskStatus::Approved
+            && task.pr_url.is_some()
+            && agent.status() == ariadne_core::SessionStatus::Idle
+        {
+            return Ok(());
+        }
         // The same words it would be started again with: an agent that has
         // gone quiet with the work still in front of it and one whose session
         // ended are in the same situation, and there is one text for it.
@@ -1210,9 +1225,8 @@ impl super::Scheduler {
     /// Two ways to know it is owed, and either is enough. `carried` is what
     /// the row that went down was flagged with, for the caller that has that
     /// row. The task is the other, and the one that answers where the flag
-    /// was already lost — swept aside by a `disconnected` before the resume,
-    /// or left on a superseded row: an approved task whose request last read
-    /// ready to merge has handed the merge to a human, and no restart of its
+    /// was already lost: an approved task whose open request last read ready
+    /// to merge has handed the merge to a human (005), and no restart of its
     /// author merges it for them.
     pub(super) async fn keep_waiting_user(
         &self,
@@ -1223,9 +1237,22 @@ impl super::Scheduler {
         if !owed
             && back.seat() == Some(Seat::Author)
             && let Some(task_id) = back.task_id.as_deref()
+            && self.store.get_task(task_id).await?.status() == TaskStatus::Approved
         {
-            let task = self.store.get_task(task_id).await?;
-            owed = task.status() == TaskStatus::Approved && task.pr_ready();
+            owed = self
+                .store
+                .pull_request_of_task(task_id)
+                .await?
+                // A row is a request Ariadne still works on: open, or ended
+                // with its work not taken down yet; the forge says which.
+                .is_some_and(|pull| {
+                    pull.ready
+                        && self
+                            .launcher
+                            .live
+                            .get(&pull.id)
+                            .is_none_or(|live| live.pull.state == "open")
+                });
         }
         if owed {
             info!(session = %back.id, seat = ?back.seat, "the agent is back on its feet and the user is still owed, raising it again");

@@ -102,10 +102,22 @@ impl Store {
             // The orchestrator's skill is nobody's to staff: its seat is a
             // fact of the name, so the refusal reads it the same way the
             // launcher does, and no schema has to know it.
-            if SkillSeat::of(name) == SkillSeat::Orchestrator {
-                return Err(StoreError::Conflict(format!(
-                    "skill {name} is the orchestrator's; a task agent cannot load it"
-                )));
+            match SkillSeat::of(name) {
+                SkillSeat::Orchestrator => {
+                    return Err(StoreError::Conflict(format!(
+                        "skill {name} is the orchestrator's; a task agent cannot load it"
+                    )));
+                }
+                // The daemon loads these itself, never an orchestrator (017):
+                // `pr-babysit` onto the author of a task that lands by
+                // request, `pr-reviewer` onto a review session.
+                SkillSeat::PullRequest => {
+                    return Err(StoreError::Conflict(format!(
+                        "skill {name} is loaded by Ariadne itself, where a request is kept or \
+                         reviewed; staff it on no task agent"
+                    )));
+                }
+                SkillSeat::Task => {}
             }
             sqlx::query(
                 "INSERT INTO task_agent_skills (agent_id, skill_name, ordinal) VALUES (?, ?, ?)",

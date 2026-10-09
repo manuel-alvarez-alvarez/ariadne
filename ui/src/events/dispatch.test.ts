@@ -268,6 +268,49 @@ describe("session events", () => {
   })
 })
 
+describe("pull request session events", () => {
+  /** A client holding a pull request list and its detail, as its screen and panel do. */
+  function withPullRequest(): QueryClient {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    queryClient.setQueryData(qk.pullRequests.list(), [])
+    queryClient.setQueryData(qk.pullRequests.detail("pull-42"), {})
+    return queryClient
+  }
+
+  it("refetches the request a session watches when that session starts or moves, for its session_id", () => {
+    for (const event of ["session_created", "session_updated"] as const) {
+      const queryClient = withPullRequest()
+
+      dispatch(queryClient, { event, data: aSession({ pull_request_id: "pull-42" }) })
+
+      expect(stale(queryClient, qk.pullRequests.list())).toBe(true)
+      expect(stale(queryClient, qk.pullRequests.detail("pull-42"))).toBe(true)
+    }
+  })
+
+  it("reads every request again on pull_requests_changed, which carries none", () => {
+    const queryClient = withPullRequest()
+    queryClient.setQueryData(qk.pullRequests.detail("repo:42"), {})
+
+    dispatch(queryClient, { event: "pull_requests_changed", data: { repository_id: "repo" } })
+
+    expect(stale(queryClient, qk.pullRequests.list())).toBe(true)
+    expect(stale(queryClient, qk.pullRequests.detail("pull-42"))).toBe(true)
+    expect(stale(queryClient, qk.pullRequests.detail("repo:42"))).toBe(true)
+  })
+
+  it("leaves the pull requests alone for a session that watches none", () => {
+    for (const event of ["session_created", "session_updated"] as const) {
+      const queryClient = withPullRequest()
+
+      dispatch(queryClient, { event, data: aSession() })
+
+      expect(stale(queryClient, qk.pullRequests.list())).toBe(false)
+      expect(stale(queryClient, qk.pullRequests.detail("pull-42"))).toBe(false)
+    }
+  })
+})
+
 describe("ai permissions events", () => {
   it("replaces the cached status whole, so a card that read installing reads ready", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -281,6 +324,45 @@ describe("ai permissions events", () => {
     expect(queryClient.getQueryData(qk.permissions.ai())).toEqual(
       anAiPermissionsStatus({ state: "ready", installed_release: "v0.1.4" }),
     )
+  })
+})
+
+describe("forge settings events", () => {
+  it("replaces the cached tunnel whole, so a screen that read up reads off", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const up = {
+      enabled: true,
+      state: "up" as const,
+      url: "https://amber-104233.loca.lt",
+      listen: "127.0.0.1:49152",
+      since: "2026-10-08T10:00:00.000Z",
+      error: null,
+    }
+    queryClient.setQueryData(qk.forge.tunnel(), up)
+    const off = { ...up, enabled: false, state: "off" as const, url: null }
+
+    dispatch(queryClient, { event: "forge_settings_updated", data: off })
+
+    expect(queryClient.getQueryData(qk.forge.tunnel())).toEqual(off)
+  })
+})
+
+describe("issue events", () => {
+  it("refetches both assignment filters of the repository whose issues moved, and no other", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    for (const key of [
+      qk.issues.list("repo-1", "me"),
+      qk.issues.list("repo-1", "all"),
+      qk.issues.list("repo-2", "me"),
+    ]) {
+      queryClient.setQueryData(key, [])
+    }
+
+    dispatch(queryClient, { event: "issues_changed", data: { repository_id: "repo-1" } })
+
+    expect(stale(queryClient, qk.issues.list("repo-1", "me"))).toBe(true)
+    expect(stale(queryClient, qk.issues.list("repo-1", "all"))).toBe(true)
+    expect(stale(queryClient, qk.issues.list("repo-2", "me"))).toBe(false)
   })
 })
 

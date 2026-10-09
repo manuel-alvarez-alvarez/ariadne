@@ -337,6 +337,7 @@ async fn a_loose_session_round_trips_without_a_goal_task_or_seat() {
             model: "stub:test-model".into(),
             effort: None,
             worktree_path: Some("/work/outside".into()),
+            pull_request_id: None,
         })
         .await
         .unwrap();
@@ -456,6 +457,7 @@ async fn the_schema_names_agents_by_registry_id_alone() {
             "launch_id",
             "title",
             "switched_from",
+            "pull_request_id",
         ]
     );
     let config: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info(?)")
@@ -499,6 +501,7 @@ async fn seed_goal(store: &Store) -> (Goal, Repository) {
     let repo = seed_repository(store).await;
     let goal = store
         .create_goal(NewGoal {
+            issue_url: None,
             landing: None,
             title: "Test goal".into(),
             description: "desc".into(),
@@ -552,6 +555,7 @@ impl World {
                 model: "stub:test-model".into(),
                 effort: None,
                 worktree_path: Some("/tmp/wt".into()),
+                pull_request_id: None,
             })
             .await
             .unwrap()
@@ -821,6 +825,7 @@ async fn a_task_lands_by_the_ending_its_goal_carries() {
     let (store, _dir) = test_store().await;
     let repo = seed_repository(&store).await;
     let goal_ending_in = |landing: Option<Landing>| NewGoal {
+        issue_url: None,
         landing,
         title: "Ship it".into(),
         description: String::new(),
@@ -885,6 +890,7 @@ async fn a_goal_reads_its_repositories_live() {
 
     let goal = store
         .create_goal(NewGoal {
+            issue_url: None,
             landing: None,
             title: "Two repos".into(),
             description: "desc".into(),
@@ -926,6 +932,7 @@ async fn a_goal_needs_repositories_that_exist() {
     let (store, _dir) = test_store().await;
     let repo = seed_repository(&store).await;
     let new_goal = |repository_ids: Vec<String>| NewGoal {
+        issue_url: None,
         landing: None,
         title: "Goal".into(),
         description: "desc".into(),
@@ -1627,56 +1634,6 @@ async fn a_task_remembers_the_request_it_was_published_as() {
     // And a task that was never published is left exactly as it was.
     store.clear_task_pull_request(&task.id).await.unwrap();
     assert_eq!(store.get_task(&task.id).await.unwrap().pr_url, None);
-}
-
-/// Whether a published request last read ready to merge: false until a
-/// report says otherwise, true only on the change into it, and false again
-/// once a later report takes it back — so a caller knows from the answer
-/// alone whether to raise or clear the notice, rather than reading the row
-/// twice.
-#[tokio::test]
-async fn a_tasks_readiness_report_says_whether_it_changed() {
-    let w = World::new().await;
-    let (store, task) = (&w.store, &w.task);
-    assert!(!store.get_task(&task.id).await.unwrap().pr_ready());
-
-    // The first ready report is a change.
-    assert!(
-        store
-            .set_task_pull_request_ready(&task.id, true)
-            .await
-            .unwrap()
-    );
-    assert!(store.get_task(&task.id).await.unwrap().pr_ready());
-
-    // A repeat of the same answer changes nothing.
-    assert!(
-        !store
-            .set_task_pull_request_ready(&task.id, true)
-            .await
-            .unwrap()
-    );
-    assert!(store.get_task(&task.id).await.unwrap().pr_ready());
-
-    // A later report that it stopped being ready is a change too.
-    assert!(
-        store
-            .set_task_pull_request_ready(&task.id, false)
-            .await
-            .unwrap()
-    );
-    assert!(!store.get_task(&task.id).await.unwrap().pr_ready());
-
-    // Clearing the request forgets its readiness with it: a retried task
-    // does not start its new request out as already ready.
-    let url = "https://github.com/ariadne/ariadne/pull/14";
-    store.set_task_pull_request(&task.id, url).await.unwrap();
-    store
-        .set_task_pull_request_ready(&task.id, true)
-        .await
-        .unwrap();
-    store.clear_task_pull_request(&task.id).await.unwrap();
-    assert!(!store.get_task(&task.id).await.unwrap().pr_ready());
 }
 
 #[tokio::test]
@@ -2983,6 +2940,70 @@ async fn a_dropped_shipped_skill_leaves_an_existing_database_on_reopen() {
     );
 }
 
+/// `pull-request` left the catalog once opening a request became the
+/// daemon's own tool rather than an agent's skill. An old staffing on it is
+/// the kept-row case any dropped skill proves: the row stays a built-in,
+/// because the task that staffed it still names it, and it reads as an empty
+/// skill since nothing ships under its name any more.
+#[tokio::test]
+async fn an_old_staffing_on_pull_request_keeps_its_row_and_reads_as_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+
+    let store = Store::open(&path).await.unwrap();
+    let (goal, repo) = seed_goal(&store).await;
+    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    drop(store);
+
+    // The era that shipped `pull-request`, reproduced: a row this release no
+    // longer ships, staffed on the task's author.
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO skills (name, document, builtin, created_at, updated_at)
+         VALUES ('pull-request', NULL, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO task_agent_skills (agent_id, skill_name, ordinal)
+         SELECT id, 'pull-request', 1 FROM task_agents
+          WHERE task_id = ? AND seat = 'author'",
+    )
+    .bind(&task.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+
+    let store = Store::open(&path).await.unwrap();
+    let loaded = store.get_skill("pull-request").await.unwrap();
+    assert!(
+        loaded.is_builtin(),
+        "an old staffing on pull-request keeps its row"
+    );
+    assert_eq!(
+        loaded.document_text(),
+        "",
+        "the dropped skill reads as empty"
+    );
+
+    let author = store.task_author(&task.id).await.unwrap();
+    let names: Vec<String> = store
+        .agent_skills(&author.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|s| s.name)
+        .collect();
+    assert!(
+        names.contains(&"pull-request".to_string()),
+        "the task still names it: {names:?}"
+    );
+}
+
 /// A skill that merged into another takes its staffings with it: the rows
 /// that named it name the skill that does its work now, so a task staffed
 /// before the merge still reads as the work it did. An agent staffed on both
@@ -3221,9 +3242,9 @@ async fn a_database_from_before_the_squash_says_which_file_to_delete() {
 }
 
 /// A database that only ever ran the squashed `0001_init.sql` — every
-/// database written before `pr_ready` was added — opens on this release the
-/// ordinary way: a new migration adds the column rather than editing the
-/// squashed one, so its checksum, and every database already recorded
+/// database written before a later migration touched `tasks` — opens on this
+/// release the ordinary way: a later migration edits the column rather than
+/// the squashed one, so its checksum, and every database already recorded
 /// against it, stay as they were.
 ///
 /// The old chain is run with sqlx's own migrator over a directory holding
@@ -3255,23 +3276,55 @@ async fn a_database_that_only_ran_the_squashed_migration_upgrades_in_place() {
     pool.close().await;
 
     // This release's own migrations run over it: the squashed one is
-    // unchanged and already recorded, so only the new one applies.
+    // unchanged and already recorded, so only the later ones apply.
     let store = Store::open(&path)
         .await
-        .expect("a pre-pr_ready database failed to upgrade in place");
+        .expect("a pre-squash database failed to upgrade in place");
 
-    // The new column is there, usable, and starts every existing task out
-    // unready rather than refusing the read.
     let (goal, repo) = seed_goal(&store).await;
     let task = seed_task(&store, &goal, &repo, vec![]).await;
-    assert!(!store.get_task(&task.id).await.unwrap().pr_ready());
-    assert!(
-        store
-            .set_task_pull_request_ready(&task.id, true)
-            .await
-            .unwrap()
-    );
-    assert!(store.get_task(&task.id).await.unwrap().pr_ready());
+    assert_eq!(store.get_task(&task.id).await.unwrap().pr_url, None);
+}
+
+/// A copy of the previous schema keeps an existing goal when the nullable
+/// issue URL column is added. The old migration files remain unchanged.
+#[tokio::test]
+async fn the_issue_url_migration_keeps_existing_goals() {
+    let dir = tempfile::tempdir().unwrap();
+    let old_migrations = dir.path().join("old_migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    for name in [
+        "0001_init.sql",
+        "0002_task_pr_ready.sql",
+        "0003_ai_permission_thresholds_hand_set.sql",
+        "0004_forge_integrations.sql",
+    ] {
+        let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("migrations")
+            .join(name);
+        std::fs::copy(source, old_migrations.join(name)).unwrap();
+    }
+    let path = dir.path().join("old.db");
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}?mode=rwc", path.display()))
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations)
+        .await
+        .unwrap()
+        .run(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO goals (id, title, description, created_at, updated_at, model) VALUES ('old-goal', 'Fix widgets', 'Old body', '2026-01-01', '2026-01-01', 'stub:model')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    let store = Store::open(&path).await.unwrap();
+    let goal = store.get_goal("old-goal").await.unwrap();
+    assert_eq!(goal.title, "Fix widgets");
+    assert_eq!(goal.description, "Old body");
+    assert_eq!(goal.issue_url, None);
 }
 
 /// A database from before `thresholds_hand_set` (it ran `0001` and `0002`)
@@ -3729,6 +3782,38 @@ async fn a_task_agent_cannot_be_staffed_on_the_orchestrators_skill() {
         matches!(refused, Err(StoreError::Conflict(_))),
         "{refused:?}"
     );
+}
+
+/// The daemon loads `pr-babysit` itself, onto the author of a task that
+/// lands by request, never an orchestrator (005, 017): no staffing names it,
+/// at creation or by a later edit.
+#[tokio::test]
+async fn a_task_agent_cannot_be_staffed_on_the_pull_request_skill() {
+    let (store, _dir) = test_store().await;
+    let (goal, repo) = seed_goal(&store).await;
+    let refused = store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id.clone(),
+            title: "Watch it".into(),
+            description: "do things".into(),
+            agents: vec![
+                NewTaskAgent::new(Seat::Author, ["pr-babysit"], default_pin()),
+                NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin()),
+            ],
+            depends_on: vec![],
+        })
+        .await;
+    let message = format!("{:?}", refused.expect_err("the pull request skill"));
+    assert!(message.contains("loaded by Ariadne itself"), "{message}");
+    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    let author = store.task_author(&task.id).await.unwrap();
+    assert!(matches!(
+        store
+            .set_agent_skills(&author.id, &["pr-babysit".to_string()])
+            .await,
+        Err(StoreError::Conflict(_))
+    ));
 }
 
 /// The staffing a several-author task is held to: one author or more, each on
@@ -4744,4 +4829,893 @@ async fn remaining_stats_reads_ignore_legacy_tool_call_facts() {
     store.spend_stats(&filter).await.unwrap();
     store.model_stats(&filter).await.unwrap();
     store.attention_stats(&filter).await.unwrap();
+}
+
+/// A forge row as a detection writes it: `acme/widgets` on github.com, not
+/// enabled.
+fn widgets(repository_id: &str) -> SetForgeIntegration {
+    SetForgeIntegration {
+        repository_id: repository_id.into(),
+        kind: ariadne_core::ForgeKind::Github,
+        host: "GitHub.com".into(),
+        owner: "Acme".into(),
+        name: "Widgets".into(),
+        remote: "origin".into(),
+        enabled: false,
+        login: None,
+        review_model: None,
+        review_effort: None,
+    }
+}
+
+/// How the last fetch went is written only on a change (026): a failure and
+/// its error, then the fetch that works again. A fetch that works on and on
+/// writes nothing, so a timer fetch every 5 minutes publishes nothing. A
+/// disabled integration fetches nothing, and records nothing.
+#[tokio::test]
+async fn the_last_fetch_error_is_written_only_when_it_changes() {
+    let (store, _dir) = test_store().await;
+    let repo = seed_repository(&store).await;
+    store
+        .set_forge_integration(widgets(&repo.id))
+        .await
+        .unwrap();
+    assert!(
+        !store
+            .set_forge_fetch_error(&repo.id, Some("gh: HTTP 502"))
+            .await
+            .unwrap()
+    );
+    store
+        .set_forge_integration(SetForgeIntegration {
+            enabled: true,
+            login: Some("me".into()),
+            ..widgets(&repo.id)
+        })
+        .await
+        .unwrap();
+    assert!(
+        store
+            .set_forge_fetch_error(&repo.id, Some("gh: HTTP 502"))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !store
+            .set_forge_fetch_error(&repo.id, Some("gh: HTTP 502"))
+            .await
+            .unwrap()
+    );
+    let read = store.forge_integration(&repo.id).await.unwrap().unwrap();
+    assert_eq!(read.fetch_error.as_deref(), Some("gh: HTTP 502"));
+    assert!(store.set_forge_fetch_error(&repo.id, None).await.unwrap());
+    assert!(!store.set_forge_fetch_error(&repo.id, None).await.unwrap());
+    let read = store.forge_integration(&repo.id).await.unwrap().unwrap();
+    assert_eq!(read.fetch_error, None);
+}
+
+/// The forge row is read with its repository, lower-cased, in every list a
+/// repository is read through, and goes with the repository.
+#[tokio::test]
+async fn a_forge_integration_is_read_with_its_repository_and_goes_with_it() {
+    let (store, _dir) = test_store().await;
+    let repo = seed_repository(&store).await;
+    assert!(store.forge_integration(&repo.id).await.unwrap().is_none());
+
+    let written = store
+        .set_forge_integration(widgets(&repo.id))
+        .await
+        .unwrap();
+    let forge = written.forge.expect("the write answers the row");
+    assert_eq!(forge.kind(), ariadne_core::ForgeKind::Github);
+    assert_eq!(
+        (
+            forge.host.as_str(),
+            forge.owner.as_str(),
+            forge.name.as_str()
+        ),
+        ("github.com", "acme", "widgets")
+    );
+    assert_eq!(
+        store.get_repository(&repo.id).await.unwrap().forge,
+        Some(forge.clone())
+    );
+    assert_eq!(
+        store.list_repositories().await.unwrap()[0].forge,
+        Some(forge)
+    );
+    assert!(store.enabled_forge_integrations().await.unwrap().is_empty());
+
+    store.delete_repository(&repo.id).await.unwrap();
+    assert!(store.forge_integration(&repo.id).await.unwrap().is_none());
+}
+
+/// One forge repository is enabled on one repository row at a time; the
+/// refusal names the row that holds it.
+#[tokio::test]
+async fn one_forge_repository_is_enabled_on_one_row() {
+    let (store, _dir) = test_store().await;
+    let (first, second) = (seed_repository(&store).await, seed_repository(&store).await);
+    let enabled = |id: &str| SetForgeIntegration {
+        enabled: true,
+        login: Some("octocat".into()),
+        ..widgets(id)
+    };
+    store
+        .set_forge_integration(enabled(&first.id))
+        .await
+        .unwrap();
+    store
+        .set_forge_integration(widgets(&second.id))
+        .await
+        .unwrap();
+
+    let refused = store
+        .set_forge_integration(enabled(&second.id))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&refused, StoreError::Conflict(m) if m.contains(&first.id)),
+        "{refused}"
+    );
+    assert!(
+        store
+            .forge_enabled_elsewhere(&second.id, "github.com", "acme", "widgets")
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .forge_enabled_elsewhere(&first.id, "github.com", "acme", "widgets")
+            .await
+            .is_ok()
+    );
+
+    store
+        .set_forge_integration(widgets(&first.id))
+        .await
+        .unwrap();
+    store
+        .set_forge_integration(enabled(&second.id))
+        .await
+        .unwrap();
+    let rows = store.enabled_forge_integrations().await.unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].repository_id, second.id);
+}
+
+/// A row is Ariadne's bookkeeping of a request it works on (026): one per
+/// repository and number, the first task that opened it staying its origin.
+/// Starting and stopping the work says so per repository, and the sessions
+/// that ran on a row outlive it, let go of it.
+#[tokio::test]
+async fn a_pull_request_row_keeps_its_identity_and_origin_and_its_sessions_outlive_it() {
+    let (store, _dir, first) = store_with_my_pull_request().await;
+    assert_eq!(first.role, "author");
+    assert_eq!(first.origin_task_id, None);
+    let mut changes = store.watch_changes().unwrap();
+    let (second, created) = store
+        .upsert_pull_request(NewPullRequest {
+            repository_id: first.repository_id.clone(),
+            number: 7,
+            url: first.url.clone(),
+            role: "author".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    assert!(!created);
+    assert_eq!(second.id, first.id);
+    assert!(matches!(
+        store
+            .upsert_pull_request(NewPullRequest {
+                repository_id: first.repository_id.clone(),
+                number: 8,
+                url: "https://github.com/acme/widgets/pull/8".into(),
+                role: "maintainer".into(),
+                origin_task_id: None,
+            })
+            .await,
+        Err(StoreError::Invalid(_))
+    ));
+    assert_eq!(
+        store
+            .pull_request_by_number(&first.repository_id, 7)
+            .await
+            .unwrap()
+            .map(|row| row.id),
+        Some(first.id.clone())
+    );
+    let session = store
+        .create_session(NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: Some(ariadne_core::Seat::Reviewer),
+            task_agent_id: None,
+            model: "stub:m".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: Some(first.id.clone()),
+        })
+        .await
+        .unwrap();
+    while let Ok(change) = changes.try_recv() {
+        drop(change);
+    }
+    let gone = store.delete_pull_request(&first.id).await.unwrap();
+    assert_eq!(gone.map(|row| row.id), Some(first.id.clone()));
+    loop {
+        match changes.recv().await.unwrap() {
+            Change::PullRequestsChanged(repository) => {
+                assert_eq!(repository, first.repository_id);
+                break;
+            }
+            _ => continue,
+        }
+    }
+    let kept = store.get_session(&session.id).await.unwrap();
+    assert_eq!(
+        kept.pull_request_id, None,
+        "the session is let go of the row"
+    );
+    assert!(
+        store
+            .delete_pull_request(&first.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .list_pull_requests(PullRequestFilter::default())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn pull_request_migration_preserves_existing_rows_and_a_recoverable_backup() {
+    let dir = tempfile::tempdir().unwrap();
+    let old_migrations = dir.path().join("migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations")).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_name().to_string_lossy().as_ref() < "0007" {
+            std::fs::copy(entry.path(), old_migrations.join(entry.file_name())).unwrap();
+        }
+    }
+    let path = dir.path().join("old.db");
+    let db = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations.as_path())
+        .await
+        .unwrap()
+        .run(&db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO repositories (id,path,base_branch,created_at,updated_at) VALUES ('old-repo','/work/widgets','main','2026-10-01','2026-10-01')").execute(&db).await.unwrap();
+    let backup = dir.path().join("backup.db");
+    sqlx::query("VACUUM INTO ?")
+        .bind(backup.to_str().unwrap())
+        .execute(&db)
+        .await
+        .unwrap();
+    db.close().await;
+    let upgraded = Store::open(&path).await.unwrap();
+    let row = upgraded.get_repository("old-repo").await.unwrap();
+    assert_eq!(row.path, "/work/widgets");
+    assert_eq!(row.base_branch, "main");
+    assert!(
+        upgraded
+            .list_pull_requests(PullRequestFilter::default())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    upgraded.close().await;
+    let recovered = Store::open(&backup).await.unwrap();
+    assert_eq!(
+        recovered
+            .get_repository("old-repo")
+            .await
+            .unwrap()
+            .created_at,
+        "2026-10-01"
+    );
+    assert_eq!(recovered.list_repositories().await.unwrap().len(), 1);
+}
+
+/// A store with one enabled GitHub repository, signed in as `me`, and one
+/// open request of mine on it.
+async fn store_with_my_pull_request() -> (Store, tempfile::TempDir, PullRequestRow) {
+    let (store, dir) = test_store().await;
+    let repo = store
+        .create_repository(NewRepository {
+            path: "/tmp/pull-request-comments".into(),
+            base_branch: "main".into(),
+            description: None,
+            permission_mode: None,
+            default_landing: None,
+        })
+        .await
+        .unwrap();
+    store
+        .set_forge_integration(SetForgeIntegration {
+            repository_id: repo.id.clone(),
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+            review_model: None,
+            review_effort: None,
+        })
+        .await
+        .unwrap();
+    let (row, _) = store
+        .upsert_pull_request(NewPullRequest {
+            repository_id: repo.id.clone(),
+            number: 7,
+            url: "https://github.com/acme/widgets/pull/7".into(),
+            role: "author".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    (store, dir, row)
+}
+
+/// A comment is the forge's; what the store keeps of one is a mark (026):
+/// told, once a claim of the news that names it held, and given back by a
+/// release; posted by a review, once a review session posted it (029). A
+/// claim is a compare and set over the row's told mark and the comments'
+/// marks, so the same news is not claimed twice.
+#[tokio::test]
+async fn comment_marks_are_claimed_once_released_whole_and_keep_the_review_mark() {
+    let (store, _dir, row) = store_with_my_pull_request().await;
+    let told = PullRequestTold {
+        checks: vec!["lint".into()],
+        behind_base: true,
+        review_decision: "approved".into(),
+        state: "open".into(),
+        check_state: "failure".into(),
+        head_sha: String::new(),
+    };
+    let before = PullRequestTold {
+        checks: Vec::new(),
+        behind_base: false,
+        review_decision: "none".into(),
+        state: "open".into(),
+        check_state: "none".into(),
+        head_sha: String::new(),
+    };
+    let comment = ["rc-1".to_string()];
+    assert!(
+        store
+            .claim_pull_request_news(&row.id, &comment, &before, &told)
+            .await
+            .unwrap()
+    );
+    let claimed = store.get_pull_request(&row.id).await.unwrap();
+    assert!(claimed.news_told_at.is_some());
+    assert_eq!(claimed.told_checks, r#"["lint"]"#);
+    assert_eq!(claimed.told_check_state.as_deref(), Some("failure"));
+    let marks = store.pull_request_comment_marks(&row.id).await.unwrap();
+    assert_eq!(marks.len(), 1);
+    assert!(marks[0].told_at.is_some());
+    assert!(
+        !store
+            .claim_pull_request_news(&row.id, &comment, &told, &told)
+            .await
+            .unwrap(),
+        "a told comment is not claimed twice"
+    );
+    // A claim whose prompt never went out is given back whole.
+    store
+        .release_pull_request_news(&row.id, &comment, &before)
+        .await
+        .unwrap();
+    let released = store.get_pull_request(&row.id).await.unwrap();
+    assert_eq!(released.told_checks, "[]");
+    assert!(!released.told_behind_base);
+    assert!(
+        store.pull_request_comment_marks(&row.id).await.unwrap()[0]
+            .told_at
+            .is_none()
+    );
+    // A news computed from a mark that moved since is refused.
+    let stale = PullRequestTold {
+        review_decision: "changes_requested".into(),
+        ..before.clone()
+    };
+    assert!(
+        !store
+            .claim_pull_request_news(&row.id, &[], &stale, &told)
+            .await
+            .unwrap()
+    );
+    store
+        .mark_review_comments(&row.id, &["rc-1".into(), "ic-2".into()])
+        .await
+        .unwrap();
+    let mut marks = store.pull_request_comment_marks(&row.id).await.unwrap();
+    marks.sort_by(|a, b| a.forge_id.cmp(&b.forge_id));
+    assert!(marks.iter().all(|m| m.from_review));
+    assert!(
+        store
+            .claim_pull_request_news(&row.id, &comment, &before, &told)
+            .await
+            .unwrap(),
+        "a review's mark leaves the comment untold"
+    );
+    store.delete_pull_request(&row.id).await.unwrap();
+    assert!(
+        store
+            .pull_request_comment_marks(&row.id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "the marks go with the row"
+    );
+}
+
+/// The ready flag a session reports moves the row, and a repeated ready
+/// report says nothing moved.
+#[tokio::test]
+async fn a_pull_request_reports_ready_once() {
+    let (store, _dir, row) = store_with_my_pull_request().await;
+    let (ready, moved) = store.set_pull_request_ready(&row.id, true).await.unwrap();
+    assert!(ready.ready && moved);
+    let (_, moved) = store.set_pull_request_ready(&row.id, true).await.unwrap();
+    assert!(!moved, "a repeat moves nothing");
+    let (ready, moved) = store.set_pull_request_ready(&row.id, false).await.unwrap();
+    assert!(!ready.ready && moved);
+}
+
+/// A reviewer row keeps the head its session last reviewed, and says once
+/// whether that moved (029).
+#[tokio::test]
+async fn a_reviewed_sha_moves_once() {
+    let (store, _dir, row) = store_with_my_pull_request().await;
+    assert_eq!(row.reviewed_sha, None);
+    let (reviewed, moved) = store
+        .set_pull_request_reviewed(&row.id, "abc")
+        .await
+        .unwrap();
+    assert!(moved);
+    assert_eq!(reviewed.reviewed_sha.as_deref(), Some("abc"));
+    let (_, moved) = store
+        .set_pull_request_reviewed(&row.id, "abc")
+        .await
+        .unwrap();
+    assert!(!moved, "the same sha moves nothing");
+    let (_, moved) = store
+        .set_pull_request_reviewed(&row.id, "def")
+        .await
+        .unwrap();
+    assert!(moved, "a later sha moves it again");
+}
+
+/// A task's author keeps the request it opened (005), so the migration that
+/// says so takes away what an older release gave a request of the user's
+/// own: the session of its own, the row of a request no task opened, and the
+/// pin that session ran on. A request a task opened, a request the user
+/// reviews and its session, and every other forge setting stay.
+#[tokio::test]
+async fn the_migration_that_gives_requests_to_their_authors_keeps_task_and_review_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let old_migrations = dir.path().join("migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations")).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_name().to_string_lossy().as_ref() < "0012" {
+            std::fs::copy(entry.path(), old_migrations.join(entry.file_name())).unwrap();
+        }
+    }
+    let path = dir.path().join("old.db");
+    let db = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations.as_path())
+        .await
+        .unwrap()
+        .run(&db)
+        .await
+        .unwrap();
+    for statement in [
+        "INSERT INTO repositories (id,path,base_branch,created_at,updated_at) VALUES ('r','/work/widgets','main','2026-10-01','2026-10-01')",
+        "INSERT INTO forge_integrations (repository_id,kind,host,owner,name,remote,enabled,login,babysit_model,review_model,detected_at,updated_at) VALUES ('r','github','github.com','acme','widgets','origin',1,'me','stub:m','stub:r','2026-10-01','2026-10-01')",
+        "INSERT INTO goals (id,title,description,created_at,updated_at,model) VALUES ('g','Ship','Body','2026-10-01','2026-10-01','stub:m')",
+        "INSERT INTO tasks (id,goal_id,repo_id,title,description,branch,created_at,updated_at) VALUES ('t','g','r','Fix','Body','ariadne/fix','2026-10-01','2026-10-01')",
+        "INSERT INTO pull_requests (id,repository_id,number,url,title,author_login,tracked_by,state,draft,head_branch,head_sha,base_branch,checks,review_decision,unanswered_comments,origin_task_id,opened_at,role,ready,last_seen_at,created_at,updated_at) VALUES ('mine','r',1,'https://github.com/acme/widgets/pull/1','Fix','me','forge','open',0,'fix-1','abc','main','none','none',0,NULL,'2026-10-01','author',0,'2026-10-01','2026-10-01','2026-10-01')",
+        "INSERT INTO pull_requests (id,repository_id,number,url,title,author_login,tracked_by,state,draft,head_branch,head_sha,base_branch,checks,review_decision,unanswered_comments,origin_task_id,opened_at,role,ready,last_seen_at,created_at,updated_at) VALUES ('tasks','r',2,'https://github.com/acme/widgets/pull/2','Fix','me','forge','open',0,'fix-2','abc','main','none','none',0,'t','2026-10-01','author',0,'2026-10-01','2026-10-01','2026-10-01')",
+        "INSERT INTO pull_requests (id,repository_id,number,url,title,author_login,tracked_by,state,draft,head_branch,head_sha,base_branch,checks,review_decision,unanswered_comments,origin_task_id,opened_at,role,ready,last_seen_at,created_at,updated_at) VALUES ('review','r',3,'https://github.com/acme/widgets/pull/3','Fix','someone','forge','open',0,'fix-3','abc','main','none','none',0,NULL,'2026-10-01','reviewer',0,'2026-10-01','2026-10-01','2026-10-01')",
+        "INSERT INTO agent_sessions (id,model,status,created_at,seat,pull_request_id) VALUES ('babysit','stub:m','idle','2026-10-01','author','tasks')",
+        "INSERT INTO agent_sessions (id,model,status,created_at,seat,pull_request_id) VALUES ('reviewing','stub:r','idle','2026-10-01','reviewer','review')",
+    ] {
+        sqlx::query(statement).execute(&db).await.unwrap();
+    }
+    db.close().await;
+
+    let upgraded = Store::open(&path).await.unwrap();
+    assert!(matches!(
+        upgraded.get_pull_request("mine").await,
+        Err(StoreError::NotFound { .. })
+    ));
+    let kept = upgraded.get_pull_request("tasks").await.unwrap();
+    assert_eq!(kept.origin_task_id.as_deref(), Some("t"));
+    assert_eq!(
+        upgraded
+            .pull_request_of_task("t")
+            .await
+            .unwrap()
+            .map(|p| p.id),
+        Some("tasks".to_string())
+    );
+    assert_eq!(
+        upgraded.get_pull_request("review").await.unwrap().role,
+        "reviewer"
+    );
+    assert!(matches!(
+        upgraded.get_session("babysit").await,
+        Err(StoreError::NotFound { .. })
+    ));
+    assert_eq!(
+        upgraded
+            .get_session("reviewing")
+            .await
+            .unwrap()
+            .pull_request_id
+            .as_deref(),
+        Some("review")
+    );
+    let forge = upgraded.forge_integration("r").await.unwrap().unwrap();
+    assert!(forge.enabled);
+    assert_eq!(forge.review_model.as_deref(), Some("stub:r"));
+    upgraded.close().await;
+}
+
+/// The pull request session migration adds beside what is there: an old
+/// session keeps every value and reads no request, an old request reads no
+/// failed check and a head level with its base, and the copy taken before
+/// the upgrade opens with every row.
+#[tokio::test]
+async fn pull_request_session_migration_preserves_sessions_and_requests() {
+    let dir = tempfile::tempdir().unwrap();
+    let old_migrations = dir.path().join("migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations")).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_name().to_string_lossy().as_ref() < "0010" {
+            std::fs::copy(entry.path(), old_migrations.join(entry.file_name())).unwrap();
+        }
+    }
+    let path = dir.path().join("old.db");
+    let db = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations.as_path())
+        .await
+        .unwrap()
+        .run(&db)
+        .await
+        .unwrap();
+    for statement in [
+        "INSERT INTO repositories (id,path,base_branch,created_at,updated_at) VALUES ('r','/work/widgets','main','2026-10-01','2026-10-01')",
+        "INSERT INTO agent_sessions (id,model,status,created_at,worktree_path) VALUES ('s','stub:m','exited','2026-10-01','/work/wt')",
+        "INSERT INTO pull_requests (id,repository_id,number,url,title,author_login,tracked_by,state,draft,head_branch,head_sha,base_branch,checks,review_decision,unanswered_comments,opened_at,role,ready,last_seen_at,created_at,updated_at) VALUES ('p','r',1,'https://github.com/acme/widgets/pull/1','Fix','someone','forge','open',0,'fix','abc','main','none','none',2,'2026-10-01','reviewer',0,'2026-10-01','2026-10-01','2026-10-01')",
+        "INSERT INTO pull_requests (id,repository_id,number,url,title,author_login,tracked_by,state,draft,head_branch,head_sha,base_branch,checks,review_decision,unanswered_comments,opened_at,role,ready,last_seen_at,created_at,updated_at) VALUES ('q','r',2,'https://github.com/acme/widgets/pull/2','Old','someone','forge','merged',0,'old','abd','main','none','none',0,'2026-09-01','reviewer',0,'2026-09-01','2026-09-01','2026-09-02')",
+    ] {
+        sqlx::query(statement).execute(&db).await.unwrap();
+    }
+    let backup = dir.path().join("backup.db");
+    sqlx::query("VACUUM INTO ?")
+        .bind(backup.to_str().unwrap())
+        .execute(&db)
+        .await
+        .unwrap();
+    db.close().await;
+
+    let upgraded = Store::open(&path).await.unwrap();
+    let session = upgraded.get_session("s").await.unwrap();
+    assert_eq!(session.worktree_path.as_deref(), Some("/work/wt"));
+    assert_eq!(session.pull_request_id, None);
+    // Nothing works on either request — no integration reads them, and one
+    // ended long ago — so neither keeps a row (0020).
+    assert!(
+        upgraded
+            .list_pull_requests(PullRequestFilter::default())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    upgraded.close().await;
+
+    let recovered = Store::open(&backup).await.unwrap();
+    assert_eq!(
+        recovered
+            .get_session("s")
+            .await
+            .unwrap()
+            .worktree_path
+            .as_deref(),
+        Some("/work/wt")
+    );
+}
+
+/// The migration that takes the forge's content out of the database (0020)
+/// keeps the row of each request Ariadne works on, with its marks: the
+/// request a task opened, an open one that asks for the user's review on a
+/// repository with a review pin, and one of the user's they asked Ariadne
+/// to review. Every other row goes, and so does an ended one whose work was
+/// taken down. A comment keeps its told and review marks alone, and a
+/// session that ran on a row that goes stays, let go of it.
+#[tokio::test]
+async fn the_migration_that_drops_forge_content_keeps_the_rows_of_work_and_their_marks() {
+    let dir = tempfile::tempdir().unwrap();
+    let old_migrations = dir.path().join("migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations")).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_name().to_string_lossy().as_ref() < "0020" {
+            std::fs::copy(entry.path(), old_migrations.join(entry.file_name())).unwrap();
+        }
+    }
+    let path = dir.path().join("old.db");
+    let db = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations.as_path())
+        .await
+        .unwrap()
+        .run(&db)
+        .await
+        .unwrap();
+    let pull = |id: &str,
+                number: i64,
+                author: &str,
+                role: &str,
+                state: &str,
+                task: &str,
+                asked: i64,
+                requested: i64,
+                cleaned: &str| {
+        format!(
+            "INSERT INTO pull_requests (id,repository_id,number,url,title,author_login,tracked_by,state,draft,head_branch,head_sha,base_branch,checks,review_decision,unanswered_comments,origin_task_id,opened_at,role,ready,last_seen_at,created_at,updated_at,review_asked,review_requested,cleaned_at) VALUES ('{id}','r',{number},'https://github.com/acme/widgets/pull/{number}','Fix','{author}','forge','{state}',0,'fix-{number}','abc','main','none','none',0,{task},'2026-10-01','{role}',0,'2026-10-01','2026-10-01','2026-10-01',{asked},{requested},{cleaned})"
+        )
+    };
+    for statement in [
+        "INSERT INTO repositories (id,path,base_branch,created_at,updated_at) VALUES ('r','/work/widgets','main','2026-10-01','2026-10-01')".to_string(),
+        "INSERT INTO forge_integrations (repository_id,kind,host,owner,name,remote,enabled,login,review_model,detected_at,updated_at) VALUES ('r','github','github.com','acme','widgets','origin',1,'me','stub:r','2026-10-01','2026-10-01')".to_string(),
+        "INSERT INTO goals (id,title,description,created_at,updated_at,model) VALUES ('g','Ship','Body','2026-10-01','2026-10-01','stub:m')".to_string(),
+        "INSERT INTO tasks (id,goal_id,repo_id,title,description,branch,created_at,updated_at) VALUES ('t','g','r','Fix','Body','ariadne/fix','2026-10-01','2026-10-01')".to_string(),
+        pull("tasks", 1, "me", "author", "open", "'t'", 0, 0, "NULL"),
+        pull("review", 2, "someone", "reviewer", "open", "NULL", 0, 1, "NULL"),
+        pull("asked", 3, "me", "author", "open", "NULL", 1, 0, "NULL"),
+        pull("listed", 4, "someone", "reviewer", "open", "NULL", 0, 0, "NULL"),
+        pull("mine", 5, "me", "author", "open", "NULL", 0, 0, "NULL"),
+        pull("ended", 6, "someone", "reviewer", "merged", "NULL", 0, 1, "'2026-10-02'"),
+        pull("owed", 7, "me", "author", "merged", "'t'", 0, 0, "NULL"),
+        "INSERT INTO agent_sessions (id,model,status,created_at,seat,pull_request_id) VALUES ('reviewing','stub:r','idle','2026-10-01','reviewer','review')".to_string(),
+        "INSERT INTO agent_sessions (id,model,status,created_at,seat,pull_request_id) VALUES ('reviewed','stub:r','exited','2026-10-01','reviewer','ended')".to_string(),
+        "INSERT INTO pull_request_comments (id,pull_request_id,forge_id,thread_id,kind,author_login,author_is_bot,body,created_at,fetched_at,told_at) VALUES ('c1','tasks','rc-1','T1','review_comment','alice',0,'Rename it.','2026-10-02','2026-10-02','2026-10-02')".to_string(),
+        "INSERT INTO pull_request_comments (id,pull_request_id,forge_id,thread_id,kind,author_login,author_is_bot,body,created_at,fetched_at,from_review) VALUES ('c2','asked','rc-2','T2','review_comment','me',0,'[P1] Untested','2026-10-02','2026-10-02',1)".to_string(),
+        "INSERT INTO pull_request_comments (id,pull_request_id,forge_id,thread_id,kind,author_login,author_is_bot,body,created_at,fetched_at) VALUES ('c3','tasks','rc-3','T3','review_comment','bob',0,'Untold.','2026-10-02','2026-10-02')".to_string(),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(statement)).execute(&db).await.unwrap();
+    }
+    db.close().await;
+
+    let upgraded = Store::open(&path).await.unwrap();
+    let mut kept: Vec<String> = upgraded
+        .list_pull_requests(PullRequestFilter::default())
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.id)
+        .collect();
+    kept.sort();
+    assert_eq!(kept, ["asked", "owed", "review", "tasks"]);
+    assert_eq!(
+        upgraded
+            .get_pull_request("tasks")
+            .await
+            .unwrap()
+            .origin_task_id
+            .as_deref(),
+        Some("t")
+    );
+    let told = upgraded.pull_request_comment_marks("tasks").await.unwrap();
+    assert_eq!(told.len(), 1, "an untold comment leaves no mark");
+    assert_eq!(told[0].forge_id, "rc-1");
+    assert!(told[0].told_at.is_some());
+    let review = upgraded.pull_request_comment_marks("asked").await.unwrap();
+    assert!(review[0].from_review);
+    assert_eq!(
+        upgraded
+            .get_session("reviewing")
+            .await
+            .unwrap()
+            .pull_request_id
+            .as_deref(),
+        Some("review")
+    );
+    let let_go = upgraded.get_session("reviewed").await.unwrap();
+    assert_eq!(let_go.pull_request_id, None, "a session outlives its row");
+    let db = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    let columns: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM pragma_table_info('pull_requests')")
+            .fetch_all(&db)
+            .await
+            .unwrap();
+    for gone in [
+        "title",
+        "body",
+        "author_login",
+        "head_sha",
+        "checks",
+        "state",
+    ] {
+        assert!(!columns.iter().any(|c| c == gone), "{gone} is the forge's");
+    }
+    db.close().await;
+    upgraded.close().await;
+}
+
+#[tokio::test]
+async fn webhook_migration_preserves_existing_integrations_and_a_recoverable_backup() {
+    let dir = tempfile::tempdir().unwrap();
+    let old_migrations = dir.path().join("migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations")).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_name().to_string_lossy().as_ref() < "0008" {
+            std::fs::copy(entry.path(), old_migrations.join(entry.file_name())).unwrap();
+        }
+    }
+    let path = dir.path().join("old.db");
+    let db = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations.as_path())
+        .await
+        .unwrap()
+        .run(&db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO repositories (id,path,base_branch,created_at,updated_at) VALUES ('old-repo','/work/widgets','main','2026-10-01','2026-10-01')").execute(&db).await.unwrap();
+    sqlx::query("INSERT INTO forge_integrations (repository_id,kind,host,owner,name,remote,enabled,login,detected_at,updated_at) VALUES ('old-repo','github','github.com','acme','widgets','origin',1,'me','2026-10-01','2026-10-01')").execute(&db).await.unwrap();
+    let backup = dir.path().join("backup.db");
+    sqlx::query("VACUUM INTO ?")
+        .bind(backup.to_str().unwrap())
+        .execute(&db)
+        .await
+        .unwrap();
+    db.close().await;
+    let upgraded = Store::open(&path).await.unwrap();
+    let row = upgraded.get_repository("old-repo").await.unwrap();
+    let forge = row.forge.unwrap();
+    assert_eq!(forge.login.as_deref(), Some("me"));
+    assert_eq!(forge.webhook_state, "polling");
+    assert!(forge.webhook_id.is_none());
+    assert!(forge.webhook_secret.is_none());
+    assert!(forge.webhook_last_delivery_at.is_none());
+    assert_eq!(row.path, "/work/widgets");
+    assert_eq!(row.base_branch, "main");
+    assert!(
+        upgraded
+            .list_pull_requests(PullRequestFilter::default())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    upgraded.close().await;
+    let recovered = Store::open(&backup).await.unwrap();
+    assert_eq!(
+        recovered
+            .get_repository("old-repo")
+            .await
+            .unwrap()
+            .created_at,
+        "2026-10-01"
+    );
+    assert_eq!(recovered.list_repositories().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn forge_settings_migration_turns_the_tunnel_on_and_keeps_the_first_subdomain() {
+    let dir = tempfile::tempdir().unwrap();
+    let old_migrations = dir.path().join("migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations")).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_name().to_string_lossy().as_ref() < "0009" {
+            std::fs::copy(entry.path(), old_migrations.join(entry.file_name())).unwrap();
+        }
+    }
+    let path = dir.path().join("old.db");
+    let db = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations.as_path())
+        .await
+        .unwrap()
+        .run(&db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO repositories (id,path,base_branch,created_at,updated_at) VALUES ('old-repo','/work/widgets','main','2026-10-01','2026-10-01')").execute(&db).await.unwrap();
+    sqlx::query("INSERT INTO forge_integrations (repository_id,kind,host,owner,name,remote,enabled,login,detected_at,updated_at,webhook_state) VALUES ('old-repo','github','github.com','acme','widgets','origin',1,'me','2026-10-01','2026-10-01','live')").execute(&db).await.unwrap();
+    db.close().await;
+
+    let upgraded = Store::open(&path).await.unwrap();
+    let settings = upgraded.forge_settings().await.unwrap();
+    assert!(settings.tunnel_enabled);
+    assert_eq!(settings.tunnel_subdomain, None);
+    let forge = upgraded
+        .get_repository("old-repo")
+        .await
+        .unwrap()
+        .forge
+        .unwrap();
+    assert_eq!(forge.webhook_state, "live");
+
+    assert!(
+        !upgraded
+            .set_tunnel_enabled(false)
+            .await
+            .unwrap()
+            .tunnel_enabled
+    );
+    let kept = upgraded
+        .keep_tunnel_subdomain("amber-104233")
+        .await
+        .unwrap();
+    assert_eq!(kept.tunnel_subdomain.as_deref(), Some("amber-104233"));
+    let again = upgraded
+        .keep_tunnel_subdomain("other-000001")
+        .await
+        .unwrap();
+    assert_eq!(again.tunnel_subdomain.as_deref(), Some("amber-104233"));
+    upgraded.close().await;
+
+    let reopened = Store::open(&path).await.unwrap();
+    let settings = reopened.forge_settings().await.unwrap();
+    assert!(!settings.tunnel_enabled);
+    assert_eq!(settings.tunnel_subdomain.as_deref(), Some("amber-104233"));
 }

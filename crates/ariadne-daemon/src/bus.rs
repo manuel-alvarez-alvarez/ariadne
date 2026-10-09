@@ -141,6 +141,35 @@ impl EventBus {
         self.publish(unscoped(DomainEvent::AiPermissionsUpdated(status)));
     }
 
+    /// Publish the forge settings and the tunnel state (027). Like the AI
+    /// permission status, only the daemon can build it: the tunnel state is
+    /// no store row.
+    pub fn forge_settings_updated(&self, tunnel: ariadne_api::repositories::ForgeTunnelDto) {
+        self.publish(unscoped(DomainEvent::ForgeSettingsUpdated(tunnel)));
+    }
+
+    /// Publish that the open issues of a repository moved on its forge
+    /// (028). Issues are no store row: the fetch that read them is the only
+    /// one that knows.
+    pub fn issues_changed(&self, repository_id: &str) {
+        self.publish(unscoped(DomainEvent::IssuesChanged(
+            ariadne_api::stream::IssuesChangedDto {
+                repository_id: repository_id.to_string(),
+            },
+        )));
+    }
+
+    /// Publish that the requests of a repository moved on its forge (026):
+    /// they are read live, so the fetch that read them is the only one that
+    /// knows.
+    pub fn pull_requests_changed(&self, repository_id: &str) {
+        self.publish(unscoped(DomainEvent::PullRequestsChanged(
+            ariadne_api::stream::PullRequestsChangedDto {
+                repository_id: repository_id.to_string(),
+            },
+        )));
+    }
+
     /// Answers once the pump has published every change it had been handed
     /// when this was called.
     ///
@@ -336,6 +365,9 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
         Change::SkillCreated(skill) => unscoped(DomainEvent::SkillCreated(skill_dto(skill))),
         Change::SkillUpdated(skill) => unscoped(DomainEvent::SkillUpdated(skill_dto(skill))),
         Change::SkillDeleted(name) => unscoped(DomainEvent::SkillDeleted(DeletedDto { id: name })),
+        Change::PullRequestsChanged(repository_id) => unscoped(DomainEvent::PullRequestsChanged(
+            ariadne_api::stream::PullRequestsChangedDto { repository_id },
+        )),
         Change::RepositoryCreated(repo) => {
             unscoped(DomainEvent::RepositoryCreated(repository_dto(repo)))
         }
@@ -431,6 +463,7 @@ mod tests {
             .unwrap();
         let goal = store
             .create_goal(NewGoal {
+                issue_url: None,
                 landing: None,
                 title: "probe".into(),
                 description: String::new(),
@@ -451,6 +484,7 @@ mod tests {
                 model: "stub:test-model".into(),
                 effort: None,
                 worktree_path: None,
+                pull_request_id: None,
             })
             .await
             .unwrap();

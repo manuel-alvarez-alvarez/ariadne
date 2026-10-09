@@ -199,7 +199,8 @@ function Row({ item }: { item: AttentionItem }) {
             and the id together took half the row and left the subject twenty
             characters. */}
         <div className="flex w-full items-center gap-2 @2xl:w-auto">
-          <GoalRef goalId={item.goalId} goal={item.goal} />
+          {/* A pull request's session belongs to no goal to name. */}
+          {item.goalId ? <GoalRef goalId={item.goalId} goal={item.goal} /> : null}
           {/* One label for every row: a task's row moves when the task is
               updated, a session's when it started asking — "last moved" is the
               one thing true of both, and the list is ordered by it. */}

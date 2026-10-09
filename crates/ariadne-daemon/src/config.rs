@@ -23,6 +23,13 @@ pub struct Config {
     pub run_dir: PathBuf,
     pub pid_file: PathBuf,
     pub tcp_listen: Option<SocketAddr>,
+    /// Separate signed ingress. None binds loopback on an operating-system port.
+    pub webhook_listen: Option<SocketAddr>,
+    pub webhook_public_url: Option<String>,
+    /// The localtunnel server the webhook tunnel registers with (027).
+    pub tunnel_host: String,
+    /// The subdomain the tunnel asks for. It wins over the stored one.
+    pub tunnel_subdomain: Option<String>,
     pub log_filter: String,
     /// The `ariadne` binary every session's MCP server is launched with.
     pub cli_bin: String,
@@ -44,6 +51,12 @@ pub struct Config {
     /// The `nvidia-smi` the hardware probe runs (022, flavours and devices).
     /// `None` looks up `nvidia-smi` on the daemon's PATH.
     pub nvidia_smi_bin: Option<String>,
+    /// The `gh` the GitHub integration runs (025). `None` looks up `gh` on
+    /// the daemon's PATH.
+    pub gh_bin: Option<String>,
+    /// The `glab` the GitLab integration runs (025). `None` looks up `glab`
+    /// on the daemon's PATH.
+    pub glab_bin: Option<String>,
     /// A command that stands in for the whole model install — the venv, pip
     /// and the weights — so the suite proves the install's states without
     /// downloading two gigabytes. Set by the test harness alone: it is not a
@@ -98,6 +111,12 @@ impl Config {
             run_dir: file.run_dir.unwrap_or_else(|| root.join("run")),
             pid_file: endpoint::pid_file(&root),
             tcp_listen: file.tcp_listen,
+            webhook_listen: file.webhook_listen,
+            webhook_public_url: file.webhook_public_url,
+            tunnel_host: file
+                .tunnel_host
+                .unwrap_or_else(|| "https://localtunnel.me".into()),
+            tunnel_subdomain: file.tunnel_subdomain,
             log_filter: file.log_filter.unwrap_or_else(|| "info".to_string()),
             cli_bin: file.cli_bin.unwrap_or_else(default_cli_bin),
             delete_merged_branches: file.delete_merged_branches.unwrap_or(true),
@@ -114,6 +133,8 @@ impl Config {
             }),
             python_bin: file.python_bin,
             nvidia_smi_bin: file.nvidia_smi_bin,
+            gh_bin: file.gh_bin,
+            glab_bin: file.glab_bin,
             ai_permissions_installer: None,
             ai_permissions_serve_command: None,
             ai_permissions_endpoint: None,
@@ -194,6 +215,39 @@ mod tests {
         );
         assert_eq!(config.python_bin, None);
         assert_eq!(config.nvidia_smi_bin, None);
+        assert_eq!(config.gh_bin, None);
+        assert_eq!(config.glab_bin, None);
+    }
+
+    #[test]
+    fn webhook_configuration_uses_a_random_port_unless_an_address_is_given() {
+        let dir = home_with("");
+        let cfg = Config::load(Some(dir.path().join("home"))).unwrap();
+        assert_eq!(cfg.webhook_listen, None);
+        assert_eq!(cfg.webhook_public_url, None);
+        assert_eq!(cfg.tunnel_host, "https://localtunnel.me");
+        assert_eq!(cfg.tunnel_subdomain, None);
+        let dir = home_with(
+            "webhook_listen = \"127.0.0.1:8181\"\nwebhook_public_url = \"https://hooks.example\"\n\
+             tunnel_host = \"https://tunnel.example\"\ntunnel_subdomain = \"widgets\"\n",
+        );
+        let cfg = Config::load(Some(dir.path().join("home"))).unwrap();
+        assert_eq!(cfg.webhook_listen, Some("127.0.0.1:8181".parse().unwrap()));
+        assert_eq!(
+            cfg.webhook_public_url.as_deref(),
+            Some("https://hooks.example")
+        );
+        assert_eq!(cfg.tunnel_host, "https://tunnel.example");
+        assert_eq!(cfg.tunnel_subdomain.as_deref(), Some("widgets"));
+    }
+
+    /// The forge CLIs are keys a user may set, each a path or a bare name.
+    #[test]
+    fn the_forge_cli_keys_are_read() {
+        let dir = home_with("gh_bin = \"/opt/bin/gh\"\nglab_bin = \"glab-17\"\n");
+        let config = Config::load(Some(dir.path().join("home"))).unwrap();
+        assert_eq!(config.gh_bin.as_deref(), Some("/opt/bin/gh"));
+        assert_eq!(config.glab_bin.as_deref(), Some("glab-17"));
     }
 
     #[test]

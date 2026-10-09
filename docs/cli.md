@@ -489,6 +489,70 @@ error anywhere names the fix: `run ariadne permissions ai enable`. `ariadne
 doctor` reports the Python interpreter the AI permission model needs and where its install
 stands, next to the rest of the daemon's environment.
 
+## Pull requests, issues and the forge
+
+```sh
+ariadne repo add ~/projects/api --forge on \
+    --review-model claude-acp:<model-id> --review-effort balanced
+ariadne repo update <repo-id> --forge off
+```
+
+`repo add` and `repo update` take `--forge on` or `--forge off` to work with
+the forge a repository's remote is on, once `gh` or `glab` is signed in to
+its host. `--review-model` and `--review-effort` pin the session that
+reviews a request asking for your review; a model is `AGENT:MODEL`, or `""`
+to clear the pin, and an effort is any effort or `default`. No `--forge`
+flag sends no change to it. A request a task opens needs no pin: the task's
+author keeps it. See [The forge integration](forge.md) for what each
+session does.
+
+```sh
+ariadne pr ls --repo <repo-id>
+ariadne pr ls --mine
+ariadne pr ls --review-requests --watch
+ariadne pr search --repo <repo-id> "rate limit"
+ariadne pr inspect <repo-id> 42
+ariadne pr refresh --repo <repo-id>
+```
+
+`ariadne pr ls` lists every open request of your enabled repositories, read
+live off the forge, as the desktop's **All** does. `--mine` narrows it to
+your own, and `--review-requests` to the ones that ask for your review; the
+two do not combine. `--repo` narrows it to one repository, and `--watch`
+redraws it as requests move. The author column reads "you" on a request of
+yours, and the `ariadne` column says whether Ariadne keeps it for a task,
+reviews it, or does nothing with it.
+`ariadne pr inspect <repo> <number>` prints every field of one request,
+read off the forge now. `ariadne pr search` searches an enabled
+repository's open requests live, by number, title or author, your own left
+out. `ariadne pr refresh` wakes one repository's fetch, or every enabled
+one. Nothing adds or removes a request: Ariadne starts and stops working on
+one on its own (see [The forge integration](forge.md)).
+
+```sh
+ariadne issue ls --repo <repo-id>
+ariadne issue ls --repo <repo-id> --all
+ariadne goal create --from-issue https://github.com/owner/repo/issues/7 \
+    --model codex-acp:<model-id>
+```
+
+`ariadne issue ls` lists open issues from an enabled repository, assigned to
+your forge login by default, or every open one with `--all`. `goal create
+--from-issue` reads one issue and uses its title and body to fill the goal.
+
+```sh
+ariadne forge tunnel
+ariadne forge tunnel on
+ariadne forge tunnel off
+```
+
+`ariadne forge tunnel` prints the webhook tunnel's switch, state, URL and
+bound listener address; `on` and `off` set the switch. See [The forge
+integration](forge.md) for enabling a repository's integration, how an
+author keeps its request, what a `pr-reviewer` session does, and the tunnel's fallback
+to polling; see [Configuration](configuration.md) for `gh_bin`, `glab_bin`
+and the webhook keys.
+
 ## Output and troubleshooting
 
 Listings print tables by default. Add `--format json` for JSON, `-q` for ids

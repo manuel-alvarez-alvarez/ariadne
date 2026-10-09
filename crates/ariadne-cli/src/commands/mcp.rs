@@ -22,6 +22,10 @@ pub(crate) enum McpSeat {
     Orchestrator,
     Author,
     Reviewer,
+    /// The reviewer seat of a pull request session (029): a session with
+    /// `ARIADNE_PULL_REQUEST_ID` set and seat `reviewer`, which reviews a
+    /// request that asks for the user's review.
+    PullRequestReviewer,
 }
 
 impl McpSeat {
@@ -30,6 +34,7 @@ impl McpSeat {
             McpSeat::Orchestrator => "orchestrator",
             McpSeat::Author => "author",
             McpSeat::Reviewer => "reviewer",
+            McpSeat::PullRequestReviewer => "pull request reviewer",
         }
     }
 
@@ -52,12 +57,20 @@ impl McpSeat {
                 "send_message",
                 "read_messages",
             ],
+            // The author keeps the request its task opens until a human
+            // merges it (005): the request's tools are its own too. None of
+            // them resolves a thread: the reviewer that opened it does.
             McpSeat::Author => &[
                 "get_task",
                 "request_review",
                 "fail_task",
                 "finish_task",
-                "record_pull_request",
+                "open_pull_request",
+                "get_pull_request",
+                "list_comments",
+                "get_comment",
+                "reply_comment",
+                "report_pull_request",
                 "send_message",
                 "read_messages",
             ],
@@ -69,6 +82,20 @@ impl McpSeat {
                 "send_message",
                 "read_messages",
             ],
+            // No task tool and no message tool: the user reaches the
+            // session through its console. It resolves only a thread it
+            // opened, once a push fixed it. No tool approves: the user gives
+            // every approval (029).
+            McpSeat::PullRequestReviewer => &[
+                "get_pull_request",
+                "get_diff",
+                "list_comments",
+                "get_comment",
+                "reply_comment",
+                "resolve_thread",
+                "submit_review",
+                "report_pull_request",
+            ],
         }
     }
 }
@@ -78,8 +105,12 @@ pub(crate) struct AriadneMcp {
     client: std::sync::Arc<Client>,
     seat: McpSeat,
     session_id: String,
-    goal_id: String,
+    /// None for a pull request session, which works for no goal.
+    goal_id: Option<String>,
     task_id: Option<String>,
+    /// The request a review session reviews. An author finds the request
+    /// its task opened through the daemon instead (005).
+    pull_request_id: Option<String>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -87,20 +118,61 @@ impl AriadneMcp {
     pub(crate) fn from_env() -> Result<Self> {
         let session_id =
             std::env::var("ARIADNE_SESSION_ID").context("ARIADNE_SESSION_ID not set")?;
-        let seat = match std::env::var("ARIADNE_SEAT").unwrap_or_default().as_str() {
-            "orchestrator" => McpSeat::Orchestrator,
-            "author" => McpSeat::Author,
-            "reviewer" => McpSeat::Reviewer,
-            other => anyhow::bail!("unknown ARIADNE_SEAT: {other:?}"),
-        };
+        let pull_request_id = std::env::var("ARIADNE_PULL_REQUEST_ID").ok();
+        let seat = mcp_seat(
+            &std::env::var("ARIADNE_SEAT").unwrap_or_default(),
+            pull_request_id.is_some(),
+        )?;
+        let goal_id = std::env::var("ARIADNE_GOAL_ID").ok();
+        if goal_id.is_none() && pull_request_id.is_none() {
+            anyhow::bail!("ARIADNE_GOAL_ID not set");
+        }
         Ok(Self {
             client: std::sync::Arc::new(Client::from_env().with_session(session_id.clone())),
             seat,
             session_id,
-            goal_id: std::env::var("ARIADNE_GOAL_ID").context("ARIADNE_GOAL_ID not set")?,
+            goal_id,
             task_id: std::env::var("ARIADNE_TASK_ID").ok(),
+            pull_request_id,
             tool_router: Self::tool_router(),
         })
+    }
+
+    /// The goal of this session, and a refusal for one that works for none.
+    fn goal(&self) -> Result<&str, McpError> {
+        self.goal_id
+            .as_deref()
+            .ok_or_else(|| McpError::invalid_params("this session works for no goal", None))
+    }
+
+    /// An endpoint under the request this session answers for: the one a
+    /// review session reviews, or the one an author's task opened (005).
+    async fn pull_request_path(&self, tail: &str) -> Result<String, McpError> {
+        let id = match &self.pull_request_id {
+            Some(id) => id.clone(),
+            None => self.task_pull_request().await?,
+        };
+        Ok(format!("/v1/pull-requests/{id}{tail}"))
+    }
+
+    /// The request this session's task opened, while Ariadne works on it.
+    async fn task_pull_request(&self) -> Result<String, McpError> {
+        let task = self
+            .task_id
+            .as_deref()
+            .ok_or_else(|| McpError::invalid_params("this session works for no request", None))?;
+        let rows: Vec<serde_json::Value> = self
+            .get(&format!("/v1/pull-requests?task={task}&role=author"))
+            .await?;
+        rows.first()
+            .and_then(|row| row["id"].as_str())
+            .map(str::to_string)
+            .ok_or_else(|| {
+                McpError::invalid_params(
+                    "your task has no request yet: call `open_pull_request` first",
+                    None,
+                )
+            })
     }
 
     /// Whether this session may call `name`: its seat lists it.
@@ -132,10 +204,10 @@ impl AriadneMcp {
     /// A goal has a channel of its own, and it is the orchestrator's inbox —
     /// which is a session with no task, so a refusal for want of one would
     /// leave the seat that reads that channel unable to read it.
-    fn channel_path(&self, named: Option<String>, tail: &str) -> String {
+    fn channel_path(&self, named: Option<String>, tail: &str) -> Result<String, McpError> {
         match named.or_else(|| self.task_id.clone()) {
-            Some(task) => format!("/v1/tasks/{task}{tail}"),
-            None => format!("/v1/goals/{}{tail}", self.goal_id),
+            Some(task) => Ok(format!("/v1/tasks/{task}{tail}")),
+            None => Ok(format!("/v1/goals/{}{tail}", self.goal()?)),
         }
     }
 
@@ -191,7 +263,23 @@ fn ask_rule(seat: &McpSeat) -> &'static str {
             "Work alone. Ask only where the task cannot go on without an \
              answer."
         }
+        McpSeat::PullRequestReviewer => {
+            "Work alone. Ask only where the request cannot go on without \
+             an answer."
+        }
     }
+}
+
+/// The seat a session's environment names: `ARIADNE_SEAT`, read as a seat
+/// of a pull request where `ARIADNE_PULL_REQUEST_ID` is set.
+fn mcp_seat(seat: &str, pull_request: bool) -> Result<McpSeat> {
+    Ok(match (seat, pull_request) {
+        ("reviewer", true) => McpSeat::PullRequestReviewer,
+        ("orchestrator", false) => McpSeat::Orchestrator,
+        ("author", false) => McpSeat::Author,
+        ("reviewer", false) => McpSeat::Reviewer,
+        (other, _) => anyhow::bail!("unknown ARIADNE_SEAT for this session: {other:?}"),
+    })
 }
 
 /// The rules that hold whoever is reading them: what Ariadne is reached
@@ -250,17 +338,24 @@ impl ServerHandler for AriadneMcp {
     /// edit: what Ariadne *is* should not be something an edit can delete.
     fn get_info(&self) -> ServerInfo {
         let mut info = ServerInfo::default();
+        let scope = [
+            self.goal_id.as_ref().map(|goal| format!("goal {goal}")),
+            self.task_id.as_ref().map(|task| format!("task {task}")),
+            self.pull_request_id
+                .as_ref()
+                .map(|pull| format!("pull request {pull}")),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|part| format!(", {part}"))
+        .collect::<String>();
         info.instructions = Some(format!(
-            "Ariadne orchestrator tools for this {} session: session {}, goal {}{}. \
+            "Ariadne orchestrator tools for this {} session: session {}{}. \
              The tools here are the ones your seat can call. Every call acts as \
              this session. {}",
             self.seat.as_str(),
             self.session_id,
-            self.goal_id,
-            match &self.task_id {
-                Some(task) => format!(", task {task}"),
-                None => String::new(),
-            },
+            scope,
             session_rules(&self.seat)
         ));
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
@@ -316,15 +411,22 @@ pub(crate) async fn serve() -> Result<()> {
 pub(crate) mod tests {
     use super::*;
 
-    const SEATS: [McpSeat; 3] = [McpSeat::Orchestrator, McpSeat::Author, McpSeat::Reviewer];
+    const SEATS: [McpSeat; 4] = [
+        McpSeat::Orchestrator,
+        McpSeat::Author,
+        McpSeat::Reviewer,
+        McpSeat::PullRequestReviewer,
+    ];
 
     pub(crate) fn server_at(seat: McpSeat, client: Client) -> AriadneMcp {
+        let pull_request = seat == McpSeat::PullRequestReviewer;
         AriadneMcp {
             client: std::sync::Arc::new(client),
             seat,
             session_id: "01SESSION".into(),
-            goal_id: "01GOAL".into(),
-            task_id: Some("01TASK".into()),
+            goal_id: (!pull_request).then(|| "01GOAL".into()),
+            task_id: (!pull_request).then(|| "01TASK".into()),
+            pull_request_id: pull_request.then(|| "01PR".into()),
             tool_router: AriadneMcp::tool_router(),
         }
     }
@@ -367,7 +469,12 @@ pub(crate) mod tests {
                     "request_review",
                     "fail_task",
                     "finish_task",
-                    "record_pull_request",
+                    "open_pull_request",
+                    "get_pull_request",
+                    "list_comments",
+                    "get_comment",
+                    "reply_comment",
+                    "report_pull_request",
                     "send_message",
                     "read_messages",
                 ][..],
@@ -383,6 +490,19 @@ pub(crate) mod tests {
                     "read_messages",
                 ][..],
             ),
+            (
+                McpSeat::PullRequestReviewer,
+                &[
+                    "get_pull_request",
+                    "get_diff",
+                    "list_comments",
+                    "get_comment",
+                    "reply_comment",
+                    "resolve_thread",
+                    "submit_review",
+                    "report_pull_request",
+                ][..],
+            ),
         ] {
             assert_eq!(seat.tools(), tools, "the tools of the {seat:?}");
         }
@@ -396,17 +516,24 @@ pub(crate) mod tests {
             "fail_task",
             "finalize_plan",
             "finish_task",
+            "get_comment",
             "get_diff",
+            "get_pull_request",
             "get_task",
+            "list_comments",
             "list_models",
             "list_skills",
             "list_tasks",
+            "open_pull_request",
             "pick_winner",
             "read_messages",
-            "record_pull_request",
+            "reply_comment",
+            "report_pull_request",
             "request_review",
+            "resolve_thread",
             "retry_task",
             "send_message",
+            "submit_review",
             "submit_verdict",
             "switch_session",
             "update_task",
@@ -416,6 +543,91 @@ pub(crate) mod tests {
             !distinct_tools().contains(&"return_to_author"),
             "the send-back a fourth seat once had is gone"
         );
+    }
+
+    /// The author keeps the request its task opens (005): it is listed the
+    /// request's four tools beside its task tools, and no seat of a session
+    /// with a request in its environment is an author. Nothing it is listed
+    /// resolves a thread.
+    #[test]
+    fn the_author_lists_the_request_tools_beside_its_task_tools() {
+        assert_eq!(mcp_seat("author", false).unwrap(), McpSeat::Author);
+        assert!(mcp_seat("author", true).is_err());
+        assert!(mcp_seat("orchestrator", true).is_err());
+        let mcp = server_at(
+            McpSeat::Author,
+            Client::resolve(Some("http://127.0.0.1:1"), None),
+        );
+        for tool in [
+            "get_pull_request",
+            "list_comments",
+            "reply_comment",
+            "report_pull_request",
+            "open_pull_request",
+            "finish_task",
+        ] {
+            assert!(mcp.allows(tool), "{tool} is the author's");
+        }
+        assert!(
+            mcp.listed_tools()
+                .iter()
+                .all(|tool| !tool.name.contains("resolve"))
+        );
+    }
+
+    /// A reviewer pull request session (029) is listed eight tools: the
+    /// request, its diff, its comments, one comment, a reply, the resolve of
+    /// a thread it opened, one review and the report. It has no task tool and no
+    /// message tool, and nothing it is listed approves or merges.
+    #[test]
+    fn the_pull_request_reviewer_seat_lists_its_eight_tools_and_no_task_or_message_tool() {
+        assert_eq!(
+            mcp_seat("reviewer", true).unwrap(),
+            McpSeat::PullRequestReviewer
+        );
+        assert_eq!(mcp_seat("reviewer", false).unwrap(), McpSeat::Reviewer);
+        let mcp = server_at(
+            McpSeat::PullRequestReviewer,
+            Client::resolve(Some("http://127.0.0.1:1"), None),
+        );
+        let mut listed: Vec<String> = mcp
+            .listed_tools()
+            .into_iter()
+            .map(|t| t.name.to_string())
+            .collect();
+        listed.sort();
+        assert_eq!(
+            listed,
+            [
+                "get_comment",
+                "get_diff",
+                "get_pull_request",
+                "list_comments",
+                "reply_comment",
+                "report_pull_request",
+                "resolve_thread",
+                "submit_review",
+            ],
+            "the pull request reviewer is listed eight tools"
+        );
+        for tool in [
+            "get_task",
+            "submit_verdict",
+            "pick_winner",
+            "send_message",
+            "read_messages",
+        ] {
+            assert!(!mcp.allows(tool), "{tool} is not its tool");
+        }
+        for word in ["approve", "merge"] {
+            assert!(listed.iter().all(|name| !name.contains(word)), "{word}");
+        }
+        let instructions = mcp.get_info().instructions.expect("instructions");
+        assert!(
+            instructions.contains("pull request reviewer session"),
+            "{instructions}"
+        );
+        assert!(instructions.contains("pull request 01PR"), "{instructions}");
     }
 
     /// The tools of the three seats together, deduplicated and sorted.
@@ -711,6 +923,14 @@ pub(crate) mod tests {
         answer: &'static str,
     ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Seen>>>) {
         recording_daemon_with_answers("200 OK", vec![answer.to_string()], true).await
+    }
+
+    /// The same daemon, answering each call with the next body of a test's
+    /// own, and every call after the last with `{}`.
+    pub(crate) async fn recording_daemon_answering_in_turn(
+        answers: Vec<String>,
+    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Seen>>>) {
+        recording_daemon_with_answers("200 OK", answers, false).await
     }
 
     async fn recording_daemon_with_answers(

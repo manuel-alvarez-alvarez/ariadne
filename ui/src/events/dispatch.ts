@@ -13,8 +13,9 @@
  * Screens therefore need no event handling of their own: read with the keys in
  * `src/api/query-keys.ts` and the cache stays live.
  *
- * `ai_permissions_updated` is the one event with no list beside its detail:
- * there is one settings row, so the whole cache it moves is `setQueryData`.
+ * `ai_permissions_updated` and `forge_settings_updated` have no list beside
+ * their detail: each is one settings row, so the whole cache each moves is
+ * `setQueryData`.
  *
  * Anything that arrives while the stream is down is lost — the daemon has no
  * replay. `invalidateEverything` is the recovery path and runs on every
@@ -28,6 +29,12 @@ import { type DomainEvent, qk } from "@/api"
 /** Apply one domain event to the query cache. */
 export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent): void {
   switch (event.event) {
+    case "pull_requests_changed": {
+      // Requests are read live off the forge and carried by no event: every
+      // list and panel over them reads again.
+      void queryClient.invalidateQueries({ queryKey: qk.pullRequests.all() })
+      break
+    }
     case "goal_created": {
       queryClient.setQueryData(qk.goals.detail(event.data.id), event.data)
       void queryClient.invalidateQueries({ queryKey: qk.goals.lists() })
@@ -91,6 +98,7 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       // another window: the outside rows are cut without the ones a session
       // holds, so theirs are asked for again.
       void queryClient.invalidateQueries({ queryKey: qk.outsideSessions.lists() })
+      invalidateWatchedPullRequest(queryClient, event.data.pull_request_id)
       break
     }
     case "session_updated": {
@@ -98,6 +106,7 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       void queryClient.invalidateQueries({ queryKey: qk.sessions.lists() })
       // A session that ended wrote a fact the stats read.
       void queryClient.invalidateQueries({ queryKey: qk.stats.all() })
+      invalidateWatchedPullRequest(queryClient, event.data.pull_request_id)
       break
     }
     case "agent_event": {
@@ -155,6 +164,20 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       void queryClient.invalidateQueries({ queryKey: qk.learnedPermissions.lists() })
       break
     }
+    case "forge_settings_updated": {
+      // One row, no list: the tunnel the settings dialog and the repositories screen read.
+      queryClient.setQueryData(qk.forge.tunnel(), event.data)
+      break
+    }
+    case "issues_changed": {
+      // Issues are read off the forge, not stored: the event carries no
+      // issue, only the repository whose open issues moved, so its lists are
+      // read again — both assignment filters.
+      void queryClient.invalidateQueries({
+        queryKey: qk.issues.ofRepository(event.data.repository_id),
+      })
+      break
+    }
     default: {
       // A kind the generated types do not know about: the daemon is newer than
       // these types. Regenerate with `npm run gen:api`.
@@ -162,6 +185,20 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       console.warn("[events] unhandled domain event", unknown)
     }
   }
+}
+
+/**
+ * A pull request session that starts or moves: the request names its newest
+ * session (`PullRequestDto.session_id`), so its detail and every list holding
+ * it are read again. Nothing for any other session.
+ */
+function invalidateWatchedPullRequest(
+  queryClient: QueryClient,
+  pullRequestId: string | null | undefined,
+): void {
+  if (!pullRequestId) return
+  void queryClient.invalidateQueries({ queryKey: qk.pullRequests.detail(pullRequestId) })
+  void queryClient.invalidateQueries({ queryKey: qk.pullRequests.lists() })
 }
 
 /**

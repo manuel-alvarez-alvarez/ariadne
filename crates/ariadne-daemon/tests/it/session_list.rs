@@ -141,6 +141,7 @@ async fn ariadne_session(h: &Harness, title: &str, agent: &str) -> ariadne_store
     let goal = h
         .store
         .create_goal(ariadne_store::NewGoal {
+            issue_url: None,
             landing: None,
             title: title.into(),
             description: "desc".into(),
@@ -158,6 +159,7 @@ async fn ariadne_session(h: &Harness, title: &str, agent: &str) -> ariadne_store
             model: format!("{agent}:test-model"),
             effort: None,
             worktree_path: Some(h.at(&slug(title)).display().to_string()),
+            pull_request_id: None,
         })
         .await
         .unwrap()
@@ -831,6 +833,7 @@ async fn the_query_and_the_page_are_in_the_openapi_document() {
             "goal",
             "kind",
             "limit",
+            "pull_request",
             "q",
             "refresh",
             "seat",

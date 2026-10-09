@@ -112,6 +112,26 @@ pub enum DomainEvent {
     LearnedPermissionCreated(LearnedPermissionDto),
     LearnedPermissionUpdated(LearnedPermissionDto),
     LearnedPermissionDeleted(LearnedPermissionDto),
+    /// The forge settings or the tunnel state moved (027).
+    ForgeSettingsUpdated(crate::repositories::ForgeTunnelDto),
+    /// The open issues of one repository moved on its forge (028): read them
+    /// again from `GET /v1/repositories/{id}/issues`.
+    IssuesChanged(IssuesChangedDto),
+    /// The requests of one repository moved: on its forge, or in what
+    /// Ariadne keeps of them (026). Read them again; they are the forge's.
+    PullRequestsChanged(PullRequestsChangedDto),
+}
+
+/// Payload of `issues_changed`: the repository whose open issues moved.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct IssuesChangedDto {
+    pub repository_id: String,
+}
+
+/// Payload of `pull_requests_changed`: the repository whose requests moved.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PullRequestsChangedDto {
+    pub repository_id: String,
 }
 
 impl DomainEvent {
@@ -138,6 +158,9 @@ impl DomainEvent {
             Self::LearnedPermissionCreated(_) => "learned_permission_created",
             Self::LearnedPermissionUpdated(_) => "learned_permission_updated",
             Self::LearnedPermissionDeleted(_) => "learned_permission_deleted",
+            Self::ForgeSettingsUpdated(_) => "forge_settings_updated",
+            Self::IssuesChanged(_) => "issues_changed",
+            Self::PullRequestsChanged(_) => "pull_requests_changed",
         }
     }
 
@@ -148,6 +171,7 @@ impl DomainEvent {
             serde_json::to_value(value).unwrap_or(serde_json::Value::Null)
         }
         match self {
+            Self::PullRequestsChanged(p) => json(p),
             Self::GoalCreated(g) | Self::GoalUpdated(g) => json(g),
             Self::GoalDeleted(d) => json(d),
             Self::TaskCreated(t) => json(t),
@@ -164,6 +188,8 @@ impl DomainEvent {
             Self::LearnedPermissionCreated(l)
             | Self::LearnedPermissionUpdated(l)
             | Self::LearnedPermissionDeleted(l) => json(l),
+            Self::ForgeSettingsUpdated(t) => json(t),
+            Self::IssuesChanged(i) => json(i),
         }
     }
 }

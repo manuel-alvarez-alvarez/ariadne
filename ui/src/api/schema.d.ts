@@ -167,6 +167,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/forge/tunnel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The tunnel switch, the tunnel state and the bound listener address. */
+        get: operations["repositories_get_tunnel"];
+        /**
+         * Turn the tunnel on or off. Off closes it, and every integration fetches on
+         *     its timer; the hooks stay registered.
+         */
+        put: operations["repositories_set_tunnel"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/goals": {
         parameters: {
             query?: never;
@@ -554,6 +575,212 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/pull-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The open requests of the enabled repositories, read live off the forge
+         *     (026): every one, or with `role` and `requested` the user's own or the
+         *     ones that ask for their review, each with what Ariadne keeps of it where
+         *     it works on it. With `task`, the request a task opened, which its author
+         *     keeps (005).
+         */
+        get: operations["pull-requests_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pull-requests/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["pull-requests_refresh"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pull-requests/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A request Ariadne works on, read off the forge now. */
+        get: operations["pull-requests_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pull-requests/{id}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The comments of a request Ariadne works on, read off the forge now, with
+         *     the marks beside them; with `unanswered_only`, the threads that wait on
+         *     the integration login.
+         */
+        get: operations["pull-requests_comments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pull-requests/{id}/comments/{comment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One comment of a request Ariadne works on, read off the forge now. */
+        get: operations["pull-requests_comment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pull-requests/{id}/comments/{comment_id}/reply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reply to one comment. The daemon posts the reply through the forge CLI,
+         *     marks it the review's where a review session posts it (029), and reads
+         *     the request again.
+         */
+        post: operations["pull-requests_reply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pull-requests/{id}/comments/{comment_id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve the thread of one comment, once a push fixed what it found
+         *     (029). Only a review session resolves, and only a thread it opened under
+         *     the integration login: the threads of anyone else stay open for the
+         *     person who wrote them.
+         */
+        post: operations["pull-requests_resolve"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pull-requests/{id}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The change under review, read in the reviewer session's worktree (029):
+         *     `git diff <base>...HEAD`, or `git diff <since>..HEAD` where `since` is
+         *     given. The base is the remote's copy of the base branch where the
+         *     checkout holds one, else the local branch.
+         */
+        get: operations["pull-requests_diff"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pull-requests/{id}/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * What the request's session says of it: `ready` once every required
+         *     approval and check reads green, which raises `waiting_user` on the
+         *     session, and the head a review session posted its review on.
+         */
+        post: operations["pull-requests_report"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pull-requests/{id}/reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post one round of a review of a request, in the user's name (029): its
+         *     new findings as one review of inline comments, each led by its priority,
+         *     and its summary, written into the one summary comment the review keeps
+         *     on the request — posted on the first round, edited on every later one. A
+         *     round with no new finding posts no review. `request_changes` stands only
+         *     on a P0 finding, new or still open. Any other event is refused, an
+         *     approval above all: the user gives every approval. What it posted is
+         *     marked as the review's.
+         */
+        post: operations["pull-requests_submit_review"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/repositories": {
         parameters: {
             query?: never;
@@ -586,6 +813,100 @@ export interface paths {
         post?: never;
         /** Delete a repository. */
         delete: operations["repositories_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/repositories/{id}/issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["issues_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/repositories/{id}/issues/{number}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["issues_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/repositories/{id}/pull-requests/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["pull-requests_search"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/repositories/{id}/pull-requests/{number}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One open request of a repository, read off the forge now (026): its
+         *     own read, its checks and its comments, with what Ariadne keeps of it
+         *     where it works on it. What the desktop's panel shows.
+         */
+        get: operations["pull-requests_get_by_number"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/repositories/{id}/pull-requests/{number}/ariadne-review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Ask Ariadne to review a request of the user's own on the model the user
+         *     picks, or stop asking (029): a review session runs on that pin while the
+         *     request is open and out of draft, and posts each round as a comment in
+         *     the user's name. Asking starts Ariadne's work on the request; stopping
+         *     ends it, where no task keeps the request. A request that asks for the
+         *     user's review has a review already, on the repository's review pin, and
+         *     takes no asking.
+         */
+        put: operations["pull-requests_ask_review"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1114,31 +1435,18 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Record the pull or merge request the author opened for a task, and
-         *     whether it currently reads ready to merge.
-         * @description The URL travels as a tool call, so a published task is either one the UI
-         *     and the CLI can point at or one that was never reported. Publication
-         *     alone is not readiness: a request nobody can merge yet is not a human's
-         *     to act on, so `ready` is what the pull-request skill reports once its own
-         *     poll of the forge finds every required approval and check green.
+         * Open the pull or merge request a task lands by, through the repository's
+         *     own forge CLI, and answer its URL.
+         * @description The daemon runs the forge call, never the agent: `gh` or `glab` only ever
+         *     run here, with the authentication the user already set up for them
+         *     ([`crate::forge`]). The author supplies only what the daemon cannot read
+         *     off the task or the repository — the title and the body — and gets the
+         *     URL back to show the user.
          *
-         *     This is the moment the task becomes the user's: a request ready to merge
-         *     but a human is exactly what `waiting_user` says, so it goes up here, on
-         *     the session that reported it — the console they answer in, and the one
-         *     place the request can be traced back to. It is raised only on the
-         *     transition into ready, so a poll that finds nothing changed raises
-         *     nothing twice, and it comes back down the moment a later poll reports
-         *     `ready: false` — a new change or a failed check that undid an earlier
-         *     ready read.
-         *
-         *     Once raised that way it stays up until the user acts: an agent's own
-         *     events never take `waiting_user` down (`clear_agent_attention`), and the
-         *     author polling its request is exactly such an agent.
-         *     `Scheduler::keep_waiting_user` puts it back on whatever comes up when
-         *     that author is restarted while the request still reads ready, which is
-         *     what makes the two halves one flag rather than two.
+         *     One request per task: a task that already has a `pr_url` answers it again
+         *     and opens nothing, so a retried call never opens a second request.
          */
-        post: operations["tasks_record_pull_request"];
+        post: operations["tasks_open_pull_request"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1407,6 +1715,26 @@ export interface components {
             /** @description Whether the checkpoints of the last good install are on disk. */
             weights_present: boolean;
         };
+        /**
+         * @description Body of `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-review`:
+         *     whether Ariadne
+         *     reviews a request of the user's own (029).
+         */
+        AskReviewRequest: {
+            asked: boolean;
+            /** @description The effort that model runs at; none for the agent's own. */
+            effort?: string | null;
+            /**
+             * @description The model the review runs on, `agent:model`: required to ask, and
+             *     checked against the catalog as any pin is.
+             */
+            model?: string | null;
+            /**
+             * @description The skills the review loads beside `pr-reviewer`, which every review
+             *     session loads; skills a task agent is staffed on.
+             */
+            skills?: string[];
+        };
         AttentionFlagDto: {
             /** Format: double */
             mean_wait_secs: number;
@@ -1538,6 +1866,7 @@ export interface components {
              * @example high
              */
             effort?: string | null;
+            issue_url?: string | null;
             landing?: null | components["schemas"]["Landing"];
             /**
              * @description What the orchestrator runs on, `<agent>:<model>` — the id of an agent
@@ -1559,6 +1888,7 @@ export interface components {
             base_branch?: string | null;
             default_landing?: null | components["schemas"]["Landing"];
             description?: string | null;
+            forge?: null | components["schemas"]["ForgeUpdate"];
             /**
              * @description Absolute path of an existing git work tree.
              * @example /home/me/dev/ariadne
@@ -1741,6 +2071,27 @@ export interface components {
             data: components["schemas"]["LearnedPermissionDto"];
             /** @enum {string} */
             event: "learned_permission_deleted";
+        } | {
+            /** @description The forge settings or the tunnel state moved (027). */
+            data: components["schemas"]["ForgeTunnelDto"];
+            /** @enum {string} */
+            event: "forge_settings_updated";
+        } | {
+            /**
+             * @description The open issues of one repository moved on its forge (028): read them
+             *     again from `GET /v1/repositories/{id}/issues`.
+             */
+            data: components["schemas"]["IssuesChangedDto"];
+            /** @enum {string} */
+            event: "issues_changed";
+        } | {
+            /**
+             * @description The requests of one repository moved: on its forge, or in what
+             *     Ariadne keeps of them (026). Read them again; they are the forge's.
+             */
+            data: components["schemas"]["PullRequestsChangedDto"];
+            /** @enum {string} */
+            event: "pull_requests_changed";
         };
         /**
          * @description One reasoning effort an entry can be run at: the name it is passed by, and
@@ -1766,6 +2117,17 @@ export interface components {
          * @enum {string}
          */
         EventOrder: "asc" | "desc";
+        /** @description One check that failed on a request's head. */
+        FailedCheckDto: {
+            /**
+             * @description The forge's own word for how it ended: `failure`, `cancelled` and
+             *     the like.
+             */
+            conclusion: string;
+            name: string;
+            /** @description Where the forge shows the check's run; empty where it names none. */
+            url: string;
+        };
         /**
          * @description Body of `POST /v1/goals/{id}/finalize`: the orchestrator ends planning and
          *     execution starts. The orchestrator's call, not the user's, and it carries
@@ -1782,6 +2144,60 @@ export interface components {
             devices: components["schemas"]["DeviceOptionDto"][];
             flavour: components["schemas"]["Flavour"];
         };
+        /** @description The forge a repository's remote is on, and whether Ariadne works with it. */
+        ForgeDto: {
+            enabled: boolean;
+            /**
+             * @description Lower-cased, like `owner` and `name`.
+             * @example github.com
+             */
+            host: string;
+            kind: components["schemas"]["ForgeKind"];
+            /** @description The account the forge CLI is signed in as, stored on enable. */
+            login?: string | null;
+            name: string;
+            owner: string;
+            /** @description The remote it was read off, `origin` where there is one. */
+            remote: string;
+            review_effort?: string | null;
+            /** @description The pin of the session that reviews a request; null starts none. */
+            review_model?: string | null;
+            webhook: components["schemas"]["WebhookDto"];
+        };
+        /**
+         * @description The forge a repository's remote is on (025): which CLI speaks to it.
+         * @enum {string}
+         */
+        ForgeKind: "github" | "gitlab";
+        /**
+         * @description The forge settings and the tunnel state, as `GET /v1/forge/tunnel` and
+         *     `forge_settings_updated` carry them (027).
+         */
+        ForgeTunnelDto: {
+            /** @description The switch: whether the daemon opens a tunnel. */
+            enabled: boolean;
+            /** @description Why the last attempt failed, while the tunnel is down. */
+            error?: string | null;
+            /**
+             * @description The bound webhook listener address the tunnel forwards to.
+             * @example 127.0.0.1:49152
+             */
+            listen?: string | null;
+            /** @description When the tunnel entered its state. */
+            since: string;
+            state: components["schemas"]["TunnelState"];
+            /** @description The public URL while the tunnel is up. */
+            url?: string | null;
+        };
+        /**
+         * @description A change to the forge integration; absent fields stay unchanged. A model
+         *     written empty clears that role's pin and its effort.
+         */
+        ForgeUpdate: {
+            enabled?: boolean | null;
+            review_effort?: string | null;
+            review_model?: string | null;
+        };
         GoalDto: {
             created_at: string;
             description: string;
@@ -1792,6 +2208,7 @@ export interface components {
              */
             effort?: string | null;
             id: string;
+            issue_url?: string | null;
             /** @description How every task of the goal ends, chosen when the goal was created. */
             landing: components["schemas"]["Landing"];
             /**
@@ -1883,6 +2300,20 @@ export interface components {
             started_at: string;
             /** @description The daemon's version, as `GET /v1/version` reports it. */
             version: string;
+        };
+        IssueDto: {
+            assignees: string[];
+            body: string;
+            labels: string[];
+            /** Format: int64 */
+            number: number;
+            title: string;
+            updated_at: string;
+            url: string;
+        };
+        /** @description Payload of `issues_changed`: the repository whose open issues moved. */
+        IssuesChangedDto: {
+            repository_id: string;
         };
         /**
          * @description How the tasks of one goal end.
@@ -2153,6 +2584,19 @@ export interface components {
             /** @description The absolute path of an existing directory the agent works in. */
             working_directory: string;
         };
+        /**
+         * @description The author asking the daemon to open the pull or merge request its task
+         *     lands by. The daemon runs the forge's own CLI, so this carries only what
+         *     the author cannot read off the task or the repository itself.
+         */
+        OpenPullRequestRequest: {
+            /** @description Filled from the repository's own request template. */
+            body: string;
+            /** @description Opens the request as a draft. Defaults to false. */
+            draft?: boolean;
+            /** @description Titled by the repository's own commit conventions. */
+            title: string;
+        };
         /** @description A file or directory the daemon depends on. */
         PathStateDto: {
             exists: boolean;
@@ -2244,6 +2688,123 @@ export interface components {
             /** @description Id of the author picked, one of the task's authors. */
             author_agent_id: string;
         };
+        /**
+         * @description One comment on a request, as the forge holds it now, read live (026),
+         *     with the marks Ariadne keeps of it.
+         */
+        PullRequestCommentDto: {
+            /** @description A later comment in the thread is by the integration login. */
+            answered: boolean;
+            author_is_bot: boolean;
+            author_login: string;
+            body: string;
+            created_at: string;
+            /** @description An Ariadne review session posted it (029). */
+            from_review?: boolean;
+            /**
+             * @description The forge's id of the comment, `rc-<n>`, `ic-<n>`, `rv-<n>` or
+             *     `note-<n>`: what `reply` and `resolve` take.
+             */
+            id: string;
+            in_reply_to?: string | null;
+            /** @description `review_comment`, `issue_comment` or `review`. */
+            kind: string;
+            /** Format: int64 */
+            line?: number | null;
+            path?: string | null;
+            pull_request_id: string;
+            /** @description The forge reports the thread resolved. */
+            resolved: boolean;
+            /**
+             * @description The forge's thread or discussion; the conversation of the request
+             *     is one thread.
+             */
+            thread_id: string;
+            /** @description When the request's session was told of it. */
+            told_at?: string | null;
+        };
+        /**
+         * @description A pull request as the forge holds it now, read live (026), with what
+         *     Ariadne keeps of it where Ariadne works on it: the request a task opened,
+         *     one that asks for the user's review on a repository with a review pin,
+         *     or one of the user's they asked Ariadne to review.
+         */
+        PullRequestDto: {
+            author_login: string;
+            base_branch: string;
+            /** @description Whether the base branch has commits the head does not. */
+            behind_base?: boolean;
+            /** @description The request's description. */
+            body?: string;
+            /** @description The rolled-up checks: `pending`, `success`, `failure` or `none`. */
+            checks: string;
+            draft: boolean;
+            /** @description The checks that failed on the head, read as `unanswered_comments` is. */
+            failed_checks?: components["schemas"]["FailedCheckDto"][];
+            head_branch: string;
+            head_repo?: string | null;
+            head_sha: string;
+            /**
+             * @description Ariadne's id of the request while it works on it; null on a request
+             *     nobody works on, which the forge alone holds.
+             */
+            id?: string | null;
+            /** Format: int64 */
+            number: number;
+            opened_at: string;
+            /** @description The task that opened the request: its author keeps it (005). */
+            origin_task_id?: string | null;
+            /** @description Whether the request's session reported it ready to merge. */
+            ready?: boolean;
+            repository_id: string;
+            /**
+             * @description Whether the user asked Ariadne to review this request of their own
+             *     (029).
+             */
+            review_asked?: boolean;
+            review_decision: string;
+            review_effort?: string | null;
+            /** @description The pin the user picked for that review. */
+            review_model?: string | null;
+            /** @description Whether the request asks for the user's review (029). */
+            review_requested?: boolean;
+            /** @description The skills that review loads beside `pr-reviewer`. */
+            review_skills?: string[];
+            /** @description `author` for a request of the user's, `reviewer` for any other. */
+            role: string;
+            /**
+             * @description The newest session on this request, if any: its review session
+             *     (029), or the author of the task that opened it (005).
+             */
+            session_id?: string | null;
+            /** @description `open`, `merged` or `closed`. */
+            state: string;
+            title: string;
+            /**
+             * Format: int64
+             * @description The threads that wait on the user's login. Read where Ariadne works
+             *     on the request, or where the request is read on its own; 0 on a row
+             *     of a list nobody works on.
+             */
+            unanswered_comments?: number;
+            /** @description When the forge last saw the request move. */
+            updated_at: string;
+            url: string;
+        };
+        /** @description An open request a search found that is not the user's own. */
+        PullRequestMatchDto: {
+            author_login: string;
+            /** Format: int64 */
+            number: number;
+            title: string;
+            /** @description Whether Ariadne works on it. */
+            tracked: boolean;
+            url: string;
+        };
+        /** @description Payload of `pull_requests_changed`: the repository whose requests moved. */
+        PullRequestsChangedDto: {
+            repository_id: string;
+        };
         /** @description The Python interpreter the daemon found, as it answered `--version`. */
         PythonDto: {
             /** @description Whether it is Python 3.12 or 3.13, which the model needs. */
@@ -2259,19 +2820,19 @@ export interface components {
              */
             version?: string | null;
         };
+        /** @description Body of `POST /v1/pull-requests/{id}/comments/{comment_id}/reply`. */
+        ReplyCommentRequest: {
+            body: string;
+        };
         /**
-         * @description The author reporting the pull or merge request it opened for a task, so
-         *     the user has somewhere to go and read it: taken off `gh pr create`'s output
-         *     and recorded on the task.
+         * @description Body of `POST /v1/pull-requests/{id}/report`: what the request's session
+         *     says of it.
          */
-        RecordPullRequestRequest: {
-            /**
-             * @description Whether every required approval and check last read green. Defaults
-             *     to false, which records the URL without announcing it to the user.
-             */
-            ready?: boolean;
-            /** @description The request's URL, e.g. `https://github.com/owner/repo/pull/12`. */
-            url: string;
+        ReportPullRequestRequest: {
+            /** @description Every required approval and check reads green. */
+            ready?: boolean | null;
+            /** @description The head a reviewer session posted its review on (029). */
+            reviewed_sha?: string | null;
         };
         RepositoryDto: {
             base_branch: string;
@@ -2279,6 +2840,7 @@ export interface components {
             /** @description The landing a new goal uses where its request leaves landing out. */
             default_landing: components["schemas"]["Landing"];
             description?: string | null;
+            forge?: null | components["schemas"]["ForgeDto"];
             id: string;
             /** @description Absolute path of the checkout. */
             path: string;
@@ -2308,6 +2870,21 @@ export interface components {
              * @description Events this connection lost. Informational: they cannot be recovered.
              */
             missed: number;
+        };
+        /** @description One inline comment of a review (029). */
+        ReviewCommentRequest: {
+            /** @description What goes wrong, and how to fix it. */
+            body: string;
+            /**
+             * Format: int64
+             * @description The line in the new version of the file.
+             */
+            line: number;
+            path: string;
+            /** @description `P0`, `P1` or `P2`. */
+            priority: string;
+            /** @description A short title of the defect; the comment opens on `[P0] Title`. */
+            title?: string;
         };
         /**
          * @description Where an agent sits: the orchestrator of a goal, or the author or a
@@ -2367,6 +2944,11 @@ export interface components {
              *     session runs on, and the model of it.
              */
             model: string;
+            /**
+             * @description The pull request this session watches (026); null for every other
+             *     session.
+             */
+            pull_request_id?: string | null;
             seat?: null | components["schemas"]["Seat"];
             status: components["schemas"]["SessionStatus"];
             /**
@@ -2426,6 +3008,8 @@ export interface components {
             last_activity_at?: string | null;
             /** @description Model requested at launch, `<agent>:<model>`; None on an outside row. */
             model?: string | null;
+            /** @description The pull request this session watches; None for every other session. */
+            pull_request_id?: string | null;
             seat?: null | components["schemas"]["Seat"];
             status?: null | components["schemas"]["SessionStatus"];
             /**
@@ -2487,6 +3071,10 @@ export interface components {
             id: string;
             rank?: null | components["schemas"]["ModelRank"];
         };
+        /** @description `PUT /v1/forge/tunnel`: turn the tunnel on or off. */
+        SetTunnelRequest: {
+            enabled: boolean;
+        };
         SkillDto: {
             /**
              * @description Whether Ariadne ships this skill. A built-in is reset rather than
@@ -2524,7 +3112,7 @@ export interface components {
          * @description Where a skill is used: by the orchestrator, or to staff a task agent.
          * @enum {string}
          */
-        SkillSeat: "orchestrator" | "task";
+        SkillSeat: "orchestrator" | "task" | "pull_request";
         /** @description What was spent in one bucket of the time axis. */
         SpendBucketDto: {
             /** Format: int64 */
@@ -2596,6 +3184,20 @@ export interface components {
             status: string;
             /** Format: double */
             total_secs: number;
+        };
+        /**
+         * @description Body of `POST /v1/pull-requests/{id}/reviews` (029): one review, posted
+         *     in the name of the integration login.
+         */
+        SubmitReviewRequest: {
+            /**
+             * @description The review's summary as it stands now: the daemon writes it into the
+             *     one summary comment the review keeps on the request.
+             */
+            body: string;
+            comments?: components["schemas"]["ReviewCommentRequest"][];
+            /** @description `request_changes` or `comment`. Every other event is refused. */
+            event: string;
         };
         /**
          * @description Switch a session to another model or agent: the old session ends, and a
@@ -2868,6 +3470,11 @@ export interface components {
             reason?: string | null;
             to: components["schemas"]["TaskStatus"];
         };
+        /**
+         * @description Where the webhook tunnel stands (027).
+         * @enum {string}
+         */
+        TunnelState: "up" | "down" | "off";
         /** @description Body of `PUT /v1/agents/{id}`: the whole new flag list, empty included. */
         UpdateAgentConfigRequest: {
             extra_flags: string[];
@@ -2904,6 +3511,7 @@ export interface components {
             default_landing?: null | components["schemas"]["Landing"];
             /** @description New description, or empty to clear it. Absent = unchanged. */
             description?: string | null;
+            forge?: null | components["schemas"]["ForgeUpdate"];
             path?: string | null;
             permission_mode?: null | components["schemas"]["PermissionMode"];
         };
@@ -2958,6 +3566,18 @@ export interface components {
             name: string;
             /** @example 0.1.0 */
             version: string;
+        };
+        /** @description Public hook status. The hook secret is never serialized. */
+        WebhookDto: {
+            error?: string | null;
+            /**
+             * @description Why the last fetch of the repository's requests failed, or null once
+             *     one works: what says polling works, where no hook is live.
+             */
+            fetch_error?: string | null;
+            last_delivery_at?: string | null;
+            state: string;
+            url?: string | null;
         };
         /** @description One bucket of the time axis: the counts of the facts that fall in it. */
         WorkBucketDto: {
@@ -3247,6 +3867,48 @@ export interface operations {
                 };
                 content: {
                     "text/event-stream": components["schemas"]["DomainEvent"];
+                };
+            };
+        };
+    };
+    repositories_get_tunnel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForgeTunnelDto"];
+                };
+            };
+        };
+    };
+    repositories_set_tunnel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetTunnelRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForgeTunnelDto"];
                 };
             };
         };
@@ -4021,6 +4683,424 @@ export interface operations {
             };
         };
     };
+    "pull-requests_list": {
+        parameters: {
+            query?: {
+                repo?: string | null;
+                /** @description `reviewer` for the requests of others, `author` for the user's own. */
+                role?: string | null;
+                /** @description The task that opened the request. */
+                task?: string | null;
+                /**
+                 * @description True for the requests that ask for the user's review (029), false
+                 *     for the ones that do not.
+                 */
+                requested?: boolean | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestDto"][];
+                };
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_refresh": {
+        parameters: {
+            query?: {
+                repo?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_get": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_comments": {
+        parameters: {
+            query?: {
+                /** @description Only the threads that wait on an answer from the integration login. */
+                unanswered_only?: boolean | null;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestCommentDto"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_comment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                comment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestCommentDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_reply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                comment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReplyCommentRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestCommentDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                comment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestCommentDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_diff": {
+        parameters: {
+            query?: {
+                /** @description Read the diff from this sha to the head, not from the base. */
+                since?: string | null;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportPullRequestRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_submit_review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubmitReviewRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestCommentDto"][];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     repositories_list: {
         parameters: {
             query?: never;
@@ -4061,14 +5141,14 @@ export interface operations {
                     "application/json": components["schemas"]["RepositoryDto"];
                 };
             };
-            /** @description not an absolute path, not a git work tree, or an unknown branch */
+            /** @description not an absolute path, not a git work tree, an unknown branch, or a forge pin that is no catalog model */
             400: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description this path and base branch are already registered, or `ai` was asked for while the AI permission model is off */
+            /** @description this path and base branch are already registered, `ai` was asked for while the AI permission model is off, or the forge integration cannot be enabled */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -4129,7 +5209,7 @@ export interface operations {
                     "application/json": components["schemas"]["RepositoryDto"];
                 };
             };
-            /** @description not an absolute path, not a git work tree, or an unknown branch */
+            /** @description not an absolute path, not a git work tree, an unknown branch, or a forge pin that is no catalog model */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -4142,7 +5222,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description this path and base branch are already registered, or `ai` was asked for while the AI permission model is off */
+            /** @description this path and base branch are already registered, `ai` was asked for while the AI permission model is off, or the forge integration cannot be enabled */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -4177,6 +5257,177 @@ export interface operations {
             };
         };
     };
+    issues_list: {
+        parameters: {
+            query?: {
+                /** @description `me` filters to the forge login; `all` reads all open issues. */
+                assigned?: string | null;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueDto"][];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    issues_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueDto"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_search": {
+        parameters: {
+            query?: {
+                q?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestMatchDto"][];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_get_by_number": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestDto"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_ask_review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskReviewRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     sessions_list: {
         parameters: {
             query?: {
@@ -4188,6 +5439,8 @@ export interface operations {
                 goal?: string | null;
                 /** @description Filter by task id. No outside session has one. */
                 task?: string | null;
+                /** @description Filter by pull request id. No outside session has one. */
+                pull_request?: string | null;
                 /**
                  * @description Filter by status. No outside session has one. A named status also
                  *     lists sessions that have ended, as `all` does.
@@ -5213,7 +6466,7 @@ export interface operations {
             };
         };
     };
-    tasks_record_pull_request: {
+    tasks_open_pull_request: {
         parameters: {
             query?: never;
             header?: never;
@@ -5225,7 +6478,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RecordPullRequestRequest"];
+                "application/json": components["schemas"]["OpenPullRequestRequest"];
             };
         };
         responses: {
@@ -5237,13 +6490,6 @@ export interface operations {
                     "application/json": components["schemas"]["TaskDto"];
                 };
             };
-            /** @description empty URL */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description not an author session */
             403: {
                 headers: {
@@ -5251,7 +6497,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description the task is not approved */
+            /** @description the task is not approved, has no forge or its integration is off, is not authenticated, or is not pushed */
             409: {
                 headers: {
                     [name: string]: unknown;

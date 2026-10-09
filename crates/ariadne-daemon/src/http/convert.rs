@@ -11,7 +11,7 @@ use ariadne_api::messages::MessageDto;
 use ariadne_api::permissions::{
     LearnedPermissionDto, LearnedPermissionLevel, LearnedPermissionScope, LearnedPermissionTarget,
 };
-use ariadne_api::repositories::RepositoryDto;
+use ariadne_api::repositories::{ForgeDto, RepositoryDto};
 use ariadne_api::sessions::{OutsideSessionDto, SessionDto, SessionEntryDto, SessionKind};
 use ariadne_api::skills::{SkillDto, SkillSeat};
 use ariadne_api::tasks::{
@@ -51,6 +51,7 @@ dto! {
         seat: match s.seat() {
             store::SkillSeat::Orchestrator => SkillSeat::Orchestrator,
             store::SkillSeat::Task => SkillSeat::Task,
+            store::SkillSeat::PullRequest => SkillSeat::PullRequest,
         },
         summary: s.summary().to_string(),
         document: s.document_text().to_string(),
@@ -62,7 +63,20 @@ dto! {
 pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
         permission_mode: r.permission_mode(),
         default_landing: r.default_landing(),
+        forge: r.forge.map(forge_dto),
         .. id, path, base_branch, description, created_at, updated_at
+    }
+
+    fn forge_dto(f: store::ForgeIntegration) -> ForgeDto {
+        kind: f.kind(),
+        webhook: ariadne_api::repositories::WebhookDto {
+            state: f.webhook_state,
+            url: f.webhook_url,
+            error: f.webhook_error,
+            last_delivery_at: f.webhook_last_delivery_at,
+            fetch_error: f.fetch_error,
+        },
+        .. host, owner, name, remote, enabled, login, review_model, review_effort
     }
 
     /// `repos` are the goal's repositories and `usage` its rollup, both of
@@ -76,7 +90,7 @@ pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
         landing: g.landing(),
         repos: repos,
         usage: usage,
-        .. id, title, description, orchestrated, model, effort,
+        .. id, title, description, issue_url, orchestrated, model, effort,
            created_at, updated_at
     }
 
@@ -159,7 +173,7 @@ pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
         context_size: s.context_size.and_then(|value| u64::try_from(value).ok()),
         .. id, goal_id, task_id, task_agent_id, model, effort, internal_session_id,
            worktree_path, attention_since,
-           last_activity_at, created_at, ended_at, title, switched_from
+           last_activity_at, created_at, ended_at, title, switched_from, pull_request_id
     }
 }
 
@@ -307,6 +321,7 @@ pub(crate) async fn session_entry_of(
         context_used: session.context_used,
         context_size: session.context_size,
         ended_at: session.ended_at,
+        pull_request_id: session.pull_request_id,
     })
 }
 
@@ -338,6 +353,7 @@ pub(crate) fn outside_entry(outside: &OutsideSessionDto) -> SessionEntryDto {
         context_size: None,
         created_at: None,
         ended_at: None,
+        pull_request_id: None,
     }
 }
 
@@ -422,4 +438,134 @@ async fn goal_usage(store: &Store, goal_id: &str) -> Result<GoalUsageDto, StoreE
         authors: of(Seat::Author),
         reviewers: of(Seat::Reviewer),
     })
+}
+
+/// The complete ledger row, shared by REST and events.
+/// A ledger row as the API answers it, with the newest session the daemon
+/// started on it.
+pub(crate) async fn pull_request_dto_of(
+    store: &Store,
+    row: ariadne_store::PullRequest,
+) -> Result<ariadne_api::pull_requests::PullRequestDto, StoreError> {
+    // A request a task opened is its author's (005); any other has a
+    // session of its own (029).
+    let filter = match &row.origin_task_id {
+        Some(task_id) if row.role == "author" => SessionFilter {
+            task_id: Some(task_id.clone()),
+            ..Default::default()
+        },
+        _ => SessionFilter {
+            pull_request_id: Some(row.id.clone()),
+            ..Default::default()
+        },
+    };
+    let session_id = store
+        .list_sessions(filter)
+        .await?
+        .into_iter()
+        .rev()
+        .find(|session| row.role != "author" || session.seat() == Some(Seat::Author))
+        .map(|session| session.id);
+    Ok(pull_request_dto(row, session_id))
+}
+
+/// A request Ariadne works on as the API answers it: its live read and
+/// its row, with the session already looked up.
+pub(crate) fn pull_request_dto(
+    pull: ariadne_store::PullRequest,
+    session_id: Option<String>,
+) -> ariadne_api::pull_requests::PullRequestDto {
+    ariadne_api::pull_requests::PullRequestDto {
+        failed_checks: serde_json::from_str(&pull.failed_checks).unwrap_or_default(),
+        behind_base: pull.behind_base,
+        review_asked: pull.review_asked,
+        review_model: pull.review_model,
+        review_effort: pull.review_effort.clone(),
+        review_skills: serde_json::from_str(&pull.review_skills_json).unwrap_or_default(),
+        review_requested: pull.review_requested,
+        body: pull.body,
+        session_id,
+        id: Some(pull.id),
+        repository_id: pull.repository_id,
+        number: pull.number,
+        url: pull.url,
+        title: pull.title,
+        author_login: pull.author_login,
+        state: pull.state,
+        draft: pull.draft,
+        head_branch: pull.head_branch,
+        head_sha: pull.head_sha,
+        head_repo: pull.head_repo,
+        base_branch: pull.base_branch,
+        checks: pull.checks,
+        review_decision: pull.review_decision,
+        unanswered_comments: pull.unanswered_comments,
+        origin_task_id: pull.origin_task_id,
+        opened_at: pull.opened_at,
+        updated_at: pull.forge_updated_at,
+        role: pull.role,
+        ready: pull.ready,
+    }
+}
+
+/// A request nobody works on as the API answers it: the forge's read alone.
+pub(crate) fn forge_pull_dto(
+    repository_id: &str,
+    pull: crate::forge::pulls::ForgePullRequest,
+    role: &str,
+    review_requested: bool,
+) -> ariadne_api::pull_requests::PullRequestDto {
+    ariadne_api::pull_requests::PullRequestDto {
+        id: None,
+        repository_id: repository_id.to_string(),
+        number: pull.number,
+        url: pull.url,
+        title: pull.title,
+        body: pull.body,
+        author_login: pull.author_login,
+        state: pull.state,
+        draft: pull.draft,
+        head_branch: pull.head_branch,
+        head_sha: pull.head_sha,
+        head_repo: pull.head_repo,
+        base_branch: pull.base_branch,
+        checks: pull.checks,
+        review_decision: pull.review_decision,
+        opened_at: pull.opened_at,
+        updated_at: pull.updated_at,
+        role: role.to_string(),
+        review_requested,
+        unanswered_comments: 0,
+        failed_checks: Vec::new(),
+        behind_base: false,
+        origin_task_id: None,
+        ready: false,
+        review_asked: false,
+        review_model: None,
+        review_effort: None,
+        review_skills: Vec::new(),
+        session_id: None,
+    }
+}
+
+pub(crate) fn pull_request_comment_dto(
+    comment: ariadne_store::PullRequestComment,
+) -> ariadne_api::pull_requests::PullRequestCommentDto {
+    ariadne_api::pull_requests::PullRequestCommentDto {
+        id: comment.id,
+        pull_request_id: comment.pull_request_id,
+        thread_id: comment.thread_id,
+        kind: comment.kind,
+        author_login: comment.author_login,
+        author_is_bot: comment.author_is_bot,
+        body: comment.body,
+        path: comment.path,
+        line: comment.line,
+        in_reply_to: comment.in_reply_to,
+        created_at: comment.created_at,
+        answered: comment.answered,
+        resolved: comment.resolved,
+        told_at: comment.told_at,
+        from_review: comment.from_review,
+    }
 }

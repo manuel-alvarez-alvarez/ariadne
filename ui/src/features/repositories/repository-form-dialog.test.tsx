@@ -19,7 +19,7 @@ import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { RepositoryDto } from "@/api"
-import { aRepository } from "@/test/fixtures"
+import { aForge, aRepository } from "@/test/fixtures"
 import { daemonFetch, errorResponse, renderScreen } from "@/test/harness"
 import { RepositoryFormDialog } from "./repository-form-dialog"
 
@@ -36,6 +36,7 @@ interface Recorded {
     description?: string | null
     permission_mode?: string
     default_landing?: string
+    forge?: Record<string, unknown>
   } | null
 }
 
@@ -400,5 +401,77 @@ describe("dismissing the dialog", () => {
 
     expect(onOpenChange).toHaveBeenCalledWith(false)
     expect(requests.filter((one) => one.method !== "GET")).toEqual([])
+  })
+})
+
+/**
+ * The integration with the forge the daemon detected on the remote (spec
+ * 025): one switch, shown only where there is a forge, and sent back only
+ * where the user moved it.
+ */
+describe("the forge integration", () => {
+  const ON_GITHUB: RepositoryDto = { ...REPOSITORY, forge: aForge() }
+
+  it("shows the detected remote, and enables the forge with its one switch", async () => {
+    const user = userEvent.setup()
+    renderDialog(ON_GITHUB)
+
+    expect(screen.getByTestId("forge-remote").textContent).toContain(
+      "github.com/acme/widgets, via gh",
+    )
+    // The webhook is the table's to show, and the role pins are the CLI's.
+    expect(screen.queryByText(/Webhook/)).toBeNull()
+    expect(screen.queryByText(/runs on/)).toBeNull()
+    await user.click(screen.getByRole("switch", { name: "GitHub integration" }))
+    await user.click(screen.getByRole("button", { name: "Save changes" }))
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()?.body?.forge).toEqual({ enabled: true })
+  })
+
+  it("sends nothing of the forge where the switch did not move", async () => {
+    const user = userEvent.setup()
+    renderDialog({ ...REPOSITORY, forge: aForge({ enabled: true, login: "octocat" }) })
+
+    expect(screen.getByTestId("forge-remote").textContent).toContain("signed in as octocat")
+    await user.type(screen.getByLabelText("Description"), " Now on GitHub.")
+    await user.click(screen.getByRole("button", { name: "Save changes" }))
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()?.body).not.toHaveProperty("forge")
+  })
+
+  it("puts a refusal to enable on the switch, in the CLI's own words", async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+    stubDaemon({
+      status: 409,
+      code: "forge_unauthenticated",
+      message: "`gh auth status --hostname github.com`: You are not logged into any GitHub hosts.",
+    })
+    renderDialog(ON_GITHUB, onOpenChange)
+
+    await user.click(screen.getByRole("switch", { name: "GitHub integration" }))
+    await user.click(screen.getByRole("button", { name: "Save changes" }))
+
+    const message = await screen.findByText(/You are not logged into any GitHub hosts/)
+    expect(message.closest("[data-slot=field-error]")).not.toBeNull()
+    expect(onOpenChange).not.toHaveBeenCalled()
+  })
+
+  it("offers no switch where no GitHub or GitLab remote was detected", () => {
+    renderDialog(REPOSITORY)
+
+    expect(screen.queryByRole("switch")).toBeNull()
+  })
+
+  it("shows no forge while registering: nothing is detected before the daemon opens the checkout", () => {
+    renderDialog(null)
+
+    expect(screen.queryByRole("switch")).toBeNull()
   })
 })

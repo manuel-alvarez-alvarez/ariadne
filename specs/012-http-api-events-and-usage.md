@@ -48,7 +48,8 @@ and the ACP runtime that reports the agent events (021).
    optionally, on a TCP address for the desktop app.
 2. DTOs and the error shape live in one crate (`ariadne-api`) and are the
    single source of truth for the OpenAPI document every client generates
-   from. Every endpoint appears in that document.
+   from. Every API endpoint appears in that document.
+   The separate forge webhook ingress follows [027](027-webhooks-and-tunnel.md).
 3. A refusal is an envelope with a machine-readable code and one sentence a
    person can act on — the state machine's own explanation where a transition
    was refused (001). Every request DTO denies unknown fields, so a body that
@@ -284,6 +285,33 @@ and the ACP runtime that reports the agent events (021).
     `<Family>StatsDto` (023). A bad `since` is `400 invalid_request`. A stat
     reads the stats ledger only, and counts no cost: the tokens are the ones
     rule 15 keeps.
+
+## Pull request events (026)
+
+| Event | Payload |
+| --- | --- |
+| `pull_requests_changed` | `{repository_id}`: the repository whose requests moved, on the forge since its fetch last read them, or in what Ariadne keeps of them. |
+
+Requests are read live off the forge and not stored, so the event carries no request: a client reads them again. It has no goal or task routing scope.
+See [026](026-pull-requests.md) for identity, routes, and event tests.
+
+## Forge settings events (027)
+
+| Event | Payload |
+| --- | --- |
+| `forge_settings_updated` | The complete `ForgeTunnelDto`: the tunnel switch, its state, URL, bound listener address, `since` and `error`. |
+
+The daemon publishes it on each switch write and each tunnel state change. It has no goal or task routing scope.
+See [027](027-webhooks-and-tunnel.md) for the tunnel rules and the event test.
+
+## Issue events (028)
+
+| Event | Payload |
+| --- | --- |
+| `issues_changed` | `{repository_id}`: the repository whose open issues moved on its forge since its fetch last read them. |
+
+Issues are not stored, so the event carries no issue: a client reads them again. It has no goal or task routing scope.
+See [028](028-issues-and-goals.md) for the rule and the event tests.
 
 ## Acceptance criteria
 

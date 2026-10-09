@@ -18,6 +18,7 @@ import type {
   AiPermissionsStatusDto,
   components,
   EffortDto,
+  ForgeDto,
   GoalDto,
   LearnedPermissionDto,
   ModelDto,
@@ -50,6 +51,7 @@ export function aGoal(overrides: Partial<GoalDto> = {}): GoalDto {
     id: GOAL_ID,
     title: "Ship the board",
     description: "",
+    issue_url: null,
     model: "claude-agent-acp:claude-sonnet-5",
     orchestrated: true,
     landing: "merge",
@@ -122,6 +124,7 @@ export function aSession(overrides: Partial<SessionDto> = {}): SessionDto {
     created_at: STAMP,
     ended_at: null,
     title: null,
+    pull_request_id: null,
     ...overrides,
   }
 }
@@ -238,8 +241,31 @@ export function aRepository(overrides: Partial<RepositoryDto> = {}): RepositoryD
     description: "The orchestrator itself.",
     permission_mode: "auto",
     default_landing: "merge",
+    forge: null,
     created_at: STAMP,
     updated_at: STAMP,
+    ...overrides,
+  }
+}
+
+export function aForge(overrides: Partial<ForgeDto> = {}): ForgeDto {
+  return {
+    webhook: {
+      state: "polling",
+      url: null,
+      error: null,
+      last_delivery_at: null,
+      fetch_error: null,
+    },
+    kind: "github",
+    host: "github.com",
+    owner: "acme",
+    name: "widgets",
+    remote: "origin",
+    enabled: false,
+    login: null,
+    review_model: null,
+    review_effort: null,
     ...overrides,
   }
 }

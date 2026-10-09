@@ -79,10 +79,14 @@ export function SessionStatusBadge({
 
 /**
  * Why a session is waiting on a person: the `attention_reason` the daemon
- * raised for it, and nothing else. Named rather than used bare because the
- * attention strip has task reasons of its own under the same word.
+ * raised for it, plus `ready_to_merge` — the name a pull request session's
+ * `waiting_user` goes by (026), since what it waits on is the user's merge —
+ * and `review_posted`, the name it goes by on a reviewer's session (029),
+ * since what that waits on is the user's approval. Named rather than used
+ * bare because the attention strip has task reasons of its own under the
+ * same word.
  */
-export type SessionAttention = AttentionReason
+export type SessionAttention = AttentionReason | "ready_to_merge" | "review_posted"
 
 interface SessionAttentionMeta {
   label: string
@@ -126,6 +130,18 @@ export const SESSION_ATTENTION_META: Record<SessionAttention, SessionAttentionMe
     badge: "bg-status-warn-soft text-status-warn-fg",
     border: "border-status-warn/40",
   },
+  ready_to_merge: {
+    label: "Ready to merge",
+    hint: "Every approval and check on the pull request reads green: the merge is yours.",
+    badge: "bg-status-warn-soft text-status-warn-fg",
+    border: "border-status-warn/40",
+  },
+  review_posted: {
+    label: "Review posted, approve yourself",
+    hint: "The review of the pull request is posted: the approval is yours to give.",
+    badge: "bg-status-warn-soft text-status-warn-fg",
+    border: "border-status-warn/40",
+  },
   agent_error: {
     label: "Agent error",
     hint: "The agent reported an error.",
@@ -153,22 +169,36 @@ export const SESSION_ATTENTION_META: Record<SessionAttention, SessionAttentionMe
 }
 
 /**
+ * The reason a session's badge shows: the daemon's own, with a pull request
+ * session's `waiting_user` read as `ready_to_merge`, or as `review_posted`
+ * on a reviewer's — the CLI's `ariadne attention` words it the same way.
+ */
+export function shownAttention(
+  session: Pick<SessionDto, "attention_reason" | "pull_request_id" | "seat">,
+): SessionAttention | null {
+  const reason = session.attention_reason ?? null
+  if (reason !== "waiting_user" || !session.pull_request_id) return reason
+  return session.seat === "reviewer" ? "review_posted" : "ready_to_merge"
+}
+
+/**
  * Why a session wants the user, and nothing when it does not.
  *
  * The stored reason is the whole rule, with one exception: `waiting_user` used
- * to mean a question sat in a thread this app no longer has, so it is no
- * longer something the attention strip, the board's badges or the sessions
- * screen's own filter raise a row for — see {@link SessionAttentionBadge},
- * which still draws it where a session's own panel shows the raw reason the
- * daemon reported. A dead session raises no reason of its own on purpose: the
- * daemon flags the agent it still owes work to as `disconnected` and leaves
- * the rest alone, so a reviewer that exited after voting is finished, not
- * stuck, and reading `status` here would put it back on the list the daemon
- * kept it off.
+ * to mean a question sat in a thread this app no longer has, so on any session
+ * but a pull request's it is no longer something the attention strip, the
+ * board's badges or the sessions screen's own filter raise a row for — see
+ * {@link SessionAttentionBadge}, which still draws it where a session's own
+ * panel shows the raw reason the daemon reported. On a pull request session it
+ * is `ready_to_merge` (see {@link shownAttention}), and that one is listed. A
+ * dead session raises no reason of its own on purpose: the daemon flags the
+ * agent it still owes work to as `disconnected` and leaves the rest alone, so
+ * a reviewer that exited after voting is finished, not stuck, and reading
+ * `status` here would put it back on the list the daemon kept it off.
  */
 export function sessionAttention(session: SessionDto): SessionAttention | null {
-  const reason = session.attention_reason
-  return reason && reason !== "waiting_user" ? reason : null
+  const reason = shownAttention(session)
+  return reason === "waiting_user" ? null : reason
 }
 
 /**

@@ -48,6 +48,12 @@ pub struct FileConfig {
     pub run_dir: Option<PathBuf>,
     /// e.g. "127.0.0.1:7676" — TCP listener is disabled unless set.
     pub tcp_listen: Option<SocketAddr>,
+    pub webhook_listen: Option<SocketAddr>,
+    pub webhook_public_url: Option<String>,
+    /// The localtunnel server the webhook tunnel registers with.
+    pub tunnel_host: Option<String>,
+    /// The subdomain the tunnel asks for, over the stored one.
+    pub tunnel_subdomain: Option<String>,
     /// tracing filter, e.g. "info,ariadne_daemon=debug"
     pub log_filter: Option<String>,
     /// Path to the `ariadne` CLI used for MCP (default: sibling of
@@ -80,6 +86,12 @@ pub struct FileConfig {
     /// The `nvidia-smi` the hardware probe runs to find a GPU (022, flavours
     /// and devices; default: `nvidia-smi` on the daemon's PATH).
     pub nvidia_smi_bin: Option<String>,
+    /// The `gh` the GitHub integration runs (025; default: `gh` on the
+    /// daemon's PATH).
+    pub gh_bin: Option<String>,
+    /// The `glab` the GitLab integration runs (025; default: `glab` on the
+    /// daemon's PATH).
+    pub glab_bin: Option<String>,
     /// Additional ACP agents appended to the built-in registry.
     #[serde(default)]
     pub acp_agents: Vec<AcpAgentConfig>,

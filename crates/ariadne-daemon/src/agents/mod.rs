@@ -27,8 +27,13 @@ pub struct SpawnCtx {
     /// every process started under the row, so that what this agent reports
     /// is told apart from what the agent it replaces is still reporting.
     pub launch_id: String,
-    pub goal_id: String,
+    /// The goal the session works for (becomes ARIADNE_GOAL_ID); None for a
+    /// pull request session, which works for no goal.
+    pub goal_id: Option<String>,
     pub task_id: Option<String>,
+    /// The pull request a pull request session watches (becomes
+    /// ARIADNE_PULL_REQUEST_ID, 026).
+    pub pull_request_id: Option<String>,
     pub seat: Seat,
     /// Per-session directory for generated files (`~/.ariadne/run/<id>/`).
     pub run_dir: PathBuf,
@@ -109,15 +114,20 @@ pub(crate) fn base_env(ctx: &SpawnCtx) -> Vec<(String, String)> {
     let mut env = vec![
         ("ARIADNE_SESSION_ID".into(), ctx.session_id.clone()),
         ("ARIADNE_LAUNCH_ID".into(), ctx.launch_id.clone()),
-        ("ARIADNE_GOAL_ID".into(), ctx.goal_id.clone()),
         ("ARIADNE_SEAT".into(), ctx.seat.as_str().to_string()),
         (
             "ARIADNE_SOCKET".into(),
             ctx.socket_path.display().to_string(),
         ),
     ];
+    if let Some(goal) = &ctx.goal_id {
+        env.push(("ARIADNE_GOAL_ID".into(), goal.clone()));
+    }
     if let Some(task) = &ctx.task_id {
         env.push(("ARIADNE_TASK_ID".into(), task.clone()));
+    }
+    if let Some(pull_request) = &ctx.pull_request_id {
+        env.push(("ARIADNE_PULL_REQUEST_ID".into(), pull_request.clone()));
     }
     env
 }

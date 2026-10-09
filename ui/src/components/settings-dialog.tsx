@@ -1,6 +1,8 @@
 /**
- * Where the daemon lives. This is the only thing the UI needs configured: the
- * address of `tcp_listen` in `~/.ariadne/config.toml`.
+ * Where the daemon lives — the one thing the UI itself needs configured: the
+ * address of `tcp_listen` in `~/.ariadne/config.toml` — and the daemon's own
+ * webhook tunnel switch, which is written the moment it is flipped rather than
+ * on Save, since it is the daemon's setting and not this window's.
  */
 
 import { useEffect, useState } from "react"
@@ -19,6 +21,7 @@ import {
 } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { TunnelSettings } from "@/features/repositories/tunnel-settings"
 import { useSettingsStore } from "@/stores/settings"
 
 export function SettingsDialog({
@@ -66,7 +69,7 @@ export function SettingsDialog({
               listens on.
             </DialogDescription>
           </DialogHeader>
-          <div className="py-4">
+          <div className="flex flex-col gap-6 py-4">
             <Field data-invalid={error ? "" : undefined}>
               <FieldLabel htmlFor="daemon-base-url">Daemon URL</FieldLabel>
               <Input
@@ -91,6 +94,9 @@ export function SettingsDialog({
                 </FieldDescription>
               )}
             </Field>
+            <div className="border-t pt-4">
+              <TunnelSettings open={open} />
+            </div>
           </div>
           <DialogFooter>
             <Button

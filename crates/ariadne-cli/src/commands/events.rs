@@ -332,6 +332,14 @@ fn agent_line(e: &AgentEventSummaryDto) -> Line {
 fn domain_line(event: &DomainEvent) -> Line {
     let kind = event.kind().to_string();
     match event {
+        DomainEvent::PullRequestsChanged(p) => Line {
+            at: String::new(),
+            kind,
+            subject: p.repository_id.clone(),
+            detail: "pull requests moved".into(),
+            session: None,
+            status: None,
+        },
         DomainEvent::GoalCreated(g) | DomainEvent::GoalUpdated(g) => Line {
             at: g.updated_at.clone(),
             kind,
@@ -400,6 +408,22 @@ fn domain_line(event: &DomainEvent) -> Line {
             detail: l.last_error.clone().unwrap_or_default(),
             session: None,
             status: Some(l.state.as_str().to_string()),
+        },
+        DomainEvent::ForgeSettingsUpdated(t) => Line {
+            at: t.since.clone(),
+            kind,
+            subject: "forge tunnel".to_string(),
+            detail: super::forge::label(t),
+            session: None,
+            status: None,
+        },
+        DomainEvent::IssuesChanged(i) => Line {
+            at: String::new(),
+            kind,
+            subject: i.repository_id.clone(),
+            detail: "the open issues moved".to_string(),
+            session: None,
+            status: None,
         },
         DomainEvent::LearnedPermissionCreated(p)
         | DomainEvent::LearnedPermissionUpdated(p)
@@ -526,6 +550,7 @@ mod tests {
 
     fn goal() -> GoalDto {
         GoalDto {
+            issue_url: None,
             updated_at: AT.into(),
             ..fixtures::goal("01GOAL", "Ship the board")
         }

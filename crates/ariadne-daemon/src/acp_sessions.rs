@@ -314,6 +314,7 @@ pub(crate) struct Filter {
     agent: Option<String>,
     goal: Option<String>,
     task: Option<String>,
+    pull_request: Option<String>,
     status: Option<ariadne_core::SessionStatus>,
     seat: Option<Seat>,
     attention: bool,
@@ -361,6 +362,7 @@ impl Filter {
             agent: query.agent.clone(),
             goal: query.goal.clone(),
             task: query.task.clone(),
+            pull_request: query.pull_request.clone(),
             status: query.status,
             seat: query.seat,
             attention: query.attention.unwrap_or(false),
@@ -411,6 +413,7 @@ impl Filter {
         self.kind != Some(SessionKind::Ariadne)
             && self.goal.is_none()
             && self.task.is_none()
+            && self.pull_request.is_none()
             && self.status.is_none()
             && self.seat.is_none()
             && !self.attention
@@ -488,6 +491,7 @@ async fn ariadne_rows<'a>(store: &Store, filter: &Filter) -> Result<Vec<(SortKey
         .list_sessions(SessionFilter {
             goal_id: filter.goal.clone(),
             task_id: filter.task.clone(),
+            pull_request_id: filter.pull_request.clone(),
             status: filter.status,
             live_only: filter.live_only(),
             attention_only: filter.attention,

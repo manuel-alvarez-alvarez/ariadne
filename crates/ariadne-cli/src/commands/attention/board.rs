@@ -95,7 +95,14 @@ pub(super) fn group(
     }
     for session in sessions {
         if let Some(reason) = session_reason(&session) {
-            let i = index_of(&mut groups, session.goal_id.as_deref().unwrap_or("-"));
+            // A pull request session works for no goal: its requests are
+            // one section of their own.
+            let goal_id = match (&session.goal_id, &session.pull_request_id) {
+                (Some(goal), _) => goal.as_str(),
+                (None, Some(_)) => PULL_REQUESTS,
+                (None, None) => "-",
+            };
+            let i = index_of(&mut groups, goal_id);
             groups[i]
                 .sessions
                 .push(AttentionSession { reason, session });
@@ -126,9 +133,13 @@ pub(super) fn group(
 pub(super) fn heading(group: &Group) -> String {
     match &group.goal {
         Some(goal) => format!("{} ({})", goal.title, short_id(&goal.id)),
+        None if group.goal_id == PULL_REQUESTS => "Pull requests".into(),
         None => format!("Goal {}", short_id(&group.goal_id)),
     }
 }
+
+/// The section the sessions of pull requests are listed under.
+pub(super) const PULL_REQUESTS: &str = "pull-requests";
 
 /// Task id → title, for naming the task a session was run for.
 pub(super) fn task_titles(tasks: &[TaskDto]) -> HashMap<String, String> {
@@ -161,9 +172,13 @@ pub(super) fn rows(
         .collect();
     rows.extend(group.sessions.iter().map(|item| {
         let s = &item.session;
+        let title = match (&s.pull_request_id, &s.title) {
+            (Some(_), Some(title)) => format!("pull request {title}"),
+            _ => format!("{} session", s.seat.map_or("-", |seat| seat.as_str())),
+        };
         vec![
             s.id.clone(),
-            format!("{} session", s.seat.map_or("-", |seat| seat.as_str())),
+            title,
             item.reason.label().into(),
             // An orchestrator belongs to no task, and the goal heading above is
             // already what it is about.
@@ -185,6 +200,25 @@ mod tests {
 
     use crate::commands::attention::reason_label;
     use crate::commands::attention::tests::{dead, flagged, goal, session, task};
+
+    /// A pull request session ready to merge is listed under the pull
+    /// requests, by the request's title.
+    #[test]
+    fn a_pull_request_ready_to_merge_is_listed_by_its_title() {
+        let session = SessionDto {
+            goal_id: None,
+            task_id: None,
+            pull_request_id: Some("01PR".into()),
+            title: Some("Fix widgets".into()),
+            ..flagged("01PRS", "01GOAL", AttentionReason::WaitingUser)
+        };
+        let attention = group(Vec::new(), Vec::new(), vec![session]);
+        assert_eq!(heading(&attention.goals[0]), "Pull requests");
+        let rows = rows(&attention.goals[0], &HashMap::new(), chrono::Utc::now());
+        assert_eq!(rows[0][0], "01PRS");
+        assert_eq!(rows[0][1], "pull request Fix widgets");
+        assert_eq!(rows[0][2], "ready to merge");
+    }
 
     #[test]
     fn a_loose_session_keeps_its_attention_row() {

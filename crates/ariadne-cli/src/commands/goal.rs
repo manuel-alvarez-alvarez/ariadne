@@ -6,6 +6,7 @@ use serde::Serialize;
 use serde_json::json;
 
 use ariadne_api::goals::{CreateGoalRequest, GoalDto};
+use ariadne_api::issues::IssueDto;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::tasks::{TaskDto, TaskListQuery};
 use ariadne_client::{Client, SseEvent};
@@ -71,13 +72,16 @@ pub(crate) enum GoalCommand {
     Create {
         /// Short goal title (what the whole effort is called)
         #[arg(long)]
-        title: String,
+        title: Option<String>,
         /// Goal description (what should be achieved)
-        #[arg(short = 'd', long, default_value = "", hide_default_value = true)]
-        description: String,
+        #[arg(short = 'd', long)]
+        description: Option<String>,
+        /// Create the goal from a GitHub or GitLab issue URL
+        #[arg(long)]
+        from_issue: Option<String>,
         /// Registered repository, by id or by the path it was added with
         /// (`ariadne repo add`); repeatable
-        #[arg(long = "repo", required = true, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::repo_ids))]
+        #[arg(long = "repo", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::repo_ids))]
         repos: Vec<String>,
         /// What the orchestrator runs on: AGENT:MODEL — the id of an agent of
         /// the ACP registry and, after the colon, one model of it
@@ -91,9 +95,9 @@ pub(crate) enum GoalCommand {
         #[arg(long, value_name = "EFFORT", value_parser = parse_effort, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::efforts))]
         effort: Option<String>,
         /// How every task of the goal ends: merge on the base branch,
-        /// pull-request opened and seen through to its merge, none where
-        /// there is nothing to land, or feature-branch. Fixed once the goal
-        /// is created. Default: merge
+        /// pull-request opened and pushed, none where there is nothing to
+        /// land, or feature-branch. Fixed once the goal is created. Default:
+        /// merge
         #[arg(long, value_enum)]
         landing: Option<Landing>,
     },
@@ -165,18 +169,41 @@ pub(crate) async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Re
         GoalCommand::Create {
             title,
             description,
+            from_issue,
             repos,
             model,
             effort,
             landing,
         } => {
+            let (issue, issue_repository) = match from_issue.as_deref() {
+                Some(url) => {
+                    let (repository, number) = issue_reference(client, url).await?;
+                    let issue: IssueDto = client
+                        .get_json(&format!("/v1/repositories/{repository}/issues/{number}"))
+                        .await?;
+                    (Some(issue), Some(repository))
+                }
+                None => (None, None),
+            };
+            let title = title
+                .or_else(|| issue.as_ref().map(|issue| issue.title.clone()))
+                .ok_or_else(|| anyhow::anyhow!("--title or --from-issue is required"))?;
+            let description = description
+                .or_else(|| issue.as_ref().map(|issue| issue.body.clone()))
+                .unwrap_or_default();
+            let repository_ids = if repos.is_empty() {
+                vec![issue_repository.ok_or_else(|| anyhow::anyhow!("--repo is required"))?]
+            } else {
+                resolve_repositories(client, &repos).await?
+            };
             let goal: GoalDto = client
                 .post_json(
                     "/v1/goals",
                     &CreateGoalRequest {
                         title,
                         description,
-                        repository_ids: resolve_repositories(client, &repos).await?,
+                        repository_ids,
+                        issue_url: issue.map(|issue| issue.url),
                         model,
                         effort,
                         landing,
@@ -202,6 +229,10 @@ pub(crate) async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Re
                 print_kv(&[
                     ("id", Kv::id(g.id.clone())),
                     ("title", Kv::title(g.title.clone())),
+                    (
+                        "issue",
+                        g.issue_url.clone().unwrap_or_else(|| "-".into()).into(),
+                    ),
                     ("status", Kv::status(g.status.as_str())),
                     ("landing", landing_row(&g)),
                     (
@@ -279,6 +310,36 @@ pub(crate) async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Re
         }
     }
     Ok(())
+}
+
+/// Match an issue URL to one enabled registered repository and its issue number.
+async fn issue_reference(client: &Client, url: &str) -> Result<(String, i64)> {
+    let (_, rest) = url
+        .split_once("://")
+        .ok_or_else(|| anyhow::anyhow!("invalid issue URL"))?;
+    let (host, path) = rest
+        .split_once('/')
+        .ok_or_else(|| anyhow::anyhow!("invalid issue URL"))?;
+    let (repository_path, number) = path
+        .rsplit_once("/issues/")
+        .ok_or_else(|| anyhow::anyhow!("invalid issue URL"))?;
+    let number: i64 = number
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid issue number"))?;
+    let repository_path = repository_path.trim_end_matches("/-");
+    let repositories: Vec<RepositoryDto> = client.get_json("/v1/repositories").await?;
+    let repository = repositories
+        .into_iter()
+        .find(|repository| {
+            repository.forge.as_ref().is_some_and(|forge| {
+                forge.enabled
+                    && forge.host.eq_ignore_ascii_case(host)
+                    && format!("{}/{}", forge.owner, forge.name)
+                        .eq_ignore_ascii_case(repository_path)
+            })
+        })
+        .ok_or_else(|| anyhow::anyhow!("no enabled repository matches {url}"))?;
+    Ok((repository.id, number))
 }
 
 /// What the goal cost, seat by seat: every session of it summed, then the
@@ -543,6 +604,91 @@ mod tests {
 
     use crate::commands::fixtures::{goal, repository};
 
+    #[tokio::test]
+    async fn create_from_issue_reads_its_title_and_body_through_the_route() {
+        use axum::{
+            Json, Router,
+            routing::{get, post},
+        };
+        use std::sync::{Arc, Mutex};
+
+        let request = Arc::new(Mutex::new(None::<CreateGoalRequest>));
+        let saved = request.clone();
+        let repositories = get(|| async {
+            let mut repository = repository("repo-1", "/work/widgets", "main");
+            repository.forge = Some(ariadne_api::repositories::ForgeDto {
+                webhook: ariadne_api::repositories::WebhookDto {
+                    state: "polling".into(),
+                    url: None,
+                    error: None,
+                    last_delivery_at: None,
+                    fetch_error: None,
+                },
+                kind: ariadne_core::ForgeKind::Github,
+                host: "github.com".into(),
+                owner: "acme".into(),
+                name: "widgets".into(),
+                remote: "origin".into(),
+                enabled: true,
+                login: Some("octocat".into()),
+                review_model: None,
+                review_effort: None,
+            });
+            Json(vec![repository])
+        });
+        let issue = get(|| async {
+            Json(IssueDto {
+                number: 12,
+                title: "Fix widget".into(),
+                body: "The widget fails.".into(),
+                url: "https://github.com/acme/widgets/issues/12".into(),
+                labels: vec![],
+                assignees: vec![],
+                updated_at: "2026-10-01T00:00:00Z".into(),
+            })
+        });
+        let app = Router::new()
+            .route("/v1/repositories", repositories)
+            .route("/v1/repositories/repo-1/issues/12", issue)
+            .route(
+                "/v1/goals",
+                post(move |Json(body): Json<CreateGoalRequest>| {
+                    let saved = saved.clone();
+                    async move {
+                        *saved.lock().unwrap() = Some(body);
+                        Json(goal("goal-1", "Fix widget"))
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let result = run(
+            &Client::tcp(format!("http://{address}")),
+            GoalCommand::Create {
+                title: None,
+                description: None,
+                from_issue: Some("https://github.com/acme/widgets/issues/12".into()),
+                repos: vec![],
+                model: "stub:test-model".into(),
+                effort: None,
+                landing: None,
+            },
+            Format::Json,
+        )
+        .await;
+        server.abort();
+        result.unwrap();
+        let body = request.lock().unwrap().take().unwrap();
+        assert_eq!(body.title, "Fix widget");
+        assert_eq!(body.description, "The widget fails.");
+        assert_eq!(
+            body.issue_url.as_deref(),
+            Some("https://github.com/acme/widgets/issues/12")
+        );
+        assert_eq!(body.repository_ids, ["repo-1"]);
+    }
+
     fn repos() -> Vec<RepositoryDto> {
         vec![
             repository("01REPOAPI", "/home/me/api", "main"),
@@ -564,6 +710,7 @@ mod tests {
     #[test]
     fn the_block_splits_the_goal_total_by_seat() {
         let g = GoalDto {
+            issue_url: None,
             usage: GoalUsageDto {
                 total: usage(12_345_000, 11_000_000, 456_000),
                 orchestrator: usage(345_000, 300_000, 6_000),
@@ -627,6 +774,7 @@ mod tests {
     #[test]
     fn goal_inspect_prints_its_landing() {
         let g = GoalDto {
+            issue_url: None,
             landing: Landing::FeatureBranch,
             ..goal("01GOAL", "Ship the board")
         };
@@ -715,6 +863,7 @@ mod tests {
         // pinned here is the sentence, not the listing behind it.
         let client = Client::resolve(Some("http://127.0.0.1:1"), None);
         let g = GoalDto {
+            issue_url: None,
             status: GoalStatus::Cancelled,
             ..goal("01m15hg1d4j6de91a4amkhsfgt", "Ship the board")
         };

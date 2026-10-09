@@ -10,8 +10,9 @@ fn ctx_with_flags(run_dir: PathBuf, extra_flags: Vec<String>) -> SpawnCtx {
     SpawnCtx {
         session_id: "01sessionxxxxxxxxxxxxxxxxx".into(),
         launch_id: "01launchxxxxxxxxxxxxxxxxxx".into(),
-        goal_id: "01goalxxxxxxxxxxxxxxxxxxxx".into(),
+        goal_id: Some("01goalxxxxxxxxxxxxxxxxxxxx".into()),
         task_id: Some("01taskxxxxxxxxxxxxxxxxxxxx".into()),
+        pull_request_id: None,
         seat: Seat::Author,
         run_dir,
         cwd: PathBuf::from("/tmp/worktree"),
@@ -34,6 +35,41 @@ fn ctx_with_pin(run_dir: PathBuf, model: &str, effort: Option<&str>) -> SpawnCtx
         effort: effort.map(str::to_string),
         ..ctx_with_flags(run_dir, vec!["--extra".into()])
     }
+}
+
+/// A pull request session works for no goal and no task (026): its MCP
+/// server is told the request it watches, beside the seat, and nothing of a
+/// goal or a task.
+#[test]
+fn a_pull_request_session_tells_its_mcp_server_the_request_and_no_goal() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = SpawnCtx {
+        goal_id: None,
+        task_id: None,
+        pull_request_id: Some("01prxxxxxxxxxxxxxxxxxxxxxx".into()),
+        ..ctx_with_flags(dir.path().into(), Vec::new())
+    };
+    plan_spawn(&ctx).unwrap();
+    let config = launch_file(dir.path());
+    let env: Vec<(String, String)> = config["mcpServers"][0]["env"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| {
+            (
+                v["name"].as_str().unwrap().to_string(),
+                v["value"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    let named = |name: &str| env.iter().find(|(n, _)| n == name).map(|(_, v)| v.as_str());
+    assert_eq!(
+        named("ARIADNE_PULL_REQUEST_ID"),
+        Some("01prxxxxxxxxxxxxxxxxxxxxxx")
+    );
+    assert_eq!(named("ARIADNE_SEAT"), Some("author"));
+    assert_eq!(named("ARIADNE_GOAL_ID"), None);
+    assert_eq!(named("ARIADNE_TASK_ID"), None);
 }
 
 /// The launch file as the run dir holds it.

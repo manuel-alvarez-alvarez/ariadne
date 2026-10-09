@@ -17,6 +17,7 @@ const GOAL_ENDED: &str = "goal_ended";
 pub struct NewGoal {
     pub title: String,
     pub description: String,
+    pub issue_url: Option<String>,
     /// Ids of registered repositories the goal works in; each must exist.
     /// The goal reads them live, so editing one moves the goal with it.
     pub repository_ids: Vec<String>,
@@ -70,13 +71,14 @@ impl Store {
         let mut tx = self.w().begin().await?;
         let (model, effort) = AgentPin::columns(&new.pin);
         sqlx::query(
-            "INSERT INTO goals (id, title, description, status,
+            "INSERT INTO goals (id, title, description, issue_url, status,
                                 orchestrated, model, effort, landing, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.title)
         .bind(&new.description)
+        .bind(&new.issue_url)
         .bind(status.as_str())
         .bind(orchestrated)
         .bind(&model)
@@ -277,9 +279,14 @@ impl Store {
         .bind(goal_id)
         .fetch_all(self.r())
         .await?;
-        rows.iter()
+        let (mut repositories, branches): (Vec<Repository>, Vec<Option<String>>) = rows
+            .iter()
             .map(|row| Ok((Repository::from_row(row)?, row.try_get("goal_branch")?)))
-            .collect()
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .unzip();
+        self.attach_forges(&mut repositories).await?;
+        Ok(repositories.into_iter().zip(branches).collect())
     }
 }
 
@@ -302,6 +309,19 @@ impl Store {
             .fetch_optional(self.r())
             .await?
             .ok_or_else(|| not_found("goal_repository", repository_id))
+    }
+
+    /// Whether `branch` is the goal branch of some goal in this repository:
+    /// a merged request on it took that goal onto its base (026).
+    pub async fn is_goal_branch(&self, repository_id: &str, branch: &str) -> Result<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM goal_repositories
+                             WHERE repository_id = ? AND goal_branch = ?)",
+        )
+        .bind(repository_id)
+        .bind(branch)
+        .fetch_one(self.r())
+        .await?)
     }
 
     pub async fn set_goal_branch(

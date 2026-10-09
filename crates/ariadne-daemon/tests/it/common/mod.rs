@@ -12,6 +12,7 @@
 //!
 
 pub(crate) mod acp;
+pub(crate) mod forge;
 
 use std::future::IntoFuture;
 use std::path::{Path, PathBuf};
@@ -144,6 +145,8 @@ pub(crate) struct HarnessBuilder {
     ai_permissions_hardware: Option<HardwareOverride>,
     python_bin: Option<String>,
     nvidia_smi_bin: Option<String>,
+    gh_bin: Option<String>,
+    glab_bin: Option<String>,
 }
 
 /// The pin the fixtures staff an agent on: a model of the registry agent the
@@ -172,7 +175,12 @@ pub(crate) fn harness() -> HarnessBuilder {
         logs: None,
         discover_agents: false,
         second_agent: false,
-        timeouts: Timeouts::default(),
+        // A review's news settles for minutes in a daemon; a test about
+        // that wait shortens it, and every other is told at once.
+        timeouts: Timeouts {
+            review_news_settle: std::time::Duration::ZERO,
+            ..Timeouts::default()
+        },
         path: std::ffi::OsString::new(),
         index: ariadne_daemon::acp_discovery::SHIPPED_INDEX.to_string(),
         ai_permissions_installer: None,
@@ -181,6 +189,8 @@ pub(crate) fn harness() -> HarnessBuilder {
         ai_permissions_hardware: None,
         python_bin: None,
         nvidia_smi_bin: None,
+        gh_bin: None,
+        glab_bin: None,
     }
 }
 
@@ -303,6 +313,14 @@ impl HarnessBuilder {
         self
     }
 
+    /// Run `stub` as `gh` and `glab` rather than whatever the machine
+    /// running the tests has (025).
+    pub(crate) fn forge_cli(mut self, stub: &forge::StubForgeCli) -> Self {
+        self.gh_bin = Some(stub.gh.clone());
+        self.glab_bin = Some(stub.glab.clone());
+        self
+    }
+
     async fn build(self) -> Harness {
         raise_open_file_limit();
         let dir = tempfile::tempdir().unwrap();
@@ -349,6 +367,12 @@ impl HarnessBuilder {
         if let Some(nvidia_smi_bin) = self.nvidia_smi_bin {
             config.nvidia_smi_bin = Some(nvidia_smi_bin);
         }
+        if let Some(gh_bin) = self.gh_bin {
+            config.gh_bin = Some(gh_bin);
+        }
+        if let Some(glab_bin) = self.glab_bin {
+            config.glab_bin = Some(glab_bin);
+        }
         let agent_registry = ariadne_daemon::acp_discovery::AgentRegistry::test_registry(
             &config.acp_agents,
             config.root.clone(),
@@ -393,12 +417,34 @@ impl HarnessBuilder {
             .with_failure_diagnosis(failure_diagnosis.clone()),
             registry: agent_registry.clone(),
             branches: BranchWatchers::new(bus.clone()),
+            live: ariadne_daemon::forge::live::LivePulls::default(),
         });
         let sched = self
             .scheduler
             .then(|| scheduler::start(store.clone(), launcher.clone(), false, self.timeouts));
         let logs = self.logs.unwrap_or_default();
+        let forge_poll = ariadne_daemon::forge::poll::start(
+            store.clone(),
+            launcher.cfg.clone(),
+            &bus,
+            launcher.live.clone(),
+            self.timeouts.forge_poll,
+            self.timeouts.forge_details,
+        );
+        // Started by a test that binds a listener: a harness opens no tunnel.
+        let tunnel = ariadne_daemon::forge::tunnel::Tunnel::new(
+            store.clone(),
+            launcher.cfg.clone(),
+            bus.clone(),
+            &forge_poll,
+            self.timeouts,
+        );
+        if let Some(sched) = &sched {
+            forge_poll.connect_scheduler(sched.clone());
+        }
         let state = AppState {
+            tunnel,
+            forge_poll,
             store: store.clone(),
             started_at: Instant::now(),
             started_at_utc: chrono::Utc::now(),
@@ -613,9 +659,16 @@ impl Harness {
     /// session fresh or calls `set_status(.., Idle)` before reusing one;
     /// this only turns that into something enforced rather than assumed.
     pub(crate) async fn agent_runs_as(&self, session: &AgentSession, agent_id: &str) {
-        let repository_id = match &session.task_id {
-            Some(task) => self.store.get_task(task).await.unwrap().repo_id,
-            None => {
+        let repository_id = match (&session.task_id, &session.pull_request_id) {
+            (Some(task), _) => self.store.get_task(task).await.unwrap().repo_id,
+            (None, Some(pull)) => {
+                self.store
+                    .get_pull_request(pull)
+                    .await
+                    .unwrap()
+                    .repository_id
+            }
+            (None, None) => {
                 self.store
                     .list_goal_repositories(session.goal_id.as_deref().unwrap())
                     .await
@@ -893,6 +946,7 @@ impl Harness {
     ) -> Goal {
         self.store
             .create_goal(NewGoal {
+                issue_url: None,
                 landing,
                 title: "Ship the UI".into(),
                 description: "desc".into(),
@@ -1074,6 +1128,7 @@ impl Harness {
                 model: test_pin().model,
                 effort: None,
                 worktree_path: Some(worktree.display().to_string()),
+                pull_request_id: None,
             })
             .await
             .unwrap()
@@ -1093,6 +1148,31 @@ impl Harness {
             .execute(&self.db)
             .await
             .unwrap();
+    }
+
+    /// Stage a skill this release no longer ships, staffed on `agent_id`.
+    /// Straight SQL: `set_agent_skills` refuses a name nothing answers to, so
+    /// the only way to reach the state an old database carries — a staffing
+    /// on a skill the catalog has since dropped — is to write the rows a
+    /// database of that era would already hold.
+    pub(crate) async fn stage_dropped_skill(&self, agent_id: &str, name: &str, ordinal: i64) {
+        sqlx::query(
+            "INSERT INTO skills (name, document, builtin, created_at, updated_at)
+             VALUES (?, NULL, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .bind(name)
+        .execute(&self.db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO task_agent_skills (agent_id, skill_name, ordinal) VALUES (?, ?, ?)",
+        )
+        .bind(agent_id)
+        .bind(name)
+        .bind(ordinal)
+        .execute(&self.db)
+        .await
+        .unwrap();
     }
 
     /// Every fact of `kind` in the stats ledger, oldest first, as
@@ -1452,7 +1532,7 @@ impl Harness {
 
     /// Move the columns the watchdog's clock is read from back, since the
     /// store only ever stamps them "now" and every threshold is minutes away.
-    async fn backdate(&self, columns: &[&str], session: &AgentSession, secs: i64) {
+    pub(crate) async fn backdate(&self, columns: &[&str], session: &AgentSession, secs: i64) {
         let when = (chrono::Utc::now() - chrono::Duration::seconds(secs))
             .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
         let set = columns

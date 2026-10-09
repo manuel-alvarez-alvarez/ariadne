@@ -6,12 +6,18 @@ import { createElement, type ReactNode } from "react"
 import { describe, expect, it } from "vitest"
 
 import type { GoalDto, SessionDto, TaskDto } from "@/api"
-import { sessionAttention } from "@/features/sessions/session-display"
+import { SESSION_ATTENTION_META, sessionAttention } from "@/features/sessions/session-display"
 import { paths } from "@/routes/paths"
 import { aGoal, aSession, aSessionPage, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse } from "@/test/harness"
 
-import { attentionTarget, taskAttentionReason, useAttention, useBoardAttention } from "./attention"
+import {
+  attentionSubject,
+  attentionTarget,
+  taskAttentionReason,
+  useAttention,
+  useBoardAttention,
+} from "./attention"
 
 function renderAttention<T>(hook: () => T) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
@@ -163,6 +169,66 @@ describe("attention", () => {
     expect(params.get("session")).toBe(session.id)
     expect(params.get("goal")).toBe("g1")
     expect(params.get("task")).toBe("t1")
+  })
+
+  it("carries a reviewer pull request session's waiting_user as review posted", () => {
+    const session = aSession({
+      id: "s1",
+      goal_id: null,
+      task_id: null,
+      task_agent_id: null,
+      seat: "reviewer",
+      pull_request_id: "pull-42",
+      attention_reason: "waiting_user",
+    })
+    expect(sessionAttention(session)).toBe("review_posted")
+    expect(SESSION_ATTENTION_META.review_posted.label).toBe("Review posted, approve yourself")
+  })
+
+  it("carries a pull request session's waiting_user as ready to merge, opening its session panel", async () => {
+    const session = aSession({
+      id: "s1",
+      goal_id: null,
+      task_id: null,
+      task_agent_id: null,
+      title: "Fix widgets",
+      pull_request_id: "pull-42",
+      attention_reason: "waiting_user",
+      attention_since: "2026-01-02T00:00:00Z",
+    })
+    expect(sessionAttention(session)).toBe("ready_to_merge")
+    stubLists({ sessions: [session] })
+
+    const { result } = renderAttention(useAttention)
+
+    await waitFor(() => expect(result.current.isPending).toBe(false))
+    const [item] = result.current.items
+    expect(result.current.items).toHaveLength(1)
+    expect(item).toMatchObject({ id: "s1", taskId: null, sessionReason: "ready_to_merge" })
+    if (!item) throw new Error("no row")
+    expect(attentionSubject(item)).toBe("Pull request · Fix widgets")
+    expect(attentionTarget(item, new URLSearchParams(), paths.goals())).toEqual({
+      search: "?session=s1",
+    })
+  })
+
+  it("keeps a pull request session off the board, having no card and no lane", async () => {
+    stubLists({
+      sessions: [
+        aSession({
+          id: "s1",
+          goal_id: null,
+          task_id: null,
+          pull_request_id: "pull-42",
+          attention_reason: "waiting_user",
+        }),
+      ],
+    })
+    const { result } = renderAttention(() => ({ board: useBoardAttention(), list: useAttention() }))
+
+    await waitFor(() => expect(result.current.list.items).toHaveLength(1))
+    expect(result.current.board.byTask.size).toBe(0)
+    expect(result.current.board.byGoal.size).toBe(0)
   })
 
   it("reports a pending list before the daemon answers", () => {

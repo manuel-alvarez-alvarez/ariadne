@@ -5,12 +5,13 @@
 use std::str::FromStr;
 
 use ariadne_core::{
-    Actor, AttentionReason, GoalStatus, Landing, MessageKind, PermissionMode, Seat, SessionStatus,
-    TaskStatus,
+    Actor, AttentionReason, ForgeKind, GoalStatus, Landing, MessageKind, PermissionMode, Seat,
+    SessionStatus, TaskStatus,
 };
 
 use crate::defaults::{
-    ORCHESTRATION_SKILL, default_landing_prompt, default_skill_document, skill_summary,
+    ORCHESTRATION_SKILL, PR_BABYSIT_SKILL, PR_REVIEWER_SKILL, default_landing_prompt,
+    default_skill_document, skill_summary,
 };
 
 /// The typed reading of a TEXT column that holds a core enum. The accessor
@@ -46,6 +47,7 @@ enum_columns! {
     Goal { status: GoalStatus }
     Task { status: TaskStatus }
     TaskAgent { seat: Seat }
+    ForgeIntegration { kind: ForgeKind }
     AgentSession {
         seat: [Seat],
         status: SessionStatus,
@@ -106,8 +108,9 @@ impl Skill {
     }
 
     /// The seat this skill serves, read off the name and stored nowhere:
-    /// `orchestration` is the orchestrator's own playbook, and every other
-    /// skill is a task agent's to be staffed on.
+    /// `orchestration` is the orchestrator's own playbook, `pr-babysit` and
+    /// `pr-reviewer` are loaded by the daemon itself, and every other skill
+    /// is a task agent's to be staffed on.
     pub fn seat(&self) -> SkillSeat {
         SkillSeat::of(&self.name)
     }
@@ -124,14 +127,19 @@ pub enum SkillSeat {
     Orchestrator,
     /// Staffed on a task's author or reviewers.
     Task,
+    /// Loaded by the daemon, staffable on nothing: `pr-babysit` onto the
+    /// author of a task that lands by request (005, 026), and `pr-reviewer`
+    /// onto the session that reviews a request (029).
+    PullRequest,
 }
 
 impl SkillSeat {
     /// The seat of the skill called `name`.
     pub fn of(name: &str) -> Self {
-        match name == ORCHESTRATION_SKILL {
-            true => Self::Orchestrator,
-            false => Self::Task,
+        match name {
+            ORCHESTRATION_SKILL => Self::Orchestrator,
+            PR_BABYSIT_SKILL | PR_REVIEWER_SKILL => Self::PullRequest,
+            _ => Self::Task,
         }
     }
 }
@@ -180,6 +188,16 @@ pub struct AcpRegistryIndex {
     pub url: String,
     pub document: String,
     pub fetched_at: String,
+}
+
+/// The one forge settings row (027).
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
+pub struct ForgeSettings {
+    /// Whether the daemon opens a tunnel to the webhook listener.
+    pub tunnel_enabled: bool,
+    /// The subdomain the tunnel asks for; None until the first tunnel.
+    pub tunnel_subdomain: Option<String>,
+    pub updated_at: String,
 }
 
 /// The one AI permission settings row, and the state of the install behind it (022).
@@ -260,6 +278,40 @@ pub struct Repository {
     /// [`Repository::permission_mode`].
     pub permission_mode: String,
     pub default_landing: String,
+    /// The forge its remote is on, where it has a usable one (025). Not a
+    /// column: every read of a repository through the store fills it.
+    #[sqlx(skip)]
+    pub forge: Option<ForgeIntegration>,
+}
+
+/// The forge a repository's remote is on, and whether Ariadne works with it
+/// (025). `host`, `owner` and `name` are lower-cased.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct ForgeIntegration {
+    pub repository_id: String,
+    /// As [`ForgeKind`] spells it. Read through [`ForgeIntegration::kind`].
+    pub kind: String,
+    pub host: String,
+    pub owner: String,
+    pub name: String,
+    /// The name of the remote it was read off, `origin` where there is one.
+    pub remote: String,
+    pub enabled: bool,
+    /// The account the forge CLI is signed in as, stored on enable.
+    pub login: Option<String>,
+    /// The pin of the session that reviews a request. None starts none.
+    pub review_model: Option<String>,
+    pub review_effort: Option<String>,
+    pub webhook_id: Option<i64>,
+    pub webhook_secret: Option<String>,
+    pub webhook_url: Option<String>,
+    pub webhook_state: String,
+    pub webhook_error: Option<String>,
+    pub webhook_last_delivery_at: Option<String>,
+    /// Why the last fetch of its requests failed; None once one succeeds.
+    pub fetch_error: Option<String>,
+    pub detected_at: String,
+    pub updated_at: String,
 }
 
 impl Repository {
@@ -306,6 +358,7 @@ pub struct Goal {
     pub id: String,
     pub title: String,
     pub description: String,
+    pub issue_url: Option<String>,
     pub status: String,
     /// Whether this goal has an orchestrator for its lifetime.
     pub orchestrated: bool,
@@ -346,11 +399,8 @@ pub struct Task {
     pub stalled: i64,
     pub merge_commit: Option<String>,
     /// URL of the pull or merge request this task was published as, once its
-    /// author has reported one. None for a task landed directly.
+    /// author has opened one. None for a task landed directly.
     pub pr_url: Option<String>,
-    /// Whether that request's approvals and checks last read ready to merge.
-    /// Read through [`Task::pr_ready`].
-    pub pr_ready: i64,
     /// The author the reviewers picked, on a task staffed with several. Its
     /// branch is what lands. None for a one-author task, and until the pick
     /// settles.
@@ -362,14 +412,6 @@ pub struct Task {
 impl Task {
     pub fn is_stalled(&self) -> bool {
         self.stalled != 0
-    }
-
-    /// Whether the published request's approvals and checks last read ready
-    /// to merge. False while nothing is published, while a check or an
-    /// approval is pending, and again once a new change or a failed check
-    /// has invalidated an earlier ready read.
-    pub fn pr_ready(&self) -> bool {
-        self.pr_ready != 0
     }
 
     /// How this task ends: the landing of its goal. A row written by a
@@ -472,6 +514,10 @@ pub struct AgentSession {
     /// The session this one replaced on its seat, when a switch started it:
     /// the same seat on another pin, in a new conversation.
     pub switched_from: Option<String>,
+    /// The pull request this session watches (026), or None for a session of
+    /// a goal, a task or nothing at all. A pull request session has no goal,
+    /// no task and no staffed agent.
+    pub pull_request_id: Option<String>,
 }
 
 impl AgentSession {
@@ -577,4 +623,236 @@ pub struct TaskTransition {
     pub actor: String,
     pub reason: Option<String>,
     pub created_at: String,
+}
+
+/// A pull request Ariadne works on (026), as the database keeps it: the
+/// daemon's own bookkeeping of it, and nothing the forge holds. A row
+/// exists while Ariadne works on the request — the request a task opened,
+/// one that asks for the user's review on a repository with a review pin, or
+/// one of the user's they asked Ariadne to review — and goes once the
+/// request merged or closed and its work was taken down. What the request
+/// says — its title, its branches, its checks, its comments — is read off
+/// the forge on every fetch and held in memory alone ([`PullRequestLive`]).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct PullRequestRow {
+    pub id: String,
+    pub repository_id: String,
+    pub number: i64,
+    pub url: String,
+    /// `author` for a request of the user's, `reviewer` for one that asks
+    /// for their review.
+    pub role: String,
+    /// The task that opened the request: its author keeps it (005).
+    pub origin_task_id: Option<String>,
+    /// Whether the request's session reported it ready to merge.
+    pub ready: bool,
+    /// The names of the failed checks the request's session was told of.
+    pub told_checks: String,
+    /// Whether the session was told the head is behind its base.
+    pub told_behind_base: bool,
+    /// The review decision and the state the session was last told; None
+    /// is the baseline of a fresh row, `none` and `open`.
+    pub told_review_decision: Option<String>,
+    pub told_state: Option<String>,
+    /// The rolled-up check state the session was last told; None is the
+    /// baseline of a fresh row, `none`.
+    pub told_check_state: Option<String>,
+    /// When the session was last handed news: the claim of its prompt.
+    pub news_told_at: Option<String>,
+    /// The head a reviewer session last posted a review on (029).
+    pub reviewed_sha: Option<String>,
+    /// The head the request's session was last told of (029).
+    pub told_head_sha: Option<String>,
+    /// Whether the user asked Ariadne to review a request of their own
+    /// (029): a review session runs on it while it is open.
+    pub review_asked: bool,
+    /// The forge id of the one summary comment an Ariadne review keeps on
+    /// the request, edited on every round (029); None before its first.
+    pub summary_comment_id: Option<String>,
+    /// The pin the user picked for the review they asked of a request of
+    /// their own (029); None where nobody asked.
+    pub review_model: Option<String>,
+    pub review_effort: Option<String>,
+    /// The skills the user picked for that review beside `pr-reviewer`, as a
+    /// JSON list.
+    #[sqlx(rename = "review_skills")]
+    pub review_skills_json: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// What the forge says of a request, as the last read found it: held in
+/// memory, never stored (026).
+#[derive(Debug, Clone, Default)]
+pub struct PullRequestLive {
+    pub title: String,
+    /// The request's description.
+    pub body: String,
+    pub author_login: String,
+    /// `open`, `merged` or `closed`.
+    pub state: String,
+    pub draft: bool,
+    pub head_branch: String,
+    pub head_sha: String,
+    pub head_repo: Option<String>,
+    pub base_branch: String,
+    /// The rolled-up checks: `pending`, `success`, `failure` or `none`.
+    pub checks: String,
+    pub review_decision: String,
+    pub opened_at: String,
+    /// When the forge last saw the request move.
+    pub forge_updated_at: String,
+    /// The checks that failed on the head: a JSON list of `{name, url,
+    /// conclusion}`.
+    pub failed_checks: String,
+    /// Whether the base branch has commits the head does not.
+    pub behind_base: bool,
+    /// Whether the request asks for the user's review (029).
+    pub review_requested: bool,
+    /// The commit a merged request landed as (005).
+    pub merge_sha: Option<String>,
+    /// The threads that wait on the integration login.
+    pub unanswered_comments: i64,
+}
+
+/// A request Ariadne works on, as the daemon reads it: its row, and what
+/// the forge says of it now.
+#[derive(Debug, Clone)]
+pub struct PullRequest {
+    pub id: String,
+    pub repository_id: String,
+    pub number: i64,
+    pub url: String,
+    pub title: String,
+    pub body: String,
+    pub author_login: String,
+    pub state: String,
+    pub draft: bool,
+    pub head_branch: String,
+    pub head_sha: String,
+    pub head_repo: Option<String>,
+    pub base_branch: String,
+    pub checks: String,
+    pub review_decision: String,
+    pub unanswered_comments: i64,
+    pub origin_task_id: Option<String>,
+    pub opened_at: String,
+    pub forge_updated_at: String,
+    pub role: String,
+    pub ready: bool,
+    pub created_at: String,
+    pub updated_at: String,
+    pub failed_checks: String,
+    pub behind_base: bool,
+    pub told_checks: String,
+    pub told_behind_base: bool,
+    pub told_review_decision: Option<String>,
+    pub told_state: Option<String>,
+    pub told_check_state: Option<String>,
+    pub news_told_at: Option<String>,
+    pub reviewed_sha: Option<String>,
+    pub told_head_sha: Option<String>,
+    pub review_requested: bool,
+    pub review_asked: bool,
+    pub merge_sha: Option<String>,
+    pub summary_comment_id: Option<String>,
+    pub review_model: Option<String>,
+    pub review_effort: Option<String>,
+    pub review_skills_json: String,
+}
+
+impl PullRequest {
+    /// The request `row` keeps, as the forge reads it now.
+    pub fn of(row: PullRequestRow, live: PullRequestLive) -> Self {
+        Self {
+            id: row.id,
+            repository_id: row.repository_id,
+            number: row.number,
+            url: row.url,
+            title: live.title,
+            body: live.body,
+            author_login: live.author_login,
+            state: live.state,
+            draft: live.draft,
+            head_branch: live.head_branch,
+            head_sha: live.head_sha,
+            head_repo: live.head_repo,
+            base_branch: live.base_branch,
+            checks: live.checks,
+            review_decision: live.review_decision,
+            unanswered_comments: live.unanswered_comments,
+            origin_task_id: row.origin_task_id,
+            opened_at: live.opened_at,
+            forge_updated_at: live.forge_updated_at,
+            role: row.role,
+            ready: row.ready,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            failed_checks: live.failed_checks,
+            behind_base: live.behind_base,
+            told_checks: row.told_checks,
+            told_behind_base: row.told_behind_base,
+            told_review_decision: row.told_review_decision,
+            told_state: row.told_state,
+            told_check_state: row.told_check_state,
+            news_told_at: row.news_told_at,
+            reviewed_sha: row.reviewed_sha,
+            told_head_sha: row.told_head_sha,
+            review_requested: live.review_requested,
+            review_asked: row.review_asked,
+            merge_sha: live.merge_sha,
+            summary_comment_id: row.summary_comment_id,
+            review_model: row.review_model,
+            review_effort: row.review_effort,
+            review_skills_json: row.review_skills_json,
+        }
+    }
+
+    /// The skills the user picked for the review of a request of their own
+    /// (029), beside the `pr-reviewer` every review session loads.
+    pub fn review_skills(&self) -> Vec<String> {
+        serde_json::from_str(&self.review_skills_json).unwrap_or_default()
+    }
+}
+
+/// What the database keeps of one comment of a request Ariadne works on
+/// (026): whether its session was told of it, and whether an Ariadne review
+/// posted it. Its text, its author and its thread are the forge's.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct CommentMark {
+    pub pull_request_id: String,
+    pub forge_id: String,
+    pub told_at: Option<String>,
+    pub from_review: bool,
+}
+
+/// One comment on a pull request, as the forge holds it and the daemon's
+/// marks read beside it (026): a review comment on a line, a comment on the
+/// conversation, or the body of a review.
+#[derive(Debug, Clone)]
+pub struct PullRequestComment {
+    /// The forge's own id of the comment, which is also its id here.
+    pub id: String,
+    pub pull_request_id: String,
+    pub forge_id: String,
+    /// The forge's thread or discussion the comment is in.
+    pub thread_id: String,
+    pub kind: String,
+    pub author_login: String,
+    pub author_is_bot: bool,
+    pub body: String,
+    pub path: Option<String>,
+    pub line: Option<i64>,
+    pub in_reply_to: Option<String>,
+    /// When the forge says the comment was written.
+    pub created_at: String,
+    /// A later comment in the thread is by the integration login.
+    pub answered: bool,
+    /// The forge reports the thread resolved.
+    pub resolved: bool,
+    /// When the comment was handed to the request's session.
+    pub told_at: Option<String>,
+    /// An Ariadne review session posted it (029): on a request of the
+    /// user's own it is a finding for the task's author, not the user's.
+    pub from_review: bool,
 }

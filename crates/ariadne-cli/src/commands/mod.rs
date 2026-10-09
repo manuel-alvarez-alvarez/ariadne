@@ -11,10 +11,13 @@ pub(crate) mod events;
 #[cfg(test)]
 pub(crate) mod fixtures;
 pub(crate) mod follow;
+pub(crate) mod forge;
 pub(crate) mod goal;
+pub(crate) mod issue;
 pub(crate) mod mcp;
 pub(crate) mod models;
 pub(crate) mod permissions;
+pub(crate) mod pr;
 pub(crate) mod repo;
 pub(crate) mod resolve;
 pub(crate) mod session;

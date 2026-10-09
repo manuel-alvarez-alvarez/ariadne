@@ -20,6 +20,15 @@ name = "it"
 path = "tests/it/main.rs"
 
 [dependencies]
+hmac = { workspace = true }
+sha2 = { workspace = true }
+subtle = { workspace = true }
+hex = { workspace = true }
+getrandom = { workspace = true }
+localtunnel-client = { workspace = true }
+# `localtunnel-client` sets TCP keepalive retries, which socket2 0.5 offers
+# only with its `all` feature, and the client does not ask for it.
+socket2 = { version = "0.5", features = ["all"] }
 agent-client-protocol = { workspace = true }
 tokio-util = { workspace = true }
 ariadne-core = { workspace = true }
@@ -74,6 +83,10 @@ tempfile = "3"
 tokio-tungstenite = { workspace = true }
 tower = { workspace = true }
 vt100 = { workspace = true }
+
+[package.metadata.cargo-machete]
+# Named only for its `all` feature, which `localtunnel-client` needs.
+ignored = ["socket2"]
 
 [lints]
 workspace = true

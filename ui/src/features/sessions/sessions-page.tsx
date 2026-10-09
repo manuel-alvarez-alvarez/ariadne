@@ -58,6 +58,7 @@ import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/compon
 import { When } from "@/components/when"
 import { goalsQueryOptions } from "@/features/goals/queries"
 import { parseModelRef, pinLabel } from "@/features/models/model-ref"
+import { PullRequestLink } from "@/features/pull-requests/pull-request-link"
 import { taskListQueryOptions } from "@/features/tasks/queries"
 import { cn, describeError, SEAT_LABELS, shortId } from "@/lib/format"
 import { paths, sessionPanelFrom, sessionTerminalFrom } from "@/routes/paths"
@@ -100,7 +101,12 @@ import {
   sessionsQueryOptions,
   useResumeOutsideSession,
 } from "./queries"
-import { SESSION_STATUS_META, SessionAttentionBadge, SessionStatusBadge } from "./session-display"
+import {
+  SESSION_STATUS_META,
+  SessionAttentionBadge,
+  SessionStatusBadge,
+  shownAttention,
+} from "./session-display"
 import { useSessionFilters } from "./use-session-filters"
 
 /** One row of the merged table, told apart by which listing it came from. */
@@ -619,9 +625,7 @@ function SessionRow({
         ) : (
           <div className="flex flex-wrap items-center gap-1.5">
             <SessionStatusBadge status={row.session.status} />
-            {row.session.attention_reason ? (
-              <SessionAttentionBadge attention={row.session.attention_reason} />
-            ) : null}
+            <RowAttention session={row.session} />
           </div>
         )}
       </TableCell>
@@ -653,12 +657,20 @@ function SessionRow({
   )
 }
 
+/** The reason badge of an Ariadne row, in the words the attention list uses. */
+function RowAttention({ session }: { session: SessionDto }) {
+  const attention = shownAttention(session)
+  return attention ? <SessionAttentionBadge attention={attention} /> : null
+}
+
 /**
  * What an Ariadne session works on, in one cell: the seat it holds, the goal
  * it is under, and the task under that. The seat is a badge of one width, so
  * the goals and tasks of every row line up beside it. Picking the goal or the
  * task narrows the table to its sessions, the way the chips above it do. A
- * loose session holds no seat and has neither.
+ * pull request session has neither: its request stands in their place, by
+ * title, linked to the forge. A loose session holds no seat and has none of
+ * them.
  */
 function WorkCell({
   session,
@@ -671,8 +683,8 @@ function WorkCell({
   taskTitle: string | undefined
   onScope: (param: FilterParam, id: string) => void
 }) {
-  const { goal_id: goalId, task_id: taskId, seat } = session
-  if (!goalId && !taskId && !seat) return <Dash />
+  const { goal_id: goalId, task_id: taskId, seat, pull_request_id: pullRequestId } = session
+  if (!goalId && !taskId && !seat && !pullRequestId) return <Dash />
   return (
     <div className="flex min-w-0 items-start gap-2 text-xs">
       {seat ? (
@@ -698,6 +710,7 @@ function WorkCell({
             className="text-muted-foreground"
           />
         ) : null}
+        {pullRequestId ? <PullRequestLink id={pullRequestId} title={session.title} /> : null}
       </div>
     </div>
   )

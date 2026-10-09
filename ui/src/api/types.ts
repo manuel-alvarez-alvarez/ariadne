@@ -12,6 +12,7 @@ export type { components, operations, paths } from "./schema"
 type Schemas = components["schemas"]
 
 export type GoalDto = Schemas["GoalDto"]
+export type IssueDto = Schemas["IssueDto"]
 export type GoalUsage = Schemas["GoalUsageDto"]
 export type GoalStatus = Schemas["GoalStatus"]
 export type CreateGoalRequest = Schemas["CreateGoalRequest"]
@@ -19,6 +20,9 @@ export type CreateGoalRequest = Schemas["CreateGoalRequest"]
 export type RepositoryDto = Schemas["RepositoryDto"]
 export type CreateRepositoryRequest = Schemas["CreateRepositoryRequest"]
 export type UpdateRepositoryRequest = Schemas["UpdateRepositoryRequest"]
+export type ForgeDto = Schemas["ForgeDto"]
+export type ForgeTunnelDto = Schemas["ForgeTunnelDto"]
+export type SetTunnelRequest = Schemas["SetTunnelRequest"]
 export type PermissionMode = Schemas["PermissionMode"]
 
 export type TaskDto = Schemas["TaskDto"]
@@ -92,3 +96,5 @@ export type UpdateLearnedPermissionRequest = Schemas["UpdateLearnedPermissionReq
 export type DomainEvent = Exclude<Schemas["DomainEvent"], { event: `memo${string}` }>
 /** `"goal_updated" | "task_updated" | ...` */
 export type DomainEventKind = DomainEvent["event"]
+
+export type PullRequestDto = components["schemas"]["PullRequestDto"]

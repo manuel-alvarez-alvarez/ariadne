@@ -12,15 +12,28 @@ use std::path::PathBuf;
 use axum::http::StatusCode;
 
 use ariadne_api::tasks::TaskDto;
-use ariadne_core::{Actor, GoalStatus, Landing, MessageKind, Seat, TaskStatus};
-use ariadne_store::{Goal, NewTask, NewTaskAgent, Repository, Task};
+use ariadne_core::{Actor, ForgeKind, GoalStatus, Landing, MessageKind, Seat, TaskStatus};
+use ariadne_store::{Goal, NewTask, NewTaskAgent, Repository, SetForgeIntegration, Task};
 
+use common::forge::{answer, opened_pull, stub_forge_cli};
 use common::{Harness, TIMEOUT, as_session, harness, post_json, sh, test_pin};
+
+/// `gh` signed in to github.com, a `pr create` that answers with `url`, and
+/// the request it opened from `head` read back.
+fn forge_script(url: &str, head: &str) -> serde_json::Value {
+    serde_json::json!([
+        answer(&["auth", "status"], 0, ""),
+        answer(&["pr", "create"], 0, url),
+        answer(&["pr", "view"], 0, &opened_pull(url, head).to_string()),
+        answer(&["pr", "list"], 0, "[]"),
+    ])
+}
 
 /// A `feature_branch` goal in planning on `repo`.
 async fn feature_goal(h: &Harness, repo: &Repository) -> Goal {
     h.store
         .create_goal(ariadne_store::NewGoal {
+            issue_url: None,
             title: "Ship feature".into(),
             description: String::new(),
             repository_ids: vec![repo.id.clone()],
@@ -146,10 +159,46 @@ async fn a_task_created_after_finalize_joins_the_final_task() {
 
 #[tokio::test]
 async fn the_final_task_waits_then_lands_the_goal_branch_on_the_base() {
-    let h = harness().scheduler().discover_agents().await;
+    const URL: &str = "https://github.com/acme/widgets/pull/9";
+    // Every request this test reads is the goal branch's, whose name is the
+    // goal's: the stub is written once the goal exists.
+    let cli = stub_forge_cli(forge_script(URL, "fix"));
+    let h = harness()
+        .scheduler()
+        .discover_agents()
+        .forge_cli(&cli)
+        .await;
     let path = h.git_repo("repo");
     let repo = h.repository(&path).await;
+    let remote = h.at("remote.git");
+    sh(
+        &path,
+        &format!(
+            "git init -q --bare '{}' && git remote add origin '{}'",
+            remote.display(),
+            remote.display()
+        ),
+    );
+    // A forge row the daemon can call `gh` through, independent of the real
+    // git remote above: the CLI is stubbed, so only the actual push and
+    // `ls-remote` need to be real.
+    h.store
+        .set_forge_integration(SetForgeIntegration {
+            repository_id: repo.id.clone(),
+            kind: ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+            review_model: None,
+            review_effort: None,
+        })
+        .await
+        .unwrap();
     let goal = feature_goal(&h, &repo).await;
+    cli.reprogram(forge_script(URL, &goal_branch(&goal)));
     let first = task(&h, &goal, &repo, "First change", 1, vec![]).await;
     let last = task(
         &h,
@@ -238,22 +287,15 @@ async fn the_final_task_waits_then_lands_the_goal_branch_on_the_base() {
     .await;
     let told = h.told(&author.id);
     assert!(
-        told.contains(&format!("Land the goal branch {branch} onto main")),
+        told.contains(&format!(
+            "Open a pull or merge request for the goal branch {branch} onto main"
+        )),
         "{told}"
     );
-    assert!(
-        told.to_lowercase().contains("pull-request` skill"),
-        "{told}"
-    );
+    assert!(told.contains("`open_pull_request`"), "{told}");
 
-    // The request squashes the goal branch onto the base branch.
-    sh(
-        &path,
-        &format!(
-            "git merge -q --squash {branch} && git -c user.email=t@t -c user.name=t commit -qm 'feat: ship feature'"
-        ),
-    );
-    let squashed = sh(&path, "git rev-parse main");
+    // Finishing before the branch is pushed is refused.
+    let tip = sh(&worktree, "git rev-parse HEAD");
     let finish = |sha: &str| {
         as_session(
             &format!("/v1/tasks/{}/transitions", last.id),
@@ -261,12 +303,89 @@ async fn the_final_task_waits_then_lands_the_goal_branch_on_the_base() {
             serde_json::json!({"to": "finished", "merge_commit": sha}),
         )
     };
-    h.error(finish(&landed), StatusCode::CONFLICT).await;
-    let finished: TaskDto = h.json(finish(&squashed), StatusCode::OK).await;
+    h.error(finish(&tip), StatusCode::CONFLICT).await;
+
+    // Push the goal branch and open the request: the daemon runs `gh`.
+    sh(&worktree, "git push origin HEAD");
+    let opened: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/pull-request", last.id),
+                &author.id,
+                serde_json::json!({"title": "feat: ship feature", "body": "Ships it."}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(opened.pr_url.as_deref(), Some(URL));
+    assert_eq!(
+        cli.invocations()
+            .iter()
+            .filter(|call| call
+                .args
+                .starts_with(&["pr".to_string(), "create".to_string()]))
+            .count(),
+        1,
+        "{:?}",
+        cli.invocations()
+    );
+
+    // Its author keeps the request with the skill the daemon loaded for it,
+    // and the task stays approved until a human merges it: nothing merges
+    // the goal branch onto the base.
+    let launch = h.launch_file(&author.id).expect("a launch file");
+    assert!(
+        launch.system_prompt.contains("- pr-babysit: "),
+        "{}",
+        launch.system_prompt
+    );
+    assert_eq!(h.status(&last.id).await, TaskStatus::Approved);
+    let refused = h.error(finish(&tip), StatusCode::CONFLICT).await;
+    assert!(
+        refused.error.message.contains("is not merged"),
+        "{}",
+        refused.error.message
+    );
+    let kept = h
+        .store
+        .pull_request_of_task(&last.id)
+        .await
+        .unwrap()
+        .expect("the ledger holds the task's request");
+    // A human merges it: the forge says so, which is what `finish_task`
+    // reads (005).
+    assert_eq!(kept.role, "author");
+    let mut merged = opened_pull(URL, &goal_branch(&goal));
+    merged["state"] = serde_json::json!("MERGED");
+    cli.reprogram(serde_json::json!([
+        answer(&["auth", "status"], 0, ""),
+        answer(&["pr", "view"], 0, &merged.to_string()),
+        answer(&["pr", "list"], 0, "[]"),
+    ]));
+    let finished: TaskDto = h.json(finish(&tip), StatusCode::OK).await;
     assert_eq!(finished.status, TaskStatus::Finished);
-    assert_eq!(finished.merge_commit.as_deref(), Some(squashed.as_str()));
-    h.launcher.cleanup_task(&last.id, true, true).await.unwrap();
-    assert_eq!(sh(&path, "git rev-parse main"), squashed);
+    assert_eq!(finished.merge_commit.as_deref(), Some(tip.as_str()));
+    let main_before_cleanup = sh(&path, "git rev-parse main");
+
+    // The task over and its request merged, the daemon deletes the goal
+    // branch, local and remote (026); nothing of it merged the goal branch
+    // onto the base itself.
+    common::eventually(TIMEOUT, "the goal branch to go", async || {
+        // No fetch has read the merge: the task's finish did, and the
+        // request is read again before Ariadne lets go of it.
+        h.flush_scheduler().await;
+        !sh(&path, "git branch --list").contains(&branch)
+    })
+    .await;
+    assert_eq!(
+        sh(&path, "git rev-parse main"),
+        main_before_cleanup,
+        "nothing merged the goal branch onto the base"
+    );
+    assert!(
+        !sh(&remote, "git branch --list").contains(&branch),
+        "the goal branch is gone from the remote too"
+    );
 }
 
 /// A feature goal finalized with a first task and its final task, the first

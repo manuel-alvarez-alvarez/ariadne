@@ -18,8 +18,8 @@
  */
 
 import { Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom"
-
 import { GoalPanel } from "@/features/goals/goal-panel"
+import { PullRequestPanel } from "@/features/pull-requests/pull-request-panel"
 import { SessionPanel } from "@/features/sessions/session-panel"
 import { TaskPanel } from "@/features/tasks"
 import { closePanel, type Panel } from "@/routes/panel-history"
@@ -30,6 +30,7 @@ export function DetailPanels() {
   const navigate = useNavigate()
   const [search, setSearch] = useSearchParams()
 
+  const prId = search.get("pr")
   const goalId = search.get("goal")
   const taskId = search.get("task")
   const sessionId = search.get("session")
@@ -40,6 +41,8 @@ export function DetailPanels() {
     if (step.kind === "back") navigate(-1)
     else setSearch(step.search, { replace: true })
   }
+
+  if (prId) return <PullRequestPanel id={prId} onClose={() => close("pr")} />
 
   // The sessions screen is the one screen that owns `?goal=` and `?task=`
   // itself: there they are what the list is narrowed to, with a chip above the

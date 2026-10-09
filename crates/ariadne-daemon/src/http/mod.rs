@@ -10,11 +10,14 @@ pub(crate) mod convert;
 mod doctor;
 mod error;
 pub(crate) mod events;
+mod forge;
 mod goals;
+mod issues;
 mod landing;
 mod logs;
 mod permissions;
 mod pins;
+mod pull_requests;
 mod repositories;
 mod sessions;
 mod skills;
@@ -53,6 +56,7 @@ use crate::scheduler::SchedEvent;
 /// Shared handler state.
 #[derive(Clone)]
 pub struct AppState {
+    pub forge_poll: crate::forge::poll::ForgePoll,
     pub store: Store,
     /// Monotonic, so uptime is immune to the clock being set.
     pub started_at: Instant,
@@ -73,6 +77,8 @@ pub struct AppState {
     pub outside_sessions: OutsideSessions,
     /// the model's settings, its Python check and its install (022).
     pub ai_permissions: AiPermissions,
+    /// The webhook tunnel and its switch (027).
+    pub tunnel: crate::forge::tunnel::Tunnel,
 }
 
 impl AppState {
@@ -105,6 +111,10 @@ impl AppState {
     pub fn notify_scheduler_goal(&self, goal_id: &str) {
         self.wake(SchedEvent::GoalChanged(goal_id.to_string()));
     }
+
+    pub(crate) fn notify_scheduler_pull_request(&self, pull_request_id: &str) {
+        self.wake(SchedEvent::PullRequestChanged(pull_request_id.to_string()));
+    }
 }
 
 #[derive(OpenApi)]
@@ -123,6 +133,12 @@ impl AppState {
         skills::reset_document,
         repositories::create, repositories::list, repositories::get,
         repositories::update, repositories::delete,
+        forge::get_tunnel, forge::set_tunnel,
+        issues::list, issues::get,
+        pull_requests::list, pull_requests::get, pull_requests::get_by_number, pull_requests::refresh, pull_requests::search,
+        pull_requests::comments, pull_requests::comment, pull_requests::reply, pull_requests::resolve,
+        pull_requests::report,
+        pull_requests::diff, pull_requests::submit_review, pull_requests::ask_review,
         permissions::get, permissions::update, permissions::refresh,
         permissions::list_learned, permissions::get_learned, permissions::delete_learned,
         permissions::update_learned,
@@ -133,7 +149,7 @@ impl AppState {
         tasks::transition, tasks::cancel, tasks::retry, tasks::list_transitions,
         landing::list_task_messages, landing::post_task_message,
         goals::list_goal_messages, goals::post_goal_message, landing::diff,
-        landing::record_pull_request, landing::pick_winner,
+        landing::open_pull_request, landing::pick_winner,
         sessions::list, sessions::create, sessions::resume_outside,
         sessions::get, sessions::kill, sessions::resume, sessions::switch,
         console::snapshot, console::stream, console::input, console::cancel,
@@ -159,6 +175,8 @@ impl AppState {
         (name = "repositories", description = "Git repositories registered with the daemon"),
         (name = "permissions", description = "The AI permission model: the local model the `ai` permission mode answers with"),
         (name = "goals", description = "Goals and their plans"),
+        (name = "pull-requests", description = "The tracked pull request ledger"),
+        (name = "issues", description = "Open issues read from enabled forges"),
         (name = "tasks", description = "Tasks, transitions, and what their agents say"),
         (name = "sessions", description = "Agent sessions, and the console each one is driven through"),
         (name = "events", description = "Agent events the ACP runtime reports, and the live domain-event stream"),
@@ -178,6 +196,43 @@ fn api_doc() -> utoipa::openapi::OpenApi {
 /// Build the daemon router.
 pub fn router(state: AppState) -> Router {
     Router::new()
+        .route("/v1/pull-requests", get(pull_requests::list))
+        .route("/v1/pull-requests/refresh", post(pull_requests::refresh))
+        .route("/v1/pull-requests/{id}", get(pull_requests::get))
+        .route(
+            "/v1/repositories/{id}/pull-requests/{number}",
+            get(pull_requests::get_by_number),
+        )
+        .route(
+            "/v1/repositories/{id}/pull-requests/search",
+            get(pull_requests::search),
+        )
+        .route(
+            "/v1/pull-requests/{id}/comments",
+            get(pull_requests::comments),
+        )
+        .route(
+            "/v1/pull-requests/{id}/comments/{comment_id}",
+            get(pull_requests::comment),
+        )
+        .route(
+            "/v1/pull-requests/{id}/comments/{comment_id}/reply",
+            post(pull_requests::reply),
+        )
+        .route(
+            "/v1/pull-requests/{id}/comments/{comment_id}/resolve",
+            post(pull_requests::resolve),
+        )
+        .route("/v1/pull-requests/{id}/report", post(pull_requests::report))
+        .route("/v1/pull-requests/{id}/diff", get(pull_requests::diff))
+        .route(
+            "/v1/pull-requests/{id}/reviews",
+            post(pull_requests::submit_review),
+        )
+        .route(
+            "/v1/repositories/{id}/pull-requests/{number}/ariadne-review",
+            put(pull_requests::ask_review),
+        )
         .route("/v1/health", get(health))
         .route("/v1/version", get(version))
         .route("/v1/doctor", get(doctor::report))
@@ -207,6 +262,12 @@ pub fn router(state: AppState) -> Router {
                 .put(repositories::update)
                 .delete(repositories::delete),
         )
+        .route(
+            "/v1/forge/tunnel",
+            get(forge::get_tunnel).put(forge::set_tunnel),
+        )
+        .route("/v1/repositories/{id}/issues", get(issues::list))
+        .route("/v1/repositories/{id}/issues/{number}", get(issues::get))
         // permissions
         .route(
             "/v1/permissions/ai",
@@ -249,7 +310,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/tasks/{id}/pick", post(landing::pick_winner))
         .route(
             "/v1/tasks/{id}/pull-request",
-            post(landing::record_pull_request),
+            post(landing::open_pull_request),
         )
         // sessions
         .route("/v1/sessions", get(sessions::list).post(sessions::create))
