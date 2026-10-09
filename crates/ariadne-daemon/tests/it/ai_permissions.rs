@@ -687,10 +687,15 @@ async fn a_repository_takes_the_ai_mode_only_once_the_model_is_on() {
 #[tokio::test]
 async fn the_endpoint_is_the_configured_one_and_live_needs_the_model_on() {
     let record = tempfile::NamedTempFile::new().unwrap();
+    let hold = tempfile::tempdir().unwrap();
+    let hold = hold.path().join("let-go");
 
     // With nothing configured, the endpoint is whatever the server reported.
+    // The test reports it by hand, so the installer holds and the install
+    // never gets ready: a ready install starts the real server, which has no
+    // Python here, exits, and takes the reported endpoint away with it.
     let h = with_ai_permissions("3.13.1")
-        .ai_permissions_installer(installer(record.path(), "", "0"))
+        .ai_permissions_installer(installer(record.path(), &hold.display().to_string(), "0"))
         .await;
     assert_eq!(h.state.ai_permissions.endpoint(), None);
     assert_eq!(h.state.ai_permissions.live().await, None);

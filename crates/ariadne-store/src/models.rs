@@ -33,6 +33,30 @@ impl Store {
 
     /// Set or clear a rank. The caller checks that discovery carries the id.
     pub async fn set_model_rank(&self, id: &str, rank: Option<ModelRank>) -> Result<()> {
+        let mut tx = self.w().begin().await?;
+        Self::set_model_rank_in_tx(&mut tx, id, rank).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Set or clear several ranks together, in one transaction: a reconcile
+    /// that reads the table mid-batch sees every one of them or none, never
+    /// some — unlike as many calls to `set_model_rank`, which hand the table
+    /// back between each.
+    pub async fn set_model_ranks(&self, entries: &[(&str, Option<ModelRank>)]) -> Result<()> {
+        let mut tx = self.w().begin().await?;
+        for (id, rank) in entries {
+            Self::set_model_rank_in_tx(&mut tx, id, *rank).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn set_model_rank_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        id: &str,
+        rank: Option<ModelRank>,
+    ) -> Result<()> {
         match rank {
             Some(rank) => {
                 sqlx::query(
@@ -43,13 +67,13 @@ impl Store {
                 .bind(id)
                 .bind(rank.as_str())
                 .bind(now())
-                .execute(self.w())
+                .execute(&mut **tx)
                 .await?;
             }
             None => {
                 sqlx::query("DELETE FROM model_ranks WHERE id = ?")
                     .bind(id)
-                    .execute(self.w())
+                    .execute(&mut **tx)
                     .await?;
             }
         }

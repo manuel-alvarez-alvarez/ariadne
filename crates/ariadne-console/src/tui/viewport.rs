@@ -1260,6 +1260,7 @@ mod tests {
     fn a_resize_either_way_leaves_no_stale_row_and_one_status_row() {
         let tap = Tap::default();
         let window = Window::new(72, 40);
+        let now = chrono::Utc::now();
         let mut terminal = super::open(|| AnsiBackend::new(tap.clone(), window.clone())).unwrap();
         let mut test = pane();
         let mut on_ansi = Console::new(header());
@@ -1271,10 +1272,11 @@ mod tests {
             prompt("next"),
             event("agent_message_chunk", "writing", json!({"text": "writing"})),
         ];
-        on_ansi.snapshot(&events);
-        on_test.snapshot(&events);
-        on_ansi.show(&mut terminal).unwrap();
-        on_test.show(&mut test).unwrap();
+        on_ansi.snapshot_at(&events, now);
+        on_test.snapshot_at(&events, now);
+        let rendered_at = Instant::now();
+        on_ansi.show_at(&mut terminal, rendered_at).unwrap();
+        on_test.show_at(&mut test, rendered_at).unwrap();
         let mut emulator = vt100::Parser::new(40, 72, 200);
         emulator.process(tap.take().as_bytes());
 
@@ -1287,8 +1289,9 @@ mod tests {
             window.set(width, height);
             emulator.screen_mut().set_size(height, width);
             test.backend_mut().under_mut().resize(width, height);
-            on_ansi.show(&mut terminal).unwrap();
-            on_test.show(&mut test).unwrap();
+            let rendered_at = Instant::now();
+            on_ansi.show_at(&mut terminal, rendered_at).unwrap();
+            on_test.show_at(&mut test, rendered_at).unwrap();
             emulator.process(tap.take().as_bytes());
 
             let expected = rows(test.backend().under().buffer());
