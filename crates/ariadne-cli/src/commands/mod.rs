@@ -25,6 +25,7 @@ pub(crate) mod skill;
 pub(crate) mod stats;
 pub(crate) mod task;
 pub(crate) mod transcript;
+pub(crate) mod workflow;
 
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;

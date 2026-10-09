@@ -12,6 +12,7 @@ use crate::commands::permissions::{
     AiPermissionsCommand, LearnedPermissionsCommand, PermissionsCommand,
 };
 use crate::commands::skill::SkillCommand;
+use crate::commands::workflow::WorkflowCommand;
 use crate::output::ColorChoice;
 
 /// clap's own consistency check over the whole tree, shadowed `--format`
@@ -33,6 +34,7 @@ const GROUPS: &[&str] = &[
     "session",
     "skill",
     "task",
+    "workflow",
 ];
 
 /// The root and every group say what they are for, list the two global flags
@@ -214,6 +216,13 @@ const LEAVES: &[(&str, bool)] = &[
     ("task messages", true),
     ("task update", true),
     ("version", true),
+    ("workflow check", true),
+    ("workflow create", true),
+    ("workflow ls", true),
+    ("workflow reset", true),
+    ("workflow rm", true),
+    ("workflow show", true),
+    ("workflow update", true),
 ];
 
 /// The list above is the whole tree, so a command added later is not
@@ -1313,6 +1322,88 @@ fn a_skill_line_takes_the_skill_by_name() {
         panic!("skill rm");
     };
     assert!(yes);
+}
+
+/// A workflow is one document, so its lines are the same shape a skill's
+/// are, plus `check`: `show` prints it, `create` and `update` write it from a
+/// file or from stdin, `reset` puts a shipped one back, `rm` deletes one of
+/// your own, and `check` parses a draft without saving it. Every verb takes
+/// the workflow by name except `check`, which takes none — it parses what it
+/// is handed rather than anything already saved.
+#[test]
+fn every_workflow_verb_parses_and_is_classified() {
+    let named = |command: WorkflowCommand| match command {
+        WorkflowCommand::Show { name }
+        | WorkflowCommand::Create { name, .. }
+        | WorkflowCommand::Update { name, .. }
+        | WorkflowCommand::Reset { name, .. }
+        | WorkflowCommand::Rm { name, .. } => Some(name),
+        WorkflowCommand::Ls | WorkflowCommand::Check { .. } => None,
+    };
+    for verb in ["show", "reset", "rm"] {
+        let Command::Workflow { command } =
+            parse(&["ariadne", "workflow", verb, "develop-review-merge"]).command
+        else {
+            panic!("workflow {verb}");
+        };
+        assert_eq!(named(command), Some("develop-review-merge".to_string()));
+    }
+
+    let Command::Workflow {
+        command: WorkflowCommand::Create { name, file },
+    } = parse(&[
+        "ariadne",
+        "workflow",
+        "create",
+        "mine",
+        "--file",
+        "/tmp/mine.md",
+    ])
+    .command
+    else {
+        panic!("workflow create");
+    };
+    assert_eq!(name, "mine");
+    assert_eq!(file, Some(PathBuf::from("/tmp/mine.md")));
+
+    let Command::Workflow {
+        command: WorkflowCommand::Update { file, .. },
+    } = parse(&["ariadne", "workflow", "update", "mine"]).command
+    else {
+        panic!("workflow update from stdin");
+    };
+    assert_eq!(file, None, "no file named is stdin");
+
+    let Command::Workflow {
+        command: WorkflowCommand::Check { file },
+    } = parse(&["ariadne", "workflow", "check", "--file", "/tmp/draft.md"]).command
+    else {
+        panic!("workflow check");
+    };
+    assert_eq!(file, Some(PathBuf::from("/tmp/draft.md")));
+
+    let Command::Workflow {
+        command: WorkflowCommand::Reset { yes, .. },
+    } = parse(&["ariadne", "workflow", "reset", "mine", "-y"]).command
+    else {
+        panic!("workflow reset");
+    };
+    assert!(yes);
+
+    let Command::Workflow {
+        command: WorkflowCommand::Rm { yes, .. },
+    } = parse(&["ariadne", "workflow", "rm", "mine", "--yes"]).command
+    else {
+        panic!("workflow rm");
+    };
+    assert!(yes);
+
+    assert!(matches!(
+        parse(&["ariadne", "workflow", "ls"]).command,
+        Command::Workflow {
+            command: WorkflowCommand::Ls
+        }
+    ));
 }
 
 /// The daemon group is about one home, so `--home` is the group's: it reaches

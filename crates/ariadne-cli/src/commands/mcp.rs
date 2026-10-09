@@ -882,6 +882,7 @@ pub(crate) mod tests {
             status: http::StatusCode::BAD_REQUEST,
             code: "bad_request".into(),
             message: refusal.into(),
+            details: None,
         });
         assert!(err.message.contains(refusal), "{}", err.message);
         assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
@@ -896,6 +897,7 @@ pub(crate) mod tests {
             status: http::StatusCode::INTERNAL_SERVER_ERROR,
             code: "internal_error".into(),
             message: failure.into(),
+            details: None,
         });
         assert!(err.message.contains(failure), "{}", err.message);
         assert_eq!(err.code, rmcp::model::ErrorCode::INTERNAL_ERROR);

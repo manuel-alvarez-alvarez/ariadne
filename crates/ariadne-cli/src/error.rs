@@ -232,6 +232,7 @@ mod tests {
             status: StatusCode::NOT_FOUND,
             code: "not_found".into(),
             message: "task not found: badid123".into(),
+            details: None,
         }
     }
 
@@ -347,6 +348,7 @@ mod tests {
                 status,
                 code: "whatever".into(),
                 message: "no".into(),
+                details: None,
             })
         };
         assert_eq!(exit(&anyhow::Error::new(unreachable())), Exit::Unreachable);

@@ -553,6 +553,28 @@ author keeps its request, what a `pr-reviewer` session does, and the tunnel's fa
 to polling; see [Configuration](configuration.md) for `gh_bin`, `glab_bin`
 and the webhook keys.
 
+## Custom workflows
+
+A workflow is a linear kanban of columns a goal's tasks step through in
+place of the fixed author, reviewer and landing pipeline. Ariadne ships two;
+`ariadne workflow` manages them the way `ariadne skill` manages skills — a
+shipped one is reset rather than deleted, one of your own is deleted rather
+than reset.
+
+```sh
+ariadne workflow ls
+ariadne workflow show develop-review-merge
+ariadne workflow check --file draft.md
+ariadne workflow create my-workflow --file draft.md
+ariadne workflow update my-workflow --file draft.md
+ariadne workflow reset develop-review-merge
+```
+
+`create` and `update` read the document from `--file`, or from stdin where
+none is named or where `-` names it. `check` parses a draft without saving it anywhere: it prints
+the document's columns, or the line a syntax rule broke on. `show` prints
+the document whole, through `$PAGER`; `--format json` prints the DTO.
+
 ## Output and troubleshooting
 
 Listings print tables by default. Add `--format json` for JSON, `-q` for ids

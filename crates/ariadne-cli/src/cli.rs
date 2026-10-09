@@ -17,6 +17,7 @@ use crate::commands::session::SessionCommand;
 use crate::commands::skill::SkillCommand;
 use crate::commands::stats::StatsCommand;
 use crate::commands::task::TaskCommand;
+use crate::commands::workflow::WorkflowCommand;
 use crate::output::{ColorChoice, Format};
 
 /// Where the two flags every command takes are listed. They belong to no
@@ -63,6 +64,16 @@ Examples:
   ariadne skill set coding --file coding.md
   ariadne skill reset coding                    # back to the one Ariadne ships
   ariadne skill create api-design --file api-design.md
+";
+
+const WORKFLOW_EXAMPLES: &str = "\
+Examples:
+  ariadne workflow ls                           # every workflow, shipped and yours
+  ariadne workflow show develop-review-merge
+  ariadne workflow check --file draft.md        # read it back, or the line it breaks on
+  ariadne workflow create my-workflow --file draft.md
+  ariadne workflow update my-workflow --file draft.md
+  ariadne workflow reset develop-review-merge   # back to the one Ariadne ships
 ";
 
 const REPO_EXAMPLES: &str = "\
@@ -343,6 +354,19 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: SkillCommand,
     },
+    /// Manage workflows
+    ///
+    /// A workflow is a linear kanban of columns that an orchestrator steps a
+    /// task through in place of the fixed author, reviewer and landing
+    /// pipeline. Ariadne ships a catalog of them and you add your own; a
+    /// shipped workflow is reset rather than deleted, one of yours is
+    /// deleted rather than reset, and `check` reads a draft back without
+    /// saving it anywhere.
+    #[command(after_help = WORKFLOW_EXAMPLES)]
+    Workflow {
+        #[command(subcommand)]
+        command: WorkflowCommand,
+    },
     /// Track pull requests
     ///
     /// Follow the open requests of your repositories: yours, the ones that ask
@@ -555,6 +579,7 @@ const LISTINGS: &[&str] = &[
     "task history",
     "task ls",
     "task messages",
+    "workflow ls",
 ];
 
 /// Commands where `-q` prints only each affected row's subject.
@@ -592,11 +617,22 @@ const QUIET_OUTPUT: &[&str] = &[
     "task messages",
     "task retry",
     "task update",
+    "workflow create",
+    "workflow ls",
+    "workflow reset",
+    "workflow rm",
+    "workflow update",
 ];
 
 /// Subcommands that print something long enough to page. `task messages`
 /// only does so with `--full`, but that is still what `--no-pager` is for.
-const PAGED: &[&str] = &["session logs", "task diff", "task logs", "task messages"];
+const PAGED: &[&str] = &[
+    "session logs",
+    "task diff",
+    "task logs",
+    "task messages",
+    "workflow show",
+];
 
 /// Subcommands whose table is a picture of live state and so take `--watch`:
 /// each declares the flag itself rather than through a global, since (unlike

@@ -14,6 +14,7 @@ use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::skills::{SkillDto, SkillSeat};
 use ariadne_api::tasks::{TaskAgentDto, TaskDto};
+use ariadne_api::workflows::WorkflowDto;
 use ariadne_core::{GoalStatus, Landing, PermissionMode, Seat, SessionStatus, TaskStatus};
 
 /// A stamp every fixture is created and updated at, so a rendered row is
@@ -119,6 +120,19 @@ pub(crate) fn skill(name: &str, summary: &str) -> SkillDto {
         document: format!("---\nname: {name}\ndescription: {summary}\n---\n"),
         document_is_default: true,
         builtin: true,
+        created_at: "2026-08-17T08:00:00Z".into(),
+        updated_at: "2026-08-17T09:00:00Z".into(),
+    }
+}
+
+/// A workflow on the document Ariadne ships, with no columns of its own: the
+/// caller adds the steps it is testing with struct-update syntax.
+pub(crate) fn workflow(name: &str) -> WorkflowDto {
+    WorkflowDto {
+        name: name.into(),
+        document: format!("workflow {name}\n"),
+        builtin: true,
+        steps: Vec::new(),
         created_at: "2026-08-17T08:00:00Z".into(),
         updated_at: "2026-08-17T09:00:00Z".into(),
     }

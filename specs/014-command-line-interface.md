@@ -1,10 +1,11 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-10-03
+updated: 2026-10-09
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 7fe184e9]
 tests:
+  - crates/ariadne-cli/src/commands/workflow.rs
   - crates/ariadne-cli/src/cli/tests.rs
   - crates/ariadne-cli/src/output.rs
   - crates/ariadne-cli/src/commands/models.rs
@@ -234,6 +235,22 @@ same binary also serves (013).
     `GET /v1/stats/<family>` (023). `ariadne stats` alone prints `work`.
     Each of the five is a listing: it takes the table flags, and
     `--format json` prints the family's DTO whole.
+36. `ariadne workflow` manages the workflow catalog (030) the way `ariadne
+    skill` manages skills: `ls` lists every workflow, shipped and written,
+    its `name` column marked `builtin` with the shared `yes_no` wording and
+    its `columns` column the titles of its steps joined with ` → `; `show`
+    prints the document whole, through `$PAGER` as `task messages --full`
+    does, and `--format json` prints the DTO; `create --file <path>|-` and
+    `update --file <path>|-` read the document from `--file`, or from stdin
+    where none is named or where `-` names it, and send `{document}`; `reset`
+    puts a shipped workflow back on the text Ariadne
+    ships, and `rm` deletes one of the user's own, each behind the usual
+    confirmation. `check --file <path>|-` posts the document to the parse
+    route without saving it anywhere: it prints the columns of a document
+    that parses, or the daemon's `workflow_invalid` refusal read apart from
+    the rest — the line named in its `details` beside the sentence next to
+    it, `line <N>: <message>` — as a usage error; every other daemon refusal
+    of a workflow command prints whole, the way any other command's does.
 
 ## Acceptance criteria
 
@@ -386,6 +403,22 @@ same binary also serves (013).
   `::a_version_line_reads_down_to_its_major_and_minor`).
 - The skill listing marks an orchestrator-only skill
   (`skill.rs::a_listing_marks_an_orchestrator_only_skill`).
+- Every `workflow` verb parses and is classified
+  (`cli/tests.rs::every_workflow_verb_parses_and_is_classified`); `--format`
+  and the listing flags are advertised exactly where they are honoured, with
+  `workflow ls` a listing and `workflow show` paged, by the same checks as
+  every other command
+  (`cli/tests.rs::format_is_advertised_exactly_where_it_is_honored`,
+  `::the_listing_flags_are_advertised_exactly_where_they_are_honored`).
+- `workflow ls` joins a workflow's columns and marks a built-in; `create` and
+  `update` read a file and stdin and send `{document}`; `check` reads a
+  `workflow_invalid` refusal's line out of its `details` and exits as a
+  usage error, and reads back the columns of a document that parses
+  (`commands/workflow.rs::the_columns_label_joins_their_titles`,
+  `::a_listing_marks_a_built_in_with_the_shared_boolean_wording`,
+  `::create_and_update_send_the_document_whole_and_nothing_else`,
+  `::check_prints_the_line_of_a_refusal_as_a_usage_error`,
+  `::check_reads_back_the_columns_of_a_good_document`).
 - `--watch` is advertised on exactly `task ls`, `goal ls`, `session ls` and
   `attention`, and nowhere else
   (`cli/tests.rs::the_watch_flag_is_advertised_exactly_where_it_is_honored`).
