@@ -75,8 +75,8 @@ impl Store {
     /// Create a workflow of the user's own. It carries its own document:
     /// nothing ships under its name for it to fall back to.
     pub async fn create_workflow(&self, new: NewWorkflow) -> Result<Workflow> {
-        self.check_workflow_document(&new.name, &new.document)
-            .await?;
+        let mut tx = self.w().begin().await?;
+        Self::check_workflow_document_in_tx(&mut tx, &new.name, &new.document).await?;
         let ts = now();
         sqlx::query(
             "INSERT INTO workflows (name, document, builtin, created_at, updated_at)
@@ -86,9 +86,10 @@ impl Store {
         .bind(&new.document)
         .bind(&ts)
         .bind(&ts)
-        .execute(self.w())
+        .execute(&mut *tx)
         .await
         .map_err(|e| taken(e, &new.name))?;
+        tx.commit().await?;
         let workflow = self.get_workflow(&new.name).await?;
         self.publish(Change::WorkflowCreated(workflow.clone()));
         Ok(workflow)
@@ -108,13 +109,15 @@ impl Store {
     /// behind it, which [`Store::reset_workflow`] goes back to.
     pub async fn set_workflow_document(&self, name: &str, document: &str) -> Result<Workflow> {
         self.get_workflow(name).await?;
-        self.check_workflow_document(name, document).await?;
+        let mut tx = self.w().begin().await?;
+        Self::check_workflow_document_in_tx(&mut tx, name, document).await?;
         sqlx::query("UPDATE workflows SET document = ?, updated_at = ? WHERE name = ?")
             .bind(document)
             .bind(now())
             .bind(name)
-            .execute(self.w())
+            .execute(&mut *tx)
             .await?;
+        tx.commit().await?;
         let workflow = self.get_workflow(name).await?;
         self.publish(Change::WorkflowUpdated(workflow.clone()));
         Ok(workflow)
@@ -171,7 +174,17 @@ impl Store {
     /// staffs a task agent, which is what a workflow column does.
     /// `pr-babysit` is allowed: the `pr` column of `develop-review-pr` loads
     /// it.
-    async fn check_workflow_document(&self, name: &str, document: &str) -> Result<()> {
+    ///
+    /// Read on `tx`'s own connection, inside the same transaction the save
+    /// it clears the way for commits in: the store's one writer serializes
+    /// every save and every skill deletion through that single connection,
+    /// so nothing deletes a skill this save just found between the check
+    /// and the write that acts on it.
+    async fn check_workflow_document_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        name: &str,
+        document: &str,
+    ) -> Result<()> {
         let parsed = workflow::parse(document).map_err(invalid)?;
         if parsed.name != name {
             return Err(StoreError::Invalid(format!(
@@ -189,7 +202,7 @@ impl Store {
                 let exists: Option<String> =
                     sqlx::query_scalar("SELECT name FROM skills WHERE name = ?")
                         .bind(skill)
-                        .fetch_optional(self.r())
+                        .fetch_optional(&mut **tx)
                         .await?;
                 if exists.is_none() {
                     return Err(StoreError::Conflict(format!("no skill is called {skill}")));

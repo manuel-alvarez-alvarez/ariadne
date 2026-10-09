@@ -3710,6 +3710,70 @@ async fn a_skill_a_goals_snapshot_still_names_cannot_be_deleted() {
     );
 }
 
+/// A workflow save checks a skill it names, and a skill deletion checks the
+/// same thing about every workflow, on the store's one writer: concurrent
+/// calls serialize through that one connection rather than each reading the
+/// other's "before" on a separate read pool, so the two can never both
+/// succeed and leave a workflow naming a skill a deletion already removed.
+///
+/// A held write lock on a connection of its own forces the race a person
+/// racing the two by hand would see: both calls reach their check before
+/// either reaches its write, which is the window the old, separately read
+/// checks let two true writers cross in.
+#[tokio::test]
+async fn concurrent_workflow_creation_and_skill_deletion_never_both_succeed() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("race.db");
+    let store = Store::open(&path).await.unwrap();
+    store
+        .create_skill(NewSkill {
+            name: "custom-check".into(),
+            document: "---\nname: custom-check\ndescription: check it\n---\n".into(),
+        })
+        .await
+        .unwrap();
+
+    let lock = raw_pool(&path).await;
+    let mut held = lock.begin().await.unwrap();
+    sqlx::query("UPDATE skills SET updated_at = updated_at WHERE name = 'custom-check'")
+        .execute(&mut *held)
+        .await
+        .unwrap();
+
+    let create = store.create_workflow(NewWorkflow {
+        name: "custom-flow".into(),
+        document:
+            "workflow custom-flow\n  build[Build]\n    Do the work.\n    skills: custom-check\n"
+                .into(),
+    });
+    let delete = store.delete_skill("custom-check");
+    let release = async {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        held.rollback().await.unwrap();
+    };
+    let (created, deleted, ()) = tokio::join!(create, delete, release);
+    lock.close().await;
+
+    assert!(
+        !(created.is_ok() && deleted.is_ok()),
+        "never both: created {created:?}, deleted {deleted:?}"
+    );
+    if created.is_ok() {
+        assert!(
+            store.get_skill("custom-check").await.is_ok(),
+            "the skill the created workflow names must survive"
+        );
+    } else {
+        assert!(
+            matches!(
+                store.get_workflow("custom-flow").await,
+                Err(StoreError::NotFound { .. })
+            ),
+            "no workflow was left naming the deleted skill"
+        );
+    }
+}
+
 /// An agent can only be staffed on a skill that exists: the name is a
 /// reference, and the refusal says which name it was.
 #[tokio::test]

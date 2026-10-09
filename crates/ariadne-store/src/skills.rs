@@ -220,10 +220,15 @@ impl Store {
                 "skill {name} is one Ariadne ships; reset it instead of deleting it"
             )));
         }
+        // Checked and deleted on the store's one writer, in one transaction:
+        // a workflow save checks a skill it names the same way, on the same
+        // connection, and the single writer serializes the two rather than
+        // letting a save between this check and this delete go unseen.
+        let mut tx = self.w().begin().await?;
         let agents: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM task_agent_skills WHERE skill_name = ?")
                 .bind(name)
-                .fetch_one(self.r())
+                .fetch_one(&mut *tx)
                 .await?;
         if agents > 0 {
             let plural = if agents == 1 { "agent" } else { "agents" };
@@ -236,7 +241,7 @@ impl Store {
              WHERE EXISTS (SELECT 1 FROM json_each(skills) WHERE value = ?)",
         )
         .bind(name)
-        .fetch_one(self.r())
+        .fetch_one(&mut *tx)
         .await?;
         if goals > 0 {
             let plural = if goals == 1 { "goal" } else { "goals" };
@@ -244,7 +249,9 @@ impl Store {
                 "skill {name} is still named by the columns of {goals} {plural}"
             )));
         }
-        let workflows = self.list_workflows().await?;
+        let workflows: Vec<crate::Workflow> = sqlx::query_as("SELECT * FROM workflows")
+            .fetch_all(&mut *tx)
+            .await?;
         if let Some(workflow) = workflows
             .iter()
             .find(|w| w.steps().iter().any(|s| s.skills.iter().any(|s| s == name)))
@@ -256,8 +263,9 @@ impl Store {
         }
         sqlx::query("DELETE FROM skills WHERE name = ?")
             .bind(name)
-            .execute(self.w())
+            .execute(&mut *tx)
             .await?;
+        tx.commit().await?;
         self.publish(Change::SkillDeleted(name.to_string()));
         Ok(())
     }
