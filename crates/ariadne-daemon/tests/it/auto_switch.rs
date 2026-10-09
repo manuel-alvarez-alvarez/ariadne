@@ -237,6 +237,12 @@ async fn claude_and_message_signals_classify_while_a_plain_error_does_not() {
             "_meta": {"jetbrains": {"air": {"sessionFailure": {"category": "limit"}}}}
         }}),
         json!({"code": -32603, "message": "RATE LIMIT reached", "data": {}}),
+        json!({"code": -32603, "message": "You've hit your session limit", "data": {
+            "errorKind": "rate_limit"
+        }}),
+        json!({"code": -32603, "message": "Internal error", "data": {
+            "details": "API error: 429 This request would exceed your account's rate limit."
+        }}),
     ] {
         let world = world(error, true, &["other"]).await;
         rank(

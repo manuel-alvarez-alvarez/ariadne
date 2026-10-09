@@ -1397,10 +1397,23 @@ fn exhausted_reason(message: &str, data: Option<&Value>, patterns: &[String]) ->
     {
         return Some("limit".to_string());
     }
-    let message = message.to_lowercase();
+    if let Some(reason) = data
+        .and_then(|data| data.get("errorKind"))
+        .and_then(Value::as_str)
+        .filter(|reason| *reason == "rate_limit")
+    {
+        return Some(reason.to_string());
+    }
+    // An adapter may say "Internal error" and keep the provider's own words
+    // in its data — claude-acp's 429 on `session/set_config_option` does.
+    let text = match data {
+        Some(data) => format!("{message}\n{}", acp_error_detail(data)),
+        None => message.to_string(),
+    }
+    .to_lowercase();
     patterns
         .iter()
-        .find(|pattern| message.contains(&pattern.to_lowercase()))
+        .find(|pattern| text.contains(&pattern.to_lowercase()))
         .cloned()
 }
 

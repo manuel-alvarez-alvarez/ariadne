@@ -174,6 +174,8 @@ pub fn default_exhausted_patterns() -> Vec<String> {
         "hit your usage limit",
         "usage limit reached",
         "usage limit",
+        "session limit",
+        "weekly limit",
         "rate limit",
         "quota",
         "try again at",
