@@ -21,8 +21,8 @@ use ariadne_api::pull_requests::{
 use ariadne_api::sessions::SwitchSessionRequest;
 use ariadne_api::skills::{SkillDto, SkillSeat};
 use ariadne_api::tasks::{
-    AgentAssignment, CreateTaskRequest, OpenPullRequestRequest, PickWinnerRequest,
-    TransitionRequest, UpdateTaskRequest,
+    AgentAssignment, CompleteStepRequest, CreateTaskRequest, FailStepRequest,
+    OpenPullRequestRequest, PickWinnerRequest, TransitionRequest, UpdateTaskRequest,
 };
 use ariadne_core::{Actor, MessageKind, Seat, TaskStatus};
 
@@ -60,6 +60,25 @@ pub(super) struct AgentReq {
     pub brief: Option<String>,
 }
 
+/// One agent an orchestrator staffs on one workflow column.
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(super) struct StepAgentReq {
+    /// The workflow column this agent works in.
+    pub step: String,
+    /// What it runs on, `<agent>:<model>` as `list_models` spells it.
+    /// The column prefers a rank. Use it unless you have a reason to move.
+    pub model: String,
+    /// An `efforts[].id` `list_models` lists for that model. Omit it for the
+    /// default effort.
+    pub effort: Option<String>,
+    /// The skills this agent loads. Omit them to use the column's own skills.
+    pub skills: Option<Vec<String>>,
+    /// What to tell this agent beyond the task. Omit it where the task says
+    /// everything.
+    pub brief: Option<String>,
+}
+
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub(super) struct CreateTaskReq {
@@ -69,12 +88,15 @@ pub(super) struct CreateTaskReq {
     /// Staff several, each on its own model, where the task is worth two
     /// attempts: each writes it alone, and the reviewers pick the one change
     /// that lands. Several authors need at least one reviewer.
-    pub authors: Vec<AgentReq>,
+    pub authors: Option<Vec<AgentReq>>,
     /// The agents that review the task, in review order. Staff at least one
     /// wherever the work can be judged. Leave it empty only where there is
     /// nothing to review, such as a release: the task is then approved as
     /// soon as its author asks.
-    pub reviewers: Vec<AgentReq>,
+    pub reviewers: Option<Vec<AgentReq>>,
+    /// The agents that work the workflow columns, one for each column. Use
+    /// the column's preferred rank unless a reason calls for another model.
+    pub agents: Option<Vec<StepAgentReq>>,
     /// Ids of the tasks that must merge before this one starts.
     pub depends_on: Option<Vec<String>>,
     /// Repository id. Pass it only where the goal works in several.
@@ -100,6 +122,10 @@ pub(super) struct UpdateTaskReq {
     /// The reviewers, in review order. This list replaces the whole list, and
     /// an empty list takes every reviewer off the task.
     pub reviewers: Option<Vec<AgentReq>>,
+    /// The agents that work the workflow columns, one for each column. This
+    /// list replaces the whole staffing list. Use each preferred rank unless
+    /// a reason calls for another model.
+    pub agents: Option<Vec<StepAgentReq>>,
     /// The ids of the tasks that must merge first. This list replaces the
     /// whole list.
     pub depends_on: Option<Vec<String>>,
@@ -154,6 +180,22 @@ pub(super) struct FinishTaskReq {
     /// The sha of the merge commit on the base branch. Omit it only where
     /// the task lands nothing.
     pub merge_commit: Option<String>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(super) struct CompleteStepReq {
+    /// The summary the next column agent reads.
+    pub reason: String,
+    /// The base branch merge sha. Pass it only where the last column needs it.
+    pub merge_commit: Option<String>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(super) struct FailStepReq {
+    /// The feedback the previous column agent reads.
+    pub reason: String,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -213,9 +255,8 @@ pub(super) struct PickWinnerReq {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub(super) struct SendMessageReq {
-    /// Who to write to: the id of an agent `get_task` lists, or
-    /// `orchestrator`. A seat word works too: `author` or `reviewer` where
-    /// the task staffs one.
+    /// Who to write to: an agent id or column from `get_task`, or
+    /// `orchestrator`. A seat word works where the task staffs one.
     pub to: String,
     /// What it needs from you, whole. Nobody answers it.
     // `message` is taken too: an agent that spells the field that way writes
@@ -348,6 +389,19 @@ fn assignment(seat: Seat, agent: AgentReq) -> AgentAssignment {
     }
 }
 
+/// A workflow column assignment. Omitted skills tell the daemon to use the
+/// skills that the goal copied from that column.
+fn step_assignment(agent: StepAgentReq) -> AgentAssignment {
+    AgentAssignment {
+        step: Some(agent.step),
+        seat: Seat::Agent,
+        skills: agent.skills.unwrap_or_default(),
+        model: agent.model,
+        effort: agent.effort,
+        brief: agent.brief,
+    }
+}
+
 /// The catalog narrowed to one agent, or all of it, and always to the
 /// models an agent can actually be staffed on. Entries pass through as the
 /// daemon wrote them: what a model is called and what it can be run at is the
@@ -400,8 +454,8 @@ fn verdict_message(verdict: Verdict, body: Option<String>) -> Result<SendMessage
     })
 }
 
-/// Who a message is for, as an agent spells it: `orchestrator`, the id of an
-/// agent the task staffs, or the seat word of a seat one agent sits in.
+/// Who a message is for, as an agent spells it: `orchestrator`, the id or
+/// workflow column of an agent the task staffs, or one seat word.
 ///
 /// The seat is looked up rather than asked for. An agent reading `get_task`
 /// has the ids in front of it and no reason to also work out which seat each
@@ -424,7 +478,12 @@ fn addressee(to: &str, agents: &[serde_json::Value]) -> Result<(Actor, Option<St
                 .is_some_and(|s| s.eq_ignore_ascii_case(to))
         })
         .collect();
-    let agent = match (agents.iter().find(|a| a["id"] == to), seated.as_slice()) {
+    let agent = match (
+        agents
+            .iter()
+            .find(|a| a["id"] == to || a["step"].as_str().is_some_and(|step| step == to)),
+        seated.as_slice(),
+    ) {
         (Some(agent), _) => agent,
         (None, [only]) => only,
         (None, []) => {
@@ -454,6 +513,7 @@ fn addressee(to: &str, agents: &[serde_json::Value]) -> Result<(Actor, Option<St
     let actor = match agent["seat"].as_str() {
         Some("author") => Actor::Author,
         Some("reviewer") => Actor::Reviewer,
+        Some("agent") => Actor::Agent,
         _ => {
             return Err(McpError::invalid_params(
                 format!("agent {to} sits nowhere"),
@@ -475,8 +535,16 @@ fn addressee(to: &str, agents: &[serde_json::Value]) -> Result<(Actor, Option<St
 fn roll_call(agents: &[serde_json::Value]) -> String {
     agents
         .iter()
-        .filter_map(|a| Some((a["id"].as_str()?, a["seat"].as_str().unwrap_or("agent"))))
-        .map(|(id, seat)| format!("{id} ({seat})"))
+        .filter_map(|a| {
+            let id = a["id"].as_str()?;
+            let seat = a["seat"].as_str().unwrap_or("agent");
+            let place = match seat {
+                "agent" => a["step"].as_str().unwrap_or(seat),
+                _ => seat,
+            };
+            Some((id, place))
+        })
+        .map(|(id, place)| format!("{id} ({place})"))
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -484,25 +552,97 @@ fn roll_call(agents: &[serde_json::Value]) -> String {
 #[tool_router(vis = "pub(super)")]
 impl AriadneMcp {
     #[tool(
-        description = "Read a task: the status, the branch, the dependencies, and the agents staffed on it with the skills each one loads."
+        description = "Read a task: its column, status, branch, dependencies and agents. Each agent gives its column and skills. The goal columns give each rank and gate."
     )]
     async fn get_task(
         &self,
         Parameters(req): Parameters<TaskIdOpt>,
     ) -> Result<CallToolResult, McpError> {
-        json_result(self.get(&self.task_path(req.task_id, "")?).await?)
+        self.task_with_steps(req.task_id).await
+    }
+
+    #[tool(
+        description = "Complete your column. Give the summary the next column agent reads. The last column ends the task. End your turn after this call."
+    )]
+    async fn complete_step(
+        &self,
+        Parameters(req): Parameters<CompleteStepReq>,
+    ) -> Result<CallToolResult, McpError> {
+        json_result(
+            self.post(
+                &self.task_path(None, "/step/complete")?,
+                &CompleteStepRequest {
+                    reason: req.reason,
+                    merge_commit: req.merge_commit,
+                },
+            )
+            .await?,
+        )
+    }
+
+    #[tool(
+        description = "Fail your column. Give the feedback the previous column agent reads. A fail on the first column fails the task. End your turn after this call."
+    )]
+    async fn fail_step(
+        &self,
+        Parameters(req): Parameters<FailStepReq>,
+    ) -> Result<CallToolResult, McpError> {
+        json_result(
+            self.post(
+                &self.task_path(None, "/step/fail")?,
+                &FailStepRequest { reason: req.reason },
+            )
+            .await?,
+        )
     }
 
     // ---- orchestrator ----
 
     #[tool(
-        description = "Create one task in the goal. Staff its authors — one for most tasks, several to compare attempts — and the reviewers the user agreed it needs. Give each agent the skills its work needs (`list_skills`) and one model from `list_models`."
+        description = "Create one task in the goal. A workflow needs `agents`, one for each column. A goal without a workflow needs `authors` and `reviewers`. Each column prefers a rank. Use it unless a reason calls for another model."
     )]
     async fn create_task(
         &self,
         Parameters(req): Parameters<CreateTaskReq>,
     ) -> Result<CallToolResult, McpError> {
-        if req.authors.is_empty() {
+        let stepped = self.goal_has_steps().await?;
+        if stepped {
+            if req.authors.is_some() || req.reviewers.is_some() {
+                return Err(McpError::invalid_params(
+                    "a workflow task takes `agents`; do not pass `authors` or `reviewers`",
+                    None,
+                ));
+            }
+            let Some(agents) = req.agents else {
+                return Err(McpError::invalid_params(
+                    "a workflow task needs `agents`, one for each column",
+                    None,
+                ));
+            };
+            let path = format!("/v1/goals/{}/tasks", self.goal()?);
+            return json_result(
+                self.post(
+                    &path,
+                    &CreateTaskRequest {
+                        title: req.title,
+                        description: req.description,
+                        repo_id: req.repo_id,
+                        agents: agents.into_iter().map(step_assignment).collect(),
+                        depends_on: req.depends_on.unwrap_or_default(),
+                    },
+                )
+                .await?,
+            );
+        }
+        if req.agents.is_some() {
+            return Err(McpError::invalid_params(
+                "a task without a workflow takes `authors` and `reviewers`; do not pass `agents`",
+                None,
+            ));
+        }
+        let authors = req.authors.unwrap_or_default();
+        let reviewers = req.reviewers.unwrap_or_default();
+        if authors.is_empty() {
             return Err(McpError::invalid_params(
                 "a task takes at least one author: pass one entry in `authors`",
                 None,
@@ -513,15 +653,10 @@ impl AriadneMcp {
             title: req.title,
             description: req.description,
             repo_id: req.repo_id,
-            agents: req
-                .authors
+            agents: authors
                 .into_iter()
                 .map(|a| assignment(Seat::Author, a))
-                .chain(
-                    req.reviewers
-                        .into_iter()
-                        .map(|r| assignment(Seat::Reviewer, r)),
-                )
+                .chain(reviewers.into_iter().map(|r| assignment(Seat::Reviewer, r)))
                 .collect(),
             depends_on: req.depends_on.unwrap_or_default(),
         };
@@ -529,19 +664,59 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Edit a task that has not started: its title, description, reviewers, dependencies, or the model and effort of its author. `reviewers` replaces the whole list. A model is required, so `default` is no model; an omitted `author_model` keeps the one the task has."
+        description = "Edit a task that has not started. A workflow uses `agents`, one for each column. A task without a workflow uses authors and reviewers. Each column prefers a rank. Use it unless a reason calls for another model."
     )]
     async fn update_task(
         &self,
         Parameters(req): Parameters<UpdateTaskReq>,
     ) -> Result<CallToolResult, McpError> {
-        // Refused here, where the agent that typed it reads the answer: the
-        // word used to clear a model, and there is no longer anything to
-        // clear one to.
         if req.author_model.as_deref() == Some("default") {
             return Err(McpError::invalid_params(
                 "`default` is no model — a model is required, so name one from \
                  `list_models`, or omit `author_model` to keep the task's own",
+                None,
+            ));
+        }
+        let goal: serde_json::Value = self.get(&format!("/v1/goals/{}", self.goal()?)).await?;
+        let stepped = goal["workflow"].is_string();
+        if stepped {
+            if req.authors.is_some()
+                || req.reviewers.is_some()
+                || req.author_model.is_some()
+                || req.author_effort.is_some()
+            {
+                return Err(McpError::invalid_params(
+                    "a workflow task takes `agents`; do not pass authors, reviewers, author_model or author_effort",
+                    None,
+                ));
+            }
+            let Some(agents) = req.agents else {
+                return Err(McpError::invalid_params(
+                    "a workflow task update needs `agents`, one for each column",
+                    None,
+                ));
+            };
+            let body = UpdateTaskRequest {
+                agents: Some(agents.into_iter().map(step_assignment).collect()),
+                title: req.title,
+                description: req.description,
+                model: None,
+                effort: None,
+                authors: None,
+                reviewers: None,
+                depends_on: req.depends_on,
+            };
+            let path = format!("/v1/tasks/{}", req.task_id);
+            return json_result(
+                self.client
+                    .patch_json(&path, &body)
+                    .await
+                    .map_err(to_mcp_err)?,
+            );
+        }
+        if req.agents.is_some() {
+            return Err(McpError::invalid_params(
+                "a task without a workflow takes `authors` and `reviewers`; do not pass `agents`",
                 None,
             ));
         }
@@ -617,14 +792,21 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "List every task of the goal, with its status, how it ends, and the agents staffed on it. This is how you see where the goal stands."
+        description = "List every task of the goal, with each task and agent column. The goal columns give each rank and gate. This shows where the goal stands."
     )]
     async fn list_tasks(
         &self,
         Parameters(_): Parameters<Empty>,
     ) -> Result<CallToolResult, McpError> {
         let path = format!("/v1/tasks?goal_id={}", self.goal()?);
-        json_result(self.get::<serde_json::Value>(&path).await?)
+        let mut tasks: serde_json::Value = self.get(&path).await?;
+        let goal: serde_json::Value = self.get(&format!("/v1/goals/{}", self.goal()?)).await?;
+        if let Some(tasks) = tasks.as_array_mut() {
+            for task in tasks {
+                task["goal_steps"] = goal["steps"].clone();
+            }
+        }
+        json_result(tasks)
     }
 
     #[tool(
@@ -999,6 +1181,26 @@ impl AriadneMcp {
 }
 
 impl AriadneMcp {
+    /// Whether this server's goal has workflow columns.
+    async fn goal_has_steps(&self) -> Result<bool, McpError> {
+        let goal: serde_json::Value = self.get(&format!("/v1/goals/{}", self.goal()?)).await?;
+        Ok(goal["workflow"].is_string())
+    }
+
+    /// Read one task and append the copied goal columns that explain its
+    /// column ids, preferred ranks and gates.
+    async fn task_with_steps(&self, named: Option<String>) -> Result<CallToolResult, McpError> {
+        let mut task: serde_json::Value = self.get(&self.task_path(named, "")?).await?;
+        let goal: serde_json::Value = self
+            .get(&format!(
+                "/v1/goals/{}",
+                task["goal_id"].as_str().unwrap_or_default()
+            ))
+            .await?;
+        task["goal_steps"] = goal["steps"].clone();
+        json_result(task)
+    }
+
     /// Write one message about `task_id` — the session's own where it names
     /// none — to whoever `to` spells.
     async fn write_message(
@@ -1519,12 +1721,11 @@ mod tests {
         }
     }
 
-    /// Reading a task is one round trip: the daemon names the profiles on it,
-    /// so nothing here fetches the goal and the profile list to spell them. An
-    /// agent reads its task on every wake-up.
+    /// Reading a task also reads its goal so the copied workflow columns sit
+    /// beside the task and its agents.
     #[tokio::test]
-    async fn reading_a_task_asks_the_daemon_once() {
-        let (endpoint, seen) = recording_daemon().await;
+    async fn reading_a_task_also_reads_its_goal_columns() {
+        let (endpoint, seen) = recording_daemon_answering(r#"{"goal_id":"01GOAL"}"#).await;
         let mcp = server_at(
             McpSeat::Author,
             Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
@@ -1534,9 +1735,11 @@ mod tests {
             .expect("read the task");
 
         let seen = seen.lock().expect("lock").clone();
-        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert_eq!(seen.len(), 2, "{seen:?}");
         assert_eq!(seen[0].method, "GET");
         assert_eq!(seen[0].path, "/v1/tasks/01TASK");
+        assert_eq!(seen[1].method, "GET");
+        assert_eq!(seen[1].path, "/v1/goals/01GOAL");
     }
 
     /// A verdict is a message to the author like any other, and what makes it
@@ -1610,6 +1813,30 @@ mod tests {
         assert_eq!(sent["to_agent_id"], serde_json::json!("01AUTHOR"));
     }
 
+    #[tokio::test]
+    async fn a_column_id_addresses_the_agent_that_works_that_column() {
+        let (endpoint, seen) = recording_daemon_answering(
+            r#"{"agents":[{"id":"01DEVELOP","seat":"agent","step":"develop","skills":["coding"]}]}"#,
+        )
+        .await;
+        let mcp = server_at(
+            McpSeat::Agent,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        mcp.send_message(Parameters(SendMessageReq {
+            to: "develop".into(),
+            body: "Please check the branch.".into(),
+            task_id: None,
+        }))
+        .await
+        .expect("send to the column");
+        let sent: serde_json::Value =
+            serde_json::from_str(&seen.lock().expect("lock").last().expect("sent").body)
+                .expect("json");
+        assert_eq!(sent["to_actor"], "agent");
+        assert_eq!(sent["to_agent_id"], "01DEVELOP");
+    }
+
     /// The orchestrator is addressed by what it is: a goal has one, and it is
     /// staffed on no task, so there is no id to name it by.
     #[tokio::test]
@@ -1669,6 +1896,35 @@ mod tests {
                 .all(|call| call.method == "GET"),
             "a message nobody could receive was sent anyway"
         );
+    }
+
+    #[tokio::test]
+    async fn a_message_refusal_names_each_workflow_agent_with_its_column() {
+        let (endpoint, _seen) = recording_daemon_answering(
+            r#"{"agents":[
+                {"id":"01DEVELOP","seat":"agent","step":"develop","skills":["coding"]},
+                {"id":"01REVIEW","seat":"agent","step":"review","skills":["code-review"]}
+            ]}"#,
+        )
+        .await;
+        let mcp = server_at(
+            McpSeat::Agent,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let err = mcp
+            .send_message(Parameters(SendMessageReq {
+                to: "01NOBODY".into(),
+                body: "Need help.".into(),
+                task_id: None,
+            }))
+            .await
+            .expect_err("no such agent");
+        assert!(
+            err.message.contains("01DEVELOP (develop)"),
+            "{}",
+            err.message
+        );
+        assert!(err.message.contains("01REVIEW (review)"), "{}", err.message);
     }
 
     /// The body of a change request is what the author is resumed with, so
@@ -1775,18 +2031,19 @@ mod tests {
             .create_task(Parameters(CreateTaskReq {
                 title: "Pin the effort".into(),
                 description: "Beside the model.".into(),
-                authors: vec![AgentReq {
+                authors: Some(vec![AgentReq {
                     skills: vec!["coding".into()],
                     model: "codex-acp:gpt-5.6-sol".into(),
                     effort: Some("xhigh".into()),
                     brief: None,
-                }],
-                reviewers: vec![AgentReq {
+                }]),
+                reviewers: Some(vec![AgentReq {
                     skills: vec!["code-review".into()],
                     model: "claude-agent-acp:claude-haiku-4-5".into(),
                     effort: Some("low".into()),
                     brief: None,
-                }],
+                }]),
+                agents: None,
                 depends_on: None,
                 repo_id: None,
             }))
@@ -1794,10 +2051,12 @@ mod tests {
             .expect("create the task");
 
         let seen = seen.lock().expect("lock").clone();
-        assert_eq!(seen.len(), 1, "{seen:?}");
-        assert_eq!(seen[0].method, "POST");
-        assert_eq!(seen[0].path, "/v1/goals/01GOAL/tasks");
-        let sent: serde_json::Value = serde_json::from_str(&seen[0].body).expect("json");
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        assert_eq!(seen[0].method, "GET");
+        assert_eq!(seen[0].path, "/v1/goals/01GOAL");
+        assert_eq!(seen[1].method, "POST");
+        assert_eq!(seen[1].path, "/v1/goals/01GOAL/tasks");
+        let sent: serde_json::Value = serde_json::from_str(&seen[1].body).expect("json");
         assert_eq!(
             sent["agents"],
             serde_json::json!([
@@ -1816,6 +2075,90 @@ mod tests {
                     "brief": null,
                 },
             ])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_workflow_task_staffs_one_agent_for_each_column() {
+        let (endpoint, seen) =
+            recording_daemon_answering(r#"{"workflow":"develop-review","steps":[]}"#).await;
+        orchestrator_at(&endpoint)
+            .create_task(Parameters(CreateTaskReq {
+                title: "Work it".into(),
+                description: String::new(),
+                authors: None,
+                reviewers: None,
+                agents: Some(vec![
+                    StepAgentReq {
+                        step: "develop".into(),
+                        model: "codex-acp:gpt-5.6-sol".into(),
+                        effort: None,
+                        skills: None,
+                        brief: None,
+                    },
+                    StepAgentReq {
+                        step: "review".into(),
+                        model: "codex-acp:gpt-5.6-luna".into(),
+                        effort: Some("high".into()),
+                        skills: Some(vec!["code-review".into()]),
+                        brief: None,
+                    },
+                ]),
+                depends_on: None,
+                repo_id: None,
+            }))
+            .await
+            .expect("create the task");
+        let seen = seen.lock().expect("lock").clone();
+        let body: serde_json::Value = serde_json::from_str(&seen[1].body).expect("json");
+        assert_eq!(body["agents"][0]["seat"], "agent");
+        assert_eq!(body["agents"][0]["step"], "develop");
+        assert_eq!(body["agents"][0]["skills"], serde_json::json!([]));
+        assert_eq!(body["agents"][1]["step"], "review");
+        assert_eq!(
+            body["agents"][1]["skills"],
+            serde_json::json!(["code-review"])
+        );
+
+        let err = orchestrator_at(&endpoint)
+            .create_task(Parameters(CreateTaskReq {
+                title: "Work it".into(),
+                description: String::new(),
+                authors: Some(vec![]),
+                reviewers: None,
+                agents: Some(vec![]),
+                depends_on: None,
+                repo_id: None,
+            }))
+            .await
+            .expect_err("authors are refused beside workflow agents");
+        assert!(err.message.contains("authors"), "{}", err.message);
+    }
+
+    #[tokio::test]
+    async fn step_tools_post_their_bodies_to_the_step_routes() {
+        let (endpoint, seen) = recording_daemon().await;
+        let mcp = server_at(
+            McpSeat::Agent,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        mcp.complete_step(Parameters(CompleteStepReq {
+            reason: "The code is ready.".into(),
+            merge_commit: Some("abc".into()),
+        }))
+        .await
+        .expect("complete");
+        mcp.fail_step(Parameters(FailStepReq {
+            reason: "Fix the test.".into(),
+        }))
+        .await
+        .expect("fail");
+        let seen = seen.lock().expect("lock").clone();
+        assert_eq!(seen[0].path, "/v1/tasks/01TASK/step/complete");
+        assert_eq!(seen[1].path, "/v1/tasks/01TASK/step/fail");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&seen[0].body).expect("json"),
+            serde_json::json!({"reason": "The code is ready.", "merge_commit": "abc"})
         );
     }
 
@@ -1841,16 +2184,18 @@ mod tests {
                     effort: None,
                     brief: None,
                 }]),
+                agents: None,
                 depends_on: None,
             }))
             .await
             .expect("edit the task");
 
         let seen = seen.lock().expect("lock").clone();
-        assert_eq!(seen.len(), 1, "{seen:?}");
-        assert_eq!(seen[0].method, "PATCH");
-        assert_eq!(seen[0].path, "/v1/tasks/01TASK");
-        let sent: serde_json::Value = serde_json::from_str(&seen[0].body).expect("json");
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        assert_eq!(seen[0].method, "GET");
+        assert_eq!(seen[1].method, "PATCH");
+        assert_eq!(seen[1].path, "/v1/tasks/01TASK");
+        let sent: serde_json::Value = serde_json::from_str(&seen[1].body).expect("json");
         assert_eq!(sent["effort"], serde_json::json!("default"));
         assert_eq!(sent["model"], serde_json::Value::Null, "left alone");
         assert_eq!(
@@ -1874,6 +2219,7 @@ mod tests {
                 author_effort: None,
                 authors: None,
                 reviewers: None,
+                agents: None,
                 depends_on: None,
             }))
             .await
@@ -1886,6 +2232,33 @@ mod tests {
         assert!(
             seen.lock().expect("lock").is_empty(),
             "nothing was sent for the daemon to refuse"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_workflow_task_update_refuses_author_pins() {
+        let (endpoint, seen) = recording_daemon_answering(r#"{"workflow":"develop-review"}"#).await;
+        let err = orchestrator_at(&endpoint)
+            .update_task(Parameters(UpdateTaskReq {
+                task_id: "01TASK".into(),
+                title: None,
+                description: None,
+                author_model: Some("codex-acp:gpt-5.6-sol".into()),
+                author_effort: None,
+                authors: None,
+                reviewers: None,
+                agents: Some(vec![]),
+                depends_on: None,
+            }))
+            .await
+            .expect_err("a workflow has no author pin");
+        assert!(err.message.contains("author_model"), "{}", err.message);
+        assert!(
+            seen.lock()
+                .expect("lock")
+                .iter()
+                .all(|call| call.method == "GET"),
+            "the refused update was sent"
         );
     }
 

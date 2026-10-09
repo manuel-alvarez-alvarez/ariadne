@@ -20,6 +20,7 @@ use ariadne_client::{Client, ClientError};
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum McpSeat {
     Orchestrator,
+    Agent,
     Author,
     Reviewer,
     /// The reviewer seat of a pull request session (029): a session with
@@ -32,6 +33,7 @@ impl McpSeat {
     fn as_str(&self) -> &'static str {
         match self {
             McpSeat::Orchestrator => "orchestrator",
+            McpSeat::Agent => "agent",
             McpSeat::Author => "author",
             McpSeat::Reviewer => "reviewer",
             McpSeat::PullRequestReviewer => "pull request reviewer",
@@ -54,6 +56,21 @@ impl McpSeat {
                 "cancel_task",
                 "switch_session",
                 "complete_goal",
+                "send_message",
+                "read_messages",
+            ],
+            McpSeat::Agent => &[
+                "get_task",
+                "complete_step",
+                "fail_step",
+                "fail_task",
+                "get_diff",
+                "open_pull_request",
+                "get_pull_request",
+                "list_comments",
+                "get_comment",
+                "reply_comment",
+                "report_pull_request",
                 "send_message",
                 "read_messages",
             ],
@@ -108,6 +125,8 @@ pub(crate) struct AriadneMcp {
     /// None for a pull request session, which works for no goal.
     goal_id: Option<String>,
     task_id: Option<String>,
+    /// The workflow column an agent session works in.
+    step: Option<String>,
     /// The request a review session reviews. An author finds the request
     /// its task opened through the daemon instead (005).
     pull_request_id: Option<String>,
@@ -133,6 +152,7 @@ impl AriadneMcp {
             session_id,
             goal_id,
             task_id: std::env::var("ARIADNE_TASK_ID").ok(),
+            step: std::env::var("ARIADNE_STEP").ok(),
             pull_request_id,
             tool_router: Self::tool_router(),
         })
@@ -259,7 +279,7 @@ fn ask_rule(seat: &McpSeat) -> &'static str {
             "The user answers in your console. Ask in plain turn text, one \
              question at a time. Then wait."
         }
-        McpSeat::Author | McpSeat::Reviewer => {
+        McpSeat::Agent | McpSeat::Author | McpSeat::Reviewer => {
             "Work alone. Ask only where the task cannot go on without an \
              answer."
         }
@@ -276,6 +296,7 @@ fn mcp_seat(seat: &str, pull_request: bool) -> Result<McpSeat> {
     Ok(match (seat, pull_request) {
         ("reviewer", true) => McpSeat::PullRequestReviewer,
         ("orchestrator", false) => McpSeat::Orchestrator,
+        ("agent", false) => McpSeat::Agent,
         ("author", false) => McpSeat::Author,
         ("reviewer", false) => McpSeat::Reviewer,
         (other, _) => anyhow::bail!("unknown ARIADNE_SEAT for this session: {other:?}"),
@@ -341,6 +362,7 @@ impl ServerHandler for AriadneMcp {
         let scope = [
             self.goal_id.as_ref().map(|goal| format!("goal {goal}")),
             self.task_id.as_ref().map(|task| format!("task {task}")),
+            self.step.as_ref().map(|step| format!("column {step}")),
             self.pull_request_id
                 .as_ref()
                 .map(|pull| format!("pull request {pull}")),
@@ -411,8 +433,9 @@ pub(crate) async fn serve() -> Result<()> {
 pub(crate) mod tests {
     use super::*;
 
-    const SEATS: [McpSeat; 4] = [
+    const SEATS: [McpSeat; 5] = [
         McpSeat::Orchestrator,
+        McpSeat::Agent,
         McpSeat::Author,
         McpSeat::Reviewer,
         McpSeat::PullRequestReviewer,
@@ -420,12 +443,14 @@ pub(crate) mod tests {
 
     pub(crate) fn server_at(seat: McpSeat, client: Client) -> AriadneMcp {
         let pull_request = seat == McpSeat::PullRequestReviewer;
+        let step = (seat == McpSeat::Agent).then(|| "develop".into());
         AriadneMcp {
             client: std::sync::Arc::new(client),
             seat,
             session_id: "01SESSION".into(),
             goal_id: (!pull_request).then(|| "01GOAL".into()),
             task_id: (!pull_request).then(|| "01TASK".into()),
+            step,
             pull_request_id: pull_request.then(|| "01PR".into()),
             tool_router: AriadneMcp::tool_router(),
         }
@@ -480,6 +505,24 @@ pub(crate) mod tests {
                 ][..],
             ),
             (
+                McpSeat::Agent,
+                &[
+                    "get_task",
+                    "complete_step",
+                    "fail_step",
+                    "fail_task",
+                    "get_diff",
+                    "open_pull_request",
+                    "get_pull_request",
+                    "list_comments",
+                    "get_comment",
+                    "reply_comment",
+                    "report_pull_request",
+                    "send_message",
+                    "read_messages",
+                ][..],
+            ),
+            (
                 McpSeat::Reviewer,
                 &[
                     "get_task",
@@ -512,7 +555,9 @@ pub(crate) mod tests {
         const EVERY_TOOL: &[&str] = &[
             "cancel_task",
             "complete_goal",
+            "complete_step",
             "create_task",
+            "fail_step",
             "fail_task",
             "finalize_plan",
             "finish_task",
@@ -573,6 +618,28 @@ pub(crate) mod tests {
                 .iter()
                 .all(|tool| !tool.name.contains("resolve"))
         );
+    }
+
+    #[test]
+    fn the_agent_seat_lists_its_step_tools_and_nothing_of_a_review() {
+        assert_eq!(mcp_seat("agent", false).unwrap(), McpSeat::Agent);
+        assert!(mcp_seat("agent", true).is_err());
+        let mcp = server_at(
+            McpSeat::Agent,
+            Client::resolve(Some("http://127.0.0.1:1"), None),
+        );
+        assert_eq!(mcp.seat.tools().len(), 13);
+        for tool in [
+            "request_review",
+            "finish_task",
+            "submit_verdict",
+            "pick_winner",
+        ] {
+            assert!(!mcp.allows(tool), "{tool} is not the agent's");
+        }
+        let instructions = mcp.get_info().instructions.expect("instructions");
+        assert!(instructions.contains("task 01TASK"), "{instructions}");
+        assert!(instructions.contains("column develop"), "{instructions}");
     }
 
     /// A reviewer pull request session (029) is listed eight tools: the
@@ -727,7 +794,7 @@ pub(crate) mod tests {
             );
         }
 
-        for seat in [McpSeat::Author, McpSeat::Reviewer] {
+        for seat in [McpSeat::Agent, McpSeat::Author, McpSeat::Reviewer] {
             let mcp = server_at(
                 seat.clone(),
                 Client::resolve(Some("http://127.0.0.1:1"), None),

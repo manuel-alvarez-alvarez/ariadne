@@ -63,6 +63,14 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      the new session is briefed with a handoff of the old conversation),
      `complete_goal` — the last five are what it supervises the goal with
      once the plan is under way (003)
+   - **agent**: `get_task`, `complete_step`, `fail_step`, `fail_task`,
+     `get_diff`, `open_pull_request`, `get_pull_request`, `list_comments`,
+     `get_comment`, `reply_comment`, `report_pull_request`, `send_message`
+     and `read_messages`. It works one workflow column on its task. Its
+     instructions name the task and column. It works alone and asks only
+     where the task cannot go on. `complete_step` moves to the next column,
+     or ends the task from the last. `fail_step` moves to the previous column,
+     or fails the task from the first. Both calls end its turn.
    - **author**: `get_task`, `request_review`, `fail_task`, `finish_task`,
      `open_pull_request` (a title and a body; the daemon runs the forge's own
      CLI and answers the URL it opened, rather than the agent: 005), and the
@@ -127,7 +135,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
     `orchestrator`, or the seat word `author` or `reviewer` where one agent
     sits in that seat; the body is taken as `body` or as `message`. A refusal
     names every id with the seat it sits in, so the sender picks a reader
-    rather than guessing again. After a question, end your turn. Do not poll
+    rather than guessing again. A workflow column id names the agent in that
+    column. After a question, end your turn. Do not poll
     `read_messages`. Ariadne delivers the answer as a new turn.
 12. A value the schema offers is a value the tool takes. The schema an agent
     reads is derived from the parameter types, and the value it sends back is
@@ -154,6 +163,12 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`::every_allowed_tool_is_one_the_router_serves`).
 - `create_task` and `update_task` take no landing
   (`tools.rs::the_task_tools_take_no_landing`).
+- The agent seat lists its thirteen step tools and no author or reviewer
+  tool (`mcp.rs::the_agent_seat_lists_its_step_tools_and_nothing_of_a_review`).
+- Step calls post their bodies to the complete and fail routes
+  (`tools.rs::step_tools_post_their_bodies_to_the_step_routes`).
+- Workflow staffing sends one `agent` assignment per column and refuses
+  authors beside it (`tools.rs::a_workflow_task_staffs_one_agent_for_each_column`).
 - `switch_session` is offered to the orchestrator alone
   (`tools.rs::switch_session_is_offered_to_the_orchestrator_alone`), posts
   the pin to the session's switch endpoint
