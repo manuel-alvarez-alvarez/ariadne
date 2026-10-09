@@ -41,15 +41,27 @@ struct Totals {
     goals: BTreeSet<String>,
 }
 
-type Rows = BTreeMap<(u8, String), Totals>;
+// Keyed by the seat's own display order, then the model, then the seat
+// itself: the order groups and sorts the rows for display, and the seat
+// tells two rows of the same group and model apart. `agent` is one key, but
+// a database migrated from the old pipeline still has `author` and
+// `reviewer` on its older facts, and a fact with no seat at all is a third —
+// collapsing any of them under the shared display order of "every other
+// seat" merged their tasks, tokens and time into whichever reached that
+// order's row first.
+type Rows = BTreeMap<(u8, String, Option<String>), Totals>;
 
-fn row<'a>(rows: &'a mut Rows, model: &str, seat: Option<&str>) -> &'a mut Totals {
-    let order = match seat {
+fn seat_order(seat: Option<&str>) -> u8 {
+    match seat {
         Some("orchestrator") => 0,
         Some("agent") => 1,
         _ => 2,
-    };
-    rows.entry((order, model.into())).or_insert_with(|| Totals {
+    }
+}
+
+fn row<'a>(rows: &'a mut Rows, model: &str, seat: Option<&str>) -> &'a mut Totals {
+    let key = (seat_order(seat), model.to_string(), seat.map(str::to_owned));
+    rows.entry(key).or_insert_with(|| Totals {
         row: ModelStat {
             model: model.into(),
             seat: seat.map(str::to_owned),
@@ -282,6 +294,37 @@ mod tests {
         let stats = store.model_stats(&StatsFilter::default()).await.unwrap();
         assert_eq!(find(&stats, "lander", Some("agent")).tasks_finished, 2);
         assert_eq!(find(&stats, "other", Some("agent")).tasks_finished, 1);
+    }
+
+    /// `author` and `reviewer` are seats the old pipeline left on facts a
+    /// migration does not rewrite, and no seat at all is a session record
+    /// predates. One model used on every one of them keeps a row of its own
+    /// per seat, rather than the three collapsing into whichever reached the
+    /// shared display order first.
+    #[tokio::test]
+    async fn distinct_seats_of_the_same_model_keep_their_own_rows() {
+        let (_dir, store) = store().await;
+        for (seat, task, input) in [
+            (Some("author"), "t1", 100),
+            (Some("reviewer"), "t2", 200),
+            (None, "t3", 400),
+        ] {
+            record(
+                &store,
+                Fact {
+                    seat,
+                    task: Some(task),
+                    data: json!({"input_tokens": input, "output_tokens": 0}),
+                    ..Fact::default()
+                },
+            )
+            .await;
+        }
+        let stats = store.model_stats(&StatsFilter::default()).await.unwrap();
+        assert_eq!(stats.items.len(), 3, "{:?}", stats.items);
+        assert_eq!(find(&stats, "writer", Some("author")).tokens, 100);
+        assert_eq!(find(&stats, "writer", Some("reviewer")).tokens, 200);
+        assert_eq!(find(&stats, "writer", None).tokens, 400);
     }
 
     #[tokio::test]
