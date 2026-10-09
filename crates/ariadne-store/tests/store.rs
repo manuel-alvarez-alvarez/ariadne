@@ -3626,6 +3626,89 @@ async fn a_skill_an_agent_still_loads_cannot_be_deleted() {
     );
 }
 
+/// A skill a workflow's own column still names cannot be deleted, even where
+/// no goal and no agent has ever loaded it: a goal created on that workflow
+/// later would snapshot the column onto a skill already gone.
+#[tokio::test]
+async fn a_skill_a_workflow_column_still_names_cannot_be_deleted() {
+    let (store, _dir) = test_store().await;
+    store
+        .create_skill(NewSkill {
+            name: "custom-check".into(),
+            document: "---\nname: custom-check\ndescription: check it\n---\n".into(),
+        })
+        .await
+        .unwrap();
+    store
+        .create_workflow(NewWorkflow {
+            name: "custom-wf".into(),
+            document:
+                "workflow custom-wf\n  build[Build]\n    Do the work.\n    skills: custom-check\n"
+                    .into(),
+        })
+        .await
+        .unwrap();
+
+    let refused = store.delete_skill("custom-check").await;
+    assert!(
+        matches!(refused, Err(StoreError::Conflict(_))),
+        "{refused:?}"
+    );
+}
+
+/// A skill no workflow names any more, but a goal already snapshotted onto
+/// its columns, still cannot be deleted: staffing a task on that goal reads
+/// the snapshot, not the catalog, and would fail naming a skill nobody can
+/// explain the loss of.
+#[tokio::test]
+async fn a_skill_a_goals_snapshot_still_names_cannot_be_deleted() {
+    let (store, _dir) = test_store().await;
+    let repo = seed_repository(&store).await;
+    store
+        .create_skill(NewSkill {
+            name: "custom-check".into(),
+            document: "---\nname: custom-check\ndescription: check it\n---\n".into(),
+        })
+        .await
+        .unwrap();
+    store
+        .create_workflow(NewWorkflow {
+            name: "custom-wf".into(),
+            document:
+                "workflow custom-wf\n  build[Build]\n    Do the work.\n    skills: custom-check\n"
+                    .into(),
+        })
+        .await
+        .unwrap();
+    store
+        .create_goal(NewGoal {
+            workflow: Some("custom-wf".into()),
+            issue_url: None,
+            title: "Test goal".into(),
+            description: "desc".into(),
+            repository_ids: vec![repo.id.clone()],
+            pin: default_pin(),
+        })
+        .await
+        .unwrap();
+
+    // The workflow no longer names it, but the goal's own snapshot still
+    // does, and no task has staffed it yet.
+    store
+        .set_workflow_document(
+            "custom-wf",
+            "workflow custom-wf\n  build[Build]\n    Do the work.\n",
+        )
+        .await
+        .unwrap();
+
+    let refused = store.delete_skill("custom-check").await;
+    assert!(
+        matches!(refused, Err(StoreError::Conflict(_))),
+        "{refused:?}"
+    );
+}
+
 /// An agent can only be staffed on a skill that exists: the name is a
 /// reference, and the refusal says which name it was.
 #[tokio::test]

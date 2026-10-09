@@ -203,8 +203,16 @@ impl Store {
         Ok(skill)
     }
 
-    /// Delete a skill; refused while any staffed agent still loads it, and
-    /// refused for a built-in, which is reset rather than removed.
+    /// Delete a skill; refused while any staffed agent still loads it, any
+    /// workflow's columns still name it, or any goal's snapshot of its
+    /// columns still does, and refused for a built-in, which is reset rather
+    /// than removed.
+    ///
+    /// A workflow document is checked for a skill at save time, but that
+    /// proves nothing of a skill deleted afterward: a goal staffs a task
+    /// from its own snapshot of the columns it started with, not the
+    /// catalog's document, so even editing every workflow clean would not
+    /// reach a goal already running on the deleted skill.
     pub async fn delete_skill(&self, name: &str) -> Result<()> {
         let skill = self.get_skill(name).await?;
         if skill.is_builtin() {
@@ -221,6 +229,29 @@ impl Store {
             let plural = if agents == 1 { "agent" } else { "agents" };
             return Err(StoreError::Conflict(format!(
                 "skill {name} is still loaded by {agents} {plural}"
+            )));
+        }
+        let goals: i64 = sqlx::query_scalar(
+            "SELECT COUNT(DISTINCT goal_id) FROM goal_steps
+             WHERE EXISTS (SELECT 1 FROM json_each(skills) WHERE value = ?)",
+        )
+        .bind(name)
+        .fetch_one(self.r())
+        .await?;
+        if goals > 0 {
+            let plural = if goals == 1 { "goal" } else { "goals" };
+            return Err(StoreError::Conflict(format!(
+                "skill {name} is still named by the columns of {goals} {plural}"
+            )));
+        }
+        let workflows = self.list_workflows().await?;
+        if let Some(workflow) = workflows
+            .iter()
+            .find(|w| w.steps().iter().any(|s| s.skills.iter().any(|s| s == name)))
+        {
+            return Err(StoreError::Conflict(format!(
+                "skill {name} is still named by a column of workflow {}",
+                workflow.name
             )));
         }
         sqlx::query("DELETE FROM skills WHERE name = ?")
