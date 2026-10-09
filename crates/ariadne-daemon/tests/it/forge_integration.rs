@@ -160,6 +160,7 @@ async fn enabling_needs_the_cli_signed_in_and_stores_its_login() {
             args: ["auth", "status", "--hostname", "github.com"]
                 .map(String::from)
                 .to_vec(),
+            input: None,
         })
     );
 

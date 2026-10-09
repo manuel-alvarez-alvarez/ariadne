@@ -28,7 +28,7 @@ pub(super) async fn request(
     secret: Option<&str>,
 ) -> Result<String, String> {
     let refs: Vec<_> = args.iter().map(String::as_str).collect();
-    let result = match cli.run(&refs).await {
+    let result = match cli.run(&refs, None).await {
         Ok(output) if output.status.success() => {
             Ok(String::from_utf8_lossy(&output.stdout).trim().into())
         }

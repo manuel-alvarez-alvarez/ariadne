@@ -265,11 +265,26 @@ fn get_as(uri: &str, session_id: &str) -> Request<Body> {
 
 /// The review posts the stub has seen.
 fn review_posts(stub: &StubForgeCli) -> Vec<Vec<String>> {
+    review_bodies(stub)
+        .into_iter()
+        .map(|(args, _)| args)
+        .collect()
+}
+
+/// The review posts the stub has seen, each with the JSON body it piped in.
+fn review_bodies(stub: &StubForgeCli) -> Vec<(Vec<String>, Value)> {
     stub.invocations()
         .into_iter()
         .filter(|i| i.args.iter().any(|a| a == "POST"))
         .filter(|i| i.args.get(1).is_some_and(|path| path.ends_with("/reviews")))
-        .map(|i| i.args)
+        .map(|i| {
+            let body = i
+                .input
+                .as_deref()
+                .map(|input| serde_json::from_str(input).unwrap())
+                .unwrap_or(Value::Null);
+            (i.args, body)
+        })
         .collect()
 }
 
@@ -644,22 +659,20 @@ async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
     assert_eq!(posts.len(), 1, "{posts:?}");
     let call = &posts[0];
     assert_eq!(call[1], "repos/acme/widgets/pulls/1/reviews");
-    for field in [
-        "event=REQUEST_CHANGES",
-        &format!("commit_id={head}"),
-        "comments[][path]=src/lib.rs",
-        "comments[][line]=3",
-        // Each finding is signed the review's, invisibly (029).
-        "comments[][body]=**[P0] Empty list**\n\nAn empty list panics.\n\n<!-- ariadne:review -->",
-        "comments[][path]=tests/it.rs",
-        "comments[][line]=9",
-        "comments[][body]=**[P1] Untested**\n\nNo test covers the empty list.\n\n<!-- ariadne:review -->",
-    ] {
-        assert!(call.iter().any(|a| a == field), "{field}: {call:?}");
-    }
-    assert!(
-        !call.iter().any(|a| a.starts_with("body=")),
-        "the review carries no summary of its own: {call:?}"
+    // One JSON body on standard input, each comment a whole object: `gh`'s
+    // `-f comments[][...]` fields split them across objects (029).
+    assert!(call.ends_with(&["--input".into(), "-".into()]), "{call:?}");
+    let (_, review) = review_bodies(&stub).pop().unwrap();
+    assert_eq!(
+        review,
+        json!({"event": "REQUEST_CHANGES", "commit_id": head, "comments": [
+            // Each finding is signed the review's, invisibly (029).
+            {"path": "src/lib.rs", "line": 3, "side": "RIGHT",
+             "body": "**[P0] Empty list**\n\nAn empty list panics.\n\n<!-- ariadne:review -->"},
+            {"path": "tests/it.rs", "line": 9, "side": "RIGHT",
+             "body": "**[P1] Untested**\n\nNo test covers the empty list.\n\n<!-- ariadne:review -->"}
+        ]}),
+        "the review carries no summary of its own"
     );
     let signed =
         |text: &str| format!("{text}\n\n<!-- ariadne:review-summary -->\n<!-- ariadne:review -->");
@@ -1107,7 +1120,7 @@ async fn a_request_of_mine_is_reviewed_once_asked_and_its_review_is_a_comment() 
     let posts = review_posts(&stub);
     assert_eq!(posts.len(), 1, "{posts:?}");
     assert!(
-        posts[0].iter().any(|a| a == "event=COMMENT"),
+        review_bodies(&stub)[0].1["event"] == "COMMENT",
         "{:?}",
         posts[0]
     );

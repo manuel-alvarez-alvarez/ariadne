@@ -74,12 +74,44 @@ pub(crate) fn signed(body: &str, summary: bool) -> String {
     }
 }
 
+/// How a body reads once its signature is taken off: the text, and whether
+/// a review signed it, as its summary or not. Only the trailing marks
+/// [`signed`] writes count: a comment that quotes a mark anywhere else, or
+/// ends on one in a code span, is signed by nobody, and keeps its text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Signature {
+    pub text: String,
+    pub review: bool,
+    pub summary: bool,
+}
+
+pub(crate) fn signature(body: &str) -> Signature {
+    let unsigned = Signature {
+        text: body.to_string(),
+        review: false,
+        summary: false,
+    };
+    let Some(rest) = body.trim_end().strip_suffix(REVIEW_MARK) else {
+        return unsigned;
+    };
+    let (rest, summary) = match rest.trim_end_matches('\n').strip_suffix(SUMMARY_MARK) {
+        Some(rest) => (rest, true),
+        None => (rest, false),
+    };
+    // `signed` leaves a blank line between the text and the marks.
+    let Some(text) = rest.strip_suffix("\n\n") else {
+        return unsigned;
+    };
+    Signature {
+        text: text.to_string(),
+        review: true,
+        summary,
+    }
+}
+
 /// `body` without the marks a review signs it with: what a reader is shown.
 pub(crate) fn unsigned(body: &str) -> String {
-    body.replace(SUMMARY_MARK, "")
-        .replace(REVIEW_MARK, "")
-        .trim_end()
-        .to_string()
+    signature(body).text
 }
 
 /// A forge repository as the fetch names it, `host/owner/name`, split into
@@ -160,4 +192,44 @@ pub(crate) async fn start_work(
         })
         .await
         .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A body a review signed reads back as its text and its marks, as a
+    /// finding or as the summary.
+    #[test]
+    fn a_signed_body_reads_back_as_its_text_and_its_marks() {
+        let finding = signature(&signed("**[P1] Untested**\n\nNo test.", false));
+        assert_eq!(
+            finding,
+            Signature {
+                text: "**[P1] Untested**\n\nNo test.".into(),
+                review: true,
+                summary: false,
+            }
+        );
+        let summary = signature(&signed("No findings.", true));
+        assert_eq!(summary.text, "No findings.");
+        assert!(summary.review && summary.summary);
+    }
+
+    /// Only the trailing marks `signed` writes sign a body (029): a reply
+    /// that quotes a mark, mid-text or in a code span it ends on, is signed
+    /// by nobody and keeps its text whole.
+    #[test]
+    fn a_quoted_mark_signs_nothing_and_keeps_its_text() {
+        for body in [
+            format!("Mid-text `{REVIEW_MARK}` is quoted."),
+            format!("Ends on a code span: `{REVIEW_MARK}`"),
+            format!("Quotes the summary's: {SUMMARY_MARK}"),
+            format!("No blank line before it {REVIEW_MARK}"),
+        ] {
+            let read = signature(&body);
+            assert!(!read.review && !read.summary, "{body}");
+            assert_eq!(read.text, body);
+        }
+    }
 }

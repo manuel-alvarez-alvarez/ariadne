@@ -787,7 +787,7 @@ pub(super) async fn submit_review(
                     .filter(|c| {
                         c.thread_id == CONVERSATION
                             && c.author_login.eq_ignore_ascii_case(&login)
-                            && c.body.contains(pulls::SUMMARY_MARK)
+                            && pulls::signature(&c.body).summary
                     })
                     .map(|c| c.forge_id)
                     .next_back()

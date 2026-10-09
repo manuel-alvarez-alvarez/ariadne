@@ -564,14 +564,29 @@ impl Cli {
         })
     }
 
-    /// Run the CLI to completion, bounded by [`CLI_TIMEOUT`].
-    async fn run(&self, args: &[&str]) -> Result<Output, String> {
+    /// Run the CLI to completion, bounded by [`CLI_TIMEOUT`], with `input`
+    /// on its standard input where there is one.
+    async fn run(&self, args: &[&str], input: Option<&str>) -> Result<Output, String> {
+        use tokio::io::AsyncWriteExt;
         let binary = self.binary()?;
-        let child = tokio::process::Command::new(&binary)
+        let stdin = match input {
+            Some(_) => std::process::Stdio::piped(),
+            None => std::process::Stdio::null(),
+        };
+        let spawned = tokio::process::Command::new(&binary)
             .args(args)
-            .stdin(std::process::Stdio::null())
+            .stdin(stdin)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
             .kill_on_drop(true)
-            .output();
+            .spawn();
+        let mut child = spawned.map_err(|e| format!("cannot run `{}`: {e}", binary.display()))?;
+        if let (Some(input), Some(mut pipe)) = (input, child.stdin.take()) {
+            pipe.write_all(input.as_bytes())
+                .await
+                .map_err(|e| format!("cannot write to `{}`: {e}", binary.display()))?;
+        }
+        let child = child.wait_with_output();
         match tokio::time::timeout(CLI_TIMEOUT, child).await {
             Ok(Ok(output)) => Ok(output),
             Ok(Err(e)) => Err(format!("cannot run `{}`: {e}", binary.display())),
@@ -594,9 +609,20 @@ impl Cli {
     /// forge said, kept apart from the command, whose arguments carry a
     /// comment's whole text.
     pub(crate) async fn call(&self, args: &[&str]) -> Result<String, Refusal> {
+        self.call_with_input(args, None).await
+    }
+
+    /// [`Cli::call`], with `input` on the CLI's standard input: a JSON body
+    /// `gh api --input -` sends as it is.
+    pub(crate) async fn call_with_input(
+        &self,
+        args: &[&str],
+        input: Option<&str>,
+    ) -> Result<String, Refusal> {
         let command = format!("{} {}", self.program, args.join(" "));
-        let output = self.run(args).await.map_err(|message| Refusal {
+        let output = self.run(args, input).await.map_err(|message| Refusal {
             said: None,
+            answer: None,
             message,
         })?;
         if output.status.success() {
@@ -618,6 +644,7 @@ impl Cli {
             false => format!("`{command}`: {said}"),
         };
         Err(Refusal {
+            answer: Some(stdout.trim().to_string()).filter(|answer| !answer.is_empty()),
             said: Some(said).filter(|said| !said.is_empty()),
             message,
         })
@@ -632,6 +659,9 @@ pub(crate) struct Refusal {
     /// The CLI's and the forge's words; None where nothing answered — the
     /// CLI did not start, or did not answer in time.
     said: Option<String>,
+    /// The forge's own answer alone, as the CLI printed it to standard
+    /// output: `gh api`'s JSON, `{"message": ..., "errors": [...]}`.
+    answer: Option<String>,
     message: String,
 }
 
@@ -645,9 +675,11 @@ impl Refusal {
             .is_some_and(|said| said.contains("HTTP 404") || said.contains("404 Not Found"))
     }
 
-    /// What the forge said, where it answered.
-    pub(crate) fn said(&self) -> Option<&str> {
-        self.said.as_deref()
+    /// The forge's own answer as JSON, where it gave one.
+    pub(crate) fn answer(&self) -> Option<serde_json::Value> {
+        self.answer
+            .as_deref()
+            .and_then(|answer| serde_json::from_str(answer).ok())
     }
 }
 
@@ -669,6 +701,7 @@ mod tests {
         // responses" carries: the title is in the message, never in `said`.
         let refusal = |said: Option<&str>| Refusal {
             said: said.map(str::to_string),
+            answer: None,
             message: "`gh api -f body=P1: Handle HTTP 404 responses`".into(),
         };
         assert!(!refusal(Some("gh: Server Error (HTTP 502)")).is_missing());

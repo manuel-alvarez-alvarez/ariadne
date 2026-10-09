@@ -32,6 +32,8 @@ pub(crate) struct StubForgeCli {
 pub(crate) struct Invocation {
     pub program: String,
     pub args: Vec<String>,
+    /// What the call piped in with `--input -`, where it did.
+    pub input: Option<String>,
 }
 
 impl StubForgeCli {
@@ -46,6 +48,7 @@ impl StubForgeCli {
                 Invocation {
                     program: call["program"].as_str().unwrap().to_string(),
                     args: serde_json::from_value(call["args"].clone()).unwrap(),
+                    input: call["input"].as_str().map(str::to_string),
                 }
             })
             .collect()
@@ -118,8 +121,11 @@ const STUB: &str = r#"#!/usr/bin/env python3
 import json, os, sys, time
 
 dir, program, args = sys.argv[1], sys.argv[2], sys.argv[3:]
+call = {"program": program, "args": args}
+if "--input" in args and args[args.index("--input") + 1:args.index("--input") + 2] == ["-"]:
+    call["input"] = sys.stdin.read()
 with open(os.path.join(dir, "forge-calls.jsonl"), "a") as f:
-    f.write(json.dumps({"program": program, "args": args}) + "\n")
+    f.write(json.dumps(call) + "\n")
 script = json.load(open(os.path.join(dir, "forge-script.json")))
 for entry in script:
     if entry.get("program", program) != program:

@@ -66,31 +66,45 @@ impl Github {
             true => "REQUEST_CHANGES",
             false => "COMMENT",
         };
+        // One JSON body on standard input: `gh`'s `-f comments[][...]`
+        // fields group several comments into the wrong objects, which GitHub
+        // refuses with a 422 naming fields of no comment.
         let post = async |body: Option<&str>| {
-            let mut args: Vec<String> = ["api", &path, "--hostname", host, "--method", "POST"]
-                .map(String::from)
-                .into();
-            // `-f` sends a string as it is; `-F` sends the line as a number.
-            // Each `comments[]` field after a `path` belongs to that comment.
-            let mut field = |flag: &str, value: String| args.extend([flag.to_string(), value]);
-            field("-f", format!("event={event}"));
+            let mut review = serde_json::json!({
+                "event": event,
+                "commit_id": review.head_sha,
+                "comments": review.comments.iter().map(|comment| serde_json::json!({
+                    "path": comment.path,
+                    "line": comment.line,
+                    "side": "RIGHT",
+                    "body": comment.body,
+                })).collect::<Vec<_>>(),
+            });
             if let Some(body) = body {
-                field("-f", format!("body={body}"));
+                review["body"] = serde_json::json!(body);
             }
-            field("-f", format!("commit_id={}", review.head_sha));
-            for comment in &review.comments {
-                field("-f", format!("comments[][path]={}", comment.path));
-                field("-F", format!("comments[][line]={}", comment.line));
-                field("-f", "comments[][side]=RIGHT".to_string());
-                field("-f", format!("comments[][body]={}", comment.body));
-            }
-            let args: Vec<&str> = args.iter().map(String::as_str).collect();
-            self.cli.call(&args).await
+            self.cli
+                .call_with_input(
+                    &[
+                        "api",
+                        &path,
+                        "--hostname",
+                        host,
+                        "--method",
+                        "POST",
+                        "--input",
+                        "-",
+                    ],
+                    Some(&review.to_string()),
+                )
+                .await
         };
         let output = match post(None).await {
-            Err(refusal) if refusal.said().is_some_and(refused_for_its_body) => post(Some(POINTER))
-                .await
-                .map_err(|refusal| refusal.to_string())?,
+            Err(refusal) if refusal.answer().is_some_and(|a| refused_for_its_body(&a)) => {
+                post(Some(POINTER))
+                    .await
+                    .map_err(|refusal| refusal.to_string())?
+            }
             answered => answered.map_err(|refusal| refusal.to_string())?,
         };
         let posted: Posted = serde_json::from_str(&output)
@@ -230,38 +244,37 @@ fn read_comment(output: &str) -> Result<(String, String), String> {
 }
 
 /// Whether GitHub refused a review for having no body: what its own answer
-/// says, `{"message": ..., "errors": [...]}`. It reads what the forge said
-/// alone, never the command, which names a body in every comment.
-fn refused_for_its_body(error: &str) -> bool {
-    error.match_indices("{\"message\"").any(|(at, _)| {
-        serde_json::Deserializer::from_str(&error[at..])
-            .into_iter::<serde_json::Value>()
-            .next()
-            .and_then(Result::ok)
-            .is_some_and(|answer| answer.to_string().to_lowercase().contains("body"))
-    })
+/// says, `{"message": ..., "errors": [...]}`, parsed whatever its layout. An
+/// error is a string, or an object with a `message` or a `field`.
+fn refused_for_its_body(answer: &serde_json::Value) -> bool {
+    let names_body = |text: &str| text.to_lowercase().contains("body");
+    let errors = answer["errors"].as_array().cloned().unwrap_or_default();
+    errors.iter().any(|error| match error {
+        serde_json::Value::String(text) => names_body(text),
+        other => ["message", "field", "code"]
+            .iter()
+            .filter_map(|key| other[key].as_str())
+            .any(names_body),
+    }) || answer["message"].as_str().is_some_and(names_body)
 }
 
 #[cfg(test)]
 mod tests {
     use super::refused_for_its_body;
 
-    /// A review is posted again with a body only where GitHub said the body
-    /// is what it lacks: the command line names `comments[][body]` in every
-    /// error, so it decides nothing.
+    /// A review is posted again with a body only where GitHub's own answer
+    /// says the body is what it lacks, whatever its spacing or key order.
     #[test]
     fn a_review_is_retried_with_a_body_only_when_github_asks_for_one() {
-        let command = "`gh api repos/a/b/pulls/1/reviews -f comments[][body]=x`: gh: Unprocessable Entity (HTTP 422)";
-        assert!(!refused_for_its_body(command));
-        let line = format!(
-            "{command} — {}",
-            r#"{"message":"Validation Failed","errors":["Line could not be resolved"],"status":"422"}"#
-        );
-        assert!(!refused_for_its_body(&line));
-        let body = format!(
-            "{command} — {}",
-            r#"{"message":"Unprocessable Entity","errors":["Body is required"],"status":"422"}"#
-        );
-        assert!(refused_for_its_body(&body));
+        let parse = |text: &str| serde_json::from_str::<serde_json::Value>(text).unwrap();
+        assert!(!refused_for_its_body(&parse(
+            r#"{"message":"Validation Failed","errors":["Line could not be resolved"]}"#
+        )));
+        assert!(refused_for_its_body(&parse(
+            r#"{ "message": "Validation Failed", "errors": ["Body is required"] }"#
+        )));
+        assert!(refused_for_its_body(&parse(
+            r#"{"errors": [{"resource": "PullRequestReview", "field": "body", "code": "missing_field"}], "message": "Validation Failed"}"#
+        )));
     }
 }
