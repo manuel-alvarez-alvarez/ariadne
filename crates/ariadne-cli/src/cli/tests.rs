@@ -595,6 +595,15 @@ fn a_filter_takes_only_the_values_the_daemon_knows() {
         try_parse(&["ariadne", "session", "ls", "--seat", "critic"]).is_err(),
         "an unknown seat is a usage error"
     );
+    // A stepped task's session carries seat `agent` too, so it is listed the
+    // same way every other seat is.
+    let Command::Session {
+        command: SessionCommand::Ls { seat, .. },
+    } = parse(&["ariadne", "session", "ls", "--seat", "agent"]).command
+    else {
+        panic!("session ls");
+    };
+    assert_eq!(seat, Some(Seat::Agent));
 
     let Command::Task {
         command: TaskCommand::Ls { statuses, .. },
@@ -866,6 +875,147 @@ fn a_line_with_no_model_is_a_usage_error() {
     .to_string();
     assert!(err.contains("no model after the `:`"), "{err}");
     assert!(err.contains("a model is required"), "{err}");
+}
+
+/// `--agent STEP[:SKILLS]=MODEL[@EFFORT]` staffs one workflow column at a
+/// time, in place of `--author`/`--reviewer`/`--no-reviewer`: every half
+/// parses, a missing model is refused the way `--author`'s is, and naming
+/// `--agent` beside `--author` is a usage error — the two staffing models
+/// cannot mix on one line.
+#[test]
+fn an_agent_slot_names_its_column_skills_model_and_effort() {
+    let Command::Task {
+        command: TaskCommand::Create { agents, .. },
+    } = parse(&[
+        "ariadne",
+        "task",
+        "create",
+        "01GOAL",
+        "--title",
+        "Do it",
+        "--agent",
+        "develop:coding=codex-acp:gpt-5.6-sol@xhigh",
+        "--agent",
+        "review=claude-agent-acp:claude-opus-5",
+    ])
+    .command
+    else {
+        panic!("task create")
+    };
+    assert_eq!(agents.len(), 2);
+    assert_eq!(agents[0].step.as_deref(), Some("develop"));
+    assert_eq!(agents[0].skills, ["coding"]);
+    assert_eq!(agents[0].model, "codex-acp:gpt-5.6-sol");
+    assert_eq!(agents[0].effort.as_deref(), Some("xhigh"));
+    assert_eq!(agents[1].step.as_deref(), Some("review"));
+    assert!(agents[1].skills.is_empty(), "empty means the column's own");
+
+    let err = try_parse(&[
+        "ariadne", "task", "create", "01GOAL", "--title", "Do it", "--agent", "develop",
+    ])
+    .map(|_| ())
+    .expect_err("an agent slot with no model")
+    .to_string();
+    assert!(err.contains("a model is required"), "{err}");
+    assert!(err.contains("STEP=MODEL"), "{err}");
+
+    // The two staffing models are mutually exclusive on one line: naming
+    // `--agent` beside `--author` is refused before anything is sent.
+    assert!(
+        try_parse(&[
+            "ariadne",
+            "task",
+            "create",
+            "01GOAL",
+            "--title",
+            "Do it",
+            "--author",
+            "coding=codex-acp:o3",
+            "--agent",
+            "develop=codex-acp:o3",
+        ])
+        .is_err()
+    );
+    // And `task create` with neither staffs nobody, which is a usage error
+    // too.
+    assert!(try_parse(&["ariadne", "task", "create", "01GOAL", "--title", "Do it"]).is_err());
+
+    let Command::Task {
+        command: TaskCommand::Update { agents, .. },
+    } = parse(&[
+        "ariadne",
+        "task",
+        "update",
+        "01TASK",
+        "--agent",
+        "develop=codex-acp:gpt-5.6-sol",
+    ])
+    .command
+    else {
+        panic!("task update")
+    };
+    assert_eq!(agents.len(), 1);
+    assert!(
+        try_parse(&[
+            "ariadne",
+            "task",
+            "update",
+            "01TASK",
+            "--agent",
+            "develop=codex-acp:o3",
+            "--model",
+            "codex-acp:o3",
+        ])
+        .is_err(),
+        "--agent replaces the whole staffing, so a pin beside it is refused"
+    );
+}
+
+/// `goal create --workflow` names a workflow in place of the fixed
+/// author/reviewer/landing pipeline, and `--landing` is refused beside it —
+/// a workflow's own gates say how every task of the goal ends.
+#[test]
+fn goal_create_workflow_sends_the_name_and_refuses_landing_beside_it() {
+    let Command::Goal {
+        command: GoalCommand::Create { workflow, .. },
+    } = parse(&[
+        "ariadne",
+        "goal",
+        "create",
+        "--title",
+        "Ship it",
+        "--repo",
+        "01REPO",
+        "--model",
+        "codex-acp:gpt-5.3-codex",
+        "--workflow",
+        "develop-review-merge",
+    ])
+    .command
+    else {
+        panic!("goal create")
+    };
+    assert_eq!(workflow.as_deref(), Some("develop-review-merge"));
+
+    assert!(
+        try_parse(&[
+            "ariadne",
+            "goal",
+            "create",
+            "--title",
+            "Ship it",
+            "--repo",
+            "01REPO",
+            "--model",
+            "codex-acp:gpt-5.3-codex",
+            "--workflow",
+            "develop-review-merge",
+            "--landing",
+            "merge",
+        ])
+        .is_err(),
+        "a workflow's own gates say how a task ends, so --landing is refused beside it"
+    );
 }
 
 #[test]

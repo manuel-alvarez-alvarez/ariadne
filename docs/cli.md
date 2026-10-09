@@ -575,6 +575,60 @@ none is named or where `-` names it. `check` parses a draft without saving it an
 the document's columns, or the line a syntax rule broke on. `show` prints
 the document whole, through `$PAGER`; `--format json` prints the DTO.
 
+### Running a goal through a workflow
+
+`goal create --workflow <name>` runs every task of the goal through that
+workflow's columns instead of the fixed author, reviewer and landing
+pipeline; it is refused beside `--landing`, since a workflow's own gates say
+how each task ends. `repo add --workflow <name>` and `repo update --workflow
+<name>` set a repository's own default, which a goal that names none falls
+back to:
+
+```sh
+ariadne goal create --title "Add rate limiting" --repo ~/projects/api \
+    --model codex-acp:<model-id> --workflow develop-review-merge
+ariadne repo update <repo-id> --workflow develop-review-merge
+```
+
+A stepped task is staffed one agent per column with `--agent
+STEP[:SKILLS]=MODEL[@EFFORT]`, repeatable — in place of `--author`,
+`--reviewer` and `--no-reviewer`, which a stepped goal refuses:
+
+```sh
+ariadne task create <goal-id> --title "Add the rate limiter" \
+    --agent develop:coding=codex-acp:<model-id> \
+    --agent review:code-review=claude-acp:<model-id>@high \
+    --agent merge=codex-acp:<model-id>
+ariadne task update <task-id> --agent develop=codex-acp:<other-model-id>
+```
+
+Leaving the `:SKILLS` half out stages the column's own skills. `task update
+--agent` replaces the whole staffing, the way `--reviewer` replaces the whole
+reviewer list.
+
+`task ls` shows each task's current column in a `step` column, and `--step
+<id>` narrows the list to it. `task inspect` prints the workflow, the current
+column, and one line per column — its skills, its pin, and its session.
+`task history` paints the column a move left and the one it entered beside
+the statuses. `goal inspect` prints the workflow and its columns, each with
+its rank and its gate:
+
+```sh
+ariadne task ls --step review
+ariadne task inspect <task-id>
+ariadne goal inspect <goal-id>
+```
+
+`attach --step <id>` opens the console of that column's agent, live or not;
+left out, it is the task's current column. `--seat agent` names the same
+seat every stepped session carries, on `task attach`, `task logs` and
+`session ls` alike:
+
+```sh
+ariadne task attach <task-id> --step review
+ariadne session ls --seat agent
+```
+
 ## Output and troubleshooting
 
 Listings print tables by default. Add `--format json` for JSON, `-q` for ids

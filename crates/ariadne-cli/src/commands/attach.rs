@@ -12,6 +12,7 @@ use ariadne_api::sessions::{
     ResumeOutsideSessionRequest, SessionDto, SessionEntryDto, SessionKind, SessionPageDto,
     SessionPageQuery,
 };
+use ariadne_api::tasks::TaskDto;
 use ariadne_client::{Client, ClientError};
 use ariadne_core::Seat;
 use ariadne_core::models::agent_of;
@@ -145,6 +146,31 @@ async fn attach_session(client: &Client, session: SessionDto) -> Result<()> {
     attach_to(client, &session).await
 }
 
+/// The session of one named workflow column of a stepped task, whether or
+/// not it is the current one — unlike [`resolve_live`], `--step` reaches a
+/// column idle between its turns, which carries a session but no live one.
+pub(crate) async fn resolve_step(client: &Client, task_id: &str, step: &str) -> Result<SessionDto> {
+    let t: TaskDto = client.get_json(&format!("/v1/tasks/{task_id}")).await?;
+    let agent = t
+        .agents
+        .iter()
+        .find(|a| a.step.as_deref() == Some(step))
+        .ok_or_else(|| anyhow::anyhow!("task {task_id} staffs no agent on column {step}"))?;
+    let session_id = agent.session_id.as_deref().ok_or_else(|| {
+        anyhow::anyhow!("no session recorded yet for column {step} of task {task_id}")
+    })?;
+    client
+        .get_json(&format!("/v1/sessions/{session_id}"))
+        .await
+        .map_err(Into::into)
+}
+
+/// `task attach --step <id>`: the console of the named column's agent.
+pub(crate) async fn attach_step(client: &Client, task_id: &str, step: &str) -> Result<()> {
+    let session = resolve_step(client, task_id, step).await?;
+    attach_to(client, &session).await
+}
+
 /// Attach to a task or goal id: the live session of the wanted seat, or the
 /// most recent resumable session of that seat revived.
 pub(crate) async fn attach(client: &Client, id: &str, seat: Option<Seat>) -> Result<()> {
@@ -275,6 +301,7 @@ mod tests {
 
     use ariadne_core::SessionStatus;
 
+    use crate::commands::fixtures;
     use crate::commands::fixtures::session;
 
     fn outside(id: &str, agent_id: &str) -> SessionEntryDto {
@@ -302,6 +329,58 @@ mod tests {
             ended_at: None,
             pull_request_id: None,
         }
+    }
+
+    /// `--step` finds the agent staffed on the named column and resolves its
+    /// session, whether or not that column is the task's current one.
+    #[tokio::test]
+    async fn resolve_step_finds_the_named_columns_session() {
+        use axum::extract::Path;
+        use axum::routing::get;
+        use axum::{Json, Router};
+
+        async fn task() -> Json<TaskDto> {
+            Json(TaskDto {
+                step: Some("review".into()),
+                agents: vec![
+                    ariadne_api::tasks::TaskAgentDto {
+                        step: Some("develop".into()),
+                        session_id: Some("01DEVELOP".into()),
+                        ..fixtures::agent("01A", Seat::Agent, &["coding"])
+                    },
+                    ariadne_api::tasks::TaskAgentDto {
+                        step: Some("review".into()),
+                        session_id: Some("01REVIEW".into()),
+                        ..fixtures::agent("01B", Seat::Agent, &["code-review"])
+                    },
+                ],
+                ..fixtures::task("01TASK", "01GOAL")
+            })
+        }
+
+        async fn one_session(Path(id): Path<String>) -> Json<SessionDto> {
+            Json(session(&id, "01GOAL", Some("01TASK")))
+        }
+
+        let app = Router::new()
+            .route("/v1/tasks/01TASK", get(task))
+            .route("/v1/sessions/{id}", get(one_session));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let client = Client::tcp(format!("http://{address}"));
+        let found = resolve_step(&client, "01TASK", "develop").await.unwrap();
+        assert_eq!(
+            found.id, "01DEVELOP",
+            "the idle column, not the current one"
+        );
+
+        let err = resolve_step(&client, "01TASK", "merge")
+            .await
+            .expect_err("no agent on that column");
+        server.abort();
+        assert!(err.to_string().contains("merge"), "{err}");
     }
 
     #[test]

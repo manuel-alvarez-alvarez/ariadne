@@ -27,6 +27,10 @@ tests:
   - crates/ariadne-cli/src/commands/skill.rs
   - crates/ariadne-cli/src/commands/console.rs
   - crates/ariadne-cli/src/commands/stats/mod.rs
+  - crates/ariadne-cli/src/commands/task/edit.rs
+  - crates/ariadne-cli/src/commands/goal.rs
+  - crates/ariadne-cli/src/commands/repo.rs
+  - crates/ariadne-cli/src/commands/attach.rs
 ---
 
 # Command-line interface
@@ -251,6 +255,35 @@ same binary also serves (013).
     the rest — the line named in its `details` beside the sentence next to
     it, `line <N>: <message>` — as a usage error; every other daemon refusal
     of a workflow command prints whole, the way any other command's does.
+37. A goal is run through a workflow with `goal create --workflow <name>`,
+    refused beside `--landing` since a workflow's own gates decide how a
+    task ends; `repo add --workflow <name>` and `repo update --workflow
+    <name>` set a repository's own default, which `repo ls` and `repo
+    inspect` show. Both complete the name against `GET /v1/workflows`.
+38. A stepped task is staffed with `--agent STEP[:SKILLS]=MODEL[@EFFORT]`,
+    repeatable, one per column, sent as `agents` with seat `agent` — in
+    place of `--author`, `--reviewer` and `--no-reviewer`, which it is
+    mutually exclusive with on the same line. `SKILLS` is optional and
+    comma-separated; left out, the column stages its own. The
+    `STEP:SKILLS=MODEL[@EFFORT]` parser sits beside `--author`'s and shares
+    its model and effort checks. `task update --agent` replaces the task's
+    whole staffing, the way `--reviewer` replaces the reviewer list.
+39. `task ls` carries a `step` column after `status`; `--step <id>` narrows
+    the list to it, client-side, the way every filter the daemon's own
+    listing does not know narrows elsewhere in this tree. `task inspect`
+    prints a stepped task's `workflow`, its current `step`, and one line per
+    column of the goal's workflow — the column, its skills, its pin and its
+    session, a column nobody has staffed yet included; an unstepped task
+    keeps its author, reviewers and picks exactly as before. `task history`
+    paints the column a move left and the one it entered beside the from and
+    to statuses.
+40. `goal inspect` prints the goal's workflow and, one line per column, its
+    rank and its gate.
+41. `task attach --step <id>` opens the console of that column's agent,
+    live or revived, whether or not it is the task's current column; left
+    out, it opens the current column's agent the way `task attach` already
+    did. `--seat agent` is accepted wherever a seat is, and
+    `session ls --seat agent` lists every stepped session the same way.
 
 ## Acceptance criteria
 
@@ -419,6 +452,35 @@ same binary also serves (013).
   `::create_and_update_send_the_document_whole_and_nothing_else`,
   `::check_prints_the_line_of_a_refusal_as_a_usage_error`,
   `::check_reads_back_the_columns_of_a_good_document`).
+- `goal create --workflow` sends the name and is refused beside `--landing`,
+  whose own gates then say how a task ends
+  (`cli/tests.rs::goal_create_workflow_sends_the_name_and_refuses_landing_beside_it`).
+  `repo add --workflow` and `repo update --workflow` send `default_workflow`,
+  and `repo ls` and `repo inspect` show it
+  (`commands/repo.rs::repo_add_and_update_take_the_workflow_flag`).
+- `--agent STEP[:SKILLS]=MODEL[@EFFORT]` stages one workflow column, in
+  place of `--author`/`--reviewer`/`--no-reviewer`, which it is mutually
+  exclusive with; the skills half is optional, and left out the column
+  stages its own. `task create` sends one `agents` entry per `--agent`,
+  seat `agent`; `task update --agent` replaces the whole staffing
+  (`cli/tests.rs::an_agent_slot_names_its_column_skills_model_and_effort`,
+  `commands/task/edit.rs::an_agent_slot_names_its_column_skills_model_and_effort`,
+  `::only_the_flags_that_were_given_reach_the_daemon`).
+- `task ls` carries a `step` column after `status`, and `--step` narrows the
+  list to it client-side; `task inspect` prints a stepped task's `workflow`,
+  `step`, and one line per column — its skills, its pin and its session,
+  unstaffed columns included; `task history` paints the column a move left
+  and the one it entered beside the statuses
+  (`commands/task.rs::step_narrows_the_list_to_the_named_column`,
+  `::a_stepped_task_lists_its_workflow_and_every_columns_agent`,
+  `::a_history_row_paints_the_columns_a_move_crossed`).
+- `goal inspect` prints the workflow and, one line per column, its rank and
+  its gate (`commands/goal.rs::workflow_columns_reads_the_rank_and_the_gate`).
+- `task attach --step` resolves the named column's session whether or not it
+  is the task's current one; `session ls --seat agent` parses the seat every
+  stepped session carries
+  (`commands/attach.rs::resolve_step_finds_the_named_columns_session`,
+  `cli/tests.rs::a_filter_takes_only_the_values_the_daemon_knows`).
 - `--watch` is advertised on exactly `task ls`, `goal ls`, `session ls` and
   `attention`, and nowhere else
   (`cli/tests.rs::the_watch_flag_is_advertised_exactly_where_it_is_honored`).

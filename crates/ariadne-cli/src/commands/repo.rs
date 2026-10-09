@@ -16,7 +16,7 @@ use super::resolve::{self, Kind};
 use super::{Subject, confirm, parse_effort_or_default, parse_model};
 use crate::cli::values::Spelling;
 use crate::output::{
-    Column, Format, Kv, UNCAPPED, age, col, empty_state, moment, ok_id_line, print, print_kv,
+    Column, Format, Kv, UNCAPPED, age, col, dash, empty_state, moment, ok_id_line, print, print_kv,
     print_list, view,
 };
 
@@ -29,6 +29,7 @@ const LS: &[Column] = &[
     col("branch", 24).rank(3),
     col("permissions", UNCAPPED).rank(2),
     col("landing", UNCAPPED).rank(1),
+    col("workflow", UNCAPPED).rank(1),
     col("forge", 40).rank(2),
     col("description", 40).rank(0),
 ];
@@ -100,6 +101,10 @@ pub(crate) enum RepoCommand {
         /// Landing new goals use: none, merge, pull-request, or feature-branch (default: merge)
         #[arg(long, value_parser = Spelling::<Landing>::new())]
         default_landing: Option<Landing>,
+        /// Run new goals through this workflow by default, where their own
+        /// request leaves it out
+        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::workflow_names))]
+        workflow: Option<String>,
         #[command(flatten)]
         forge: ForgeArgs,
     },
@@ -131,6 +136,9 @@ pub(crate) enum RepoCommand {
         /// New default landing: none, merge, pull-request, or feature-branch
         #[arg(long, value_parser = Spelling::<Landing>::new())]
         default_landing: Option<Landing>,
+        /// New default workflow, or "" to go back to none
+        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::workflow_names))]
+        workflow: Option<String>,
         #[command(flatten)]
         forge: ForgeArgs,
     },
@@ -153,13 +161,14 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
             description,
             permission_mode,
             default_landing,
+            workflow,
             forge,
         } => {
             let repo: RepositoryDto = client
                 .post_json(
                     "/v1/repositories",
                     &CreateRepositoryRequest {
-                        default_workflow: None,
+                        default_workflow: workflow,
                         path,
                         base_branch: branch,
                         description,
@@ -204,6 +213,7 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
             description,
             permission_mode,
             default_landing,
+            workflow,
             forge,
         } => {
             let id = resolve::id(client, Kind::Repo, &id).await?;
@@ -211,7 +221,7 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
                 .put_json(
                     &repo_path(&id),
                     &UpdateRepositoryRequest {
-                        default_workflow: None,
+                        default_workflow: workflow,
                         path,
                         base_branch: branch,
                         description,
@@ -255,6 +265,7 @@ fn ls_row(r: &RepositoryDto, now: chrono::DateTime<chrono::Utc>) -> Vec<String> 
         r.base_branch.clone(),
         r.permission_mode.as_str().into(),
         r.default_landing.as_str().into(),
+        dash(r.default_workflow.as_deref()),
         r.forge.as_ref().map_or_else(|| "-".into(), forge_label),
         r.description.clone().unwrap_or_else(|| "-".into()),
     ]
@@ -291,6 +302,10 @@ fn inspect_rows(r: &RepositoryDto, tunnel: Option<&ForgeTunnelDto>) -> Vec<(&'st
         ("branch", r.base_branch.clone().into()),
         ("permissions", r.permission_mode.as_str().into()),
         ("default landing", r.default_landing.as_str().into()),
+        (
+            "default workflow",
+            dash(r.default_workflow.as_deref()).into(),
+        ),
         (
             "description",
             r.description.clone().unwrap_or_else(|| "-".into()).into(),
@@ -476,6 +491,60 @@ mod tests {
             <Repo as clap::Parser>::try_parse_from(["repo", "add", "/r", "--review-model", "x"])
                 .is_err(),
             "a model names its agent"
+        );
+    }
+
+    /// `--workflow` reaches `add` and `update` the way every other flag of
+    /// theirs does, and a repository with none shows a dash rather than an
+    /// empty cell.
+    #[test]
+    fn repo_add_and_update_take_the_workflow_flag() {
+        #[derive(clap::Parser)]
+        struct Repo {
+            #[command(subcommand)]
+            command: RepoCommand,
+        }
+        let Repo {
+            command: RepoCommand::Add { workflow, .. },
+        } = <Repo as clap::Parser>::try_parse_from([
+            "repo",
+            "add",
+            "/r",
+            "--workflow",
+            "develop-review-merge",
+        ])
+        .expect("parses")
+        else {
+            panic!("repo add")
+        };
+        assert_eq!(workflow.as_deref(), Some("develop-review-merge"));
+
+        let Repo {
+            command: RepoCommand::Update { workflow, .. },
+        } = <Repo as clap::Parser>::try_parse_from(["repo", "update", "01R", "--workflow", ""])
+            .expect("parses")
+        else {
+            panic!("repo update")
+        };
+        assert_eq!(workflow.as_deref(), Some(""), "empty clears it");
+
+        assert_eq!(
+            ls_row(
+                &fixtures::repository("01A", "/r", "main"),
+                chrono::Utc::now()
+            )[LS.iter().position(|c| c.header == "workflow").unwrap()],
+            "-"
+        );
+        let with_workflow = RepositoryDto {
+            default_workflow: Some("develop-review-pr".into()),
+            ..fixtures::repository("01A", "/r", "main")
+        };
+        assert!(
+            crate::output::kv_block(
+                &inspect_rows(&with_workflow, None),
+                &crate::output::View::plain()
+            )
+            .contains("develop-review-pr")
         );
     }
 

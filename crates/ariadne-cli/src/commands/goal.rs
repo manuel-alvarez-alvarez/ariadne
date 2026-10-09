@@ -18,7 +18,7 @@ use super::resolve::{self, Kind};
 use super::{Subject, confirm, parse_effort, parse_model};
 use crate::cli::values::Spelling;
 use crate::output::{
-    Column, Format, Kv, UNCAPPED, age, col, empty_state, moment, ok_id_line, print, print_kv,
+    Column, Format, Kv, UNCAPPED, age, col, dash, empty_state, moment, ok_id_line, print, print_kv,
     print_list, status_line, usage_block, usage_cell, view,
 };
 
@@ -97,9 +97,15 @@ pub(crate) enum GoalCommand {
         /// How every task of the goal ends: merge on the base branch,
         /// pull-request opened and pushed, none where there is nothing to
         /// land, or feature-branch. Fixed once the goal is created. Default:
-        /// merge
-        #[arg(long, value_enum)]
+        /// merge. Refused beside --workflow, whose own gates say how each
+        /// task ends
+        #[arg(long, value_enum, conflicts_with = "workflow")]
         landing: Option<Landing>,
+        /// Run the goal through this workflow's columns instead of the fixed
+        /// author/reviewer/landing pipeline. Default: the first repository's
+        /// own default workflow, else none
+        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::workflow_names))]
+        workflow: Option<String>,
     },
     /// List goals: the live ones, newest first (--all includes finished)
     Ls {
@@ -174,6 +180,7 @@ pub(crate) async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Re
             model,
             effort,
             landing,
+            workflow,
         } => {
             let (issue, issue_repository) = match from_issue.as_deref() {
                 Some(url) => {
@@ -200,7 +207,7 @@ pub(crate) async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Re
                 .post_json(
                     "/v1/goals",
                     &CreateGoalRequest {
-                        workflow: None,
+                        workflow,
                         title,
                         description,
                         repository_ids,
@@ -236,6 +243,11 @@ pub(crate) async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Re
                     ),
                     ("status", Kv::status(g.status.as_str())),
                     ("landing", landing_row(&g)),
+                    (
+                        "workflow",
+                        g.workflow.clone().unwrap_or_else(|| "-".into()).into(),
+                    ),
+                    ("columns", workflow_columns(&g.steps).into()),
                     (
                         "orchestrator",
                         pin_label(&g.model, g.effort.as_deref()).into(),
@@ -596,6 +608,29 @@ fn landing_row(goal: &GoalDto) -> Kv {
     goal.landing.as_str().into()
 }
 
+/// A goal's workflow columns, one line each, in column order: the id and the
+/// title, then the rank and the gate the document named it — a dash for
+/// either where the column left it to the default. An unstepped goal has
+/// none, which reads as a dash rather than an empty line.
+fn workflow_columns(steps: &[ariadne_api::workflows::WorkflowStepDto]) -> String {
+    if steps.is_empty() {
+        return "-".to_string();
+    }
+    steps
+        .iter()
+        .map(|s| {
+            format!(
+                "{} [{}] rank={} gate={}",
+                s.id,
+                s.title,
+                dash(s.rank.map(|r| r.as_str())),
+                dash(s.gate.map(|g| g.as_str())),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(INDENT)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -674,6 +709,7 @@ mod tests {
                 model: "stub:test-model".into(),
                 effort: None,
                 landing: None,
+                workflow: None,
             },
             Format::Json,
         )
@@ -788,6 +824,42 @@ mod tests {
             ),
             "landing  feature_branch"
         );
+    }
+
+    /// A column reads as its id, its title, and the rank and the gate the
+    /// document named it, with a dash for either it left to the default; an
+    /// unstepped goal's columns are a dash and not an empty line.
+    #[test]
+    fn workflow_columns_reads_the_rank_and_the_gate() {
+        use ariadne_api::workflows::WorkflowStepDto;
+        use ariadne_core::models::ModelRank;
+        use ariadne_core::workflow::StepGate;
+
+        assert_eq!(workflow_columns(&[]), "-");
+        let steps = vec![
+            WorkflowStepDto {
+                id: "develop".into(),
+                title: "Develop".into(),
+                description: String::new(),
+                skills: vec!["coding".into()],
+                rank: Some(ModelRank::Balanced),
+                gate: Some(StepGate::Committed),
+            },
+            WorkflowStepDto {
+                id: "review".into(),
+                title: "Review".into(),
+                description: String::new(),
+                skills: vec!["code-review".into()],
+                rank: None,
+                gate: None,
+            },
+        ];
+        let lines = workflow_columns(&steps);
+        assert!(
+            lines.contains("develop [Develop] rank=balanced gate=committed"),
+            "{lines}"
+        );
+        assert!(lines.contains("review [Review] rank=- gate=-"), "{lines}");
     }
 
     #[test]
