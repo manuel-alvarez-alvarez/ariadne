@@ -253,6 +253,7 @@ export function CreateGoalDialog({
               name="workflow"
               id="goal-workflow"
               enabled={open}
+              allowInherit
               onValueChange={() => {
                 workflowPicked.current = true
               }}

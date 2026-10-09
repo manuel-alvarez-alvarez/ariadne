@@ -62,8 +62,7 @@ const formSchema = z.object({
   base_branch: z.string().trim(),
   description: z.string(),
   permission_mode: z.enum(["auto", "ask", "learn", "ai"]),
-  // A workflow's name, or empty for none.
-  default_workflow: z.string(),
+  default_workflow: z.string().min(1, "Pick a workflow."),
   forge_enabled: z.boolean(),
 })
 
@@ -137,8 +136,7 @@ export function RepositoryFormDialog({
             // Empty is how the daemon spells "clear the description".
             description,
             permission_mode: values.permission_mode,
-            // Empty is how the daemon spells "no default workflow".
-            default_workflow: workflow ?? "",
+            default_workflow: workflow,
             ...(forgeMoved ? { forge: { enabled: values.forge_enabled } } : {}),
           },
         })
@@ -314,7 +312,7 @@ export function RepositoryFormDialog({
             )}
           </Field>
 
-          <Field>
+          <Field data-invalid={formState.errors.default_workflow ? true : undefined}>
             <FieldLabel htmlFor="repository-default-workflow">Default workflow</FieldLabel>
             <WorkflowSelect
               control={control}
@@ -322,9 +320,13 @@ export function RepositoryFormDialog({
               id="repository-default-workflow"
               enabled={open}
             />
-            <FieldDescription>
-              The workflow a new goal against this repository runs, where the goal names none.
-            </FieldDescription>
+            {formState.errors.default_workflow ? (
+              <FieldError errors={[formState.errors.default_workflow]} />
+            ) : (
+              <FieldDescription>
+                The workflow a new goal against this repository runs, where the goal names none.
+              </FieldDescription>
+            )}
           </Field>
 
           {forge ? (
