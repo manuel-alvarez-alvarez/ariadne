@@ -27,6 +27,7 @@ import type {
   SessionEntryDto,
   SkillDto,
   TaskDto,
+  WorkflowDto,
 } from "@/api"
 import type { OutsideSessionDto } from "@/features/sessions/queries"
 
@@ -43,6 +44,27 @@ const REVIEWER_ID = "01JAGENT0000000000000REVW"
 const REPO_ID = "01JREPO0000000000000000001"
 const LEARNED_ID = "01JLEARNED000000000000001"
 
+export function aWorkflow(overrides: Partial<WorkflowDto> = {}): WorkflowDto {
+  return {
+    name: "develop-review-merge",
+    document: "workflow develop-review-merge\n  develop[Develop]\n    Build the task.",
+    builtin: true,
+    steps: [
+      {
+        id: "develop",
+        title: "Develop",
+        description: "Build the task.",
+        skills: ["coding"],
+        rank: "balanced",
+        gate: "committed",
+      },
+    ],
+    created_at: STAMP,
+    updated_at: STAMP,
+    ...overrides,
+  }
+}
+
 /** A row nobody has reported tokens for, which is how every fixture starts. */
 const NO_TOKENS = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 }
 
@@ -54,14 +76,14 @@ export function aGoal(overrides: Partial<GoalDto> = {}): GoalDto {
     issue_url: null,
     model: "claude-agent-acp:claude-sonnet-5",
     orchestrated: true,
-    landing: "merge",
+    workflow: "build-test",
     repos: [],
+    steps: [],
     status: "active",
     usage: {
+      agents: [],
       total: NO_TOKENS,
       orchestrator: NO_TOKENS,
-      authors: NO_TOKENS,
-      reviewers: NO_TOKENS,
     },
     created_at: STAMP,
     updated_at: STAMP,
@@ -77,26 +99,24 @@ export function aTask(overrides: Partial<TaskDto> = {}): TaskDto {
     description: "",
     status: "in_progress",
     branch: "wire-the-sessions-screen-000001",
-    landing: "merge",
     repo_id: REPO_ID,
     stalled: false,
     agents: [
       {
         id: AUTHOR_ID,
-        seat: "author",
+        step: "build",
         skills: ["coding"],
         model: "claude-agent-acp:claude-sonnet-5",
       },
       {
         id: REVIEWER_ID,
-        seat: "reviewer",
+        step: "test",
         skills: ["code-review"],
         model: "claude-agent-acp:claude-sonnet-5",
       },
     ],
     depends_on: [],
-    picks: [],
-    usage: { total: NO_TOKENS, author: NO_TOKENS, reviewers: [] },
+    usage: { total: NO_TOKENS, agents: [] },
     created_at: STAMP,
     updated_at: STAMP,
     ...overrides,
@@ -109,7 +129,7 @@ export function aSession(overrides: Partial<SessionDto> = {}): SessionDto {
     id,
     goal_id: GOAL_ID,
     task_id: TASK_ID,
-    seat: "author",
+    seat: "agent",
     task_agent_id: AUTHOR_ID,
     model: "claude-agent-acp:claude-sonnet-5",
     internal_session_id: null,
@@ -240,7 +260,7 @@ export function aRepository(overrides: Partial<RepositoryDto> = {}): RepositoryD
     base_branch: "main",
     description: "The orchestrator itself.",
     permission_mode: "auto",
-    default_landing: "merge",
+    default_workflow: "build-test",
     forge: null,
     created_at: STAMP,
     updated_at: STAMP,

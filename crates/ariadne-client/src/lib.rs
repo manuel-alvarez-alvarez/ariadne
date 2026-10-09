@@ -78,6 +78,9 @@ pub enum ClientError {
         status: StatusCode,
         code: String,
         message: String,
+        /// Structured detail of the refusal, where the code carries more
+        /// than a sentence — `workflow_invalid`'s `line`, for one.
+        details: Option<Box<serde_json::Value>>,
     },
     #[error("failed to decode daemon response: {0}")]
     Decode(#[from] serde_json::Error),
@@ -143,6 +146,15 @@ impl ClientError {
             Self::Api { code, .. } => code,
             Self::Decode(_) => "invalid_response",
             Self::Timeout => "timeout",
+        }
+    }
+
+    /// Structured detail of the refusal, where the code carries more than a
+    /// sentence — `workflow_invalid`'s `line`, for one.
+    pub fn details(&self) -> Option<&serde_json::Value> {
+        match self {
+            Self::Api { details, .. } => details.as_deref(),
+            _ => None,
         }
     }
 }
@@ -567,11 +579,13 @@ impl Client {
                 status,
                 code: body.error.code,
                 message: body.error.message,
+                details: body.error.details,
             },
             Err(_) => ClientError::Api {
                 status,
                 code: "unknown_error".into(),
                 message: String::from_utf8_lossy(&bytes).into_owned(),
+                details: None,
             },
         }
     }
@@ -835,6 +849,7 @@ mod tests {
             status: StatusCode::NOT_FOUND,
             code: "not_found".into(),
             message: "task not found: badid123".into(),
+            details: None,
         };
         assert_eq!(err.human(), "task not found: badid123");
         assert!(err.hint().is_none());
@@ -850,6 +865,7 @@ mod tests {
             status: StatusCode::CONFLICT,
             code: "ai_disabled".into(),
             message: "the `ai` permission mode needs the AI permission model".into(),
+            details: None,
         };
         assert_eq!(
             disabled.hint().as_deref(),
@@ -860,6 +876,7 @@ mod tests {
             status: StatusCode::CONFLICT,
             code: "python_unavailable".into(),
             message: "the AI permission model needs Python 3.12 or 3.13".into(),
+            details: None,
         };
         assert_eq!(
             unavailable.hint().as_deref(),
@@ -920,6 +937,7 @@ mod tests {
             status: StatusCode::BAD_GATEWAY,
             code: "unknown_error".into(),
             message: String::new(),
+            details: None,
         };
         assert_eq!(err.human(), "daemon returned 502 Bad Gateway");
     }

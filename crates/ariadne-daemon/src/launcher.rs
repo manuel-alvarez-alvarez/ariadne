@@ -14,7 +14,7 @@ use ariadne_core::models::agent_of;
 use ariadne_core::{GoalStatus, PermissionMode, PromptKind, Seat, SessionStatus, TaskStatus};
 use ariadne_store::{
     AgentPin, AgentSession, NewAgentEvent, NewSession, PullRequest, Repository, SessionFilter,
-    Store, Task, TaskAgent, TaskFilter, author_branch,
+    Store, Task, TaskAgent, TaskFilter,
 };
 
 use crate::acp::{AcpLaunch, AcpRuntime};
@@ -24,7 +24,7 @@ use crate::agents::{
 };
 use crate::branch::BranchWatchers;
 use crate::config::Config;
-use crate::gitwt::{BranchHasNoCommits, GitManager};
+use crate::gitwt::GitManager;
 
 pub struct Launcher {
     pub cfg: Arc<Config>,
@@ -37,7 +37,7 @@ pub struct Launcher {
     /// what discovery measured about it.
     pub registry: AgentRegistry,
     /// The task branches whose head the daemon is following, so that a commit
-    /// an author makes reaches the clients watching its diff.
+    /// a column's agent makes reaches the clients watching its diff.
     pub branches: BranchWatchers,
     /// What the forge said of each request Ariadne works on, on its last
     /// read (026): held here, never stored.
@@ -58,9 +58,8 @@ impl Launcher {
         self.cfg.run_dir.join(session_id)
     }
 
-    /// Refuse to double-spawn: one live session per (task, seat) —
-    /// per (task, seat, agent) for reviewers, and for the authors of a task
-    /// staffed with several.
+    /// Refuse to double-spawn: one live session per (goal, task, seat), and
+    /// per staffed agent where `agent_id` names one.
     ///
     /// This is the last guard before a second agent starts working on
     /// somebody else's task.
@@ -110,9 +109,9 @@ impl Launcher {
     ///
     /// The model and the effort it runs at are the opposite: they are the ones
     /// the session was created with, off the pin its seat carries, and no
-    /// launch of that session ever moves either. Editing a profile is meant to
-    /// steer the work defined after it, not to switch the model out from under
-    /// a conversation already running.
+    /// launch of that session ever moves either. Editing a staffing is meant
+    /// to steer the work defined after it, not to switch the model out from
+    /// under a conversation already running.
     async fn spawn_ctx(
         &self,
         session: &AgentSession,
@@ -130,9 +129,9 @@ impl Launcher {
     /// The orchestrator is staffed by nobody, so its one skill — the
     /// playbook — is named in code, and an edit to it reaches the next
     /// launch the way any task agent's skill does. A review session is
-    /// staffed by the daemon, so its skill is named in code too (029), and
-    /// so is the `pr-babysit` skill the author of a task that lands by
-    /// request keeps its request with (005).
+    /// staffed by the daemon, so its skill is named in code too (029). A
+    /// column's agent loads what it was staffed with, its column's skills
+    /// where it was staffed with none.
     async fn skills_of(&self, session: &AgentSession) -> Result<Vec<ariadne_store::Skill>> {
         let seat = session.seat().context("a staffed session needs a seat")?;
         if let Some(pull_request_id) = &session.pull_request_id {
@@ -145,25 +144,10 @@ impl Launcher {
                     .get_skill(ariadne_store::defaults::ORCHESTRATION_SKILL)
                     .await?,
             ],
-            Seat::Author | Seat::Reviewer => {
-                let mut skills = match &session.task_agent_id {
-                    Some(id) => self.store.agent_skills(id).await?,
-                    None => Vec::new(),
-                };
-                if seat == Seat::Author
-                    && let Some(task_id) = &session.task_id
-                    && self
-                        .lands_by_request(&self.store.get_task(task_id).await?)
-                        .await?
-                {
-                    skills.push(
-                        self.store
-                            .get_skill(ariadne_store::defaults::PR_BABYSIT_SKILL)
-                            .await?,
-                    );
-                }
-                skills
-            }
+            Seat::Agent | Seat::Reviewer => match &session.task_agent_id {
+                Some(id) => self.store.agent_skills(id).await?,
+                None => Vec::new(),
+            },
         })
     }
 
@@ -184,17 +168,6 @@ impl Launcher {
             }
         }
         Ok(skills)
-    }
-
-    /// Whether a task lands by a request its author keeps (005): a task of a
-    /// `pull_request` goal, or the final task of a `feature_branch` goal,
-    /// which takes the goal branch onto the base by one.
-    pub(crate) async fn lands_by_request(&self, task: &Task) -> Result<bool> {
-        Ok(match task.landing() {
-            ariadne_core::Landing::PullRequest => true,
-            ariadne_core::Landing::FeatureBranch => self.store.works_on_goal_branch(task).await?,
-            ariadne_core::Landing::Merge | ariadne_core::Landing::None => false,
-        })
     }
 
     /// [`Self::spawn_ctx`] with the skills already decided.
@@ -283,23 +256,14 @@ impl Launcher {
         }
         // The repository the session works in answers its permission
         // requests, and holds what `learn` remembers. A learned key names its
-        // checkout and the session's branch by placeholders: an author's
-        // own branch, the branch a reviewer's caller set for its review,
-        // else the task's.
+        // checkout and the session's branch by placeholders: the task's
+        // branch for a column's agent, the request's head for a review
+        // session.
         let mut task_branch = None;
         let repository = match &session.task_id {
             Some(task_id) => {
                 let task = self.store.get_task(task_id).await?;
-                task_branch = Some(match (&session.task_agent_id, session.seat()) {
-                    (Some(agent_id), Some(Seat::Author)) => {
-                        let agent = self.store.get_task_agent(agent_id).await?;
-                        author_branch(&task.branch, agent.ordinal)
-                    }
-                    _ => self
-                        .acp
-                        .task_branch(&session.id)
-                        .unwrap_or_else(|| task.branch.clone()),
-                });
+                task_branch = Some(task.branch.clone());
                 Some(self.store.get_repository(&task.repo_id).await?)
             }
             // A pull request session works in its request's repository, on
@@ -427,19 +391,16 @@ impl Launcher {
         Ok(())
     }
 
-    /// The session of `seat` on this task there is something to resume, and the
-    /// agent conversation it left behind: the most recent one with a
-    /// conversation in it ([`Self::has_conversation`]).
+    /// The session of one staffed agent on this task there is something to
+    /// resume, and the agent conversation it left behind: the most recent one
+    /// with a conversation in it ([`Self::has_conversation`]).
     ///
     /// A session that never got going has none, and that is nothing to resume
-    /// — the caller spawns afresh instead. `agent_id` tells a task's reviewers
-    /// apart, which is the only thing that does; every other seat has one
-    /// session per task.
+    /// — the caller spawns afresh instead.
     async fn resumable_session(
         &self,
         task_id: &str,
-        seat: Seat,
-        agent_id: Option<&str>,
+        agent_id: &str,
     ) -> Result<Option<(AgentSession, String)>> {
         let sessions = self
             .store
@@ -449,8 +410,8 @@ impl Launcher {
             })
             .await?;
         for s in sessions.into_iter().rev() {
-            if s.seat() == Some(seat)
-                && agent_id.is_none_or(|wanted| s.task_agent_id.as_deref() == Some(wanted))
+            if s.seat() == Some(Seat::Agent)
+                && s.task_agent_id.as_deref() == Some(agent_id)
                 && let Some(internal) = self.has_conversation(&s).await?
             {
                 return Ok(Some((s, internal)));
@@ -513,8 +474,9 @@ impl Launcher {
     /// is for the fresh spawn that supersedes a row instead of reviving it.
     ///
     /// "Replaces" is the identity a spawn is refused for: the seat on this
-    /// goal and task, and for a reviewer the profile too, since a task's
-    /// reviewers are siblings that only their profile tells apart.
+    /// goal and task, and for a column's agent the staffed agent too, since
+    /// the agents of a task's columns are siblings that only their agent row
+    /// tells apart.
     async fn clear_superseded_attention(&self, session: &AgentSession) {
         let Ok(siblings) = self
             .store
@@ -532,7 +494,7 @@ impl Launcher {
                 && previous.task_id == session.task_id
                 && previous.pull_request_id == session.pull_request_id
                 && previous.seat() == session.seat()
-                && (previous.seat() != Some(Seat::Reviewer)
+                && (previous.seat() != Some(Seat::Agent)
                     || previous.task_agent_id == session.task_agent_id)
                 && previous.attention_reason().is_some()
             {
@@ -544,6 +506,20 @@ impl Launcher {
                 let _ = self.store.clear_session_attention(&previous.id).await;
             }
         }
+    }
+
+    /// The briefing an orchestrator starts on, for a spawn and a switch
+    /// alike: the goal, its workflow with every column, and its repositories.
+    async fn orchestrator_briefing(
+        &self,
+        goal: &ariadne_store::Goal,
+        repos: &[Repository],
+    ) -> Result<String> {
+        let template = prompts::template_for(PromptKind::OrchestratorBriefing);
+        let steps = self.store.goal_steps(&goal.id).await?;
+        Ok(prompts::orchestrator_briefing(
+            template, goal, repos, &steps,
+        ))
     }
 
     /// Spawn the orchestrator for a goal (cwd = first repo).
@@ -568,8 +544,7 @@ impl Launcher {
             })
             .await?;
 
-        let template = prompts::template_for(PromptKind::OrchestratorBriefing);
-        let briefing = prompts::orchestrator_briefing(template, &goal, &repos);
+        let briefing = self.orchestrator_briefing(&goal, &repos).await?;
         self.spawn(&session, PathBuf::from(&repo.path), briefing)
             .await?;
         self.store
@@ -619,108 +594,94 @@ impl Launcher {
             .await
     }
 
-    /// Spawn the author for a task: worktree + branch + session. On a task
-    /// staffed with several authors this is the picked winner where the pick
-    /// has settled, and the first author otherwise —
-    /// [`Self::spawn_author_agent`] is how a named one of several starts.
-    pub async fn spawn_author(&self, task_id: &str) -> Result<AgentSession> {
-        let task = self.store.get_task(task_id).await?;
-        let author = match &task.picked_agent_id {
-            Some(picked) => self.store.get_task_agent(picked).await?,
-            None => self.store.task_author(task_id).await?,
+    /// Launch one workflow agent on the task's shared branch and worktree:
+    /// its earlier conversation resumed where it left one on the pin the
+    /// agent still has, a fresh one where it did not, where the last launch
+    /// died on arrival, or where a staffing edit moved the agent's model or
+    /// effort since — a session freezes its pin at its first launch (011), so
+    /// the new pin gets a session of its own and the old one stays as
+    /// history. The scheduler supplies the durable column prompt after this
+    /// launch.
+    pub async fn start_step_agent(&self, task: &Task, agent: &TaskAgent) -> Result<AgentSession> {
+        self.assert_no_live_session(&task.goal_id, Some(&task.id), Seat::Agent, Some(&agent.id))
+            .await?;
+        let repo = self.store.get_repository(&task.repo_id).await?;
+        let worktree = self
+            .task_worktree(
+                task,
+                &repo,
+                task.worktree_path.as_deref().map(PathBuf::from),
+            )
+            .await?;
+        let previous = self.resumable_session(&task.id, &agent.id).await?;
+        let (session, internal) = match previous {
+            Some((previous, internal))
+                if !previous.died_on_arrival()
+                    && previous.model == agent.model
+                    && previous.effort == agent.effort =>
+            {
+                (
+                    self.store
+                        .restart_session(&previous.id, Some(&worktree.display().to_string()))
+                        .await?,
+                    Some(internal),
+                )
+            }
+            _ => (
+                self.store
+                    .create_session(NewSession {
+                        goal_id: Some(task.goal_id.clone()),
+                        task_id: Some(task.id.clone()),
+                        seat: Some(Seat::Agent),
+                        task_agent_id: Some(agent.id.clone()),
+                        model: agent.model.clone(),
+                        effort: agent.effort.clone(),
+                        worktree_path: Some(worktree.display().to_string()),
+                        pull_request_id: None,
+                    })
+                    .await?,
+                None,
+            ),
         };
-        self.spawn_author_agent(task_id, &author.id).await
-    }
-
-    /// Spawn one author of a task, by the staffed agent it runs.
-    pub async fn spawn_author_agent(&self, task_id: &str, agent_id: &str) -> Result<AgentSession> {
-        self.spawn_author_agent_told(task_id, agent_id, "").await
-    }
-
-    /// Spawn the author of a task afresh — the picked winner where the pick
-    /// has settled, the first author otherwise — briefed on its task and then
-    /// told `then`, as [`Self::spawn_author_agent_told`].
-    pub(crate) async fn spawn_author_told(
-        &self,
-        task_id: &str,
-        then: &str,
-    ) -> Result<AgentSession> {
-        let task = self.store.get_task(task_id).await?;
-        let author = match &task.picked_agent_id {
-            Some(picked) => self.store.get_task_agent(picked).await?,
-            None => self.store.task_author(task_id).await?,
+        let ctx = self.spawn_ctx(&session, worktree, String::new()).await?;
+        let mut plan = match internal {
+            Some(internal) => plan_resume(&ctx, &internal, "")?,
+            None => plan_spawn(&ctx)?,
         };
-        self.spawn_author_agent_told(task_id, &author.id, then)
-            .await
+        plan.config.initial_prompt = None;
+        self.launch(&session, plan, &ctx.launch_id).await?;
+        self.clear_superseded_attention(&session).await;
+        Ok(self.store.get_session(&session.id).await?)
     }
 
-    /// Spawn one author, briefed on its task and then told `then`: what a
-    /// resume would have told the conversation it has no longer. An author
-    /// that has to start afresh on an approved task is still the one that
-    /// lands it, and one sent back with review feedback still has to read it.
-    pub(crate) async fn spawn_author_agent_told(
+    /// The first briefing of a column: the task, the column, the values its
+    /// commands act on, and what the column before it said.
+    pub async fn step_first_briefing(
         &self,
-        task_id: &str,
-        agent_id: &str,
-        then: &str,
-    ) -> Result<AgentSession> {
-        // The final task of a feature branch goal works on the goal branch.
-        let task = self
-            .store
-            .start_on_goal_branch(task_id)
-            .await?
-            .ok_or_else(|| anyhow!("the final task {task_id} waits for another task"))?;
+        task: &Task,
+        step: &ariadne_store::GoalStep,
+        reason: &str,
+    ) -> Result<String> {
+        let task = self.store.get_task(&task.id).await?;
         let goal = self.store.get_goal(&task.goal_id).await?;
         let repo = self.store.get_repository(&task.repo_id).await?;
-        let seat = self.author_seat(&task, agent_id).await?;
-        // One live session per author. A one-author task is guarded by the
-        // seat alone, as it always was, so a session staffed on an author the
-        // task no longer lists still refuses a second.
-        let guard = seat.sibling_tail().map(|_| seat.author.id.as_str());
-        self.assert_no_live_session(&goal.id, Some(task_id), Seat::Author, guard)
-            .await?;
-
-        let worktree = self.author_worktree(&task, &repo, None, &seat).await?;
-
-        let session = self
-            .store
-            .create_session(NewSession {
-                goal_id: Some(goal.id.clone()),
-                task_id: Some(task.id.clone()),
-                seat: Some(Seat::Author),
-                task_agent_id: Some(seat.author.id.clone()),
-                model: seat.author.model.clone(),
-                effort: seat.author.effort.clone(),
-                worktree_path: Some(worktree.display().to_string()),
-                pull_request_id: None,
-            })
-            .await?;
-
-        // Re-read: worktree_path may just have been set.
-        let task = self.store.get_task(task_id).await?;
         let mut deps = Vec::new();
-        for dep_id in self.store.list_task_dependencies(&task.id).await? {
-            deps.push(self.store.get_task(&dep_id).await?);
+        for id in self.store.list_task_dependencies(&task.id).await? {
+            let dep = self.store.get_task(&id).await?;
+            deps.push(format!(
+                "{} ({}, branch {})",
+                dep.title, dep.status, dep.branch
+            ));
         }
-        let template = prompts::template_for(PromptKind::AuthorBriefing);
-        let seen = seat.task_as_seen(&task, Some(worktree.display().to_string()));
-        let mut briefing = prompts::author_briefing(
-            template,
-            &seen,
+        Ok(prompts::step_briefing(
+            prompts::template_for(PromptKind::StepBriefing),
+            &task,
             &goal,
             &repo,
-            &self.store.task_landing_branch(&seen, &repo).await?,
-            &deps,
-        );
-        if !then.is_empty() {
-            briefing.push_str("\n\n");
-            briefing.push_str(then);
-        }
-        self.spawn(&session, worktree, briefing).await?;
-        self.store
-            .get_session(&session.id)
-            .await
-            .map_err(Into::into)
+            step,
+            reason,
+            &deps.join("\n"),
+        ))
     }
 
     /// Resume an outside conversation in its recorded directory.
@@ -844,376 +805,46 @@ impl Launcher {
         Ok(self.store.get_session(&session.id).await?)
     }
 
-    /// One author's place on a task: the agent row, its branch, and whether
-    /// it is the task's lone author.
-    async fn author_seat(&self, task: &Task, agent_id: &str) -> Result<AuthorSeat> {
-        let authors = self.store.list_task_authors(&task.id).await?;
-        let lone = authors.len() == 1;
-        let author = authors
-            .into_iter()
-            .find(|a| a.id == agent_id)
-            .ok_or_else(|| anyhow!("agent {agent_id} is not an author of task {}", task.id))?;
-        let branch = author_branch(&task.branch, author.ordinal);
-        Ok(AuthorSeat {
-            author,
-            branch,
-            lone,
-        })
-    }
-
-    /// The author's worktree, checked out on its own branch: created on the
-    /// first spawn, and created again whenever it has been cleaned up under a
-    /// task that is still going. Nobody else ever holds the branch — the
-    /// author keeps it from the first commit to the merge.
+    /// The task's one worktree, checked out on its branch: created on the
+    /// first column's first launch, and created again whenever it has been
+    /// cleaned up under a task that is still going. Every column works in it
+    /// in turn — the branch is the task's from the first commit to the last
+    /// column.
     ///
-    /// `keep` is the tree a resumed author was working in — kept while it is
-    /// still on disk, since an agent is put back where it left off rather than
-    /// beside it. A fresh spawn passes `None` and gets the canonical path.
-    ///
-    /// The task's own `worktree_path` is the lone author's — set here for a
-    /// one-author task exactly as it always was, and for one of several only
-    /// once the pick has named it the winner (`scheduler::tasks`).
-    async fn author_worktree(
+    /// `keep` is the tree the task was working in — kept while it is still on
+    /// disk, since an agent is put back where the task left off rather than
+    /// beside it. A first spawn passes `None` and gets the canonical path.
+    async fn task_worktree(
         &self,
         task: &Task,
         repo: &Repository,
         keep: Option<PathBuf>,
-        seat: &AuthorSeat,
     ) -> Result<PathBuf> {
         let worktree = match keep {
             Some(existing) if existing.is_dir() => existing,
-            _ => {
-                let name = match seat.sibling_tail() {
-                    None => format!("{}-eng", tail(&task.id)),
-                    Some(sibling) => format!("{}-eng-{sibling}", tail(&task.id)),
-                };
-                self.cfg.worktree_root.join(tail(&task.goal_id)).join(name)
-            }
+            _ => self
+                .cfg
+                .worktree_root
+                .join(tail(&task.goal_id))
+                .join(format!("{}-eng", tail(&task.id))),
         };
         if !worktree.exists() {
-            let base_branch = self.store.task_landing_branch(task, repo).await?;
             std::fs::create_dir_all(worktree.parent().unwrap())?;
             self.git
                 .add_worktree(
                     &PathBuf::from(&repo.path),
                     &worktree,
-                    &seat.branch,
-                    &base_branch,
+                    &task.branch,
+                    &repo.base_branch,
                 )
                 .await?;
         }
-        if seat.lone {
-            self.store
-                .set_task_worktree(&task.id, Some(&worktree.display().to_string()))
-                .await?;
-        }
-        // There is a tree to commit in now: follow what the branch does.
-        match seat.sibling_tail() {
-            None => self.branches.watch(task, Path::new(&repo.path)),
-            Some(_) => self.branches.watch_author(
-                task,
-                &seat.author.id,
-                &seat.branch,
-                Path::new(&repo.path),
-            ),
-        }
-        Ok(worktree)
-    }
-
-    /// The reviewer's detached worktree, pinned at the branch tip: created on
-    /// the first round, re-pointed at the tip on every later one — the same
-    /// worktree serves the whole review, as the same session does.
-    ///
-    /// The tip has to be a commit. In a repository that had none when the task
-    /// started, the task branch is unborn until the author commits, and there
-    /// is nothing for a reviewer to be pinned at.
-    ///
-    /// `branch` is the branch under review — the task's own where the caller
-    /// names none, and one author's of several where it does. One worktree
-    /// serves the reviewer either way, re-pointed at whichever review it is
-    /// briefed on.
-    async fn reviewer_worktree(
-        &self,
-        task: &Task,
-        agent_id: &str,
-        branch: Option<&str>,
-    ) -> Result<PathBuf> {
-        let branch = branch.unwrap_or(&task.branch);
-        let repo_path = {
-            let repo = self.store.get_repository(&task.repo_id).await?;
-            PathBuf::from(repo.path)
-        };
-        if let Err(error) = self.git.ensure_branch_has_commits(&repo_path, branch).await {
-            if error.downcast_ref::<BranchHasNoCommits>().is_some() {
-                return Err(error.context(format!("task {} has nothing to review yet", task.id)));
-            }
-            return Err(error);
-        }
-        let worktree = self
-            .cfg
-            .worktree_root
-            .join(tail(&task.goal_id))
-            .join(format!("{}-rev-{}", tail(&task.id), tail(agent_id)));
-        if worktree.exists() {
-            // New round: refresh to the current branch tip.
-            self.git.checkout_detached(&worktree, branch).await?;
-        } else {
-            std::fs::create_dir_all(worktree.parent().unwrap())?;
-            self.git
-                .add_detached_worktree(&repo_path, &worktree, branch)
-                .await?;
-        }
-        Ok(worktree)
-    }
-
-    /// Spawn one reviewer for a task (detached worktree at the branch tip).
-    ///
-    /// The session is not tied to the round it starts in: later rounds resume
-    /// this very session (see [`Launcher::resume_reviewer`]), so its name says
-    /// which reviewer of which task it is and nothing about when it began.
-    pub async fn spawn_reviewer(&self, task_id: &str, agent_id: &str) -> Result<AgentSession> {
-        self.spawn_reviewer_for(task_id, agent_id, None).await
-    }
-
-    /// The same, started for one named author's review: its worktree pins at
-    /// that author's branch, and its briefing carries that author's summary.
-    /// `None` reads the task's own branch and summary, which is the whole of
-    /// a one-author task.
-    pub async fn spawn_reviewer_for(
-        &self,
-        task_id: &str,
-        agent_id: &str,
-        author: Option<&str>,
-    ) -> Result<AgentSession> {
-        let task = self.store.get_task(task_id).await?;
-        let goal = self.store.get_goal(&task.goal_id).await?;
-        let repo = self.store.get_repository(&task.repo_id).await?;
-        // The agent has to be one this task staffs as a reviewer: that is both
-        // the proof it reviews the task at all, and where its pin comes from.
-        let reviewer = self
-            .store
-            .list_task_reviewers(task_id)
-            .await?
-            .into_iter()
-            .find(|r| r.id == agent_id)
-            .ok_or_else(|| anyhow!("agent {agent_id} is not a reviewer of task {task_id}"))?;
-        self.assert_no_live_session(&goal.id, Some(task_id), Seat::Reviewer, Some(&reviewer.id))
-            .await?;
-
-        let branch = self.review_branch(&task, author).await?;
-        let worktree = self
-            .reviewer_worktree(&task, &reviewer.id, branch.as_deref())
-            .await?;
-        let session = self
-            .store
-            .create_session(NewSession {
-                goal_id: Some(goal.id.clone()),
-                task_id: Some(task.id.clone()),
-                seat: Some(Seat::Reviewer),
-                task_agent_id: Some(reviewer.id.clone()),
-                model: reviewer.model.clone(),
-                effort: reviewer.effort.clone(),
-                worktree_path: Some(worktree.display().to_string()),
-                pull_request_id: None,
-            })
-            .await?;
-        self.acp.set_task_branch(
-            &session.id,
-            Some(branch.clone().unwrap_or_else(|| task.branch.clone())),
-        );
-
-        let summary = match author {
-            Some(author_id) => Some(verdict_addressed_to(
-                author_id,
-                self.store
-                    .author_review_summary(task_id, author_id)
-                    .await?
-                    .as_deref(),
-            )),
-            None => self.store.review_summary(&task.id).await?,
-        };
-        let seen = match branch {
-            Some(branch) => Task {
-                branch,
-                ..task.clone()
-            },
-            None => task.clone(),
-        };
-        let template = prompts::template_for(PromptKind::ReviewerBriefing);
-        let briefing = prompts::reviewer_briefing(
-            template,
-            &seen,
-            &goal,
-            &repo,
-            &self.store.task_landing_branch(&seen, &repo).await?,
-            summary.as_deref(),
-        );
-        self.spawn(&session, worktree, briefing).await?;
         self.store
-            .get_session(&session.id)
-            .await
-            .map_err(Into::into)
-    }
-
-    /// Move a reviewer's detached worktree to the branch of the review it is
-    /// about to be briefed on, while its session stays up.
-    ///
-    /// The resume paths re-point the worktree by relaunching the session;
-    /// this is the same re-point for an agent that survived the last review —
-    /// a contested task hands a live reviewer the next author's review, and
-    /// the tree it verifies in has to be on that author's branch before the
-    /// briefing that names it lands. The reviewer is detached and read-only,
-    /// so between reviews there is nothing of its own in the tree to lose.
-    pub(crate) async fn refresh_reviewer_worktree(
-        &self,
-        task_id: &str,
-        agent_id: &str,
-        author: Option<&str>,
-    ) -> Result<PathBuf> {
-        let task = self.store.get_task(task_id).await?;
-        let branch = self.review_branch(&task, author).await?;
-        self.reviewer_worktree(&task, agent_id, branch.as_deref())
-            .await
-    }
-
-    /// The branch one review is about: the named author's own, or `None` for
-    /// the task's — a one-author task, or a caller that did not say.
-    pub(crate) async fn review_branch(
-        &self,
-        task: &Task,
-        author: Option<&str>,
-    ) -> Result<Option<String>> {
-        let Some(author_id) = author else {
-            return Ok(None);
-        };
-        let agent = self.store.get_task_agent(author_id).await?;
-        Ok(Some(author_branch(&task.branch, agent.ordinal)))
-    }
-
-    /// Resume a reviewer's previous agent session for the task's current
-    /// round, relaunching the very same session — row and id — so
-    /// a reviewer that sees a task through several rounds remembers what it
-    /// asked for last time instead of reading the change afresh every round
-    /// (spawn afresh if there is nothing to resume).
-    ///
-    /// The reviewer's worktree is re-pointed at the branch tip before the
-    /// agent starts, so the tree it wakes up in is the one it is asked about;
-    /// the row's `review_round` moves to the round being reviewed now.
-    pub async fn resume_reviewer(
-        &self,
-        task_id: &str,
-        agent_id: &str,
-        instruction: &str,
-    ) -> Result<AgentSession> {
-        self.resume_reviewer_for(task_id, agent_id, None, instruction)
-            .await
-    }
-
-    /// The same, resumed for one named author's review: the worktree is
-    /// re-pointed at that author's branch rather than the task's.
-    pub(crate) async fn resume_reviewer_for(
-        &self,
-        task_id: &str,
-        agent_id: &str,
-        author: Option<&str>,
-        instruction: &str,
-    ) -> Result<AgentSession> {
-        let task = self.store.get_task(task_id).await?;
-        let reviewer = self.store.get_task_agent(agent_id).await?;
-
-        let Some((previous, internal)) = self
-            .resumable_session(&task.id, Seat::Reviewer, Some(&reviewer.id))
-            .await?
-        else {
-            return self.spawn_reviewer_for(task_id, agent_id, author).await;
-        };
-
-        let branch = self.review_branch(&task, author).await?;
-        let worktree = self
-            .reviewer_worktree(&task, &reviewer.id, branch.as_deref())
+            .set_task_worktree(&task.id, Some(&worktree.display().to_string()))
             .await?;
-        // An agent still up under the row is taken down by the launch that
-        // replaces it: one session, one agent.
-        let session = self
-            .store
-            .restart_session(&previous.id, Some(&worktree.display().to_string()))
-            .await?;
-        self.acp
-            .set_task_branch(&session.id, Some(branch.unwrap_or(task.branch)));
-
-        self.launch_resumed(&session, worktree, &internal, instruction)
-            .await
-    }
-
-    /// Resume the author's previous agent session with a new instruction,
-    /// relaunching the very same session — row and id — so a task
-    /// bounced through several review rounds keeps one author session rather
-    /// than one per round (spawn afresh if there is nothing to resume). On a
-    /// task staffed with several authors this is the picked winner where the
-    /// pick has settled, and the first author otherwise —
-    /// [`Self::resume_author_agent`] is how a named one of several comes back.
-    pub async fn resume_author(&self, task_id: &str, instruction: &str) -> Result<AgentSession> {
-        let task = self.store.get_task(task_id).await?;
-        let author = match &task.picked_agent_id {
-            Some(picked) => self.store.get_task_agent(picked).await?,
-            None => self.store.task_author(task_id).await?,
-        };
-        self.resume_author_agent(task_id, &author.id, instruction)
-            .await
-    }
-
-    /// Resume one author of a task, by the staffed agent it runs.
-    pub(crate) async fn resume_author_agent(
-        &self,
-        task_id: &str,
-        agent_id: &str,
-        instruction: &str,
-    ) -> Result<AgentSession> {
-        let task = self.store.get_task(task_id).await?;
-        let seat = self.author_seat(&task, agent_id).await?;
-        // A one-author task resumes whatever author session it last had, as
-        // it always did — a session staffed before a re-staff included. One
-        // of several is its own conversation, so only its own comes back.
-        let of_agent = seat.sibling_tail().map(|_| agent_id);
-        let Some((previous, internal)) = self
-            .resumable_session(&task.id, Seat::Author, of_agent)
-            .await?
-        else {
-            return self
-                .spawn_author_agent_told(task_id, agent_id, instruction)
-                .await;
-        };
-        // The tree it was working in, from the task or from the session's own
-        // row, and a new one in its place where it is no longer on disk. The
-        // task's own column is the lone author's (or the picked winner's), so
-        // one of several trusts its session row alone.
-        let keep = match seat.sibling_tail() {
-            None => task
-                .worktree_path
-                .clone()
-                .or_else(|| previous.worktree_path.clone()),
-            Some(_) => match task.picked_agent_id.as_deref() == Some(agent_id) {
-                true => task
-                    .worktree_path
-                    .clone()
-                    .or_else(|| previous.worktree_path.clone()),
-                false => previous.worktree_path.clone(),
-            },
-        }
-        .map(PathBuf::from);
-        let repo = self.store.get_repository(&task.repo_id).await?;
-        let worktree = self.author_worktree(&task, &repo, keep, &seat).await?;
-        // Same conversation, same session: the row goes back to `starting` and
-        // is launched again, and an agent still up under it is taken down by
-        // that launch. Its events carry on in the one record, so the console
-        // reads as the one continuous transcript the agent actually produced.
-        let session = self
-            .store
-            .restart_session(&previous.id, Some(&worktree.display().to_string()))
-            .await?;
-
-        self.launch_resumed(&session, worktree, &internal, instruction)
-            .await
+        // There is a tree to commit in now: follow what the branch does.
+        self.branches.watch(task, Path::new(&repo.path));
+        Ok(worktree)
     }
 
     /// Revive an ended session in a fresh agent process, continuing the same
@@ -1232,6 +863,31 @@ impl Launcher {
             // Already alive — attaching needs nothing from us.
             return Ok(previous);
         }
+        self.resume_in_place(previous, instruction).await
+    }
+
+    /// Relaunch a session's agent in place, alive or not: a fresh agent
+    /// process on the same row and the same conversation, told
+    /// `instruction` as its first turn. The process it replaces goes with
+    /// the launch, and the session itself does not end — a relaunch is not
+    /// an end (008), so a console open over it stays open.
+    pub async fn relaunch_session(
+        &self,
+        session_id: &str,
+        instruction: &str,
+    ) -> Result<AgentSession> {
+        let previous = self.store.get_session(session_id).await?;
+        self.resume_in_place(previous, Some(instruction)).await
+    }
+
+    /// The tail [`Self::revive_session`] and [`Self::relaunch_session`]
+    /// share: the conversation to go back to, the directory to go back to it
+    /// in, and the launch on the same row.
+    async fn resume_in_place(
+        &self,
+        previous: AgentSession,
+        instruction: Option<&str>,
+    ) -> Result<AgentSession> {
         let internal = previous
             .internal_session_id
             .as_deref()
@@ -1301,54 +957,6 @@ impl Launcher {
         }
     }
 
-    /// What the author of a task is picked up with, whether its session
-    /// ended, went quiet or was switched: its profile's template for the
-    /// situation, rendered.
-    ///
-    /// Two situations, and the task's status tells them apart. An approved
-    /// task is one the author is landing, and what it is picked up with is
-    /// the landing briefing — the whole procedure, which is what a session
-    /// that ended over it has to be given back. Anything earlier is work in
-    /// the worktree, and the resume nudge is what that wants.
-    pub(crate) async fn author_resume_text(&self, task: &Task) -> Result<String> {
-        // On a task the reviewers picked a winner for, the branch every
-        // briefing names is the winner's own: that is the change that lands.
-        let seen = match self
-            .review_branch(task, task.picked_agent_id.as_deref())
-            .await?
-        {
-            Some(branch) => Task {
-                branch,
-                ..task.clone()
-            },
-            None => task.clone(),
-        };
-        if task.status() == TaskStatus::Approved {
-            let repo = self.store.get_repository(&task.repo_id).await?;
-            // The procedure is the goal's: the user chose how every task of
-            // the goal ends when the goal was created, and it is the whole of
-            // what decides which procedure the author runs. The final task of
-            // a feature branch goal takes the goal branch onto the base. A
-            // task whose request is open already opened it: its author keeps
-            // it until a human merges it (005), and is picked up with that.
-            let template = if task.pr_url.is_some() {
-                ariadne_store::defaults::keep_request_prompt()
-            } else if self.store.works_on_goal_branch(task).await? {
-                ariadne_store::defaults::final_landing_prompt()
-            } else {
-                task.landing_prompt_text()
-            };
-            return Ok(prompts::landing_briefing(
-                template,
-                &seen,
-                &repo,
-                &self.store.task_landing_branch(&seen, &repo).await?,
-            ));
-        }
-        let template = prompts::template_for(PromptKind::AuthorResume);
-        Ok(prompts::author_resume_briefing(template, &seen))
-    }
-
     /// Switch a session onto another pin. Keep its conversation when the
     /// registry agent stays the same.
     ///
@@ -1416,15 +1024,7 @@ impl Launcher {
             )
             .await;
             let session = self.store.set_session_pin(&old.id, &pin).await?;
-            match (old.seat(), &old.task_agent_id, &old.goal_id) {
-                (Some(Seat::Orchestrator), _, Some(goal_id)) => {
-                    self.store.set_goal_pin(goal_id, &pin).await?;
-                }
-                (Some(Seat::Author | Seat::Reviewer), Some(agent_id), _) => {
-                    self.store.set_agent_pin(agent_id, &pin).await?;
-                }
-                _ => {}
-            }
+            self.move_seat_pin(&old, &pin).await?;
             self.store
                 .create_event(NewAgentEvent {
                     session_id: Some(old.id.clone()),
@@ -1441,9 +1041,6 @@ impl Launcher {
                 .await?;
             return Ok(session);
         }
-        // Read before the kill: the branch a reviewer's caller set is what
-        // tells which review it owes on a task with several authors.
-        let review_branch = self.acp.task_branch(&old.id);
         self.acp.kill_and_wait(&old.id).await;
         // The old agent is gone, so a live agent on the seat now is another
         // session's: the seat is taken, and this switch starts nothing.
@@ -1461,8 +1058,8 @@ impl Launcher {
             None => self.loose_switch(&old)?,
             Some(Seat::Orchestrator) => self.orchestrator_switch(&old).await?,
             Some(_) if old.pull_request_id.is_some() => self.pull_request_switch(&old).await?,
-            Some(Seat::Author) => self.author_switch(&old).await?,
-            Some(Seat::Reviewer) => self.reviewer_switch(&old, review_branch).await?,
+            Some(Seat::Agent) => self.agent_switch(&old).await?,
+            Some(Seat::Reviewer) => anyhow::bail!("a review session works for a request"),
         };
         let events = self.store.list_session_events(&old.id).await?;
         let handoff = handoff_text(&events, HANDOFF_BUDGET);
@@ -1522,15 +1119,7 @@ impl Launcher {
             .set_session_status(&old.id, SessionStatus::Exited)
             .await?;
         crate::stats::record_session_end(&self.store, &old.id).await;
-        match (old.seat(), &old.task_agent_id, &old.goal_id) {
-            (Some(Seat::Orchestrator), _, Some(goal_id)) => {
-                self.store.set_goal_pin(goal_id, &pin).await?;
-            }
-            (Some(Seat::Author | Seat::Reviewer), Some(agent_id), _) => {
-                self.store.set_agent_pin(agent_id, &pin).await?;
-            }
-            _ => {}
-        }
+        self.move_seat_pin(&old, &pin).await?;
 
         if session.seat.is_none() {
             if let Some(title) = &old.title {
@@ -1550,9 +1139,6 @@ impl Launcher {
             // row it replaced is the one superseded.
             self.store.clear_session_attention(&old.id).await?;
         } else {
-            if old.seat() == Some(Seat::Reviewer) {
-                self.acp.set_task_branch(&session.id, plan.task_branch);
-            }
             // A pull request session goes by its request's title (026).
             if session.pull_request_id.is_some()
                 && let Some(title) = &old.title
@@ -1569,6 +1155,23 @@ impl Launcher {
             .map_err(Into::into)
     }
 
+    /// Move the pin of the seat a switched session sits on, so a later spawn
+    /// or resume of the seat runs on the new one: the goal's for an
+    /// orchestrator, the staffed agent's for a column's agent. A loose
+    /// session and a review session have no seat pin to move.
+    async fn move_seat_pin(&self, old: &AgentSession, pin: &AgentPin) -> Result<()> {
+        match (old.seat(), &old.task_agent_id, &old.goal_id) {
+            (Some(Seat::Orchestrator), _, Some(goal_id)) => {
+                self.store.set_goal_pin(goal_id, pin).await?;
+            }
+            (Some(Seat::Agent), Some(agent_id), _) => {
+                self.store.set_agent_pin(agent_id, pin).await?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     /// Where a switched loose session goes on: the directory it ran in.
     fn loose_switch(&self, old: &AgentSession) -> Result<SwitchPlan> {
         let cwd = old
@@ -1582,7 +1185,6 @@ impl Launcher {
             cwd,
             briefing: None,
             resume: None,
-            task_branch: None,
         })
     }
 
@@ -1593,8 +1195,7 @@ impl Launcher {
         let goal = self.store.get_goal(goal_id).await?;
         let repos = self.store.list_goal_repositories(goal_id).await?;
         let repo = repos.first().context("goal has no repos")?;
-        let template = prompts::template_for(PromptKind::OrchestratorBriefing);
-        let briefing = prompts::orchestrator_briefing(template, &goal, &repos);
+        let briefing = self.orchestrator_briefing(&goal, &repos).await?;
         let template = prompts::template_for(PromptKind::OrchestratorResume);
         let resume = prompts::orchestrator_resume_briefing(template, &goal);
         Ok(SwitchPlan {
@@ -1602,114 +1203,43 @@ impl Launcher {
             cwd: PathBuf::from(&repo.path),
             briefing: Some(briefing),
             resume: Some(resume),
-            task_branch: None,
         })
     }
 
-    /// The author's switch: the worktree it worked in, its task's briefing,
-    /// and what a resume of it would say.
-    async fn author_switch(&self, old: &AgentSession) -> Result<SwitchPlan> {
-        let task_id = old.task_id.as_deref().context("session has no task")?;
-        let agent_id = old
-            .task_agent_id
-            .as_deref()
-            .context("session has no staffed agent")?;
-        let task = self.store.get_task(task_id).await?;
-        let goal = self.store.get_goal(&task.goal_id).await?;
-        let repo = self.store.get_repository(&task.repo_id).await?;
-        let seat = self.author_seat(&task, agent_id).await?;
-        let keep = old.worktree_path.as_deref().map(PathBuf::from);
-        let worktree = self.author_worktree(&task, &repo, keep, &seat).await?;
-        let task = self.store.get_task(task_id).await?;
-        let mut deps = Vec::new();
-        for dep_id in self.store.list_task_dependencies(&task.id).await? {
-            deps.push(self.store.get_task(&dep_id).await?);
-        }
-        let template = prompts::template_for(PromptKind::AuthorBriefing);
-        let seen = seat.task_as_seen(&task, Some(worktree.display().to_string()));
-        let briefing = prompts::author_briefing(
-            template,
-            &seen,
-            &goal,
-            &repo,
-            &self.store.task_landing_branch(&seen, &repo).await?,
-            &deps,
-        );
-        let resume = self.author_resume_text(&task).await?;
-        Ok(SwitchPlan {
-            worktree: Some(worktree.display().to_string()),
-            cwd: worktree,
-            briefing: Some(briefing),
-            resume: Some(resume),
-            task_branch: None,
-        })
-    }
-
-    /// The reviewer's switch: its worktree at the tip of the branch under
-    /// review, its briefing, and the briefing of the review it owes.
-    ///
-    /// `branch` is the branch the old session was reviewing. On a task with
-    /// several authors it names the author whose review is owed; anywhere
-    /// else the review is the task's own.
-    async fn reviewer_switch(
-        &self,
-        old: &AgentSession,
-        branch: Option<String>,
-    ) -> Result<SwitchPlan> {
-        let task_id = old.task_id.as_deref().context("session has no task")?;
-        let agent_id = old
-            .task_agent_id
-            .as_deref()
-            .context("session has no staffed agent")?;
-        let task = self.store.get_task(task_id).await?;
-        let goal = self.store.get_goal(&task.goal_id).await?;
-        let repo = self.store.get_repository(&task.repo_id).await?;
-        let authors = self.store.list_task_authors(task_id).await?;
-        let author = match authors.len() {
-            0 | 1 => None,
-            _ => authors
-                .iter()
-                .find(|a| Some(author_branch(&task.branch, a.ordinal)) == branch)
-                .map(|a| a.id.clone()),
-        };
-        let branch = self.review_branch(&task, author.as_deref()).await?;
-        let worktree = self
-            .reviewer_worktree(&task, agent_id, branch.as_deref())
+    /// A column agent's switch: the task's one worktree, and its column's
+    /// first briefing. The scheduler's next pass hands it the column entry
+    /// where the task is in its column.
+    async fn agent_switch(&self, old: &AgentSession) -> Result<SwitchPlan> {
+        let task = self
+            .store
+            .get_task(old.task_id.as_deref().context("agent has no task")?)
             .await?;
-        let summary = match &author {
-            Some(author_id) => Some(verdict_addressed_to(
-                author_id,
-                self.store
-                    .author_review_summary(task_id, author_id)
-                    .await?
-                    .as_deref(),
-            )),
-            None => self.store.review_summary(&task.id).await?,
-        };
-        let seen = match &branch {
-            Some(branch) => Task {
-                branch: branch.clone(),
-                ..task.clone()
-            },
-            None => task.clone(),
-        };
-        let template = prompts::template_for(PromptKind::ReviewerBriefing);
-        let briefing = prompts::reviewer_briefing(
-            template,
-            &seen,
-            &goal,
-            &repo,
-            &self.store.task_landing_branch(&seen, &repo).await?,
-            summary.as_deref(),
-        );
-        let template = prompts::template_for(PromptKind::ReviewerResume);
-        let resume = prompts::reviewer_resume_briefing(template, &seen, summary.as_deref());
+        let agent_id = old
+            .task_agent_id
+            .as_deref()
+            .context("session has no staffed agent")?;
+        let agent = self.store.get_task_agent(agent_id).await?;
+        let steps = self.store.goal_steps(&task.goal_id).await?;
+        let step = steps
+            .iter()
+            .find(|s| s.id == agent.step)
+            .context("the agent's column is not one of the task's")?;
+        let repo = self.store.get_repository(&task.repo_id).await?;
+        let worktree = self
+            .task_worktree(
+                &task,
+                &repo,
+                task.worktree_path
+                    .clone()
+                    .or_else(|| old.worktree_path.clone())
+                    .map(PathBuf::from),
+            )
+            .await?;
         Ok(SwitchPlan {
             worktree: Some(worktree.display().to_string()),
             cwd: worktree,
-            briefing: Some(briefing),
-            resume: Some(resume),
-            task_branch: Some(branch.unwrap_or(task.branch)),
+            briefing: Some(self.step_first_briefing(&task, step, "").await?),
+            resume: None,
         })
     }
 
@@ -1756,29 +1286,6 @@ impl Launcher {
                     continue;
                 }
             };
-            // A task staffed with several authors keeps its worktrees on the
-            // sessions rather than on the task, so each author whose session
-            // holds one is followed on its own branch.
-            let authors = self.store.list_task_authors(&task.id).await?;
-            if authors.len() > 1 && !task.status().is_terminal() {
-                let with_worktrees: std::collections::HashSet<String> = self
-                    .store
-                    .list_sessions(SessionFilter {
-                        task_id: Some(task.id.clone()),
-                        ..Default::default()
-                    })
-                    .await?
-                    .into_iter()
-                    .filter(|s| s.worktree_path.is_some())
-                    .filter_map(|s| s.task_agent_id)
-                    .collect();
-                for author in authors.iter().filter(|a| with_worktrees.contains(&a.id)) {
-                    let branch = author_branch(&task.branch, author.ordinal);
-                    self.branches
-                        .watch_author(&task, &author.id, &branch, Path::new(&repo.path));
-                }
-                continue;
-            }
             if worth_following(&task) {
                 self.branches.watch(&task, Path::new(&repo.path));
             }
@@ -1790,9 +1297,9 @@ impl Launcher {
     /// worktrees, optionally delete the branch. Idempotent: safe to call
     /// repeatedly on the same task.
     ///
-    /// `remove_worktrees = false` keeps the worktrees on disk (and therefore
-    /// also the branch — the author worktree has it checked out, which pins
-    /// it) so finished or cancelled work can be inspected later.
+    /// `remove_worktrees = false` keeps the worktree on disk (and therefore
+    /// also the branch — the worktree has it checked out, which pins it) so
+    /// finished or cancelled work can be inspected later.
     pub async fn cleanup_task(
         &self,
         task_id: &str,
@@ -1866,94 +1373,18 @@ impl Launcher {
             self.store.set_task_worktree(&task.id, None).await?;
         }
         self.git.prune_worktrees(&repo_path).await.ok();
-        if delete_branch && task.status() == TaskStatus::Finished {
-            // Every author's branch, not only the task's own: the losers of
-            // a several-author task went with the pick, but a crash between
-            // the pick and this cleanup leaves theirs for here.
-            let mut branches = vec![task.branch.clone()];
-            for author in self.store.list_task_authors(&task.id).await? {
-                branches.push(author_branch(&task.branch, author.ordinal));
-            }
-            branches.dedup();
-            // Neither the branch a task lands on nor the goal branch is the
-            // task's own: a failed final task leaves the goal branch whole.
-            let base_branch = self.store.task_landing_branch(&task, &repo).await?;
-            let goal_branch = self
-                .store
-                .get_goal_repository(&task.goal_id, &task.repo_id)
-                .await?
-                .goal_branch;
-            for branch in branches {
-                if branch == base_branch || goal_branch.as_ref() == Some(&branch) {
-                    continue;
-                }
-                if self
-                    .git
-                    .branch_exists(&repo_path, &branch)
-                    .await
-                    .unwrap_or(false)
-                {
-                    self.git.delete_branch(&repo_path, &branch).await.ok();
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Take down the authors the pick passed over: their sessions, their
-    /// worktrees and their branches, leaving the winner's untouched.
-    ///
-    /// Unconditional, unlike the merged-work cleanup behind the config flags:
-    /// a losing branch is one the reviewers judged and set aside, and the
-    /// task is still running — nothing later comes back for it. Idempotent,
-    /// so a pass that crashed halfway just runs again.
-    pub(crate) async fn cleanup_losing_authors(&self, task_id: &str) -> Result<()> {
-        let task = self.store.get_task(task_id).await?;
-        let Some(winner) = task.picked_agent_id.clone() else {
-            return Ok(());
-        };
-        let repo = self.store.get_repository(&task.repo_id).await?;
-        let repo_path = PathBuf::from(&repo.path);
-        let sessions = self
-            .store
-            .list_sessions(SessionFilter {
-                task_id: Some(task.id.clone()),
-                ..Default::default()
-            })
-            .await?;
-        for author in self.store.list_task_authors(&task.id).await? {
-            if author.id == winner {
-                continue;
-            }
-            self.branches.unwatch_author(&task.id, &author.id);
-            for session in sessions
-                .iter()
-                .filter(|s| s.task_agent_id.as_deref() == Some(author.id.as_str()))
-            {
-                if session.status().is_live() {
-                    tracing::info!(task = %task.id, session = %session.id, "the pick passed this author over, killing its session");
-                    self.kill_session(&session.id).await.ok();
-                }
-                if let Some(wt) = &session.worktree_path {
-                    let wt = PathBuf::from(wt);
-                    if wt.exists() {
-                        tracing::info!(task = %task.id, worktree = %wt.display(), "removing a losing author's worktree");
-                        self.git.remove_worktree(&repo_path, &wt).await.ok();
-                    }
-                }
-            }
-            let branch = author_branch(&task.branch, author.ordinal);
-            if self
+        // The base branch is never the task's own to delete.
+        if delete_branch
+            && task.status() == TaskStatus::Finished
+            && task.branch != repo.base_branch
+            && self
                 .git
-                .branch_exists(&repo_path, &branch)
+                .branch_exists(&repo_path, &task.branch)
                 .await
                 .unwrap_or(false)
-            {
-                tracing::info!(task = %task.id, branch = %branch, "deleting a losing author's branch");
-                self.git.delete_branch(&repo_path, &branch).await.ok();
-            }
+        {
+            self.git.delete_branch(&repo_path, &task.branch).await.ok();
         }
-        self.git.prune_worktrees(&repo_path).await.ok();
         Ok(())
     }
 }
@@ -1961,7 +1392,7 @@ impl Launcher {
 /// A review session: its worktree detached at the request's head, its row,
 /// and its agent (029). The daemon staffs it on the repository's
 /// `review_model`; no goal, task or orchestrator is behind it. A request of
-/// the user's own has none: its task's author keeps it (005).
+/// the user's own has none: its task's `pr` column keeps it (030).
 impl Launcher {
     /// Where a request's worktree is cut: one per request, named by its id.
     fn pull_request_worktree_path(&self, pull_request_id: &str) -> PathBuf {
@@ -1974,11 +1405,11 @@ impl Launcher {
     }
 
     /// The worktree of a request the user reviews (029), detached at the
-    /// request's head as a task reviewer's is at its branch tip: created on
-    /// the first spawn, and moved to the head on every later call. A head the
-    /// checkout lacks is fetched into `FETCH_HEAD` alone, from the head
-    /// repository of a fork, else from the repository's own remote: the head
-    /// branch may share its name with a branch of the checkout.
+    /// request's head: created on the first spawn, and moved to the head on
+    /// every later call. A head the checkout lacks is fetched into
+    /// `FETCH_HEAD` alone, from the head repository of a fork, else from the
+    /// repository's own remote: the head branch may share its name with a
+    /// branch of the checkout.
     pub(crate) async fn review_worktree(
         &self,
         pull: &PullRequest,
@@ -2105,8 +1536,8 @@ impl Launcher {
             .map_err(Into::into)
     }
 
-    /// Put a request's session back on its feet, as an author's is (009
-    /// rule 23): the same row, on the conversation it left behind, in its
+    /// Put a request's session back on its feet, as a column's agent is
+    /// (009): the same row, on the conversation it left behind, in its
     /// worktree. A fresh session is spawned where there is nothing to resume,
     /// where the last launch died on arrival, or where the pin moved since
     /// the last session started: an agent's conversation keeps its model.
@@ -2173,49 +1604,6 @@ impl Launcher {
         )
     }
 
-    /// Take down what is left of a request a task opened, once it merged
-    /// or closed and its task is over: any session or worktree an earlier
-    /// release started on it, and, where the request merged a goal branch
-    /// onto its base, that goal branch, local and remote. The task's own
-    /// cleanup took its worktree and its branch, so no other branch is
-    /// touched. Idempotent: a pass that stopped halfway runs again.
-    pub(crate) async fn cleanup_kept_request(&self, pull: &PullRequest) -> Result<()> {
-        self.end_pull_request_sessions(&pull.id, &pull.repository_id)
-            .await?;
-        let goal_branch = pull.state == "merged"
-            && self
-                .store
-                .is_goal_branch(&pull.repository_id, &pull.head_branch)
-                .await?;
-        if !goal_branch {
-            return Ok(());
-        }
-        let repo = self.store.get_repository(&pull.repository_id).await?;
-        let repo_path = PathBuf::from(&repo.path);
-        let checked_out = self.git.current_branch(&repo_path).await.ok();
-        // A branch already gone is deleted. One that would not go fails the
-        // cleanup, so the scheduler tries it again.
-        if checked_out.as_deref() != Some(pull.head_branch.as_str())
-            && self
-                .git
-                .branch_exists(&repo_path, &pull.head_branch)
-                .await?
-        {
-            self.git
-                .delete_branch(&repo_path, &pull.head_branch)
-                .await?;
-        }
-        let remote = repo
-            .forge
-            .as_ref()
-            .map_or_else(|| "origin".to_string(), |forge| forge.remote.clone());
-        tracing::info!(pull_request = %pull.id, branch = %pull.head_branch, "the goal branch merged, deleting it on the remote");
-        self.git
-            .delete_remote_branch(&repo_path, &remote, &pull.head_branch)
-            .await?;
-        Ok(())
-    }
-
     /// Kill a request's sessions and remove its worktree, and touch no
     /// branch: what Ariadne takes down when it stops working on a request.
     pub(crate) async fn end_pull_request_sessions(
@@ -2267,7 +1655,6 @@ impl Launcher {
             cwd: worktree,
             briefing: Some(briefing),
             resume: None,
-            task_branch: None,
         })
     }
 }
@@ -2284,61 +1671,8 @@ struct SwitchPlan {
     cwd: PathBuf,
     briefing: Option<String>,
     resume: Option<String>,
-    /// The branch a reviewer reviews, which its permission keys name.
-    task_branch: Option<String>,
 }
 
-/// One author's place on a task: the agent row, the branch it owns, and
-/// whether it is the task's lone author.
-///
-/// The lone author is the shape everything always had — the task branch and
-/// the `-eng` worktree — so `sibling_tail()` is what
-/// every naming decision reads: `None` keeps a one-author task exactly as it
-/// was, and `Some` carries the tail that tells several authors apart.
-struct AuthorSeat {
-    author: TaskAgent,
-    /// The branch this author works on ([`author_branch`]).
-    branch: String,
-    lone: bool,
-}
-
-impl AuthorSeat {
-    /// What tells this author from its siblings, or `None` for a lone one.
-    fn sibling_tail(&self) -> Option<String> {
-        (!self.lone).then(|| tail(&self.author.id).to_string())
-    }
-
-    /// The task as this author sees it: its own branch and worktree in place
-    /// of the task's, so every briefing renders the seat it is for. A lone
-    /// author sees the task as it stands.
-    fn task_as_seen(&self, task: &Task, worktree: Option<String>) -> Task {
-        match self.lone {
-            true => task.clone(),
-            false => Task {
-                branch: self.branch.clone(),
-                worktree_path: worktree.or_else(|| task.worktree_path.clone()),
-                ..task.clone()
-            },
-        }
-    }
-}
-
-/// The summary one reviewer reads on a contested task, opened by the address
-/// its verdict takes: several reviews run side by side there, and a verdict
-/// that names no author is one the daemon refuses.
-pub(crate) fn verdict_addressed_to(author_id: &str, summary: Option<&str>) -> String {
-    format!(
-        "Give your verdict to author {author_id}.\n\n{}",
-        summary.unwrap_or("(none provided)")
-    )
-}
-
-/// Whether a task's branch is one to follow: there is a worktree to commit in,
-/// and a task still being worked on in it.
-///
-/// A failed task is not terminal — the user can retry it, and the spawn that
-/// revives it takes the watch up again — but until then nobody is committing
-/// on its branch, and nothing should be said about it.
 /// The most of a prompt a loose session's title keeps.
 const TITLE_CHARS: usize = 120;
 
@@ -2353,6 +1687,12 @@ pub(crate) fn loose_title(prompt: &str) -> Option<String> {
     Some(line.chars().take(TITLE_CHARS).collect())
 }
 
+/// Whether a task's branch is one to follow: there is a worktree to commit in,
+/// and a task still being worked on in it.
+///
+/// A failed task is not terminal — the user can retry it, and the spawn that
+/// revives it takes the watch up again — but until then nobody is committing
+/// on its branch, and nothing should be said about it.
 pub(crate) fn worth_following(task: &Task) -> bool {
     task.worktree_path.is_some()
         && !task.status().is_terminal()

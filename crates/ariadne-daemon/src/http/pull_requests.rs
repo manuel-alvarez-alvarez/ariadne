@@ -15,7 +15,7 @@ use ariadne_api::pull_requests::{
     PullRequestDto, PullRequestListQuery, PullRequestMatchDto, ReplyCommentRequest,
     ReportPullRequestRequest, SubmitReviewRequest,
 };
-use ariadne_core::{AttentionReason, Seat};
+use ariadne_core::AttentionReason;
 use ariadne_store::{
     AgentSession, ForgeIntegration, PullRequest, PullRequestComment, PullRequestFilter,
     PullRequestRow,
@@ -297,23 +297,25 @@ pub(super) async fn search(
 
 /// The session a call came from, refused unless it is the request's own: a
 /// request is answered for by the review session the daemon started on it
-/// (029), or, for a request a task opened, by that task's author, which
-/// keeps it (005).
+/// (029), or, for a request a task opened, by the agent of that task's
+/// current column, which keeps it (030).
 async fn own_session(
     state: &AppState,
     headers: &HeaderMap,
     row: &PullRequestRow,
 ) -> ApiResult<AgentSession> {
     let ctx = call_ctx(&state.store, headers).await?;
-    let keeps = |session: &AgentSession| {
-        row.role == "author"
-            && session.seat() == Some(Seat::Author)
-            && session.task_id.is_some()
-            && session.task_id == row.origin_task_id
-    };
+    if row.role == "author"
+        && let Some(task_id) = row.origin_task_id.as_deref()
+        && let Some(session) = ctx.session.as_ref()
+        && session.task_id.as_deref() == Some(task_id)
+    {
+        let task = state.store.get_task(task_id).await?;
+        super::steps::current_agent(state, &ctx, &task).await?;
+        return Ok(session.clone());
+    }
     match ctx.session {
         Some(session) if session.pull_request_id.as_deref() == Some(row.id.as_str()) => Ok(session),
-        Some(session) if keeps(&session) => Ok(session),
         Some(session) => Err(ApiError::forbidden(format!(
             "session {} does not watch pull request {}",
             session.id, row.id

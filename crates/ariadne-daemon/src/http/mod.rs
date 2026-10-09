@@ -4,6 +4,7 @@ pub use events::ingest_event;
 
 mod caller;
 mod catalog;
+mod channel;
 pub(crate) mod classify;
 mod console;
 pub(crate) mod convert;
@@ -13,7 +14,6 @@ pub(crate) mod events;
 mod forge;
 mod goals;
 mod issues;
-mod landing;
 mod logs;
 mod permissions;
 mod pins;
@@ -23,9 +23,11 @@ mod sessions;
 mod skills;
 mod sse;
 mod stats;
+mod steps;
 mod stream;
 mod tasks;
 mod terminal;
+mod workflows;
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -131,6 +133,8 @@ impl AppState {
         agents::list, agents::update, acp_agents::list, acp_agents::refresh,
         skills::create, skills::list, skills::get, skills::update, skills::delete,
         skills::reset_document,
+        workflows::create, workflows::list, workflows::get, workflows::update,
+        workflows::delete, workflows::reset, workflows::parse,
         repositories::create, repositories::list, repositories::get,
         repositories::update, repositories::delete,
         forge::get_tunnel, forge::set_tunnel,
@@ -147,9 +151,9 @@ impl AppState {
         goals::cancel, goals::complete, goals::finalize,
         tasks::create, tasks::list, tasks::get, tasks::update,
         tasks::transition, tasks::cancel, tasks::retry, tasks::list_transitions,
-        landing::list_task_messages, landing::post_task_message,
-        goals::list_goal_messages, goals::post_goal_message, landing::diff,
-        landing::open_pull_request, landing::pick_winner,
+        channel::list_task_messages, channel::post_task_message,
+        goals::list_goal_messages, goals::post_goal_message, channel::diff,
+        channel::open_pull_request, steps::complete, steps::fail,
         sessions::list, sessions::create, sessions::resume_outside,
         sessions::get, sessions::kill, sessions::resume, sessions::switch,
         console::snapshot, console::stream, console::input, console::cancel,
@@ -172,6 +176,7 @@ impl AppState {
         (name = "agents", description = "Per-agent launch configuration: the flags behind each registry command"),
         (name = "acp-agents", description = "The ACP agent registry: what's on PATH or configured, and what discovery found"),
         (name = "skills", description = "The documents an agent loads to do one kind of work"),
+        (name = "workflows", description = "The kanban of columns a task is staged through"),
         (name = "repositories", description = "Git repositories registered with the daemon"),
         (name = "permissions", description = "The AI permission model: the local model the `ai` permission mode answers with"),
         (name = "goals", description = "Goals and their plans"),
@@ -251,6 +256,19 @@ pub fn router(state: AppState) -> Router {
             "/v1/skills/{name}/document/reset",
             post(skills::reset_document),
         )
+        // workflows
+        .route(
+            "/v1/workflows",
+            post(workflows::create).get(workflows::list),
+        )
+        .route(
+            "/v1/workflows/{name}",
+            get(workflows::get)
+                .put(workflows::update)
+                .delete(workflows::delete),
+        )
+        .route("/v1/workflows/{name}/reset", post(workflows::reset))
+        .route("/v1/workflows/parse", post(workflows::parse))
         // repositories
         .route(
             "/v1/repositories",
@@ -304,13 +322,14 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/tasks/{id}/retry", post(tasks::retry))
         .route(
             "/v1/tasks/{id}/messages",
-            get(landing::list_task_messages).post(landing::post_task_message),
+            get(channel::list_task_messages).post(channel::post_task_message),
         )
-        .route("/v1/tasks/{id}/diff", get(landing::diff))
-        .route("/v1/tasks/{id}/pick", post(landing::pick_winner))
+        .route("/v1/tasks/{id}/diff", get(channel::diff))
+        .route("/v1/tasks/{id}/step/complete", post(steps::complete))
+        .route("/v1/tasks/{id}/step/fail", post(steps::fail))
         .route(
             "/v1/tasks/{id}/pull-request",
-            post(landing::open_pull_request),
+            post(channel::open_pull_request),
         )
         // sessions
         .route("/v1/sessions", get(sessions::list).post(sessions::create))

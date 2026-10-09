@@ -14,30 +14,24 @@ use ariadne_api::sessions::SessionDto;
 use ariadne_api::stream::{DeletedDto, DomainEvent};
 use ariadne_api::tasks::TaskDto;
 use ariadne_api::usage::TokenUsageDto;
-use ariadne_core::{
-    Actor, AttentionReason, GoalStatus, MessageKind, Seat, SessionStatus, TaskStatus,
-};
+use ariadne_core::{Actor, AttentionReason, GoalStatus, SessionStatus, TaskStatus};
 use ariadne_daemon::bus::{BusEvent, EventBus};
 use ariadne_daemon::http::{self, AppState};
 use ariadne_daemon::scheduler::{self, SchedEvent};
-use ariadne_store::{AgentSession, EventFilter, NewAgentEvent, Task};
+use ariadne_store::{AgentSession, EventFilter, NewAgentEvent};
 
-use common::{Harness, TIMEOUT, expect_sse, get, harness, next_event, next_sse_message, post_json};
+use common::{
+    Cast, Harness, TIMEOUT, expect_sse, get, harness, next_event, next_sse_message, post_json,
+};
 
-/// Hand a task to its author, which is the state a live author session is
-/// actually in.
+/// Hand a task to the agent of its first column, which is the state a live
+/// column agent's session is actually in.
 ///
 /// Attention belongs to an agent somebody is waiting on, and nobody is waiting
-/// on the author of a task that has not been started: the ingestion
-/// withholds the flag there, so the tests that assert on one start the work
-/// first.
-async fn hand_to_author(h: &Harness, task: &Task) {
-    for status in [TaskStatus::Ready, TaskStatus::InProgress] {
-        h.store
-            .transition_task(&task.id, status, Actor::Daemon, None, None)
-            .await
-            .unwrap();
-    }
+/// on the agent of a task that has not been started: the ingestion withholds
+/// the flag there, so the tests that assert on one start the work first.
+async fn hand_to_develop(h: &Harness, cast: &Cast) {
+    h.advance(&cast.task, TaskStatus::InProgress).await;
 }
 
 /// A permission request as the runtime reports it: the call the agent asks
@@ -64,21 +58,6 @@ async fn recorded(h: &Harness, session: &ariadne_store::AgentSession, kind: &str
         .unwrap()
         .iter()
         .filter(|e| e.kind == kind)
-        .count()
-}
-
-/// How many permission requests this session has reported.
-async fn permission_requests_recorded(h: &Harness, session_id: &str) -> usize {
-    h.store
-        .list_events(EventFilter {
-            session_id: Some(session_id.to_string()),
-            limit: 50,
-            ..Default::default()
-        })
-        .await
-        .unwrap()
-        .iter()
-        .filter(|e| e.kind == "permission_request")
         .count()
 }
 
@@ -385,9 +364,7 @@ async fn launcher_session_writes_emit_session_events() {
     let cast = h.active_cast().await;
     let mut rx = h.bus.subscribe();
 
-    let session = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    let session = h.agent_session(&cast, "develop").await;
 
     let event = next_event(&mut rx, |e| e.event.kind() == "session_created").await;
     assert_eq!(event.goal_id.as_deref(), Some(cast.goal.id.as_str()));
@@ -418,10 +395,8 @@ async fn launcher_session_writes_emit_session_events() {
 async fn an_event_from_a_launch_the_session_has_moved_past_changes_nothing() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    hand_to_author(&h, &cast.task).await;
-    let session = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    hand_to_develop(&h, &cast).await;
+    let session = h.agent_session(&cast, "develop").await;
     h.store
         .set_session_launch(&session.id, "01launchtwoxxxxxxxxxxxxxxx")
         .await
@@ -480,10 +455,8 @@ async fn an_event_from_a_launch_the_session_has_moved_past_changes_nothing() {
 async fn a_session_put_back_to_starting_has_moved_past_its_last_launch() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    hand_to_author(&h, &cast.task).await;
-    let session = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    hand_to_develop(&h, &cast).await;
+    let session = h.agent_session(&cast, "develop").await;
     h.store
         .set_session_launch(&session.id, "01launchonexxxxxxxxxxxxxxx")
         .await
@@ -514,9 +487,7 @@ async fn a_session_put_back_to_starting_has_moved_past_its_last_launch() {
 async fn an_events_status_is_the_last_thing_it_moves() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    let session = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    let session = h.agent_session(&cast, "develop").await;
     h.set_status(&session, SessionStatus::Running).await;
     assert_eq!(
         h.store
@@ -561,9 +532,7 @@ async fn an_events_summary_reaches_the_snapshot_and_the_stream_alike() {
     // reaches the daemon's async relay before the SSE stream subscribes —
     // otherwise it can still be in flight once the stream opens.
     let mut sync = h.bus.subscribe();
-    let session = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    let session = h.agent_session(&cast, "develop").await;
     next_event(
         &mut sync,
         |e| matches!(&e.event, DomainEvent::SessionCreated(s) if s.id == session.id),
@@ -610,9 +579,7 @@ fn tool_call_payload() -> serde_json::Value {
 async fn a_session_to_report_on(h: &Harness) -> AgentSession {
     let cast = h.active_cast().await;
     let mut sync = h.bus.subscribe();
-    let session = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    let session = h.agent_session(&cast, "develop").await;
     next_event(
         &mut sync,
         |e| matches!(&e.event, DomainEvent::SessionCreated(s) if s.id == session.id),
@@ -777,9 +744,7 @@ async fn a_before_page_walks_back_from_the_newest_page() {
 async fn a_goals_events_are_what_its_sessions_and_its_tasks_reported() {
     let h = harness().await;
     let cast = h.cast().await;
-    let session = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    let session = h.agent_session(&cast, "develop").await;
 
     let by_session = record(&h, Some(&session.id), None).await;
     let by_task = record(&h, None, Some(&cast.task.id)).await;
@@ -800,10 +765,8 @@ async fn a_goals_events_are_what_its_sessions_and_its_tasks_reported() {
 async fn ingested_events_raise_and_clear_session_attention() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    hand_to_author(&h, &cast.task).await;
-    let session = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    hand_to_develop(&h, &cast).await;
+    let session = h.agent_session(&cast, "develop").await;
     let mut rx = h.bus.subscribe();
 
     // A failed turn: attention is raised, the lifecycle status is untouched.
@@ -879,13 +842,11 @@ async fn ingested_events_raise_and_clear_session_attention() {
 async fn an_idle_report_clears_the_stall_and_the_error_and_nothing_else() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    hand_to_author(&h, &cast.task).await;
+    hand_to_develop(&h, &cast).await;
     let stalled = async || h.store.get_task(&cast.task.id).await.unwrap().is_stalled();
-    let session = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    let session = h.agent_session(&cast, "develop").await;
 
-    // A stalled author that answers its nudge: the `stop` ending the turn is
+    // A stalled agent that answers its nudge: the `stop` ending the turn is
     // the agent reporting, which is the one thing the flag denied.
     h.raise(&session, AttentionReason::Stalled).await;
     assert!(stalled().await, "the task says what its agent's flag says");
@@ -926,10 +887,8 @@ async fn an_idle_report_clears_the_stall_and_the_error_and_nothing_else() {
 async fn a_permission_request_flags_the_session_as_blocked() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    hand_to_author(&h, &cast.task).await;
-    let session = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    hand_to_develop(&h, &cast).await;
+    let session = h.agent_session(&cast, "develop").await;
 
     // Working, so the internal id is already known and the flag is down.
     h.ingest(
@@ -979,31 +938,18 @@ async fn a_permission_request_flags_the_session_as_blocked() {
 }
 
 /// Attention says a human must act, so it is only raised on an agent somebody
-/// is still waiting on. A reviewer that has cast its verdict is finished, and
-/// a dialog it puts up afterwards is nobody's to answer — the event is still
-/// recorded, and the status still follows it.
+/// is still waiting on. The agent of a column the task has moved past is
+/// finished with it until the task comes back, and a dialog it puts up
+/// meanwhile is nobody's to answer — the event is still recorded, and the
+/// status still follows it.
 #[tokio::test]
-async fn a_reviewer_that_already_voted_raises_no_attention() {
+async fn the_agent_of_a_column_the_task_has_left_raises_no_attention() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    hand_to_author(&h, &cast.task).await;
-    h.store
-        .transition_task(
-            &cast.task.id,
-            TaskStatus::UnderReview,
-            Actor::Author,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    // Entering review opens the round the verdict belongs to.
-    let task = h.store.get_task(&cast.task.id).await.unwrap();
-    let session = h
-        .session(&cast.goal, Some(&task), Seat::Reviewer, &cast.reviewer.id)
-        .await;
+    hand_to_develop(&h, &cast).await;
+    let session = h.agent_session(&cast, "develop").await;
 
-    // The round is still waiting on this reviewer: the prompt is raised.
+    // The task is in its column: the prompt is raised.
     h.ingest(&session, "permission_request", permission_request())
         .await;
     assert_eq!(
@@ -1018,16 +964,16 @@ async fn a_reviewer_that_already_voted_raises_no_attention() {
     )
     .await;
 
-    // ...and once the verdict is in, the same prompt raises nothing.
-    h.verdict_from(&task, &session, MessageKind::Approve, "looks right")
-        .await;
+    // ...and once the task has moved on to the next column, the same prompt
+    // raises nothing.
+    h.advance_to(&cast.task, "review").await;
     h.ingest(&session, "permission_request", permission_request())
         .await;
     let quiet = h.store.get_session(&session.id).await.unwrap();
     assert_eq!(
         quiet.attention_reason(),
         None,
-        "a reviewer that has voted is not an agent anybody is waiting on"
+        "the agent of a column the task has left is not an agent anybody is waiting on"
     );
     assert_eq!(
         quiet.status(),
@@ -1035,7 +981,7 @@ async fn a_reviewer_that_already_voted_raises_no_attention() {
         "withholding the flag changes nothing else about the ingestion"
     );
     assert_eq!(
-        permission_requests_recorded(&h, &session.id).await,
+        recorded(&h, &session, "permission_request").await,
         2,
         "the event itself is recorded either way"
     );
@@ -1098,33 +1044,25 @@ fn reports(source: &str, usage: TokenUsageDto) -> serde_json::Value {
 /// Everything an agent reports lands on its own session, rolls up to the task
 /// and to the goal, and every watcher of the three hears it: a report is the
 /// whole of one transcript, so a second one under the same source replaces it
-/// and only a second source adds.
+/// and only a second source adds. On the task and the goal, every agent is
+/// named by its column.
 #[tokio::test]
 async fn reported_usage_rolls_up_to_the_task_and_the_goal() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    let author = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
-    let reviewer = h
-        .session(
-            &cast.goal,
-            Some(&cast.task),
-            Seat::Reviewer,
-            &cast.reviewer.id,
-        )
-        .await;
+    let develop = h.agent_session(&cast, "develop").await;
+    let review = h.agent_session(&cast, "review").await;
     let orchestrator = h.orchestrator_session(&cast.goal).await;
     let mut rx = h.bus.subscribe();
 
-    h.ingest(&author, "stop", reports("/x.jsonl", tokens(100, 80, 10)))
+    h.ingest(&develop, "stop", reports("/x.jsonl", tokens(100, 80, 10)))
         .await;
 
     // The rollup rides in all three fat events, since all three are read with
     // it: a client holding a task would otherwise never hear its figures move.
     next_event(&mut rx, |e| {
         matches!(&e.event, DomainEvent::SessionUpdated(s)
-                 if s.id == author.id && s.usage == tokens(100, 80, 10))
+                 if s.id == develop.id && s.usage == tokens(100, 80, 10))
     })
     .await;
     next_event(&mut rx, |e| {
@@ -1140,18 +1078,18 @@ async fn reported_usage_rolls_up_to_the_task_and_the_goal() {
 
     // The same transcript, further along: the session stands at the second
     // figures, not at the sum of both.
-    h.ingest(&author, "stop", reports("/x.jsonl", tokens(150, 120, 30)))
+    h.ingest(&develop, "stop", reports("/x.jsonl", tokens(150, 120, 30)))
         .await;
-    let session: SessionDto = h.get(&format!("/v1/sessions/{}", author.id)).await;
+    let session: SessionDto = h.get(&format!("/v1/sessions/{}", develop.id)).await;
     assert_eq!(session.usage, tokens(150, 120, 30));
 
     // A resumed agent writes a transcript of its own, and that one adds.
-    h.ingest(&author, "stop", reports("/y.jsonl", tokens(10, 0, 5)))
+    h.ingest(&develop, "stop", reports("/y.jsonl", tokens(10, 0, 5)))
         .await;
-    let session: SessionDto = h.get(&format!("/v1/sessions/{}", author.id)).await;
+    let session: SessionDto = h.get(&format!("/v1/sessions/{}", develop.id)).await;
     assert_eq!(session.usage, tokens(160, 120, 35));
 
-    h.ingest(&reviewer, "stop", reports("/r.jsonl", tokens(20, 10, 4)))
+    h.ingest(&review, "stop", reports("/r.jsonl", tokens(20, 10, 4)))
         .await;
     h.ingest(
         &orchestrator,
@@ -1161,22 +1099,30 @@ async fn reported_usage_rolls_up_to_the_task_and_the_goal() {
     .await;
 
     let task: TaskDto = h.get(&format!("/v1/tasks/{}", cast.task.id)).await;
-    assert_eq!(task.usage.author, tokens(160, 120, 35));
-    let reviewers = &task.usage.reviewers;
-    assert_eq!(reviewers.len(), 1);
-    assert_eq!(reviewers[0].agent_id, cast.reviewer.id);
-    assert_eq!(reviewers[0].skills, vec!["code-review".to_string()]);
-    assert_eq!(reviewers[0].usage, tokens(20, 10, 4));
+    let agents = &task.usage.agents;
+    assert_eq!(
+        agents.iter().map(|a| a.step.as_deref()).collect::<Vec<_>>(),
+        [Some("develop"), Some("review")],
+        "one entry per agent with a session, in column order: {agents:?}"
+    );
+    assert_eq!(agents[0].agent_id, cast.develop().id);
+    assert_eq!(agents[0].skills, vec!["coding".to_string()]);
+    assert_eq!(agents[0].usage, tokens(160, 120, 35));
+    assert_eq!(agents[1].agent_id, cast.review().id);
+    assert_eq!(agents[1].skills, vec!["code-review".to_string()]);
+    assert_eq!(agents[1].usage, tokens(20, 10, 4));
     assert_eq!(
         task.usage.total,
         tokens(180, 130, 39),
-        "the total is its author and its reviewers, and nothing else is on the task"
+        "the total is its agents' and nothing else is on the task"
     );
 
     let goal: GoalDto = h.get(&format!("/v1/goals/{}", cast.goal.id)).await;
     assert_eq!(goal.usage.orchestrator, tokens(40, 30, 8));
-    assert_eq!(goal.usage.authors, tokens(160, 120, 35));
-    assert_eq!(goal.usage.reviewers, tokens(20, 10, 4));
+    assert_eq!(
+        goal.usage.agents, task.usage.agents,
+        "the goal lists every agent of its tasks, as the task does"
+    );
     assert_eq!(
         goal.usage.total,
         tokens(220, 160, 47),
@@ -1190,15 +1136,21 @@ async fn reported_usage_rolls_up_to_the_task_and_the_goal() {
 async fn a_session_that_has_reported_nothing_reads_as_zeros() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    let author = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    let develop = h.agent_session(&cast, "develop").await;
 
-    let session: SessionDto = h.get(&format!("/v1/sessions/{}", author.id)).await;
+    let session: SessionDto = h.get(&format!("/v1/sessions/{}", develop.id)).await;
     assert_eq!(session.usage, tokens(0, 0, 0));
     let task: TaskDto = h.get(&format!("/v1/tasks/{}", cast.task.id)).await;
     assert_eq!(task.usage.total, tokens(0, 0, 0));
-    assert_eq!(task.usage.author, tokens(0, 0, 0));
+    assert_eq!(
+        task.usage
+            .agents
+            .iter()
+            .map(|a| (a.step.as_deref(), a.usage))
+            .collect::<Vec<_>>(),
+        [(Some("develop"), tokens(0, 0, 0))],
+        "an agent with a session that has reported nothing is listed with zeros"
+    );
     let goal: GoalDto = h.get(&format!("/v1/goals/{}", cast.goal.id)).await;
     assert_eq!(goal.usage.total, tokens(0, 0, 0));
 }
@@ -1209,12 +1161,10 @@ async fn a_session_that_has_reported_nothing_reads_as_zeros() {
 async fn a_malformed_report_is_dropped_and_its_event_still_lands() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    let author = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    let develop = h.agent_session(&cast, "develop").await;
 
     h.ingest(
-        &author,
+        &develop,
         "stop",
         serde_json::json!({
             "ariadne_usage": {"source": "/x.jsonl", "input_tokens": -5, "output_tokens": 1},
@@ -1222,7 +1172,7 @@ async fn a_malformed_report_is_dropped_and_its_event_still_lands() {
     )
     .await;
 
-    let session: SessionDto = h.get(&format!("/v1/sessions/{}", author.id)).await;
+    let session: SessionDto = h.get(&format!("/v1/sessions/{}", develop.id)).await;
     assert_eq!(session.usage, tokens(0, 0, 0));
     assert_eq!(
         session.status,
@@ -1232,7 +1182,7 @@ async fn a_malformed_report_is_dropped_and_its_event_still_lands() {
     let events = h
         .store
         .list_events(EventFilter {
-            session_id: Some(author.id.clone()),
+            session_id: Some(develop.id.clone()),
             limit: 50,
             ..Default::default()
         })

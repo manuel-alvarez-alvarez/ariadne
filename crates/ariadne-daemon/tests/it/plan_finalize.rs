@@ -3,10 +3,12 @@
 //! The plan is the tasks it wrote, and `finalize` is what hands them out: the
 //! goal goes from `planning` straight to `active` and every task the plan
 //! holds starts. Nobody else may make that call — a user session is refused —
-//! and it is made once.
+//! and it is made once. Every task runs through every column of the goal's
+//! workflow, so a plan with a column nobody staffs is refused by that column's
+//! name until the orchestrator staffs it.
 //!
 //! Mostly no agent is started — the rows are seeded through the store and
-//! the endpoints are exercised — except for the two tests about what the
+//! the endpoints are exercised — except for the tests about what the
 //! scheduler makes of a finalized goal, which want a real scheduler and the
 //! stub ACP agent.
 
@@ -15,13 +17,18 @@ use crate::common;
 use std::time::Duration;
 
 use axum::http::StatusCode;
+use serde_json::{Value, json};
 
 use ariadne_api::error::ErrorBody;
 use ariadne_api::goals::GoalDto;
+use ariadne_api::tasks::TaskDto;
 use ariadne_core::{GoalStatus, Seat, SessionStatus, TaskStatus};
 use ariadne_daemon::attention::work_is_active;
+use ariadne_store::{NewTask, NewTaskAgent};
 
-use common::{Cast, Harness, as_session, eventually, harness, post_json};
+use common::{
+    Cast, Harness, as_session, eventually, harness, patch_json, post_json, put_json, test_pin,
+};
 
 /// How long a test waits for the scheduler to come round to what it was told.
 const TIMEOUT: Duration = Duration::from_secs(30);
@@ -49,6 +56,16 @@ async fn goal_status(h: &Harness, cast: &Cast) -> GoalStatus {
     h.store.get_goal(&cast.goal.id).await.unwrap().status()
 }
 
+/// The ids of a goal's columns, as its DTO lists them.
+fn step_ids(goal: &Value) -> Vec<&str> {
+    goal["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap())
+        .collect()
+}
+
 /// Finalizing is what starts the work: the goal goes active and its tasks are
 /// handed out.
 #[tokio::test]
@@ -60,12 +77,16 @@ async fn the_orchestrator_finalizes_the_plan_and_its_tasks_start() {
     let goal = finalize(&h, &cast, &orchestrator.id).await;
 
     assert_eq!(goal.status, GoalStatus::Active);
-    eventually(TIMEOUT, "the plan's task to reach an author", async || {
-        matches!(
-            h.status(&cast.task.id).await,
-            TaskStatus::Ready | TaskStatus::InProgress
-        )
-    })
+    eventually(
+        TIMEOUT,
+        "the plan's task to reach its first column",
+        async || {
+            matches!(
+                h.status(&cast.task.id).await,
+                TaskStatus::Ready | TaskStatus::InProgress
+            )
+        },
+    )
     .await;
 }
 
@@ -105,7 +126,7 @@ async fn the_tasks_of_a_plan_wait_for_the_yes_that_finalizes_it() {
     );
     assert!(
         h.sessions_of(&cast.task.id).await.is_empty(),
-        "an agent was staffed on a task the user has not seen"
+        "an agent was started on a task the user has not seen"
     );
 
     // And the same task, on the same passes, once the plan is agreed.
@@ -196,6 +217,140 @@ async fn a_plan_is_finalized_only_out_of_planning() {
     assert_eq!(envelope.error.message, "goal is active, expected planning");
 }
 
+/// A goal created with no workflow of its own runs its first repository's
+/// default, and its columns are that workflow's: the workflow is settled at
+/// the goal before planning starts, so the orchestrator never has to ask.
+#[tokio::test]
+async fn a_goal_created_without_a_workflow_runs_its_first_repositorys_default() {
+    let h = harness().await;
+    let repo = h.repository(&h.at("repo")).await;
+    let updated: Value = h
+        .json(
+            put_json(
+                &format!("/v1/repositories/{}", repo.id),
+                json!({"default_workflow": "develop-review-pr"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(updated["default_workflow"], "develop-review-pr");
+
+    let goal: Value = h
+        .json(
+            post_json(
+                "/v1/goals",
+                json!({
+                    "title": "Ship the board", "description": "Land it through a request.",
+                    "repository_ids": [repo.id], "model": "stub:test-model"
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+
+    assert_eq!(goal["workflow"], "develop-review-pr");
+    assert_eq!(step_ids(&goal), ["develop", "review", "pr"]);
+    // Snapshotted at creation: a later read says the same, and so does the
+    // row behind it.
+    let read: Value = h
+        .get(&format!("/v1/goals/{}", goal["id"].as_str().unwrap()))
+        .await;
+    assert_eq!(step_ids(&read), ["develop", "review", "pr"]);
+    assert_eq!(
+        h.store
+            .get_goal(goal["id"].as_str().unwrap())
+            .await
+            .unwrap()
+            .workflow,
+        "develop-review-pr"
+    );
+}
+
+/// Every task runs through every column, so a task with a column nobody
+/// staffs would stop there: the plan is refused with the column's name, and
+/// is accepted once the orchestrator has staffed it through `update_task`.
+#[tokio::test]
+async fn finalize_refuses_a_task_with_an_unstaffed_column_by_name_until_it_is_staffed() {
+    let h = harness().await;
+    let (goal, repo) = h.goal().await;
+    // Staffed on the first two columns and not on the third: what a plan
+    // written column by column, or a task moved onto a workflow, looks like.
+    let task = h
+        .store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id.clone(),
+            title: "Build the board".into(),
+            description: "Render it from the store.".into(),
+            agents: vec![
+                NewTaskAgent::new(String::from("develop"), Vec::<String>::new(), test_pin()),
+                NewTaskAgent::new(String::from("review"), Vec::<String>::new(), test_pin()),
+            ],
+            depends_on: vec![],
+        })
+        .await
+        .unwrap();
+    let orchestrator = h.orchestrator_session(&goal).await;
+    let finalize_uri = format!("/v1/goals/{}/finalize", goal.id);
+
+    let envelope: ErrorBody = h
+        .json(
+            as_session(&finalize_uri, &orchestrator.id, json!({})),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    assert!(
+        envelope
+            .error
+            .message
+            .contains("has no agent on column merge"),
+        "the refusal names the column: {}",
+        envelope.error.message
+    );
+    assert!(
+        envelope.error.message.contains(&task.title),
+        "and the task: {}",
+        envelope.error.message
+    );
+    assert_eq!(
+        h.store.get_goal(&goal.id).await.unwrap().status(),
+        GoalStatus::Planning,
+        "a refused call leaves the goal where it was"
+    );
+    assert_eq!(h.status(&task.id).await, TaskStatus::Pending);
+
+    // The whole staffing again, the missing column included.
+    let staffed: TaskDto = h
+        .json(
+            patch_json(
+                &format!("/v1/tasks/{}", task.id),
+                json!({"agents": [
+                    {"step": "develop", "model": "stub:test-model"},
+                    {"step": "review", "model": "stub:test-model"},
+                    {"step": "merge", "model": "stub:test-model"},
+                ]}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(
+        staffed
+            .agents
+            .iter()
+            .map(|a| a.step.as_str())
+            .collect::<Vec<_>>(),
+        ["develop", "review", "merge"]
+    );
+
+    let finalized: GoalDto = h
+        .json(
+            as_session(&finalize_uri, &orchestrator.id, json!({})),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(finalized.status, GoalStatus::Active);
+}
+
 /// The orchestrator is the agent work waits on for the whole goal, not only
 /// while the plan is being written: it is what the user talks to about work
 /// already running, and what the daemon tells when a task needs a decision.
@@ -232,10 +387,10 @@ async fn an_orchestrator_is_the_agent_work_waits_on_until_the_goal_is_over() {
 /// The plan's task really starts, in a git repository of its own, and the
 /// passes below run over a goal whose work is under way: what the daemon says
 /// to an orchestrator is what its tasks need, and a task nothing could start
-/// needs it very much. Without the repository the author cannot be launched,
-/// so every pass over that task spends an attempt, and after three of them
-/// the task fails and the daemon rightly says so — which is a prompt this
-/// assertion reads as the defect it is watching for.
+/// needs it very much. Without the repository the first column's agent cannot
+/// be launched, so every pass over that task spends an attempt, and after
+/// three of them the task fails and the daemon rightly says so — which is a
+/// prompt this assertion reads as the defect it is watching for.
 #[tokio::test]
 async fn a_scheduler_pass_keeps_the_orchestrator_of_an_active_goal_and_types_nothing() {
     let h = harness().scheduler().await;
@@ -247,7 +402,7 @@ async fn a_scheduler_pass_keeps_the_orchestrator_of_an_active_goal_and_types_not
     finalize(&h, &cast, &orchestrator.id).await;
     eventually(TIMEOUT, "the plan's task to be under way", async || {
         h.status(&cast.task.id).await == TaskStatus::InProgress
-            && h.running_session(&cast.task.id, Seat::Author)
+            && h.running_session(&cast.task.id, Seat::Agent)
                 .await
                 .is_some()
     })

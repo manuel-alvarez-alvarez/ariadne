@@ -258,40 +258,27 @@ pub(super) async fn switch(
 pub(super) struct DebugSpawnRequest {
     pub seat: ariadne_core::Seat,
     pub goal_id: Option<String>,
-    pub task_id: Option<String>,
-    /// Id of the reviewing task agent when seat = reviewer.
-    pub agent_id: Option<String>,
 }
 
-/// Manually spawn an agent session (debug/testing path until the scheduler
-/// drives spawns automatically). Not part of the public OpenAPI surface.
+/// Manually spawn an orchestrator session (debug/testing path). Not part of
+/// the public OpenAPI surface: the scheduler starts every column's agent,
+/// and the pull request scheduler every review session.
 pub(super) async fn debug_spawn(
     State(state): State<AppState>,
     Json(req): Json<DebugSpawnRequest>,
 ) -> ApiResult<Json<SessionDto>> {
     use ariadne_core::Seat;
-    let launcher = &state.launcher;
     let session = match req.seat {
         Seat::Orchestrator => {
             let goal = req
                 .goal_id
                 .ok_or_else(|| ApiError::bad_request("goal_id required"))?;
-            launcher.spawn_orchestrator(&goal).await
+            state.launcher.spawn_orchestrator(&goal).await
         }
-        Seat::Author => {
-            let task = req
-                .task_id
-                .ok_or_else(|| ApiError::bad_request("task_id required"))?;
-            launcher.spawn_author(&task).await
-        }
-        Seat::Reviewer => {
-            let task = req
-                .task_id
-                .ok_or_else(|| ApiError::bad_request("task_id required"))?;
-            let agent_id = req
-                .agent_id
-                .ok_or_else(|| ApiError::bad_request("agent_id required"))?;
-            launcher.spawn_reviewer(&task, &agent_id).await
+        Seat::Agent | Seat::Reviewer => {
+            return Err(ApiError::conflict(
+                "the scheduler starts the current column agent and every review session",
+            ));
         }
     }
     .map_err(|e| ApiError::conflict(e.to_string()))?;

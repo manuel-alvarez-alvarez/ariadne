@@ -5,7 +5,6 @@
 //! CLI is the canonical implementation.
 
 use std::path::{Path, PathBuf};
-use std::{error, fmt};
 
 use anyhow::{Context, Result, bail};
 use tokio::process::Command;
@@ -14,21 +13,32 @@ use tokio::process::Command;
 /// no commit at all.
 const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
-#[derive(Debug)]
-pub(crate) struct BranchHasNoCommits(String);
-
-impl fmt::Display for BranchHasNoCommits {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl error::Error for BranchHasNoCommits {}
-
 #[derive(Debug, Clone, Default)]
 pub struct GitManager;
 
 impl GitManager {
+    /// Whether `branch` holds a commit `base` does not, and the worktree is
+    /// clean.
+    ///
+    /// A `base` nobody has committed to yet is unborn, and no range can be
+    /// cut from it (`rev-list base..branch` fails): the count is of `branch`
+    /// alone then, since every commit on it is one `base` does not have.
+    pub async fn committed_clean(
+        &self,
+        repo: &Path,
+        worktree: &Path,
+        base: &str,
+        branch: &str,
+    ) -> Result<bool> {
+        let range = match self.has_commit(repo, base).await? {
+            true => format!("{base}..{branch}"),
+            false => branch.to_string(),
+        };
+        let ahead = self.git(repo, &["rev-list", "--count", &range]).await?;
+        let status = self.git(worktree, &["status", "--porcelain"]).await?;
+        Ok(ahead.trim().parse::<u64>()? > 0 && status.trim().is_empty())
+    }
+
     async fn git(&self, repo: &Path, args: &[&str]) -> Result<String> {
         let mut command = Command::new("git");
         if args.first() == Some(&"push") {
@@ -52,47 +62,11 @@ impl GitManager {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
-    /// Create a goal branch once and publish it before its tasks can start.
-    /// Reuse the local branch after a failed push, so finalization can retry.
-    pub(crate) async fn create_goal_branch(
-        &self,
-        repo: &Path,
-        branch: &str,
-        base: &str,
-    ) -> Result<()> {
-        if !self.branch_exists(repo, branch).await? {
-            if !self.branch_exists(repo, base).await? {
-                bail!(
-                    "base branch {base} has no commits; create its first commit before finalizing a feature branch goal"
-                );
-            }
-            self.git(repo, &["branch", branch, base]).await?;
-        }
-        let remotes = self.git(repo, &["remote"]).await?;
-        if let Some(remote) = remotes
-            .lines()
-            .find(|r| *r == "origin")
-            .or_else(|| remotes.lines().next())
-        {
-            self.git(
-                repo,
-                &[
-                    "push",
-                    "--set-upstream",
-                    remote,
-                    &format!("refs/heads/{branch}:refs/heads/{branch}"),
-                ],
-            )
-            .await?;
-        }
-        Ok(())
-    }
-
-    /// Create an author worktree on `branch` (created at `base` when new).
+    /// Create a task worktree on `branch` (created at `base` when new).
     ///
     /// A repository nobody has committed to yet has an unborn base branch,
     /// which no commit can be cut from: the task branch starts unborn as well,
-    /// and the author's first commit is the repository's first commit.
+    /// and the first column's first commit is the repository's first commit.
     pub async fn add_worktree(
         &self,
         repo: &Path,
@@ -114,8 +88,8 @@ impl GitManager {
         Ok(())
     }
 
-    /// Create a reviewer worktree, detached at `reference` (two worktrees
-    /// cannot share a branch).
+    /// Create a detached worktree at `reference`, for a session that reviews
+    /// a request (029): two worktrees cannot share a branch.
     pub async fn add_detached_worktree(
         &self,
         repo: &Path,
@@ -128,14 +102,14 @@ impl GitManager {
         Ok(())
     }
 
-    /// Move a (reviewer) worktree to a new detached position, e.g. the task
-    /// branch tip at the next review round.
+    /// Move a detached worktree to a new detached position, e.g. the head of
+    /// a request on its next push (029).
     ///
-    /// Whatever the reviewer left in the tree is thrown away first. The tree
-    /// is read-only by contract, but a reviewer that proves a test fails by
+    /// Whatever the session left in the tree is thrown away first. The tree
+    /// is read-only by contract, but a session that proves a test fails by
     /// breaking the code leaves edits behind, and a plain checkout refuses to
-    /// overwrite them: the tree then never moves again, and the reviewer is
-    /// never started for the next review. Ignored files — build caches — stay.
+    /// overwrite them: the tree then never moves again, and the session is
+    /// never started for the next round. Ignored files — build caches — stay.
     pub async fn checkout_detached(&self, worktree: &Path, reference: &str) -> Result<()> {
         self.git(worktree, &["checkout", "--force", "--detach", reference])
             .await?;
@@ -237,18 +211,6 @@ impl GitManager {
             })
     }
 
-    /// Ensure a branch points at a real commit, saying which one does not when
-    /// it is a branch nothing has been committed to yet.
-    pub async fn ensure_branch_has_commits(&self, repo: &Path, branch: &str) -> Result<()> {
-        if self.branch_exists(repo, branch).await? {
-            return Ok(());
-        }
-        Err(anyhow::Error::new(BranchHasNoCommits(format!(
-            "branch {branch} of {} has no commits yet",
-            repo.display()
-        ))))
-    }
-
     /// Whether `reference` names a commit the repository holds: the head of
     /// a request under review, before it is fetched (029). A reference git
     /// cannot read as one is `false`.
@@ -343,24 +305,6 @@ impl GitManager {
             .await
     }
 
-    /// Delete `branch` on `remote`: the goal branch a merged request took
-    /// onto its base (026). A branch the remote no longer holds is already
-    /// what was asked for.
-    pub(crate) async fn delete_remote_branch(
-        &self,
-        repo: &Path,
-        remote: &str,
-        branch: &str,
-    ) -> Result<()> {
-        // Asked of the push itself, not of `ls-remote`: a remote can push
-        // somewhere other than where it fetches from.
-        match self.git(repo, &["push", remote, "--delete", branch]).await {
-            Ok(_) => Ok(()),
-            Err(error) if error.to_string().contains("remote ref does not exist") => Ok(()),
-            Err(error) => Err(error),
-        }
-    }
-
     pub async fn delete_branch(&self, repo: &Path, branch: &str) -> Result<()> {
         self.git(repo, &["branch", "-D", branch]).await?;
         Ok(())
@@ -369,7 +313,7 @@ impl GitManager {
     /// Whether `branch`'s local tip is also what `remote` has for it, read
     /// with `git ls-remote` rather than a fetch: the push check before the
     /// daemon opens a request, and the merge verification before it accepts
-    /// `finish_task` for one.
+    /// `complete_step` for one.
     pub async fn remote_has_branch_tip(
         &self,
         repo: &Path,
@@ -388,7 +332,7 @@ impl GitManager {
     }
 
     /// True when `ancestor` is reachable from `descendant` — the merge
-    /// verification used before accepting `finish_task`.
+    /// verification used before accepting a merge column's `complete_step`.
     pub async fn is_ancestor(&self, repo: &Path, ancestor: &str, descendant: &str) -> Result<bool> {
         let output = Command::new("git")
             .arg("-C")

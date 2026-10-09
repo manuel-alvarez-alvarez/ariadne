@@ -265,8 +265,7 @@ skill says (017).
 - A seat runs the registry command its pin names, with the bare model half
   pinned (`acp_runtime.rs::an_orchestrator_runs_on_the_registry_agent`).
 - The model and effort of a session never move across its launches
-  (`resume.rs::a_running_reviewer_keeps_the_model_its_session_started_on`,
-  `::a_resumed_author_stays_on_the_model_its_session_started_on`,
+  (`resume.rs::a_relaunched_agent_stays_on_the_model_its_session_started_on`,
   `::an_orchestrator_respawn_stays_on_the_goals_pin`).
 - Every launch carries the session context, in the agent's environment and
   the MCP server's (`adapters.rs::every_launch_carries_the_session_context`).
@@ -289,9 +288,9 @@ skill says (017).
 - A session of an agent without `session_load` is refused as not resumable
   (`acp_runtime.rs::a_session_of_an_agent_without_session_load_is_not_resumable`).
 - A session without an agent session id is not revived
-  (`resume.rs::a_session_without_an_agent_id_is_not_revived`), a reviewer
+  (`resume.rs::a_session_without_an_agent_id_is_not_resumed_and_a_fresh_one_is_spawned`), an agent
   without one is spawned afresh
-  (`::a_reviewer_without_an_agent_id_is_spawned_afresh`), a session of a
+  (the same test), a session of a
   completed goal revives without reopening the goal
   (`::a_session_of_a_completed_goal_revives_and_the_goal_stays_completed`), and a revive brings back
   the row it names (`::reviving_a_session_revives_it_in_place`).

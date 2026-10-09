@@ -820,7 +820,7 @@ mod tests {
         )
     }
 
-    const LONG_TOOL: &str = "mcp__ariadne__request_review_of_the_whole_branch";
+    const LONG_TOOL: &str = "mcp__ariadne__report_pull_request_of_the_whole_branch";
     const TOKENS: &str = "↑ 12.4k ↓ 3.1k";
 
     /// One state of the console, and every part of its two rows as the

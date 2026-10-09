@@ -41,8 +41,7 @@ fn dto(stats: ModelStats) -> ModelStatsDto {
                 tokens: row.tokens,
                 time_secs: row.time_secs,
                 messages: row.messages,
-                rounds_per_task: row.rounds_per_task,
-                changes_per_task: row.changes_per_task,
+                tasks_finished: row.tasks_finished,
             })
             .collect(),
     }

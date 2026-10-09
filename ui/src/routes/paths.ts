@@ -21,6 +21,7 @@ import { useLocation, useSearchParams } from "react-router-dom"
  * showing.
  */
 export const SKILL_PARAM = "skill"
+export const WORKFLOW_PARAM = "workflow"
 
 /**
  * What a link asks the screen it opens to hand the keyboard to, under
@@ -52,6 +53,8 @@ export const paths = {
   /** The goals board with this goal's panel open. */
   goal: (goalId: string) => `/goals?goal=${goalId}`,
   skills: () => "/skills",
+  workflows: () => "/workflows",
+  workflow: (name: string) => `/workflows?${WORKFLOW_PARAM}=${encodeURIComponent(name)}`,
   /**
    * The skills screen, opened on one skill: the screen is a list beside the
    * selected skill's editor rather than a page per skill, so the link

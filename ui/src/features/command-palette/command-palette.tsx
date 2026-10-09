@@ -68,6 +68,7 @@ import { sessionsQueryOptions } from "@/features/sessions/queries"
 import { skillsQueryOptions } from "@/features/skills/queries"
 import { taskListQueryOptions } from "@/features/tasks"
 import { CreateTaskDialog } from "@/features/tasks/task-form-dialog"
+import { workflowsQueryOptions } from "@/features/workflows/queries"
 import { useConnection } from "@/hooks/use-connection"
 import {
   HELP_SHORTCUT,
@@ -166,7 +167,7 @@ export function CommandPalette({
         onOpenChange={onOpenChange}
         className="sm:max-w-xl"
         title="Command palette"
-        description="Search goals, tasks, sessions and skills, or run an action."
+        description="Search goals, tasks, sessions, skills and workflows, or run an action."
       >
         {/* The search is cmdk's own state, not React's: cmdk sorts the rows by
             reordering the DOM, and a re-render on every keystroke — which is
@@ -174,7 +175,7 @@ export function CommandPalette({
             order they were written in. The palette is unmounted while closed,
             so that state also starts empty every time. */}
         <Command loop filter={PALETTE_FILTER}>
-          <CommandInput autoFocus placeholder="Search goals, tasks, sessions, skills…" />
+          <CommandInput autoFocus placeholder="Search goals, tasks, sessions, skills, workflows…" />
           <CommandList>
             <CommandEmpty>No matches.</CommandEmpty>
 
@@ -392,6 +393,7 @@ const PAGES = [
   { label: "Goals", path: paths.goals(), icon: TargetIcon },
   { label: "Sessions", path: paths.sessions(), icon: RadioTowerIcon },
   { label: "Skills", path: paths.skills(), icon: CpuIcon },
+  { label: "Workflows", path: paths.workflows(), icon: ListChecksIcon },
   { label: "Agents", path: paths.agents(), icon: BotIcon },
   { label: "Repositories", path: paths.repositories(), icon: FolderGit2Icon },
 ] as const
@@ -402,6 +404,7 @@ const GROUPS = [
   { key: "tasks", heading: "Tasks", icon: ListChecksIcon },
   { key: "sessions", heading: "Sessions", icon: RadioTowerIcon },
   { key: "skills", heading: "Skills", icon: CpuIcon },
+  { key: "workflows", heading: "Workflows", icon: ListChecksIcon },
   { key: "repositories", heading: "Repositories", icon: FolderGit2Icon },
 ] as const satisfies readonly {
   key: keyof PaletteEntries
@@ -536,6 +539,7 @@ function usePaletteEntries(open: boolean): {
   const tasks = useQuery({ ...taskListQueryOptions(), enabled: open })
   const sessions = useQuery({ ...sessionsQueryOptions(), enabled: open })
   const skills = useQuery({ ...skillsQueryOptions(), enabled: open })
+  const workflows = useQuery({ ...workflowsQueryOptions(), enabled: open })
   const repositories = useQuery({ ...repositoriesQueryOptions(), enabled: open })
 
   const entries = useMemo(
@@ -545,9 +549,10 @@ function usePaletteEntries(open: boolean): {
         tasks: tasks.data,
         sessions: sessions.data,
         skills: skills.data,
+        workflows: workflows.data,
         repositories: repositories.data,
       }),
-    [goals.data, tasks.data, sessions.data, skills.data, repositories.data],
+    [goals.data, tasks.data, sessions.data, skills.data, repositories.data, workflows.data],
   )
 
   return { entries, goals: goals.data }

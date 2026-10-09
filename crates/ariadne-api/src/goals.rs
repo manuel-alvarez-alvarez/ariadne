@@ -1,6 +1,6 @@
 //! Goal DTOs.
 
-use ariadne_core::{GoalStatus, Landing};
+use ariadne_core::GoalStatus;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -9,6 +9,14 @@ use crate::usage::TokenUsageDto;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct GoalDto {
+    /// The workflow every task of the goal runs on, chosen when the goal was
+    /// created.
+    pub workflow: String,
+    /// The columns of that workflow as they were when the goal was created:
+    /// a later edit of the catalog reaches later goals alone.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub steps: Vec<crate::workflows::WorkflowStepDto>,
     pub id: String,
     pub title: String,
     pub description: String,
@@ -16,38 +24,36 @@ pub struct GoalDto {
     pub status: GoalStatus,
     /// Whether this goal has an orchestrator for its lifetime.
     pub orchestrated: bool,
-    /// What the orchestrator or adopted author runs on, `<agent>:<model>`:
-    /// the registry agent and, after the `:`, the model of it.
+    /// What the orchestrator runs on, `<agent>:<model>`: the registry agent
+    /// and, after the `:`, the model of it.
     #[schema(example = "claude-acp:claude-opus-5")]
     pub model: String,
     /// The reasoning effort that model is run at, pinned like `model`. None =
     /// whatever the agent runs it at on its own.
     #[schema(example = "high")]
     pub effort: Option<String>,
-    /// How every task of the goal ends, chosen when the goal was created.
-    pub landing: Landing,
     /// The registered repositories the goal works in, as they stand now: a
     /// goal references them, so an edit to one shows up here.
-    pub repos: Vec<GoalRepositoryDto>,
+    pub repos: Vec<RepositoryDto>,
     /// What the agents of this goal have spent between them.
     pub usage: GoalUsageDto,
     pub created_at: String,
     pub updated_at: String,
 }
 
-/// What a goal cost, by the seat that spent it. Grouped by seat rather than
-/// by agent: a goal's authors are as many as it has tasks, and what is
-/// read at this height is where the tokens went, not which agent went there.
+/// What a goal cost, by the seat that spent it, and by the agent of every
+/// column of every task under it.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 pub struct GoalUsageDto {
     /// Every session of the goal summed, the orchestrator's included.
     pub total: TokenUsageDto,
     /// The orchestrator's sessions, which belong to no task.
     pub orchestrator: TokenUsageDto,
-    /// Every author session of every task of the goal.
-    pub authors: TokenUsageDto,
-    /// Every reviewer session of every task of the goal, all rounds.
-    pub reviewers: TokenUsageDto,
+    /// One entry per agent of every task of the goal that has a session,
+    /// task by task and column by column.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub agents: Vec<crate::tasks::AgentUsageDto>,
 }
 
 /// Body of `POST /v1/goals/{id}/finalize`: the orchestrator ends planning and
@@ -68,6 +74,11 @@ pub struct CompleteGoalRequest {}
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateGoalRequest {
+    /// The workflow every task of the goal runs on, a name of the catalog
+    /// (`GET /v1/workflows`). Omitted = the default of the first repository.
+    /// It cannot change once the goal is created.
+    #[serde(default)]
+    pub workflow: Option<String>,
     pub title: String,
     #[serde(default)]
     pub description: String,
@@ -90,25 +101,4 @@ pub struct CreateGoalRequest {
     #[serde(default)]
     #[schema(example = "high")]
     pub effort: Option<String>,
-    /// How every task of the goal ends. Omitted = `merge`. It cannot change
-    /// once the goal is created.
-    #[serde(default)]
-    pub landing: Option<Landing>,
-}
-
-/// A registered repository together with the branch this goal owns in it.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct GoalRepositoryDto {
-    #[serde(flatten)]
-    pub repository: RepositoryDto,
-    /// Null until a feature branch goal creates its branch at plan finalization.
-    pub goal_branch: Option<String>,
-}
-
-impl std::ops::Deref for GoalRepositoryDto {
-    type Target = RepositoryDto;
-
-    fn deref(&self) -> &Self::Target {
-        &self.repository
-    }
 }

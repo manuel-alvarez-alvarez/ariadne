@@ -1,10 +1,10 @@
 //! What a pull request wants of the scheduler.
 //!
-//! A request of mine is the request a task opened, and the author of that
-//! task keeps it until a human merges or closes it (005): the news of the
-//! request is handed to that author's session, once. It gets no session of
-//! its own. The task's own pass starts, resumes and watches the author; an
-//! idle author on an open request waits on the forge (009 rule 41).
+//! A request of mine is the request a task opened, and the agent of that
+//! task's `pr` column keeps it until a human merges or closes it (030): the
+//! news of the request is handed to that agent's session, once. It gets no
+//! session of its own. The task's own pass starts, resumes and watches the
+//! agent; an idle agent on an open request waits on the forge (009).
 //!
 //! A request that asks for my review wants a reviewer session on the
 //! repository's `review_model` and `review_effort` (029): one detached at the
@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use tracing::{info, warn};
 
+use ariadne_core::workflow::StepGate;
 use ariadne_core::{Actor, Seat, SessionStatus, TaskStatus};
 use ariadne_store::{
     AgentPin, AgentSession, PullRequest, PullRequestFilter, SessionFilter, StoreError, Task,
@@ -82,7 +83,7 @@ impl super::Scheduler {
             .is_some_and(|i| i.enabled);
         // With the integration off nothing reads the forge for the request:
         // its review ends, and Ariadne stops working on it, but for a task's
-        // request, whose author keeps it once the integration is on again.
+        // request, whose agent keeps it once the integration is on again.
         if !enabled {
             self.launcher
                 .end_pull_request_sessions(&row.id, &row.repository_id)
@@ -103,7 +104,7 @@ impl super::Scheduler {
             return self.review_pass(&pull).await;
         }
         // A request of mine the user asked Ariadne to review has a review
-        // session beside its author's (029), taken down the same way.
+        // session beside its keeper's (029), taken down the same way.
         if pull.review_asked
             || self.launcher.pull_request_worktree_exists(&pull.id)
             || !self.live_pull_request_sessions(&pull.id).await?.is_empty()
@@ -163,9 +164,10 @@ impl super::Scheduler {
         Ok(())
     }
 
-    /// A request of mine: its news handed to the author of the task that
-    /// opened it, and what is left of it taken down once it ended and its
-    /// task is over (005). One opened by hand has nobody to keep it.
+    /// A request of mine: its news handed to the agent of the `pr` column
+    /// of the task that opened it, and what is left of it taken down once it
+    /// ended and its task is over (030). One opened by hand has nobody to
+    /// keep it.
     async fn keep_pass(&mut self, pull: &PullRequest) -> anyhow::Result<()> {
         let task = match &pull.origin_task_id {
             Some(task_id) => match self.store.get_task(task_id).await {
@@ -210,28 +212,26 @@ impl super::Scheduler {
         else {
             return Ok(());
         };
-        let author = self
+        let keeper = self
             .keeper_of(&task)
             .await?
-            .filter(|author| self.launcher.acp.is_running(&author.id));
-        if pull.state == "merged" && self.merge_is_read(pull, author.as_ref()) {
+            .filter(|keeper| self.launcher.acp.is_running(&keeper.id));
+        if pull.state == "merged" && self.merge_is_read(pull, keeper.as_ref()) {
             // Boxed: the fetch it waits on would otherwise sit in every
             // scheduler future that reaches a request's pass.
             return Box::pin(self.finish_merged(&task, pull)).await;
         }
-        let Some(author) = author else {
-            // The task's own pass starts its author again, and the news
+        let Some(keeper) = keeper else {
+            // The task's own pass starts its agent again, and the news
             // waits for it.
             return Ok(());
         };
         let login = integration.login.clone().unwrap_or_default();
-        self.tell_pull_request(&author, pull, &login).await?;
+        self.tell_pull_request(&keeper, pull, &login).await?;
         Ok(())
     }
 
-    /// Whether an approved task's request merged and its pass ended the
-    /// task: the author's turn that read the merge is the task's event, and
-    /// the request's pass is what finishes it (005).
+    /// Whether a merged request moved its task forward or finished it.
     pub(super) async fn merge_ended(&mut self, task: &Task) -> anyhow::Result<bool> {
         let Some(row) = self.store.pull_request_of_task(&task.id).await? else {
             return Ok(false);
@@ -244,15 +244,16 @@ impl super::Scheduler {
             return Ok(false);
         }
         self.reconcile_pull_request(&pull.id).await;
-        Ok(self.store.get_task(&task.id).await?.status() != TaskStatus::Approved)
+        let after = self.store.get_task(&task.id).await?;
+        Ok(after.status() == TaskStatus::Finished || after.step != task.step)
     }
 
-    /// Whether the author of a task whose request merged is done with it:
-    /// it was told the merge and the turn that read it has ended, or it has
-    /// not answered in [`QUIET_NUDGE_SECS`] since, or no author is up to tell
-    /// at all (005).
-    fn merge_is_read(&self, pull: &PullRequest, author: Option<&AgentSession>) -> bool {
-        let Some(author) = author else {
+    /// Whether the agent keeping a request that merged is done with it: it
+    /// was told the merge and the turn that read it has ended, or it has not
+    /// answered in [`QUIET_NUDGE_SECS`] since, or no agent is up to tell at
+    /// all (030).
+    fn merge_is_read(&self, pull: &PullRequest, keeper: Option<&AgentSession>) -> bool {
+        let Some(author) = keeper else {
             return true;
         };
         if pull.told_state.as_deref() != Some("merged") {
@@ -272,43 +273,54 @@ impl super::Scheduler {
         answered || waited
     }
 
-    /// End a task whose request a human merged (005): the author's own
-    /// finish is no longer waited on, and the task's cleanup takes its
-    /// sessions and its worktree down, so no agent stays up on a request
-    /// that is done.
+    /// Advance a request column, or end its task when no column follows.
     async fn finish_merged(&mut self, task: &Task, pull: &PullRequest) -> anyhow::Result<()> {
+        let Some(step) = task.step.as_deref() else {
+            return Ok(());
+        };
+        let columns = self.store.goal_steps(&task.goal_id).await?;
+        let Some(at) = columns.iter().position(|column| column.id == step) else {
+            return Ok(());
+        };
+        if columns[at].gate.as_deref() != Some(StepGate::RequestMerged.as_str()) {
+            return Ok(());
+        }
+        let next_step = columns.get(at + 1).map(|column| column.id.clone());
         let merge_commit = match self.land_merge_locally(pull).await {
             Ok(sha) => sha,
             Err(e) => {
-                // The task waits approved, and the next pass tries again: a
-                // task finished on a base that lacks its change would start
-                // its dependents without it.
+                // The task waits in its column, and the next pass tries
+                // again: a task finished on a base that lacks its change would
+                // start its dependents without it.
                 warn!(task = %task.id, pull_request = %pull.id, error = %format!("{e:#}"),
                     "the merged request is not on the local base yet");
                 return Ok(());
             }
         };
-        info!(task = %task.id, pull_request = %pull.id, %merge_commit, "the request merged, finishing its task");
-        match self
-            .store
-            .transition_task(
-                &task.id,
-                TaskStatus::Finished,
-                Actor::Daemon,
-                Some(&format!("{} merged", pull.url)),
-                Some(&merge_commit),
-            )
-            .await
-        {
+        info!(task = %task.id, pull_request = %pull.id, %merge_commit, "the request merged, advancing its task");
+        let reason = format!("{} merged", pull.url);
+        let advanced = match next_step.as_deref() {
+            Some(next) => {
+                self.store
+                    .move_step(&task.id, next, Actor::Daemon, &reason, Some(&merge_commit))
+                    .await
+            }
+            None => {
+                self.store
+                    .end_step_by_daemon(&task.id, step, &reason, &merge_commit)
+                    .await
+            }
+        };
+        match advanced {
             Ok(_) => Ok(()),
-            // The author finished it in the meantime.
-            Err(StoreError::Transition(_)) => Ok(()),
+            // The agent completed its step in the meantime.
+            Err(StoreError::Transition(_) | StoreError::Conflict(_)) => Ok(()),
             Err(e) => Err(e.into()),
         }
     }
 
-    /// Bring the merge of a request into the checkout before its task ends
-    /// (005), and answer the commit it landed as. The base is fetched from
+    /// Bring the merge of a request into the checkout before its step advances
+    /// (030), and answer the commit it landed as. The base is fetched from
     /// the remote, the request's own merge commit — as the forge reported it —
     /// must be on it, and the local base branch is fast-forwarded to it, so
     /// the tasks that wait on this one branch from a base that holds it. A
@@ -349,10 +361,19 @@ impl super::Scheduler {
         Ok(merge_commit)
     }
 
-    /// The live session of the author that keeps a task's request: the
-    /// picked winner's on a task with several authors, the lone author's
-    /// everywhere else.
+    /// The live session of the agent that keeps a task's request: the agent
+    /// of the column the task is in. None while the task is in no column.
     async fn keeper_of(&self, task: &Task) -> anyhow::Result<Option<AgentSession>> {
+        let Some(step) = task.step.as_deref() else {
+            return Ok(None);
+        };
+        let current = self
+            .store
+            .list_task_agents(&task.id)
+            .await?
+            .into_iter()
+            .find(|agent| agent.step == step)
+            .map(|agent| agent.id);
         let live = self
             .store
             .list_sessions(SessionFilter {
@@ -362,11 +383,9 @@ impl super::Scheduler {
             })
             .await?;
         Ok(live.into_iter().find(|session| {
-            session.seat() == Some(Seat::Author)
-                && task
-                    .picked_agent_id
-                    .as_ref()
-                    .is_none_or(|winner| session.task_agent_id.as_deref() == Some(winner.as_str()))
+            session.seat() == Some(Seat::Agent)
+                && session.task_agent_id.is_some()
+                && session.task_agent_id.as_deref() == current.as_deref()
         }))
     }
 
@@ -456,29 +475,18 @@ impl super::Scheduler {
 
     /// A request a task opened that a human merged or closed, once its task
     /// is over: whatever an earlier release left of a session of its own
-    /// taken down, and, where it merged a goal branch onto its base, that
-    /// branch deleted (`Launcher::cleanup_kept_request`). The task's own
+    /// taken down (`Launcher::end_pull_request_sessions`). The task's own
     /// cleanup took its worktree and its branch.
     async fn end_kept_request(&mut self, pull: &PullRequest) -> anyhow::Result<()> {
-        let enabled = self
-            .store
-            .forge_integration(&pull.repository_id)
-            .await?
-            .is_some_and(|i| i.enabled);
         info!(pull_request = %pull.id, state = %pull.state, "the request ended, taking its work down");
-        // Done only once every branch it owes is gone: until then the row
-        // stays, so a restart owes it the same. A deletion that failed is
+        // Done only once its sessions and worktree are gone: until then the
+        // row stays, so a restart owes it the same. A cleanup that failed is
         // tried again, on the next change of the request at once and on the
-        // tick after a wait. Where the integration was disabled no branch is
-        // touched.
-        let cleaned = match enabled {
-            true => self.launcher.cleanup_kept_request(pull).await,
-            false => {
-                self.launcher
-                    .end_pull_request_sessions(&pull.id, &pull.repository_id)
-                    .await
-            }
-        };
+        // tick after a wait.
+        let cleaned = self
+            .launcher
+            .end_pull_request_sessions(&pull.id, &pull.repository_id)
+            .await;
         match cleaned {
             Ok(()) => self.stop_working(&pull.id).await,
             Err(e) => {
@@ -599,7 +607,7 @@ impl super::Scheduler {
     /// killed and its worktree removed; no branch is touched, since none is
     /// mine. Ariadne then stops working on it, but for a draft, whose review
     /// waits for it to leave draft. A request of mine ends its review alone:
-    /// its row is its author's side to end (`end_kept_request`).
+    /// its row is its keeper's side to end (`end_kept_request`).
     async fn end_review(
         &mut self,
         pull: &PullRequest,

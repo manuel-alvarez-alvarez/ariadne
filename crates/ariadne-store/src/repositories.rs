@@ -1,33 +1,35 @@
 //! Repository repository: the git checkouts Ariadne knows about.
 
+use ariadne_core::PermissionMode;
 use ariadne_core::id::new_id;
-use ariadne_core::{Landing, PermissionMode};
 
+use crate::defaults::DEFAULT_WORKFLOW;
 use crate::forge::{ForgeWrite, write_forge};
 use crate::skills::plural_list;
 use crate::{Change, Repository, Result, SetForgeIntegration, Store, StoreError, now};
 
 #[derive(Debug, Clone)]
 pub struct NewRepository {
+    /// The workflow a new goal in this repository runs on where its request
+    /// names none. None = `develop-review-merge`.
+    pub default_workflow: Option<String>,
     /// Absolute path of the checkout.
     pub path: String,
     pub base_branch: String,
     pub description: Option<String>,
     /// None = `auto`.
     pub permission_mode: Option<PermissionMode>,
-    /// None = `merge`.
-    pub default_landing: Option<Landing>,
 }
 
 /// Partial update; `None` leaves a field alone.
 #[derive(Debug, Clone, Default)]
 pub struct RepositoryUpdate {
+    pub default_workflow: Option<String>,
     pub path: Option<String>,
     pub base_branch: Option<String>,
     /// Some(None) clears the description.
     pub description: Option<Option<String>>,
     pub permission_mode: Option<PermissionMode>,
-    pub default_landing: Option<Landing>,
 }
 
 impl Store {
@@ -43,12 +45,16 @@ impl Store {
         new: NewRepository,
         forge: Option<SetForgeIntegration>,
     ) -> Result<Repository> {
+        let default_workflow = new
+            .default_workflow
+            .unwrap_or_else(|| DEFAULT_WORKFLOW.to_string());
+        self.get_workflow(&default_workflow).await?;
         let id = new_id();
         let ts = now();
         let mut tx = self.w().begin().await?;
         sqlx::query(
-            "INSERT INTO repositories (id, path, base_branch, description, permission_mode, default_landing,
-                                       created_at, updated_at)
+            "INSERT INTO repositories (id, path, base_branch, description, permission_mode,
+                                       default_workflow, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
@@ -56,7 +62,7 @@ impl Store {
         .bind(&new.base_branch)
         .bind(&new.description)
         .bind(new.permission_mode.unwrap_or(PermissionMode::Auto).as_str())
-        .bind(new.default_landing.unwrap_or(Landing::Merge).as_str())
+        .bind(&default_workflow)
         .bind(&ts)
         .bind(&ts)
         .execute(&mut *tx)
@@ -119,23 +125,22 @@ impl Store {
         let permission_mode = update
             .permission_mode
             .unwrap_or_else(|| current.permission_mode());
-        let default_landing = update
-            .default_landing
-            .unwrap_or_else(|| current.default_landing());
+        let default_workflow = update.default_workflow.unwrap_or(current.default_workflow);
+        self.get_workflow(&default_workflow).await?;
         let path = update.path.unwrap_or(current.path);
         let base_branch = update.base_branch.unwrap_or(current.base_branch);
         let description = update.description.unwrap_or(current.description);
         let mut tx = self.w().begin().await?;
         sqlx::query(
             "UPDATE repositories SET path = ?, base_branch = ?, description = ?,
-                                     permission_mode = ?, default_landing = ?, updated_at = ?
+                                     permission_mode = ?, default_workflow = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(&path)
         .bind(&base_branch)
         .bind(&description)
         .bind(permission_mode.as_str())
-        .bind(default_landing.as_str())
+        .bind(&default_workflow)
         .bind(now())
         .bind(id)
         .execute(&mut *tx)

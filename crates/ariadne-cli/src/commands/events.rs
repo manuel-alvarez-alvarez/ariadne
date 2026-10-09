@@ -134,7 +134,7 @@ impl Line {
     /// goal or task title is free text a person wrote, and `titled` appends
     /// `[state]` after it rather than escaping what is already there, so a
     /// title that happens to end in the same words in brackets — `Investigate
-    /// [under_review]`, status `under_review` — must not have its own bracket
+    /// [in_progress]`, status `in_progress` — must not have its own bracket
     /// mistaken for the one the daemon actually set.
     fn painted_detail(&self, color: bool) -> String {
         let Some(word) = &self.status else {
@@ -393,6 +393,14 @@ fn domain_line(event: &DomainEvent) -> Line {
             session: None,
             status: None,
         },
+        DomainEvent::WorkflowCreated(w) | DomainEvent::WorkflowUpdated(w) => Line {
+            at: w.updated_at.clone(),
+            kind,
+            subject: w.name.clone(),
+            detail: format!("{} steps", w.steps.len()),
+            session: None,
+            status: None,
+        },
         DomainEvent::RepositoryCreated(r) | DomainEvent::RepositoryUpdated(r) => Line {
             at: now(),
             kind,
@@ -437,6 +445,7 @@ fn domain_line(event: &DomainEvent) -> Line {
         },
         DomainEvent::GoalDeleted(DeletedDto { id })
         | DomainEvent::SkillDeleted(DeletedDto { id })
+        | DomainEvent::WorkflowDeleted(DeletedDto { id })
         | DomainEvent::RepositoryDeleted(DeletedDto { id }) => Line {
             at: now(),
             kind,
@@ -559,7 +568,7 @@ mod tests {
     fn task() -> TaskDto {
         TaskDto {
             title: "Wire the screen".into(),
-            status: TaskStatus::UnderReview,
+            status: TaskStatus::InProgress,
             updated_at: AT.into(),
             ..fixtures::task("01TASK", "01GOAL")
         }
@@ -613,7 +622,7 @@ mod tests {
         );
         assert_eq!(
             rendered(&domain_line(&DomainEvent::TaskCreated(task()))),
-            "<time> · task_created · 01TASK · Wire the screen [under_review]"
+            "<time> · task_created · 01TASK · Wire the screen [in_progress]"
         );
     }
 
@@ -636,12 +645,12 @@ mod tests {
         let line = domain_line(&DomainEvent::TaskCreated(task()));
         assert_eq!(
             rendered(&line),
-            "<time> · task_created · 01TASK · Wire the screen [under_review]"
+            "<time> · task_created · 01TASK · Wire the screen [in_progress]"
         );
         assert!(!line.render(false).contains('\u{1b}'));
 
         let painted = line.render(true);
-        let (sty, glyph) = style::status("under_review");
+        let (sty, glyph) = style::status("in_progress");
         assert!(
             painted.contains(&style::paint(true, style::TITLE, "task_created")),
             "{painted}"
@@ -650,7 +659,7 @@ mod tests {
             painted.contains(&style::paint(
                 true,
                 sty,
-                &format!("{} under_review", glyph.expect("under_review has a glyph"))
+                &format!("{} in_progress", glyph.expect("in_progress has a glyph"))
             )),
             "{painted}"
         );
@@ -664,25 +673,25 @@ mod tests {
     #[test]
     fn a_title_that_echoes_the_status_does_not_steal_the_paint() {
         let echoing = TaskDto {
-            title: "Investigate [under_review]".into(),
+            title: "Investigate [in_progress]".into(),
             ..task()
         };
         let line = domain_line(&DomainEvent::TaskCreated(echoing));
         assert_eq!(
             rendered(&line),
-            "<time> · task_created · 01TASK · Investigate [under_review] [under_review]"
+            "<time> · task_created · 01TASK · Investigate [in_progress] [in_progress]"
         );
 
         let painted = line.render(true);
-        let (sty, glyph) = style::status("under_review");
+        let (sty, glyph) = style::status("in_progress");
         let glyphed = style::paint(
             true,
             sty,
-            &format!("{} under_review", glyph.expect("under_review has a glyph")),
+            &format!("{} in_progress", glyph.expect("in_progress has a glyph")),
         );
         assert!(painted.ends_with(&format!("[{glyphed}]")), "{painted}");
         assert!(
-            painted.contains("Investigate [under_review] ["),
+            painted.contains("Investigate [in_progress] ["),
             "the title's own bracket is untouched: {painted}"
         );
     }
@@ -694,17 +703,19 @@ mod tests {
         let moved = DomainEvent::TaskUpdated(TaskUpdatedDto {
             task: task(),
             transition: Some(TaskTransitionDto {
+                from_step: None,
+                to_step: None,
                 id: "01TR".into(),
-                from_status: "in_progress".into(),
-                to_status: "under_review".into(),
-                actor: "author".into(),
+                from_status: "ready".into(),
+                to_status: "in_progress".into(),
+                actor: "daemon".into(),
                 reason: None,
                 created_at: AT.into(),
             }),
         });
         assert_eq!(
             rendered(&domain_line(&moved)),
-            "<time> · task_updated · 01TASK · Wire the screen [in_progress → under_review]"
+            "<time> · task_updated · 01TASK · Wire the screen [ready → in_progress]"
         );
 
         let edited = DomainEvent::TaskUpdated(TaskUpdatedDto {
@@ -713,7 +724,7 @@ mod tests {
         });
         assert_eq!(
             rendered(&domain_line(&edited)),
-            "<time> · task_updated · 01TASK · Wire the screen [under_review]"
+            "<time> · task_updated · 01TASK · Wire the screen [in_progress]"
         );
     }
 
@@ -723,7 +734,7 @@ mod tests {
     fn a_session_line_carries_its_attention_beside_its_status() {
         assert_eq!(
             rendered(&domain_line(&DomainEvent::SessionUpdated(session()))),
-            "<time> · session_updated · 01SESS · author stub [running]"
+            "<time> · session_updated · 01SESS · agent stub [running]"
         );
         let waiting = SessionDto {
             attention_reason: Some(AttentionReason::WaitingInput),
@@ -731,7 +742,7 @@ mod tests {
         };
         assert_eq!(
             rendered(&domain_line(&DomainEvent::SessionUpdated(waiting))),
-            "<time> · session_updated · 01SESS · author stub [running] · waiting for input"
+            "<time> · session_updated · 01SESS · agent stub [running] · waiting for input"
         );
     }
 

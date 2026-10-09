@@ -20,30 +20,27 @@ use ariadne_api::permissions::{LearnedPermissionDto, LearnedPermissionScope};
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::tasks::TaskDto;
 use ariadne_api::usage::TokenUsageDto;
-use ariadne_core::{
-    Actor, AttentionReason, MessageKind, PermissionMode, Seat, SessionStatus, TaskStatus,
-};
+use ariadne_core::{Actor, AttentionReason, PermissionMode, SessionStatus, TaskStatus};
 use ariadne_store::{AgentPin, EventFilter, NewTask, NewTaskAgent, Store};
 
 use ariadne_api::stream::{DeletedDto, DomainEvent};
-use ariadne_daemon::acp::TurnReport;
 use ariadne_daemon::bus::{BusEvent, EventBus};
 use ariadne_daemon::http::{self, AppState};
 
 use common::acp::{StubAcpAgent, discovery_settled, registry_home, script, stub_acp_agent};
 use common::{
-    Cast, Harness, QUIET, RUNS_OUT, TIMEOUT, as_session, eventually, expect_sse, get, harness,
-    next_event, next_sse_message, parse_sse, post, post_json, put_json, sse_is_closed,
+    Cast, Harness, RUNS_OUT, TIMEOUT, eventually, expect_sse, get, harness, next_event,
+    next_sse_message, parse_sse, post, post_json, put_json, sse_is_closed,
 };
 
 /// A task whose author runs on the registry agent `stub`, in a real repo,
 /// with an effort pinned — the same fixture `acp_runtime.rs` casts.
 async fn acp_cast(h: &Harness) -> Cast {
     h.git_repo("repo");
-    let cast = h.cast_pinned("stub:test-model", 1).await;
+    let cast = h.cast_pinned("stub:test-model").await;
     h.store
         .set_agent_pin(
-            &cast.author.id,
+            &cast.develop().id,
             &AgentPin {
                 model: "stub:test-model".into(),
                 effort: Some("high".into()),
@@ -57,7 +54,7 @@ async fn acp_cast(h: &Harness) -> Cast {
 /// Spawn the task's author against the stub and wait for the initial turn to
 /// end.
 async fn spawned_idle(h: &Harness, cast: &Cast) -> ariadne_store::AgentSession {
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.start_agent(&cast.task, "develop").await;
     eventually(TIMEOUT, "the prompt round trip to end", || async {
         h.session_status(&session).await == SessionStatus::Idle
     })
@@ -164,7 +161,7 @@ async fn context_updates_keep_the_sessions_window_current_while_it_runs() {
     let stub = stub_acp_agent(agent_dir.path(), scripted);
     let h = harness().home(registry_home(&stub)).await;
     let cast = acp_cast(&h).await;
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.start_agent(&cast.task, "develop").await;
 
     eventually(TIMEOUT, "the first context update", || async {
         let session: SessionDto = h.get(&format!("/v1/sessions/{}", session.id)).await;
@@ -247,7 +244,7 @@ async fn spawned_mid_turn(
     cast: &Cast,
     release: &std::path::Path,
 ) -> ariadne_store::AgentSession {
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.start_agent(&cast.task, "develop").await;
     let reached = release.with_extension("reached");
     eventually(TIMEOUT, "the turn to be held open", || async {
         reached.exists()
@@ -313,7 +310,7 @@ async fn a_relaunch_over_a_running_turn_keeps_what_the_old_launch_spent() {
     stub.reprogram(resumed_script);
     let resumed = h
         .launcher
-        .resume_author(&cast.task.id, "here is your review")
+        .relaunch_session(&session.id, "here is your review")
         .await
         .unwrap();
     assert_eq!(resumed.id, session.id);
@@ -437,317 +434,6 @@ async fn an_agent_that_ignores_the_cancel_is_killed_when_the_grace_runs_out() {
     assert_eq!(session_usage.usage, tokens(0, 0, 0));
 }
 
-/// An author that asks for a review has its turn ended for it: one
-/// `session/cancel` once the agent itself reports the review call ended —
-/// not before, however long that takes — what the turn spent kept, the
-/// agent left up and idle, and the verdict that follows reaching the same
-/// session as a prompt.
-#[tokio::test]
-async fn an_authors_review_request_ends_its_turn_and_the_verdict_still_reaches_it() {
-    let agent_dir = tempfile::tempdir().unwrap();
-    let release = agent_dir.path().join("release");
-    let answered = agent_dir.path().join("answered");
-    let mut scripted = held_turn_script(
-        &release,
-        json!({"inputTokens": 10, "cachedReadTokens": 20, "outputTokens": 40}),
-    );
-    scripted["stored_sessions"] = json!(["stub-session"]);
-    // The held turn reports its review call — open, then completed, the way
-    // an agent does once it holds the answer — only when the test says so.
-    scripted["prompts"][0]["updates_when"] = json!({
-        "file": answered.display().to_string(),
-        "updates": [
-            {"sessionUpdate": "tool_call", "toolCallId": "call-review",
-             "title": "mcp.ariadne.request_review", "kind": "execute"},
-            {"sessionUpdate": "tool_call_update", "toolCallId": "call-review",
-             "status": "completed"},
-        ],
-    });
-    let stub = stub_acp_agent(agent_dir.path(), scripted);
-    let h = harness()
-        .scheduler()
-        .home(registry_home(&stub))
-        .discover_agents()
-        .await;
-    discovery_settled(&h, &stub).await;
-    let cast = acp_cast(&h).await;
-    h.activate(&cast.goal).await;
-    h.notify(&cast.task.id);
-    // The stub holds its turn before the daemon has the session on record
-    // as running, so both are waited for.
-    let reached = release.with_extension("reached");
-    eventually(TIMEOUT, "the author's turn to be held open", || async {
-        reached.exists()
-            && h.running_session(&cast.task.id, Seat::Author)
-                .await
-                .is_some()
-    })
-    .await;
-    let session = h
-        .running_session(&cast.task.id, Seat::Author)
-        .await
-        .expect("a live author session");
-    let pid = stub.pid().unwrap();
-
-    let (status, _) = h
-        .send(as_session(
-            &format!("/v1/tasks/{}/transitions", cast.task.id),
-            &session.id,
-            json!({"to": "under_review", "reason": "the change, and the test that proves it"}),
-        ))
-        .await;
-    assert_eq!(status, StatusCode::OK);
-    // The answer is out, and the agent has not said it holds it: no cancel,
-    // for as long as that takes.
-    tokio::time::sleep(QUIET).await;
-    assert!(
-        stub.calls_of("session/cancel").is_empty(),
-        "the turn is not ended before the agent reports the call answered"
-    );
-    assert_eq!(h.session_status(&session).await, SessionStatus::Running);
-
-    std::fs::write(&answered, "1").unwrap();
-    eventually(TIMEOUT, "the author's turn to be cancelled", || async {
-        h.session_status(&session).await == SessionStatus::Idle
-    })
-    .await;
-    assert_eq!(stub.calls_of("session/cancel").len(), 1);
-    assert!(
-        common::acp::pid_is_alive(pid),
-        "the author stays up between turns"
-    );
-    assert_eq!(h.status(&cast.task.id).await, TaskStatus::UnderReview);
-    let session_usage: SessionDto = h.get(&format!("/v1/sessions/{}", session.id)).await;
-    assert_eq!(session_usage.usage, tokens(30, 20, 40));
-
-    // The verdict wakes the same session with the feedback as its prompt.
-    let mut resumed_script = script();
-    resumed_script["stored_sessions"] = json!(["stub-session"]);
-    stub.reprogram(resumed_script);
-    h.verdict(
-        &cast.task,
-        &cast.reviewer.id,
-        MessageKind::RequestChanges,
-        "rename the flag",
-    )
-    .await;
-    h.notify(&cast.task.id);
-    eventually(TIMEOUT, "the verdict to reach the author", || async {
-        stub.prompts_for(&session.id)
-            .iter()
-            .any(|prompt| prompt.contains("rename the flag"))
-    })
-    .await;
-    assert_eq!(
-        stub.calls_of("session/cancel").len(),
-        1,
-        "one cancel per review request"
-    );
-}
-
-/// A burst of tool calls ending before the review call's report is delivered
-/// whole: a follower that reads only afterwards still reads every report in
-/// order, and the daemon's own follower still ends the turn on the review
-/// call's.
-#[tokio::test]
-async fn a_burst_of_reports_before_the_review_calls_loses_none_and_the_cancel_follows() {
-    const BURST: usize = 100;
-    let agent_dir = tempfile::tempdir().unwrap();
-    let release = agent_dir.path().join("release");
-    let answered = agent_dir.path().join("answered");
-    let mut scripted = held_turn_script(&release, json!({}));
-    let mut updates = Vec::new();
-    for i in 0..BURST {
-        updates.push(
-            json!({"sessionUpdate": "tool_call", "toolCallId": format!("call-{i}"),
-                            "title": format!("Read file-{i}"), "kind": "read"}),
-        );
-        updates.push(json!({"sessionUpdate": "tool_call_update",
-                            "toolCallId": format!("call-{i}"), "status": "completed"}));
-    }
-    updates.push(
-        json!({"sessionUpdate": "tool_call", "toolCallId": "call-review",
-                        "title": "mcp.ariadne.request_review", "kind": "execute"}),
-    );
-    updates.push(
-        json!({"sessionUpdate": "tool_call_update", "toolCallId": "call-review",
-                        "status": "completed"}),
-    );
-    scripted["prompts"][0]["updates_when"] = json!({
-        "file": answered.display().to_string(),
-        "updates": updates,
-    });
-    let stub = stub_acp_agent(agent_dir.path(), scripted);
-    let h = harness().home(registry_home(&stub)).await;
-    let cast = acp_cast(&h).await;
-    h.advance(&cast.task, TaskStatus::InProgress).await;
-    let session = spawned_mid_turn(&h, &cast, &release).await;
-    let launch = h.launch_id(&session).await.unwrap();
-    // A follower that reads nothing until the burst is over.
-    let mut late_reader = h.launcher.acp.turn_reports(&session.id, &launch).unwrap();
-
-    let (status, _) = h
-        .send(as_session(
-            &format!("/v1/tasks/{}/transitions", cast.task.id),
-            &session.id,
-            json!({"to": "under_review", "reason": "the change"}),
-        ))
-        .await;
-    assert_eq!(status, StatusCode::OK);
-    std::fs::write(&answered, "1").unwrap();
-    eventually(TIMEOUT, "the author's turn to be cancelled", || async {
-        h.session_status(&session).await == SessionStatus::Idle
-    })
-    .await;
-    assert_eq!(stub.calls_of("session/cancel").len(), 1);
-
-    // Read up to the turn's own end. The status read above settles once the
-    // turn's stop is recorded, and the report of that same stop reaches this
-    // channel independently of it — a non-blocking drain taken right after
-    // can be one report short of it.
-    let mut reports = Vec::new();
-    tokio::time::timeout(TIMEOUT, async {
-        while let Some(report) = late_reader.recv().await {
-            let ended = report == TurnReport::TurnEnded;
-            reports.push(report);
-            if ended {
-                break;
-            }
-        }
-    })
-    .await
-    .expect("the turn's reports to reach TurnEnded within the timeout");
-    let expected: Vec<TurnReport> = (0..BURST)
-        .map(|i| TurnReport::ToolEnded(format!("Read file-{i}")))
-        .chain([
-            TurnReport::ToolEnded("mcp.ariadne.request_review".into()),
-            TurnReport::TurnEnded,
-        ])
-        .collect();
-    assert_eq!(reports, expected);
-}
-
-/// A review call reported by the launch before is not the new launch's: an
-/// author relaunched while its review request waits on the report has the
-/// old process's late report go to the old launch alone, and the new
-/// launch's turn runs on uncancelled.
-#[tokio::test]
-async fn a_prior_launchs_late_review_report_does_not_end_the_new_launchs_turn() {
-    let agent_dir = tempfile::tempdir().unwrap();
-    let release = agent_dir.path().join("release");
-    let answered = agent_dir.path().join("answered");
-    let mut first = held_turn_script(
-        &release,
-        json!({"inputTokens": 10, "cachedReadTokens": 20, "outputTokens": 40}),
-    );
-    first["stored_sessions"] = json!(["stub-session"]);
-    // The old process ignores the cancel a relaunch sends, so it is still
-    // being served — for the grace — when it reports the review call ended.
-    first["prompts"][0]["ignore_cancel"] = json!(true);
-    first["prompts"][0]["updates_when"] = json!({
-        "file": answered.display().to_string(),
-        "updates": [
-            {"sessionUpdate": "tool_call", "toolCallId": "call-review",
-             "title": "mcp.ariadne.request_review", "kind": "execute"},
-            {"sessionUpdate": "tool_call_update", "toolCallId": "call-review",
-             "status": "completed"},
-        ],
-    });
-    let stub = stub_acp_agent(agent_dir.path(), first);
-    let h = harness().home(registry_home(&stub)).discover_agents().await;
-    discovery_settled(&h, &stub).await;
-    let cast = acp_cast(&h).await;
-    h.advance(&cast.task, TaskStatus::InProgress).await;
-    let session = spawned_mid_turn(&h, &cast, &release).await;
-    let old_launch = h.launch_id(&session).await.unwrap();
-
-    let (status, _) = h
-        .send(as_session(
-            &format!("/v1/tasks/{}/transitions", cast.task.id),
-            &session.id,
-            json!({"to": "under_review", "reason": "the change"}),
-        ))
-        .await;
-    assert_eq!(status, StatusCode::OK);
-
-    // The relaunch: the new process holds its turn too, and reports nothing.
-    let release_again = agent_dir.path().join("release-again");
-    let mut resumed_script = held_turn_script(&release_again, json!({}));
-    resumed_script["stored_sessions"] = json!(["stub-session"]);
-    stub.reprogram(resumed_script);
-    let relaunch = tokio::spawn({
-        let launcher = h.launcher.clone();
-        let task_id = cast.task.id.clone();
-        async move {
-            launcher
-                .resume_author(&task_id, "here is your review")
-                .await
-        }
-    });
-    eventually(TIMEOUT, "the relaunch to cancel the old turn", || async {
-        stub.calls_of("session/cancel").len() == 1
-    })
-    .await;
-    // The old process's late report, while the relaunch still waits on it.
-    std::fs::write(&answered, "1").unwrap();
-    eventually(
-        TIMEOUT,
-        "the old launch's late report to be recorded",
-        || async { late_review_report_recorded(&h, &session).await },
-    )
-    .await;
-    // Then the old turn ends, rather than the relaunch sitting out the grace.
-    std::fs::write(&release, "1").unwrap();
-    let resumed = relaunch.await.unwrap().unwrap();
-    assert_eq!(resumed.id, session.id);
-    let new_launch = h.launch_id(&session).await.unwrap();
-    assert_ne!(new_launch, old_launch);
-    let reached_again = release_again.with_extension("reached");
-    eventually(TIMEOUT, "the new launch's turn to be held open", || async {
-        reached_again.exists()
-    })
-    .await;
-
-    // The old process's report is on the record (waited for above), but it went to the old launch alone: the new one has reported nothing,
-    // and its turn is not cancelled.
-    assert!(
-        h.launcher
-            .acp
-            .turn_reports(&session.id, &old_launch)
-            .is_err()
-    );
-    let mut reports = h
-        .launcher
-        .acp
-        .turn_reports(&session.id, &new_launch)
-        .unwrap();
-    tokio::time::sleep(QUIET).await;
-    assert!(matches!(
-        reports.try_recv(),
-        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
-    ));
-    assert_eq!(stub.calls_of("session/cancel").len(), 1);
-    assert_eq!(h.session_status(&session).await, SessionStatus::Running);
-    std::fs::write(&release_again, "1").unwrap();
-}
-
-/// Whether the session's record holds the review call's end, as the old
-/// process reported it.
-async fn late_review_report_recorded(h: &Harness, session: &ariadne_store::AgentSession) -> bool {
-    h.store
-        .list_events(ariadne_store::EventFilter {
-            session_id: Some(session.id.clone()),
-            limit: 200,
-            ..Default::default()
-        })
-        .await
-        .unwrap()
-        .iter()
-        .any(|event| {
-            event.kind == "post_tool_use" && event.payload.contains("mcp.ariadne.request_review")
-        })
-}
-
 /// The adapters' quota report includes subagent use, so it takes precedence
 /// over the standard response where the two disagree.
 #[tokio::test]
@@ -813,8 +499,7 @@ async fn resumed_prompt_usage_adds_a_new_launch_total() {
     }]);
     stub.reprogram(resumed_script);
     let resumed = h
-        .launcher
-        .resume_author(&cast.task.id, "continue this conversation")
+        .resume_agent(&cast.task, "develop", "continue this conversation")
         .await
         .unwrap();
     assert_eq!(resumed.id, session.id);
@@ -971,7 +656,7 @@ async fn available_commands_reach_console_streams_and_snapshots_without_storage(
     let stub = stub_acp_agent(agent_dir.path(), scripted);
     let h = harness().home(registry_home(&stub)).await;
     let cast = acp_cast(&h).await;
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.start_agent(&cast.task, "develop").await;
     eventually(TIMEOUT, "the first turn to pause", || async {
         finish.with_extension("reached").exists()
     })
@@ -1145,15 +830,15 @@ async fn ask_raises_attention_and_a_console_answer_unblocks_the_turn() {
             title: "Ask before writing".into(),
             description: "do things".into(),
             agents: vec![
-                NewTaskAgent::new(Seat::Author, ["coding"], common::test_pin()),
-                NewTaskAgent::new(Seat::Reviewer, ["code-review"], common::test_pin()),
+                NewTaskAgent::new("develop", ["coding"], common::test_pin()),
+                NewTaskAgent::new("review", ["code-review"], common::test_pin()),
             ],
             depends_on: vec![],
         })
         .await
         .unwrap();
     ready(&h, &task.id).await;
-    let session = h.launcher.spawn_author(&task.id).await.unwrap();
+    let session = h.start_agent(&task, "develop").await;
 
     eventually(TIMEOUT, "the permission attention to rise", || async {
         h.attention(&session).await == Some(AttentionReason::WaitingPermission)
@@ -1198,7 +883,7 @@ async fn learn_remembers_an_approval_per_repository_across_a_daemon_restart() {
         .await;
     ready(&h, &cast.task.id).await;
 
-    let denied = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let denied = h.start_agent(&cast.task, "develop").await;
     eventually(TIMEOUT, "the first permission attention", || async {
         h.attention(&denied).await == Some(AttentionReason::WaitingPermission)
     })
@@ -1221,20 +906,20 @@ async fn learn_remembers_an_approval_per_repository_across_a_daemon_restart() {
     assert_eq!(denial.output, None, "no model was called");
 
     let asked_again = h
-        .task_on(&cast.goal, &cast.repo, "Ask again", 1, common::test_pin())
+        .task_on(&cast.goal, &cast.repo, "Ask again", common::test_pin())
         .await;
     ready(&h, &asked_again.id).await;
-    let approved = h.launcher.spawn_author(&asked_again.id).await.unwrap();
+    let allowed = h.start_agent(&asked_again, "develop").await;
     eventually(
         TIMEOUT,
         "the second permission attention: a denial never auto-allows",
-        || async { h.attention(&approved).await == Some(AttentionReason::WaitingPermission) },
+        || async { h.attention(&allowed).await == Some(AttentionReason::WaitingPermission) },
     )
     .await;
-    let (status, _) = h.send(post_console_input(&approved.id, "command")).await;
+    let (status, _) = h.send(post_console_input(&allowed.id, "command")).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
-    eventually(TIMEOUT, "the approved turn to finish", || async {
-        h.session_status(&approved).await == SessionStatus::Idle
+    eventually(TIMEOUT, "the allowed turn to finish", || async {
+        h.session_status(&allowed).await == SessionStatus::Idle
     })
     .await;
 
@@ -1268,16 +953,10 @@ async fn learn_remembers_an_approval_per_repository_across_a_daemon_restart() {
     assert_eq!(options.as_array().unwrap().len(), 2);
 
     let remembered = h
-        .task_on(
-            &cast.goal,
-            &cast.repo,
-            "Use approval",
-            1,
-            common::test_pin(),
-        )
+        .task_on(&cast.goal, &cast.repo, "Use approval", common::test_pin())
         .await;
     ready(&h, &remembered.id).await;
-    let session = h.launcher.spawn_author(&remembered.id).await.unwrap();
+    let session = h.start_agent(&remembered, "develop").await;
     eventually(
         TIMEOUT,
         "the remembered permission turn to finish",
@@ -1322,7 +1001,7 @@ async fn widening_a_row_to_all_answers_a_second_repository() {
         effort: None,
     };
     let goal_b = h.goal_on(&repo_b, pin.clone()).await;
-    let task_b = h.task_on(&goal_b, &repo_b, "task-b", 1, pin.clone()).await;
+    let task_b = h.task_on(&goal_b, &repo_b, "task-b", pin.clone()).await;
 
     let session_a = asked(&h, &cast_a.task.id).await;
     let (status, _) = h.send(post_console_input(&session_a.id, "command")).await;
@@ -1365,9 +1044,9 @@ async fn widening_a_row_to_all_answers_a_second_repository() {
     };
     assert_eq!(published.scope, LearnedPermissionScope::All);
 
-    let again_b = h.task_on(&goal_b, &repo_b, "task-b-again", 1, pin).await;
+    let again_b = h.task_on(&goal_b, &repo_b, "task-b-again", pin).await;
     ready(&h, &again_b.id).await;
-    let session_again = h.launcher.spawn_author(&again_b.id).await.unwrap();
+    let session_again = h.start_agent(&again_b, "develop").await;
     eventually(
         TIMEOUT,
         "the widened permission's turn to finish",
@@ -1395,14 +1074,14 @@ async fn ai_asks_once_and_remembers_the_approval_as_learn_does() {
     h.set_permission_mode(&cast.repo, PermissionMode::Ai).await;
     ready(&h, &cast.task.id).await;
 
-    let asked = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let asked = h.start_agent(&cast.task, "develop").await;
     eventually(TIMEOUT, "the first permission attention", || async {
         h.attention(&asked).await == Some(AttentionReason::WaitingPermission)
     })
     .await;
     let (status, _) = h.send(post_console_input(&asked.id, "command")).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
-    eventually(TIMEOUT, "the approved turn to finish", || async {
+    eventually(TIMEOUT, "the allowed turn to finish", || async {
         h.session_status(&asked).await == SessionStatus::Idle
     })
     .await;
@@ -1416,10 +1095,10 @@ async fn ai_asks_once_and_remembers_the_approval_as_learn_does() {
     assert_eq!(learned[0].target, "ai");
 
     let again = h
-        .task_on(&cast.goal, &cast.repo, "Ask again", 1, common::test_pin())
+        .task_on(&cast.goal, &cast.repo, "Ask again", common::test_pin())
         .await;
     ready(&h, &again.id).await;
-    let remembered = h.launcher.spawn_author(&again.id).await.unwrap();
+    let remembered = h.start_agent(&again, "develop").await;
     eventually(TIMEOUT, "the remembered permission turn", || async {
         h.session_status(&remembered).await == SessionStatus::Idle
     })
@@ -1490,7 +1169,8 @@ async fn allowed_row(h: &Harness, cast: &Cast, command: &str, family: &str) {
 /// Spawn the task's author and wait until it asks the console.
 async fn asked(h: &Harness, task_id: &str) -> ariadne_store::AgentSession {
     ready(h, task_id).await;
-    let session = h.launcher.spawn_author(task_id).await.unwrap();
+    let task = h.store.get_task(task_id).await.unwrap();
+    let session = h.start_agent(&task, "develop").await;
     eventually(TIMEOUT, "the permission attention", || async {
         h.attention(&session).await == Some(AttentionReason::WaitingPermission)
     })
@@ -1570,16 +1250,10 @@ async fn family_choice_answers_later_rebase_calls_but_not_other_families() {
         "git rebase --autostash main | tail -5",
     )));
     let second_task = h
-        .task_on(
-            &cast.goal,
-            &cast.repo,
-            "Second rebase",
-            1,
-            common::test_pin(),
-        )
+        .task_on(&cast.goal, &cast.repo, "Second rebase", common::test_pin())
         .await;
     ready(&h, &second_task.id).await;
-    let second = h.launcher.spawn_author(&second_task.id).await.unwrap();
+    let second = h.start_agent(&second_task, "develop").await;
     eventually(TIMEOUT, "the learned answer", || async {
         h.session_status(&second).await == SessionStatus::Idle
     })
@@ -1595,13 +1269,7 @@ async fn family_choice_answers_later_rebase_calls_but_not_other_families() {
 
     stub.reprogram(permission_script_for(bash_call("cargo nextest run")));
     let third_task = h
-        .task_on(
-            &cast.goal,
-            &cast.repo,
-            "Other family",
-            1,
-            common::test_pin(),
-        )
+        .task_on(&cast.goal, &cast.repo, "Other family", common::test_pin())
         .await;
     asked(&h, &third_task.id).await;
 }
@@ -1638,7 +1306,7 @@ async fn a_family_row_keeps_the_force_tag_guard() {
         "git push --force origin main",
     )));
     let second_task = h
-        .task_on(&cast.goal, &cast.repo, "Force push", 1, common::test_pin())
+        .task_on(&cast.goal, &cast.repo, "Force push", common::test_pin())
         .await;
     let second = asked(&h, &second_task.id).await;
     let request = permission_event(&h, &second.id, "permission_request").await;
@@ -1671,7 +1339,7 @@ async fn once_and_reject_choices_record_once_and_ask_again() {
     );
 
     let second_task = h
-        .task_on(&cast.goal, &cast.repo, "Ask twice", 1, common::test_pin())
+        .task_on(&cast.goal, &cast.repo, "Ask twice", common::test_pin())
         .await;
     let second = asked(&h, &second_task.id).await;
     h.send(post_console_input(&second.id, "reject")).await;
@@ -1696,13 +1364,7 @@ async fn once_and_reject_choices_record_once_and_ask_again() {
     assert_eq!(replies[1]["result"]["outcome"]["optionId"], "no");
 
     let third_task = h
-        .task_on(
-            &cast.goal,
-            &cast.repo,
-            "Ask third time",
-            1,
-            common::test_pin(),
-        )
+        .task_on(&cast.goal, &cast.repo, "Ask third time", common::test_pin())
         .await;
     asked(&h, &third_task.id).await;
 }
@@ -1750,7 +1412,7 @@ async fn ask_records_the_console_choice_and_never_auto_allows() {
     assert_eq!(learned[0].output, None);
 
     let again = h
-        .task_on(&cast.goal, &cast.repo, "Ask again", 1, common::test_pin())
+        .task_on(&cast.goal, &cast.repo, "Ask again", common::test_pin())
         .await;
     asked(&h, &again.id).await;
 }
@@ -1801,7 +1463,7 @@ async fn a_row_with_an_unknown_allow_kind_never_auto_allows() {
     asked(&h, &cast.task.id).await;
 }
 
-/// `learn` answers a request that differs from an approved one only by a
+/// `learn` answers a request that differs from an allowed one only by a
 /// commit, a `description` and an output filter: both share one key.
 #[tokio::test]
 async fn learn_answers_a_request_that_differs_only_by_one_time_values() {
@@ -1841,7 +1503,7 @@ async fn learn_answers_a_request_that_differs_only_by_one_time_values() {
     let session = asked(&h, &cast.task.id).await;
     let (status, _) = h.send(post_console_input(&session.id, "command")).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
-    eventually(TIMEOUT, "the approved turn to finish", || async {
+    eventually(TIMEOUT, "the allowed turn to finish", || async {
         h.session_status(&session).await == SessionStatus::Idle
     })
     .await;
@@ -1899,7 +1561,7 @@ async fn a_row_without_the_requests_risk_tags_does_not_answer_it() {
     let session = asked(&h, &cast.task.id).await;
     let (status, _) = h.send(post_console_input(&session.id, "command")).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
-    eventually(TIMEOUT, "the approved turn to finish", || async {
+    eventually(TIMEOUT, "the allowed turn to finish", || async {
         h.session_status(&session).await == SessionStatus::Idle
     })
     .await;
@@ -1911,160 +1573,6 @@ async fn a_row_without_the_requests_risk_tags_does_not_answer_it() {
     assert_eq!(learned.len(), 1, "the request has the row's key");
     let tags: Vec<String> = serde_json::from_str(&learned[0].risk_tags).unwrap();
     assert!(tags.contains(&"recursive".to_string()), "{tags:?}");
-}
-
-/// The second author of a task works on a branch of its own, the task's
-/// with a suffix: its key names that branch `<BRANCH>` whole, and leaves the
-/// first author's branch, the task's, as it is.
-#[tokio::test]
-async fn a_second_authors_branch_is_the_branch_placeholder() {
-    let root = tempfile::tempdir().unwrap();
-    let agent_dir = tempfile::tempdir().unwrap();
-    let stub = stub_acp_agent(agent_dir.path(), script());
-    let h = harness().home(home_with_stub(&root, &stub)).await;
-    let cast = acp_cast(&h).await;
-    h.set_permission_mode(&cast.repo, PermissionMode::Learn)
-        .await;
-    let author = || NewTaskAgent::new(Seat::Author, ["coding"], common::test_pin());
-    let task = h
-        .store
-        .create_task(NewTask {
-            goal_id: cast.goal.id.clone(),
-            repo_id: cast.repo.id.clone(),
-            title: "Contested push".into(),
-            description: "do things".into(),
-            agents: vec![
-                author(),
-                author(),
-                NewTaskAgent::new(Seat::Reviewer, ["code-review"], common::test_pin()),
-            ],
-            depends_on: vec![],
-        })
-        .await
-        .unwrap();
-    let second = h.store.list_task_authors(&task.id).await.unwrap().remove(1);
-    let branch = ariadne_store::author_branch(&task.branch, second.ordinal);
-    assert_ne!(branch, task.branch);
-    stub.reprogram(permission_script_for(bash_call(&format!(
-        "git push origin {branch} && git log {}",
-        task.branch
-    ))));
-    ready(&h, &task.id).await;
-
-    let session = h
-        .launcher
-        .spawn_author_agent(&task.id, &second.id)
-        .await
-        .unwrap();
-    eventually(TIMEOUT, "the permission attention", || async {
-        h.attention(&session).await == Some(AttentionReason::WaitingPermission)
-    })
-    .await;
-    let (status, _) = h.send(post_console_input(&session.id, "command")).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
-    eventually(TIMEOUT, "the approved turn to finish", || async {
-        h.session_status(&session).await == SessionStatus::Idle
-    })
-    .await;
-    let learned = h
-        .store
-        .list_learned_permissions(Some(&cast.repo.id))
-        .await
-        .unwrap();
-    assert_eq!(learned.len(), 1);
-    assert_eq!(
-        learned[0].key,
-        json!({"command": format!("git push origin <BRANCH> && git log {}", task.branch)})
-            .to_string()
-    );
-}
-
-/// A reviewer of the second author reviews that author's branch: its key
-/// names that branch `<BRANCH>`, and leaves the task's own as it is.
-#[tokio::test]
-async fn a_reviewer_of_a_second_author_names_the_reviewed_branch() {
-    let root = tempfile::tempdir().unwrap();
-    let agent_dir = tempfile::tempdir().unwrap();
-    let stub = stub_acp_agent(agent_dir.path(), script());
-    let h = harness().home(home_with_stub(&root, &stub)).await;
-    let cast = acp_cast(&h).await;
-    h.set_permission_mode(&cast.repo, PermissionMode::Learn)
-        .await;
-    let author = || NewTaskAgent::new(Seat::Author, ["coding"], common::test_pin());
-    let task = h
-        .store
-        .create_task(NewTask {
-            goal_id: cast.goal.id.clone(),
-            repo_id: cast.repo.id.clone(),
-            title: "Contested review".into(),
-            description: "do things".into(),
-            agents: vec![
-                author(),
-                author(),
-                NewTaskAgent::new(Seat::Reviewer, ["code-review"], common::test_pin()),
-            ],
-            depends_on: vec![],
-        })
-        .await
-        .unwrap();
-    let second = h.store.list_task_authors(&task.id).await.unwrap().remove(1);
-    let reviewer = h
-        .store
-        .list_task_reviewers(&task.id)
-        .await
-        .unwrap()
-        .remove(0);
-    let branch = ariadne_store::author_branch(&task.branch, second.ordinal);
-    ready(&h, &task.id).await;
-    let writing = h
-        .launcher
-        .spawn_author_agent(&task.id, &second.id)
-        .await
-        .unwrap();
-    eventually(TIMEOUT, "the second author's turn to finish", || async {
-        h.session_status(&writing).await == SessionStatus::Idle
-    })
-    .await;
-    stub.reprogram(permission_script_for(bash_call(&format!(
-        "git diff {}...{branch}",
-        task.branch
-    ))));
-
-    let session = h
-        .launcher
-        .spawn_reviewer_for(&task.id, &reviewer.id, Some(&second.id))
-        .await
-        .unwrap();
-    // No review is open, so nobody waits on the reviewer and no attention
-    // rises: the request itself is what the test waits for.
-    eventually(TIMEOUT, "the permission request", || async {
-        h.store
-            .list_events(EventFilter {
-                session_id: Some(session.id.clone()),
-                ..Default::default()
-            })
-            .await
-            .unwrap()
-            .iter()
-            .any(|event| event.kind == "permission_request")
-    })
-    .await;
-    let (status, _) = h.send(post_console_input(&session.id, "command")).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
-    eventually(TIMEOUT, "the approved turn to finish", || async {
-        h.session_status(&session).await == SessionStatus::Idle
-    })
-    .await;
-    let learned = h
-        .store
-        .list_learned_permissions(Some(&cast.repo.id))
-        .await
-        .unwrap();
-    assert_eq!(learned.len(), 1);
-    assert_eq!(
-        learned[0].key,
-        json!({"command": format!("git diff {}...<BRANCH>", task.branch)}).to_string()
-    );
 }
 
 /// A request with no `rawInput` gets a row, but even an allowing row never
@@ -2086,7 +1594,7 @@ async fn a_request_without_raw_input_never_auto_allows() {
     let session = asked(&h, &cast.task.id).await;
     let (status, _) = h.send(post_console_input(&session.id, "command")).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
-    eventually(TIMEOUT, "the approved turn to finish", || async {
+    eventually(TIMEOUT, "the allowed turn to finish", || async {
         h.session_status(&session).await == SessionStatus::Idle
     })
     .await;
@@ -2099,7 +1607,7 @@ async fn a_request_without_raw_input_never_auto_allows() {
     assert_eq!(learned[0].selected_option, "yes");
 
     let again = h
-        .task_on(&cast.goal, &cast.repo, "Ask again", 1, common::test_pin())
+        .task_on(&cast.goal, &cast.repo, "Ask again", common::test_pin())
         .await;
     asked(&h, &again.id).await;
 }

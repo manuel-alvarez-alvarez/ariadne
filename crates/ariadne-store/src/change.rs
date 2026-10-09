@@ -7,7 +7,7 @@
 
 use crate::{
     AgentEvent, AgentSession, Goal, LearnedPermission, Message, Repository, Skill, Task,
-    TaskTransition,
+    TaskTransition, Workflow,
 };
 
 /// A committed write, carrying the row as it now stands.
@@ -33,6 +33,9 @@ pub enum Change {
     SkillCreated(Skill),
     SkillUpdated(Skill),
     SkillDeleted(String),
+    WorkflowCreated(Workflow),
+    WorkflowUpdated(Workflow),
+    WorkflowDeleted(String),
     RepositoryCreated(Repository),
     RepositoryUpdated(Repository),
     RepositoryDeleted(String),

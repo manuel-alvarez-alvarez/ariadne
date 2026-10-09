@@ -2,7 +2,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use ariadne_core::MessageKind;
 use serde_json::Value;
 use sqlx::Row;
 
@@ -30,10 +29,8 @@ pub struct ModelStat {
     pub time_secs: f64,
     /// The messages this model sent in this seat.
     pub messages: u64,
-    /// Authors only: the mean review requests over finished tasks, zero without one.
-    pub rounds_per_task: Option<f64>,
-    /// Reviewers only: changes requested over the tasks given a verdict, zero without one.
-    pub changes_per_task: Option<f64>,
+    /// The tasks this model's column ended `finished`.
+    pub tasks_finished: u64,
 }
 
 /// Intermediate totals retain task and goal identities until all filtered facts are read.
@@ -42,22 +39,29 @@ struct Totals {
     row: ModelStat,
     tasks: BTreeSet<String>,
     goals: BTreeSet<String>,
-    rounds: f64,
-    finished: u64,
-    changes: u64,
-    reviewed_tasks: BTreeSet<String>,
 }
 
-type Rows = BTreeMap<(u8, String), Totals>;
+// Keyed by the seat's own display order, then the model, then the seat
+// itself: the order groups and sorts the rows for display, and the seat
+// tells two rows of the same group and model apart. `agent` is one key, but
+// a database migrated from the old pipeline still has `author` and
+// `reviewer` on its older facts, and a fact with no seat at all is a third —
+// collapsing any of them under the shared display order of "every other
+// seat" merged their tasks, tokens and time into whichever reached that
+// order's row first.
+type Rows = BTreeMap<(u8, String, Option<String>), Totals>;
+
+fn seat_order(seat: Option<&str>) -> u8 {
+    match seat {
+        Some("orchestrator") => 0,
+        Some("agent") => 1,
+        _ => 2,
+    }
+}
 
 fn row<'a>(rows: &'a mut Rows, model: &str, seat: Option<&str>) -> &'a mut Totals {
-    let order = match seat {
-        Some("orchestrator") => 0,
-        Some("author") => 1,
-        Some("reviewer") => 2,
-        _ => 3,
-    };
-    rows.entry((order, model.into())).or_insert_with(|| Totals {
+    let key = (seat_order(seat), model.to_string(), seat.map(str::to_owned));
+    rows.entry(key).or_insert_with(|| Totals {
         row: ModelStat {
             model: model.into(),
             seat: seat.map(str::to_owned),
@@ -65,14 +69,6 @@ fn row<'a>(rows: &'a mut Rows, model: &str, seat: Option<&str>) -> &'a mut Total
         },
         ..Totals::default()
     })
-}
-
-fn ratio(numerator: f64, denominator: u64) -> f64 {
-    if denominator == 0 {
-        0.0
-    } else {
-        numerator / denominator as f64
-    }
 }
 
 impl Store {
@@ -84,7 +80,7 @@ impl Store {
         // attention fact is left out, because its prompt is already a permission.
         let sql = format!(
             "SELECT kind, model, seat, goal_id, task_id, data FROM stat_facts
-             WHERE (kind IN ('session_ended', 'message', 'task_ended', 'verdict', 'switch', 'pick')
+             WHERE (kind IN ('session_ended', 'message', 'task_ended', 'switch')
                     OR (kind = 'permission' AND json_extract(data, '$.decided_by') = 'console')
                     OR (kind = 'attention' AND json_extract(data, '$.reason')
                         IN ('waiting_input', 'waiting_user', 'stalled', 'agent_error'))){clause}"
@@ -103,25 +99,6 @@ impl Store {
             let goal: Option<String> = fact.try_get("goal_id")?;
             let task: Option<String> = fact.try_get("task_id")?;
             let data: sqlx::types::Json<Value> = fact.try_get("data")?;
-            // A verdict names its author's model, and a pick names every entrant.
-            let authors: Vec<&str> = match kind.as_str() {
-                "verdict" => data["author_model"].as_str().into_iter().collect(),
-                "pick" => data["winner_model"]
-                    .as_str()
-                    .into_iter()
-                    .chain(
-                        data["loser_models"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .filter_map(Value::as_str),
-                    )
-                    .collect(),
-                _ => Vec::new(),
-            };
-            for author in authors {
-                row(&mut rows, author, Some("author"));
-            }
             let Some(model) = model.as_deref() else {
                 continue;
             };
@@ -139,37 +116,15 @@ impl Store {
                     totals.row.time_secs += data["lifetime_secs"].as_f64().unwrap_or(0.0);
                 }
                 "message" => totals.row.messages += 1,
-                "task_ended" if data["status"] == "finished" => {
-                    totals.finished += 1;
-                    totals.rounds += number("review_requests") as f64;
-                }
-                "verdict" => {
-                    totals.changes += u64::from(
-                        data["verdict"].as_str() == Some(MessageKind::RequestChanges.as_str()),
-                    );
-                    totals.reviewed_tasks.extend(task);
-                }
+                "task_ended" if data["status"] == "finished" => totals.row.tasks_finished += 1,
                 _ => {}
             }
         }
         let items = rows
             .into_values()
             .map(|mut totals| {
-                let row = &mut totals.row;
-                row.tasks = totals.tasks.len() as u64;
-                row.goals = totals.goals.len() as u64;
-                match row.seat.as_deref() {
-                    Some("author") => {
-                        row.rounds_per_task = Some(ratio(totals.rounds, totals.finished))
-                    }
-                    Some("reviewer") => {
-                        row.changes_per_task = Some(ratio(
-                            totals.changes as f64,
-                            totals.reviewed_tasks.len() as u64,
-                        ))
-                    }
-                    _ => {}
-                }
+                totals.row.tasks = totals.tasks.len() as u64;
+                totals.row.goals = totals.goals.len() as u64;
                 totals.row
             })
             .collect();
@@ -197,7 +152,7 @@ mod tests {
             Self {
                 kind: "session_ended",
                 model: Some("writer"),
-                seat: Some("author"),
+                seat: Some("agent"),
                 goal: None,
                 task: None,
                 data: json!({}),
@@ -242,9 +197,9 @@ mod tests {
     async fn each_figure_counts_the_sessions_and_messages_of_its_model_and_seat() {
         let (_dir, store) = store().await;
         for (seat, goal, task, input, cached, output, lifetime) in [
-            ("author", "g1", Some("t1"), 100, 40, 20, 30.0),
-            ("author", "g1", Some("t1"), 200, 200, 30, 60.5),
-            ("author", "g2", Some("t2"), 300, 0, 50, 10.0),
+            ("agent", "g1", Some("t1"), 100, 40, 20, 30.0),
+            ("agent", "g1", Some("t1"), 200, 200, 30, 60.5),
+            ("agent", "g2", Some("t2"), 300, 0, 50, 10.0),
             ("orchestrator", "g1", None, 1_000, 0, 100, 500.0),
         ] {
             record(
@@ -260,7 +215,7 @@ mod tests {
             )
             .await;
         }
-        for seat in ["author", "author", "orchestrator"] {
+        for seat in ["agent", "agent", "orchestrator"] {
             record(
                 &store,
                 Fact {
@@ -285,17 +240,16 @@ mod tests {
         let stats = store.model_stats(&StatsFilter::default()).await.unwrap();
         assert_eq!(stats.items.len(), 2);
         assert_eq!(
-            find(&stats, "writer", Some("author")),
+            find(&stats, "writer", Some("agent")),
             &ModelStat {
                 model: "writer".into(),
-                seat: Some("author".into()),
+                seat: Some("agent".into()),
                 tasks: 2,
                 goals: 2,
                 tokens: 700,
                 time_secs: 100.5,
                 messages: 2,
-                rounds_per_task: Some(0.0),
-                changes_per_task: None,
+                tasks_finished: 0,
             }
         );
         assert_eq!(
@@ -308,140 +262,81 @@ mod tests {
                 tokens: 1_100,
                 time_secs: 500.0,
                 messages: 1,
-                rounds_per_task: None,
-                changes_per_task: None,
+                tasks_finished: 0,
             }
         );
     }
 
+    /// A finished task counts for the model of the column it ended in, and
+    /// a task that failed or was cancelled counts for nobody.
     #[tokio::test]
-    async fn rounds_per_task_is_the_mean_review_requests_of_finished_tasks_for_authors_only() {
+    async fn tasks_finished_counts_the_finished_endings_of_a_models_column() {
         let (_dir, store) = store().await;
-        for (model, seat, status, rounds) in [
-            ("writer", Some("author"), "finished", 1),
-            ("writer", Some("author"), "finished", 4),
-            ("writer", Some("author"), "failed", 9),
-            ("writer", Some("author"), "cancelled", 9),
-            ("other", Some("author"), "finished", 7),
-            ("writer", None, "finished", 5),
+        for (model, status) in [
+            ("lander", "finished"),
+            ("lander", "finished"),
+            ("lander", "failed"),
+            ("lander", "cancelled"),
+            ("other", "finished"),
         ] {
             record(
                 &store,
                 Fact {
                     kind: "task_ended",
                     model: Some(model),
-                    seat,
                     task: Some("t"),
-                    data: json!({"status": status, "review_requests": rounds}),
+                    data: json!({"status": status, "landed": status == "finished"}),
                     ..Fact::default()
                 },
             )
             .await;
         }
         let stats = store.model_stats(&StatsFilter::default()).await.unwrap();
-        assert_eq!(
-            find(&stats, "writer", Some("author")).rounds_per_task,
-            Some(2.5)
-        );
-        assert_eq!(
-            find(&stats, "other", Some("author")).rounds_per_task,
-            Some(7.0)
-        );
-        let seatless = find(&stats, "writer", None);
-        assert_eq!(
-            (seatless.rounds_per_task, seatless.changes_per_task),
-            (None, None)
-        );
-        assert_eq!(
-            find(&stats, "writer", Some("author")).changes_per_task,
-            None
-        );
+        assert_eq!(find(&stats, "lander", Some("agent")).tasks_finished, 2);
+        assert_eq!(find(&stats, "other", Some("agent")).tasks_finished, 1);
     }
 
+    /// `author` and `reviewer` are seats the old pipeline left on facts a
+    /// migration does not rewrite, and no seat at all is a session record
+    /// predates. One model used on every one of them keeps a row of its own
+    /// per seat, rather than the three collapsing into whichever reached the
+    /// shared display order first.
     #[tokio::test]
-    async fn changes_per_task_divides_changes_requested_by_the_tasks_reviewed_for_reviewers_only() {
+    async fn distinct_seats_of_the_same_model_keep_their_own_rows() {
         let (_dir, store) = store().await;
-        for (model, task, verdict) in [
-            ("judge", "t1", "request_changes"),
-            ("judge", "t1", "request_changes"),
-            ("judge", "t1", "approve"),
-            ("judge", "t2", "approve"),
-            ("judge", "t3", "request_changes"),
-            ("judge", "t4", "approve"),
-            ("other", "t1", "approve"),
+        for (seat, task, input) in [
+            (Some("author"), "t1", 100),
+            (Some("reviewer"), "t2", 200),
+            (None, "t3", 400),
         ] {
             record(
                 &store,
                 Fact {
-                    kind: "verdict",
-                    model: Some(model),
-                    seat: Some("reviewer"),
+                    seat,
                     task: Some(task),
-                    data: json!({"verdict": verdict, "author_model": "writer"}),
+                    data: json!({"input_tokens": input, "output_tokens": 0}),
                     ..Fact::default()
                 },
             )
             .await;
         }
         let stats = store.model_stats(&StatsFilter::default()).await.unwrap();
-        let judge = find(&stats, "judge", Some("reviewer"));
-        assert_eq!(
-            (judge.changes_per_task, judge.rounds_per_task),
-            (Some(0.75), None)
-        );
-        assert_eq!(
-            find(&stats, "other", Some("reviewer")).changes_per_task,
-            Some(0.0)
-        );
-        // The author model the verdicts name gets a row of its own.
-        assert_eq!(
-            find(&stats, "writer", Some("author")).rounds_per_task,
-            Some(0.0)
-        );
-    }
-
-    #[tokio::test]
-    async fn the_review_figures_are_zero_without_a_denominator() {
-        let (_dir, store) = store().await;
-        for (seat, kind) in [("author", "message"), ("reviewer", "session_ended")] {
-            record(
-                &store,
-                Fact {
-                    kind,
-                    seat: Some(seat),
-                    task: Some("t"),
-                    ..Fact::default()
-                },
-            )
-            .await;
-        }
-        let stats = store.model_stats(&StatsFilter::default()).await.unwrap();
-        assert_eq!(
-            find(&stats, "writer", Some("author")).rounds_per_task,
-            Some(0.0)
-        );
-        assert_eq!(
-            find(&stats, "writer", Some("reviewer")).changes_per_task,
-            Some(0.0)
-        );
+        assert_eq!(stats.items.len(), 3, "{:?}", stats.items);
+        assert_eq!(find(&stats, "writer", Some("author")).tokens, 100);
+        assert_eq!(find(&stats, "writer", Some("reviewer")).tokens, 200);
+        assert_eq!(find(&stats, "writer", None).tokens, 400);
     }
 
     #[tokio::test]
     async fn every_fact_is_filtered_by_time_and_repository() {
         let (_dir, store) = store().await;
-        for kind in ["session_ended", "message", "task_ended", "verdict"] {
+        for kind in ["session_ended", "message", "task_ended"] {
             record(
                 &store,
                 Fact {
                     kind,
-                    seat: Some(if kind == "verdict" {
-                        "reviewer"
-                    } else {
-                        "author"
-                    }),
                     task: Some("old"),
-                    data: json!({"status": "finished", "review_requests": 9, "input_tokens": 900,
-                        "verdict": "request_changes"}),
+                    data: json!({"status": "finished", "input_tokens": 900}),
                     ..Fact::default()
                 },
             )
@@ -466,24 +361,15 @@ mod tests {
             since: Some("2026-01-01T00:00:00Z".parse().unwrap()),
         };
         let stats = store.model_stats(&boundary).await.unwrap();
-        assert_eq!(find(&stats, "writer", Some("author")).tokens, 900);
-        assert_eq!(
-            find(&stats, "writer", Some("reviewer")).changes_per_task,
-            Some(1.0)
-        );
-        for kind in ["session_ended", "task_ended", "verdict"] {
+        assert_eq!(find(&stats, "writer", Some("agent")).tokens, 900);
+        assert_eq!(find(&stats, "writer", Some("agent")).tasks_finished, 1);
+        for kind in ["session_ended", "task_ended"] {
             record(
                 &store,
                 Fact {
                     kind,
-                    seat: Some(if kind == "verdict" {
-                        "reviewer"
-                    } else {
-                        "author"
-                    }),
                     task: Some("new"),
-                    data: json!({"status": "finished", "review_requests": 1, "input_tokens": 10,
-                        "verdict": "approve"}),
+                    data: json!({"status": "finished", "input_tokens": 10}),
                     ..Fact::default()
                 },
             )
@@ -494,14 +380,10 @@ mod tests {
             since: Some("2026-02-01T00:00:00Z".parse().unwrap()),
         };
         let stats = store.model_stats(&recent).await.unwrap();
-        let row = find(&stats, "writer", Some("author"));
+        let row = find(&stats, "writer", Some("agent"));
         assert_eq!(
-            (row.tasks, row.tokens, row.messages, row.rounds_per_task),
-            (1, 10, 0, Some(1.0))
-        );
-        assert_eq!(
-            find(&stats, "writer", Some("reviewer")).changes_per_task,
-            Some(0.0)
+            (row.tasks, row.tokens, row.messages, row.tasks_finished),
+            (1, 10, 0, 1)
         );
     }
 
@@ -510,11 +392,10 @@ mod tests {
         let (_dir, store) = store().await;
         for (model, seat) in [
             ("z", None),
-            ("z", Some("reviewer")),
-            ("z", Some("author")),
+            ("z", Some("agent")),
             ("z", Some("orchestrator")),
             ("a", Some("orchestrator")),
-            ("b", Some("author")),
+            ("b", Some("agent")),
         ] {
             record(
                 &store,
@@ -536,32 +417,17 @@ mod tests {
             vec![
                 (Some("orchestrator"), "a"),
                 (Some("orchestrator"), "z"),
-                (Some("author"), "b"),
-                (Some("author"), "z"),
-                (Some("reviewer"), "z"),
+                (Some("agent"), "b"),
+                (Some("agent"), "z"),
                 (None, "z"),
             ]
         );
     }
 
     #[tokio::test]
-    async fn models_named_only_in_payloads_and_other_facts_get_rows_under_both_filters() {
+    async fn models_named_in_other_facts_get_rows_under_both_filters() {
         let (_dir, store) = store().await;
         let facts = [
-            Fact {
-                kind: "verdict",
-                model: None,
-                seat: Some("reviewer"),
-                data: json!({"author_model": "payload", "verdict": "approve"}),
-                ..Fact::default()
-            },
-            Fact {
-                kind: "pick",
-                model: None,
-                seat: None,
-                data: json!({"winner_model": "winner", "loser_models": ["loser", "loser"]}),
-                ..Fact::default()
-            },
             Fact {
                 kind: "switch",
                 model: Some("switched"),
@@ -597,11 +463,10 @@ mod tests {
             record(&store, fact).await;
         }
         let empty = ModelStat {
-            seat: Some("author".into()),
-            rounds_per_task: Some(0.0),
+            seat: Some("agent".into()),
             ..ModelStat::default()
         };
-        let named: Vec<ModelStat> = ["asked", "loser", "payload", "stuck", "switched", "winner"]
+        let named: Vec<ModelStat> = ["asked", "stuck", "switched"]
             .into_iter()
             .map(|model| ModelStat {
                 model: model.into(),

@@ -893,18 +893,18 @@ mod tests {
     async fn session_in(store: &Store) -> String {
         let repository = store
             .create_repository(ariadne_store::NewRepository {
+                default_workflow: None,
                 path: "/tmp/probe".into(),
                 base_branch: "main".into(),
                 description: None,
                 permission_mode: None,
-                default_landing: None,
             })
             .await
             .unwrap();
         let goal = store
             .create_goal(ariadne_store::NewGoal {
+                workflow: None,
                 issue_url: None,
-                landing: None,
                 title: "probe".into(),
                 description: String::new(),
                 repository_ids: vec![repository.id.clone()],

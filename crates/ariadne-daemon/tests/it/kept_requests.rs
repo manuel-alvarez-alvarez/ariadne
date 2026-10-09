@@ -1,8 +1,8 @@
-//! A request of mine is kept by the author of the task that opened it, until
-//! a human merges or closes it (005, 026): the detail fetch, the news handed
-//! to that author's own session, the tools it answers through, and the
-//! cleanup once the request ended and its task is over. A request of mine
-//! gets no session of its own.
+//! A request of mine is kept by the agent of the `pr` column of the task
+//! that opened it, until a human merges or closes it (030, 026): the detail
+//! fetch, the news handed to that agent's own session, the tools it answers
+//! through, and the cleanup once the request ended and its task is over. A
+//! request of mine gets no session of its own.
 use std::path::PathBuf;
 
 use axum::body::Body;
@@ -10,14 +10,16 @@ use axum::http::{Request, StatusCode};
 use serde_json::{Value, json};
 
 use crate::common::forge::{StubForgeCli, answer, stub_forge_cli};
-use crate::common::{Harness, QUIET, TIMEOUT, as_session, eventually, harness, post_json, sh};
-use crate::landing_lifecycle::{walk_to_approved, with_forge};
+use crate::common::{
+    Harness, QUIET, TIMEOUT, as_session, eventually, harness, post_json, sh, with_forge,
+};
 use ariadne_api::SESSION_HEADER;
 use ariadne_api::tasks::TaskDto;
-use ariadne_core::{AttentionReason, Landing, SessionStatus, TaskStatus};
+use ariadne_core::{AttentionReason, SessionStatus, TaskStatus};
 use ariadne_daemon::forge::poll::Mode;
 use ariadne_daemon::scheduler::SchedEvent;
-use ariadne_store::{AgentSession, NewGoal, SessionFilter, Task};
+use ariadne_store::defaults::PULL_REQUEST_WORKFLOW;
+use ariadne_store::{AgentSession, SessionFilter, Task};
 
 /// Where `pr create` says the task's request is.
 const URL: &str = "https://github.com/acme/widgets/pull/1";
@@ -123,14 +125,14 @@ fn quiet_script() -> Value {
     script("OPEN", &[], json!([]))
 }
 
-/// A task that lands by request, walked to its approval, whose author opened
-/// its request: the request the ledger keeps for it, the author's own
-/// session, and the checkout with its bare remote.
+/// A task of a `develop-review-pr` goal, walked to its `pr` column, whose
+/// agent opened its request: the request the ledger keeps for it, that
+/// agent's own session, and the checkout with its bare remote.
 struct Kept {
     h: Harness,
     stub: StubForgeCli,
     task: Task,
-    author: AgentSession,
+    agent: AgentSession,
     /// The ledger row of the task's request.
     id: String,
     repo: String,
@@ -146,19 +148,32 @@ async fn kept_request(script: Value) -> Kept {
         .forge_cli(&stub)
         .await;
     let path = h.git_repo("repo");
-    let cast = h.active_cast_ending_in(Landing::PullRequest).await;
+    let cast = h.active_cast_running(Some(PULL_REQUEST_WORKFLOW)).await;
     with_forge(&h, &cast.repo).await;
     let bare = h.at("remote.git");
     // The base is on the remote, as a forge's is: a merge is fetched from it.
     sh(&path, "git push -q origin main");
     let task = cast.task.clone();
-    let (worktree, author) = walk_to_approved(&h, &task, &cast.reviewer.id).await;
+    // The develop column commits the change, the review column passes it on,
+    // and the `pr` column's agent pushes the branch and opens the request.
+    let develop = h.step_session(&task, "develop").await;
+    let worktree = PathBuf::from(develop.worktree_path.as_deref().unwrap());
+    sh(
+        &worktree,
+        "echo change > widget && git add widget && git -c user.name=Test -c user.email=test@test commit -qm 'feat: add widgets'",
+    );
+    h.complete_step(&task, &develop, "The change is committed.")
+        .await;
+    let review = h.step_session(&task, "review").await;
+    h.complete_step(&task, &review, "The change passes review.")
+        .await;
+    let agent = h.step_session(&task, "pr").await;
     sh(&worktree, "git push -q origin HEAD");
     let opened: TaskDto = h
         .json(
             as_session(
                 &format!("/v1/tasks/{}/pull-request", task.id),
-                &author.id,
+                &agent.id,
                 json!({"title": "Fix widgets", "body": "Fixes widgets."}),
             ),
             StatusCode::OK,
@@ -174,15 +189,17 @@ async fn kept_request(script: Value) -> Kept {
         .id;
     let repo = cast.repo.id.clone();
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
-    eventually(TIMEOUT, "the author's landing turn to end", async || {
-        h.session_status(&author).await == SessionStatus::Idle
-    })
+    eventually(
+        TIMEOUT,
+        "the request agent's first turn to end",
+        async || h.session_status(&agent).await == SessionStatus::Idle,
+    )
     .await;
     Kept {
         h,
         stub,
         task,
-        author,
+        agent,
         id,
         repo,
         path,
@@ -228,30 +245,21 @@ fn get_as(uri: &str, session_id: &str) -> Request<Body> {
         .unwrap()
 }
 
-/// A finish of the task, by its author, with `sha`.
-fn finish(task: &Task, author: &AgentSession, sha: &str) -> Request<Body> {
-    as_session(
-        &format!("/v1/tasks/{}/transitions", task.id),
-        &author.id,
-        json!({"to": "finished", "merge_commit": sha}),
-    )
-}
-
 /// A new comment by another login is stored, counted, and handed to the
-/// task's author in one prompt that names it; the same details again hand
-/// nothing; a check that turned to failure is handed by name. The request has
-/// no session of its own: its row names the author's.
+/// task's `pr` agent in one prompt that names it; the same details again
+/// hand nothing; a check that turned to failure is handed by name. The
+/// request has no session of its own: its row names the agent's.
 #[tokio::test]
-async fn the_news_of_its_request_reaches_the_author_once() {
+async fn the_news_of_its_request_reaches_the_pr_agent_once() {
     let Kept {
         h,
         stub,
-        author,
+        agent,
         id,
         repo,
         ..
     } = kept_request(quiet_script()).await;
-    let briefed = h.prompts_to(&author).len();
+    let briefed = h.prompts_to(&agent).len();
 
     let comments = [review_comment(101, "alice", None, "2026-10-02T00:00:00Z")];
     stub.reprogram(script("OPEN", &comments, json!([])));
@@ -264,20 +272,20 @@ async fn the_news_of_its_request_reaches_the_author_once() {
     let dto: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
     assert_eq!(dto["unanswered_comments"], 1);
     assert_eq!(
-        dto["session_id"], author.id,
-        "the request's session is its author's"
+        dto["session_id"], agent.id,
+        "the request's session is its agent's"
     );
-    eventually(TIMEOUT, "the news to reach the author", async || {
-        h.prompts_to(&author).len() == briefed + 1
+    eventually(TIMEOUT, "the news to reach the agent", async || {
+        h.prompts_to(&agent).len() == briefed + 1
     })
     .await;
-    let news = h.prompts_to(&author).pop().unwrap();
+    let news = h.prompts_to(&agent).pop().unwrap();
     assert!(news.contains(&comment_id), "{news}");
     assert!(news.contains("alice"), "{news}");
 
     fetch_again(&h, &stub, &repo).await;
     assert_eq!(
-        h.prompts_to(&author).len(),
+        h.prompts_to(&agent).len(),
         briefed + 1,
         "the same details are no news"
     );
@@ -286,13 +294,11 @@ async fn the_news_of_its_request_reaches_the_author_once() {
         "conclusion": "failure", "status": "completed"}]);
     stub.reprogram(script("OPEN", &comments, failed));
     fetch_again(&h, &stub, &repo).await;
-    eventually(
-        TIMEOUT,
-        "the failed check to reach the author",
-        async || h.prompts_to(&author).len() == briefed + 2,
-    )
+    eventually(TIMEOUT, "the failed check to reach the agent", async || {
+        h.prompts_to(&agent).len() == briefed + 2
+    })
     .await;
-    let news = h.prompts_to(&author).pop().unwrap();
+    let news = h.prompts_to(&agent).pop().unwrap();
     assert!(news.contains("Check lint turned to failure"), "{news}");
     assert!(
         !news.contains(&comment_id),
@@ -314,18 +320,18 @@ async fn the_news_of_its_request_reaches_the_author_once() {
     );
 }
 
-/// The author replies through the forge's reply command, stored as my
-/// comment in the thread, which answers it; the author resolves no thread. Its
-/// `ready: true` raises `waiting_user` on its own session once, and
+/// The `pr` agent replies through the forge's reply command, stored as my
+/// comment in the thread, which answers it; the agent resolves no thread.
+/// Its `ready: true` raises `waiting_user` on its own session once, and
 /// `ready: false` takes it down. Any other session is refused, and so is a
 /// call that comes from no session.
 #[tokio::test]
-async fn the_author_replies_and_reports_and_no_other_session_may() {
+async fn the_pr_agent_replies_and_reports_and_no_other_session_may() {
     let comments = [review_comment(101, "alice", None, "2026-10-02T00:00:00Z")];
     let Kept {
         h,
         stub,
-        author,
+        agent,
         id,
         repo,
         ..
@@ -338,10 +344,8 @@ async fn the_author_replies_and_reports_and_no_other_session_may() {
     })
     .await;
     let comment_id = stored[0]["id"].as_str().unwrap().to_string();
-    eventually(TIMEOUT, "the author to read the comment", async || {
-        h.prompts_to(&author)
-            .iter()
-            .any(|p| p.contains(&comment_id))
+    eventually(TIMEOUT, "the agent to read the comment", async || {
+        h.prompts_to(&agent).iter().any(|p| p.contains(&comment_id))
     })
     .await;
 
@@ -349,7 +353,7 @@ async fn the_author_replies_and_reports_and_no_other_session_may() {
         .json(
             as_session(
                 &format!("/v1/pull-requests/{id}/comments/{comment_id}/reply"),
-                &author.id,
+                &agent.id,
                 json!({"body": "Renamed it."}),
             ),
             StatusCode::CREATED,
@@ -378,7 +382,7 @@ async fn the_author_replies_and_reports_and_no_other_session_may() {
     h.error(
         as_session(
             &format!("/v1/pull-requests/{id}/comments/{comment_id}/resolve"),
-            &author.id,
+            &agent.id,
             json!({}),
         ),
         StatusCode::FORBIDDEN,
@@ -395,18 +399,18 @@ async fn the_author_replies_and_reports_and_no_other_session_may() {
     let report = |ready: bool| {
         as_session(
             &format!("/v1/pull-requests/{id}/report"),
-            &author.id,
+            &agent.id,
             json!({"ready": ready}),
         )
     };
     let dto: Value = h.json(report(true), StatusCode::OK).await;
     assert_eq!(dto["ready"], true);
     assert_eq!(
-        h.attention(&author).await,
+        h.attention(&agent).await,
         Some(AttentionReason::WaitingUser)
     );
     let _: Value = h.json(report(false), StatusCode::OK).await;
-    assert_eq!(h.attention(&author).await, None);
+    assert_eq!(h.attention(&agent).await, None);
 
     let stranger = h.lone_session("stranger").await;
     h.error(
@@ -433,71 +437,17 @@ async fn the_author_replies_and_reports_and_no_other_session_may() {
     .await;
 }
 
-/// The task stays approved while its request is open, and its finish is
-/// refused. A merge is told to the author; once the turn that read it ended,
-/// the daemon finishes the task itself, the task's cleanup stops the author,
-/// and the request's cleanup is recorded.
-#[tokio::test]
-async fn a_merge_is_told_to_the_author_and_then_ends_the_task_and_its_agent() {
-    let Kept {
-        h,
-        stub,
-        task,
-        author,
-        id,
-        repo,
-        ..
-    } = kept_request(quiet_script()).await;
-    let tip = sh(&h.at("repo"), &format!("git rev-parse {}", task.branch));
-    assert_eq!(h.status(&task.id).await, TaskStatus::Approved);
-    let refused = h
-        .error(finish(&task, &author, &tip), StatusCode::CONFLICT)
-        .await;
-    assert!(
-        refused.error.message.contains("is not merged"),
-        "{}",
-        refused.error.message
-    );
-
-    stub.reprogram(script("MERGED", &[], json!([])));
-    h.state.forge_poll.wake(&repo);
-    eventually(TIMEOUT, "the merge to reach the author", async || {
-        h.prompted(&author).contains("The request is now merged.")
-    })
-    .await;
-    eventually(TIMEOUT, "the daemon to finish the task", async || {
-        h.flush_scheduler().await;
-        h.status(&task.id).await == TaskStatus::Finished
-    })
-    .await;
-    eventually(TIMEOUT, "the author to be stopped", async || {
-        h.flush_scheduler().await;
-        !h.session_status(&author).await.is_live()
-    })
-    .await;
-    eventually(
-        TIMEOUT,
-        "the request's cleanup to be recorded",
-        async || {
-            pass_over(&h, &id).await;
-            // Taken down, Ariadne works on it no more: the row is gone.
-            h.store.get_pull_request(&id).await.is_err()
-        },
-    )
-    .await;
-}
-
-/// A merge done on the forge while the author is down ends the task on the
-/// request's own merge commit — not on a later commit another request put on
-/// the base before the pass — and only once the local base branch holds it,
-/// so the tasks that wait on this one branch from a base with its change.
+/// A merge done on the forge while the `pr` agent is down ends the task on
+/// the request's own merge commit — not on a later commit another request put
+/// on the base before the pass — and only once the local base branch holds
+/// it, so the tasks that wait on this one branch from a base with its change.
 #[tokio::test]
 async fn a_merge_ends_the_task_on_its_own_merge_commit_once_the_local_base_holds_it() {
     let Kept {
         h,
         stub,
         task,
-        author,
+        agent,
         repo,
         path,
         bare,
@@ -527,7 +477,7 @@ async fn a_merge_ends_the_task_on_its_own_merge_commit_once_the_local_base_holds
 
     let _: Value = h
         .json(
-            crate::common::post(&format!("/v1/sessions/{}/kill", author.id)),
+            crate::common::post(&format!("/v1/sessions/{}/kill", agent.id)),
             StatusCode::OK,
         )
         .await;
@@ -559,17 +509,17 @@ async fn a_merge_ends_the_task_on_its_own_merge_commit_once_the_local_base_holds
     );
 }
 
-/// An Ariadne review of a request a task's author keeps posts under the
-/// user's login, yet its findings are the author's to answer (029): each is
-/// told to the author once, named as the review's, and waits on it; the
-/// author's reply answers it.
+/// An Ariadne review of a request a task's `pr` agent keeps posts under the
+/// user's login, yet its findings are the agent's to answer (029): each is
+/// told to the agent once, named as the review's, and waits on it; the
+/// agent's reply answers it.
 #[tokio::test]
-async fn an_ariadne_review_of_a_kept_request_reaches_its_author() {
+async fn an_ariadne_review_of_a_kept_request_reaches_its_pr_agent() {
     let Kept {
         h,
         stub,
         task,
-        author,
+        agent,
         id,
         repo,
         path,
@@ -647,7 +597,7 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_author() {
     })
     .await;
     let review = review.unwrap();
-    let told = h.prompts_to(&author).len();
+    let told = h.prompts_to(&agent).len();
     let stored: Vec<Value> = h
         .json(
             as_session(
@@ -694,15 +644,15 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_author() {
     );
 
     fetch_again(&h, &stub, &repo).await;
-    eventually(TIMEOUT, "the finding to reach the author", async || {
-        h.prompts_to(&author)
+    eventually(TIMEOUT, "the finding to reach the agent", async || {
+        h.prompts_to(&agent)
             .iter()
             .skip(told)
             .any(|p| p.contains(&finding_id))
     })
     .await;
     let news = h
-        .prompts_to(&author)
+        .prompts_to(&agent)
         .into_iter()
         .skip(told)
         .collect::<Vec<_>>()
@@ -717,7 +667,7 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_author() {
         .json(
             as_session(
                 &format!("/v1/pull-requests/{id}/comments/{finding_id}/reply"),
-                &author.id,
+                &agent.id,
                 json!({"body": "Added the test."}),
             ),
             StatusCode::CREATED,
@@ -741,7 +691,7 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_author() {
     let dto: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
     assert_eq!(
         dto["unanswered_comments"], 1,
-        "the author's reply answers the finding"
+        "the agent's reply answers the finding"
     );
 }
 
@@ -768,7 +718,7 @@ async fn a_failed_read_of_an_ended_tasks_request_keeps_its_row() {
         .transition_task(
             &task.id,
             TaskStatus::Finished,
-            Actor::Author,
+            Actor::Daemon,
             None,
             Some(&tip),
         )
@@ -788,30 +738,6 @@ async fn a_failed_read_of_an_ended_tasks_request_keeps_its_row() {
     .await;
 }
 
-/// A close is told to the author too, and a closed request finishes nothing:
-/// the author fails the task instead.
-#[tokio::test]
-async fn a_close_is_told_to_the_author_and_finishes_nothing() {
-    let Kept {
-        h,
-        stub,
-        task,
-        author,
-        repo,
-        ..
-    } = kept_request(quiet_script()).await;
-    stub.reprogram(script("CLOSED", &[], json!([])));
-    h.state.forge_poll.wake(&repo);
-    eventually(TIMEOUT, "the close to reach the author", async || {
-        h.prompted(&author).contains("The request is now closed.")
-    })
-    .await;
-    let tip = sh(&h.at("repo"), &format!("git rev-parse {}", task.branch));
-    h.error(finish(&task, &author, &tip), StatusCode::CONFLICT)
-        .await;
-    assert_eq!(h.status(&task.id).await, TaskStatus::Approved);
-}
-
 /// A check that fails is told, its recovery is no news but is recorded, and
 /// its next failure is told again.
 #[tokio::test]
@@ -819,14 +745,14 @@ async fn a_check_that_recovers_and_fails_again_is_told_again() {
     let Kept {
         h,
         stub,
-        author,
+        agent,
         repo,
         ..
     } = kept_request(quiet_script()).await;
     let failed = json!([{"name": "lint", "html_url": "https://ci.example/1",
         "conclusion": "failure"}]);
     let told_lint = || {
-        h.prompts_to(&author)
+        h.prompts_to(&agent)
             .iter()
             .filter(|p| p.contains("Check lint turned to failure"))
             .count()
@@ -838,7 +764,7 @@ async fn a_check_that_recovers_and_fails_again_is_told_again() {
 
     stub.reprogram(quiet_script());
     fetch_again(&h, &stub, &repo).await;
-    let after_recovery = h.prompts_to(&author).len();
+    let after_recovery = h.prompts_to(&agent).len();
 
     stub.reprogram(script("OPEN", &[], failed));
     fetch_again(&h, &stub, &repo).await;
@@ -847,7 +773,7 @@ async fn a_check_that_recovers_and_fails_again_is_told_again() {
     })
     .await;
     assert_eq!(
-        h.prompts_to(&author).len(),
+        h.prompts_to(&agent).len(),
         after_recovery + 1,
         "the recovery itself was no news"
     );
@@ -910,96 +836,6 @@ async fn the_detail_fetch_reads_every_page_of_threads_and_check_runs() {
             assert!(call.args.contains(&"--paginate".to_string()), "{call:?}");
         }
     }
-}
-
-/// A goal on the repository whose goal branch is `branch`.
-async fn goal_on_branch(h: &Harness, repository_id: &str, branch: &str) {
-    let goal = h
-        .store
-        .create_goal(NewGoal {
-            issue_url: None,
-            landing: None,
-            title: "Ship widgets".into(),
-            description: "desc".into(),
-            repository_ids: vec![repository_id.into()],
-            pin: crate::common::test_pin(),
-        })
-        .await
-        .unwrap();
-    h.store
-        .set_goal_branch(&goal.id, repository_id, branch)
-        .await
-        .unwrap();
-}
-
-/// A merged request whose head is a goal branch takes that branch down,
-/// local and remote, once its task is over. A remote delete that fails is
-/// not forgotten: the cleanup stays pending on the row, and the first pass
-/// of a restarted daemon after the remote recovered deletes it.
-#[tokio::test]
-async fn a_merged_goal_branch_goes_once_its_task_is_over_and_a_failed_remote_delete_is_tried_again()
-{
-    let Kept {
-        h,
-        stub,
-        task,
-        author,
-        id,
-        repo,
-        path,
-        bare,
-    } = kept_request(quiet_script()).await;
-    // The request's head is `fix`, a goal branch, on the checkout and on
-    // the remote; the remote cannot be pushed to yet.
-    sh(&path, "git branch fix && git push -q origin fix");
-    goal_on_branch(&h, &repo, "fix").await;
-    let gone = h.at("no-such-remote.git");
-    sh(
-        &path,
-        &format!("git remote set-url --push origin '{}'", gone.display()),
-    );
-
-    stub.reprogram(script("MERGED", &[], json!([])));
-    h.state.forge_poll.wake(&repo);
-    eventually(TIMEOUT, "the merge to reach the author", async || {
-        h.prompted(&author).contains("The request is now merged.")
-    })
-    .await;
-    // The daemon ends the task once the author read the merge, and the
-    // goal branch goes after it.
-    eventually(TIMEOUT, "the task to end", async || {
-        h.flush_scheduler().await;
-        h.status(&task.id).await == TaskStatus::Finished
-    })
-    .await;
-    eventually(TIMEOUT, "the local goal branch to go", async || {
-        pass_over(&h, &id).await;
-        sh(&path, "git branch --list fix").is_empty()
-    })
-    .await;
-    assert_eq!(
-        sh(&bare, "git branch --list fix"),
-        "fix",
-        "the remote could not be reached"
-    );
-    assert!(
-        h.store.get_pull_request(&id).await.is_ok(),
-        "the cleanup stays owed: the row stays"
-    );
-
-    sh(
-        &path,
-        &format!("git remote set-url --push origin '{}'", bare.display()),
-    );
-    // A daemon that restarts owes the cleanup too: a scheduler of its own,
-    // with nothing in memory, takes the remote branch down on its first
-    // full pass, with no change of the request to wake it.
-    let _restarted =
-        ariadne_daemon::scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
-    eventually(TIMEOUT, "the remote goal branch to go", async || {
-        sh(&bare, "git branch --list fix").is_empty()
-    })
-    .await;
 }
 
 /// A request the user reviews is no lifecycle of this one: closing it takes

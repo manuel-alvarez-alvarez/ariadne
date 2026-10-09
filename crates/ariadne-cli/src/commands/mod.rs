@@ -25,6 +25,7 @@ pub(crate) mod skill;
 pub(crate) mod stats;
 pub(crate) mod task;
 pub(crate) mod transcript;
+pub(crate) mod workflow;
 
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
@@ -364,11 +365,11 @@ mod tests {
                 "/v1/tasks",
                 &TaskListQuery {
                     goal: Some("a b&c".into()),
-                    status: Some(TaskStatus::UnderReview),
+                    status: Some(TaskStatus::InProgress),
                 }
             )
             .unwrap(),
-            "/v1/tasks?goal=a+b%26c&status=under_review"
+            "/v1/tasks?goal=a+b%26c&status=in_progress"
         );
         assert_eq!(
             query_path(

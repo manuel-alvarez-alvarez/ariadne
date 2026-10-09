@@ -4,34 +4,34 @@
 //! session gets, with nothing of the database between the two — a profile
 //! carries a system prompt and no lifecycle text at all.
 //!
-//! And what assembly comes to is pinned here too: the placeholders of a spawn,
-//! a resume and a review round are filled in by hand and compared with what
-//! the daemon produced, so a change to the assembler shows up as a diff rather
-//! than as an agent quietly briefed with something else.
+//! And what assembly comes to is pinned here too: the placeholders of the
+//! orchestrator's briefing, a column's first briefing, a return to a column
+//! and a nudge are filled in by hand and compared with what the daemon
+//! produced, so a change to the assembler shows up as a diff rather than as
+//! an agent quietly briefed with something else.
 //!
-//! The agent is the harness's stub, and the rendered briefing is read back
-//! from the session's launch file — what the agent was told. `git` is real —
-//! spawning an author creates its worktree.
+//! The agent is the harness's stub. The orchestrator's briefing is read back
+//! from its launch file — what the agent was told at its launch — and a
+//! column's from the prompts the scheduler hands it, since a column's agent is
+//! launched bare and briefed afterwards. `git` is real: starting a column's
+//! agent creates the task's worktree.
 
 use crate::common;
 
-use crate::common::post_json;
-use ariadne_core::{Actor, PromptKind, Seat, TaskStatus};
-use ariadne_daemon::agents::prompts;
+use crate::common::{post_json, sh};
+use ariadne_core::{PromptKind, Seat};
+use ariadne_daemon::scheduler::QUIET_NUDGE_SECS;
 use ariadne_store::defaults::default_prompt_text;
 use axum::http::StatusCode;
 use serde_json::json;
 
-use common::{Cast, Harness, harness};
+use common::{Cast, Harness, TIMEOUT, eventually, harness};
 
-/// What the author requested review with, and what it wrote afterwards:
-/// the briefing has to carry the first and never the second.
-const SUMMARY: &str = "Rendered the board from the store, with a test per lane.";
-
-/// A task ready for its author to be spawned, in a real repo.
+/// A task ready for its first column's agent to be started, in a real repo,
+/// on a goal under way.
 async fn seeded(h: &Harness) -> Cast {
     h.git_repo("repo");
-    h.cast().await
+    h.active_cast().await
 }
 
 /// The placeholders filled in by hand, so that what an assertion compares
@@ -47,6 +47,24 @@ fn fill(template: &str, values: &[(&str, &str)]) -> String {
 
 fn default_for(kind: PromptKind) -> String {
     default_prompt_text(kind).to_string()
+}
+
+/// Every placeholder `kind` declares, as it would read in a template.
+fn tokens_of(kind: PromptKind) -> Vec<String> {
+    kind.placeholders()
+        .iter()
+        .map(|name| format!("{{{name}}}"))
+        .collect()
+}
+
+/// The commit the `develop` column's gate asks for, made in the task's
+/// worktree.
+fn commit_in(worktree: &str) {
+    sh(
+        std::path::Path::new(worktree),
+        "echo change > feature && git add feature && \
+         git -c user.name=Test -c user.email=test@test commit -qm 'feat: add the feature'",
+    );
 }
 
 #[tokio::test]
@@ -79,80 +97,88 @@ async fn an_issue_goal_keeps_its_url_and_briefs_the_orchestrator_to_close_it() {
     assert!(briefing.contains(&format!("Closes {url}")), "{briefing}");
 }
 
-/// The built-in template is the briefing the agent is launched with,
-/// placeholders and all, as its first prompt — behind the system layer and
-/// the index of its skills.
+/// The orchestrator is briefed with the goal's workflow and every column of
+/// it, one line each — what it staffs every task against — and with no
+/// landing: a goal lands the way its last column says, not the way a line of
+/// its briefing does. The whole text is the built-in template with every
+/// placeholder filled in, exactly.
 #[tokio::test]
-async fn a_spawned_author_is_briefed_from_the_builtin_template() {
+async fn the_orchestrator_briefing_names_the_workflow_and_its_columns_and_no_landing() {
     let h = harness().await;
-    let cast = seeded(&h).await;
+    let (goal, repo) = h.goal().await;
+    let steps = h.store.goal_steps(&goal.id).await.unwrap();
+    assert_eq!(steps.len(), 3, "the default workflow has three columns");
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
-    let task = h.store.get_task(&cast.task.id).await.unwrap();
-    let briefing = prompts::author_briefing(
-        prompts::template_for(PromptKind::AuthorBriefing),
-        &task,
-        &cast.goal,
-        &cast.repo,
-        &cast.repo.base_branch,
-        &[],
-    );
-    let launch = h.launch_file(&session.id).expect("a launch file");
-    assert_eq!(
-        launch.initial_prompt.as_deref(),
-        Some(briefing.as_str()),
-        "the built-in briefing, rendered"
-    );
+    let session = h.launcher.spawn_orchestrator(&goal.id).await.unwrap();
+    let briefing = h.launch_file(&session.id).unwrap().initial_prompt.unwrap();
 
-    // The system layer is what the seat owes, and then the index of the skills
-    // this agent loads: one line each, with the document left on disk for the
-    // agent to read when it needs it.
-    let run_dir = h.launcher.cfg.run_dir.join(&session.id);
-    let system = launch.system_prompt;
-    let (owed, index) = system
-        .split_once(
-            "\n\nYour skills. Read the document of a skill before you do the work it covers:",
-        )
-        .expect("a skill index");
-    assert_eq!(
-        owed,
-        ariadne_store::defaults::default_system_prompt(Seat::Author).trim(),
-        "the seat's own text, word for word out of the code"
+    let columns = steps
+        .iter()
+        .map(|s| {
+            let skills: Vec<String> = serde_json::from_str(&s.skills).unwrap();
+            let mut line = format!("- {} [{}]: {}", s.id, s.title, s.description);
+            if !skills.is_empty() {
+                line.push_str(&format!(" Skills: {}.", skills.join(", ")));
+            }
+            if let Some(rank) = &s.rank {
+                line.push_str(&format!(" Rank: {rank}."));
+            }
+            line
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let expected = fill(
+        &default_for(PromptKind::OrchestratorBriefing),
+        &[
+            ("goal_title", &goal.title),
+            ("goal_description", &goal.description),
+            ("workflow", &goal.workflow),
+            ("columns", &columns),
+            (
+                "repositories",
+                &format!("- {} (base branch: {})", repo.path, repo.base_branch),
+            ),
+        ],
     );
-    let document = run_dir.join("skills").join("coding").join("SKILL.md");
-    assert_eq!(
-        index.trim(),
-        format!(
-            "- coding: Build a task whole and prove it with tests at a seam. Use \
-             when a task asks for code, a feature, a fix, or the tests that guard \
-             one. ({})",
-            document.display()
-        ),
-        "one line per skill: its summary, and where its document is"
+    assert_eq!(briefing, expected, "the built-in briefing, rendered");
+    assert!(
+        briefing.contains("Workflow: develop-review-merge"),
+        "{briefing}"
     );
-    // And the path the line names is a document, not a promise.
-    let written = std::fs::read_to_string(&document).expect("the skill document on disk");
-    assert_eq!(
-        written,
-        ariadne_store::defaults::skill_text(
-            ariadne_store::defaults::default_skill_document("coding").unwrap(),
-        ),
-        "the shipped document, written whole for the agent to open"
-    );
+    for column in [
+        "- develop [Develop]:",
+        "- review [Review]:",
+        "- merge [Merge]:",
+    ] {
+        assert!(
+            briefing.lines().any(|line| line.starts_with(column)),
+            "no line for {column}: {briefing}"
+        );
+    }
+    assert!(!briefing.contains("Landing"), "{briefing}");
 }
 
-/// The code's text is what reaches the agent, without anything having been
-/// copied into the database first — and what reaches it is the built-in
-/// template with every placeholder filled in, exactly.
+/// The first briefing of a column is the built-in template with every
+/// placeholder filled in, exactly, handed to the agent as its first prompt
+/// — behind a system layer that is the seat's own text and the index of the
+/// agent's skills.
 #[tokio::test]
-async fn a_spawn_assembles_the_default_briefing_word_for_word() {
-    let h = harness().await;
+async fn a_started_column_agent_is_briefed_from_the_builtin_template() {
+    let h = harness().scheduler().await;
     let cast = seeded(&h).await;
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.step_session(&cast.task, "develop").await;
     let task = h.store.get_task(&cast.task.id).await.unwrap();
+    let step = h
+        .store
+        .goal_steps(&cast.goal.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|s| s.id == "develop")
+        .unwrap();
     let expected = fill(
-        &default_for(PromptKind::AuthorBriefing),
+        &default_for(PromptKind::StepBriefing),
         &[
             ("task_title", &task.title),
             ("task_description", &task.description),
@@ -161,129 +187,174 @@ async fn a_spawn_assembles_the_default_briefing_word_for_word() {
             ("branch", &task.branch),
             ("base_branch", &cast.repo.base_branch),
             ("repo_path", &cast.repo.path),
-            ("landing", cast.task.landing().as_str()),
-            ("dependencies", "none"),
+            ("step_id", &step.id),
+            ("step_title", &step.title),
+            ("step_description", &step.description),
+            // A first column has nothing before it, and this task waits on
+            // nothing.
+            ("previous_summary", ""),
+            ("dependencies", ""),
         ],
     );
-
-    let launch = h.launch_file(&session.id).expect("a launch file");
-    assert_eq!(
-        launch.initial_prompt.as_deref(),
-        Some(expected.as_str()),
-        "the default briefing, assembled"
-    );
-    // The same text is what the assembler answers on its own, so nothing
-    // between the two decorates it.
-    assert_eq!(
-        prompts::author_briefing(
-            &default_for(PromptKind::AuthorBriefing),
-            &task,
-            &h.store.get_goal(&task.goal_id).await.unwrap(),
-            &cast.repo,
-            &cast.repo.base_branch,
-            &[],
-        ),
-        expected
-    );
-}
-
-/// The other two assemblies an agent meets, pinned the same way: what an
-/// author holding unfinished work is picked up with, and what a reviewer
-/// owing a verdict is.
-#[tokio::test]
-async fn a_resume_and_a_review_assemble_word_for_word() {
-    let h = harness().await;
-    let cast = seeded(&h).await;
-    let task = h.store.get_task(&cast.task.id).await.unwrap();
-
-    assert_eq!(
-        prompts::author_resume_briefing(&default_for(PromptKind::AuthorResume), &task,),
-        fill(
-            &default_for(PromptKind::AuthorResume),
-            &[("task_title", &task.title), ("branch", &task.branch)],
-        )
-    );
-
-    assert_eq!(
-        prompts::reviewer_resume_briefing(
-            &default_for(PromptKind::ReviewerResume),
-            &task,
-            Some(SUMMARY),
-        ),
-        fill(
-            &default_for(PromptKind::ReviewerResume),
-            &[
-                ("task_title", &task.title),
-                ("branch", &task.branch),
-                ("summary", SUMMARY),
-            ],
-        )
-    );
-    // A review nobody wrote a summary for still says so in words.
+    // The first prompt of a launch carries the seat text and the skill index
+    // ahead of the briefing, since ACP has no system prompt of its own; the
+    // briefing is what ends it.
+    let prompts = h.prompts_to(&session);
+    let first = prompts.first().map(String::as_str).unwrap_or_default();
     assert!(
-        prompts::reviewer_resume_briefing(&default_for(PromptKind::ReviewerResume), &task, None,)
-            .contains("(none provided)")
+        first.ends_with(&expected),
+        "the default briefing, assembled, ends the first prompt: {first}"
+    );
+
+    // The launch itself carries no briefing: the column's prompt is the
+    // scheduler's, so a relaunch is never briefed twice.
+    let launch = h.launch_file(&session.id).expect("a launch file");
+    assert!(
+        launch
+            .initial_prompt
+            .as_deref()
+            .unwrap_or_default()
+            .is_empty(),
+        "{:?}",
+        launch.initial_prompt
+    );
+
+    // The system layer is what the seat owes, and then the index of the skills
+    // this agent loads: one line each, with the document left on disk for the
+    // agent to read when it needs it.
+    let run_dir = h.launcher.cfg.run_dir.join(&session.id);
+    let (owed, index) = launch
+        .system_prompt
+        .split_once(
+            "\n\nYour skills. Read the document of a skill before you do the work it covers:",
+        )
+        .expect("a skill index");
+    assert_eq!(
+        owed,
+        ariadne_store::defaults::default_system_prompt(Seat::Agent).trim(),
+        "the seat's own text, word for word out of the code"
+    );
+    let shipped = ariadne_store::defaults::default_skill_document("coding").unwrap();
+    let document = run_dir.join("skills").join("coding").join("SKILL.md");
+    assert_eq!(
+        index.trim(),
+        format!(
+            "- coding: {} ({})",
+            ariadne_store::defaults::skill_summary(shipped).unwrap(),
+            document.display()
+        ),
+        "one line per skill: its summary, and where its document is"
+    );
+    // And the path the line names is a document, not a promise.
+    let written = std::fs::read_to_string(&document).expect("the skill document on disk");
+    assert_eq!(
+        written,
+        ariadne_store::defaults::skill_text(shipped),
+        "the shipped document, written whole for the agent to open"
     );
 }
 
-/// The `{summary}` a reviewer is briefed with is the one the author
-/// requested review with — the round's own record of it — and not whatever
-/// the author happened to say last.
-///
-/// The two are only the same until the author writes anything else: a
-/// "thanks, will do" posted after the request would otherwise be what the
-/// reviewers, and the people reading a published request, are handed as the
-/// summary of the change.
+/// The other two texts a column's agent meets, pinned the same way: what it
+/// is told when the task comes back to its column, and what it is nudged with
+/// when it has gone quiet with the task still in front of it.
 #[tokio::test]
-async fn a_reviewer_is_briefed_with_the_summary_review_was_requested_with() {
-    let h = harness().await;
+async fn a_return_and_a_nudge_assemble_word_for_word() {
+    let h = harness().scheduler().await;
     let cast = seeded(&h).await;
-    let task = &cast.task;
-    // The author's worktree is what creates the branch the reviewer's is
-    // cut from.
-    h.launcher.spawn_author(&task.id).await.unwrap();
+    let develop = h.step_session(&cast.task, "develop").await;
+    commit_in(develop.worktree_path.as_deref().unwrap());
+    h.complete_step(&cast.task, &develop, "The feature is committed.")
+        .await;
+    let review = h.step_session(&cast.task, "review").await;
 
-    for status in [TaskStatus::Ready, TaskStatus::InProgress] {
-        h.store
-            .transition_task(&task.id, status, Actor::Daemon, None, None)
-            .await
-            .unwrap();
-    }
-    h.store
-        .transition_task(
-            &task.id,
-            TaskStatus::UnderReview,
-            Actor::Author,
-            Some(SUMMARY),
-            None,
-        )
-        .await
-        .unwrap();
-    let session = h
-        .launcher
-        .spawn_reviewer(&task.id, &cast.reviewer.id)
-        .await
-        .unwrap();
-    let reviewed = h.store.get_task(&task.id).await.unwrap();
+    const REASON: &str = "Fix the edge case the test names.";
+    h.fail_step(&cast.task, &review, REASON).await;
     let expected = fill(
-        &default_for(PromptKind::ReviewerBriefing),
+        &default_for(PromptKind::StepReturn),
         &[
-            ("task_title", &reviewed.title),
-            ("task_description", &reviewed.description),
-            ("goal_title", &cast.goal.title),
-            ("branch", &reviewed.branch),
-            ("base_branch", &cast.repo.base_branch),
-            ("repo_path", &cast.repo.path),
-            ("summary", SUMMARY),
+            ("task_title", &cast.task.title),
+            ("step_title", "Develop"),
+            ("direction", "back"),
+            ("reason", REASON),
         ],
     );
-    let launch = h.launch_file(&session.id).expect("a launch file");
-    assert_eq!(
-        launch.initial_prompt.as_deref(),
-        Some(expected.as_str()),
-        "the review-round briefing, assembled"
+    // The stub records the seat text ahead of every prompt it is sent, so
+    // the briefing is what a prompt ends with.
+    eventually(TIMEOUT, "the return briefing", || async {
+        h.prompts_to(&develop)
+            .iter()
+            .any(|prompt| prompt.ends_with(&expected))
+    })
+    .await;
+
+    // Quiet for longer than the nudge threshold, with the task still in its
+    // column: the nudge is the resume text, rendered for this task.
+    eventually(TIMEOUT, "the develop agent to finish its turn", || async {
+        h.session_status(&develop).await == ariadne_core::SessionStatus::Idle
+    })
+    .await;
+    let expected = fill(
+        &default_for(PromptKind::AgentResume),
+        &[("task_title", &cast.task.title), ("step_title", "Develop")],
     );
-    // The summary is what the author requested review with, undecorated:
-    // it is the whole of what the reviewer is told.
-    assert!(!expected.contains("Review requested:"));
+    h.backdate(
+        &["last_activity_at", "launched_at"],
+        &develop,
+        QUIET_NUDGE_SECS + 5,
+    )
+    .await;
+    h.notify(&cast.task.id);
+    eventually(TIMEOUT, "the nudge", || async {
+        h.prompts_to(&develop)
+            .iter()
+            .any(|prompt| prompt.ends_with(&expected))
+    })
+    .await;
+}
+
+/// Every placeholder a kind declares is one its assembler fills in: the
+/// built-in template of every kind validates against its kind, and no
+/// `{token}` of the kind is left in a briefing the daemon rendered.
+#[tokio::test]
+async fn every_allowed_placeholder_is_one_a_briefing_fills_in() {
+    for kind in [
+        PromptKind::OrchestratorBriefing,
+        PromptKind::OrchestratorResume,
+        PromptKind::GoalAttention,
+        PromptKind::IncomingMessage,
+        PromptKind::StepBriefing,
+        PromptKind::StepReturn,
+        PromptKind::AgentResume,
+    ] {
+        kind.validate_template(default_prompt_text(kind))
+            .unwrap_or_else(|e| panic!("{}: {e}", kind.as_str()));
+    }
+
+    let h = harness().scheduler().await;
+    let cast = seeded(&h).await;
+    // The scheduler starts the goal's orchestrator on its own.
+    let launched = async || {
+        h.sessions_of_goal(&cast.goal.id)
+            .await
+            .into_iter()
+            .find(|s| s.seat() == Some(Seat::Orchestrator) && h.launch_file(&s.id).is_some())
+    };
+    eventually(TIMEOUT, "the orchestrator to be launched", || async {
+        launched().await.is_some()
+    })
+    .await;
+    let briefing = h
+        .launch_file(&launched().await.unwrap().id)
+        .unwrap()
+        .initial_prompt
+        .unwrap();
+    for token in tokens_of(PromptKind::OrchestratorBriefing) {
+        assert!(!briefing.contains(&token), "{token} left in: {briefing}");
+    }
+
+    let develop = h.step_session(&cast.task, "develop").await;
+    let briefing = h.prompted(&develop);
+    for token in tokens_of(PromptKind::StepBriefing) {
+        assert!(!briefing.contains(&token), "{token} left in: {briefing}");
+    }
 }

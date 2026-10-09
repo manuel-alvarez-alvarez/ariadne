@@ -12,10 +12,16 @@
  * the live search params.
  */
 
-import type { GoalDto, RepositoryDto, SessionDto, SkillDto, TaskDto } from "@/api"
-import { type AttentionItem, attentionSubject, attentionTarget } from "@/features/goals/attention"
+import type { GoalDto, RepositoryDto, SessionDto, SkillDto, TaskDto, WorkflowDto } from "@/api"
+import {
+  type AttentionItem,
+  agentLabel,
+  attentionSubject,
+  attentionTarget,
+} from "@/features/goals/attention"
 import { SESSION_ATTENTION_META, seatLabel } from "@/features/sessions/session-display"
 import { STALLED_META, TASK_STATUS_META } from "@/features/tasks"
+import { sessionColumn } from "@/features/tasks/steps"
 import { folderName, shortId } from "@/lib/format"
 import { paths, taskPanelFrom, taskSessionPanelFrom } from "@/routes/paths"
 
@@ -64,6 +70,7 @@ interface PaletteSource {
   sessions: SessionDto[] | undefined
   skills: SkillDto[] | undefined
   repositories: RepositoryDto[] | undefined
+  workflows: WorkflowDto[] | undefined
 }
 
 /** One group of rows per entity, in the order the palette lists them. */
@@ -73,6 +80,7 @@ export interface PaletteEntries {
   sessions: PaletteEntry[]
   skills: PaletteEntry[]
   repositories: PaletteEntry[]
+  workflows: PaletteEntry[]
 }
 
 export function buildPaletteEntries({
@@ -81,9 +89,12 @@ export function buildPaletteEntries({
   sessions,
   skills,
   repositories,
+  workflows,
 }: PaletteSource): PaletteEntries {
   const goalTitles = new Map((goals ?? []).map((goal) => [goal.id, goal.title]))
   const taskTitles = new Map((tasks ?? []).map((task) => [task.id, task.title]))
+  const tasksById = new Map((tasks ?? []).map((task) => [task.id, task]))
+  const goalsById = new Map((goals ?? []).map((goal) => [goal.id, goal]))
 
   return {
     goals: (goals ?? []).map((goal) => ({
@@ -113,7 +124,13 @@ export function buildPaletteEntries({
       const of =
         (session.task_id ? taskTitles.get(session.task_id) : undefined) ??
         goalTitles.get(session.goal_id ?? "")
-      const seat = seatLabel(session.seat)
+      // A step agent is named by the workflow column it staffs.
+      const seat =
+        sessionColumn(
+          session,
+          tasksById.get(session.task_id ?? ""),
+          goalsById.get(session.goal_id ?? ""),
+        ) ?? seatLabel(session.seat)
       return {
         value: `${seat} ${of ?? ""} ${shortId(session.id)}`,
         label: of ? `${seat} · ${of}` : seat,
@@ -136,6 +153,14 @@ export function buildPaletteEntries({
       // The one entity with no panel of its own: the screen opens on it,
       // so the pick is carried there rather than dropped at `/skills`.
       target: { kind: "page", path: paths.skill(skill.name) },
+    })),
+
+    workflows: (workflows ?? []).map((workflow) => ({
+      value: workflow.name,
+      label: workflow.name,
+      detail: workflow.steps.map((step) => step.title).join(" · "),
+      keywords: [workflow.name, workflow.builtin ? "shipped" : "yours"],
+      target: { kind: "page", path: paths.workflow(workflow.name) },
     })),
 
     // A repository has no panel either, and no screen of its own to open on
@@ -217,7 +242,7 @@ export function attentionEntries(items: AttentionItem[]): PaletteEntry[] {
       item.session?.id ?? "",
       item.taskReason ?? "",
       item.sessionReason ?? "",
-      item.session ? seatLabel(item.session.seat) : "",
+      agentLabel(item),
       item.task?.branch ?? "",
       item.goal?.title ?? "",
     ],

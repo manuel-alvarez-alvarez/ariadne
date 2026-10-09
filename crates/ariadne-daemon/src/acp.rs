@@ -56,8 +56,7 @@ use crate::transcript::{LaunchTranscript, TranscriptHomes};
 const CONSOLE_CAPACITY: usize = 1024;
 
 /// What one launch reports of its turns as they go, to whoever waits on the
-/// agent's own word — the daemon ending the turn an author asked for its
-/// review in (004), once the agent says it holds the answer. Each launch
+/// agent's own word. Each launch
 /// reports on channels of its own: a report never comes from the process
 /// before, and none is ever dropped on the way — a follower's channel is
 /// unbounded, and a follower lives only until it has what it waited for.
@@ -150,7 +149,7 @@ struct Inner {
     ending: Mutex<HashMap<String, Vec<(String, Reaped)>>>,
     /// The branch each session works on, by Ariadne session id: what a
     /// learned key names `<BRANCH>`. Shared with the session's runtime, so a
-    /// live reviewer moved to another author's branch keys on that one.
+    /// session moved to another branch keys on that one.
     branches: Mutex<HashMap<String, SessionBranch>>,
     /// Wakes the scheduler after an event lands, the way the HTTP ingestion
     /// does — present once a scheduler is running.
@@ -233,6 +232,7 @@ struct Prompt {
 /// prompt was never written.
 #[derive(Debug, Clone)]
 pub(crate) enum Delivery {
+    Step(String),
     /// An agent message, by id (018).
     Message(String),
     /// The news of a pull request (026). Boxed: it carries two marks and a
@@ -256,6 +256,7 @@ impl Delivery {
     /// pull request, whose next news waits until the queued one is claimed.
     fn key(&self) -> String {
         match self {
+            Delivery::Step(id) => format!("step:{id}"),
             Delivery::Message(id) => format!("message:{id}"),
             Delivery::PullRequestNews(news) => format!("news:{}", news.pull_request_id),
         }
@@ -504,8 +505,8 @@ impl AcpRuntime {
         self
     }
 
-    /// Set the branch a session works on: an author's own, or the one a
-    /// reviewer reviews. Its learned keys name it `<BRANCH>` from the next
+    /// Set the branch a session works on: its task's. Its learned keys name
+    /// it `<BRANCH>` from the next
     /// permission request on, a running agent's included.
     pub fn set_task_branch(&self, session_id: &str, branch: Option<String>) {
         *self.branch_of(session_id).lock().expect("ACP branch lock") = branch;
@@ -618,7 +619,11 @@ impl AcpRuntime {
     ///
     /// Errs where there is nobody here to hear it: no agent runs for this
     /// session.
-    pub(crate) fn send_prompt(&self, session_id: &str, text: String) -> Result<()> {
+    pub(crate) fn send_step(&self, session_id: &str, transition: &str, text: String) -> Result<()> {
+        self.queue_daemon_prompt(session_id, text, Some(Delivery::Step(transition.into())))
+    }
+
+    pub fn send_prompt(&self, session_id: &str, text: String) -> Result<()> {
         self.queue_daemon_prompt(session_id, text, None)
     }
 
@@ -767,13 +772,6 @@ impl AcpRuntime {
     /// driver.
     pub(crate) async fn cancel(&self, session_id: &str) -> Result<()> {
         self.cancel_turn(session_id, None).await
-    }
-
-    /// [`Self::cancel`], but only while the session still runs under
-    /// `launch_id`: a cancel decided on one launch never lands on the turn a
-    /// relaunch since started.
-    pub(crate) async fn cancel_launch(&self, session_id: &str, launch_id: &str) -> Result<()> {
-        self.cancel_turn(session_id, Some(launch_id)).await
     }
 
     /// Follow the turn reports of the session's agent, as long as it still
@@ -1226,6 +1224,7 @@ impl AcpRuntime {
         // agent, or for a read, again (018, 026).
         if let Some(delivery) = in_flight.unwritten() {
             let released = match &delivery {
+                Delivery::Step(id) => self.inner.store.release_step_briefing(id).await,
                 Delivery::Message(id) => self.inner.store.unmark_message_delivered(id).await,
                 Delivery::PullRequestNews(news) => {
                     self.inner
@@ -1695,7 +1694,7 @@ struct RuntimeIncoming {
     workspace: String,
     /// What a learned key replaces with placeholders, but the branch.
     key_facts: Facts,
-    /// The session's branch, which a reviewer's can change while it runs.
+    /// The session's branch, which can change while it runs.
     branch: SessionBranch,
     pending_permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
     reports: Followers,
@@ -2404,6 +2403,7 @@ async fn claim_message(rpc: &Rpc, prompt: &Prompt) -> bool {
         .dequeue_message(&sink.session_id, &sink.launch_id, &delivery.key());
     let store = &sink.runtime.inner.store;
     let claimed = match delivery {
+        Delivery::Step(id) => store.claim_step_briefing(id).await,
         Delivery::Message(id) => store.mark_message_delivered(id).await,
         Delivery::PullRequestNews(news) => {
             store
@@ -3199,7 +3199,7 @@ mod tests {
         assert_eq!(payload["acp"]["rawOutput"], json!({"stdout": "built"}));
     }
 
-    /// Every permission request is approved: the allowing option wins
+    /// Every permission request is allowed: the allowing option wins
     /// wherever the agent put it, an unmarked list falls back to its first
     /// option, and only an empty one is answered with nothing to select.
     /// A live event takes its id and goes out under the store's event lock,

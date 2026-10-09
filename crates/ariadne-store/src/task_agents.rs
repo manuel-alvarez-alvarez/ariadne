@@ -1,25 +1,24 @@
 //! The agents staffed on a task.
 //!
 //! An agent has no identity of its own: it is a model of a registry agent,
-//! an effort, a brief and a set of skills. Its seat says only where it sits —
-//! one of the authors that write the task, each on a branch of its own, or
-//! one of the reviewers that vote on it — which is what the state machine and
-//! the launcher need to know and the whole of what they need.
+//! an effort, a brief and a set of skills. Its column says only where in the
+//! task's workflow it works — which is what the scheduler and the launcher
+//! need to know and the whole of what they need.
 
-use ariadne_core::{Seat, id::new_id};
+use ariadne_core::id::new_id;
 use sqlx::{Sqlite, Transaction};
 
-use crate::{AgentPin, Result, Skill, SkillSeat, Store, StoreError, TaskAgent, not_found};
+use crate::defaults::PR_BABYSIT_SKILL;
+use crate::{AgentPin, Result, Skill, SkillSeat, Store, StoreError, TaskAgent};
 
 /// One agent to staff on a task, as the orchestrator describes it.
 #[derive(Debug, Clone)]
 pub struct NewTaskAgent {
-    /// `Author` or `Reviewer`. A task takes one author or more; several
-    /// authors need a reviewer to pick the winner.
-    pub seat: Seat,
+    /// The id of the workflow column this agent works, one of the goal's
+    /// columns. A task takes one agent per column.
+    pub step: String,
     /// The skills this agent loads, in the order they reach it. An agent with
-    /// none is a generic agent with nothing but its task, which is legal and
-    /// rarely what anybody wants.
+    /// none takes its column's.
     pub skills: Vec<String>,
     /// What it runs on: its model, `<agent>:<model>`, and the effort where
     /// one was chosen.
@@ -29,14 +28,14 @@ pub struct NewTaskAgent {
 }
 
 impl NewTaskAgent {
-    /// An agent in `seat` on the named skills, on `pin`.
+    /// An agent on column `step` on the named skills, on `pin`.
     pub fn new(
-        seat: Seat,
+        step: impl Into<String>,
         skills: impl IntoIterator<Item = impl Into<String>>,
         pin: AgentPin,
     ) -> Self {
         Self {
-            seat,
+            step: step.into(),
             skills: skills.into_iter().map(Into::into).collect(),
             pin,
             brief: None,
@@ -56,39 +55,154 @@ impl Store {
         task_id: &str,
         agents: &[NewTaskAgent],
     ) -> Result<()> {
-        let mut ordinals = (0i64, 0i64);
-        for agent in agents {
-            let ordinal = match agent.seat {
-                Seat::Author => {
-                    ordinals.0 += 1;
-                    ordinals.0 - 1
-                }
-                Seat::Reviewer => {
-                    ordinals.1 += 1;
-                    ordinals.1 - 1
-                }
-                Seat::Orchestrator => {
-                    return Err(StoreError::Conflict(
-                        "an orchestrator belongs to a goal, not to a task".into(),
-                    ));
-                }
-            };
+        for (ordinal, agent) in agents.iter().enumerate() {
             let id = new_id();
             let (model, effort) = AgentPin::columns(&agent.pin);
             sqlx::query(
-                "INSERT INTO task_agents (id, task_id, seat, ordinal, model, effort, brief)
+                "INSERT INTO task_agents (id, task_id, step, ordinal, model, effort, brief)
                  VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&id)
             .bind(task_id)
-            .bind(agent.seat.as_str())
-            .bind(ordinal)
+            .bind(&agent.step)
+            .bind(ordinal as i64)
             .bind(&model)
             .bind(&effort)
             .bind(&agent.brief)
             .execute(&mut **tx)
             .await?;
             Self::write_agent_skills_in_tx(tx, &id, &agent.skills).await?;
+        }
+        Ok(())
+    }
+
+    /// Staff a task again, column by column, keeping the row of an agent
+    /// already on its column: its sessions, its messages and its usage name
+    /// that row, and an edit that staffs a column the task lacked is no
+    /// reason to lose them. Where two rows sit on one column — a database
+    /// from before workflows put every reviewer on `review` (0023) — the
+    /// first keeps the column and the others' sessions and messages move to
+    /// it before they go. A column the new staffing leaves out loses its
+    /// agent only while nothing names it; one with sessions or messages
+    /// behind it is refused, since dropping it would drop them.
+    pub(crate) async fn restaff_agents_in_tx(
+        tx: &mut Transaction<'_, Sqlite>,
+        task_id: &str,
+        agents: &[NewTaskAgent],
+    ) -> Result<()> {
+        let existing: Vec<(String, String)> =
+            sqlx::query_as("SELECT id, step FROM task_agents WHERE task_id = ? ORDER BY ordinal")
+                .bind(task_id)
+                .fetch_all(&mut **tx)
+                .await?;
+        let mut kept: Vec<(String, String)> = Vec::new();
+        for (id, step) in &existing {
+            let wanted = agents.iter().any(|agent| agent.step == *step);
+            match kept.iter().find(|(_, kept_step)| kept_step == step) {
+                Some((keeper, _)) if wanted => {
+                    Self::move_agent_history_in_tx(tx, id, keeper).await?;
+                    sqlx::query("DELETE FROM task_agents WHERE id = ?")
+                        .bind(id)
+                        .execute(&mut **tx)
+                        .await?;
+                }
+                _ if wanted => kept.push((id.clone(), step.clone())),
+                _ => {
+                    if Self::agent_has_history_in_tx(tx, id).await? {
+                        return Err(StoreError::Conflict(format!(
+                            "column {step} has sessions or messages behind it; staff it again \
+                             rather than leave it out"
+                        )));
+                    }
+                    sqlx::query("DELETE FROM task_agents WHERE id = ?")
+                        .bind(id)
+                        .execute(&mut **tx)
+                        .await?;
+                }
+            }
+        }
+        // The ordinals are reassigned from the new list; they are unique per
+        // task, so the rows that stay step out of the way first.
+        sqlx::query("UPDATE task_agents SET ordinal = -1 - ordinal WHERE task_id = ?")
+            .bind(task_id)
+            .execute(&mut **tx)
+            .await?;
+        for (ordinal, agent) in agents.iter().enumerate() {
+            let (model, effort) = AgentPin::columns(&agent.pin);
+            match kept.iter().find(|(_, step)| *step == agent.step) {
+                Some((id, _)) => {
+                    sqlx::query(
+                        "UPDATE task_agents SET ordinal = ?, model = ?, effort = ?, brief = ?
+                         WHERE id = ?",
+                    )
+                    .bind(ordinal as i64)
+                    .bind(&model)
+                    .bind(&effort)
+                    .bind(&agent.brief)
+                    .bind(id)
+                    .execute(&mut **tx)
+                    .await?;
+                    sqlx::query("DELETE FROM task_agent_skills WHERE agent_id = ?")
+                        .bind(id)
+                        .execute(&mut **tx)
+                        .await?;
+                    Self::write_agent_skills_in_tx(tx, id, &agent.skills).await?;
+                }
+                None => {
+                    let id = new_id();
+                    sqlx::query(
+                        "INSERT INTO task_agents (id, task_id, step, ordinal, model, effort, brief)
+                         VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    )
+                    .bind(&id)
+                    .bind(task_id)
+                    .bind(&agent.step)
+                    .bind(ordinal as i64)
+                    .bind(&model)
+                    .bind(&effort)
+                    .bind(&agent.brief)
+                    .execute(&mut **tx)
+                    .await?;
+                    Self::write_agent_skills_in_tx(tx, &id, &agent.skills).await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether a session or a message names this agent.
+    async fn agent_has_history_in_tx(
+        tx: &mut Transaction<'_, Sqlite>,
+        agent_id: &str,
+    ) -> Result<bool> {
+        let named: i64 = sqlx::query_scalar(
+            "SELECT (SELECT COUNT(*) FROM agent_sessions WHERE task_agent_id = ?)
+                  + (SELECT COUNT(*) FROM messages WHERE from_agent_id = ? OR to_agent_id = ?)",
+        )
+        .bind(agent_id)
+        .bind(agent_id)
+        .bind(agent_id)
+        .fetch_one(&mut **tx)
+        .await?;
+        Ok(named > 0)
+    }
+
+    /// Hand one agent's sessions and messages to another of the same column.
+    async fn move_agent_history_in_tx(
+        tx: &mut Transaction<'_, Sqlite>,
+        from: &str,
+        to: &str,
+    ) -> Result<()> {
+        for sql in [
+            "UPDATE agent_sessions SET task_agent_id = ? WHERE task_agent_id = ?",
+            "UPDATE messages SET from_agent_id = ? WHERE from_agent_id = ?",
+            "UPDATE messages SET to_agent_id = ? WHERE to_agent_id = ?",
+        ] {
+            sqlx::query(sql)
+                .bind(to)
+                .bind(from)
+                .execute(&mut **tx)
+                .await?;
         }
         Ok(())
     }
@@ -108,13 +222,13 @@ impl Store {
                         "skill {name} is the orchestrator's; a task agent cannot load it"
                     )));
                 }
-                // The daemon loads these itself, never an orchestrator (017):
-                // `pr-babysit` onto the author of a task that lands by
-                // request, `pr-reviewer` onto a review session.
+                // The `pr` column stages `pr-babysit` (030); `pr-reviewer`
+                // is the daemon's own, loaded onto a review session (029).
+                SkillSeat::PullRequest if name == PR_BABYSIT_SKILL => {}
                 SkillSeat::PullRequest => {
                     return Err(StoreError::Conflict(format!(
-                        "skill {name} is loaded by Ariadne itself, where a request is kept or \
-                         reviewed; staff it on no task agent"
+                        "skill {name} is loaded by Ariadne itself, where a request is reviewed; \
+                         staff it on no task agent"
                     )));
                 }
                 SkillSeat::Task => {}
@@ -132,52 +246,14 @@ impl Store {
         Ok(())
     }
 
-    /// Every agent of a task, authors before reviewers, each seat in the order
-    /// the orchestrator listed it.
+    /// Every agent of a task, in the order the orchestrator listed them.
     pub async fn list_task_agents(&self, task_id: &str) -> Result<Vec<TaskAgent>> {
-        Ok(sqlx::query_as(
-            "SELECT * FROM task_agents WHERE task_id = ?
-             ORDER BY seat = 'reviewer', ordinal",
+        Ok(
+            sqlx::query_as("SELECT * FROM task_agents WHERE task_id = ? ORDER BY ordinal")
+                .bind(task_id)
+                .fetch_all(self.r())
+                .await?,
         )
-        .bind(task_id)
-        .fetch_all(self.r())
-        .await?)
-    }
-
-    /// The first author of a task, which for most tasks is the only one.
-    ///
-    /// A task staffed with several authors is read with
-    /// [`Store::list_task_authors`]; this stays the answer for the paths that
-    /// hold for a one-author task alone.
-    pub async fn task_author(&self, task_id: &str) -> Result<TaskAgent> {
-        sqlx::query_as(
-            "SELECT * FROM task_agents WHERE task_id = ? AND seat = 'author'
-             ORDER BY ordinal LIMIT 1",
-        )
-        .bind(task_id)
-        .fetch_optional(self.r())
-        .await?
-        .ok_or_else(|| not_found("author", task_id))
-    }
-
-    /// The authors of a task, in the order the orchestrator listed them.
-    pub async fn list_task_authors(&self, task_id: &str) -> Result<Vec<TaskAgent>> {
-        Ok(sqlx::query_as(
-            "SELECT * FROM task_agents WHERE task_id = ? AND seat = 'author' ORDER BY ordinal",
-        )
-        .bind(task_id)
-        .fetch_all(self.r())
-        .await?)
-    }
-
-    /// The reviewers of a task, in the order the orchestrator listed them.
-    pub async fn list_task_reviewers(&self, task_id: &str) -> Result<Vec<TaskAgent>> {
-        Ok(sqlx::query_as(
-            "SELECT * FROM task_agents WHERE task_id = ? AND seat = 'reviewer' ORDER BY ordinal",
-        )
-        .bind(task_id)
-        .fetch_all(self.r())
-        .await?)
     }
 
     pub async fn get_task_agent(&self, id: &str) -> Result<TaskAgent> {

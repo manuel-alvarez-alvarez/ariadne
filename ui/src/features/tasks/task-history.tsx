@@ -1,7 +1,8 @@
 /**
  * The transition audit log — the `task history` equivalent.
  *
- * Every status change the store accepted, in order, with who asked for it. It
+ * Every status change the store accepted, in order, with who asked for it —
+ * and for a stepped task every move between workflow columns, by column. It
  * is the answer to "why is this task where it is", so the reason the daemon
  * recorded is shown in full rather than truncated.
  */
@@ -9,7 +10,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { ArrowRightIcon } from "lucide-react"
 
-import type { TaskStatus, TaskTransitionDto } from "@/api"
+import type { TaskStatus, TaskTransitionDto, WorkflowStepDto } from "@/api"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { StatusBadge } from "@/components/status-badge"
@@ -18,8 +19,16 @@ import { When } from "@/components/when"
 import { cn } from "@/lib/format"
 import { taskTransitionsQueryOptions } from "./queries"
 import { TASK_STATUS_META } from "./status"
+import { stepTitle } from "./steps"
 
-export function TaskHistory({ taskId }: { taskId: string }) {
+export function TaskHistory({
+  taskId,
+  steps,
+}: {
+  taskId: string
+  /** The goal's workflow columns, which a step move is named by. */
+  steps?: WorkflowStepDto[]
+}) {
   const transitions = useQuery(taskTransitionsQueryOptions(taskId))
 
   if (transitions.isPending) {
@@ -49,13 +58,19 @@ export function TaskHistory({ taskId }: { taskId: string }) {
   return (
     <ol className="relative space-y-0 border-l pl-5">
       {transitions.data.map((transition) => (
-        <TransitionRow key={transition.id} transition={transition} />
+        <TransitionRow key={transition.id} transition={transition} steps={steps} />
       ))}
     </ol>
   )
 }
 
-function TransitionRow({ transition }: { transition: TaskTransitionDto }) {
+function TransitionRow({
+  transition,
+  steps,
+}: {
+  transition: TaskTransitionDto
+  steps: WorkflowStepDto[] | undefined
+}) {
   return (
     <li className="relative py-2">
       <span
@@ -65,9 +80,13 @@ function TransitionRow({ transition }: { transition: TaskTransitionDto }) {
         )}
       />
       <div className="flex flex-wrap items-center gap-2 text-sm">
-        <span className="text-muted-foreground">{label(transition.from_status)}</span>
+        <span className="text-muted-foreground">
+          {label(transition.from_status, transition.from_step, steps)}
+        </span>
         <ArrowRightIcon className="size-3 text-muted-foreground" />
-        <span className="font-medium">{label(transition.to_status)}</span>
+        <span className="font-medium">
+          {label(transition.to_status, transition.to_step, steps)}
+        </span>
         <StatusBadge size="sm" label={transition.actor} tone="bg-muted text-muted-foreground" />
         <When at={transition.created_at} className="ml-auto text-xs text-muted-foreground" />
       </div>
@@ -96,7 +115,14 @@ function meta(status: string) {
  * requested" back to "In progress" — where what actually happened is that it
  * became ready, and that a round of review asked for changes.
  */
-function label(status: string): string {
+function label(
+  status: string,
+  step: string | null | undefined,
+  steps: WorkflowStepDto[] | undefined,
+): string {
+  // A stepped task stays `in_progress` from column to column, so the column
+  // is what says where it went.
+  if (step) return stepTitle(steps, step)
   return meta(status)?.label ?? status
 }
 

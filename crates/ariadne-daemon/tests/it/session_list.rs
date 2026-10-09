@@ -141,8 +141,8 @@ async fn ariadne_session(h: &Harness, title: &str, agent: &str) -> ariadne_store
     let goal = h
         .store
         .create_goal(ariadne_store::NewGoal {
+            workflow: None,
             issue_url: None,
-            landing: None,
             title: title.into(),
             description: "desc".into(),
             repository_ids: vec![repo.id.clone()],
@@ -486,14 +486,12 @@ async fn goal_narrows_the_listing_to_one_goals_sessions() {
 async fn task_narrows_the_listing_to_one_tasks_sessions() {
     let h = harness().await;
     let cast = h.cast().await;
-    let author = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    let agent = h.agent_session(&cast, "develop").await;
     h.orchestrator_session(&cast.goal).await;
 
     let page = listing(&h, &format!("task={}", cast.task.id)).await;
 
-    assert_eq!(ids(&page), [author.id.as_str()]);
+    assert_eq!(ids(&page), [agent.id.as_str()]);
     assert_eq!(only(&page).title.as_deref(), Some(cast.task.title.as_str()));
 }
 
@@ -502,15 +500,13 @@ async fn task_narrows_the_listing_to_one_tasks_sessions() {
 async fn seat_narrows_the_listing_to_one_seat() {
     let h = harness().await;
     let cast = h.cast().await;
-    let author = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    let agent = h.agent_session(&cast, "develop").await;
     h.orchestrator_session(&cast.goal).await;
 
-    let page = listing(&h, "seat=author").await;
+    let page = listing(&h, "seat=agent").await;
 
-    assert_eq!(ids(&page), [author.id.as_str()]);
-    assert_eq!(only(&page).seat, Some(Seat::Author));
+    assert_eq!(ids(&page), [agent.id.as_str()]);
+    assert_eq!(only(&page).seat, Some(Seat::Agent));
 }
 
 /// `status` keeps the sessions in that status, ended ones included: a named
@@ -734,7 +730,7 @@ async fn a_page_with_no_room_for_an_outside_session_asks_no_agent() {
     for query in [
         format!("goal={goal}"),
         "status=running".to_owned(),
-        "seat=author".to_owned(),
+        "seat=agent".to_owned(),
         "attention=true".to_owned(),
     ] {
         listing(&h, &query).await;

@@ -244,7 +244,7 @@ mod tests {
                 task("01T1", "01GA", TaskStatus::Failed, false),
                 task("01T2", "01GB", TaskStatus::InProgress, true),
                 task("01T3", "01GONE", TaskStatus::Failed, false),
-                task("01T4", "01GA", TaskStatus::ChangesRequested, false),
+                task("01T4", "01GA", TaskStatus::Ready, false),
             ],
             vec![
                 dead("01S1", "01GB", None),
@@ -289,7 +289,7 @@ mod tests {
         let rows = rows_of(vec![dead("01S1", "01GA", Some("01T9"))]);
         assert_eq!(rows[0][..4], ["01T9", "task 01T9", "failed", "-"]);
         assert_eq!(rows[1][0], "01S1");
-        assert_eq!(rows[1][1], "author session");
+        assert_eq!(rows[1][1], "agent session");
         assert_eq!(rows[1][2], "disconnected");
         assert_eq!(rows[1][3], "task 01T9");
 

@@ -1,10 +1,11 @@
 # The forge integration
 
 Ariadne works with the forge a repository's remote is on — GitHub through
-`gh`, GitLab through `glab` — once you enable it. Enabled, a request a task
-opens is kept by that task's author until a human merges it, and a request
-asking for your review gets a session that reviews it; no agent runs a
-forge command itself, and none approves or merges anything.
+`gh`, GitLab through `glab` — once you enable it. Enabled, a request a
+task's `pr` column opens is kept by that column's agent until a human
+merges it, and a request asking for your review gets a session that
+reviews it; no agent runs a forge command itself, and none approves or
+merges anything.
 
 ## Enabling it
 
@@ -53,8 +54,8 @@ already pinned — given with no model pinned, it is refused — and
 CLI only: the desktop app's repository dialog has just the switch that
 enables the integration.
 
-A request of yours needs no pin: the author of the task that opened it
-keeps it, on that author's own model.
+A request of yours needs no pin: the agent of the task that opened it
+keeps it, on that agent's own model.
 
 ## The daemon talks to the forge, never the agent
 
@@ -62,38 +63,39 @@ Every call to `gh` or `glab` — opening a request, reading its comments and
 checks, posting a reply or a review, registering a webhook — is the
 daemon's own, run as a child process on `gh_bin` or `glab_bin` (see
 [Configuration](configuration.md)). No agent ever runs the forge's CLI
-itself: a landing briefing that opens a request names no forge command, and
-an author keeping its request, or a `pr-reviewer` session, reaches the forge
+itself: the briefing that opens a request names no forge command, and the
+agent keeping its request, or a `pr-reviewer` session, reaches the forge
 only through the tools its session lists — never a shell.
 
-## How an author keeps its request
+## How the `pr` column keeps its request
 
-A task with the `pull_request` landing, and the final task of a
-`feature_branch` goal, does not end when its request opens. Its author keeps
-the request until a human merges or closes it, with the `pr-babysit` skill
-Ariadne loads for every such author, and the task stays `approved` until
-then. Opening it needs the integration on: with it off, `open_pull_request`
-is refused with 409 `forge_disabled`, since nothing would read the request
-for the author.
+A task whose workflow gates its last column on `request-merged` —
+`develop-review-pr`'s `pr` column — does not finish when its request opens.
+That column's agent keeps the request until a human merges or closes it,
+with the `pr-babysit` skill the column stages. Opening it needs the
+integration on: with it off, `open_pull_request` is refused with 409
+`forge_disabled`, since nothing would read the request for the agent.
 
-The author never polls. The daemon reads the forge and prompts the author's
-own session each time the request has news — a new comment, a check that
+The agent never polls. The daemon reads the forge and prompts its own
+session each time the request has news — a new comment, a check that
 turned to failure or back to green, a base branch ahead of the head, a
-changed review decision, a merge, or a close — and leaves an idle author
+changed review decision, a merge, or a close — and leaves an idle agent
 alone in between.
 
-The author **replies to every unanswered comment** — saying what it
+The agent **replies to every unanswered comment** — saying what it
 changed, or why the code stays — and **resolves no thread**: resolving a
 thread, once its reply satisfies you, is yours to do. A change a comment or
-a failed check asks for goes onto the branch as a new commit and through the
-task's own reviewers with `request_review` before it is pushed. A moved base
-branch is merged in rather than rebased onto, and the branch is never
-amended, rebased or force-pushed. It reports the request ready once every
-required approval and check reads green, and takes the readiness back down
-the moment a later change turns one back. Once you merge the request, the
-author brings the base branch up to date and finishes the task; a request
-closed unmerged fails it. Should the author not finish it once it has read
-the merge, Ariadne finishes the task itself and stops the author's agent.
+a failed check asks for goes onto the branch as a new commit, with the
+changed tests and lint run again, before it is pushed. A moved base branch
+is merged in rather than rebased onto, and the branch is never amended,
+rebased or force-pushed. It reports the request ready once every required
+approval and check reads green, and takes the readiness back down the
+moment a later change turns one back. Once you merge the request, the
+agent brings the base branch up to date and completes the column, which
+finishes the task when nothing follows it, or hands on to the next column;
+a request closed unmerged fails the task. Should the agent fall quiet once
+it has read the merge, the daemon advances or finishes the task itself and
+stops the agent.
 
 A request of yours that no task opened — one you opened by hand — is listed
 too, and nobody keeps it.
@@ -116,13 +118,13 @@ own playbook, is always on and is all it starts with; any other skill can
 join it. The
 same is `PUT /v1/repositories/<repo-id>/pull-requests/<number>/ariadne-review` with `{"asked": true,
 "model": "<agent:model>", "effort": "<effort>", "skills": [...]}`. That
-session hears of pushes alone — the comments are the author's news — and
-its review is always posted as a comment, since no forge takes a change
+session hears of pushes alone — the comments are the keeping agent's news —
+and its review is always posted as a comment, since no forge takes a change
 request from a request's own author. Starting it closes the dialog and, once the daemon
 has the agent up, opens that session's console in the panel. **Stop
 review** takes it down. The
-panel's Sessions tab lists the review session, and the task's author where
-a task opened the request; picking one opens its console in the panel.
+panel's Sessions tab lists the review session, and the task's keeping agent
+where a task opened the request; picking one opens its console in the panel.
 
 It posts its findings at one of three priorities:
 
@@ -149,9 +151,10 @@ finding by priority and title, saying nothing of what the reviewer did.
 On a later round the reviewer posts nothing more in a thread nobody has
 answered: it waits for the answer. Once a commit fixes the defect, it
 replies so and resolves the thread; once someone answers and the defect is
-still there, it replies once saying so and why. On a request a task's author keeps, the review's
-findings go to that author like anyone else's comments, though they are
-posted under your login: it answers each one, and fixes what needs fixing.
+still there, it replies once saying so and why. On a request a task's agent
+keeps, the review's findings go to that agent like anyone else's comments,
+though they are posted under your login: it answers each one, and fixes
+what needs fixing.
 
 ## Nothing approves or merges in your name
 
@@ -164,7 +167,7 @@ resolve.
 
 ## Readiness and review flags on `ariadne attention`
 
-An author that just reported its request ready shows in `ariadne attention`
+An agent that just reported its request ready shows in `ariadne attention`
 and the desktop app's attention strip as waiting on you — every required
 approval and check reads green, and the merge is yours. A review session that has just posted shows
 as "review posted, approve yourself" in the CLI and **Review posted,

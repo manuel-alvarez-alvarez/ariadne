@@ -21,7 +21,7 @@ mod quiet;
 mod sweeps;
 mod tasks;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -103,11 +103,11 @@ pub const QUIET_NUDGE_SECS: i64 = 180;
 /// spare.
 ///
 /// Ten minutes. Unlike the nudge this one is spent whatever the agent is
-/// doing, so it has to clear the longest wait an agent is *told* to take: the
-/// landing briefing sends an author to `sleep` at most five minutes at a time
-/// while it waits for a pull request to be merged, and this is twice that. A flag
-/// raised over a tool call that ran longer still is not the end of anything —
-/// the agent's next event takes it down again.
+/// doing, so it has to clear the longest tool call an agent is *told* to
+/// make: a whole test suite run with a timeout of up to ten minutes, which is
+/// what the review and merge columns run. A flag raised over a tool call that
+/// ran longer still is not the end of anything — the agent's next event takes
+/// it down again.
 pub const QUIET_FLAG_SECS: i64 = 600;
 /// And before the agent is killed and put back on its feet: the flag
 /// plus enough of a wait for a person to have looked at it first — twenty
@@ -117,11 +117,10 @@ pub const QUIET_RELAUNCH_SECS: i64 = 1_800;
 /// The watchdog is one timeline, and the order of its thresholds is what
 /// makes it one: nudged before the user is told, told before an agent is
 /// killed under them. The flag has a floor of its own — it is spent whatever
-/// the agent is doing, so it has to clear the longest wait an agent is *told*
-/// to take, which is the five-minute `sleep` the landing briefing sends an
-/// author to while a pull request waits to be merged. Checked here rather
-/// than in a test, so that a number edited into the wrong order does not
-/// build.
+/// the agent is doing, so it has to clear the longest tool call an agent is
+/// *told* to make, which is the ten-minute suite run a column's skill allows.
+/// Checked here rather than in a test, so that a number edited into the wrong
+/// order does not build.
 const _: () = assert!(
     QUIET_NUDGE_SECS < QUIET_FLAG_SECS,
     "an agent is nudged before the user is told about it"
@@ -132,7 +131,7 @@ const _: () = assert!(
 );
 const _: () = assert!(
     QUIET_FLAG_SECS >= 600,
-    "the flag stays clear of a five-minute sleep, with margin"
+    "the flag stays clear of a ten-minute suite run"
 );
 
 pub(crate) struct Scheduler {
@@ -156,10 +155,10 @@ pub(crate) struct Scheduler {
     dead_launch: HashMap<String, String>,
     /// The launch each seat last gave its budget back for, keyed like the map
     /// above: a launch that was heard from gives the attempts back once, not
-    /// on every pass. A task's agents share one budget, so an author that
-    /// keeps reporting would otherwise refund, pass after pass, every attempt
-    /// its reviewer failed, and a reviewer that cannot be started would be
-    /// tried for ever without the task ever failing.
+    /// on every pass. A task's agents share one budget, so one column's agent
+    /// that keeps reporting would otherwise refund, pass after pass, every
+    /// attempt the next column's agent failed, and an agent that cannot be
+    /// started would be tried for ever without the task ever failing.
     refunded_launch: HashMap<String, String>,
     /// What the quiet-clock watchdog has done about each session it has had
     /// to act on, by session id (in memory like the map above).
@@ -171,27 +170,6 @@ pub(crate) struct Scheduler {
     /// a wake too many costs a turn, one too few leaves a goal with nobody
     /// deciding.
     goal_told: HashMap<String, String>,
-    /// Tasks whose author has been handed the landing briefing, by task id.
-    /// In memory like the maps above: what it prevents is briefing the same
-    /// approved task twice while the daemon that approved it is running, and
-    /// a daemon that restarts over an approved task wants to say it again.
-    landing_briefed: HashSet<String>,
-    /// Reviewers already asked to pick a contested task's winner, by (task,
-    /// reviewer). In memory like `landing_briefed`, and for the same reason:
-    /// a daemon that restarts over an open pick asks once more.
-    pick_briefed: HashSet<(String, String)>,
-    /// Reviews a live reviewer has already been briefed on, by (reviewer,
-    /// review request). A reviewer whose agent survived the last one is
-    /// handed the next one's briefing the moment it owes it — once, and in
-    /// memory like the sets above: a daemon that restarts over an open review
-    /// says it once more.
-    ///
-    /// The request is the row addressed to that reviewer, not the newest on
-    /// the task: an announcement writes one row per reviewer, so the newest
-    /// moves while it runs. A briefing sent before that row was written is
-    /// stamped under the author it is for, and the row that lands next takes
-    /// the stamp over: see `adopt_briefing_sent_before_the_request`.
-    review_briefed: HashSet<(String, String)>,
     /// Exhausted switches the task's orchestrator has not received yet.
     exhausted_notices: HashMap<String, ExhaustedNotice>,
     pull_request_cleanup_retry: HashMap<String, std::time::Instant>,
@@ -228,9 +206,6 @@ pub fn start(
         refunded_launch: HashMap::new(),
         quiet: HashMap::new(),
         goal_told: HashMap::new(),
-        landing_briefed: HashSet::new(),
-        pick_briefed: HashSet::new(),
-        review_briefed: HashSet::new(),
         exhausted_notices: HashMap::new(),
         pull_request_cleanup_retry: HashMap::new(),
         review_news: HashMap::new(),
@@ -518,8 +493,8 @@ impl Scheduler {
     /// spawn that never got off the ground spends, one per launch, and the
     /// caller says what running out of it means for the seat.
     /// `seat` names the seat the launch was for — the goal for an
-    /// orchestrator, the task for its author, the session row for one of
-    /// several reviewers — and `budget` the count it spends, which for every
+    /// orchestrator, the staffed agent for a column's agent, the request for
+    /// a review session — and `budget` the count it spends, which for every
     /// agent of a task is the task's own.
     pub(super) fn spent_on_a_dead_launch(
         &mut self,
@@ -527,9 +502,9 @@ impl Scheduler {
         budget: &str,
         last: &AgentSession,
     ) -> bool {
-        // Once per launch, and per launch rather than per row: an author and
-        // a reviewer are put back on their feet under the id they already
-        // have, so the row says nothing about which run of it died. Every
+        // Once per launch, and per launch rather than per row: a column's
+        // agent is put back on its feet under the id it already has, so the
+        // row says nothing about which run of it died. Every
         // pass over the same dead launch would otherwise spend the budget
         // again, and no relaunch of a session would ever spend it once. The
         // same holds for giving it back: a launch heard from refunds once.
@@ -583,7 +558,8 @@ struct Cost {
 /// started, so it spends no attempt. Under load the write pool hands out a
 /// timeout instead of a connection, and every task's reconciliation fails
 /// together for as long as that lasts: counted as spawn attempts, three ticks
-/// of it fail a task whose agent was never asked for.
+/// of it fail a task whose agent was never asked for — which is how a pool
+/// timeout under load failed two tasks whose agents had already committed.
 ///
 /// A descriptor shortage is waited out whichever layer noticed it, and
 /// `short_of_descriptors` is that state asked of the machine rather than read
@@ -675,7 +651,7 @@ mod tests {
                 id: "gone".into(),
             },
             StoreError::Conflict("already landed".into()),
-            StoreError::Invalid("no author".into()),
+            StoreError::Invalid("no agent".into()),
             StoreError::Transition(TransitionError::IllegalTransition {
                 from: TaskStatus::Failed,
                 to: TaskStatus::InProgress,

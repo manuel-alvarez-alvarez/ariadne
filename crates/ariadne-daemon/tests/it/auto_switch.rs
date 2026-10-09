@@ -3,14 +3,30 @@ use serde_json::{Value, json};
 use ariadne_core::models::ModelRank;
 use ariadne_core::{AttentionReason, Seat, SessionStatus};
 use ariadne_daemon::scheduler::{self, SPAWN_RETRY_BUDGET, SchedEvent};
-use ariadne_store::{AgentPin, AgentSession, SessionFilter};
+use ariadne_store::{AgentPin, AgentSession, SessionFilter, Task};
 
 use crate::common::acp::{StubAcpAgent, discovery_accepted, option, script, stub_acp_agent};
 use crate::common::{Harness, TIMEOUT, eventually, harness};
 
+/// Start the agent of the task's first column and hand it a first prompt, the
+/// way the scheduler briefs a column's agent once it is up: the launch itself
+/// carries none, and the exhausted stub errors on its first turn.
+async fn started(h: &Harness, task: &Task) -> AgentSession {
+    let task = h.store.get_task(&task.id).await.unwrap();
+    let develop = h.store.list_task_agents(&task.id).await.unwrap().remove(0);
+    let session = h.launcher.start_step_agent(&task, &develop).await.unwrap();
+    h.launcher
+        .acp
+        .send_prompt(&session.id, "Begin the task.".into())
+        .unwrap();
+    session
+}
+
+/// The world the exhaustion tests run in: the develop column's agent, whose
+/// first turn exhausted, and the orchestrator that is told of each switch.
 struct World {
     h: Harness,
-    author: AgentSession,
+    agent: AgentSession,
     orchestrator: AgentSession,
     scheduler: tokio::sync::mpsc::UnboundedSender<SchedEvent>,
     control: StubAcpAgent,
@@ -106,7 +122,6 @@ async fn world_with_prompt(prompt: Value, auto_switch: bool, agents: &[&str]) ->
             &goal,
             &repo,
             "task",
-            1,
             AgentPin {
                 model: "codex:old".into(),
                 effort: None,
@@ -120,15 +135,15 @@ async fn world_with_prompt(prompt: Value, auto_switch: bool, agents: &[&str]) ->
         h.session_status(&orchestrator).await == SessionStatus::Idle
     })
     .await;
-    let author = h.launcher.spawn_author(&task.id).await.unwrap();
-    eventually(TIMEOUT, "the failed author to end", || async {
-        h.session_status(&author).await == SessionStatus::Exited
+    let agent = started(&h, &task).await;
+    eventually(TIMEOUT, "the failed agent to end", || async {
+        h.session_status(&agent).await == SessionStatus::Exited
     })
     .await;
     let scheduler = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
     World {
         h,
-        author,
+        agent,
         orchestrator,
         scheduler,
         control,
@@ -152,7 +167,7 @@ async fn rank(h: &Harness, entries: &[(&str, ModelRank)]) {
 async fn wake(world: &World) {
     world
         .scheduler
-        .send(SchedEvent::SessionEvent(world.author.id.clone()))
+        .send(SchedEvent::SessionEvent(world.agent.id.clone()))
         .unwrap();
 }
 
@@ -204,14 +219,14 @@ async fn a_codex_exhaustion_switches_to_another_agent_at_the_same_rank() {
     )
     .await;
     wake(&world).await;
-    let next = successor(&world.h, &world.author).await;
+    let next = successor(&world.h, &world.agent).await;
     assert_eq!(next.model, "other:old-model");
     assert_eq!(next.effort, None);
 
     let events = world
         .h
         .store
-        .list_session_events(&world.author.id)
+        .list_session_events(&world.agent.id)
         .await
         .unwrap();
     let error: Value = serde_json::from_str(
@@ -255,7 +270,7 @@ async fn claude_and_message_signals_classify_while_a_plain_error_does_not() {
         .await;
         wake(&world).await;
         assert_eq!(
-            successor(&world.h, &world.author).await.model,
+            successor(&world.h, &world.agent).await.model,
             "other:old-model"
         );
     }
@@ -278,7 +293,7 @@ async fn claude_and_message_signals_classify_while_a_plain_error_does_not() {
     .await;
     wake(&response).await;
     assert_eq!(
-        successor(&response.h, &response.author).await.model,
+        successor(&response.h, &response.agent).await.model,
         "other:old-model"
     );
 
@@ -302,7 +317,7 @@ async fn claude_and_message_signals_classify_while_a_plain_error_does_not() {
         plain
             .h
             .store
-            .switched_successor(&plain.author.id)
+            .switched_successor(&plain.agent.id)
             .await
             .unwrap()
             .is_none()
@@ -310,7 +325,7 @@ async fn claude_and_message_signals_classify_while_a_plain_error_does_not() {
     let events = plain
         .h
         .store
-        .list_session_events(&plain.author.id)
+        .list_session_events(&plain.agent.id)
         .await
         .unwrap();
     let error: Value = serde_json::from_str(
@@ -369,7 +384,7 @@ async fn the_ladder_uses_same_agent_then_the_rank_above_then_below() {
         let world = world(codex_error(), true, &["other"]).await;
         rank(&world.h, &ranks).await;
         wake(&world).await;
-        assert_eq!(successor(&world.h, &world.author).await.model, expected);
+        assert_eq!(successor(&world.h, &world.agent).await.model, expected);
     }
 }
 
@@ -393,20 +408,20 @@ async fn an_unranked_model_and_disabled_auto_switch_stay_exhausted() {
             world
                 .h
                 .store
-                .switched_successor(&world.author.id)
+                .switched_successor(&world.agent.id)
                 .await
                 .unwrap()
                 .is_none()
         );
         assert_eq!(
-            world.h.attention(&world.author).await,
+            world.h.attention(&world.agent).await,
             Some(AttentionReason::Exhausted),
             "auto_switch={auto_switch} task={:?} session={:?}",
             world
                 .h
-                .status(world.author.task_id.as_deref().unwrap())
+                .status(world.agent.task_id.as_deref().unwrap())
                 .await,
-            world.h.session_status(&world.author).await
+            world.h.session_status(&world.agent).await
         );
     }
 }
@@ -438,13 +453,13 @@ async fn a_chain_never_revisits_a_model_and_stops_at_the_budget() {
                 .h
                 .store
                 .list_sessions(SessionFilter {
-                    task_id: world.author.task_id.clone(),
+                    task_id: world.agent.task_id.clone(),
                     ..Default::default()
                 })
                 .await
                 .unwrap()
                 .iter()
-                .filter(|session| session.seat() == Some(Seat::Author))
+                .filter(|session| session.seat() == Some(Seat::Agent))
                 .count()
                 == SPAWN_RETRY_BUDGET as usize + 1
         },
@@ -454,22 +469,22 @@ async fn a_chain_never_revisits_a_model_and_stops_at_the_budget() {
         .h
         .store
         .list_sessions(SessionFilter {
-            task_id: world.author.task_id.clone(),
+            task_id: world.agent.task_id.clone(),
             ..Default::default()
         })
         .await
         .unwrap();
-    let authors: Vec<_> = sessions
+    let agents: Vec<_> = sessions
         .iter()
-        .filter(|session| session.seat() == Some(Seat::Author))
+        .filter(|session| session.seat() == Some(Seat::Agent))
         .collect();
     let models: std::collections::HashSet<_> =
-        authors.iter().map(|session| &session.model).collect();
-    assert_eq!(models.len(), authors.len());
-    let last = authors
+        agents.iter().map(|session| &session.model).collect();
+    assert_eq!(models.len(), agents.len());
+    let last = agents
         .iter()
         .find(|session| {
-            !authors
+            !agents
                 .iter()
                 .any(|candidate| candidate.switched_from.as_deref() == Some(session.id.as_str()))
         })
@@ -478,7 +493,7 @@ async fn a_chain_never_revisits_a_model_and_stops_at_the_budget() {
         world.h.attention(last).await == Some(AttentionReason::Exhausted)
     })
     .await;
-    for earlier in authors.iter().filter(|session| session.id != last.id) {
+    for earlier in agents.iter().filter(|session| session.id != last.id) {
         assert_eq!(world.h.attention(earlier).await, None);
     }
     let notices = world
@@ -500,7 +515,7 @@ async fn an_in_place_switch_does_not_return_to_the_exhausted_model() {
     // `world` was still building) is on hand to compare against regardless
     // of how much of the rest that reconcile gets through before anything
     // below runs again.
-    let errors_so_far = count_errors(&world.h, &world.author).await;
+    let errors_so_far = count_errors(&world.h, &world.agent).await;
     rank(
         &world.h,
         &[
@@ -510,7 +525,7 @@ async fn an_in_place_switch_does_not_return_to_the_exhausted_model() {
     )
     .await;
     wake(&world).await;
-    assert_eq!(successor(&world.h, &world.author).await.model, "codex:same");
+    assert_eq!(successor(&world.h, &world.agent).await.model, "codex:same");
     // The retried prompt fails the same way on the model that took over
     // (`prompt_script`'s second turn), so the session is exhausted again
     // through the same classification as the first failure, with nothing
@@ -526,18 +541,18 @@ async fn an_in_place_switch_does_not_return_to_the_exhausted_model() {
     // second error row is instead something no poll can catch mid-flight:
     // once written, it stays.
     eventually(TIMEOUT, "the switched model to exhaust in turn", || async {
-        count_errors(&world.h, &world.author).await > errors_so_far
+        count_errors(&world.h, &world.agent).await > errors_so_far
     })
     .await;
     wake(&world).await;
     scheduler::flush_for_test(&world.scheduler).await;
-    let session = world.h.store.get_session(&world.author.id).await.unwrap();
+    let session = world.h.store.get_session(&world.agent.id).await.unwrap();
     assert_eq!(session.model, "codex:same");
     assert_eq!(session.attention_reason(), Some(AttentionReason::Exhausted));
     let switches = world
         .h
         .store
-        .list_session_events(&world.author.id)
+        .list_session_events(&world.agent.id)
         .await
         .unwrap()
         .into_iter()

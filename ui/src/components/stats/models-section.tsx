@@ -63,7 +63,6 @@ type Column = {
   explain: string
   render: (row: Model) => ReactNode
 }
-const mean = (value: number | null | undefined) => (value ?? 0).toFixed(1)
 const model: Column = {
   header: "MODEL",
   explain: "MODEL: the name of the model this row is about.",
@@ -99,37 +98,10 @@ const tasks: Column = {
 const groups: { seat: string; title: string; columns: Column[]; count: (row: Model) => number }[] =
   [
     {
-      seat: "author",
-      title: "Authors",
+      seat: "agent",
+      title: "Agents",
       count: (row) => row.tasks,
-      columns: [
-        model,
-        tasks,
-        ...work,
-        {
-          header: "ROUNDS/TASK",
-          numeric: true,
-          explain: "ROUNDS/TASK: the mean number of review requests on each finished task.",
-          render: (row) => mean(row.rounds_per_task),
-        },
-      ],
-    },
-    {
-      seat: "reviewer",
-      title: "Reviewers",
-      count: (row) => row.tasks,
-      columns: [
-        model,
-        tasks,
-        ...work,
-        {
-          header: "CHANGES/TASK",
-          numeric: true,
-          explain:
-            "CHANGES/TASK: the mean number of changes-requested verdicts on each task this model reviewed.",
-          render: (row) => mean(row.changes_per_task),
-        },
-      ],
+      columns: [model, tasks, ...work],
     },
     {
       seat: "orchestrator",

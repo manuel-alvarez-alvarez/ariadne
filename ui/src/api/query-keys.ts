@@ -121,6 +121,13 @@ export const qk = {
     details: () => ["skills", "detail"] as const,
     detail: (name: string) => ["skills", "detail", name] as const,
   },
+  workflows: {
+    all: () => ["workflows"] as const,
+    lists: () => ["workflows", "list"] as const,
+    list: () => ["workflows", "list", {}] as const,
+    details: () => ["workflows", "detail"] as const,
+    detail: (name: string) => ["workflows", "detail", name] as const,
+  },
   /**
    * The registered checkouts goals are created against
    * (`GET /v1/repositories`). One unfiltered list — the daemon takes no

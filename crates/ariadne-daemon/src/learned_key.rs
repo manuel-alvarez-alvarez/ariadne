@@ -17,8 +17,7 @@ pub(crate) struct Facts {
     pub(crate) repository: String,
     /// The session's working directory: the task's worktree.
     pub(crate) worktree: String,
-    /// The session's branch, where it works on a task: an author's own,
-    /// else the task's.
+    /// The session's branch, where it works on a task: the task's.
     pub(crate) branch: Option<String>,
     pub(crate) home: String,
 }
@@ -367,8 +366,8 @@ mod tests {
 
     /// A commit is a placeholder, so two merges of two commits share a key.
     #[test]
-    fn two_finish_task_inputs_with_different_shas_give_one_key() {
-        let tool = "mcp__ariadne__finish_task";
+    fn two_complete_step_inputs_with_different_shas_give_one_key() {
+        let tool = "mcp__ariadne__complete_step";
         let first = key(
             tool,
             json!({"merge_commit": "94f07c0b878adfa965c6b6438dad1dedb4578e9f"}),
@@ -401,8 +400,8 @@ mod tests {
 
     /// The prose of an MCP call is left out of its key.
     #[test]
-    fn two_verdicts_with_different_bodies_give_one_key() {
-        let tool = "mcp__ariadne__submit_verdict";
+    fn two_step_returns_with_different_bodies_give_one_key() {
+        let tool = "mcp__ariadne__fail_step";
         let first = key(
             tool,
             json!({"verdict": "approve", "body": "Looks good.", "summary": "ok"}),
@@ -507,9 +506,8 @@ mod tests {
         );
     }
 
-    /// Only the session's own branch is `<BRANCH>`: a second author's
-    /// session names its own branch so and leaves the first author's, and the
-    /// first author's session leaves the second's apart from its own.
+    /// Only the session's own branch is `<BRANCH>`: a session names its own
+    /// branch so and leaves another task's branch apart from its own.
     #[test]
     fn only_the_sessions_own_branch_is_the_branch_placeholder() {
         let second = Facts {

@@ -36,8 +36,7 @@ use ariadne_api::stream::DomainEvent;
 use ariadne_core::acp::LaunchConfig;
 use ariadne_core::models::agent_of;
 use ariadne_core::{
-    Actor, AttentionReason, GoalStatus, Landing, MessageKind, PermissionMode, Seat, SessionStatus,
-    TaskStatus,
+    Actor, AttentionReason, ForgeKind, GoalStatus, PermissionMode, Seat, SessionStatus, TaskStatus,
 };
 use ariadne_daemon::acp::AcpLaunch;
 use ariadne_daemon::ai_permissions::hardware::HardwareOverride;
@@ -52,8 +51,9 @@ use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::timeouts::Timeouts;
 use ariadne_daemon::transcript::TranscriptHomes;
 use ariadne_store::{
-    AgentPin, AgentSession, Goal, NewAgentEvent, NewGoal, NewMessage, NewRepository, NewSession,
-    NewTask, NewTaskAgent, Repository, RepositoryUpdate, SessionFilter, Store, Task, TaskAgent,
+    AgentPin, AgentSession, Goal, NewAgentEvent, NewGoal, NewRepository, NewSession, NewTask,
+    NewTaskAgent, Repository, RepositoryUpdate, SessionFilter, SetForgeIntegration, Store, Task,
+    TaskAgent,
 };
 
 /// How long a test waits for something the daemon does off the request path —
@@ -806,8 +806,8 @@ impl Harness {
 
 // -- seeding ----------------------------------------------------------------
 
-/// The agents of one goal with one task, and the repository behind it: every
-/// agent that can be spawned for it.
+/// One goal with one task, the repository behind it, and the agents staffed
+/// on the task: one per column of the goal's workflow, in column order.
 ///
 /// The orchestrator is not among them: a goal has exactly one, it is the one
 /// agent type Ariadne defines, and nothing staffs it.
@@ -815,8 +815,64 @@ pub(crate) struct Cast {
     pub goal: Goal,
     pub task: Task,
     pub repo: Repository,
-    pub author: TaskAgent,
-    pub reviewer: TaskAgent,
+    /// The agents of the task, one per column, in column order.
+    pub agents: Vec<TaskAgent>,
+}
+
+impl Cast {
+    /// The agent of the first column, which writes the change.
+    pub(crate) fn develop(&self) -> &TaskAgent {
+        &self.agents[0]
+    }
+
+    /// The agent of the second column, which reviews it.
+    pub(crate) fn review(&self) -> &TaskAgent {
+        &self.agents[1]
+    }
+
+    /// The agent of the column `step`.
+    pub(crate) fn agent(&self, step: &str) -> &TaskAgent {
+        self.agents
+            .iter()
+            .find(|a| a.step == step)
+            .unwrap_or_else(|| panic!("the task has no agent on column {step}"))
+    }
+}
+
+/// A bare remote for `repo` named `origin`, and a forge row the daemon can
+/// call `gh` through — independent of the real git remote, since the CLI is
+/// stubbed and only the push and `ls-remote` the daemon runs need to be real.
+/// The integration is on: the `pr` column keeps the request it opens, and the
+/// integration is what reads it for the agent (030).
+pub(crate) async fn with_forge(h: &Harness, repo: &Repository) {
+    with_forge_enabled(h, repo, true).await
+}
+
+pub(crate) async fn with_forge_enabled(h: &Harness, repo: &Repository, enabled: bool) {
+    let remote = h.at("remote.git");
+    sh(
+        Path::new(&repo.path),
+        &format!(
+            "git init -q --bare '{}' && git remote add origin '{}'",
+            remote.display(),
+            remote.display()
+        ),
+    );
+    h.store
+        .set_forge_integration(SetForgeIntegration {
+            repository_id: repo.id.clone(),
+            kind: ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled,
+            login: enabled.then(|| "me".into()),
+            review_model: None,
+            review_effort: None,
+        })
+        .await
+        .unwrap();
 }
 
 impl Harness {
@@ -836,18 +892,18 @@ impl Harness {
         repo
     }
 
-    /// A registered repository at `path`: a directory that exists, since an
-    /// orchestrator is started in it, but only the tests that spawn an author
-    /// ever have git look at it.
+    /// A registered repository at `path`, on the default workflow: a
+    /// directory that exists, since an orchestrator is started in it, but only
+    /// the tests that start a column's agent ever have git look at it.
     pub(crate) async fn repository(&self, path: &Path) -> Repository {
         std::fs::create_dir_all(path).unwrap();
         self.store
             .create_repository(NewRepository {
+                default_workflow: None,
                 path: path.display().to_string(),
                 base_branch: "main".into(),
                 description: None,
                 permission_mode: None,
-                default_landing: None,
             })
             .await
             .unwrap()
@@ -867,87 +923,32 @@ impl Harness {
             .unwrap();
     }
 
-    /// One reviewer's verdict on the round a task stands in, as the reviewer
-    /// itself would send it: a message to the author, of the kind that closes
-    /// a round.
-    pub(crate) async fn verdict(
-        &self,
-        task: &Task,
-        reviewer_agent_id: &str,
-        kind: MessageKind,
-        body: &str,
-    ) -> ariadne_store::Message {
-        self.write_verdict(task, reviewer_agent_id, None, kind, body)
-            .await
-    }
-
-    /// The same, sent from a live reviewer session, so the verdict names the
-    /// session it came from.
-    pub(crate) async fn verdict_from(
-        &self,
-        task: &Task,
-        session: &AgentSession,
-        kind: MessageKind,
-        body: &str,
-    ) -> ariadne_store::Message {
-        let agent_id = session.task_agent_id.clone().unwrap_or_default();
-        self.write_verdict(task, &agent_id, Some(&session.id), kind, body)
-            .await
-    }
-
-    /// A verdict on the review that is open now, whichever that is: what a
-    /// verdict belongs to is the request it answers, and the store reads that
-    /// off the channel rather than off anything the caller holds.
-    async fn write_verdict(
-        &self,
-        task: &Task,
-        reviewer_agent_id: &str,
-        session_id: Option<&str>,
-        kind: MessageKind,
-        body: &str,
-    ) -> ariadne_store::Message {
-        let task = self.store.get_task(&task.id).await.unwrap();
-        let author = self.store.task_author(&task.id).await.unwrap();
-        self.store
-            .send_message(NewMessage {
-                goal_id: task.goal_id.clone(),
-                task_id: Some(task.id.clone()),
-                kind,
-                from_actor: Actor::Reviewer,
-                from_agent_id: Some(reviewer_agent_id.to_string()),
-                from_session: session_id.map(str::to_string),
-                to_actor: Actor::Author,
-                to_agent_id: Some(author.id),
-                body: body.to_string(),
-            })
-            .await
-            .unwrap()
-    }
-
     /// A goal still in planning, on a repository of its own, pinned to the
-    /// stub as [`Self::cast_reviewed_by`] pins its own.
+    /// stub as [`Self::cast`] pins its own, on the repository's default
+    /// workflow.
     pub(crate) async fn goal(&self) -> (Goal, Repository) {
         let repo = self.repository(&self.at("repo")).await;
         let goal = self.goal_on(&repo, test_pin()).await;
         (goal, repo)
     }
 
+    /// A goal on `repo`'s default workflow.
     pub(crate) async fn goal_on(&self, repo: &Repository, pin: AgentPin) -> Goal {
-        self.goal_ending_in(repo, pin, None).await
+        self.goal_running(repo, pin, None).await
     }
 
-    /// The same, with every task of the goal ending in `landing`: None is
-    /// what a goal gets when its creator says nothing.
-    async fn goal_ending_in(
+    /// A goal on the named workflow: None is what a goal gets when its
+    /// creator says nothing, which is its first repository's default.
+    pub(crate) async fn goal_running(
         &self,
         repo: &Repository,
         pin: AgentPin,
-        landing: Option<Landing>,
+        workflow: Option<&str>,
     ) -> Goal {
         self.store
             .create_goal(NewGoal {
+                workflow: workflow.map(str::to_string),
                 issue_url: None,
-                landing,
                 title: "Ship the UI".into(),
                 description: "desc".into(),
                 repository_ids: vec![repo.id.clone()],
@@ -957,20 +958,23 @@ impl Harness {
             .unwrap()
     }
 
-    /// A task on a goal, staffed with one author and the reviewers given, all
-    /// on the same pin.
+    /// A task on a goal, staffed with one agent per column of the goal's
+    /// workflow, each on the column's own skills and on `pin`.
     pub(crate) async fn task_on(
         &self,
         goal: &Goal,
         repo: &Repository,
         title: &str,
-        reviewers: usize,
         pin: AgentPin,
     ) -> Task {
-        let agent =
-            |seat: Seat, skills: &[&str]| NewTaskAgent::new(seat, skills.to_vec(), pin.clone());
-        let mut agents = vec![agent(Seat::Author, &["coding"])];
-        agents.extend((0..reviewers).map(|_| agent(Seat::Reviewer, &["code-review"])));
+        let agents = self
+            .store
+            .goal_steps(&goal.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|step| NewTaskAgent::new(step.id, Vec::<String>::new(), pin.clone()))
+            .collect();
         self.store
             .create_task(NewTask {
                 goal_id: goal.id.clone(),
@@ -994,43 +998,29 @@ impl Harness {
     /// A goal in planning with one task on it, and the agents staffed on that
     /// task: the shape most tests start from.
     pub(crate) async fn cast(&self) -> Cast {
-        self.cast_reviewed_by(1).await
-    }
-
-    /// The same, with `reviewers` reviewers on the task. A task is approved
-    /// when every one of them has approved, so two of them is where a round
-    /// one verdict does not close — a reviewer sitting with its work done.
-    pub(crate) async fn cast_reviewed_by(&self, reviewers: usize) -> Cast {
-        self.cast_pinned(&test_pin().model, reviewers).await
+        self.cast_pinned(&test_pin().model).await
     }
 
     /// The same on another model: what a goal and a task's agents run on is
     /// what they were pinned to when they were created.
-    pub(crate) async fn cast_pinned(&self, model: &str, reviewers: usize) -> Cast {
+    pub(crate) async fn cast_pinned(&self, model: &str) -> Cast {
         let pin = AgentPin {
             model: model.to_string(),
             effort: None,
         };
-        self.cast_of(pin, reviewers, None).await
+        self.cast_of(pin, None).await
     }
 
-    async fn cast_of(&self, pin: AgentPin, reviewers: usize, landing: Option<Landing>) -> Cast {
+    async fn cast_of(&self, pin: AgentPin, workflow: Option<&str>) -> Cast {
         let repo = self.repository(&self.at("repo")).await;
-        let goal = self.goal_ending_in(&repo, pin.clone(), landing).await;
-        let task = self.task_on(&goal, &repo, "task", reviewers, pin).await;
-        let author = self.store.task_author(&task.id).await.unwrap();
-        let reviewer = self
-            .store
-            .list_task_reviewers(&task.id)
-            .await
-            .unwrap()
-            .remove(0);
+        let goal = self.goal_running(&repo, pin.clone(), workflow).await;
+        let task = self.task_on(&goal, &repo, "task", pin).await;
+        let agents = self.store.list_task_agents(&task.id).await.unwrap();
         Cast {
             goal,
             task,
             repo,
-            author,
-            reviewer,
+            agents,
         }
     }
 
@@ -1052,17 +1042,13 @@ impl Harness {
     /// are out too — so a stream opened afterwards sees nothing but what the
     /// test itself does.
     pub(crate) async fn active_cast(&self) -> Cast {
-        self.active_cast_of(None).await
+        self.active_cast_running(None).await
     }
 
-    /// The same, on a goal whose every task ends in `landing`.
-    pub(crate) async fn active_cast_ending_in(&self, landing: Landing) -> Cast {
-        self.active_cast_of(Some(landing)).await
-    }
-
-    async fn active_cast_of(&self, landing: Option<Landing>) -> Cast {
+    /// The same, on a goal running the named workflow.
+    pub(crate) async fn active_cast_running(&self, workflow: Option<&str>) -> Cast {
         let mut rx = self.bus.subscribe();
-        let mut cast = self.cast_of(test_pin(), 1, landing).await;
+        let mut cast = self.cast_of(test_pin(), workflow).await;
         cast.goal = self.activate(&cast.goal).await;
         next_event(
             &mut rx,
@@ -1089,6 +1075,18 @@ impl Harness {
         agent_id: &str,
     ) -> AgentSession {
         self.new_session(goal, task, seat, Some(agent_id)).await
+    }
+
+    /// The session of a column's agent on `task`: a row, with no agent
+    /// process under it until [`Self::agent_runs`] starts one.
+    pub(crate) async fn agent_session(&self, cast: &Cast, step: &str) -> AgentSession {
+        self.session(
+            &cast.goal,
+            Some(&cast.task),
+            Seat::Agent,
+            &cast.agent(step).id,
+        )
+        .await
     }
 
     /// An orchestrator session on a goal of its own, on a repository named
@@ -1138,13 +1136,15 @@ impl Harness {
         self.at(&format!("wt-{}", &id[id.len() - 4..]))
     }
 
-    /// Take a session's row out from under the daemon, the way deleting the
-    /// goal it belonged to would. Straight SQL: nothing an agent can call does
-    /// this, which is the point — it is the state the daemon has to cope with,
-    /// not one it is asked to produce.
-    pub(crate) async fn forget_session(&self, session: &AgentSession) {
-        sqlx::query("DELETE FROM agent_sessions WHERE id = ?")
-            .bind(&session.id)
+    /// Take the agent of one column off a task, the way a database written
+    /// before workflows leaves a column of a migrated task with none (0023).
+    /// Straight SQL: the store refuses an edit that leaves a column out once
+    /// the goal runs, which is the point — it is the state the daemon has to
+    /// cope with, not one it is asked to produce.
+    pub(crate) async fn unstaff_column(&self, task: &Task, step: &str) {
+        sqlx::query("DELETE FROM task_agents WHERE task_id = ? AND step = ?")
+            .bind(&task.id)
+            .bind(step)
             .execute(&self.db)
             .await
             .unwrap();
@@ -1200,14 +1200,12 @@ impl Harness {
             .collect()
     }
 
-    /// A task whose author session has already run once: a worktree on disk,
-    /// an agent conversation to resume, and no agent left running.
-    /// What the launcher relaunches when the reviewers bounce a task back.
-    pub(crate) async fn resumable_author(&self) -> (Cast, AgentSession) {
+    /// A task whose first column's agent has already run once: a worktree on
+    /// disk, an agent conversation to resume, and no agent left running.
+    /// What the launcher relaunches when the task comes back to the column.
+    pub(crate) async fn resumable_agent(&self) -> (Cast, AgentSession) {
         let cast = self.cast().await;
-        let session = self
-            .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-            .await;
+        let session = self.agent_session(&cast, "develop").await;
         self.make_resumable(&cast.task, &session).await;
         self.set_status(&session, SessionStatus::Exited).await;
         (cast, session)
@@ -1240,26 +1238,23 @@ impl Harness {
     /// Walk a fresh task up to the status a test wants to watch it in, from
     /// wherever it stands: a scheduler woken by a live agent may already
     /// have taken it part of the way, and may take a step of the walk
-    /// between this read of the status and this write of it.
+    /// between this read of the status and this write of it. `in_progress`
+    /// puts the task in its first column.
     pub(crate) async fn advance(&self, task: &Task, to: TaskStatus) {
-        let steps = [
-            (TaskStatus::Ready, Actor::Daemon),
-            (TaskStatus::InProgress, Actor::Daemon),
-            (TaskStatus::UnderReview, Actor::Author),
-        ];
+        let steps = [TaskStatus::Ready, TaskStatus::InProgress];
         // How far up the walk a status stands. A status off the walk,
         // `pending` included, stands below every step of it.
         let reached = |status: TaskStatus| {
             steps
                 .iter()
-                .position(|(step, _)| *step == status)
+                .position(|step| *step == status)
                 .map_or(0, |at| at + 1)
         };
-        for (at, (status, actor)) in steps.into_iter().enumerate() {
+        for (at, status) in steps.into_iter().enumerate() {
             if reached(self.status(&task.id).await) <= at {
                 let stepped = self
                     .store
-                    .transition_task(&task.id, status, actor, None, None)
+                    .transition_task(&task.id, status, Actor::Daemon, None, None)
                     .await;
                 if let Err(refused) = stepped {
                     // The scheduler took the step first, which is the step
@@ -1275,6 +1270,185 @@ impl Harness {
                 return;
             }
         }
+    }
+
+    /// Put a task in the named column: in progress, and moved forward one
+    /// column at a time by the daemon until it stands there. What a test
+    /// that watches a later column starts from.
+    pub(crate) async fn advance_to(&self, task: &Task, step: &str) {
+        self.advance(task, TaskStatus::InProgress).await;
+        let steps = self.store.goal_steps(&task.goal_id).await.unwrap();
+        let wanted = steps
+            .iter()
+            .position(|s| s.id == step)
+            .unwrap_or_else(|| panic!("the goal has no column {step}"));
+        loop {
+            let current = self.store.get_task(&task.id).await.unwrap().step;
+            let at = steps
+                .iter()
+                .position(|s| Some(&s.id) == current.as_ref())
+                .expect("a task in progress is in a column");
+            if at >= wanted {
+                return;
+            }
+            self.store
+                .move_step(
+                    &task.id,
+                    &steps[at + 1].id,
+                    Actor::Daemon,
+                    "the test moved the task on",
+                    None,
+                )
+                .await
+                .unwrap();
+        }
+    }
+
+    /// The step call the current column's agent makes to hand the task on,
+    /// as that agent's own session: the task as the daemon answers it.
+    pub(crate) async fn complete_step(
+        &self,
+        task: &Task,
+        session: &AgentSession,
+        reason: &str,
+    ) -> serde_json::Value {
+        self.json(
+            as_session(
+                &format!("/v1/tasks/{}/step/complete", task.id),
+                &session.id,
+                serde_json::json!({"reason": reason}),
+            ),
+            StatusCode::OK,
+        )
+        .await
+    }
+
+    /// The step call the current column's agent makes to hand the task back.
+    pub(crate) async fn fail_step(
+        &self,
+        task: &Task,
+        session: &AgentSession,
+        reason: &str,
+    ) -> serde_json::Value {
+        self.json(
+            as_session(
+                &format!("/v1/tasks/{}/step/fail", task.id),
+                &session.id,
+                serde_json::json!({"reason": reason}),
+            ),
+            StatusCode::OK,
+        )
+        .await
+    }
+
+    /// Start the agent of column `step` on `task` and hand it the column's
+    /// first briefing, the way the scheduler does once the agent is up: the
+    /// launch itself carries no prompt. What a test without a scheduler
+    /// starts a column's agent with. Where the agent ran before, this resumes
+    /// its conversation.
+    pub(crate) async fn start_agent(&self, task: &Task, step: &str) -> AgentSession {
+        // The task is put in the column first, the way the scheduler finds
+        // it: an agent's work is only its own while its column is current.
+        self.advance_to(task, step).await;
+        let task = self.store.get_task(&task.id).await.unwrap();
+        let agent = self
+            .store
+            .list_task_agents(&task.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|a| a.step == step)
+            .unwrap_or_else(|| panic!("the task has no agent on column {step}"));
+        let session = self.launcher.start_step_agent(&task, &agent).await.unwrap();
+        let steps = self.store.goal_steps(&task.goal_id).await.unwrap();
+        let column = steps
+            .iter()
+            .find(|s| s.id == step)
+            .unwrap_or_else(|| panic!("the goal has no column {step}"));
+        let briefing = self
+            .launcher
+            .step_first_briefing(&task, column, "")
+            .await
+            .unwrap();
+        self.launcher
+            .acp
+            .send_prompt(&session.id, briefing)
+            .unwrap();
+        session
+    }
+
+    /// Start the agent of column `step` again on its earlier conversation and
+    /// hand it `instruction` as a new turn, the way the scheduler resumes a
+    /// column's agent that went away. Answers the launcher's own refusal
+    /// where the conversation cannot be reopened.
+    pub(crate) async fn resume_agent(
+        &self,
+        task: &Task,
+        step: &str,
+        instruction: &str,
+    ) -> anyhow::Result<AgentSession> {
+        let task = self.store.get_task(&task.id).await.unwrap();
+        let agent = self
+            .store
+            .list_task_agents(&task.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|a| a.step == step)
+            .unwrap_or_else(|| panic!("the task has no agent on column {step}"));
+        let session = self.launcher.start_step_agent(&task, &agent).await?;
+        self.launcher
+            .acp
+            .send_prompt(&session.id, instruction.to_string())?;
+        Ok(session)
+    }
+
+    /// Mark the task's current column entry as briefed, the way the runtime
+    /// does once the entry prompt went out: a scheduler pass then sends the
+    /// column's agent no briefing, and the next prompt it gets is the one a
+    /// test is about.
+    pub(crate) async fn briefed(&self, task: &Task) {
+        let latest = self
+            .store
+            .list_task_transitions(&task.id)
+            .await
+            .unwrap()
+            .pop()
+            .expect("the task has moved");
+        assert!(
+            self.store.claim_step_briefing(&latest.id).await.unwrap(),
+            "the current column entry was already briefed"
+        );
+    }
+
+    /// The session of the agent of column `step`, once the scheduler has
+    /// started it and handed it its briefing: a harness with a scheduler
+    /// starts the current column's agent on its own.
+    pub(crate) async fn step_session(&self, task: &Task, step: &str) -> AgentSession {
+        let agent = self
+            .store
+            .list_task_agents(&task.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|a| a.step == step)
+            .unwrap_or_else(|| panic!("the task has no agent on column {step}"));
+        eventually(
+            TIMEOUT,
+            "the column agent to receive its briefing",
+            || async {
+                self.sessions_of(&task.id).await.iter().any(|s| {
+                    s.task_agent_id.as_ref() == Some(&agent.id) && !self.prompts_to(s).is_empty()
+                })
+            },
+        )
+        .await;
+        self.sessions_of(&task.id)
+            .await
+            .into_iter()
+            .rev()
+            .find(|s| s.task_agent_id.as_ref() == Some(&agent.id))
+            .unwrap()
     }
 
     /// One event recorded for an agent, straight into the store.
@@ -1375,22 +1549,6 @@ impl Harness {
     /// write. Only for a harness built with [`HarnessBuilder::scheduler`].
     pub(crate) fn notify(&self, task_id: &str) {
         self.wake(SchedEvent::TaskChanged(task_id.to_string()));
-    }
-
-    /// Reconcile a task directly, then wait for its expected state.
-    ///
-    /// One notification is one complete reconciliation. Sending another on
-    /// every poll can build a queue behind a slow agent launch, leaving the
-    /// later state change waiting behind stale passes over the same task.
-    pub(crate) async fn reconcile_task_until(
-        &self,
-        task_id: &str,
-        patience: Duration,
-        what: &str,
-        check: impl AsyncFnMut() -> bool,
-    ) {
-        self.notify(task_id);
-        eventually(patience, what, check).await;
     }
 
     /// The same about a goal: what a status change sends.

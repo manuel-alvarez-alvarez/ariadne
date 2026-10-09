@@ -7,7 +7,7 @@ use crate::common;
 use axum::http::StatusCode;
 use serde_json::json;
 
-use ariadne_core::{PermissionMode, Seat, SessionStatus, TokenUsage};
+use ariadne_core::{PermissionMode, Seat, SessionStatus, TaskStatus, TokenUsage};
 use ariadne_store::AgentSession;
 
 use common::acp::{discovery_settled, registry_home, script, stub_acp_agent};
@@ -15,13 +15,19 @@ use common::{Cast, Harness, TIMEOUT, eventually, get, harness, post, post_json};
 
 const LAUNCH: &str = "01launchonexxxxxxxxxxxxxxx";
 
-/// A running author session on a task of its own, its launch named, having
-/// taken two turns and spent 1000 tokens in, 800 of them cached, and 100 out.
+/// A running session of a column's agent on a task of its own, its launch
+/// named, having taken two turns and spent 1000 tokens in, 800 of them
+/// cached, and 100 out.
 async fn worked_session(h: &Harness) -> (Cast, AgentSession) {
     h.git_repo("repo");
     let cast = h.cast().await;
     let session = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
+        .session(
+            &cast.goal,
+            Some(&cast.task),
+            Seat::Agent,
+            &cast.develop().id,
+        )
         .await;
     h.store
         .set_session_launch(&session.id, LAUNCH)
@@ -62,7 +68,7 @@ async fn a_session_that_ends_writes_one_session_ended_fact() {
     let fact = &facts[0];
     assert_eq!(fact.session_id.as_deref(), Some(session.id.as_str()));
     assert_eq!(fact.launch_id.as_deref(), Some(LAUNCH));
-    assert_eq!(fact.seat.as_deref(), Some("author"));
+    assert_eq!(fact.seat.as_deref(), Some("agent"));
     assert_eq!(fact.model.as_deref(), Some("stub:test-model"));
     assert_eq!(fact.skills, ["coding"]);
     assert_eq!(fact.data["status"], "exited");
@@ -105,7 +111,9 @@ async fn a_restarted_session_writes_a_fact_for_each_run() {
     assert_eq!(launches, [LAUNCH, "01launchtwoxxxxxxxxxxxxxxx"]);
 }
 
-/// A console permission answer writes a fact.
+/// A console permission answer writes a fact. The permission is asked by the
+/// agent of a task's first column, started by the scheduler as the daemon
+/// starts it.
 #[tokio::test]
 async fn a_console_permission_answer_writes_a_fact() {
     let mut scripted = script();
@@ -120,11 +128,30 @@ async fn a_console_permission_answer_writes_a_fact() {
     }]);
     let agent_dir = tempfile::tempdir().unwrap();
     let stub = stub_acp_agent(agent_dir.path(), scripted);
-    let h = harness().home(registry_home(&stub)).await;
+    let h = harness()
+        .home(registry_home(&stub))
+        .discover_agents()
+        .scheduler()
+        .await;
+    discovery_settled(&h, &stub).await;
     h.git_repo("repo");
     let cast = h.cast().await;
     h.set_permission_mode(&cast.repo, PermissionMode::Ask).await;
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    h.activate(&cast.goal).await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    h.notify(&cast.task.id);
+    // The column's agent runs on the registry stub, whose prompts the
+    // harness does not read: the session is waited for by its row.
+    eventually(TIMEOUT, "the column agent to start", || async {
+        h.running_session(&cast.task.id, ariadne_core::Seat::Agent)
+            .await
+            .is_some()
+    })
+    .await;
+    let session = h
+        .running_session(&cast.task.id, ariadne_core::Seat::Agent)
+        .await
+        .unwrap();
     eventually(TIMEOUT, "the permission request", || async {
         h.store
             .count_session_events(&session.id, "permission_request")
@@ -133,11 +160,18 @@ async fn a_console_permission_answer_writes_a_fact() {
             == 1
     })
     .await;
-    h.send(post_json(
-        &format!("/v1/sessions/{}/console/input", session.id),
-        json!({"text": "yes"}),
-    ))
-    .await;
+    let (status, body) = h
+        .send(post_json(
+            &format!("/v1/sessions/{}/console/input", session.id),
+            json!({"text": "yes"}),
+        ))
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::NO_CONTENT,
+        "the console answer was refused: {}",
+        String::from_utf8_lossy(&body)
+    );
     eventually(TIMEOUT, "the permission fact", || async {
         h.facts("permission").await.len() == 1
     })
@@ -172,26 +206,42 @@ async fn the_old_families_are_gone() {
     }
 }
 
-/// A kill lands while a turn is running. The runtime then cancels the turn,
-/// and the cancelled turn reports its stop and what it spent only after the
-/// kill has returned. The fact of the run counts that last turn and those
-/// tokens: it is written once the agent is reaped, not at the kill.
-#[tokio::test]
-async fn a_killed_turn_counts_in_its_fact() {
-    let agent_dir = tempfile::tempdir().unwrap();
-    let release = agent_dir.path().join("release");
+/// A stub whose one prompt turn is held open until `release` exists, and
+/// which can load the conversation a resumable agent left behind.
+fn held_turn(release: &std::path::Path) -> serde_json::Value {
     let mut scripted = script();
+    scripted["stored_sessions"] = json!(["uuid-1234"]);
     scripted["prompts"] = json!([{
         "updates": [],
         "usage": {"totalTokens": 1500, "inputTokens": 1000, "cachedReadTokens": 400,
                   "outputTokens": 100},
         "wait_for": release.display().to_string(),
     }]);
-    let stub = stub_acp_agent(agent_dir.path(), scripted);
-    let h = harness().home(registry_home(&stub)).await;
+    scripted
+}
+
+/// A kill lands while a turn is running. The runtime then cancels the turn,
+/// and the cancelled turn reports its stop and what it spent only after the
+/// kill has returned. The fact of the run counts that last turn and those
+/// tokens: it is written once the agent is reaped, not at the kill.
+///
+/// The run is a column agent's conversation revived with an instruction,
+/// which is the one way a session is put back on its feet outside the
+/// scheduler.
+#[tokio::test]
+async fn a_killed_turn_counts_in_its_fact() {
+    let agent_dir = tempfile::tempdir().unwrap();
+    let release = agent_dir.path().join("release");
+    let stub = stub_acp_agent(agent_dir.path(), held_turn(&release));
+    let h = harness().home(registry_home(&stub)).discover_agents().await;
+    discovery_settled(&h, &stub).await;
     h.git_repo("repo");
-    let cast = h.cast().await;
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let (_cast, resumable) = h.resumable_agent().await;
+    let session = h
+        .launcher
+        .revive_session(&resumable.id, Some("go on"))
+        .await
+        .unwrap();
     let reached = release.with_extension("reached");
     eventually(TIMEOUT, "the turn to be held open", || async {
         reached.exists()
@@ -209,6 +259,7 @@ async fn a_killed_turn_counts_in_its_fact() {
 
     let facts = h.facts("session_ended").await;
     assert_eq!(facts.len(), 1, "{facts:?}");
+    assert_eq!(facts[0].seat.as_deref(), Some("agent"));
     let usage = h.store.session_usage(&session.id).await.unwrap();
     assert!(
         usage.input_tokens > 0,
@@ -224,27 +275,25 @@ async fn a_killed_turn_counts_in_its_fact() {
 }
 
 /// A resume right after a kill moves the row to a new launch, and the new
-/// agent takes a turn of its own, prompted by the resume. The killed launch still gets exactly one
-/// fact, and that fact holds only the killed run: its one cancelled turn and
-/// what that turn spent, never the resumed turn. The resumed launch waits
-/// for that fact before it starts, so the outcome does not depend on timing.
+/// agent takes a turn of its own, prompted by the resume. The killed launch
+/// still gets exactly one fact, and that fact holds only the killed run: its
+/// one cancelled turn and what that turn spent, never the resumed turn. The
+/// resumed launch waits for that fact before it starts, so the outcome does
+/// not depend on timing.
 #[tokio::test]
 async fn a_resume_after_a_kill_leaves_the_killed_run_its_own_fact() {
     let agent_dir = tempfile::tempdir().unwrap();
     let release = agent_dir.path().join("release");
-    let mut scripted = script();
-    scripted["stored_sessions"] = json!(["stub-session"]);
-    scripted["prompts"] = json!([{
-        "updates": [],
-        "usage": {"totalTokens": 1500, "inputTokens": 1000, "cachedReadTokens": 400,
-                  "outputTokens": 100},
-        "wait_for": release.display().to_string(),
-    }]);
-    let stub = stub_acp_agent(agent_dir.path(), scripted);
-    let h = harness().home(registry_home(&stub)).await;
+    let stub = stub_acp_agent(agent_dir.path(), held_turn(&release));
+    let h = harness().home(registry_home(&stub)).discover_agents().await;
+    discovery_settled(&h, &stub).await;
     h.git_repo("repo");
-    let cast = h.cast().await;
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let (_cast, resumable) = h.resumable_agent().await;
+    let session = h
+        .launcher
+        .revive_session(&resumable.id, Some("go on"))
+        .await
+        .unwrap();
     let reached = release.with_extension("reached");
     eventually(TIMEOUT, "the turn to be held open", || async {
         reached.exists()
@@ -254,7 +303,7 @@ async fn a_resume_after_a_kill_leaves_the_killed_run_its_own_fact() {
 
     // The next agent's turn ends at once and spends far more.
     let mut next = script();
-    next["stored_sessions"] = json!(["stub-session"]);
+    next["stored_sessions"] = json!(["uuid-1234"]);
     next["prompts"] = json!([{
         "updates": [],
         "usage": {"totalTokens": 9000, "inputTokens": 5000, "cachedReadTokens": 0,
@@ -266,7 +315,7 @@ async fn a_resume_after_a_kill_leaves_the_killed_run_its_own_fact() {
     let (status, body) = h.send(post(&format!("{row}/kill"))).await;
     assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
     h.launcher
-        .resume_author(&cast.task.id, "go on")
+        .revive_session(&session.id, Some("go on"))
         .await
         .unwrap();
     eventually(TIMEOUT, "the resumed turn to end", || async {

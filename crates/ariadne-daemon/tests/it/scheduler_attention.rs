@@ -4,10 +4,9 @@
 //! one timeline on it: a nudge, then the user, then the agent killed and put
 //! back on its feet. The three thresholds are the scheduler's own,
 //! read from it rather than copied, so a test says "past the nudge" and means
-//! whatever that is today. Every seat
-//! is under it, since every seat can go quiet: the orchestrator of a goal still
-//! being planned, the reviewers a round is waiting on, and the author —
-//! which is the only one whose task carries a flag of its own next to the
+//! whatever that is today. Every seat is under it, since every seat can go
+//! quiet: the orchestrator of a goal still being planned, and the agent of
+//! the column a task is in — whose task carries a flag of its own next to the
 //! session's. An agent that dies while its work is still going says so too,
 //! rather than ending quietly.
 //!
@@ -35,9 +34,7 @@ use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing_subscriber::layer::SubscriberExt;
 
-use ariadne_core::{
-    Actor, AttentionReason, GoalStatus, MessageKind, Seat, SessionStatus, TaskStatus,
-};
+use ariadne_core::{Actor, AttentionReason, GoalStatus, Seat, SessionStatus, TaskStatus};
 // The watchdog's timeline and the orchestrator's budget come from the scheduler
 // rather than being written down again here, so that moving a threshold moves
 // the tests with it instead of leaving them backdating clocks past a number
@@ -47,6 +44,7 @@ use ariadne_daemon::scheduler::{
     QUIET_RELAUNCH_SECS as RELAUNCH_SECS, START_GRACE_SECS, SchedEvent,
 };
 use ariadne_daemon::timeouts::Timeouts;
+use ariadne_store::defaults::PULL_REQUEST_WORKFLOW;
 use ariadne_store::{AgentSession, Goal, NewTaskAgent, SessionFilter, Task};
 
 #[cfg(unix)]
@@ -104,16 +102,19 @@ fn reconciles_of(h: &Harness, session: &AgentSession) -> usize {
         .count()
 }
 
-/// How many attempts at starting this task's reviewer the scheduler has made:
-/// what a retry held off by the descriptor delay is measured by, read from the
-/// line `Scheduler::reconcile_task` logs before each attempt. It covers a
-/// resume of a row that is already there as well as a spawn that writes one.
-fn reviewer_starts_of(h: &Harness, task: &Task) -> usize {
+/// How many attempts at starting this task's column agent the scheduler has
+/// made: what a retry held off by the descriptor delay is measured by, read
+/// from the line `Scheduler::reconcile_steps` logs before each attempt. It
+/// covers a resume of a row that is already there as well as a spawn that
+/// writes one.
+fn agent_starts_of(h: &Harness, task: &Task) -> usize {
     h.logs
         .snapshot()
         .iter()
         .filter(|line| {
-            line.message.starts_with("starting reviewer") && line.message.contains(&task.id)
+            line.message
+                .starts_with("the column has no live agent, starting one")
+                && line.message.contains(&task.id)
         })
         .count()
 }
@@ -127,8 +128,10 @@ struct World {
     h: Harness,
     goal: Goal,
     task: Task,
-    author: String,
-    reviewer: String,
+    /// The agent of the task's first column, `develop`.
+    develop: String,
+    /// The agent of its second column, `review`.
+    review: String,
 }
 
 impl Deref for World {
@@ -141,13 +144,21 @@ impl Deref for World {
 impl World {
     /// An active goal with one task on it.
     async fn active() -> World {
-        World::build(harness().await, 1).await
+        World::build(harness().await).await
     }
 
-    /// The same with two reviewers on the task: a round one verdict does not
-    /// close is where a reviewer sits with its work done.
-    async fn reviewed_by(reviewers: usize) -> World {
-        World::build(harness().await, reviewers).await
+    /// An active goal on the `develop-review-pr` workflow, whose last column
+    /// keeps the request the task opens.
+    async fn on_pull_requests() -> World {
+        let h = harness().await;
+        let cast = h.active_cast_running(Some(PULL_REQUEST_WORKFLOW)).await;
+        World {
+            develop: cast.develop().id.clone(),
+            review: cast.review().id.clone(),
+            h,
+            goal: cast.goal,
+            task: cast.task,
+        }
     }
 
     /// An active goal whose scheduler reconciles everything once, at the
@@ -163,7 +174,7 @@ impl World {
                 ..Timeouts::default()
             })
             .await;
-        World::build(h, 1).await
+        World::build(h).await
     }
 
     /// A daemon that cannot start anything: the registry's agent names no
@@ -175,19 +186,31 @@ impl World {
     /// replacement can happen, and the one about the replacement runs where it
     /// can.
     async fn cannot_spawn() -> World {
-        World::build(harness().cannot_spawn().await, 1).await
+        World::build(harness().cannot_spawn().await).await
     }
 
-    async fn build(h: Harness, reviewers: usize) -> World {
-        let cast = h.cast_reviewed_by(reviewers).await;
+    async fn build(h: Harness) -> World {
+        let cast = h.cast().await;
         let goal = h.activate(&cast.goal).await;
         World {
+            develop: cast.develop().id.clone(),
+            review: cast.review().id.clone(),
             h,
             goal,
             task: cast.task,
-            author: cast.author.id,
-            reviewer: cast.reviewer.id,
         }
+    }
+
+    /// The agent of column `step` on the world's task.
+    async fn agent_of(&self, step: &str) -> String {
+        self.store
+            .list_task_agents(&self.task.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|a| a.step == step)
+            .unwrap_or_else(|| panic!("the task has no agent on column {step}"))
+            .id
     }
 
     /// Another task on the same goal, with the same agents behind it.
@@ -205,8 +228,9 @@ impl World {
                 title: title.into(),
                 description: "do things".into(),
                 agents: vec![
-                    NewTaskAgent::new(Seat::Author, ["coding"], test_pin()),
-                    NewTaskAgent::new(Seat::Reviewer, ["code-review"], test_pin()),
+                    NewTaskAgent::new("develop", ["coding"], test_pin()),
+                    NewTaskAgent::new("review", ["code-review"], test_pin()),
+                    NewTaskAgent::new("merge", ["merge"], test_pin()),
                 ],
                 depends_on: vec![],
             })
@@ -214,15 +238,47 @@ impl World {
             .unwrap()
     }
 
-    /// The author of a task walked to `status`, with a stub agent running
-    /// under it: the opening most of these tests share.
-    async fn author_on(&self, task: &Task, status: TaskStatus) -> AgentSession {
+    /// The develop agent of a task walked to `status`, with a stub agent
+    /// running under it: the opening most of these tests share.
+    async fn agent_on(&self, task: &Task, status: TaskStatus) -> AgentSession {
         self.advance(task, status).await;
+        if status == TaskStatus::InProgress {
+            // Briefed already: what the watchdog watches is the silence
+            // after the column's briefing, not the briefing itself.
+            self.briefed(task).await;
+        }
+        let develop = self.develop_of(task).await;
         let session = self
-            .session(&self.goal, Some(task), Seat::Author, &self.author)
+            .session(&self.goal, Some(task), Seat::Agent, &develop)
             .await;
         self.agent_runs(&session).await;
         session
+    }
+
+    /// The develop agent of a task whose column moved on to `review`: an
+    /// agent nothing is waiting on any more, with a stub running under it.
+    async fn agent_left_behind(&self, task: &Task) -> AgentSession {
+        self.advance_to(task, "review").await;
+        self.briefed(task).await;
+        let develop = self.develop_of(task).await;
+        let session = self
+            .session(&self.goal, Some(task), Seat::Agent, &develop)
+            .await;
+        self.agent_runs(&session).await;
+        session
+    }
+
+    /// The develop agent of `task`, which is this world's own on its own
+    /// task and another task's own on that one.
+    async fn develop_of(&self, task: &Task) -> String {
+        self.store
+            .list_task_agents(&task.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|a| a.step == "develop")
+            .expect("a task has a develop column")
+            .id
     }
 
     /// The scheduler, started over everything seeded so far. Its first tick is
@@ -269,9 +325,9 @@ impl Sched {
     }
 }
 
-/// The author's resume template, as its profile has it: the words the daemon
-/// nudges an idle author with.
-const RESUME: &str = r#"Continue "task" on"#;
+/// The agent's resume template, rendered for the world's task on its first
+/// column: the words the daemon nudges an idle column agent with.
+const RESUME: &str = "Continue task at Develop.";
 
 // -- the timeline -----------------------------------------------------------
 
@@ -320,41 +376,43 @@ async fn an_idle_planning_orchestrator_is_never_nudged_or_flagged() {
     );
 }
 
-/// A reviewer the round is still waiting on is watched the same way.
+/// The agent of a later column is watched the same way once its column is
+/// the task's.
 #[tokio::test]
-async fn a_reviewer_idle_past_the_threshold_is_raised_on_its_session() {
+async fn a_review_column_agent_idle_past_the_threshold_is_raised_on_its_session() {
     let w = World::active().await;
-    w.advance(&w.task, TaskStatus::UnderReview).await;
+    w.advance_to(&w.task, "review").await;
     let session = w
-        .session(&w.goal, Some(&w.task), Seat::Reviewer, &w.reviewer)
+        .session(&w.goal, Some(&w.task), Seat::Agent, &w.review)
         .await;
     w.agent_runs(&session).await;
     w.idle_for(&session, NUDGE_SECS + 60).await;
 
     let sched = w.scheduler();
     sched.task(&w.task);
-    eventually(TIMEOUT, "the reviewer to be nudged", async || {
+    eventually(TIMEOUT, "the review agent to be nudged", async || {
         w.nudged(&session).await
     })
     .await;
     w.idle_for(&session, FLAG_SECS + 60).await;
     sched.task(&w.task);
-    eventually(TIMEOUT, "the reviewer to be raised", async || {
+    eventually(TIMEOUT, "the review agent to be raised", async || {
         w.attention(&session).await == Some(AttentionReason::Stalled)
     })
     .await;
 }
 
-/// The author keeps its task-level flag, and now says it on its session too.
+/// The current column's agent keeps its task-level flag, and says it on its
+/// session too.
 #[tokio::test]
-async fn an_author_stall_flags_the_task_and_its_session() {
+async fn a_step_agent_stall_flags_the_task_and_its_session() {
     let w = World::active().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
     w.idle_for(&session, NUDGE_SECS + 60).await;
 
     let sched = w.scheduler();
     sched.task(&w.task);
-    eventually(TIMEOUT, "the author to be nudged", async || {
+    eventually(TIMEOUT, "the agent to be nudged", async || {
         w.nudged(&session).await
     })
     .await;
@@ -377,7 +435,7 @@ async fn an_author_stall_flags_the_task_and_its_session() {
 #[tokio::test]
 async fn an_idle_agent_is_nudged_once_for_the_situation_it_went_quiet_in() {
     let w = World::active().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
     w.idle_for(&session, NUDGE_SECS + 60).await;
 
     let sched = w.scheduler();
@@ -391,7 +449,7 @@ async fn an_idle_agent_is_nudged_once_for_the_situation_it_went_quiet_in() {
     // A second task's agent, quiet in the same way from now on: its nudge is
     // what says the passes the first one went through are over.
     let control_task = w.extra_task("control").await;
-    let control = w.author_on(&control_task, TaskStatus::InProgress).await;
+    let control = w.agent_on(&control_task, TaskStatus::InProgress).await;
     w.idle_for(&control, NUDGE_SECS + 60).await;
     // And the first one is as quiet as ever, still in the situation it was
     // nudged for.
@@ -422,13 +480,13 @@ async fn an_idle_agent_is_nudged_once_for_the_situation_it_went_quiet_in() {
 #[tokio::test]
 async fn a_session_waiting_on_a_person_is_never_nudged() {
     let w = World::active().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
     w.idle_for(&session, NUDGE_SECS + 60).await;
     w.raise(&session, AttentionReason::WaitingPermission).await;
     // A second task, idle in exactly the same way but blocked on nothing: its
     // nudge is what says the pass the blocked one went through is over.
     let control_task = w.extra_task("control").await;
-    let control = w.author_on(&control_task, TaskStatus::InProgress).await;
+    let control = w.agent_on(&control_task, TaskStatus::InProgress).await;
     w.idle_for(&control, NUDGE_SECS + 60).await;
 
     let sched = w.scheduler();
@@ -461,13 +519,13 @@ async fn a_session_waiting_on_a_person_is_never_nudged() {
 #[tokio::test]
 async fn an_agent_in_the_middle_of_a_turn_is_not_nudged() {
     let w = World::active().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
     w.launched_ago(&session, NUDGE_SECS + 60).await;
 
     // A second task's author, idle in the same silence: its nudge is what
     // says the pass the working one went through is over.
     let control_task = w.extra_task("control").await;
-    let control = w.author_on(&control_task, TaskStatus::InProgress).await;
+    let control = w.agent_on(&control_task, TaskStatus::InProgress).await;
     w.idle_for(&control, NUDGE_SECS + 60).await;
 
     let sched = w.scheduler();
@@ -497,13 +555,13 @@ async fn an_agent_in_the_middle_of_a_turn_is_not_nudged() {
 #[tokio::test]
 async fn an_agent_that_reported_an_error_is_left_alone() {
     let w = World::active().await;
-    let errored = w.author_on(&w.task, TaskStatus::InProgress).await;
+    let errored = w.agent_on(&w.task, TaskStatus::InProgress).await;
     w.launched_ago(&errored, RELAUNCH_SECS + 60).await;
     w.raise(&errored, AttentionReason::AgentError).await;
     // And an agent whose silence nothing explains, whose flag says the passes
     // are over.
     let control_task = w.extra_task("control").await;
-    let control = w.author_on(&control_task, TaskStatus::InProgress).await;
+    let control = w.agent_on(&control_task, TaskStatus::InProgress).await;
     w.launched_ago(&control, FLAG_SECS + 60).await;
 
     let launched = w.launched_at(&errored).await;
@@ -594,17 +652,17 @@ async fn a_vanished_agent_with_work_still_active_is_flagged_disconnected() {
     );
 }
 
-/// The author of an active task with no live session is resumed blind, and
-/// when even that cannot get off the ground the session it tried to bring back
-/// is the thing the user has to look at.
+/// The current column's agent of an active task with no live session is
+/// resumed blind, and when even that cannot get off the ground the session it
+/// tried to bring back is the thing the user has to look at.
 #[tokio::test]
-async fn an_author_that_cannot_be_resumed_is_flagged_disconnected() {
+async fn a_step_agent_that_cannot_be_resumed_is_flagged_disconnected() {
     let w = World::cannot_spawn().await;
     w.advance(&w.task, TaskStatus::InProgress).await;
     // Ended, with no agent conversation to resume and no git repository to
     // spawn a fresh one in: the resume attempt cannot succeed.
     let session = w
-        .session(&w.goal, Some(&w.task), Seat::Author, &w.author)
+        .session(&w.goal, Some(&w.task), Seat::Agent, &w.develop)
         .await;
     w.set_status(&session, SessionStatus::Exited).await;
 
@@ -617,31 +675,21 @@ async fn an_author_that_cannot_be_resumed_is_flagged_disconnected() {
 }
 
 /// An agent going away when nobody is waiting on it is just a session
-/// ending: the author of a task under review is waiting on its reviewers and
-/// is woken by id when they answer, a reviewer that has voted is finished
-/// however long the round runs on, and a cancelled task is owed nothing at
-/// all. All three are retired, and none of them raised.
+/// ending: the develop agent of a task that moved on to its review column is
+/// finished however long that column runs on, and a cancelled task is owed
+/// nothing at all. Both are retired, and neither is raised.
 #[tokio::test]
 async fn a_vanished_agent_nobody_is_waiting_on_is_not_raised() {
-    // Two approvals wanted, one given: the round stays open around a reviewer
-    // that has nothing left to do, so the status is not what makes it quiet.
-    let w = World::reviewed_by(2).await;
-    w.advance(&w.task, TaskStatus::UnderReview).await;
-    // Entering review opens a round: the verdict belongs to that one.
-    let under_review = w.store.get_task(&w.task.id).await.unwrap();
-
-    let author = w
-        .session(&w.goal, Some(&under_review), Seat::Author, &w.author)
-        .await;
-    let voted = w
-        .session(&w.goal, Some(&under_review), Seat::Reviewer, &w.reviewer)
-        .await;
-    w.verdict_from(&under_review, &voted, MessageKind::Approve, "looks right")
+    let w = World::active().await;
+    w.advance_to(&w.task, "review").await;
+    let in_review = w.store.get_task(&w.task.id).await.unwrap();
+    let left_behind = w
+        .session(&w.goal, Some(&in_review), Seat::Agent, &w.develop)
         .await;
 
     let cancelled_task = w.extra_task("cancelled").await;
     let cancelled = w
-        .session(&w.goal, Some(&cancelled_task), Seat::Author, &w.author)
+        .session(&w.goal, Some(&cancelled_task), Seat::Agent, &w.develop)
         .await;
     w.store
         .transition_task(
@@ -654,15 +702,15 @@ async fn a_vanished_agent_nobody_is_waiting_on_is_not_raised() {
         .await
         .unwrap();
 
-    // All three had launched and were running when their agents went: a session
+    // Both had launched and were running when their agents went: a session
     // still starting is inside the sweep's grace window, and left alone
     // whoever it belongs to.
-    for gone in [&author, &voted, &cancelled] {
+    for gone in [&left_behind, &cancelled] {
         w.launched_ago(gone, 60).await;
     }
 
     let _sched = w.scheduler();
-    for gone in [&author, &voted, &cancelled] {
+    for gone in [&left_behind, &cancelled] {
         eventually(TIMEOUT, "the vanished session to be retired", async || {
             w.session_status(gone).await == SessionStatus::Exited
         })
@@ -670,12 +718,13 @@ async fn a_vanished_agent_nobody_is_waiting_on_is_not_raised() {
     }
     // Whatever else that pass had to say about them would have been said now.
     tokio::time::sleep(Duration::from_millis(300)).await;
+    let task = w.store.get_task(&in_review.id).await.unwrap();
     assert_eq!(
-        w.store.get_task(&under_review.id).await.unwrap().status(),
-        TaskStatus::UnderReview,
-        "the round is still open, so the status is not what makes this quiet"
+        (task.status(), task.step.as_deref()),
+        (TaskStatus::InProgress, Some("review")),
+        "the task is still in its review column, so the status is not what makes this quiet"
     );
-    for gone in [&author, &voted, &cancelled] {
+    for gone in [&left_behind, &cancelled] {
         assert_eq!(
             w.attention(gone).await,
             None,
@@ -779,15 +828,14 @@ async fn an_orchestrator_whose_agent_went_away_is_resumed_in_its_own_row() {
 async fn resuming_a_session_clears_its_attention() {
     let w = World::active().await;
     let session = w
-        .session(&w.goal, Some(&w.task), Seat::Author, &w.author)
+        .session(&w.goal, Some(&w.task), Seat::Agent, &w.develop)
         .await;
     w.make_resumable(&w.task, &session).await;
     w.set_status(&session, SessionStatus::Exited).await;
     w.raise(&session, AttentionReason::Disconnected).await;
 
     let resumed = w
-        .launcher
-        .resume_author(&w.task.id, "Continue where you left off.")
+        .resume_agent(&w.task, "develop", "Continue where you left off.")
         .await
         .unwrap();
 
@@ -802,14 +850,14 @@ async fn resuming_a_session_clears_its_attention() {
 
 /// A flag raised by an agent event is only ever taken down by another one, and
 /// a session waiting on an answer reports nothing: the sweep is what lets go of
-/// an author that was blocked on a permission prompt when its task moved on
-/// to its reviewers — and only then. An agent the work is still waiting on
+/// an agent that was blocked on a permission prompt when its task moved on
+/// to its next column — and only then. An agent the work is still waiting on
 /// keeps its flag, down to the moment it went up, since how long it has been
 /// stuck is the half of it the user acts on.
 #[tokio::test]
 async fn the_sweep_lets_go_of_a_blocked_agent_only_once_its_work_moved_on() {
     let w = World::cannot_spawn().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
     w.raise(&session, AttentionReason::WaitingPermission).await;
     let raised_at = w
         .store
@@ -818,17 +866,17 @@ async fn the_sweep_lets_go_of_a_blocked_agent_only_once_its_work_moved_on() {
         .unwrap()
         .attention_since;
 
-    // A second author, blocked in exactly the same way but on a task that
-    // has gone to its reviewers: whatever the prompt was about, it got past it
-    // and sent the task for review, and nothing more will ever be reported on
-    // that session.
-    let handed_over = w.extra_task("under review").await;
-    let control = w.author_on(&handed_over, TaskStatus::UnderReview).await;
+    // A second develop agent, blocked in exactly the same way but on a task
+    // that has gone to its review column: whatever the prompt was about, it
+    // got past it and completed its step, and nothing more will ever be
+    // reported on that session.
+    let handed_over = w.extra_task("in review").await;
+    let control = w.agent_left_behind(&handed_over).await;
     w.raise(&control, AttentionReason::WaitingPermission).await;
 
     // The sweep runs on the tick, and the first tick is immediate.
     let _sched = w.scheduler();
-    eventually(TIMEOUT, "the finished author to be let go", async || {
+    eventually(TIMEOUT, "the finished agent to be let go", async || {
         w.attention(&control).await.is_none()
     })
     .await;
@@ -878,14 +926,12 @@ async fn a_prompt_flag_does_not_outlive_the_session_it_was_raised_on() {
     let goal = h.activate(&cast.goal).await;
     h.advance(&cast.task, TaskStatus::InProgress).await;
     let author_session = h
-        .session(&goal, Some(&cast.task), Seat::Author, &cast.author.id)
+        .session(&goal, Some(&cast.task), Seat::Agent, &cast.develop().id)
         .await;
-    let review = h
-        .task_on(&goal, &cast.repo, "under review", 1, test_pin())
-        .await;
-    h.advance(&review, TaskStatus::UnderReview).await;
+    let review = h.task_on(&goal, &cast.repo, "in review", test_pin()).await;
+    h.advance_to(&review, "review").await;
     let reviewer_session = h
-        .session(&goal, Some(&review), Seat::Reviewer, &cast.reviewer.id)
+        .session(&goal, Some(&review), Seat::Agent, &cast.review().id)
         .await;
 
     assert_eq!(
@@ -952,13 +998,13 @@ async fn a_stale_prompt_flag_from_before_the_daemon_started_is_swept_up() {
 async fn a_starting_session_is_swept_only_once_its_grace_window_has_run_out() {
     let w = World::cannot_spawn().await;
     w.advance(&w.task, TaskStatus::InProgress).await;
-    // Two authors with no agent between them, and nothing but the age of
-    // their start to tell them apart.
+    // Two sessions of the column's agent with no process between them, and
+    // nothing but the age of their start to tell them apart.
     let coming_up = w
-        .session(&w.goal, Some(&w.task), Seat::Author, &w.author)
+        .session(&w.goal, Some(&w.task), Seat::Agent, &w.develop)
         .await;
     let never_came_up = w
-        .session(&w.goal, Some(&w.task), Seat::Author, &w.author)
+        .session(&w.goal, Some(&w.task), Seat::Agent, &w.develop)
         .await;
     w.starting_for(&never_came_up, START_GRACE_SECS + 60).await;
 
@@ -1118,8 +1164,8 @@ async fn a_descriptor_shortage_does_not_spend_adjacent_retry_attempts() {
         })
         .await;
     let repo = h.git_repo("repo");
-    let w = World::build(h, 1).await;
-    w.advance(&w.task, TaskStatus::UnderReview).await;
+    let w = World::build(h).await;
+    w.advance_to(&w.task, "review").await;
     sh(&repo, &format!("git branch {}", w.task.branch));
 
     let original = getrlimit(Resource::Nofile);
@@ -1142,7 +1188,7 @@ async fn a_descriptor_shortage_does_not_spend_adjacent_retry_attempts() {
     sched.flush().await;
     // What the shortage itself bought: one attempt, or none where it bit
     // before the attempt was made.
-    let spent = reviewer_starts_of(&w, &w.task);
+    let spent = agent_starts_of(&w, &w.task);
     assert!(spent <= 1, "the shortage spent {spent} attempts");
     drop(held);
     setrlimit(Resource::Nofile, original).unwrap();
@@ -1161,40 +1207,40 @@ async fn a_descriptor_shortage_does_not_spend_adjacent_retry_attempts() {
         .await
         .unwrap()
         .into_iter()
-        .filter(|session| session.seat() == Some(Seat::Reviewer))
+        .filter(|session| session.task_agent_id.as_deref() == Some(w.review.as_str()))
         .collect();
     assert_eq!(
-        reviewer_starts_of(&w, &w.task),
+        agent_starts_of(&w, &w.task),
         spent,
         "an adjacent wake retried the reviewer: {reviewers:#?}"
     );
     assert_eq!(
         w.store.get_task(&w.task.id).await.unwrap().status(),
-        TaskStatus::UnderReview,
+        TaskStatus::InProgress,
         "adjacent wakes spent the retry budget"
     );
 }
 
 /// An agent that was heard from once and then went away is not an agent that
 /// runs. Its old word used to give the task's budget back on every pass, so a
-/// reviewer that could not be started again — a worktree git would not move
-/// — was tried every tick for ever, the count going back to zero between
-/// attempts, and the task never failed. Only a live agent gives the budget
-/// back.
+/// column's agent that could not be started again — a worktree git would not
+/// move — was tried every tick for ever, the count going back to zero
+/// between attempts, and the task never failed. Only a live agent gives the
+/// budget back.
 #[tokio::test]
-async fn a_reviewer_heard_from_once_that_cannot_be_started_again_fails_its_task() {
+async fn a_step_agent_heard_from_once_that_cannot_be_started_again_fails_its_task() {
     let w = World::active().await;
-    w.advance(&w.task, TaskStatus::UnderReview).await;
+    w.advance_to(&w.task, "review").await;
     let reviewer = w
-        .session(&w.goal, Some(&w.task), Seat::Reviewer, &w.reviewer)
+        .session(&w.goal, Some(&w.task), Seat::Agent, &w.review)
         .await;
     w.seed_conversation(&reviewer.id, "uuid-1234").await;
     w.launched_ago(&reviewer, 60).await;
     w.store.touch_session(&reviewer.id).await.unwrap();
     w.set_status(&reviewer, SessionStatus::Exited).await;
 
-    // The task branch has no commits, so every resume of the reviewer fails
-    // before its agent is launched.
+    // The task branch has no commits, so every resume of the agent fails
+    // before it is launched.
     let sched = w.scheduler();
     eventually(TIMEOUT, "the retry budget to run out", async || {
         sched.task(&w.task);
@@ -1491,22 +1537,17 @@ async fn a_goal_whose_tasks_all_landed_wakes_its_orchestrator() {
     let orchestrator = w.orchestrator_session(&w.goal).await;
     w.agent_runs(&orchestrator).await;
     w.set_status(&orchestrator, SessionStatus::Idle).await;
-    w.advance(&w.task, TaskStatus::UnderReview).await;
-    for (status, actor) in [
-        (TaskStatus::Approved, Actor::Daemon),
-        (TaskStatus::Finished, Actor::Author),
-    ] {
-        w.store
-            .transition_task(
-                &w.task.id,
-                status,
-                actor,
-                None,
-                (status == TaskStatus::Finished).then_some("cafe1234"),
-            )
-            .await
-            .unwrap();
-    }
+    w.advance_to(&w.task, "merge").await;
+    w.store
+        .transition_task(
+            &w.task.id,
+            TaskStatus::Finished,
+            Actor::Agent,
+            None,
+            Some("cafe1234"),
+        )
+        .await
+        .unwrap();
 
     let sched = w.scheduler();
     for _ in 0..3 {
@@ -1534,7 +1575,7 @@ async fn a_pass_with_three_agents_to_nudge_does_not_wait_on_the_deliveries() {
     let third = w.extra_task("third").await;
     let mut sessions = Vec::new();
     for task in [&w.task, &second, &third] {
-        let session = w.author_on(task, TaskStatus::InProgress).await;
+        let session = w.agent_on(task, TaskStatus::InProgress).await;
         w.idle_for(&session, NUDGE_SECS + 60).await;
         sessions.push(session);
     }
@@ -1559,7 +1600,7 @@ async fn a_pass_with_three_agents_to_nudge_does_not_wait_on_the_deliveries() {
 #[tokio::test]
 async fn an_agent_that_reports_nothing_is_flagged_and_then_relaunched() {
     let w = World::active().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
     w.make_resumable(&w.task, &session).await;
     w.launched_ago(&session, FLAG_SECS + 60).await;
     let launched = w.launched_at(&session).await;
@@ -1613,12 +1654,18 @@ async fn an_agent_that_reports_nothing_is_flagged_and_then_relaunched() {
         Some("uuid-1234"),
         "the relaunch resumes the conversation it was having"
     );
-    let resume = launch.initial_prompt.unwrap_or_default();
-    assert!(
-        resume.contains(&w.task.branch) && resume.contains(RESUME),
-        "and carries the resume its seat is picked up with, rendered for this \
-         task: {resume}"
-    );
+    // The launch itself carries no prompt: the resume its seat is picked up
+    // with, rendered for this task, is handed to the agent once it is up.
+    eventually(
+        TIMEOUT,
+        "the relaunched agent to be told to continue",
+        async || {
+            w.prompts_to(&session)
+                .iter()
+                .any(|prompt| prompt.contains(RESUME))
+        },
+    )
+    .await;
 }
 
 /// A turn that takes all afternoon is not a stall. What the thresholds
@@ -1627,7 +1674,7 @@ async fn an_agent_that_reports_nothing_is_flagged_and_then_relaunched() {
 #[tokio::test]
 async fn a_running_agent_that_keeps_reporting_is_left_alone() {
     let w = World::active().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
     w.make_resumable(&w.task, &session).await;
     // Launched long before both thresholds, and still saying so.
     w.launched_ago(&session, RELAUNCH_SECS * 2).await;
@@ -1637,7 +1684,7 @@ async fn a_running_agent_that_keeps_reporting_is_left_alone() {
     // A second task whose author really has gone quiet: what it gets says
     // the pass the working one went through is over.
     let control_task = w.extra_task("control").await;
-    let control = w.author_on(&control_task, TaskStatus::InProgress).await;
+    let control = w.agent_on(&control_task, TaskStatus::InProgress).await;
     w.launched_ago(&control, FLAG_SECS + 60).await;
 
     let sched = w.scheduler();
@@ -1670,19 +1717,19 @@ async fn a_running_agent_that_keeps_reporting_is_left_alone() {
 #[tokio::test]
 async fn a_running_agent_waiting_on_a_person_is_never_relaunched() {
     let w = World::active().await;
-    let blocked = w.author_on(&w.task, TaskStatus::InProgress).await;
+    let blocked = w.agent_on(&w.task, TaskStatus::InProgress).await;
     w.make_resumable(&w.task, &blocked).await;
     w.launched_ago(&blocked, RELAUNCH_SECS + 60).await;
     w.raise(&blocked, AttentionReason::WaitingPermission).await;
     // The other half of the same rule, on a task of its own: an agent that
     // asked the user a question is waiting on the answer, not stuck.
     let asked_task = w.extra_task("asked").await;
-    let asked = w.author_on(&asked_task, TaskStatus::InProgress).await;
+    let asked = w.agent_on(&asked_task, TaskStatus::InProgress).await;
     w.launched_ago(&asked, RELAUNCH_SECS + 60).await;
     w.raise(&asked, AttentionReason::WaitingInput).await;
     // And a third that is only wedged, whose relaunch says the passes are over.
     let control_task = w.extra_task("control").await;
-    let control = w.author_on(&control_task, TaskStatus::InProgress).await;
+    let control = w.agent_on(&control_task, TaskStatus::InProgress).await;
     w.launched_ago(&control, FLAG_SECS + 60).await;
 
     let launched = [w.launched_at(&blocked).await, w.launched_at(&asked).await];
@@ -1719,7 +1766,7 @@ async fn a_running_agent_waiting_on_a_person_is_never_relaunched() {
 #[tokio::test]
 async fn an_agent_that_wedges_after_every_relaunch_fails_its_task() {
     let w = World::active().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
     w.make_resumable(&w.task, &session).await;
 
     let sched = w.scheduler();
@@ -1822,14 +1869,14 @@ async fn an_idle_orchestrator_stays_up_for_the_whole_goal() {
 #[tokio::test]
 async fn a_wedged_agent_flagged_for_the_user_keeps_the_flag_and_is_relaunched() {
     let w = World::active().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
     w.make_resumable(&w.task, &session).await;
     w.launched_ago(&session, FLAG_SECS + 60).await;
     w.raise(&session, AttentionReason::WaitingUser).await;
     // A second task's agent, wedged in the same way with nothing raised on
     // it: its flag is what says the pass the first one went through is over.
     let control_task = w.extra_task("control").await;
-    let control = w.author_on(&control_task, TaskStatus::InProgress).await;
+    let control = w.agent_on(&control_task, TaskStatus::InProgress).await;
     w.launched_ago(&control, FLAG_SECS + 60).await;
 
     let sched = w.scheduler();
@@ -1875,38 +1922,24 @@ async fn a_wedged_agent_flagged_for_the_user_keeps_the_flag_and_is_relaunched() 
 /// A task with a request open raises no attention, and a resumed author
 /// carries none either, while nothing reported the request ready.
 ///
-/// The author keeps the request until a human merges it (005): the open
-/// request alone is no stretch where the user is owed anything. An approved
-/// task whose author's agent went away is read as a disconnect the way any
-/// other is, and the resume that answers it puts the author back on the task
-/// with nothing carried forward.
+/// The `pr` column's agent keeps the request until a human merges it (030):
+/// the open request alone is no stretch where the user is owed anything. A
+/// task on that column whose agent went away is read as a disconnect the way
+/// any other is, and the resume that answers it puts the agent back on the
+/// task with nothing carried forward.
 #[tokio::test]
 async fn an_open_pull_request_raises_no_attention() {
-    let w = World::active().await;
-    w.advance(&w.task, TaskStatus::UnderReview).await;
-    // Live in the database with no agent process under it: the agent that
-    // stopped.
-    let session = w
-        .session(&w.goal, Some(&w.task), Seat::Author, &w.author)
-        .await;
-    w.make_resumable(&w.task, &session).await;
-    w.store
-        .transition_task(&w.task.id, TaskStatus::Approved, Actor::Daemon, None, None)
-        .await
-        .unwrap();
-    w.store
-        .set_task_pull_request(&w.task.id, "https://example.test/pull/1")
-        .await
-        .unwrap();
+    let w = World::on_pull_requests().await;
+    let (session, _) = on_the_pr_column_with_a_kept_request(&w).await;
 
     // One pass does all of it: the sweep retires the vanished agent and raises
-    // the disconnect, and the task's own reconciliation puts an author back
+    // the disconnect, and the task's own reconciliation puts the agent back
     // on it.
     let sched = w.scheduler();
     sched.task(&w.task);
     eventually(
         TIMEOUT,
-        "the author to be put back on the task",
+        "the agent to be put back on the task",
         async || {
             // Launched, heard from, and settled: the row it comes back in is
             // the one that went down, since the conversation was there to
@@ -1928,20 +1961,18 @@ async fn an_open_pull_request_raises_no_attention() {
     );
 }
 
-/// The world of [`an_open_pull_request_raises_no_attention`], with the
-/// request in the ledger, kept by the task's author, its repository's
-/// integration on: an approved task whose author's agent went away, and the
-/// row of its open request. Answers the author's session and the row's id.
-async fn approved_with_a_kept_request(w: &World) -> (AgentSession, String) {
-    w.advance(&w.task, TaskStatus::UnderReview).await;
+/// A task on its `pr` column with the request in the ledger, kept by that
+/// column's agent, its repository's integration on: an agent whose process
+/// went away, and the row of its open request. Answers the agent's session
+/// and the row's id.
+async fn on_the_pr_column_with_a_kept_request(w: &World) -> (AgentSession, String) {
+    w.advance_to(&w.task, "pr").await;
+    w.briefed(&w.task).await;
+    let keeper = w.agent_of("pr").await;
     let session = w
-        .session(&w.goal, Some(&w.task), Seat::Author, &w.author)
+        .session(&w.goal, Some(&w.task), Seat::Agent, &keeper)
         .await;
     w.make_resumable(&w.task, &session).await;
-    w.store
-        .transition_task(&w.task.id, TaskStatus::Approved, Actor::Daemon, None, None)
-        .await
-        .unwrap();
     const URL: &str = "https://github.com/acme/widgets/pull/1";
     w.store
         .set_task_pull_request(&w.task.id, URL)
@@ -1973,26 +2004,25 @@ async fn approved_with_a_kept_request(w: &World) -> (AgentSession, String) {
         })
         .await
         .unwrap();
-    // Quiet: nothing on it is news the author was not told.
+    // Quiet: nothing on it is news the agent was not told.
     crate::common::forge::seed_live(&w.h, &pull, "me", &w.task.branch, "abc", false);
     (session, pull.id)
 }
 
-/// An author whose open request last read ready to merge is owed the user
-/// again when its agent comes back (005 rule 9): the restart is no answer to
-/// a person who still has the request to merge. It is picked up with the
-/// keep-request briefing, not the landing one: the request is open already.
+/// A `pr` agent whose open request last read ready to merge is owed the user
+/// again when its agent comes back (030 rule 10): the restart is no answer to
+/// a person who still has the request to merge.
 #[tokio::test]
-async fn an_author_whose_open_request_reads_ready_is_owed_the_user_again_on_its_restart() {
-    let w = World::active().await;
-    let (session, pull) = approved_with_a_kept_request(&w).await;
+async fn a_pr_agent_whose_open_request_reads_ready_is_owed_the_user_again_on_its_restart() {
+    let w = World::on_pull_requests().await;
+    let (session, pull) = on_the_pr_column_with_a_kept_request(&w).await;
     w.store.set_pull_request_ready(&pull, true).await.unwrap();
 
     let sched = w.scheduler();
     sched.task(&w.task);
     eventually(
         TIMEOUT,
-        "the author to be put back on the task",
+        "the agent to be put back on the task",
         async || w.relaunched(&session, &None).await,
     )
     .await;
@@ -2000,35 +2030,31 @@ async fn an_author_whose_open_request_reads_ready_is_owed_the_user_again_on_its_
         w.attention(&session).await == Some(AttentionReason::WaitingUser)
     })
     .await;
-    let back = w.launch_file(&session.id).expect("a launch file");
-    let told = back.initial_prompt.unwrap_or_default();
-    assert!(told.contains("# Keep request:"), "{told}");
-    assert!(!told.contains("`open_pull_request`"), "{told}");
 }
 
-/// An idle author on an approved task whose request is open waits on the
-/// forge (005 rule 8, 009 rule 41): however long it sits idle it is never
-/// nudged and never relaunched.
+/// An idle `pr` agent whose request is open waits on the forge (030 rule 10,
+/// 009 rule 41): however long it sits idle it is never nudged and never
+/// relaunched.
 #[tokio::test]
-async fn an_idle_author_keeping_its_open_request_is_never_nudged() {
-    let w = World::active().await;
-    let (session, _) = approved_with_a_kept_request(&w).await;
+async fn an_idle_pr_agent_keeping_its_open_request_is_never_nudged() {
+    let w = World::on_pull_requests().await;
+    let (session, _) = on_the_pr_column_with_a_kept_request(&w).await;
     let sched = w.scheduler();
     sched.task(&w.task);
     eventually(
         TIMEOUT,
-        "the author to be put back on the task",
+        "the agent to be put back on the task",
         async || w.relaunched(&session, &None).await,
     )
     .await;
-    eventually(TIMEOUT, "the author's turn to end", async || {
+    eventually(TIMEOUT, "the agent's turn to end", async || {
         w.session_status(&session).await == SessionStatus::Idle
     })
     .await;
     let told = w.prompts_to(&session).len();
 
-    // Silent long past the nudge since its launch: what an author waiting
-    // on the forge looks like.
+    // Silent long past the nudge since its launch: what an agent waiting on
+    // the forge looks like.
     w.idle_for(&session, NUDGE_SECS + 60).await;
     w.backdate(&["launched_at"], &session, NUDGE_SECS + 60)
         .await;
@@ -2040,13 +2066,13 @@ async fn an_idle_author_keeping_its_open_request_is_never_nudged() {
     assert_eq!(
         w.prompts_to(&session).len(),
         told,
-        "an idle author on an open request is not nudged past {NUDGE_SECS} s"
+        "an idle agent on an open request is not nudged past {NUDGE_SECS} s"
     );
     assert_eq!(w.launched_at(&session).await, launched, "nor relaunched");
     assert_eq!(w.attention(&session).await, None, "nor flagged stalled");
 }
 
-/// A task that failed is a decision no author can make: retry it, rewrite it,
+/// A task that failed is a decision no column's agent can make: retry it, rewrite it,
 /// staff it differently or give it up. So the daemon wakes the orchestrator,
 /// the agent the user is also talking to, and says which task it is.
 ///
@@ -2067,7 +2093,7 @@ async fn a_failed_task_wakes_the_orchestrator_once() {
         .transition_task(
             &w.task.id,
             TaskStatus::Failed,
-            Actor::Author,
+            Actor::Agent,
             Some("the crate the task names was deleted upstream"),
             None,
         )
@@ -2116,7 +2142,7 @@ async fn a_situation_survives_a_failed_hand_off_and_is_told_on_the_next_pass() {
             ..Timeouts::default()
         })
         .await;
-    let w = World::build(h, 1).await;
+    let w = World::build(h).await;
     let orchestrator = w.orchestrator_session(&w.goal).await;
     w.agent_runs(&orchestrator).await;
     w.set_status(&orchestrator, SessionStatus::Idle).await;
@@ -2125,7 +2151,7 @@ async fn a_situation_survives_a_failed_hand_off_and_is_told_on_the_next_pass() {
         .transition_task(
             &w.task.id,
             TaskStatus::Failed,
-            Actor::Author,
+            Actor::Agent,
             Some("the crate the task names was deleted upstream"),
             None,
         )
@@ -2176,7 +2202,7 @@ async fn a_goal_whose_tasks_are_running_leaves_its_orchestrator_alone() {
     let orchestrator = w.orchestrator_session(&w.goal).await;
     w.agent_runs(&orchestrator).await;
     w.set_status(&orchestrator, SessionStatus::Idle).await;
-    w.advance(&w.task, TaskStatus::UnderReview).await;
+    w.advance_to(&w.task, "review").await;
 
     let sched = w.scheduler();
     for _ in 0..3 {
@@ -2200,7 +2226,7 @@ async fn a_goal_whose_tasks_are_running_leaves_its_orchestrator_alone() {
 #[tokio::test]
 async fn the_wake_a_burst_of_events_ends_on_is_still_acted_on() {
     let w = World::woken_only().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
 
     // Everything the scheduler logs from here is this test's to count.
     let _capture = capture(&w);
@@ -2233,7 +2259,7 @@ async fn the_wake_a_burst_of_events_ends_on_is_still_acted_on() {
 #[tokio::test]
 async fn a_wake_folded_into_a_window_is_taken_by_a_flush() {
     let w = World::woken_only().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
 
     let _capture = capture(&w);
     let sched = w.scheduler();
@@ -2282,7 +2308,7 @@ async fn a_burst_that_queues_behind_a_slow_reconcile_still_costs_two_reconciles(
     let goal = h.activate(&cast.goal).await;
     h.advance(&cast.task, TaskStatus::InProgress).await;
     let author = h
-        .session(&goal, Some(&cast.task), Seat::Author, &cast.author.id)
+        .session(&goal, Some(&cast.task), Seat::Agent, &cast.develop().id)
         .await;
 
     // Everything the scheduler logs from here is this test's to count.

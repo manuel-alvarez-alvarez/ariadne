@@ -296,7 +296,7 @@ mod tests {
         model: &str,
         data: serde_json::Value,
     ) {
-        ended_as(store, launch_id, repo_id, task_id, "author", model, data).await;
+        ended_as(store, launch_id, repo_id, task_id, "agent", model, data).await;
     }
 
     /// The same, naming the seat the session ran in: what a model's row pools
@@ -408,7 +408,7 @@ mod tests {
             "l1",
             "01REPO",
             None,
-            "author",
+            "agent",
             "stub:heavy",
             run(900, 0, 100),
         )
@@ -418,7 +418,7 @@ mod tests {
             "l2",
             "01REPO",
             None,
-            "reviewer",
+            "agent",
             "stub:light",
             run(90, 0, 10),
         )
@@ -428,7 +428,7 @@ mod tests {
             "l3",
             "01REPO",
             None,
-            "reviewer",
+            "agent",
             "stub:heavy",
             run(0, 0, 0),
         )

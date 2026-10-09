@@ -10,7 +10,7 @@ use ariadne_api::sessions::SessionDto;
 use ariadne_core::models::ModelRank;
 use ariadne_core::{SessionStatus, TaskStatus};
 use ariadne_daemon::scheduler::{self, SchedEvent};
-use ariadne_store::{AgentPin, AgentSession};
+use ariadne_store::{AgentPin, AgentSession, Task, TaskAgent};
 
 use common::acp::{discovery_accepted, option, script, stub_acp_agent};
 use common::{Harness, TIMEOUT, eventually, harness, post_json};
@@ -19,6 +19,29 @@ use common::{Harness, TIMEOUT, eventually, harness, post_json};
 const FROM: &str = "stub:a";
 const TO: &str = "other:b";
 const SAME_TO: &str = "stub:b";
+
+/// Start the agent of the task's first column and hand it a first prompt, the
+/// way the scheduler briefs a column's agent once it is up: the launch itself
+/// carries none, and a session that never ran a turn has no model to leave.
+async fn started(h: &Harness, task: &Task, agent: &TaskAgent) -> AgentSession {
+    let task = h.store.get_task(&task.id).await.unwrap();
+    let session = h.launcher.start_step_agent(&task, agent).await.unwrap();
+    h.launcher
+        .acp
+        .send_prompt(&session.id, "Begin the task.".into())
+        .unwrap();
+    session
+}
+
+/// A task in its first column on a repo on disk, pinned to [`FROM`], and the
+/// develop column's agent started on it.
+async fn develop_on(h: &Harness) -> AgentSession {
+    h.git_repo("repo");
+    let cast = h.cast_pinned(FROM).await;
+    h.activate(&cast.goal).await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    started(h, &cast.task, cast.develop()).await
+}
 
 /// Switch `session_id` to `model` over the endpoint.
 async fn switch(h: &Harness, session_id: &str, model: &str) -> SessionDto {
@@ -45,9 +68,7 @@ async fn first_turn_done(h: &Harness, session: &AgentSession) {
 #[tokio::test]
 async fn a_manual_switch_writes_one_switch_fact_with_the_model_left_and_entered() {
     let h = harness().second_agent().await;
-    h.git_repo("repo");
-    let cast = h.cast_pinned(FROM, 1).await;
-    let old = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let old = develop_on(&h).await;
     first_turn_done(&h, &old).await;
 
     switch(&h, &old.id, TO).await;
@@ -67,9 +88,7 @@ async fn a_manual_switch_writes_one_switch_fact_with_the_model_left_and_entered(
 #[tokio::test]
 async fn a_same_agent_switch_writes_the_fact_before_the_pin_moves() {
     let h = harness().second_agent().await;
-    h.git_repo("repo");
-    let cast = h.cast_pinned(FROM, 1).await;
-    let old = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let old = develop_on(&h).await;
     first_turn_done(&h, &old).await;
 
     switch(&h, &old.id, SAME_TO).await;
@@ -107,10 +126,10 @@ fn catalog_script(models: &[&str]) -> Value {
     value
 }
 
-/// A goal whose orchestrator and author are both live: the orchestrator on
-/// `other:old-model` (a healthy agent offering a second model to switch onto
-/// by hand), the author on `codex:old`, whose agent errors with an
-/// exhaustion signal on its first turn.
+/// A goal whose orchestrator and develop agent are both up: the orchestrator
+/// on `other:old-model` (a healthy agent offering a second model to switch
+/// onto by hand), the develop agent on `codex:old`, whose agent errors with
+/// an exhaustion signal on its first turn.
 async fn exhausted_world() -> (Harness, AgentSession, AgentSession, tempfile::TempDir) {
     let root = tempfile::tempdir().unwrap();
     let exhausted_dir = root.path().join("exhausted");
@@ -147,7 +166,6 @@ async fn exhausted_world() -> (Harness, AgentSession, AgentSession, tempfile::Te
             &goal,
             &repo,
             "task",
-            1,
             AgentPin {
                 model: "codex:old".into(),
                 effort: None,
@@ -161,9 +179,10 @@ async fn exhausted_world() -> (Harness, AgentSession, AgentSession, tempfile::Te
         h.session_status(&orchestrator).await == SessionStatus::Idle
     })
     .await;
-    let author = h.launcher.spawn_author(&task.id).await.unwrap();
-    eventually(TIMEOUT, "the failed author to end", || async {
-        h.session_status(&author).await == SessionStatus::Exited
+    let develop = h.store.list_task_agents(&task.id).await.unwrap().remove(0);
+    let agent = started(&h, &task, &develop).await;
+    eventually(TIMEOUT, "the failed agent to end", || async {
+        h.session_status(&agent).await == SessionStatus::Exited
     })
     .await;
     h.store
@@ -174,22 +193,22 @@ async fn exhausted_world() -> (Harness, AgentSession, AgentSession, tempfile::Te
         .set_model_rank("other:old-model", Some(ModelRank::Balanced))
         .await
         .unwrap();
-    (h, orchestrator, author, root)
+    (h, orchestrator, agent, root)
 }
 
 /// An exhausted session that auto-switches leaves one `switch` fact,
 /// `reason=exhausted` and `automatic=true`.
 #[tokio::test]
 async fn an_exhausted_session_that_auto_switches_writes_one_switch_fact() {
-    let (h, _orchestrator, author, _root) = exhausted_world().await;
+    let (h, _orchestrator, agent, _root) = exhausted_world().await;
     let scheduler = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
     scheduler
-        .send(SchedEvent::SessionEvent(author.id.clone()))
+        .send(SchedEvent::SessionEvent(agent.id.clone()))
         .unwrap();
 
     eventually(TIMEOUT, "the exhausted session to switch", || async {
         h.store
-            .switched_successor(&author.id)
+            .switched_successor(&agent.id)
             .await
             .unwrap()
             .is_some()

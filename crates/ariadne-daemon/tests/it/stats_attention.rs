@@ -3,10 +3,10 @@
 use crate::common;
 
 use ariadne_api::stats::AttentionStatsDto;
-use ariadne_core::{AttentionReason, PermissionMode};
+use ariadne_core::{AttentionReason, PermissionMode, TaskStatus};
 use serde_json::json;
 
-use common::acp::{registry_home, script, stub_acp_agent};
+use common::acp::{discovery_settled, registry_home, script, stub_acp_agent};
 use common::{TIMEOUT, eventually, harness, post_json};
 
 /// `GET /v1/stats/attention` answers 200 with the family's DTO, and the route is
@@ -24,7 +24,9 @@ async fn the_attention_stat_answers_and_is_in_the_api_document() {
     );
 }
 
-/// A console reply and a clear both appear in the family response.
+/// A console reply and a clear both appear in the family response. The
+/// permission is asked by the agent of a task's first column, started by the
+/// scheduler as the daemon starts it.
 #[tokio::test]
 async fn the_attention_stat_counts_a_console_reply_and_a_cleared_flag() {
     let mut scripted = script();
@@ -36,11 +38,30 @@ async fn the_attention_stat_counts_a_console_reply_and_a_cleared_flag() {
     }]);
     let agent_dir = tempfile::tempdir().unwrap();
     let stub = stub_acp_agent(agent_dir.path(), scripted);
-    let h = harness().home(registry_home(&stub)).await;
+    let h = harness()
+        .home(registry_home(&stub))
+        .discover_agents()
+        .scheduler()
+        .await;
+    discovery_settled(&h, &stub).await;
     h.git_repo("repo");
     let cast = h.cast().await;
     h.set_permission_mode(&cast.repo, PermissionMode::Ask).await;
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    h.activate(&cast.goal).await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    h.notify(&cast.task.id);
+    // The column's agent runs on the registry stub, whose prompts the
+    // harness does not read: the session is waited for by its row.
+    eventually(TIMEOUT, "the column agent to start", || async {
+        h.running_session(&cast.task.id, ariadne_core::Seat::Agent)
+            .await
+            .is_some()
+    })
+    .await;
+    let session = h
+        .running_session(&cast.task.id, ariadne_core::Seat::Agent)
+        .await
+        .unwrap();
     eventually(TIMEOUT, "the permission request", || async {
         h.store
             .count_session_events(&session.id, "permission_request")
@@ -59,8 +80,14 @@ async fn the_attention_stat_counts_a_console_reply_and_a_cleared_flag() {
         .await
         .unwrap();
     h.store.clear_agent_attention(&session.id).await.unwrap();
+    // The console answer takes the permission flag down, which is a clear
+    // with a fact of its own; the cleared question is the second.
     eventually(TIMEOUT, "the attention facts", || async {
-        h.facts("permission").await.len() == 1 && h.facts("attention").await.len() == 1
+        h.facts("permission").await.len() == 1
+            && h.facts("attention")
+                .await
+                .iter()
+                .any(|fact| fact.data["reason"] == "waiting_input")
     })
     .await;
 

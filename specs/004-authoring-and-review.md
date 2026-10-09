@@ -1,248 +1,38 @@
 ---
 id: authoring-and-review
-status: current
-updated: 2026-09-18
+status: superseded
+updated: 2026-10-09
+superseded_by: 030
 areas: [daemon, store, prompts]
 commits: [ad268ee0, 2ca6dd29, 88bf39ac, da10e748, b21bd69e, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
-tests:
-  - crates/ariadne-daemon/tests/it/prompts.rs
-  - crates/ariadne-daemon/tests/it/resume.rs
-  - crates/ariadne-daemon/tests/it/landing_lifecycle.rs
-  - crates/ariadne-daemon/tests/it/multi_author_tasks.rs
-  - crates/ariadne-store/tests/store.rs
-  - crates/ariadne-store/src/defaults.rs
+tests: []
 ---
 
 # Authoring and review
 
-What happens between a task becoming `ready` and being `approved`: the
-authors — one for most tasks — one or more reviewers, and as many reviews as
-each change needs.
+Superseded by [030](030-workflows.md). The number stays so that a reference in
+the git history still points here.
 
-## Scope
+This spec settled the fixed pipeline between a task becoming `ready` and
+being `approved`: one author session per staffed author, one reviewer
+session per staffed reviewer in a detached read-only worktree,
+`request_review`, `submit_verdict`, the `under_review`, `changes_requested`
+and `approved` statuses, and the pick that named the winning author on a
+task staffed with several.
 
-In: the author sessions and what each owns, `request_review`, reviewer
-sessions, the verdict each reviewer owes, how a review settles, how the two
-sides are resumed between reviews, and — on a task staffed with several
-authors — the pick that names the change that lands.
+Every goal now runs on a workflow. What this spec settled is now the
+workflow's columns:
 
-Out: the transition table itself (001), the landing that follows approval
-(005), and the briefings' wording (006).
+- The author is the agent of the `develop` column. It builds the task on the
+  task branch and ends its step with `complete_step` (030 rule 4).
+- The reviewer is the agent of the `review` column. It works in the same
+  worktree, runs the whole suite once, and judges the change; `fail_step`
+  sends the task back to `develop` with the changes to make, and
+  `complete_step` sends it on (030 rules 4 and 6, the `code-review` skill).
+- There are no verdict messages and no picks. A review's outcome is a step
+  call, and a task has one agent per column (018 rule 1, 030 rule 2).
+- The statuses `under_review`, `changes_requested` and `approved` are gone:
+  a task is `in_progress` from its first column to its last (001 rule 4).
 
-## Behavior
-
-1. A `ready` task gets one author session per staffed author, each in its
-   own worktree on its own branch (002), and moves to `in_progress`. Most
-   tasks staff one author; several authors write the same task side by
-   side, each on its own model, and need at least one reviewer (017).
-2. The task never leaves its authors: the same sessions and worktrees carry
-   it from the first commit through every review to the merge.
-3. The author implements only its task, obeys the repository's conventions
-   files, and writes no authorship or tool trailer in its commits. Its checks
-   are the checks of what it changed — the tests and the lint of the crates
-   and packages the change touches once, before the commit. After the commit,
-   it leaves `git status` empty and the repository's generate step unchanged.
-   It never runs the whole suite on its
-   task branch. No run of the whole suite is the author's: a reviewer runs it
-   once before each verdict it gives (behavior 7), and the landing runs it
-   once after the rebase (005). So a branch takes one run per verdict, plus
-   the landing's. The commits are counted the same way. The task is one
-   commit, built whole and proven before it is made. Each answer to a review
-   is one more commit on the same branch. Nothing is amended, since a reviewer
-   judges a SHA (behavior 7). The landing squashes the branch into the one
-   commit the base branch grows (005).
-4. A task the author cannot do as written ends with its own `fail_task` and
-   the reason on the task.
-5. `request_review` moves the task to `under_review` and carries one short
-   summary — what changed, why, and how it was verified. That summary is what
-   the reviewers read first. The author ends its turn after `request_review`
-   and does not poll; Ariadne wakes it with the verdict or a message. The
-   daemon ends that turn itself, once the author reports the call ended —
-   the runtime's turn report of the launch that made the call (021), which
-   an agent sends only when it holds the answer, and which no earlier launch
-   of the session can supply — with ACP `session/cancel` to the session that
-   made the call (021), once per request, and never to a session whose turn
-   ended meanwhile, that is gone, or that was relaunched since; an agent that
-   never reports the call is never cancelled. So an author that cannot idle
-   inside a turn does not poll until its next briefing. The session stays up
-   and idle; a message, a verdict or the landing briefing wakes it as a new
-   turn (009), and the cancelled turn's tokens are counted as any other's
-   (012).
-6. Each reviewer the task staffs (017) gets one session for the whole task, in
-   a detached read-only worktree (002). Which review it is on is not part of a
-   reviewer's identity, only of the briefing it is woken with.
-7. A reviewer moves its detached worktree to the branch tip named by its
-   briefing. It then starts the whole test suite, build and linters in that
-   worktree, once for each verdict, as one command in the foreground, and
-   reads only once they end. It judges tests
-   by reading them and never changes code to see a test fail. It gives exactly
-   one verdict through `submit_verdict` on each review it is asked for, and
-   every verdict carries the SHA from `git rev-parse HEAD` that it judged.
-   Nothing else counts as a verdict. Anything it cannot judge from the change
-   it asks the author about instead (018); a question is not a verdict, and
-   asking one settles nothing.
-8. There are no numbered rounds. A review is bounded by the request that
-   opened it: the verdicts that count are the ones sent since the author last
-   asked, and asking again supersedes everything said about the change before
-   it. On a second review, the reviewer refreshes its detached worktree and
-   starts the checks again. It reads only `git log` and `git diff` from the SHA
-   in its last verdict, which it gets through `read_messages`. It uses
-   `get_diff` when no SHA is known or HEAD does not follow that SHA. That
-   boundary is a row of the channel (018) rather than a counter, so nothing
-   has to be reset. A review opens in two writes — the status, then the
-   request rows — so the transition that opened it bounds the verdicts as
-   well: in between, the answers to the review before it are not this
-   review's (018).
-9. Verdicts settle a review before anything else is done with it: any request
-   for changes moves the task to `changes_requested`, whatever else the review
-   holds. Otherwise the approvals are counted and the task is `approved` once
-   every reviewer staffed on it has approved. A task staffed with none is
-   approved the moment its author asks: there is nobody to ask (017).
-10. A `changes_requested` task resumes its author with the feedback, under a
-    heading naming who wrote each point — the Ariadne reviewers, or the people
-    on a published request (005). The author answers every point and says why
-    where the code stays.
-11. A reviewer that has already voted on the open review is nobody's blocker:
-    no attention is raised on it and no session is started for it. It stays up
-    all the same, until the task is over, because the author may still have
-    something to ask it (018).
-12. An author whose task is under review is likewise not the agent the work
-    is waiting on (009).
-13. On a task staffed with several authors the reviews run side by side, one
-    per author. The task is `under_review` from the first `request_review`
-    to the pick; a later author's request opens its own review on the
-    channel without moving the task, and a verdict is addressed to the
-    author whose change it judges — one per reviewer per author's open
-    review, and none for an author that has not asked. A change request
-    reaches that author as a message, and only that author revises. A
-    reviewer works one review at a time, oldest first by author order, and
-    each verdict it gives is the event that hands it the next: a reviewer
-    whose agent survived the last review is briefed for the next one the
-    moment it owes it — the full briefing naming the author and its branch,
-    sent to the live agent as a prompt, with its detached worktree moved to
-    that branch first — rather than waiting on the quiet clock (009). That
-    briefing is also the review request's delivery: a contested request is
-    never sent to a reviewer as a bare message, since the summary alone
-    names neither the author nor the branch, and the briefing is what
-    stamps it delivered on the channel (018).
-14. Approval says a change is sound; with several sound changes, the pick
-    says which one lands. Once every author is approved, each reviewer is
-    asked to pick a winner — `pick_winner`, once per reviewer, refused by
-    name a second time and refused entirely before every author is approved.
-    When every staffed reviewer has picked, the author with the most picks
-    wins; a tie goes to the author listed first. The task then moves to
-    `approved` with the winner recorded on it, the losing authors' sessions,
-    worktrees and branches are removed, and the winner lands the task as a
-    lone author would (005). Asking a reviewer to pick is counted as sent
-    only once it has gone out — the reviewer's runtime entry can be gone in
-    the moment between finding it live and the hand-off, and its resume can
-    fail while its agent is still coming up (005) — so a failed attempt is
-    retried on the next pass rather than counted as asked. The winner is
-    written before anything else of the settlement, and the rest is
-    idempotent: a daemon that dies between the two leaves a task
-    `under_review` with a winner on it, which the next pass — a restart's
-    first included — routes straight back through the
-    settlement.
-
-## Acceptance criteria
-
-- A spawned author is briefed from the built-in template, word for word
-  (`prompts.rs::a_spawned_author_is_briefed_from_the_builtin_template`,
-  `::a_spawn_assembles_the_default_briefing_word_for_word`).
-- A resume and a review assemble word for word
-  (`prompts.rs::a_resume_and_a_review_assemble_word_for_word`), and the
-  reviewer is briefed with the summary review was requested with
-  (`::a_reviewer_is_briefed_with_the_summary_review_was_requested_with`).
-- The author keeps one session across reviews
-  (`resume.rs::resuming_the_author_reuses_its_session_across_reviews`),
-  and so does each reviewer (`::a_reviewer_reuses_its_session_across_reviews`);
-  a reviewer with no agent id is spawned afresh
-  (`::a_reviewer_without_an_agent_id_is_spawned_afresh`).
-- The author's seat text scopes its checks to what it changed and names who
-  runs the whole suite
-  (`defaults.rs::the_author_scopes_its_checks_and_names_who_runs_the_whole_suite`),
-  and every skill that ends a step on a check scopes it the same way
-  (`defaults.rs::a_skill_scopes_its_own_checks_to_what_the_task_changed`).
-- The seat text and the skills make the task one commit and each review answer
-  one more
-  (`defaults.rs::a_task_is_one_commit_and_a_review_answer_is_one_more`).
-- A verdict belongs to the review that was asked for, and asking again
-  supersedes what came before it
-  (`store.rs::a_verdict_belongs_to_the_review_that_was_asked_for`); a second
-  verdict on the open review is refused by name
-  (`agent_messages.rs::only_one_verdict_per_reviewer_per_review_is_taken`). A
-  review whose request rows are not written yet owns none of the verdicts
-  before it
-  (`store.rs::a_review_still_being_announced_owns_none_of_the_verdicts_before_it`),
-  so the task stays under review
-  (`agent_messages.rs::a_review_is_not_closed_by_the_answers_to_the_review_before_it`).
-- The review summary is the reason of the latest review request
-  (`store.rs::the_review_summary_is_the_reason_of_the_latest_review_request`).
-- An author's review request ends its turn with one cancel once the agent
-  reports the call ended and not before, the agent stays up, and the verdict
-  that follows reaches the same session as a prompt
-  (`acp_console.rs::an_authors_review_request_ends_its_turn_and_the_verdict_still_reaches_it`);
-  a late report of the launch before does not end the new launch's turn
-  (`::a_prior_launchs_late_review_report_does_not_end_the_new_launchs_turn`),
-  and a burst of other tool calls ending before the review call's report
-  does not lose it
-  (`::a_burst_of_reports_before_the_review_calls_loses_none_and_the_cancel_follows`).
-- The reviewer and its code-review skill start every full check before reading,
-  once per verdict
-  (`defaults.rs::reviewer_checks_start_before_the_read_once_per_verdict`).
-- The reviewer's seat text and its skill run those checks in the foreground
-  and never poll a background one
-  (`defaults.rs::checks_run_in_the_foreground_and_print_only_failures`).
-- Every verdict carries the SHA it judged
-  (`defaults.rs::every_reviewer_verdict_carries_the_sha_it_judged`), and a
-  resumed reviewer reads only commits after that SHA
-  (`::a_reviewer_resume_reads_only_commits_since_its_last_verdict_sha`).
-- A reviewer judges a test by reading it and never changes the code to test it
-  (`defaults.rs::a_reviewer_judges_a_test_by_reading_it_without_changing_code`).
-- A resumed reviewer refreshes the named branch before the checks
-  (`defaults.rs::reviewer_texts_refresh_the_named_branch_before_checks`)
-  and uses the whole diff when HEAD does not follow its last SHA
-  (`::a_reviewer_uses_the_whole_diff_when_head_does_not_follow_the_last_sha`).
-- A reviewer that already voted raises no attention
-  (`events.rs::a_reviewer_that_already_voted_raises_no_attention`).
-- A revision of a published request goes back to the reviewers
-  (`landing_lifecycle.rs::a_revision_of_a_published_request_goes_back_to_the_reviewers`).
-- A task staffed with two authors runs two sessions in two worktrees
-  (`multi_author_tasks.rs::a_task_staffed_with_two_authors_runs_two_sessions_in_two_worktrees`).
-- The pick starts only after every author is approved
-  (`multi_author_tasks.rs::the_pick_starts_only_after_every_author_is_approved`),
-  a second pick from the same reviewer is refused by name
-  (`::a_second_pick_from_the_same_reviewer_is_refused_by_name`), and exactly
-  one branch lands with the losers gone after the landing
-  (`::exactly_one_branch_lands_and_the_losers_are_gone`). Asking a live
-  reviewer to pick that a failed hand-off could not deliver is retried once
-  the hand-off can succeed
-  (`::a_pick_ask_survives_a_failed_hand_off_to_a_live_reviewer`), and the
-  same for a reviewer with nothing live yet, whose fallback resume fails
-  (`::a_pick_ask_survives_a_failed_resume_of_its_reviewer`). A contested
-  review's first reviewer, resumed rather than asked live, is retried the
-  same way when the resume that would spawn it fails
-  (`::a_contested_review_survives_a_failed_resume_of_its_first_reviewer`).
-- A live reviewer is briefed for the next author's review without the quiet
-  clock, its worktree moved to that author's branch first
-  (`multi_author_tasks.rs::a_live_reviewer_is_briefed_for_the_next_author_without_the_quiet_clock`),
-  a contested review request reaches it only as that briefing, stamped
-  delivered by it
-  (`::a_contested_review_request_reaches_a_live_reviewer_only_as_its_briefing`),
-  and a settlement the daemon died in is finished by the daemon that comes
-  back (`::a_restart_finishes_a_settlement_the_daemon_died_in`).
-- One pick per reviewer is the store's own rule too, and the winner reads
-  off the picks with a tie to the first listed
-  (`store.rs::a_reviewer_picks_once_and_the_picks_settle_a_winner`).
-- The staffing rules hold at creation and on an edit
-  (`store.rs::a_task_takes_several_authors_each_on_a_branch_of_its_own`,
-  `::an_edit_replaces_the_whole_author_list`).
-
-## Sources
-
-`crates/ariadne-daemon/src/scheduler/tasks.rs`,
-`crates/ariadne-daemon/src/launcher.rs`,
-`crates/ariadne-daemon/src/http/landing.rs` (`pick_winner`),
-`crates/ariadne-store/src/picks.rs`,
-`crates/ariadne-store/src/defaults.rs` (`AUTHOR_*`, `REVIEWER_*`,
-`CHANGES_REQUESTED`, `REVIEWER_PICK`).
+Migration `0023_workflows_only.sql` maps the rows this spec wrote onto the
+workflow vocabulary (030 rule 9).

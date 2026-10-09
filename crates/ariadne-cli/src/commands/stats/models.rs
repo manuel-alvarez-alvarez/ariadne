@@ -20,8 +20,7 @@ pub(crate) struct Args {
 #[derive(Clone, Copy, ValueEnum)]
 enum ModelSeat {
     Orchestrator,
-    Author,
-    Reviewer,
+    Agent,
 }
 
 pub(super) async fn run(
@@ -52,13 +51,11 @@ fn output(
 fn render(stats: &ModelStatsDto, seat: Option<ModelSeat>, view: &View) -> Result<String> {
     let selected = seat.map(|s| match s {
         ModelSeat::Orchestrator => "orchestrator",
-        ModelSeat::Author => "author",
-        ModelSeat::Reviewer => "reviewer",
+        ModelSeat::Agent => "agent",
     });
     let mut groups = Vec::new();
-    let mean = |value: Option<f64>| format!("{:.1}", value.unwrap_or(0.0));
     // A seatless session remains in JSON and uses the task columns in the table.
-    for seat in [Some("orchestrator"), Some("author"), Some("reviewer"), None] {
+    for seat in [Some("orchestrator"), Some("agent"), None] {
         if selected.is_some() && selected != seat {
             continue;
         }
@@ -81,10 +78,8 @@ fn render(stats: &ModelStatsDto, seat: Option<ModelSeat>, view: &View) -> Result
             "time",
             "messages",
         ];
-        match seat {
-            Some("author") => headers.push("rounds/task"),
-            Some("reviewer") => headers.push("changes/task"),
-            _ => {}
+        if seat == Some("agent") {
+            headers.push("finished");
         }
         let columns: Vec<_> = headers
             .into_iter()
@@ -105,10 +100,8 @@ fn render(stats: &ModelStatsDto, seat: Option<ModelSeat>, view: &View) -> Result
                     duration(r.time_secs as u64),
                     r.messages.to_string(),
                 ];
-                match seat {
-                    Some("author") => cells.push(mean(r.rounds_per_task)),
-                    Some("reviewer") => cells.push(mean(r.changes_per_task)),
-                    _ => {}
+                if seat == Some("agent") {
+                    cells.push(r.tasks_finished.to_string());
                 }
                 cells
             })
@@ -150,25 +143,23 @@ mod tests {
                 },
                 ModelStatDto {
                     model: "writer".into(),
-                    seat: Some("author".into()),
+                    seat: Some("agent".into()),
                     tasks: 4,
                     goals: 2,
                     tokens: 1_200,
                     time_secs: 1_800.0,
                     messages: 6,
-                    rounds_per_task: Some(1.25),
-                    changes_per_task: None,
+                    tasks_finished: 3,
                 },
                 ModelStatDto {
                     model: "judge".into(),
-                    seat: Some("reviewer".into()),
+                    seat: None,
                     tasks: 5,
                     goals: 2,
                     tokens: 800,
                     time_secs: 120.0,
                     messages: 7,
-                    rounds_per_task: None,
-                    changes_per_task: Some(0.4),
+                    tasks_finished: 0,
                 },
             ],
         }
@@ -194,39 +185,13 @@ mod tests {
     #[test]
     fn each_seat_prints_its_own_columns_and_figures() {
         assert_eq!(
-            table(ModelSeat::Author),
+            table(ModelSeat::Agent),
             (
-                "AUTHOR".into(),
-                [
-                    "MODEL",
-                    "TASKS",
-                    "TOKENS",
-                    "TIME",
-                    "MESSAGES",
-                    "ROUNDS/TASK"
-                ]
-                .map(String::from)
-                .to_vec(),
-                ["writer", "4", "1.2k", "30m 0s", "6", "1.2"]
+                "AGENT".into(),
+                ["MODEL", "TASKS", "TOKENS", "TIME", "MESSAGES", "FINISHED"]
                     .map(String::from)
                     .to_vec(),
-            )
-        );
-        assert_eq!(
-            table(ModelSeat::Reviewer),
-            (
-                "REVIEWER".into(),
-                [
-                    "MODEL",
-                    "TASKS",
-                    "TOKENS",
-                    "TIME",
-                    "MESSAGES",
-                    "CHANGES/TASK"
-                ]
-                .map(String::from)
-                .to_vec(),
-                ["judge", "5", "800", "2m 0s", "7", "0.4"]
+                ["writer", "4", "1.2k", "30m 0s", "6", "3"]
                     .map(String::from)
                     .to_vec(),
             )
@@ -250,9 +215,9 @@ mod tests {
         let text = render(&stats(), None, &View::plain()).unwrap();
         let headings: Vec<_> = text
             .lines()
-            .filter(|l| ["ORCHESTRATOR", "AUTHOR", "REVIEWER"].contains(&l.trim()))
+            .filter(|l| ["ORCHESTRATOR", "AGENT", "NONE"].contains(&l.trim()))
             .collect();
-        assert_eq!(headings, ["ORCHESTRATOR", "AUTHOR", "REVIEWER"], "{text}");
+        assert_eq!(headings, ["ORCHESTRATOR", "AGENT", "NONE"], "{text}");
         let empty = render(&ModelStatsDto::default(), None, &View::plain()).unwrap();
         assert_eq!(empty, "No model ran in that span.");
     }
@@ -260,7 +225,7 @@ mod tests {
     #[test]
     fn the_seat_option_belongs_only_to_models_and_prints_one_table() {
         let cli =
-            crate::cli::Cli::try_parse_from(["ariadne", "stats", "models", "--seat", "author"])
+            crate::cli::Cli::try_parse_from(["ariadne", "stats", "models", "--seat", "agent"])
                 .unwrap();
         let crate::cli::Command::Stats {
             command: Some(super::super::StatsCommand::Models(args)),
@@ -274,13 +239,16 @@ mod tests {
         assert!(!text.contains("judge"));
         assert!(!text.contains("planner"));
         assert!(
-            crate::cli::Cli::try_parse_from(["ariadne", "stats", "work", "--seat", "author"])
+            crate::cli::Cli::try_parse_from(["ariadne", "stats", "work", "--seat", "agent"])
                 .is_err()
         );
-        assert!(
-            crate::cli::Cli::try_parse_from(["ariadne", "stats", "models", "--seat", "unknown"])
-                .is_err()
-        );
+        for gone in ["unknown", "author", "reviewer"] {
+            assert!(
+                crate::cli::Cli::try_parse_from(["ariadne", "stats", "models", "--seat", gone])
+                    .is_err(),
+                "{gone}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -301,7 +269,7 @@ mod tests {
             &StatsQuery::default(),
             Format::Json,
             Args {
-                seat: Some(ModelSeat::Author),
+                seat: Some(ModelSeat::Agent),
             },
         )
         .await
@@ -309,7 +277,7 @@ mod tests {
         let rendered = output(
             &expected,
             Format::Json,
-            Some(ModelSeat::Author),
+            Some(ModelSeat::Agent),
             &View::plain(),
         )
         .unwrap();
@@ -319,11 +287,10 @@ mod tests {
             expected
         );
         assert_eq!(
-            value["items"][2],
+            value["items"][1],
             serde_json::json!({
-                "model": "judge", "seat": "reviewer", "tasks": 5, "goals": 2, "tokens": 800,
-                "time_secs": 120.0, "messages": 7, "rounds_per_task": null,
-                "changes_per_task": 0.4
+                "model": "writer", "seat": "agent", "tasks": 4, "goals": 2, "tokens": 1200,
+                "time_secs": 1800.0, "messages": 6, "tasks_finished": 3
             })
         );
         server.abort();

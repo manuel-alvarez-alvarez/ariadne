@@ -5,13 +5,13 @@
 use std::str::FromStr;
 
 use ariadne_core::{
-    Actor, AttentionReason, ForgeKind, GoalStatus, Landing, MessageKind, PermissionMode, Seat,
+    Actor, AttentionReason, ForgeKind, GoalStatus, MessageKind, PermissionMode, Seat,
     SessionStatus, TaskStatus,
 };
 
 use crate::defaults::{
-    ORCHESTRATION_SKILL, PR_BABYSIT_SKILL, PR_REVIEWER_SKILL, default_landing_prompt,
-    default_skill_document, skill_summary,
+    ORCHESTRATION_SKILL, PR_BABYSIT_SKILL, PR_REVIEWER_SKILL, default_skill_document,
+    default_workflow_document, skill_summary,
 };
 
 /// The typed reading of a TEXT column that holds a core enum. The accessor
@@ -46,7 +46,6 @@ macro_rules! enum_columns {
 enum_columns! {
     Goal { status: GoalStatus }
     Task { status: TaskStatus }
-    TaskAgent { seat: Seat }
     ForgeIntegration { kind: ForgeKind }
     AgentSession {
         seat: [Seat],
@@ -108,15 +107,17 @@ impl Skill {
     }
 
     /// The seat this skill serves, read off the name and stored nowhere:
-    /// `orchestration` is the orchestrator's own playbook, `pr-babysit` and
-    /// `pr-reviewer` are loaded by the daemon itself, and every other skill
-    /// is a task agent's to be staffed on.
+    /// `orchestration` is the orchestrator's own playbook, `pr-reviewer` is
+    /// loaded by the daemon itself for a review session, `pr-babysit` is the
+    /// one pull request skill a workflow column stages, and every other
+    /// skill is a task agent's to be staffed on.
     pub fn seat(&self) -> SkillSeat {
         SkillSeat::of(&self.name)
     }
 }
 
-/// Where a skill's work sits: the orchestrator's seat, or a task agent's.
+/// Where a skill's work sits: the orchestrator's seat, a task agent's, or a
+/// pull request's.
 ///
 /// A skill's seat is a fact of its name, not of any row — which is what lets
 /// the shipped playbook stay a skill like the rest, resettable and editable,
@@ -125,11 +126,12 @@ impl Skill {
 pub enum SkillSeat {
     /// Loaded by every orchestrator session, staffable on nothing.
     Orchestrator,
-    /// Staffed on a task's author or reviewers.
+    /// Staffed on the agent of a workflow column.
     Task,
-    /// Loaded by the daemon, staffable on nothing: `pr-babysit` onto the
-    /// author of a task that lands by request (005, 026), and `pr-reviewer`
-    /// onto the session that reviews a request (029).
+    /// A skill of a pull request: `pr-babysit` is staged by the `pr` column
+    /// of `develop-review-pr` (030), and `pr-reviewer` is loaded by the
+    /// daemon onto the session that reviews a request (029) and staffs no
+    /// task agent.
     PullRequest,
 }
 
@@ -141,6 +143,58 @@ impl SkillSeat {
             PR_BABYSIT_SKILL | PR_REVIEWER_SKILL => Self::PullRequest,
             _ => Self::Task,
         }
+    }
+}
+
+/// A workflow: a linear kanban of columns that stages one agent per column
+/// through a task. Its name is its identity, and the document is the whole
+/// of the syntax `ariadne_core::workflow::parse` reads.
+///
+/// A `NULL` document is a built-in still on the text Ariadne ships, the same
+/// way a [`Skill`]'s is.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct Workflow {
+    pub name: String,
+    /// The document set on this workflow, or NULL while a built-in runs on
+    /// the text Ariadne ships. Read through [`Workflow::document_text`].
+    pub document: Option<String>,
+    pub builtin: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl Workflow {
+    /// Whether Ariadne ships this workflow, and so whether it has a default
+    /// to be reset to and refuses deletion.
+    pub fn is_builtin(&self) -> bool {
+        self.builtin != 0
+    }
+
+    /// The document that stages an agent: the one set on it, or the text
+    /// Ariadne ships under its name.
+    pub fn document_text(&self) -> &str {
+        self.document
+            .as_deref()
+            .or_else(|| default_workflow_document(&self.name))
+            .unwrap_or("")
+    }
+
+    /// Whether [`Workflow::document_text`] is the shipped text rather than
+    /// one somebody wrote.
+    pub fn document_is_default(&self) -> bool {
+        self.document.is_none()
+    }
+
+    /// The columns [`Workflow::document_text`] parses into.
+    ///
+    /// A row only ever holds a document a save already proved valid
+    /// ([`crate::Store::create_workflow`], [`crate::Store::set_workflow_document`]),
+    /// so a row that fails to parse is a schema violation rather than an
+    /// input error.
+    pub fn steps(&self) -> Vec<ariadne_core::workflow::WorkflowStep> {
+        ariadne_core::workflow::parse(self.document_text())
+            .unwrap_or_else(|e| panic!("invalid workflow document in db: {e}"))
+            .steps
     }
 }
 
@@ -255,17 +309,12 @@ pub struct LearnedPermission {
     pub updated_at: String,
 }
 
-/// The branch a goal owns in one registered repository.
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct GoalRepository {
-    pub goal_id: String,
-    pub repository_id: String,
-    pub goal_branch: Option<String>,
-}
-
 /// A git repository registered once, globally, and named by id from there on.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Repository {
+    /// The workflow a new goal runs on where its request names none
+    /// (030): a name of the catalog.
+    pub default_workflow: String,
     pub id: String,
     /// Absolute path of the checkout.
     pub path: String,
@@ -277,7 +326,6 @@ pub struct Repository {
     /// [`PermissionMode`] spells it. Read through
     /// [`Repository::permission_mode`].
     pub permission_mode: String,
-    pub default_landing: String,
     /// The forge its remote is on, where it has a usable one (025). Not a
     /// column: every read of a repository through the store fills it.
     #[sqlx(skip)]
@@ -321,13 +369,6 @@ impl Repository {
     pub fn permission_mode(&self) -> PermissionMode {
         self.permission_mode.parse().unwrap_or(PermissionMode::Ask)
     }
-
-    /// The landing a new goal uses where its request leaves landing out. A
-    /// row written by a future build with another value reads as `merge`, the
-    /// repository default that preserves the established goal behavior.
-    pub fn default_landing(&self) -> Landing {
-        self.default_landing.parse().unwrap_or(Landing::Merge)
-    }
 }
 
 /// The model, and optionally the effort, that a goal's orchestrator or one
@@ -355,6 +396,10 @@ impl AgentPin {
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Goal {
+    /// The workflow every task of this goal runs on (030): a name of the
+    /// catalog, whose columns the goal snapshotted into its `goal_steps` when
+    /// it was created. Read with [`crate::Store::goal_steps`].
+    pub workflow: String,
     pub id: String,
     pub title: String,
     pub description: String,
@@ -362,28 +407,19 @@ pub struct Goal {
     pub status: String,
     /// Whether this goal has an orchestrator for its lifetime.
     pub orchestrated: bool,
-    /// Model this goal's orchestrator or adopted author runs on, `<agent>:<model>`.
+    /// Model this goal's orchestrator runs on, `<agent>:<model>`.
     pub model: String,
     /// Effort that model is run at. None = whatever the agent runs it at.
     pub effort: Option<String>,
-    /// How every task of this goal ends, as [`Landing`] spells it. Read
-    /// through [`Goal::landing`].
-    pub landing: String,
     pub created_at: String,
     pub updated_at: String,
 }
 
-impl Goal {
-    /// How every task of this goal ends. A row written by a future build
-    /// that spells it some other way reads as a goal with nothing to land,
-    /// which is the one answer that asks nothing of git.
-    pub fn landing(&self) -> Landing {
-        self.landing.parse().unwrap_or(Landing::None)
-    }
-}
-
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Task {
+    /// The column the task is in while it is `in_progress`; None before its
+    /// first column and once it has ended.
+    pub step: Option<String>,
     pub id: String,
     pub goal_id: String,
     pub repo_id: String,
@@ -391,20 +427,13 @@ pub struct Task {
     pub description: String,
     pub status: String,
     pub branch: String,
-    /// How this task ends, as [`Landing`] spells it: its goal's landing,
-    /// read with the row (`tasks` has no column of its own). Read through
-    /// [`Task::landing`].
-    pub landing: String,
     pub worktree_path: Option<String>,
     pub stalled: i64,
+    /// The commit the task landed as, where its last column reported one.
     pub merge_commit: Option<String>,
-    /// URL of the pull or merge request this task was published as, once its
-    /// author has opened one. None for a task landed directly.
+    /// URL of the pull or merge request this task's `pr` column opened, once
+    /// it has. None for a task landed directly.
     pub pr_url: Option<String>,
-    /// The author the reviewers picked, on a task staffed with several. Its
-    /// branch is what lands. None for a one-author task, and until the pick
-    /// settles.
-    pub picked_agent_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -413,37 +442,22 @@ impl Task {
     pub fn is_stalled(&self) -> bool {
         self.stalled != 0
     }
-
-    /// How this task ends: the landing of its goal. A row written by a
-    /// future build that spells it some other way reads as a task with
-    /// nothing to land, which is the one answer that asks nothing of git.
-    pub fn landing(&self) -> Landing {
-        self.landing.parse().unwrap_or(Landing::None)
-    }
-
-    /// The procedure the author of this task is briefed to end it with: the
-    /// built-in of the ending its goal carries.
-    ///
-    /// One text per ending, Ariadne's own. The repository only supplied the
-    /// goal's default when it was created, and cannot change this answer.
-    pub fn landing_prompt_text(&self) -> &'static str {
-        default_landing_prompt(self.landing())
-    }
 }
 
-/// One agent staffed on a task: where it sits, what it runs on, what it was
-/// told, and — through [`crate::Store::agent_skills`] — what it knows.
+/// One agent staffed on a task: the column it works, what it runs on, what
+/// it was told, and — through [`crate::Store::agent_skills`] — what it knows.
 ///
-/// The agent has no identity of its own. `seat` says only whether it authors
-/// the task or reviews it, which is what the state machine and the launcher
+/// The agent has no identity of its own. `step` says only which column of the
+/// task's workflow it works, which is what the scheduler and the launcher
 /// need; everything about the work itself comes from its skills.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct TaskAgent {
+    /// The id of the column this agent works, one of the task's goal's
+    /// `goal_steps`.
+    pub step: String,
     pub id: String,
     pub task_id: String,
-    /// `author` or `reviewer`; never `orchestrator`, which belongs to a goal.
-    pub seat: String,
-    /// The order the orchestrator listed this agent in, 0-based within a seat.
+    /// The order the orchestrator listed this agent in, 0-based.
     pub ordinal: i64,
     /// Model it runs on, `<agent>:<model>`.
     pub model: String,
@@ -452,19 +466,6 @@ pub struct TaskAgent {
     /// What the orchestrator told this agent beyond the task itself, where it
     /// had anything to add. None = the task is the whole of it.
     pub brief: Option<String>,
-}
-
-/// One reviewer's pick of the winning author, on a task staffed with several
-/// authors. The reviewers pick once every author is approved, and the author
-/// with the most picks lands.
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct TaskPick {
-    pub task_id: String,
-    /// The reviewer that picked. One pick per reviewer per task.
-    pub reviewer_agent_id: String,
-    /// The author it picked.
-    pub author_agent_id: String,
-    pub created_at: String,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -577,9 +578,9 @@ pub struct Message {
 
 impl Message {
     /// What this message is, or None for a row written by a build that knows
-    /// a kind this one does not. Such a row is carried and shown, and no
-    /// verdict is counted from it — the one place a spelling this build does
-    /// not know must not panic, since a message is what an agent typed about.
+    /// a kind this one does not. Such a row is carried and shown — the one
+    /// place a spelling this build does not know must not panic, since a
+    /// message is what an agent typed about.
     pub fn kind(&self) -> Option<MessageKind> {
         MessageKind::from_str(&self.kind).ok()
     }
@@ -616,6 +617,8 @@ pub struct AgentEvent {
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct TaskTransition {
+    pub from_step: Option<String>,
+    pub to_step: Option<String>,
     pub id: String,
     pub task_id: String,
     pub from_status: String,
@@ -642,7 +645,8 @@ pub struct PullRequestRow {
     /// `author` for a request of the user's, `reviewer` for one that asks
     /// for their review.
     pub role: String,
-    /// The task that opened the request: its author keeps it (005).
+    /// The task that opened the request: the agent of its `pr` column keeps
+    /// it (030).
     pub origin_task_id: Option<String>,
     /// Whether the request's session reported it ready to merge.
     pub ready: bool,
@@ -855,4 +859,17 @@ pub struct PullRequestComment {
     /// An Ariadne review session posted it (029): on a request of the
     /// user's own it is a finding for the task's author, not the user's.
     pub from_review: bool,
+}
+
+/// A column captured when a goal starts.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct GoalStep {
+    pub goal_id: String,
+    pub ordinal: i64,
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub skills: String,
+    pub rank: Option<String>,
+    pub gate: Option<String>,
 }

@@ -203,7 +203,8 @@ export interface paths {
          *     spawned by the scheduler once agent execution lands.
          * @description The repos are referenced, not copied: whatever `POST /v1/repositories`
          *     validated about a checkout holds for every goal that names it, and an edit
-         *     there moves this goal too.
+         *     there moves this goal too. The workflow is the one the request names, or
+         *     the first repository's default, and its columns are copied onto the goal.
          */
         post: operations["goals_create"];
         delete?: never;
@@ -304,7 +305,9 @@ export interface paths {
         /**
          * Finalize the plan: goal moves planning -> active and its tasks start. The
          *     orchestrator's call alone, and there is nothing left for the user to
-         *     approve.
+         *     approve. A task with a column nobody staffs is refused by the column's
+         *     name: every task runs through every column, and one with nobody on it
+         *     would stop there.
          */
         post: operations["goals_finalize"];
         delete?: never;
@@ -1327,7 +1330,10 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Edit a pending/ready task (orchestrator or user). */
+        /**
+         * Edit a task that is not running (orchestrator or user): pending, ready,
+         *     or failed and waiting for a retry.
+         */
         patch: operations["tasks_update"];
         trace?: never;
     };
@@ -1345,7 +1351,7 @@ export interface paths {
          *     the task belongs to.
          * @description Who called it is read from the session header rather than assumed, so the
          *     transition log says which of the two it was — and so the state machine
-         *     refuses an author or a reviewer reaching for it.
+         *     refuses a column's agent reaching for it.
          */
         post: operations["tasks_cancel"];
         delete?: never;
@@ -1366,9 +1372,6 @@ export interface paths {
          *     once the task is merged, the diff its merge commit brought into the base —
          *     after the merge the branch is contained in the base, so the three-dot diff
          *     would be forever empty.
-         * @description On a task staffed with several authors, `agent` names the author whose
-         *     branch to read; left out, the task's own branch is read — the first
-         *     author's until the pick settles, and the winner's after it.
          */
         get: operations["tasks_diff"];
         put?: never;
@@ -1402,29 +1405,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/tasks/{id}/pick": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * One reviewer's pick of the winning author, on a task staffed with several.
-         * @description The gate is here: the pick starts only once every author is approved, and
-         *     a pick before that is refused. One pick per reviewer per task — a second
-         *     is refused by the reviewer's name — and the daemon settles the winner once
-         *     every staffed reviewer has picked.
-         */
-        post: operations["tasks_pick_winner"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/tasks/{id}/pull-request": {
         parameters: {
             query?: never;
@@ -1439,9 +1419,9 @@ export interface paths {
          *     own forge CLI, and answer its URL.
          * @description The daemon runs the forge call, never the agent: `gh` or `glab` only ever
          *     run here, with the authentication the user already set up for them
-         *     ([`crate::forge`]). The author supplies only what the daemon cannot read
-         *     off the task or the repository — the title and the body — and gets the
-         *     URL back to show the user.
+         *     ([`crate::forge`]). The current column's agent supplies only what the
+         *     daemon cannot read off the task or the repository — the title and the
+         *     body — and gets the URL back to show the user.
          *
          *     One request per task: a task that already has a `pr_url` answers it again
          *     and opens nothing, so a retried call never opens a second request.
@@ -1463,11 +1443,44 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Retry a failed task: failed -> ready. The user's call, and the
-         *     orchestrator's — the daemon wakes it when a task fails, and retrying is
-         *     one of the three answers it has.
+         * Retry a failed task: failed -> ready, which starts it on its first column
+         *     again. The user's call, and the orchestrator's — the daemon wakes it when
+         *     a task fails, and retrying is one of the three answers it has. A task
+         *     with a column nobody staffs is refused by that column's name.
          */
         post: operations["tasks_retry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks/{id}/step/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["tasks_complete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks/{id}/step/fail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["tasks_fail"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1503,6 +1516,84 @@ export interface paths {
         get: operations["system_version"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workflows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List every workflow, shipped and written, by name. */
+        get: operations["workflows_list"];
+        put?: never;
+        /**
+         * Create a workflow of the user's own. It carries its own document: nothing
+         *     Ariadne ships answers to its name, so there is nothing behind it to fall
+         *     back to.
+         */
+        post: operations["workflows_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workflows/parse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Parse a document without saving it anywhere: the picker a workflow editor
+         *     checks a draft against before it writes one.
+         */
+        post: operations["workflows_parse"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workflows/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one workflow by name. */
+        get: operations["workflows_get"];
+        /** Write a new document over a workflow's. */
+        put: operations["workflows_update"];
+        post?: never;
+        /** Delete a workflow of the user's own (409 for a built-in). */
+        delete: operations["workflows_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workflows/{name}/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Put a built-in workflow back on the document Ariadne ships. */
+        post: operations["workflows_reset"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1555,10 +1646,10 @@ export interface components {
          * @description Who is attempting a transition: a seat, the daemon, or the user.
          * @enum {string}
          */
-        Actor: "orchestrator" | "author" | "reviewer" | "daemon" | "user";
+        Actor: "orchestrator" | "agent" | "daemon" | "user";
         /**
-         * @description One agent to staff on a task: where it sits, the skills it loads, and what
-         *     it is to run on.
+         * @description One agent to staff on a task: the column it works, the skills it loads,
+         *     and what it is to run on.
          *
          *     The model is written `<agent>:<model>`: the id of an agent in the ACP
          *     registry, and after the `:` one model of it. Both halves are required — a
@@ -1586,19 +1677,21 @@ export interface components {
              */
             model: string;
             /**
-             * @description `author` or `reviewer`. A task takes one author or more; several
-             *     authors need at least one reviewer, to pick the winner.
-             */
-            seat: components["schemas"]["Seat"];
-            /**
              * @description The names of the skills this agent loads, in the order they reach it.
-             *     A name no skill answers to is refused.
+             *     Omitted or empty = the column's own skills. A name no skill answers
+             *     to is refused.
              * @example [
              *       "coding",
              *       "documentation"
              *     ]
              */
             skills?: string[];
+            /**
+             * @description The id of the workflow column this agent works, one of the goal's
+             *     columns. A task takes one agent per column, and a column named twice
+             *     is refused.
+             */
+            step: string;
         };
         /**
          * @description How one registry agent is launched, shared by every session that runs on
@@ -1652,12 +1745,18 @@ export interface components {
         };
         /**
          * @description What one staffed agent spent on a task, named the way a reader addresses
-         *     it: an agent has no name of its own, so its skills are what identify it.
+         *     it: an agent has no name of its own, so its column and its skills are what
+         *     identify it.
          */
         AgentUsageDto: {
             agent_id: string;
             /** @description The skills the agent loads; empty only if the agent is gone. */
             skills: string[];
+            /**
+             * @description The column the agent works; null for an agent the task no longer
+             *     staffs.
+             */
+            step?: string | null;
             usage: components["schemas"]["TokenUsageDto"];
         };
         /**
@@ -1848,6 +1947,16 @@ export interface components {
          */
         CompleteGoalRequest: Record<string, never>;
         /**
+         * @description Body of `POST /v1/tasks/{id}/step/complete`: the current column's agent
+         *     hands the task to the next column, or finishes it from the last one.
+         */
+        CompleteStepRequest: {
+            /** @description The commit the task landed as, which the `merged` gate checks. */
+            merge_commit?: string | null;
+            /** @description What the next column's agent is briefed with. */
+            reason: string;
+        };
+        /**
          * @description Body of `POST /v1/sessions/{id}/console/input`.
          *
          *     While a permission request is pending, the text selects that request's
@@ -1867,7 +1976,6 @@ export interface components {
              */
             effort?: string | null;
             issue_url?: string | null;
-            landing?: null | components["schemas"]["Landing"];
             /**
              * @description What the orchestrator runs on, `<agent>:<model>` — the id of an agent
              *     in the ACP registry and, after the `:`, the model of it:
@@ -1882,11 +1990,21 @@ export interface components {
             /** @description Ids of registered repositories (`POST /v1/repositories`); at least one. */
             repository_ids: string[];
             title: string;
+            /**
+             * @description The workflow every task of the goal runs on, a name of the catalog
+             *     (`GET /v1/workflows`). Omitted = the default of the first repository.
+             *     It cannot change once the goal is created.
+             */
+            workflow?: string | null;
         };
         CreateRepositoryRequest: {
             /** @description Omit for the repo's currently checked-out branch. */
             base_branch?: string | null;
-            default_landing?: null | components["schemas"]["Landing"];
+            /**
+             * @description The workflow a new goal in this repository runs on where its request
+             *     names none. Omit for `develop-review-merge`.
+             */
+            default_workflow?: string | null;
             description?: string | null;
             forge?: null | components["schemas"]["ForgeUpdate"];
             /**
@@ -1910,9 +2028,8 @@ export interface components {
         };
         CreateTaskRequest: {
             /**
-             * @description The agents to staff: the authors first — one or more, each with its
-             *     own model — then the reviewers in review order. Several authors need
-             *     at least one reviewer, to pick the winner.
+             * @description The agents to staff: one per column of the goal's workflow, each with
+             *     its own model. A column left out is named when the plan is finalized.
              */
             agents: components["schemas"]["AgentAssignment"][];
             /** @description Task ids this task depends on. */
@@ -1924,6 +2041,18 @@ export interface components {
              */
             repo_id?: string | null;
             title: string;
+        };
+        CreateWorkflowRequest: {
+            /**
+             * @description The whole workflow document. Its `workflow <name>` line must equal
+             *     `name`.
+             */
+            document: string;
+            /**
+             * @description Kebab-case, and free: a name Ariadne already ships is refused.
+             * @example my-workflow
+             */
+            name: string;
         };
         /** @description The daemon's own environment, as `ariadne doctor` renders it. */
         DaemonReportDto: {
@@ -2043,6 +2172,18 @@ export interface components {
             /** @enum {string} */
             event: "skill_deleted";
         } | {
+            data: components["schemas"]["WorkflowDto"];
+            /** @enum {string} */
+            event: "workflow_created";
+        } | {
+            data: components["schemas"]["WorkflowDto"];
+            /** @enum {string} */
+            event: "workflow_updated";
+        } | {
+            data: components["schemas"]["DeletedDto"];
+            /** @enum {string} */
+            event: "workflow_deleted";
+        } | {
             data: components["schemas"]["RepositoryDto"];
             /** @enum {string} */
             event: "repository_created";
@@ -2117,6 +2258,14 @@ export interface components {
          * @enum {string}
          */
         EventOrder: "asc" | "desc";
+        /**
+         * @description Body of `POST /v1/tasks/{id}/step/fail`: the current column's agent hands
+         *     the task back to the previous column, or fails it from the first one.
+         */
+        FailStepRequest: {
+            /** @description What the previous column's agent is told to fix. */
+            reason: string;
+        };
         /** @description One check that failed on a request's head. */
         FailedCheckDto: {
             /**
@@ -2209,11 +2358,9 @@ export interface components {
             effort?: string | null;
             id: string;
             issue_url?: string | null;
-            /** @description How every task of the goal ends, chosen when the goal was created. */
-            landing: components["schemas"]["Landing"];
             /**
-             * @description What the orchestrator or adopted author runs on, `<agent>:<model>`:
-             *     the registry agent and, after the `:`, the model of it.
+             * @description What the orchestrator runs on, `<agent>:<model>`: the registry agent
+             *     and, after the `:`, the model of it.
              * @example claude-acp:claude-opus-5
              */
             model: string;
@@ -2223,17 +2370,22 @@ export interface components {
              * @description The registered repositories the goal works in, as they stand now: a
              *     goal references them, so an edit to one shows up here.
              */
-            repos: components["schemas"]["GoalRepositoryDto"][];
+            repos: components["schemas"]["RepositoryDto"][];
             status: components["schemas"]["GoalStatus"];
+            /**
+             * @description The columns of that workflow as they were when the goal was created:
+             *     a later edit of the catalog reaches later goals alone.
+             */
+            steps: components["schemas"]["WorkflowStepDto"][];
             title: string;
             updated_at: string;
             /** @description What the agents of this goal have spent between them. */
             usage: components["schemas"]["GoalUsageDto"];
-        };
-        /** @description A registered repository together with the branch this goal owns in it. */
-        GoalRepositoryDto: components["schemas"]["RepositoryDto"] & {
-            /** @description Null until a feature branch goal creates its branch at plan finalization. */
-            goal_branch?: string | null;
+            /**
+             * @description The workflow every task of the goal runs on, chosen when the goal was
+             *     created.
+             */
+            workflow: string;
         };
         /**
          * @description Goal lifecycle status.
@@ -2241,17 +2393,17 @@ export interface components {
          */
         GoalStatus: "planning" | "active" | "completed" | "cancelled";
         /**
-         * @description What a goal cost, by the seat that spent it. Grouped by seat rather than
-         *     by agent: a goal's authors are as many as it has tasks, and what is
-         *     read at this height is where the tokens went, not which agent went there.
+         * @description What a goal cost, by the seat that spent it, and by the agent of every
+         *     column of every task under it.
          */
         GoalUsageDto: {
-            /** @description Every author session of every task of the goal. */
-            authors: components["schemas"]["TokenUsageDto"];
+            /**
+             * @description One entry per agent of every task of the goal that has a session,
+             *     task by task and column by column.
+             */
+            agents: components["schemas"]["AgentUsageDto"][];
             /** @description The orchestrator's sessions, which belong to no task. */
             orchestrator: components["schemas"]["TokenUsageDto"];
-            /** @description Every reviewer session of every task of the goal, all rounds. */
-            reviewers: components["schemas"]["TokenUsageDto"];
             /** @description Every session of the goal summed, the orchestrator's included. */
             total: components["schemas"]["TokenUsageDto"];
         };
@@ -2315,24 +2467,6 @@ export interface components {
         IssuesChangedDto: {
             repository_id: string;
         };
-        /**
-         * @description How the tasks of one goal end.
-         *
-         *     The one thing about the end of a task the author has to be told, since the
-         *     commands it runs differ entirely between the endings. The user chooses it
-         *     once, for the whole goal, when the goal is created, and every task of the
-         *     goal follows it: some work lands on the base branch, some goes through a
-         *     request the author then sees to its merge, and some has nothing to land at
-         *     all — a report filed, a document published, a release cut. Every ending
-         *     reaches [`TaskStatus::Finished`]; landing is one way of getting there
-         *     rather than the meaning of being there.
-         *
-         *     Which forge a published request goes to is *not* here: `origin` says
-         *     whether it is GitHub or GitLab, and asking the remote at landing time
-         *     cannot go stale the way a second copy of the answer would.
-         * @enum {string}
-         */
-        Landing: "merge" | "pull_request" | "none" | "feature_branch";
         LeadTimeDto: {
             /** Format: double */
             mean_secs: number;
@@ -2454,23 +2588,20 @@ export interface components {
         /**
          * @description What one agent is saying to another.
          *
-         *     Agents talk to each other through one channel, and this is what tells a
-         *     message from the three steps of a review. A verdict used to be a row of its own; it is a
-         *     message like the rest now, which is what carries a review's whole
-         *     conversation in one place.
+         *     Agents talk to each other through one channel, and one kind carries
+         *     everything they say on it, whether it asks something or answers it. There
+         *     is no `answer` kind and no `reply` tool: an answer is a message to whoever
+         *     asked, addressed the way the question was, so nothing threads. Each
+         *     message reaches its agent as a turn — which is why the tool that sends one
+         *     takes questions and answers and nothing else, no confirmation and no
+         *     thanks.
          *
-         *     One kind carries everything the agents say outside a review, whether it
-         *     asks something or answers it. There is no `answer` kind and no `reply`
-         *     tool: an answer is a message to whoever asked, addressed the way the
-         *     question was, so nothing threads. Each message reaches its agent as a turn
-         *     — which is why the tool that sends one takes questions and answers and
-         *     nothing else, no confirmation and no thanks.
-         *
-         *     The kind is what the daemon reads. Two of them move the task
-         *     ([`TaskStatus`]), and the rest are said and left.
+         *     A review used to run on the channel too, as three kinds of its own; a
+         *     workflow column moves a task through the step routes now, and the one
+         *     kind left is what the agents say.
          * @enum {string}
          */
-        MessageKind: "review_request" | "approve" | "request_changes" | "message";
+        MessageKind: "message";
         /**
          * @description One thing an agent can be pinned to, as served by `GET /v1/models`: a
          *     registry agent on a model discovery found it offering
@@ -2525,12 +2656,6 @@ export interface components {
         /** @description What one model did in one seat. */
         ModelStatDto: {
             /**
-             * Format: double
-             * @description Changes requested over the tasks this reviewer model gave a verdict on;
-             *     null except for reviewers.
-             */
-            changes_per_task?: number | null;
-            /**
              * Format: int64
              * @description Distinct goals with a session of this model in this seat.
              */
@@ -2541,18 +2666,17 @@ export interface components {
              */
             messages: number;
             model: string;
-            /**
-             * Format: double
-             * @description The mean review requests over this author model's finished tasks; null
-             *     except for authors.
-             */
-            rounds_per_task?: number | null;
             seat?: string | null;
             /**
              * Format: int64
              * @description Distinct tasks with a session of this model in this seat.
              */
             tasks: number;
+            /**
+             * Format: int64
+             * @description The tasks this model's column ended `finished`.
+             */
+            tasks_finished: number;
             /**
              * Format: double
              * @description The sum of the session lifetimes.
@@ -2585,9 +2709,10 @@ export interface components {
             working_directory: string;
         };
         /**
-         * @description The author asking the daemon to open the pull or merge request its task
-         *     lands by. The daemon runs the forge's own CLI, so this carries only what
-         *     the author cannot read off the task or the repository itself.
+         * @description The agent of the `pr` column asking the daemon to open the pull or merge
+         *     request its task lands by. The daemon runs the forge's own CLI, so this
+         *     carries only what the agent cannot read off the task or the repository
+         *     itself.
          */
         OpenPullRequestRequest: {
             /** @description Filled from the repository's own request template. */
@@ -2596,6 +2721,17 @@ export interface components {
             draft?: boolean;
             /** @description Titled by the repository's own commit conventions. */
             title: string;
+        };
+        ParseWorkflowRequest: {
+            document: string;
+        };
+        /**
+         * @description Response of `POST /v1/workflows/parse`: a document's name and columns,
+         *     read without saving it anywhere.
+         */
+        ParsedWorkflowDto: {
+            name: string;
+            steps: components["schemas"]["WorkflowStepDto"][];
         };
         /** @description A file or directory the daemon depends on. */
         PathStateDto: {
@@ -2679,14 +2815,6 @@ export interface components {
             prompts: number;
             /** Format: double */
             total_secs: number;
-        };
-        /**
-         * @description One reviewer picking the winning author of a task staffed with several:
-         *     the author whose branch lands.
-         */
-        PickWinnerRequest: {
-            /** @description Id of the author picked, one of the task's authors. */
-            author_agent_id: string;
         };
         /**
          * @description One comment on a request, as the forge holds it now, read live (026),
@@ -2837,8 +2965,12 @@ export interface components {
         RepositoryDto: {
             base_branch: string;
             created_at: string;
-            /** @description The landing a new goal uses where its request leaves landing out. */
-            default_landing: components["schemas"]["Landing"];
+            /**
+             * @description The workflow a new goal runs on where its request names none, a name
+             *     of the catalog (`GET /v1/workflows`).
+             * @example develop-review-merge
+             */
+            default_workflow: string;
             description?: string | null;
             forge?: null | components["schemas"]["ForgeDto"];
             id: string;
@@ -2887,15 +3019,15 @@ export interface components {
             title?: string;
         };
         /**
-         * @description Where an agent sits: the orchestrator of a goal, or the author or a
-         *     reviewer of one task.
+         * @description Where an agent sits: the orchestrator of a goal, the agent of one workflow
+         *     column of a task, or the reviewer of a pull request (029).
          *
          *     A seat is a position, not an identity. Every agent below the orchestrator
          *     is generic, and what it can do comes from the skills it loads; the seat is
          *     only what the state machine and the launcher need to know about it.
          * @enum {string}
          */
-        Seat: "orchestrator" | "author" | "reviewer";
+        Seat: "orchestrator" | "agent" | "reviewer";
         /**
          * @description Body of `POST /v1/tasks/{id}/messages` and `POST /v1/goals/{id}/messages`.
          *
@@ -2905,12 +3037,11 @@ export interface components {
          */
         SendMessageRequest: {
             body: string;
-            kind: components["schemas"]["MessageKind"];
             /** @description Who it is for. `orchestrator` needs no agent id — a goal has one. */
             to_actor: components["schemas"]["Actor"];
             /**
              * @description The staffed agent it is for, as `GET /v1/tasks/{id}` lists them.
-             *     Required for `author` and `reviewer`, refused for the orchestrator.
+             *     Required for `agent`, refused for the orchestrator.
              */
             to_agent_id?: string | null;
         };
@@ -3186,6 +3317,12 @@ export interface components {
             total_secs: number;
         };
         /**
+         * @description What a step waits for before the next one may start: the author's commit,
+         *     a push, a merge onto the base, or a request merged by a human.
+         * @enum {string}
+         */
+        StepGate: "committed" | "pushed" | "merged" | "request_merged";
+        /**
          * @description Body of `POST /v1/pull-requests/{id}/reviews` (029): one review, posted
          *     in the name of the integration login.
          */
@@ -3213,13 +3350,17 @@ export interface components {
              */
             model: string;
         };
+        /**
+         * @description One agent staffed on a task: the column it works, what it knows, and what
+         *     it runs on.
+         *
+         *     The agent has no identity of its own. `step` says only which column of
+         *     the workflow it works; the skills are what it can do. What it runs on was
+         *     sized by the orchestrator when it staffed the task, or chosen by the user
+         *     since — either way it is what this agent runs on, and nothing behind it
+         *     changes that.
+         */
         TaskAgentDto: {
-            /**
-             * @description The branch this agent works on: the task branch for the first author,
-             *     a suffixed sibling of it for every later one. None for a reviewer,
-             *     which owns no branch.
-             */
-            branch?: string | null;
             /**
              * @description What the orchestrator told this agent beyond the task itself. None =
              *     the task is the whole of it.
@@ -3237,8 +3378,6 @@ export interface components {
              * @example codex-acp:o3
              */
             model: string;
-            /** @description `author` or `reviewer`. */
-            seat: components["schemas"]["Seat"];
             /**
              * @description This agent's live session, the id `POST /v1/sessions/{id}/switch`
              *     takes. None while it carries no live session.
@@ -3252,6 +3391,8 @@ export interface components {
              *     ]
              */
             skills: string[];
+            /** @description The id of the workflow column this agent works. */
+            step: string;
         };
         /**
          * @description Payload of `task_branch_updated`: where a task's branch points now.
@@ -3269,46 +3410,30 @@ export interface components {
         };
         TaskDto: {
             /**
-             * @description The agents staffed on the task: the authors first, then the reviewers
-             *     in review order. What each one can do is the skills it carries. Most
-             *     tasks staff one author; one staffed with several runs them in
-             *     parallel, and the reviewers pick the branch that lands.
+             * @description The agents staffed on the task, one per column of its goal's
+             *     workflow, in the order the orchestrator listed them. What each one can
+             *     do is the skills it carries.
              */
             agents: components["schemas"]["TaskAgentDto"][];
+            /** @description The branch every column works on, in the one worktree the task has. */
             branch: string;
             created_at: string;
-            /** @description Ids of tasks that must merge before this one starts. */
+            /** @description Ids of tasks that must finish before this one starts. */
             depends_on: string[];
             description: string;
             goal_id: string;
             id: string;
-            /**
-             * @description How the task ends: a read-only copy of its goal's landing, which every
-             *     task of the goal follows.
-             */
-            landing: components["schemas"]["Landing"];
+            /** @description The commit the task landed as, where its last column reported one. */
             merge_commit?: string | null;
             /**
-             * @description The author the reviewers picked, on a task staffed with several: the
-             *     one whose branch lands. None for a one-author task, and until the
-             *     pick settles.
-             */
-            picked_agent_id?: string | null;
-            /**
-             * @description The picks the reviewers have recorded so far, oldest first. Empty for
-             *     a one-author task.
-             */
-            picks: components["schemas"]["TaskPickDto"][];
-            /**
-             * @description URL of the pull or merge request the task was published as, once its
-             *     author has reported one; None for a task landed directly.
+             * @description URL of the pull or merge request the task's `pr` column opened, once
+             *     it has; null for a task landed directly.
              */
             pr_url?: string | null;
             /**
-             * @description Why a `failed` or `cancelled` task ended — the author's own
-             *     `fail_task` reason, a dependency that never landed, a cancelled goal.
-             *     None for every other status, and for an ending nobody gave a reason
-             *     for.
+             * @description Why a `failed` or `cancelled` task ended — an agent's own `fail_task`
+             *     reason, a dependency that never landed, a cancelled goal. Null for
+             *     every other status, and for an ending nobody gave a reason for.
              */
             reason?: string | null;
             /** @description Id of the repository the task works in, one of its goal's. */
@@ -3316,6 +3441,11 @@ export interface components {
             /** @description Set when the agent went idle without advancing the task. */
             stalled: boolean;
             status: components["schemas"]["TaskStatus"];
+            /**
+             * @description The column of its goal's workflow the task is in while it is
+             *     `in_progress`; null before its first column and once it has ended.
+             */
+            step?: string | null;
             title: string;
             updated_at: string;
             /** @description What the agents of this task have spent between them. */
@@ -3323,36 +3453,21 @@ export interface components {
             worktree_path?: string | null;
         };
         /**
-         * @description One agent staffed on a task: where it sits, what it knows, and what it
-         *     runs on.
-         *
-         *     The agent has no identity of its own. `seat` says only whether it authors
-         *     the task or reviews it; the skills are what it can do. What it runs on was
-         *     sized by the orchestrator when it staffed the task, or chosen by the user
-         *     since — either way it is what this agent runs on, and nothing behind it
-         *     changes that.
-         *     One reviewer's pick of the winning author, on a task staffed with several
-         *     authors.
-         */
-        TaskPickDto: {
-            /** @description The author it picked. */
-            author_agent_id: string;
-            created_at: string;
-            /** @description The reviewer that picked. One pick per reviewer per task. */
-            reviewer_agent_id: string;
-        };
-        /**
          * @description Task lifecycle status.
          * @enum {string}
          */
-        TaskStatus: "pending" | "ready" | "in_progress" | "under_review" | "changes_requested" | "approved" | "finished" | "cancelled" | "failed";
+        TaskStatus: "pending" | "ready" | "in_progress" | "finished" | "cancelled" | "failed";
         TaskTransitionDto: {
             actor: string;
             created_at: string;
             from_status: string;
+            /** @description The column the task left, where the move crossed columns. */
+            from_step?: string | null;
             id: string;
             reason?: string | null;
             to_status: string;
+            /** @description The column the task entered. */
+            to_step?: string | null;
         };
         /**
          * @description Payload of `task_updated`: the task as it now stands, plus the audit row
@@ -3363,20 +3478,18 @@ export interface components {
             transition?: null | components["schemas"]["TaskTransitionDto"];
         };
         /**
-         * @description What a task cost, by who spent it: its author, its reviewers one entry
-         *     each, and the total of every session on the task.
+         * @description What a task cost, by who spent it: one entry per agent that has a session
+         *     on the task, and the total of every session on it.
          */
         TaskUsageDto: {
-            /** @description The author's own, across every run of it. */
-            author: components["schemas"]["TokenUsageDto"];
             /**
-             * @description One entry per reviewer that has a session on the task, every review
-             *     round of it summed, in review order. A reviewer whose session has yet
-             *     to report anything is listed with zeros; one that has never been
-             *     spawned is not listed at all.
+             * @description One entry per agent that has a session on the task, every run of it
+             *     summed, in column order. An agent whose session has yet to report
+             *     anything is listed with zeros; one that has never been spawned is not
+             *     listed at all.
              */
-            reviewers: components["schemas"]["AgentUsageDto"][];
-            /** @description Every session on the task summed, whatever its seat. */
+            agents: components["schemas"]["AgentUsageDto"][];
+            /** @description Every session on the task summed, whatever its column. */
             total: components["schemas"]["TokenUsageDto"];
         };
         /**
@@ -3465,7 +3578,10 @@ export interface components {
             output_tokens: number;
         };
         TransitionRequest: {
-            /** @description Required when `to` is `finished`, unless the task lands nothing. */
+            /**
+             * @description The commit the task landed as, where `to` is `finished` and a column
+             *     reported one.
+             */
             merge_commit?: string | null;
             reason?: string | null;
             to: components["schemas"]["TaskStatus"];
@@ -3508,7 +3624,8 @@ export interface components {
         /** @description Partial update; absent fields stay unchanged. */
         UpdateRepositoryRequest: {
             base_branch?: string | null;
-            default_landing?: null | components["schemas"]["Landing"];
+            /** @description Absent = unchanged. */
+            default_workflow?: string | null;
             /** @description New description, or empty to clear it. Absent = unchanged. */
             description?: string | null;
             forge?: null | components["schemas"]["ForgeUpdate"];
@@ -3523,42 +3640,26 @@ export interface components {
              */
             document?: string | null;
         };
-        /** @description Partial update; only allowed while the task is pending/ready. */
+        /** @description Partial update; only allowed while the task is pending, ready or failed. */
         UpdateTaskRequest: {
             /**
-             * @description The whole author list, replaced: every author is staffed afresh, with
-             *     the skills and the model it names. The way to give a task several
-             *     authors, or to take them back to one. `model` and `effort` above are
-             *     refused while a task has several authors: each author names its own.
+             * @description The whole staffing, replaced: every column is staffed afresh, with
+             *     the skills and the model it names. The way to staff a column a task
+             *     lacks before it is retried.
              */
-            authors?: components["schemas"]["AgentAssignment"][] | null;
+            agents?: components["schemas"]["AgentAssignment"][] | null;
+            /** @description The whole dependency list, replaced. */
             depends_on?: string[] | null;
             description?: string | null;
-            /**
-             * @description The reasoning effort to run the model at: absent leaves it alone,
-             *     "default" (or the empty string) puts it back on whatever the agent
-             *     runs the model at, and anything else is checked against the model it
-             *     will run at — the one this request names, or the task's own where it
-             *     names none — and refused where that model does not take it. A `model`
-             *     written without an effort runs at the agent's own default: the effort
-             *     belonged to the model that was left behind.
-             * @example xhigh
-             */
-            effort?: string | null;
-            /**
-             * @description What the author runs on, `<agent>:<model>`: absent leaves the
-             *     author's pins alone, and anything else pins what it spells. A model is
-             *     required, so "default" and the empty string are refused — there is no
-             *     default to hand the pin back to.
-             * @example codex-acp:gpt-5.3-codex
-             */
-            model?: string | null;
-            /**
-             * @description The whole reviewer list, replaced: every reviewer is staffed afresh,
-             *     with the skills and the model it names.
-             */
-            reviewers?: components["schemas"]["AgentAssignment"][] | null;
             title?: string | null;
+        };
+        /** @description Partial update; absent fields stay unchanged. */
+        UpdateWorkflowRequest: {
+            /**
+             * @description The new document. Absent = unchanged; putting a built-in back on the
+             *     text Ariadne ships is `POST /v1/workflows/{name}/reset`.
+             */
+            document?: string | null;
         };
         /** @description Response of `GET /v1/version`. */
         VersionResponse: {
@@ -3683,6 +3784,42 @@ export interface components {
              * @default 0
              */
             tasks_finished: number;
+        };
+        WorkflowDto: {
+            /**
+             * @description Whether Ariadne ships this workflow. A built-in is reset rather than
+             *     deleted; a workflow of the user's own is deleted rather than reset.
+             */
+            builtin: boolean;
+            created_at: string;
+            /** @description The effective document: the override, or the text Ariadne ships. */
+            document: string;
+            /**
+             * @description Kebab-case; named on the document's first line.
+             * @example develop-review-merge
+             */
+            name: string;
+            /** @description `document`, parsed into its columns. */
+            steps: components["schemas"]["WorkflowStepDto"][];
+            updated_at: string;
+        };
+        /** @description One column of a workflow. */
+        WorkflowStepDto: {
+            description: string;
+            gate?: null | components["schemas"]["StepGate"];
+            /**
+             * @description Kebab-case, unique within the workflow.
+             * @example develop
+             */
+            id: string;
+            rank?: null | components["schemas"]["ModelRank"];
+            /** @description The skills an agent on this step loads. */
+            skills: string[];
+            /**
+             * @description The display title.
+             * @example Develop
+             */
+            title: string;
         };
     };
     responses: never;
@@ -3966,7 +4103,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description no such repository or orchestrator profile */
+            /** @description no such repository or workflow */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -6310,10 +6447,7 @@ export interface operations {
     };
     tasks_diff: {
         parameters: {
-            query?: {
-                /** @description Id of the author whose branch to read, on a task staffed with several. */
-                agent?: string | null;
-            };
+            query?: never;
             header?: never;
             path: {
                 /** @description task id */
@@ -6419,53 +6553,6 @@ export interface operations {
             };
         };
     };
-    tasks_pick_winner: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description task id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PickWinnerRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TaskDto"];
-                };
-            };
-            /** @description not an author of the task */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description not a reviewer session */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description the pick has not started, or this reviewer has picked already */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
     tasks_open_pull_request: {
         parameters: {
             query?: never;
@@ -6490,14 +6577,14 @@ export interface operations {
                     "application/json": components["schemas"]["TaskDto"];
                 };
             };
-            /** @description not an author session */
+            /** @description not the current column's agent */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description the task is not approved, has no forge or its integration is off, is not authenticated, or is not pushed */
+            /** @description the task is not in progress, has no forge or its integration is off, is not authenticated, or is not pushed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -6517,6 +6604,83 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    tasks_complete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description task id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompleteStepRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description step_gate_failed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    tasks_fail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description task id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FailStepRequest"];
+            };
+        };
         responses: {
             200: {
                 headers: {
@@ -6617,6 +6781,217 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["VersionResponse"];
                 };
+            };
+        };
+    };
+    workflows_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowDto"][];
+                };
+            };
+        };
+    };
+    workflows_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateWorkflowRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowDto"];
+                };
+            };
+            /** @description name already exists, or the document is invalid */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    workflows_parse: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ParseWorkflowRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParsedWorkflowDto"];
+                };
+            };
+            /** @description workflow_invalid, with details.line */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    workflows_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workflow name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    workflows_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workflow name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateWorkflowRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    workflows_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workflow name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    workflows_reset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workflow name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

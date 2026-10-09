@@ -14,7 +14,7 @@ cli_bin = "/usr/local/bin/ariadne" # runs the Ariadne MCP server for ACP session
 delete_merged_worktrees = true     # remove task worktrees after merge (default);
                                    # false keeps them for inspecting finished work
 delete_merged_branches = true      # only applies when worktrees are deleted too:
-                                   # a kept author worktree pins the task branch
+                                   # a kept task worktree pins its branch
 prevent_sleep = true               # hold a system sleep inhibition while any agent
                                    # session is live, so the box does not idle-sleep
                                    # out from under a working agent (default)

@@ -39,19 +39,19 @@ import { useFocusReturn } from "@/hooks/use-focus-return"
 import { taskCopyEntries } from "@/lib/clipboard"
 import { paths, usePanelSessionNavigation } from "@/routes/paths"
 
-import { taskMessagesQueryOptions, taskQueryOptions } from "./queries"
+import { taskQueryOptions } from "./queries"
 import { StalledBadge } from "./stalled"
-import { primaryStatus, subStatus, TASK_STATUS_META } from "./status"
+import { TASK_STATUS_META } from "./status"
+import { StepStrip } from "./step-strip"
 import { TaskActions } from "./task-actions"
 import { TaskDiff } from "./task-diff"
 import { TaskFacts } from "./task-facts"
 import { TaskHistory } from "./task-history"
-import { TaskMessages } from "./task-messages"
 import { TaskSessions, TaskSessionView } from "./task-sessions"
 
 // Description leads the strip and is where the panel opens: it is what the
 // task *is*, and the first thing to read on a task just landed on.
-const TABS = ["description", "messages", "history", "diff", "sessions"] as const
+const TABS = ["description", "history", "diff", "sessions"] as const
 type Tab = (typeof TABS)[number]
 
 export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => void }) {
@@ -70,7 +70,13 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
   // one `TaskSessions` itself passes, or the tab's count and the tab's list
   // would be two cache entries and two requests.
   const sessions = useQuery(sessionsQueryOptions({ task: taskId }))
-  const messages = useQuery(taskMessagesQueryOptions(taskId))
+  // The goal's workflow columns, which a stepped task is drawn and named by:
+  // the same detail entry the header's breadcrumb reads.
+  const goal = useQuery({
+    ...goalQueryOptions(task.data?.goal_id ?? ""),
+    enabled: task.data !== undefined,
+  })
+  const steps = goal.data?.steps ?? []
 
   function setTab(next: Tab) {
     const params = new URLSearchParams(search)
@@ -119,18 +125,12 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
         <>
           <TaskHeader task={task.data} />
           <PaneBody>
-            <TaskFacts task={task.data} />
+            <TaskFacts task={task.data} steps={steps} />
+            {steps.length > 0 ? <StepStrip task={task.data} steps={steps} /> : null}
 
             <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
               <TabsList>
                 <TabsTrigger value="description">Description</TabsTrigger>
-                {/* The verdicts, not the rounds they are grouped into: a
-                    round is how the tab is laid out, and a task around for the
-                    third time has said more than three things about itself. */}
-                <TabsTrigger value="messages">
-                  Messages
-                  <TabCount count={messages.data?.length} noun="message" />
-                </TabsTrigger>
                 <TabsTrigger value="history">History</TabsTrigger>
                 <TabsTrigger value="diff">Diff</TabsTrigger>
                 <TabsTrigger value="sessions">
@@ -145,11 +145,8 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
                   <EmptyState emphasis="quiet" title="This task has no description" />
                 )}
               </TabsContent>
-              <TabsContent value="messages" className="pt-3">
-                <TaskMessages taskId={taskId} />
-              </TabsContent>
               <TabsContent value="history" className="pt-3">
-                <TaskHistory taskId={taskId} />
+                <TaskHistory taskId={taskId} steps={steps} />
               </TabsContent>
               <TabsContent value="diff" className="pt-3">
                 <TaskDiff taskId={taskId} />
@@ -176,8 +173,7 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
 function TaskHeader({ task }: { task: TaskDto }) {
   const goal = useQuery(goalQueryOptions(task.goal_id))
   const navigate = useNavigate()
-  const status = TASK_STATUS_META[primaryStatus(task.status)]
-  const sub = subStatus(task.status)
+  const status = TASK_STATUS_META[task.status]
   return (
     <PanelHeader
       breadcrumb={{
@@ -191,7 +187,6 @@ function TaskHeader({ task }: { task: TaskDto }) {
       status={
         <>
           <StatusBadge label={status.label} tone={status.badge} hint={status.hint} />
-          {sub && <StatusBadge label={sub.label} tone={sub.badge} hint={sub.hint} />}
           {task.stalled && <StalledBadge />}
         </>
       }

@@ -19,6 +19,7 @@ use crate::repositories::RepositoryDto;
 use crate::sessions::SessionDto;
 use crate::skills::SkillDto;
 use crate::tasks::{TaskDto, TaskTransitionDto};
+use crate::workflows::WorkflowDto;
 
 /// Payload of `task_updated`: the task as it now stands, plus the audit row
 /// when the update was a status transition.
@@ -32,7 +33,7 @@ pub struct TaskUpdatedDto {
 
 /// Payload of `task_branch_updated`: where a task's branch points now.
 ///
-/// A commit in the author's worktree changes nothing in the store, so no
+/// A commit in the task's worktree changes nothing in the store, so no
 /// other event says the task's diff is no longer the one a client fetched.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TaskBranchDto {
@@ -104,6 +105,9 @@ pub enum DomainEvent {
     SkillCreated(SkillDto),
     SkillUpdated(SkillDto),
     SkillDeleted(DeletedDto),
+    WorkflowCreated(WorkflowDto),
+    WorkflowUpdated(WorkflowDto),
+    WorkflowDeleted(DeletedDto),
     RepositoryCreated(RepositoryDto),
     RepositoryUpdated(RepositoryDto),
     RepositoryDeleted(DeletedDto),
@@ -151,6 +155,9 @@ impl DomainEvent {
             Self::SkillCreated(_) => "skill_created",
             Self::SkillUpdated(_) => "skill_updated",
             Self::SkillDeleted(_) => "skill_deleted",
+            Self::WorkflowCreated(_) => "workflow_created",
+            Self::WorkflowUpdated(_) => "workflow_updated",
+            Self::WorkflowDeleted(_) => "workflow_deleted",
             Self::RepositoryCreated(_) => "repository_created",
             Self::RepositoryUpdated(_) => "repository_updated",
             Self::RepositoryDeleted(_) => "repository_deleted",
@@ -182,6 +189,8 @@ impl DomainEvent {
             Self::AgentEvent(e) => json(e),
             Self::SkillCreated(s) | Self::SkillUpdated(s) => json(s),
             Self::SkillDeleted(d) => json(d),
+            Self::WorkflowCreated(w) | Self::WorkflowUpdated(w) => json(w),
+            Self::WorkflowDeleted(d) => json(d),
             Self::RepositoryCreated(r) | Self::RepositoryUpdated(r) => json(r),
             Self::RepositoryDeleted(d) => json(d),
             Self::AiPermissionsUpdated(l) => json(l),

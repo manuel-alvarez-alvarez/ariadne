@@ -14,10 +14,24 @@ use tokio::sync::Semaphore;
 
 use ariadne_core::{PermissionMode, SessionStatus, TaskStatus};
 use ariadne_daemon::timeouts::Timeouts;
-use ariadne_store::{AgentPin, AgentSession, EventFilter, Store};
+use ariadne_store::{AgentPin, AgentSession, EventFilter, Store, Task};
 
 use crate::common::acp::{discovery_accepted, script, stub_acp_agent};
 use crate::common::{Harness, QUIET, TIMEOUT, eventually, harness, put_json, test_pin};
+
+/// Start the agent of the task's first column and hand it a first prompt, the
+/// way the scheduler briefs a column's agent once it is up: the launch itself
+/// carries none, and the stubs here fail or ask on their first turn.
+async fn started(h: &Harness, task: &Task) -> AgentSession {
+    let task = h.store.get_task(&task.id).await.unwrap();
+    let develop = h.store.list_task_agents(&task.id).await.unwrap().remove(0);
+    let session = h.launcher.start_step_agent(&task, &develop).await.unwrap();
+    h.launcher
+        .acp
+        .send_prompt(&session.id, "Begin the task.".into())
+        .unwrap();
+    session
+}
 
 #[derive(Clone)]
 enum Answer {
@@ -235,15 +249,15 @@ async fn world_with(
     h.git_repo("repo");
     let repo = h.repository(&h.at("repo")).await;
     let goal = h.goal_on(&repo, test_pin()).await;
-    let task = h.task_on(&goal, &repo, "task", 0, test_pin()).await;
+    let task = h.task_on(&goal, &repo, "task", test_pin()).await;
     h.activate(&goal).await;
     h.advance(&task, TaskStatus::InProgress).await;
-    let author = h.launcher.spawn_author(&task.id).await.unwrap();
-    eventually(TIMEOUT, "the failed author to end", || async {
-        h.session_status(&author).await == SessionStatus::Exited
+    let agent = started(&h, &task).await;
+    eventually(TIMEOUT, "the failed agent to end", || async {
+        h.session_status(&agent).await == SessionStatus::Exited
     })
     .await;
-    (h, author)
+    (h, agent)
 }
 
 /// Every event of `kind` a session reported, as parsed JSON payloads.
@@ -281,14 +295,14 @@ async fn a_failed_sessions_diagnosis_is_correlated_with_its_own_error() {
         json!({"exhausted": 0.81, "temporary": 0.05, "auth_config": 0.05, "task_error": 0.05, "insufficient": 0.04}),
     )
     .await;
-    let (h, author) = world(quota_error(), true, &server).await;
+    let (h, agent) = world(quota_error(), true, &server).await;
 
-    let errors = events_of(&h, &author.id, "session.error").await;
+    let errors = events_of(&h, &agent.id, "session.error").await;
     assert_eq!(errors.len(), 1, "{errors:?}");
     let error_event_id = h
         .store
         .list_events(EventFilter {
-            session_id: Some(author.id.clone()),
+            session_id: Some(agent.id.clone()),
             limit: 50,
             ..Default::default()
         })
@@ -300,12 +314,12 @@ async fn a_failed_sessions_diagnosis_is_correlated_with_its_own_error() {
         .id;
 
     eventually(TIMEOUT, "the advisory diagnosis to arrive", || async {
-        !events_of(&h, &author.id, "session.diagnosis")
+        !events_of(&h, &agent.id, "session.diagnosis")
             .await
             .is_empty()
     })
     .await;
-    let diagnosis = events_of(&h, &author.id, "session.diagnosis")
+    let diagnosis = events_of(&h, &agent.id, "session.diagnosis")
         .await
         .remove(0);
 
@@ -323,11 +337,11 @@ async fn a_failed_sessions_diagnosis_is_correlated_with_its_own_error() {
 #[tokio::test]
 async fn disabled_by_default_produces_no_diagnosis() {
     let server = ModelServer::answer("exhausted", json!({})).await;
-    let (h, author) = world(quota_error(), false, &server).await;
+    let (h, agent) = world(quota_error(), false, &server).await;
 
     tokio::time::sleep(QUIET).await;
     assert!(
-        events_of(&h, &author.id, "session.diagnosis")
+        events_of(&h, &agent.id, "session.diagnosis")
             .await
             .is_empty()
     );
@@ -340,7 +354,7 @@ async fn disabled_by_default_produces_no_diagnosis() {
 #[tokio::test]
 async fn a_malformed_answer_produces_no_diagnosis() {
     let server = ModelServer::malformed().await;
-    let (h, author) = world(quota_error(), true, &server).await;
+    let (h, agent) = world(quota_error(), true, &server).await;
 
     eventually(TIMEOUT, "the model to have been asked", || async {
         !server.requests.lock().unwrap().is_empty()
@@ -348,7 +362,7 @@ async fn a_malformed_answer_produces_no_diagnosis() {
     .await;
     tokio::time::sleep(QUIET).await;
     assert!(
-        events_of(&h, &author.id, "session.diagnosis")
+        events_of(&h, &agent.id, "session.diagnosis")
             .await
             .is_empty()
     );
@@ -365,19 +379,19 @@ async fn model_disagreement_never_moves_the_recorded_exhaustion() {
         json!({"exhausted": 0.05, "temporary": 0.05, "auth_config": 0.05, "task_error": 0.05, "insufficient": 0.8}),
     )
     .await;
-    let (h, author) = world(quota_error(), true, &server).await;
+    let (h, agent) = world(quota_error(), true, &server).await;
 
-    let errors = events_of(&h, &author.id, "session.error").await;
+    let errors = events_of(&h, &agent.id, "session.error").await;
     assert_eq!(errors[0]["error"]["exhausted"], json!(true));
     assert_eq!(errors[0]["error"]["exhausted_reason"], json!("quota"));
 
     eventually(TIMEOUT, "the advisory diagnosis to arrive", || async {
-        !events_of(&h, &author.id, "session.diagnosis")
+        !events_of(&h, &agent.id, "session.diagnosis")
             .await
             .is_empty()
     })
     .await;
-    let diagnosis = events_of(&h, &author.id, "session.diagnosis")
+    let diagnosis = events_of(&h, &agent.id, "session.diagnosis")
         .await
         .remove(0);
     assert_eq!(diagnosis["category"], json!("insufficient"));
@@ -389,7 +403,7 @@ async fn model_disagreement_never_moves_the_recorded_exhaustion() {
 #[tokio::test]
 async fn shutdown_cancels_a_diagnosis_in_flight() {
     let server = ModelServer::hanging().await;
-    let (h, _author) = world(quota_error(), true, &server).await;
+    let (h, _agent) = world(quota_error(), true, &server).await;
 
     eventually(TIMEOUT, "the hanging request to have started", || async {
         !server.requests.lock().unwrap().is_empty()
@@ -407,7 +421,7 @@ async fn shutdown_cancels_a_diagnosis_in_flight() {
 #[tokio::test]
 async fn an_absent_model_produces_no_diagnosis_the_same_as_one_still_loading() {
     let server = ModelServer::answer("exhausted", json!({})).await;
-    let (h, author) = world_with(
+    let (h, agent) = world_with(
         quota_error(),
         true,
         &server,
@@ -418,7 +432,7 @@ async fn an_absent_model_produces_no_diagnosis_the_same_as_one_still_loading() {
 
     tokio::time::sleep(QUIET).await;
     assert!(
-        events_of(&h, &author.id, "session.diagnosis")
+        events_of(&h, &agent.id, "session.diagnosis")
             .await
             .is_empty()
     );
@@ -489,7 +503,6 @@ async fn a_second_failure_while_one_is_in_flight_is_skipped_not_queued() {
             &goal,
             &repo,
             "first-task",
-            0,
             AgentPin {
                 model: "first:model".into(),
                 effort: None,
@@ -501,7 +514,6 @@ async fn a_second_failure_while_one_is_in_flight_is_skipped_not_queued() {
             &goal,
             &repo,
             "second-task",
-            0,
             AgentPin {
                 model: "second:model".into(),
                 effort: None,
@@ -512,9 +524,9 @@ async fn a_second_failure_while_one_is_in_flight_is_skipped_not_queued() {
     h.advance(&first_task, TaskStatus::InProgress).await;
     h.advance(&second_task, TaskStatus::InProgress).await;
 
-    let first_author = h.launcher.spawn_author(&first_task.id).await.unwrap();
-    eventually(TIMEOUT, "the first author to end", || async {
-        h.session_status(&first_author).await == SessionStatus::Exited
+    let first_agent = started(&h, &first_task).await;
+    eventually(TIMEOUT, "the first agent to end", || async {
+        h.session_status(&first_agent).await == SessionStatus::Exited
     })
     .await;
     eventually(TIMEOUT, "the first request to reach the model", || async {
@@ -522,9 +534,9 @@ async fn a_second_failure_while_one_is_in_flight_is_skipped_not_queued() {
     })
     .await;
 
-    let second_author = h.launcher.spawn_author(&second_task.id).await.unwrap();
-    eventually(TIMEOUT, "the second author to end", || async {
-        h.session_status(&second_author).await == SessionStatus::Exited
+    let second_agent = started(&h, &second_task).await;
+    eventually(TIMEOUT, "the second agent to end", || async {
+        h.session_status(&second_agent).await == SessionStatus::Exited
     })
     .await;
 
@@ -547,7 +559,7 @@ async fn a_second_failure_while_one_is_in_flight_is_skipped_not_queued() {
 #[tokio::test]
 async fn a_diagnosis_that_runs_past_its_bound_times_out_and_produces_none() {
     let server = ModelServer::hanging().await;
-    let (h, author) = world_with(
+    let (h, agent) = world_with(
         quota_error(),
         true,
         &server,
@@ -565,7 +577,7 @@ async fn a_diagnosis_that_runs_past_its_bound_times_out_and_produces_none() {
     .await;
     tokio::time::sleep(Duration::from_millis(600)).await;
     assert!(
-        events_of(&h, &author.id, "session.diagnosis")
+        events_of(&h, &agent.id, "session.diagnosis")
             .await
             .is_empty()
     );
@@ -582,10 +594,10 @@ async fn a_diagnosis_for_a_replaced_launch_keeps_that_launchs_id_and_disturbs_no
         json!({"exhausted": 0.9, "temporary": 0.03, "auth_config": 0.03, "task_error": 0.02, "insufficient": 0.02}),
     )
     .await;
-    let (h, author) = world(quota_error(), true, &server).await;
+    let (h, agent) = world(quota_error(), true, &server).await;
     let original_launch_id = h
         .store
-        .get_session(&author.id)
+        .get_session(&agent.id)
         .await
         .unwrap()
         .launch_id
@@ -599,22 +611,22 @@ async fn a_diagnosis_for_a_replaced_launch_keeps_that_launchs_id_and_disturbs_no
     .await;
     // A replacement launch takes the row over before the diagnosis answers.
     h.store
-        .set_session_launch(&author.id, "launch-replacement")
+        .set_session_launch(&agent.id, "launch-replacement")
         .await
         .unwrap();
 
     eventually(TIMEOUT, "the advisory diagnosis to arrive", || async {
-        !events_of(&h, &author.id, "session.diagnosis")
+        !events_of(&h, &agent.id, "session.diagnosis")
             .await
             .is_empty()
     })
     .await;
-    let diagnosis = events_of(&h, &author.id, "session.diagnosis")
+    let diagnosis = events_of(&h, &agent.id, "session.diagnosis")
         .await
         .remove(0);
     assert_eq!(diagnosis["launch_id"], json!(original_launch_id));
 
-    let current = h.store.get_session(&author.id).await.unwrap();
+    let current = h.store.get_session(&agent.id).await.unwrap();
     assert_eq!(current.launch_id.as_deref(), Some("launch-replacement"));
     assert_eq!(current.status(), SessionStatus::Exited);
 }
@@ -629,10 +641,10 @@ async fn the_stored_correlation_survives_a_restart() {
         json!({"exhausted": 0.75, "temporary": 0.1, "auth_config": 0.05, "task_error": 0.05, "insufficient": 0.05}),
     )
     .await;
-    let (h, author) = world(quota_error(), true, &server).await;
+    let (h, agent) = world(quota_error(), true, &server).await;
 
     eventually(TIMEOUT, "the advisory diagnosis to arrive", || async {
-        !events_of(&h, &author.id, "session.diagnosis")
+        !events_of(&h, &agent.id, "session.diagnosis")
             .await
             .is_empty()
     })
@@ -644,7 +656,7 @@ async fn the_stored_correlation_survives_a_restart() {
     let reopened = Store::open(&db_path).await.unwrap();
     let events = reopened
         .list_events(EventFilter {
-            session_id: Some(author.id.clone()),
+            session_id: Some(agent.id.clone()),
             limit: 50,
             ..Default::default()
         })
@@ -750,7 +762,6 @@ async fn a_permission_decision_preempts_a_hanging_diagnosis_and_is_not_delayed_b
             &goal,
             &repo,
             "failing-task",
-            0,
             AgentPin {
                 model: "failing:model".into(),
                 effort: None,
@@ -762,7 +773,6 @@ async fn a_permission_decision_preempts_a_hanging_diagnosis_and_is_not_delayed_b
             &goal,
             &repo,
             "asking-task",
-            0,
             AgentPin {
                 model: "asking:model".into(),
                 effort: None,
@@ -773,9 +783,9 @@ async fn a_permission_decision_preempts_a_hanging_diagnosis_and_is_not_delayed_b
     h.advance(&failing_task, TaskStatus::InProgress).await;
     h.advance(&asking_task, TaskStatus::InProgress).await;
 
-    let failing_author = h.launcher.spawn_author(&failing_task.id).await.unwrap();
-    eventually(TIMEOUT, "the failed author to end", || async {
-        h.session_status(&failing_author).await == SessionStatus::Exited
+    let failing_agent = started(&h, &failing_task).await;
+    eventually(TIMEOUT, "the failed agent to end", || async {
+        h.session_status(&failing_agent).await == SessionStatus::Exited
     })
     .await;
     eventually(
@@ -785,14 +795,14 @@ async fn a_permission_decision_preempts_a_hanging_diagnosis_and_is_not_delayed_b
     )
     .await;
 
-    let asking_author = h.launcher.spawn_author(&asking_task.id).await.unwrap();
+    let asking_agent = started(&h, &asking_task).await;
     // Without preemption this decision waits behind the hanging diagnosis
     // on the one worker and never gets its confident allow; with it, the
     // turn reaches `stop` well within this bound, with no console asked.
     eventually(
         TIMEOUT,
         "the ai-decided turn to finish without a console",
-        || async { h.session_status(&asking_author).await == SessionStatus::Idle },
+        || async { h.session_status(&asking_agent).await == SessionStatus::Idle },
     )
     .await;
 }

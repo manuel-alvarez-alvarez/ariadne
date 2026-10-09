@@ -401,20 +401,18 @@ mod tests {
     async fn task() -> Json<serde_json::Value> {
         Json(json!({
             "id": "task", "goal_id": "goal", "repo_id": "repo", "title": "Input box",
-            "description": "", "status": "in_progress", "agents": [], "depends_on": [],
-            "branch": "task", "landing": "merge", "worktree_path": null, "stalled": false,
-            "merge_commit": null, "pr_url": null, "picked_agent_id": null, "picks": [],
-            "reason": null,
+            "description": "", "status": "in_progress", "step": "develop", "agents": [],
+            "depends_on": [], "branch": "task", "worktree_path": null, "stalled": false,
+            "merge_commit": null, "pr_url": null, "reason": null,
             "usage": {"total": {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0},
-                      "author": {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0},
-                      "reviewers": []},
+                      "agents": []},
             "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"
         }))
     }
 
     async fn repository() -> Json<serde_json::Value> {
         Json(json!({
-            "id": "repo", "path": "/work/ariadne", "base_branch": "main", "description": null, "permission_mode": "auto", "default_landing": "merge",
+            "id": "repo", "path": "/work/ariadne", "base_branch": "main", "description": null, "permission_mode": "auto", "default_workflow": "develop-review-merge",
             "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"
         }))
     }
@@ -464,7 +462,7 @@ mod tests {
             goal_id: Some("goal".into()),
             task_id: Some("task".into()),
             task_agent_id: None,
-            seat: Some(Seat::Author),
+            seat: Some(Seat::Agent),
             model: "stub:model".into(),
             effort: Some("high".into()),
             internal_session_id: None,

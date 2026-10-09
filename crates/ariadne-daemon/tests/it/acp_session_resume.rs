@@ -8,7 +8,7 @@ use serde_json::json;
 
 use ariadne_api::error::ErrorBody;
 use ariadne_api::sessions::{SessionDto, SessionKind, SessionPageDto};
-use ariadne_core::{PermissionMode, Seat, SessionStatus};
+use ariadne_core::{PermissionMode, SessionStatus};
 use ariadne_store::{SessionFilter, TaskFilter};
 
 use common::acp::{script, stub_acp_agent};
@@ -367,9 +367,7 @@ async fn a_session_missing_from_the_snapshot_is_refused_after_one_fresh_snapshot
 async fn an_agent_session_cannot_resume_an_outside_session() {
     let h = harness().await;
     let cast = h.cast().await;
-    let session = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    let session = h.agent_session(&cast, "develop").await;
     let (status, _) = h
         .send(as_session(
             "/v1/outside-sessions/resume",

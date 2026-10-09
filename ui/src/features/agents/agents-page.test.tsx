@@ -541,7 +541,9 @@ describe("ranking a model", () => {
       expect(lastWrite()).toMatchObject({ method: "PUT", path: "/v1/models/rank" })
       expect(lastWrite()?.body).toEqual({ id: LOCAL.id, rank: word })
     }
-  })
+    // Four picks through a select, each a round trip: on a loaded machine
+    // that is past the default five seconds.
+  }, 15_000)
 
   it("sends null to clear a rank back to unranked", async () => {
     const user = userEvent.setup()

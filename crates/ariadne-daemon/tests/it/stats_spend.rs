@@ -9,13 +9,18 @@ use common::{Harness, harness};
 
 const LAUNCH: &str = "01launchonexxxxxxxxxxxxxxx";
 
-/// An ended author session on a task of its own, having spent 1000 tokens
-/// in, 800 of them cached, and 100 out.
+/// An ended session of a column's agent on a task of its own, having spent
+/// 1000 tokens in, 800 of them cached, and 100 out.
 async fn ended_session(h: &Harness) {
     h.git_repo("repo");
     let cast = h.cast().await;
     let session = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
+        .session(
+            &cast.goal,
+            Some(&cast.task),
+            Seat::Agent,
+            &cast.develop().id,
+        )
         .await;
     h.store
         .set_session_launch(&session.id, LAUNCH)

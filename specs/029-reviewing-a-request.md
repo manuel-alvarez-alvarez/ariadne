@@ -247,7 +247,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   GitLab's summary note is edited the same way:
   `pull_request_reviews.rs::a_gitlab_finding_on_a_renamed_file_names_its_old_path`.
   The author's answer in a review's thread reaches the review:
-  `kept_requests.rs::an_ariadne_review_of_a_kept_request_reaches_its_author`.
+  `kept_requests.rs::an_ariadne_review_of_a_kept_request_reaches_its_pr_agent`.
 - A summary that fails keeps the findings posted, and a round with no
   comments writes it:
   `pull_request_reviews.rs::a_failed_summary_keeps_the_posted_findings_for_a_round_with_no_comments`.
@@ -265,7 +265,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   `pull_request_reviews.rs::a_gitlab_finding_on_a_renamed_file_names_its_old_path`.
 - An Ariadne review of a request a task's author keeps reaches that author,
   waits on it, and is answered by its reply:
-  `kept_requests.rs::an_ariadne_review_of_a_kept_request_reaches_its_author`.
+  `kept_requests.rs::an_ariadne_review_of_a_kept_request_reaches_its_pr_agent`.
 - A draft is no work and gets no row until it leaves draft, and a
   repository with no review pin gives its review requests none:
   `pull_request_reviews.rs::a_draft_starts_no_review_until_it_leaves_draft`.
@@ -299,7 +299,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   `prompts.rs::tests::the_pull_request_texts_fill_every_placeholder_they_name`.
 - The reviewer PR seat lists its eight tools and no task or message tool, and
   its tools call the routes of its request:
-  `mcp.rs::tests::the_pull_request_reviewer_seat_lists_its_eight_tools_and_no_task_or_message_tool`,
+  `mcp.rs::tests::the_pull_request_reviewer_seat_lists_its_tools_and_no_task_or_message_tool`,
   `tools.rs::tests::the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request`.
 - The skill is within its caps, names the three priorities, names
   `request_changes` only beside P0, resolves a thread a push fixed, and

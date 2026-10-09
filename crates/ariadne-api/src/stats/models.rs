@@ -24,10 +24,6 @@ pub struct ModelStatDto {
     pub time_secs: f64,
     /// The messages this model sent in this seat.
     pub messages: u64,
-    /// The mean review requests over this author model's finished tasks; null
-    /// except for authors.
-    pub rounds_per_task: Option<f64>,
-    /// Changes requested over the tasks this reviewer model gave a verdict on;
-    /// null except for reviewers.
-    pub changes_per_task: Option<f64>,
+    /// The tasks this model's column ended `finished`.
+    pub tasks_finished: u64,
 }

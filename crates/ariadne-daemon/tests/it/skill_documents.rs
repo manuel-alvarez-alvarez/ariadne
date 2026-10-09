@@ -12,12 +12,14 @@ use crate::common;
 use axum::http::StatusCode;
 
 use ariadne_api::skills::{SkillDto, SkillSeat};
-use ariadne_core::{Landing, Seat};
+use ariadne_core::{Seat, TaskStatus};
 use ariadne_store::defaults::{
-    BUILTIN_SKILLS, ORCHESTRATION_SKILL, default_skill_document, default_system_prompt, skill_text,
+    BUILTIN_SKILLS, ORCHESTRATION_SKILL, PR_BABYSIT_SKILL, default_skill_document,
+    default_system_prompt, skill_text,
 };
+use ariadne_store::{AgentSession, Task};
 
-use common::{delete, get, harness, post, post_json, put_json};
+use common::{Harness, delete, get, harness, post, post_json, put_json};
 
 /// A shipped skill runs on the text Ariadne ships and stores none of it; a
 /// text written over it is the skill's own until the reset takes it back off.
@@ -204,37 +206,96 @@ async fn an_edited_orchestration_skill_reaches_the_next_launch() {
     );
 }
 
-/// `pull-request` left the catalog: opening a request is the daemon's own
-/// tool now, behind `open_pull_request`, so no author reads a skill for it
-/// — not even one whose task lands by pull request.
-///
-/// An old staffing on it is the kept-row case any dropped skill leaves
-/// ([`crate::common::Harness::stage_dropped_skill`]): the row stays because
-/// the author still names it, and it reads as empty since nothing ships
-/// under the name any more, so the copy written to the author's run
-/// directory is blank.
-#[tokio::test]
-async fn an_old_staffing_on_pull_request_reads_as_empty() {
-    let h = harness().await;
-    h.git_repo("repo");
-    let cast = h.active_cast_ending_in(Landing::PullRequest).await;
-    h.stage_dropped_skill(&cast.author.id, "pull-request", 2)
-        .await;
+/// The session of the agent of column `step`, once the scheduler has started
+/// it: the goal is active and the task in progress, and the daemon moves it
+/// forward to that column.
+async fn column_session(h: &Harness, task: &Task, step: &str) -> AgentSession {
+    h.advance_to(task, step).await;
+    h.notify(&task.id);
+    h.step_session(task, step).await
+}
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
-
-    let document = h
-        .launcher
+/// Where a session's launch wrote the document of `skill`.
+fn skill_file(h: &Harness, session: &AgentSession, skill: &str) -> std::path::PathBuf {
+    h.launcher
         .cfg
         .run_dir
         .join(&session.id)
         .join("skills")
-        .join("pull-request")
-        .join("SKILL.md");
+        .join(skill)
+        .join("SKILL.md")
+}
+
+/// A column's agent loads the skills it is staffed on, and no other: the
+/// `pr` column of `develop-review-pr` stages `pr-babysit`, so its agent is
+/// indexed on that document and nothing else, over the seat text every
+/// column's agent owes. The `develop` column's agent is indexed on `coding`
+/// and knows nothing of the request.
+#[tokio::test]
+async fn a_columns_agent_loads_its_staffed_skills_and_the_pr_column_loads_pr_babysit() {
+    let h = harness().scheduler().await;
+    h.git_repo("repo");
+    let cast = h.active_cast_running(Some("develop-review-pr")).await;
+    let pr = column_session(&h, &cast.task, "pr").await;
+
+    let launch = h.launch_file(&pr.id).expect("a launch file");
+    assert!(
+        launch
+            .system_prompt
+            .starts_with(default_system_prompt(Seat::Agent).trim()),
+        "the seat's own text first: {}",
+        launch.system_prompt
+    );
+    assert!(
+        launch
+            .system_prompt
+            .contains(&format!("- {PR_BABYSIT_SKILL}: ")),
+        "{}",
+        launch.system_prompt
+    );
+    assert!(
+        !launch.system_prompt.contains("- coding: "),
+        "the request column does not write code: {}",
+        launch.system_prompt
+    );
+    let document = skill_file(&h, &pr, PR_BABYSIT_SKILL);
     assert_eq!(
-        std::fs::read_to_string(&document).unwrap(),
+        std::fs::read_to_string(&document).expect("the document on disk"),
+        skill_text(default_skill_document(PR_BABYSIT_SKILL).unwrap())
+    );
+    assert!(!skill_file(&h, &pr, "coding").exists());
+}
+
+/// `pull-request` left the catalog: opening a request is the daemon's own
+/// tool now, behind `open_pull_request`, so no agent reads a skill for it —
+/// not even the agent of a `pr` column.
+///
+/// An old staffing on it is the kept-row case any dropped skill leaves
+/// ([`crate::common::Harness::stage_dropped_skill`]): the row stays because
+/// the agent still names it, and it reads as empty since nothing ships
+/// under the name any more, so the copy written to the agent's run
+/// directory is blank.
+#[tokio::test]
+async fn an_old_staffing_on_pull_request_reads_as_empty() {
+    let h = harness().scheduler().await;
+    h.git_repo("repo");
+    let cast = h.active_cast().await;
+    h.stage_dropped_skill(&cast.develop().id, "pull-request", 2)
+        .await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    h.notify(&cast.task.id);
+    let develop = h.step_session(&cast.task, "develop").await;
+
+    assert_eq!(
+        std::fs::read_to_string(skill_file(&h, &develop, "pull-request")).unwrap(),
         "",
         "an old staffing on pull-request does not read the removed skill"
+    );
+    assert!(
+        !std::fs::read_to_string(skill_file(&h, &develop, "coding"))
+            .unwrap()
+            .is_empty(),
+        "the column's own skill is read whole beside it"
     );
 }
 

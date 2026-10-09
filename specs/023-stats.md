@@ -45,15 +45,15 @@ of the desktop app.
 ## Scope
 
 In: the ledger, the rules a fact obeys, every fact kind (`attention`, `session_ended`,
-`switch`, `message`, `verdict`, `permission`, `task_ended` and
-`pick`), the filters every family takes, the frame the five families share —
+`switch`, `message`, `permission`, `task_ended` and `goal_ended`), the
+filters every family takes, the frame the five families share —
 their routes, the command, the screen and its shared pieces, the query keys
 and the bucket rule — and each family's own rules.
 
 Out: token accounting itself (012, rules 13 to 16), what a session is and how
-it ends (008), what a skill is (017), and the task state machine and the pick
-itself, `task_picks` included (004) — the fact is a record of what they
-decided, not a change to how they decide it.
+it ends (008), what a skill is (017), and the task state machine and the
+columns a task walks (001, 030) — the fact is a record of what they decided,
+not a change to how they decide it.
 
 ## Behavior
 
@@ -153,15 +153,13 @@ decided, not a change to how they decide it.
     event already exist, and a ledger failure does not undo or refuse a
     switch already under way (rule 10).
 
-### The review facts
+### The message fact
 
 19. Every stored task message writes a `message` fact. Its `data` holds
     `kind`, `from_actor` and `to_actor`, and the sender session supplies its
     model and seat.
-20. An accepted verdict also writes a `verdict` fact from the reviewer
-    session. Its `data` holds `verdict`, `author_model`, `author_session_id`,
-    `round` (the author's count of review requests on the task) and
-    `latency_secs` (from the latest request to the verdict).
+20. There is no verdict fact: a review's outcome is a step call, and the
+    `task_ended` fact names the column a task ended in (rule 23).
 
 ### The permission facts
 
@@ -180,45 +178,17 @@ decided, not a change to how they decide it.
     being written alongside it. A task retried and failed again writes one
     more fact.
 23. Its `data` holds `status` (`finished`, `cancelled` or `failed`),
-    `reason` (the transition's own reason), `landing` (the task's own, as
-    005 spells it), `lead_time_secs` (from the task's `created_at` to the
-    transition), `review_requests` (the count of `review_request` messages
-    on the task) and `authors` (the count of author agents staffed), and
-    `picked` (true where `picked_agent_id` is set), and `status_secs` (an
-    object with the seconds in `pending`, `ready`, `in_progress`,
-    `under_review`, `changes_requested` and `approved`, summed across the
-    task's whole life from its transitions). The ending status has no time.
-    The repository, the
-    goal and the task are the task's own; there is no session to one.
-24. The model, the effort and the skills are the picked author's where the
-    task staffed several authors, the one author's where it staffed a
-    single one, and none of the three where it staffed several and none
-    was picked yet — a task cancelled or failed before its pick settled.
-
-### The `pick` fact
-
-25. A contested task's settled pick writes one `pick` fact, inside
-    `Store::set_task_picked` itself (004 rule 14) rather than from the
-    daemon once that call returns: the winner's column and this fact are
-    one transaction, so there is no moment where a daemon could die with
-    the winner written and the fact not. Its `data` holds `winner_model`,
-    `loser_models` (the losing authors' models, as an array) and
-    `reviewers` (the count of reviewers staffed on the task).
-26. The repository and the goal are the task's own, and the model, the
-    effort and the skills are the winning `task_agents` row's own
-    (`task_agent_skills`) rather than a session's: a session can end, be
-    resumed under another one, or never have existed, none of which should
-    stand between the winner being on the task and the fact that says who
-    lost to it. Two authors of one contest sharing a model are still one
-    row each, since the fact names the model, not the agent. `session_id`
-    and `launch_id` are the winner's live session where `run_the_pick`
-    found one, carried straight through to the fact; absent where it found
-    none.
-27. Each settled contest calls `set_task_picked` once, so each one writes
-    one fact of its own: a task retried clears the winner
-    (`Store::clear_task_picks`) and runs its review again, and the next
-    settlement's fact is its own rather than a second one of a task
-    already named.
+    `reason` (the transition's own reason), `lead_time_secs` (from the
+    task's `created_at` to the transition), `landed` (true where the last
+    column reported the commit the task landed as), `step` (the column the
+    task ended in, absent for a task that never entered one) and
+    `status_secs` (an object with the seconds in `pending`, `ready` and
+    `in_progress`, summed across the task's whole life from its
+    transitions). The ending status has no time. The repository, the goal
+    and the task are the task's own; there is no session to one.
+24. The seat is `agent`, and the model, the effort and the skills are those
+    of the agent of the column the task ended in (030); a task that ended
+    before its first column names none of the three.
 
 ### The frame
 
@@ -322,7 +292,7 @@ changes landed, over time.
     passes. A move to the same status writes no fact.
 38. Its `data` holds `status` (`completed` or `cancelled`), `lead_time_secs`
     (from the goal's `created_at` to the move), `tasks` (the count of its
-    tasks), `tasks_finished` (those `finished`) and `landing` (the goal's
+    tasks), `tasks_finished` (those `finished`) and `workflow` (the goal's
     own). `goal_id` is the goal's; `repo_id` is the goal's one repository, or
     null where it works in several; `model` and `effort` are the goal's
     orchestrator pin.
@@ -331,7 +301,7 @@ changes landed, over time.
     `median_goal_lead_time_secs` (over completed goals), `tasks_finished`,
     `tasks_failed`, `tasks_cancelled`, `finish_rate` (`tasks_finished` over
     the three, 0 where there are none) and `landed` (`task_ended` facts
-    `finished` whose `landing` is `merge` or `pull_request`). `bucket` is
+    `finished` whose `landed` is true). `bucket` is
     `Bucket::for_span` of the span rule 32 names (`"hour"`, `"day"` or
     `"week"`); `buckets` is one row per bucket of that whole span, zeros
     included, each with `start`, `tasks_finished`, `tasks_failed`,
@@ -409,17 +379,16 @@ nothing here converts one.
 
 `Store::model_stats` reads only filtered `stat_facts` and returns `ModelStats { items }`.
 `GET /v1/stats/models` returns the same fields through `ModelStatsDto` and the shared `StatsQuery`.
-Each named model gets one row per seat, including models named only inside verdicts or picks.
-A verdict names its `author_model` as an author, and a pick names its winner and losers as authors.
+Each named model gets one row per seat.
 A model named only by a `switch` fact, a `permission` fact with `decided_by = console`, or an
 `attention` fact with reason `waiting_input`, `waiting_user`, `stalled` or `agent_error` gets a row too.
 Such a row carries zero figures.
-Rows sort by orchestrator, author, reviewer, then no seat, and by model within each seat.
+Rows sort by orchestrator, agent, then no seat, and by model within each seat.
 A fact without a model contributes to no figure.
 Both filters apply before any aggregation.
 
-Each row carries `model`, `seat`, `tasks`, `goals`, `tokens`, `time_secs`, `messages`,
-`rounds_per_task` and `changes_per_task`.
+Each row carries `model`, `seat`, `tasks`, `goals`, `tokens`, `time_secs`, `messages`
+and `tasks_finished`.
 `tasks` counts the distinct tasks of this model's `session_ended` facts in this seat.
 `goals` counts the distinct goals of the same facts.
 `tokens` sums `input_tokens` and `output_tokens` of those facts.
@@ -427,29 +396,23 @@ Cached tokens are already part of input and are never added again.
 `time_secs` sums their `lifetime_secs`.
 `messages` counts the `message` facts this model sent in this seat.
 
-`rounds_per_task` is null except for authors.
-For an author it is the mean `review_requests` over this model's `task_ended` facts with status `finished`.
-`changes_per_task` is null except for reviewers.
-For a reviewer it divides this model's `verdict` facts with verdict `request_changes`
-by the distinct tasks this model gave a verdict on.
-Each of the two is zero without a denominator.
+`tasks_finished` counts this model's `task_ended` facts with status `finished`: the tasks
+whose last column this model's agent ended.
 
 The CLI prints one comparison table per seat, headed by the seat.
-`--seat orchestrator|author|reviewer` belongs only to `stats models` and limits table output.
+`--seat orchestrator|agent` belongs only to `stats models` and limits table output.
 JSON output always contains the complete DTO, regardless of `--seat`.
 A seatless row uses the TASKS columns under `NONE` in the CLI and remains available in JSON.
-The desktop section draws Authors, Reviewers, and Orchestrators through `StatTable`, omitting empty seats.
-Responses without rows for the three displayed seats use the shared empty state, including responses with only seatless rows.
+The desktop section draws the seat tables through `StatTable`, omitting empty seats.
+Responses without rows for the displayed seats use the shared empty state, including responses with only seatless rows.
 Each desktop table sorts by its first count descending, then by model.
 
 | Seat | Columns |
 | --- | --- |
-| Author | MODEL, TASKS, TOKENS, TIME, MESSAGES, ROUNDS/TASK |
-| Reviewer | MODEL, TASKS, TOKENS, TIME, MESSAGES, CHANGES/TASK |
+| Agent | MODEL, TASKS, TOKENS, TIME, MESSAGES, FINISHED |
 | Orchestrator | MODEL, GOALS, TOKENS, TIME, MESSAGES |
 
 TOKENS uses compact notation and TIME the existing duration formatter.
-ROUNDS/TASK and CHANGES/TASK print with one decimal.
 
 ### Attention
 
@@ -514,21 +477,15 @@ alongside the family's other totals, and the Stats screen's key figures (rule
 - An exhausted session that auto-switches writes one `switch` fact,
   `reason=exhausted` and `automatic=true`
   (`switch_stats.rs::an_exhausted_session_that_auto_switches_writes_one_switch_fact`).
-- Verdict facts count review requests as rounds, and message facts record
-  each stored message
-  (`review_stats.rs::verdicts_record_rounds_and_messages_record_each_message`).
 - A console permission answer writes a fact
   (`stats.rs::a_console_permission_answer_writes_a_fact`).
-- A task that finishes writes one `task_ended` fact with its status, its
-  author's model and a lead time
-  (`outcome_stats.rs::a_finished_task_writes_one_task_ended_fact`), and a task
+- A task that finishes writes one `task_ended` fact with its status, the
+  model of the column's agent, its column and a lead time
+  (`outcome_stats.rs::a_finished_task_writes_one_task_ended_fact`), a task
+  cancelled before its first column names no agent
+  (`::a_task_cancelled_before_its_first_column_names_no_agent`), and a task
   retried after it fails, and that fails again, writes a fact for each ending
   (`outcome_stats.rs::a_retried_task_that_fails_again_writes_two_facts`).
-- A two-author task writes one `pick` fact with the winner's and the loser's
-  models (`outcome_stats.rs::a_contested_pick_writes_one_pick_fact`), and a
-  task retried writes a `pick` fact for each settled cycle, not just the
-  first
-  (`store.rs::a_retried_contest_writes_a_pick_fact_for_each_settled_cycle`).
 
 #### The frame
 
@@ -616,7 +573,7 @@ alongside the family's other totals, and the Stats screen's key figures (rule
 #### Work
 
 - A goal completed writes one `goal_ended` fact with its status, lead time,
-  task counts and landing; a goal cancelled writes one too, and a second
+  task counts and workflow; a goal cancelled writes one too, and a second
   move to the same status writes no second one
   (`stats_work.rs::a_completed_goal_writes_one_goal_ended_fact`,
   `::a_cancelled_goal_writes_one_goal_ended_fact`).
@@ -703,22 +660,17 @@ alongside the family's other totals, and the Stats screen's key figures (rule
 - Each row counts the distinct tasks and goals, the tokens without cached tokens again,
   the time and the messages of its model and seat
   (`stats/models.rs::tests::each_figure_counts_the_sessions_and_messages_of_its_model_and_seat`).
-- Rounds per task is the mean over finished tasks, for authors only
-  (`stats/models.rs::tests::rounds_per_task_is_the_mean_review_requests_of_finished_tasks_for_authors_only`).
-- Changes per task divides changes requested by the tasks reviewed, for reviewers only
-  (`stats/models.rs::tests::changes_per_task_divides_changes_requested_by_the_tasks_reviewed_for_reviewers_only`).
-- A real `request_changes` verdict sent through the API lifts the reviewer's changes per task
-  above zero
-  (`stats_models.rs::a_real_request_changes_verdict_lifts_the_reviewers_changes_per_task`).
-- Both review figures are zero without a denominator
-  (`stats/models.rs::tests::the_review_figures_are_zero_without_a_denominator`).
+- Tasks finished counts the finished endings of a model's column
+  (`stats/models.rs::tests::tasks_finished_counts_the_finished_endings_of_a_models_column`),
+  and a task finished in its column through the API lifts its agent's count
+  (`stats_models.rs::a_task_finished_in_its_column_lifts_its_agents_tasks_finished`).
 - Every fact obeys both filters, including the exact time boundary
   (`stats/models.rs::tests::every_fact_is_filtered_by_time_and_repository`).
 - Rows sort by seat, then by model
   (`stats/models.rs::tests::rows_sort_by_seat_then_model`).
-- Models named only in verdict or pick payloads, or only by switch, console permission and
-  attention facts, get rows under both filters
-  (`stats/models.rs::tests::models_named_only_in_payloads_and_other_facts_get_rows_under_both_filters`).
+- Models named only by switch, console permission and attention facts get
+  rows under both filters
+  (`stats/models.rs::tests::models_named_in_other_facts_get_rows_under_both_filters`).
 - The route answers the new shape per model and seat under both filters
   (`stats_models.rs::each_model_and_seat_answers_its_figures_under_both_filters`).
 - CLI tables print each seat's columns and figures in seat order, and only the models command accepts `--seat`
@@ -760,12 +712,11 @@ alongside the family's other totals, and the Stats screen's key figures (rule
 `crates/ariadne-store/migrations/0001_init.sql`,
 `crates/ariadne-store/src/stats/`,
 `crates/ariadne-store/src/tasks.rs`,
-`crates/ariadne-store/src/picks.rs`,
 `crates/ariadne-store/src/events.rs`,
 `crates/ariadne-api/src/stats/`,
 `crates/ariadne-daemon/src/stats.rs`,
 `crates/ariadne-daemon/src/http/stats/`,
-`crates/ariadne-daemon/src/http/landing.rs`,
+`crates/ariadne-daemon/src/http/channel.rs`,
 `crates/ariadne-daemon/src/http/events.rs`,
 `crates/ariadne-daemon/src/launcher.rs`,
 `crates/ariadne-daemon/src/scheduler/goals.rs`,

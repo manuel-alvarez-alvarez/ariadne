@@ -15,7 +15,7 @@
 
 use tracing::{debug, info};
 
-use ariadne_core::{Actor, MessageKind, PromptKind, Seat};
+use ariadne_core::{Actor, PromptKind, Seat};
 use ariadne_store::{AgentSession, Message, MessageFilter, SessionFilter};
 
 use crate::agents::prompts;
@@ -31,28 +31,7 @@ impl super::Scheduler {
                 ..Default::default()
             })
             .await;
-        self.deliver(
-            waiting.unwrap_or_default(),
-            self.briefs_its_author(task_id).await,
-        )
-        .await;
-    }
-
-    /// Whether this task answers a change request with a briefing of its own.
-    ///
-    /// A task with one author does: the `changes_requested` arm resumes that
-    /// author with the feedback of every reviewer that asked, and stamps
-    /// those verdicts. A contested task does not — each of its authors is
-    /// nudged on its own branch while the reviews run side by side — so there
-    /// the channel is what carries a change request.
-    async fn briefs_its_author(&self, task_id: &str) -> bool {
-        let Ok(task) = self.store.get_task(task_id).await else {
-            return false;
-        };
-        let Ok(authors) = self.store.list_task_authors(task_id).await else {
-            return false;
-        };
-        authors.len() == 1 || task.picked_agent_id.is_some()
+        self.deliver(waiting.unwrap_or_default()).await;
     }
 
     /// And everything waiting on the goal's own channel, which is the
@@ -69,41 +48,26 @@ impl super::Scheduler {
                 ..Default::default()
             })
             .await;
-        // Nothing on a goal's channel is a verdict, so nothing there is
-        // briefed anywhere else.
-        self.deliver(waiting.unwrap_or_default(), false).await;
+        self.deliver(waiting.unwrap_or_default()).await;
     }
 
     /// One pass over a batch of undelivered messages, in the order they were
     /// written: the runtime queues each prompt behind the one before it.
     ///
-    /// `briefed_author` says that a change request in this batch travels as
-    /// the author's own briefing, so it is not handed on here as well.
-    async fn deliver(&mut self, waiting: Vec<Message>, briefed_author: bool) {
+    /// A message to the agent of a column the task is not in waits: that
+    /// agent sits idle until its column is current, and a message is not a
+    /// reason to wake it.
+    async fn deliver(&mut self, waiting: Vec<Message>) {
         for message in waiting {
-            // A review request is not a message to hand on: the reviewer's
-            // briefing is its delivery, and that briefing stamps it delivered.
-            if message.kind() == Some(MessageKind::ReviewRequest)
-                && message.to_actor() == Some(Actor::Reviewer)
-            {
-                debug!(message = %message.id, "a review request travels as the reviewer's briefing");
-                continue;
-            }
-            // And a change request is not one either: the author is resumed
-            // with the feedback of every reviewer that asked, in one briefing
-            // that stamps them. Handed on here as well, each one would reach
-            // the author twice.
-            if briefed_author
-                && message.kind() == Some(MessageKind::RequestChanges)
-                && message.to_actor() == Some(Actor::Author)
-            {
-                debug!(message = %message.id, "a change request travels as the author's briefing");
-                continue;
-            }
             let Some(session) = self.recipient_session(&message).await else {
                 debug!(message = %message.id, "nothing live to deliver the message to yet");
                 continue;
             };
+            if session.seat() == Some(Seat::Agent)
+                && !crate::attention::work_is_active(&self.store, &session).await
+            {
+                continue;
+            }
             let seat = message.from_actor().map_or("agent", |actor| actor.as_str());
             let task_title = self.sender_task_title(&message).await;
             let skills = self.sender_skills(&message).await;
@@ -152,8 +116,8 @@ impl super::Scheduler {
         let live = self.store.list_sessions(filter).await.ok()?;
         live.into_iter().find(|s| match message.to_actor() {
             Some(Actor::Orchestrator) => s.seat() == Some(Seat::Orchestrator),
-            // Addressed to one staffed agent, and to no other in its seat:
-            // two reviewers on a task are two recipients.
+            // Addressed to one staffed agent, and to no other of the task:
+            // the agents of two columns are two recipients.
             _ => s.task_agent_id.is_some() && s.task_agent_id == message.to_agent_id,
         })
     }

@@ -60,9 +60,12 @@ orchestrator decides (003).
 9. An edit that moves the model moves the pin whole: an effort that belonged
    to the model left behind does not travel with it.
 10. A goal carries the orchestrator's pin. Every other pin sits on the agent
-    the task staffs (017), one per author and per reviewer.
+    the task staffs (017), one per column.
 11. A session freezes its pin at its first launch: a re-pin steers the next
-    spawn, never the conversation already running. A switch moves the
+    spawn, never the conversation already running. A column's agent whose
+    pin an edit moved gets a session of its own at its next entry — the
+    retry of a failed task — on the new pin, and the session that ran on
+    the old pin stays as history (030). A switch moves the
     seat's pin. A same-agent switch moves the pin of the running session and
     keeps its conversation; a cross-agent switch starts a new session (008).
 12. The registry holds the agents of the shipped ACP registry index that the
@@ -164,21 +167,22 @@ orchestrator decides (003).
   does not list takes any effort but a blank one
   (`models.rs (core)::an_unlisted_model_takes_any_effort_but_a_blank_one`,
   `pins.rs::a_discovered_models_effort_choices_bound_its_pin`).
-- An effort of its own is run at the model already pinned, and `default`
-  clears it (`pins.rs::an_effort_of_its_own_is_run_at_the_model_already_pinned`).
+- An edit that names the model a column already runs with another effort
+  runs it at that effort, and `default` clears it
+  (`pins.rs::an_edit_runs_the_same_model_at_another_effort_and_default_clears_it`).
 - An edit moves the pin whole (`pins.rs::an_edit_moves_the_pin_whole`).
 - A task staffs each agent on its own pin
   (`pins.rs::a_task_staffs_each_agent_on_its_own_pin`), and a discovered
   catalog id pins agents through the API and reaches the registry command
   (`pins.rs::a_discovered_catalog_id_pins_agents_through_the_api`).
-- A session keeps what it started on for every seat
-  (`resume.rs::a_resumed_author_stays_on_the_model_its_session_started_on`,
-  `::a_running_reviewer_keeps_the_model_its_session_started_on`,
+- A session keeps what it started on for every seat, and a moved pin gets a
+  session of its own at the next entry of the column
+  (`resume.rs::a_relaunched_agent_stays_on_the_model_its_session_started_on`,
+  `::a_retry_after_a_staffing_edit_starts_a_new_session_on_the_new_pin`,
   `::an_orchestrator_respawn_stays_on_the_goals_pin`).
-- A switch moves the seat's pin: the staffed agent's for an author and a
-  reviewer, the goal's for an orchestrator
-  (`switch.rs::a_switched_author_starts_a_new_session_briefed_with_the_handoff`,
-  `::a_switched_reviewer_starts_a_new_session_on_the_review_it_owes`,
+- A switch moves the seat's pin: the staffed agent's for a column's agent,
+  the goal's for an orchestrator
+  (`switch.rs::a_switched_agent_starts_a_new_session_briefed_on_its_column`,
   `::a_switched_orchestrator_moves_the_goals_pin`).
 - A same-agent switch moves the running row's pin, including its effort
   (`switch.rs::a_same_agent_switch_keeps_the_row_and_conversation`,

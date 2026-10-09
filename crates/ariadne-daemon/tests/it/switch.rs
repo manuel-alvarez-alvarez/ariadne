@@ -4,8 +4,10 @@
 //!
 //! The new agent cannot resume the old conversation, so it is briefed as a
 //! fresh spawn of its seat is, handed the old session's history, and told
-//! what a resume would have told it. The agents are the harness's stub, and
-//! `git` is real: an author and a reviewer work in real worktrees.
+//! what a resume would have told it. A column's agent keeps its column: its
+//! successor is briefed with the column's first briefing, and the staffing
+//! of that column is what moves. The agents are the harness's stub, and
+//! `git` is real: a column's agent works in the task's real worktree.
 
 use crate::common;
 
@@ -13,12 +15,12 @@ use axum::http::StatusCode;
 use serde_json::json;
 
 use ariadne_api::sessions::SessionDto;
-use ariadne_core::{GoalStatus, PromptKind, Seat, SessionStatus};
+use ariadne_core::{GoalStatus, PromptKind, Seat, SessionStatus, TaskStatus};
 use ariadne_daemon::agents::prompts;
 use ariadne_store::{AgentPin, AgentSession, NewAgentEvent};
 
 use common::acp::{pid_is_alive, registry_home, script, stub_acp_agent};
-use common::{Harness, TIMEOUT, eventually, harness, post_json, put_json, sh};
+use common::{Cast, Harness, TIMEOUT, eventually, harness, post_json, put_json};
 
 /// The line every handoff opens with.
 const HANDOFF: &str = "This is the history of the session you continue.";
@@ -49,12 +51,47 @@ async fn first_turn_done(h: &Harness, session: &AgentSession) {
     .await;
 }
 
+/// A task in its first column on a repo on disk, its agents pinned to
+/// [`FROM`]: the goal active and the task in progress, as a column's agent
+/// is only ever started on.
+async fn in_progress(h: &Harness) -> Cast {
+    h.git_repo("repo");
+    let cast = h.cast_pinned(FROM).await;
+    let goal = h.activate(&cast.goal).await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    let task = h.store.get_task(&cast.task.id).await.unwrap();
+    Cast { goal, task, ..cast }
+}
+
+/// Start the develop column's agent and hand it the column's first briefing,
+/// the way the scheduler does once the agent is up: the launch itself carries
+/// no prompt. Answers the session and the briefing it was handed.
+async fn briefed_develop(h: &Harness, cast: &Cast) -> (AgentSession, String) {
+    let session = h
+        .launcher
+        .start_step_agent(&cast.task, cast.develop())
+        .await
+        .unwrap();
+    let task = h.store.get_task(&cast.task.id).await.unwrap();
+    let steps = h.store.goal_steps(&cast.goal.id).await.unwrap();
+    let step = steps.iter().find(|s| s.id == "develop").unwrap();
+    let briefing = h
+        .launcher
+        .step_first_briefing(&task, step, "")
+        .await
+        .unwrap();
+    h.launcher
+        .acp
+        .send_prompt(&session.id, briefing.clone())
+        .unwrap();
+    (session, briefing)
+}
+
 #[tokio::test]
 async fn a_same_agent_switch_keeps_the_row_and_conversation() {
     let h = harness().second_agent().await;
-    h.git_repo("repo");
-    let cast = h.cast_pinned(FROM, 1).await;
-    let old = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let cast = in_progress(&h).await;
+    let (old, _) = briefed_develop(&h, &cast).await;
     first_turn_done(&h, &old).await;
     let internal = h
         .store
@@ -86,7 +123,11 @@ async fn a_same_agent_switch_keeps_the_row_and_conversation() {
             .any(|call| call["value"] == "b")
     );
     assert_eq!(
-        h.store.get_task_agent(&cast.author.id).await.unwrap().model,
+        h.store
+            .get_task_agent(&cast.develop().id)
+            .await
+            .unwrap()
+            .model,
         SAME_TO
     );
 }
@@ -94,9 +135,8 @@ async fn a_same_agent_switch_keeps_the_row_and_conversation() {
 #[tokio::test]
 async fn a_same_agent_switch_sets_effort_and_clears_the_old_pin() {
     let h = harness().second_agent().await;
-    h.git_repo("repo");
-    let cast = h.cast_pinned(FROM, 1).await;
-    let old = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let cast = in_progress(&h).await;
+    let (old, _) = briefed_develop(&h, &cast).await;
     first_turn_done(&h, &old).await;
     let uri = format!("/v1/sessions/{}/switch", old.id);
     let with_effort: SessionDto = h
@@ -119,7 +159,7 @@ async fn a_same_agent_switch_sets_effort_and_clears_the_old_pin() {
     assert_eq!(cleared.effort, None);
     assert_eq!(
         h.store
-            .get_task_agent(&cast.author.id)
+            .get_task_agent(&cast.develop().id)
             .await
             .unwrap()
             .effort,
@@ -130,9 +170,8 @@ async fn a_same_agent_switch_sets_effort_and_clears_the_old_pin() {
 #[tokio::test]
 async fn an_ended_same_agent_session_uses_its_new_pin_on_revival() {
     let h = harness().second_agent().await;
-    h.git_repo("repo");
-    let cast = h.cast_pinned(FROM, 1).await;
-    let old = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let cast = in_progress(&h).await;
+    let (old, _) = briefed_develop(&h, &cast).await;
     first_turn_done(&h, &old).await;
     h.launcher.kill_session(&old.id).await.unwrap();
     let calls = h.agent.calls_of("session/set_config_option").len();
@@ -159,9 +198,8 @@ async fn a_refused_same_agent_option_keeps_the_old_pin() {
     scripted["reject_config_value"] = json!("b");
     let stub = stub_acp_agent(dir.path(), scripted);
     let h = harness().home(registry_home(&stub)).await;
-    h.git_repo("repo");
-    let cast = h.cast_pinned(FROM, 1).await;
-    let old = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let cast = in_progress(&h).await;
+    let (old, _) = briefed_develop(&h, &cast).await;
     first_turn_done(&h, &old).await;
 
     let err = h
@@ -181,7 +219,11 @@ async fn a_refused_same_agent_option_keeps_the_old_pin() {
     );
     assert_eq!(h.store.get_session(&old.id).await.unwrap().model, FROM);
     assert_eq!(
-        h.store.get_task_agent(&cast.author.id).await.unwrap().model,
+        h.store
+            .get_task_agent(&cast.develop().id)
+            .await
+            .unwrap()
+            .model,
         FROM
     );
 }
@@ -194,9 +236,8 @@ async fn a_same_agent_switch_during_a_turn_precedes_queued_input() {
     scripted["prompts"][0]["wait_for"] = json!(release.display().to_string());
     let stub = stub_acp_agent(dir.path(), scripted);
     let h = harness().home(registry_home(&stub)).await;
-    h.git_repo("repo");
-    let cast = h.cast_pinned(FROM, 1).await;
-    let old = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let cast = in_progress(&h).await;
+    let (old, _) = briefed_develop(&h, &cast).await;
     eventually(TIMEOUT, "the held turn", || async {
         release.with_extension("reached").exists()
     })
@@ -249,15 +290,19 @@ async fn switched_event(h: &Harness, session: &AgentSession) -> serde_json::Valu
     serde_json::from_str(&event.payload).unwrap()
 }
 
-/// `prompt` is `briefing`, a blank line, the handoff, a blank line and
-/// `resume`, in that order, and the handoff holds what the old session's
-/// first turn said.
-fn assert_briefing_handoff_resume(prompt: &str, briefing: &str, resume: &str) {
+/// `prompt` is `briefing`, a blank line, the handoff and — where the seat has
+/// one — a blank line and `resume`, in that order, and the handoff holds what
+/// the old session's first turn said.
+fn assert_briefing_handoff_resume(prompt: &str, briefing: &str, resume: Option<&str>) {
     let handoff = prompt
         .strip_prefix(&format!("{briefing}\n\n"))
-        .unwrap_or_else(|| panic!("the prompt opens with the seat's briefing: {prompt}"))
-        .strip_suffix(&format!("\n\n{resume}"))
-        .unwrap_or_else(|| panic!("the prompt ends with the resume text: {prompt}"));
+        .unwrap_or_else(|| panic!("the prompt opens with the seat's briefing: {prompt}"));
+    let handoff = match resume {
+        Some(resume) => handoff
+            .strip_suffix(&format!("\n\n{resume}"))
+            .unwrap_or_else(|| panic!("the prompt ends with the resume text: {prompt}")),
+        None => handoff,
+    };
     assert!(handoff.starts_with(HANDOFF), "{handoff}");
     assert!(
         handoff.contains("agent\ndone"),
@@ -265,24 +310,24 @@ fn assert_briefing_handoff_resume(prompt: &str, briefing: &str, resume: &str) {
     );
 }
 
-/// An author switched from one model to another gets a new row that names
-/// the old one. The old row is exited and records the switch. The new agent
-/// is briefed, handed the history and told to go on, and the author's pin
-/// moves to the new model.
+/// A column's agent switched from one model to another gets a new row that
+/// names the old one, on the same column, in the task's one worktree. The old
+/// row is exited and records the switch. The new agent is briefed with the
+/// column's first briefing and handed the history — the column's entry is
+/// the scheduler's to send, so nothing follows the handoff — and the column's
+/// staffing moves to the new model, and only that column's.
 #[tokio::test]
-async fn a_switched_author_starts_a_new_session_briefed_with_the_handoff() {
+async fn a_switched_agent_starts_a_new_session_briefed_on_its_column() {
     let h = harness().second_agent().await;
-    h.git_repo("repo");
-    let cast = h.cast_pinned(FROM, 1).await;
-    let old = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let cast = in_progress(&h).await;
+    let (old, briefing) = briefed_develop(&h, &cast).await;
     first_turn_done(&h, &old).await;
-    let briefing = first_prompt(&h, &old.id);
 
     let new = switch(&h, &old, TO).await;
 
     assert_ne!(new.id, old.id);
     assert_eq!(new.switched_from.as_deref(), Some(old.id.as_str()));
-    assert_eq!(new.seat, Some(Seat::Author));
+    assert_eq!(new.seat, Some(Seat::Agent));
     assert_eq!(new.task_id, old.task_id);
     assert_eq!(new.task_agent_id, old.task_agent_id);
     assert_eq!(new.worktree_path, old.worktree_path);
@@ -302,22 +347,23 @@ async fn a_switched_author_starts_a_new_session_briefed_with_the_handoff() {
         })
     );
 
-    let task = h.store.get_task(&cast.task.id).await.unwrap();
-    let resume =
-        prompts::author_resume_briefing(prompts::template_for(PromptKind::AuthorResume), &task);
-    assert_briefing_handoff_resume(&first_prompt(&h, &new.id), &briefing, &resume);
+    assert_briefing_handoff_resume(&first_prompt(&h, &new.id), &briefing, None);
     assert_eq!(h.launch_file(&new.id).unwrap().model, "b");
 
-    let author = h.store.get_task_agent(&cast.author.id).await.unwrap();
-    assert_eq!(author.model, TO);
+    let develop = h.store.get_task_agent(&cast.develop().id).await.unwrap();
+    assert_eq!(develop.model, TO);
+    let review = h.store.get_task_agent(&cast.review().id).await.unwrap();
+    assert_eq!(
+        review.model, FROM,
+        "only the switched column's staffing moves"
+    );
 }
 
 #[tokio::test]
-async fn a_switched_author_receives_an_older_user_correction_before_recent_noise() {
+async fn a_switched_agent_receives_an_older_user_correction_before_recent_noise() {
     let h = harness().second_agent().await;
-    h.git_repo("repo");
-    let cast = h.cast_pinned(FROM, 1).await;
-    let old = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let cast = in_progress(&h).await;
+    let (old, _) = briefed_develop(&h, &cast).await;
     first_turn_done(&h, &old).await;
     h.store
         .create_event(NewAgentEvent {
@@ -346,45 +392,6 @@ async fn a_switched_author_receives_an_older_user_correction_before_recent_noise
         "{prompt}"
     );
     assert!(!prompt.contains("recent routine output"), "{prompt}");
-}
-
-/// A reviewer switches the same way: a new row on its seat, the briefing of
-/// a fresh reviewer, the handoff and the review it owes, and its own pin
-/// moved.
-#[tokio::test]
-async fn a_switched_reviewer_starts_a_new_session_on_the_review_it_owes() {
-    let h = harness().second_agent().await;
-    let repo = h.git_repo("repo");
-    let cast = h.cast_pinned(FROM, 1).await;
-    sh(&repo, &format!("git branch {}", cast.task.branch));
-    let old = h
-        .launcher
-        .spawn_reviewer(&cast.task.id, &cast.reviewer.id)
-        .await
-        .unwrap();
-    first_turn_done(&h, &old).await;
-    let briefing = first_prompt(&h, &old.id);
-
-    let new = switch(&h, &old, TO).await;
-
-    assert_eq!(new.switched_from.as_deref(), Some(old.id.as_str()));
-    assert_eq!(new.seat, Some(Seat::Reviewer));
-    assert_eq!(new.task_agent_id, old.task_agent_id);
-    assert_eq!(new.worktree_path, old.worktree_path);
-    assert_eq!(h.session_status(&old).await, SessionStatus::Exited);
-    assert_eq!(switched_event(&h, &old).await["to"], json!(new.id));
-
-    let resume = prompts::reviewer_resume_briefing(
-        prompts::template_for(PromptKind::ReviewerResume),
-        &cast.task,
-        None,
-    );
-    assert_briefing_handoff_resume(&first_prompt(&h, &new.id), &briefing, &resume);
-
-    let reviewer = h.store.get_task_agent(&cast.reviewer.id).await.unwrap();
-    assert_eq!(reviewer.model, TO);
-    let author = h.store.get_task_agent(&cast.author.id).await.unwrap();
-    assert_eq!(author.model, FROM, "only the switched seat moves");
 }
 
 /// An orchestrator switches the same way, and the goal's pin is what moves:
@@ -416,7 +423,7 @@ async fn a_switched_orchestrator_moves_the_goals_pin() {
 
     let resume =
         prompts::template_for(PromptKind::OrchestratorResume).replace("{goal_title}", &goal.title);
-    assert_briefing_handoff_resume(&first_prompt(&h, &new.id), &briefing, &resume);
+    assert_briefing_handoff_resume(&first_prompt(&h, &new.id), &briefing, Some(&resume));
 
     let goal = h.store.get_goal(&goal.id).await.unwrap();
     assert_eq!(goal.model, TO);
@@ -483,9 +490,8 @@ async fn a_session_switched_mid_turn_is_cancelled_and_killed_before_the_new_one_
     held["stored_sessions"] = json!(["uuid-1234", "stub-session"]);
     held["prompts"][0]["wait_for"] = json!(h.at("never").display().to_string());
     h.agent.reprogram(held);
-    h.git_repo("repo");
-    let cast = h.cast_pinned(FROM, 1).await;
-    let old = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let cast = in_progress(&h).await;
+    let (old, _) = briefed_develop(&h, &cast).await;
     eventually(TIMEOUT, "the first turn to start", || async {
         !h.prompts_to(&old).is_empty()
     })
@@ -528,8 +534,8 @@ fn method(message: &serde_json::Value) -> Option<&str> {
     message.get("method").and_then(|m| m.as_str())
 }
 
-/// The live sessions on the author's seat of `task_id`.
-async fn live_authors(h: &Harness, task_id: &str) -> Vec<AgentSession> {
+/// The live sessions of the columns' agents on `task_id`.
+async fn live_agents(h: &Harness, task_id: &str) -> Vec<AgentSession> {
     h.store
         .list_sessions(ariadne_store::SessionFilter {
             task_id: Some(task_id.to_string()),
@@ -539,7 +545,7 @@ async fn live_authors(h: &Harness, task_id: &str) -> Vec<AgentSession> {
         .await
         .unwrap()
         .into_iter()
-        .filter(|s| s.seat() == Some(Seat::Author))
+        .filter(|s| s.seat() == Some(Seat::Agent))
         .collect()
 }
 
@@ -548,9 +554,8 @@ async fn live_authors(h: &Harness, task_id: &str) -> Vec<AgentSession> {
 #[tokio::test]
 async fn a_session_already_switched_is_not_switched_again() {
     let h = harness().second_agent().await;
-    h.git_repo("repo");
-    let cast = h.cast_pinned(FROM, 1).await;
-    let old = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let cast = in_progress(&h).await;
+    let (old, _) = briefed_develop(&h, &cast).await;
     first_turn_done(&h, &old).await;
     let new = switch(&h, &old, TO).await;
 
@@ -569,14 +574,14 @@ async fn a_session_already_switched_is_not_switched_again() {
         "{}",
         err.error.message
     );
-    let live: Vec<String> = live_authors(&h, &cast.task.id)
+    let live: Vec<String> = live_agents(&h, &cast.task.id)
         .await
         .into_iter()
         .map(|s| s.id)
         .collect();
     assert_eq!(live, std::slice::from_ref(&new.id));
-    let author = h.store.get_task_agent(&cast.author.id).await.unwrap();
-    assert_eq!(author.model, TO, "the refused switch moves no pin");
+    let develop = h.store.get_task_agent(&cast.develop().id).await.unwrap();
+    assert_eq!(develop.model, TO, "the refused switch moves no pin");
 }
 
 /// Two switches of one session at once start one successor: the other is
@@ -584,9 +589,8 @@ async fn a_session_already_switched_is_not_switched_again() {
 #[tokio::test]
 async fn two_switches_of_one_session_at_once_start_one_successor() {
     let h = harness().second_agent().await;
-    h.git_repo("repo");
-    let cast = h.cast_pinned(FROM, 1).await;
-    let old = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let cast = in_progress(&h).await;
+    let (old, _) = briefed_develop(&h, &cast).await;
     first_turn_done(&h, &old).await;
     let uri = format!("/v1/sessions/{}/switch", old.id);
 
@@ -598,7 +602,7 @@ async fn two_switches_of_one_session_at_once_start_one_successor() {
     let mut statuses = [first.0, second.0];
     statuses.sort();
     assert_eq!(statuses, [StatusCode::OK, StatusCode::CONFLICT]);
-    let live = live_authors(&h, &cast.task.id).await;
+    let live = live_agents(&h, &cast.task.id).await;
     assert_eq!(live.len(), 1, "{live:?}");
     assert_eq!(live[0].switched_from.as_deref(), Some(old.id.as_str()));
 }
@@ -609,9 +613,7 @@ async fn two_switches_of_one_session_at_once_start_one_successor() {
 async fn a_session_of_a_cancelled_goal_is_not_switched() {
     let h = harness().second_agent().await;
     let cast = h.cast().await;
-    let session = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    let session = h.agent_session(&cast, "develop").await;
     h.store
         .set_goal_status(&cast.goal.id, GoalStatus::Cancelled)
         .await
@@ -640,8 +642,8 @@ async fn a_session_of_a_cancelled_goal_is_not_switched() {
         StatusCode::NOT_FOUND,
     )
     .await;
-    let author = h.store.get_task_agent(&cast.author.id).await.unwrap();
-    assert_ne!(author.model, TO, "a refused switch moves no pin");
+    let develop = h.store.get_task_agent(&cast.develop().id).await.unwrap();
+    assert_ne!(develop.model, TO, "a refused switch moves no pin");
 }
 
 /// A model the user turned off is refused as a pin on it is, and so is a
@@ -658,9 +660,7 @@ async fn a_switch_to_a_model_that_is_turned_off_is_refused() {
     let h = harness().home(registry_home(&stub)).discover_agents().await;
     common::acp::discovery_settled(&h, &stub).await;
     let cast = h.cast().await;
-    let session = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    let session = h.agent_session(&cast, "develop").await;
     let off = "stub:old-model";
     let _: serde_json::Value = h
         .json(

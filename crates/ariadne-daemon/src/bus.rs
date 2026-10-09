@@ -27,7 +27,7 @@ use ariadne_store::{AgentSession, Change, Goal, Result, Store, Task};
 
 use crate::http::convert::{
     event_dto, goal_dto_of, message_dto, repository_dto, session_dto_of, skill_dto, task_dto_of,
-    transition_dto,
+    transition_dto, workflow_dto,
 };
 
 /// Events buffered per subscriber before it is considered too slow.
@@ -365,6 +365,15 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
         Change::SkillCreated(skill) => unscoped(DomainEvent::SkillCreated(skill_dto(skill))),
         Change::SkillUpdated(skill) => unscoped(DomainEvent::SkillUpdated(skill_dto(skill))),
         Change::SkillDeleted(name) => unscoped(DomainEvent::SkillDeleted(DeletedDto { id: name })),
+        Change::WorkflowCreated(workflow) => {
+            unscoped(DomainEvent::WorkflowCreated(workflow_dto(workflow)))
+        }
+        Change::WorkflowUpdated(workflow) => {
+            unscoped(DomainEvent::WorkflowUpdated(workflow_dto(workflow)))
+        }
+        Change::WorkflowDeleted(name) => {
+            unscoped(DomainEvent::WorkflowDeleted(DeletedDto { id: name }))
+        }
         Change::PullRequestsChanged(repository_id) => unscoped(DomainEvent::PullRequestsChanged(
             ariadne_api::stream::PullRequestsChangedDto { repository_id },
         )),
@@ -453,18 +462,18 @@ mod tests {
         let store = Store::open(dir.path().join("test.db")).await.unwrap();
         let repository = store
             .create_repository(NewRepository {
+                default_workflow: None,
                 path: "/tmp/probe".into(),
                 base_branch: "main".into(),
                 description: None,
                 permission_mode: None,
-                default_landing: None,
             })
             .await
             .unwrap();
         let goal = store
             .create_goal(NewGoal {
+                workflow: None,
                 issue_url: None,
-                landing: None,
                 title: "probe".into(),
                 description: String::new(),
                 repository_ids: vec![repository.id.clone()],

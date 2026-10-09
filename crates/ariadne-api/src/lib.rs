@@ -21,6 +21,7 @@ pub mod stats;
 pub mod stream;
 pub mod tasks;
 pub mod usage;
+pub mod workflows;
 
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};

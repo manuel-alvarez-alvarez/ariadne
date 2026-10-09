@@ -27,6 +27,7 @@ import {
   sessionAttention,
 } from "@/features/sessions/session-display"
 import { STALLED_META, TASK_STATUS_META, taskListQueryOptions } from "@/features/tasks"
+import { sessionColumn } from "@/features/tasks/steps"
 import { shortId } from "@/lib/format"
 import { sessionPanelFrom, sessionTerminalFrom, taskPanelFrom } from "@/routes/paths"
 
@@ -341,6 +342,15 @@ export function attentionTarget(
 }
 
 /**
+ * The agent behind a row's session: its seat, or for a step agent the
+ * workflow column it staffs.
+ */
+export function agentLabel(item: AttentionItem): string {
+  if (!item.session) return ""
+  return sessionColumn(item.session, item.task, item.goal) ?? seatLabel(item.session.seat)
+}
+
+/**
  * What the row is about, in one line: the task the agent was working on, or —
  * for an orchestrator, which has none — its seat and the goal it is planning.
  *
@@ -357,7 +367,7 @@ export function attentionSubject(item: AttentionItem): string {
     return `Pull request · ${item.session?.title ?? shortId(pullRequestId)}`
   }
   return item.session
-    ? `${seatLabel(item.session.seat)} · ${item.goal?.title ?? `Goal ${shortId(item.goalId)}`}`
+    ? `${agentLabel(item)} · ${item.goal?.title ?? `Goal ${shortId(item.goalId)}`}`
     : `Goal ${shortId(item.goalId)}`
 }
 
@@ -374,7 +384,7 @@ export function attentionDetail(item: AttentionItem): string {
   if (item.session && item.sessionReason) {
     const hint = SESSION_ATTENTION_META[item.sessionReason].hint
     // A task-less session already says its seat in the subject.
-    return item.taskId ? `${seatLabel(item.session.seat)} · ${hint}` : hint
+    return item.taskId ? `${agentLabel(item)} · ${hint}` : hint
   }
   const reason = item.taskReason
   return `Task · ${reason === "stalled" ? STALLED_META.hint : TASK_STATUS_META.failed.hint}`

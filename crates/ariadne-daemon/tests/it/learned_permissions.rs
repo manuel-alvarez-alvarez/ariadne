@@ -40,11 +40,11 @@ async fn learned_permission_routes_read_and_delete_and_publish_fat_events() {
     let repo = h
         .store
         .create_repository(NewRepository {
+            default_workflow: None,
             path: "/tmp/learned-api".into(),
             base_branch: "main".into(),
             description: None,
             permission_mode: None,
-            default_landing: None,
         })
         .await
         .unwrap();

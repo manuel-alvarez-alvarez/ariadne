@@ -1,8 +1,8 @@
 //! Attach/logs helpers: resolve an Ariadne id to a session's console.
 //!
 //! The id is a session, task or goal id — a task or goal one resolves to the
-//! session of the wanted seat (default author for tasks, orchestrator for
-//! goals). With no live session for it, attach revives the most recent
+//! session of the wanted seat (the current column's agent for tasks, the
+//! orchestrator for goals). With no live session for it, attach revives the most recent
 //! matching session (`POST /v1/sessions/{id}/resume`) and attaches to the
 //! fresh agent that resumes the same conversation.
 
@@ -12,6 +12,7 @@ use ariadne_api::sessions::{
     ResumeOutsideSessionRequest, SessionDto, SessionEntryDto, SessionKind, SessionPageDto,
     SessionPageQuery,
 };
+use ariadne_api::tasks::TaskDto;
 use ariadne_client::{Client, ClientError};
 use ariadne_core::Seat;
 use ariadne_core::models::agent_of;
@@ -27,7 +28,7 @@ fn hint(message: &str) -> String {
 }
 
 /// Sessions matching the id, plus the seat to attach to: task first (default
-/// author), then goal (default orchestrator).
+/// agent), then goal (default orchestrator).
 ///
 /// With no sessions on either side the id itself decides the wording — a task
 /// without sessions used to be reported as a missing *orchestrator* session,
@@ -37,7 +38,7 @@ async fn candidates(
     id: &str,
     seat: Option<Seat>,
 ) -> Result<(Vec<SessionEntryDto>, Seat)> {
-    for (query, default) in [("task", Seat::Author), ("goal", Seat::Orchestrator)] {
+    for (query, default) in [("task", Seat::Agent), ("goal", Seat::Orchestrator)] {
         let page: SessionPageDto = client
             .get_json(&query_path(
                 "/v1/sessions",
@@ -49,12 +50,24 @@ async fn candidates(
                 },
             )?)
             .await?;
-        let sessions = page.sessions;
-        if !sessions.is_empty() {
-            return Ok((sessions, seat.unwrap_or(default)));
+        let mut sessions = page.sessions;
+        if sessions.is_empty() {
+            continue;
         }
+        let wanted = seat.unwrap_or(default);
+        // Every column's agent sits in the one `agent` seat, and the agents
+        // of the columns a task has left keep their sessions, live or not. A
+        // task's console is its current column's, so the listing is narrowed
+        // to that column's agent before a session is picked from it.
+        if query == "task"
+            && wanted == Seat::Agent
+            && let Some(agent) = current_column_agent(client, id).await?
+        {
+            sessions.retain(|s| s.task_agent_id.as_deref() == Some(agent.as_str()));
+        }
+        return Ok((sessions, wanted));
     }
-    for (kind, default) in [("tasks", Seat::Author), ("goals", Seat::Orchestrator)] {
+    for (kind, default) in [("tasks", Seat::Agent), ("goals", Seat::Orchestrator)] {
         if found::<serde_json::Value>(client, &format!("/v1/{kind}/{id}"))
             .await?
             .is_some()
@@ -63,6 +76,23 @@ async fn candidates(
         }
     }
     bail!("no such task, goal or session: {id}")
+}
+
+/// The agent of the column a task is in, which is the agent its console
+/// belongs to: none while the task has not entered a column, or where the
+/// column has no agent yet.
+async fn current_column_agent(client: &Client, task_id: &str) -> Result<Option<String>> {
+    let Some(task) = found::<TaskDto>(client, &format!("/v1/tasks/{task_id}")).await? else {
+        return Ok(None);
+    };
+    let Some(step) = task.step.as_deref() else {
+        return Ok(None);
+    };
+    Ok(task
+        .agents
+        .iter()
+        .find(|a| a.step == step)
+        .map(|a| a.id.clone()))
 }
 
 /// What a GET on `path` answers with, or nothing at all when it 404s.
@@ -142,6 +172,31 @@ async fn attach_session(client: &Client, session: SessionDto) -> Result<()> {
             .post_empty(&format!("/v1/sessions/{}/resume", session.id))
             .await?
     };
+    attach_to(client, &session).await
+}
+
+/// The session of one named workflow column of a stepped task, whether or
+/// not it is the current one — unlike [`resolve_live`], `--step` reaches a
+/// column idle between its turns, which carries a session but no live one.
+pub(crate) async fn resolve_step(client: &Client, task_id: &str, step: &str) -> Result<SessionDto> {
+    let t: TaskDto = client.get_json(&format!("/v1/tasks/{task_id}")).await?;
+    let agent = t
+        .agents
+        .iter()
+        .find(|a| a.step == step)
+        .ok_or_else(|| anyhow::anyhow!("task {task_id} staffs no agent on column {step}"))?;
+    let session_id = agent.session_id.as_deref().ok_or_else(|| {
+        anyhow::anyhow!("no session recorded yet for column {step} of task {task_id}")
+    })?;
+    client
+        .get_json(&format!("/v1/sessions/{session_id}"))
+        .await
+        .map_err(Into::into)
+}
+
+/// `task attach --step <id>`: the console of the named column's agent.
+pub(crate) async fn attach_step(client: &Client, task_id: &str, step: &str) -> Result<()> {
+    let session = resolve_step(client, task_id, step).await?;
     attach_to(client, &session).await
 }
 
@@ -275,6 +330,7 @@ mod tests {
 
     use ariadne_core::SessionStatus;
 
+    use crate::commands::fixtures;
     use crate::commands::fixtures::session;
 
     fn outside(id: &str, agent_id: &str) -> SessionEntryDto {
@@ -302,6 +358,158 @@ mod tests {
             ended_at: None,
             pull_request_id: None,
         }
+    }
+
+    /// A task's console is its current column's: with the sessions of two
+    /// columns live, the one listed first by its latest activity being the
+    /// column the task has left, attach and logs pick the current column's,
+    /// and so does the revive of a task with no live session.
+    #[tokio::test]
+    async fn resolve_live_and_revive_pick_the_current_columns_session() {
+        use std::sync::{Arc, Mutex};
+
+        use axum::extract::{Path, State};
+        use axum::routing::{get, post};
+        use axum::{Json, Router};
+
+        #[derive(Clone)]
+        struct Api {
+            live: bool,
+            resumed: Arc<Mutex<Vec<String>>>,
+        }
+
+        async fn task() -> Json<TaskDto> {
+            Json(TaskDto {
+                step: Some("review".into()),
+                agents: vec![
+                    fixtures::agent("01A", "develop", &["coding"]),
+                    fixtures::agent("01B", "review", &["code-review"]),
+                ],
+                ..fixtures::task("01TASK", "01GOAL")
+            })
+        }
+
+        fn column_session(id: &str, agent: &str, live: bool) -> SessionEntryDto {
+            let mut entry = outside(id, "codex-acp");
+            entry.kind = SessionKind::Ariadne;
+            entry.goal_id = Some("01GOAL".into());
+            entry.task_id = Some("01TASK".into());
+            entry.seat = Some(Seat::Agent);
+            entry.task_agent_id = Some(agent.into());
+            entry.status = Some(if live {
+                SessionStatus::Idle
+            } else {
+                SessionStatus::Exited
+            });
+            entry.model = Some("codex-acp:model".into());
+            entry
+        }
+
+        async fn listed(State(api): State<Api>) -> Json<SessionPageDto> {
+            // The develop column's session reported last, so it is listed
+            // first; the task is in its review column all the same.
+            Json(SessionPageDto {
+                sessions: vec![
+                    column_session("01DEVELOP", "01A", api.live),
+                    column_session("01REVIEW", "01B", api.live),
+                ],
+                next_cursor: None,
+                total: 2,
+                snapshot_at: "2026-09-12T12:00:00Z".into(),
+            })
+        }
+
+        async fn one_session(Path(id): Path<String>) -> Json<SessionDto> {
+            Json(session(&id, "01GOAL", Some("01TASK")))
+        }
+
+        async fn resume(State(api): State<Api>, Path(id): Path<String>) -> Json<SessionDto> {
+            api.resumed.lock().unwrap().push(id.clone());
+            Json(session(&id, "01GOAL", Some("01TASK")))
+        }
+
+        for live in [true, false] {
+            let api = Api {
+                live,
+                resumed: Arc::new(Mutex::new(Vec::new())),
+            };
+            let app = Router::new()
+                .route("/v1/tasks/01TASK", get(task))
+                .route("/v1/sessions", get(listed))
+                .route("/v1/sessions/{id}", get(one_session))
+                .route("/v1/sessions/{id}/resume", post(resume))
+                .with_state(api.clone());
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let client = Client::tcp(format!("http://{address}"));
+
+            if live {
+                let found = resolve_live(&client, "01TASK", None).await.unwrap();
+                assert_eq!(
+                    found.id, "01REVIEW",
+                    "the current column, not the latest row"
+                );
+            } else {
+                resolve_live(&client, "01TASK", None)
+                    .await
+                    .expect_err("nothing live");
+                let revived = revive(&client, "01TASK", None).await.unwrap();
+                assert_eq!(revived.id, "01REVIEW");
+                assert_eq!(*api.resumed.lock().unwrap(), ["01REVIEW"]);
+            }
+            server.abort();
+        }
+    }
+
+    /// `--step` finds the agent staffed on the named column and resolves its
+    /// session, whether or not that column is the task's current one.
+    #[tokio::test]
+    async fn resolve_step_finds_the_named_columns_session() {
+        use axum::extract::Path;
+        use axum::routing::get;
+        use axum::{Json, Router};
+
+        async fn task() -> Json<TaskDto> {
+            Json(TaskDto {
+                step: Some("review".into()),
+                agents: vec![
+                    ariadne_api::tasks::TaskAgentDto {
+                        session_id: Some("01DEVELOP".into()),
+                        ..fixtures::agent("01A", "develop", &["coding"])
+                    },
+                    ariadne_api::tasks::TaskAgentDto {
+                        session_id: Some("01REVIEW".into()),
+                        ..fixtures::agent("01B", "review", &["code-review"])
+                    },
+                ],
+                ..fixtures::task("01TASK", "01GOAL")
+            })
+        }
+
+        async fn one_session(Path(id): Path<String>) -> Json<SessionDto> {
+            Json(session(&id, "01GOAL", Some("01TASK")))
+        }
+
+        let app = Router::new()
+            .route("/v1/tasks/01TASK", get(task))
+            .route("/v1/sessions/{id}", get(one_session));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let client = Client::tcp(format!("http://{address}"));
+        let found = resolve_step(&client, "01TASK", "develop").await.unwrap();
+        assert_eq!(
+            found.id, "01DEVELOP",
+            "the idle column, not the current one"
+        );
+
+        let err = resolve_step(&client, "01TASK", "merge")
+            .await
+            .expect_err("no agent on that column");
+        server.abort();
+        assert!(err.to_string().contains("merge"), "{err}");
     }
 
     #[test]
@@ -367,7 +575,7 @@ mod tests {
             let mut entry = outside(id, "codex-acp");
             entry.kind = SessionKind::Ariadne;
             entry.status = Some(SessionStatus::Exited);
-            entry.seat = Some(Seat::Author);
+            entry.seat = Some(Seat::Agent);
             entry.model = Some("codex-acp:model".into());
             entry
         }

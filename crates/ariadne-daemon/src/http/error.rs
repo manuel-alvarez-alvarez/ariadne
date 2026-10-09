@@ -29,6 +29,17 @@ impl ApiError {
         Self::new(StatusCode::BAD_REQUEST, "invalid_request", message)
     }
 
+    pub(crate) fn bad_request_with_details(
+        code: &str,
+        message: impl Into<String>,
+        details: serde_json::Value,
+    ) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            body: ErrorBody::with_details(code, message, details),
+        }
+    }
+
     pub(crate) fn conflict(message: impl Into<String>) -> Self {
         Self::new(StatusCode::CONFLICT, "conflict", message)
     }
@@ -46,6 +57,9 @@ impl From<StoreError> for ApiError {
             }
             // The code already says "conflict"; the message must not repeat it
             // (`StoreError::Conflict`'s own Display prefix would).
+            StoreError::WorkflowInUse(_) => {
+                Self::new(StatusCode::CONFLICT, "workflow_in_use", e.to_string())
+            }
             StoreError::Conflict(message) => Self::conflict(message.clone()),
             // Rust variant names are for the log; the envelope gets the
             // sentence a person can act on.

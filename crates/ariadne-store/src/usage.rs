@@ -11,11 +11,10 @@ use ariadne_core::{Seat, TokenUsage};
 
 use crate::{Change, Result, Store, now};
 
-/// The usage of one staffed agent in one seat — the author of a task, or one of
-/// its reviewers with every round it sat summed together.
+/// The usage of one staffed agent — the agent of one column of a task, with
+/// every run it made summed together.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentUsage {
-    pub seat: Seat,
     pub agent_id: String,
     pub usage: TokenUsage,
 }
@@ -104,31 +103,28 @@ impl Store {
         Ok(usage_of(sums))
     }
 
-    /// What a task has spent, one entry per `(seat, agent)` that has a
-    /// session on it: its author, and each reviewer with all its rounds
-    /// summed. Ordered by seat and then by agent id, so a reader sees the
+    /// What a task has spent, one entry per agent that has a session on it,
+    /// with every run of it summed. Ordered by agent id, so a reader sees the
     /// same order twice running.
     ///
     /// The join is outer because having spent nothing is not the same as not
-    /// being here: a reviewer whose session has yet to report reads as zeros,
-    /// and a reviewer with no session at all is absent.
+    /// being here: an agent whose session has yet to report reads as zeros,
+    /// and an agent with no session at all is absent.
     pub async fn task_usage(&self, task_id: &str) -> Result<Vec<AgentUsage>> {
-        let rows: Vec<(String, String, i64, i64, i64)> =
-            sqlx::query_as(sqlx::AssertSqlSafe(format!(
-                "SELECT s.seat, s.task_agent_id, {SUMS}
-                   FROM agent_sessions s
-              LEFT JOIN session_usage u ON u.session_id = s.id
-                  WHERE s.task_id = ?
-               GROUP BY s.seat, s.task_agent_id
-               ORDER BY s.seat, s.task_agent_id"
-            )))
-            .bind(task_id)
-            .fetch_all(self.r())
-            .await?;
+        let rows: Vec<(String, i64, i64, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT s.task_agent_id, {SUMS}
+               FROM agent_sessions s
+          LEFT JOIN session_usage u ON u.session_id = s.id
+              WHERE s.task_id = ? AND s.task_agent_id IS NOT NULL
+           GROUP BY s.task_agent_id
+           ORDER BY s.task_agent_id"
+        )))
+        .bind(task_id)
+        .fetch_all(self.r())
+        .await?;
         Ok(rows
             .into_iter()
-            .map(|(seat, agent_id, input, cached, output)| AgentUsage {
-                seat: seat.parse().expect("valid seat in db"),
+            .map(|(agent_id, input, cached, output)| AgentUsage {
                 agent_id,
                 usage: usage_of((input, cached, output)),
             })
@@ -136,7 +132,7 @@ impl Store {
     }
 
     /// What a goal has spent, one entry per seat that has a session on it —
-    /// its orchestrator, every author of its tasks, every reviewer of them.
+    /// its orchestrator, and the agents of every column of its tasks.
     /// Outer-joined like [`Store::task_usage`], and for the same reason.
     pub async fn goal_usage(&self, goal_id: &str) -> Result<Vec<SeatUsage>> {
         let rows: Vec<(String, i64, i64, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(

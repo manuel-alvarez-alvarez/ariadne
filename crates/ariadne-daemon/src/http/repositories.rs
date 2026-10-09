@@ -48,11 +48,11 @@ pub(super) async fn create(
         .store
         .create_repository_with_forge(
             NewRepository {
+                default_workflow: req.default_workflow,
                 path: req.path,
                 base_branch,
                 description: req.description,
                 permission_mode: req.permission_mode,
-                default_landing: req.default_landing,
             },
             row,
         )
@@ -128,6 +128,7 @@ pub(super) async fn update(
         .update_repository_with_forge(
             &id,
             RepositoryUpdate {
+                default_workflow: req.default_workflow,
                 path: req.path,
                 base_branch,
                 description: req.description.map(|d| match d.is_empty() {
@@ -135,7 +136,6 @@ pub(super) async fn update(
                     false => Some(d),
                 }),
                 permission_mode: req.permission_mode,
-                default_landing: req.default_landing,
             },
             write,
         )

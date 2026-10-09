@@ -8,15 +8,17 @@ at.
 They are written to be referenced: an orchestrator names the spec a task works
 from, and an author reads it in its own worktree. So each one is short, states
 its rules as numbered sentences, and ties every acceptance criterion to the
-test that proves it.
+test that proves it. A spec that a later one replaced whole is marked
+`status: superseded` and names the spec that holds the account now; its
+number and file stay.
 
 | # | Spec | What it settles |
 | --- | --- | --- |
-| 001 | [Goal and task lifecycle](001-goal-and-task-lifecycle.md) | statuses, the transition table, dependencies, failure and retry |
+| 001 | [Goal and task lifecycle](001-goal-and-task-lifecycle.md) | the six statuses, the transition table, dependencies, failure and retry |
 | 002 | [Repositories, branches and worktrees](002-repositories-branches-and-worktrees.md) | checkouts, base branches, branch naming, the worktree per seat |
 | 003 | [Planning a goal](003-planning-a-goal.md) | the conversation, the plan, and the orchestrator's whole life |
-| 004 | [Authoring and review](004-authoring-and-review.md) | the author, the reviewers, and the verdicts on a review |
-| 005 | [How a task ends](005-how-a-task-ends.md) | `merge`, `pull_request`, `none` and `feature_branch`, chosen per goal, and merge verification |
+| 004 | [Authoring and review](004-authoring-and-review.md) | superseded by 030: the author, the reviewers and the verdicts are the develop and review columns |
+| 005 | [How a task ends](005-how-a-task-ends.md) | superseded by 030: the landings are the gate of a workflow's last column |
 | 006 | [Prompts and Simplified Technical English](006-prompts-and-simplified-technical-english.md) | the layers of text, who owns each, the English all of it is in |
 | 007 | [Agent launch](007-agent-cli-adapters.md) | how a registry agent is launched over ACP: the launch record, flags, skills, resume |
 | 008 | [Sessions and the console](008-sessions-terminals-and-logs.md) | session rows, the console, kill and resume |
@@ -27,8 +29,8 @@ test that proves it.
 | 014 | [Command-line interface](014-command-line-interface.md) | the command tree, flags, failures, completions, `doctor` |
 | 015 | [Desktop app](015-desktop-app.md) | Ariadne Desktop, and its parity with the CLI |
 | 016 | [Install, service and release](016-install-service-and-release.md) | the installer, the service, release-please, the migration policy |
-| 017 | [Skills and staffed agents](017-skills-and-staffed-agents.md) | the one agent type, the skill catalog, and how a task is staffed |
-| 018 | [Agent messages](018-agent-messages.md) | the one channel the agents talk on, and how a message reaches its recipient |
+| 017 | [Skills and staffed agents](017-skills-and-staffed-agents.md) | the one agent type, the skill catalog, and the agent of each column |
+| 018 | [Agent messages](018-agent-messages.md) | the one channel the agents talk on, one kind, and how a message reaches its recipient |
 | 020 | [Outside session resume](020-session-adoption.md) | discover outside conversations and resume them without a task |
 | 021 | [ACP runtime](021-acp-runtime.md) | the daemon-owned ACP agent: child process, protocol, events, kill |
 | 022 | [The `ai` permission mode](022-ai-permission-mode.md) | the fourth mode, the AI permission model's settings and prompts, the Python check and the install |
@@ -39,6 +41,7 @@ test that proves it.
 | 027 | [Webhooks and tunnel](027-webhooks-and-tunnel.md) | separate signed ingress, hook lifecycle, public URL handle, fetch modes, and the tunnel with its switch |
 | 028 | [Issues and goals](028-issues-and-goals.md) | live forge issues and goals created from them |
 | 029 | [Reviewing a request](029-reviewing-a-request.md) | the reviewer session on a request that asks for the user's review, its detached worktree, its news, one review by priority, and no approval |
+| 030 | [Workflows](030-workflows.md) | the workflow every goal runs on: the document, the catalog, the routes, one agent per column, step moves and gates, the `pr` column, and migration 0023 |
 
 ## Writing one
 

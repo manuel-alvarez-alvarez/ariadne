@@ -6,21 +6,20 @@ use anyhow::Result;
 use clap::Subcommand;
 use serde_json::json;
 
+use ariadne_api::goals::GoalDto;
 use ariadne_api::messages::MessageDto;
 use ariadne_api::stream::EventStreamQuery;
 use ariadne_api::tasks::{
     AgentAssignment, CreateTaskRequest, TaskDto, TaskListQuery, TaskTransitionDto,
 };
 use ariadne_api::usage::TokenUsageDto;
+use ariadne_api::workflows::WorkflowStepDto;
 use ariadne_client::{Client, SseEvent};
-use ariadne_core::{Actor, Seat, TaskStatus};
+use ariadne_core::{Actor, TaskStatus};
 
 use super::follow;
 use super::resolve::{self, Kind};
-use super::{
-    Subject, agent_label, agent_pin_label, confirm, one_of, parse_effort_or_default, parse_model,
-    query_path,
-};
+use super::{Subject, agent_label, agent_pin_label, confirm, one_of, query_path};
 use crate::cli::values::Spelling;
 use crate::output::{
     Column, Format, Kv, UNCAPPED, age, col, dash, empty_state, local_time, moment, note,
@@ -28,7 +27,7 @@ use crate::output::{
     usage_cell, view, yes_no,
 };
 use ariadne_console::transcript::{Filters, Since};
-use edit::{Edits, parse_author, parse_reviewer, resolve_repo, update_request};
+use edit::{Edits, parse_agent_slot, resolve_repo, update_request};
 
 /// Columns of `task ls`. Titles and branches are the long ones: a task whose
 /// title runs to a paragraph would otherwise push the status off-screen.
@@ -44,6 +43,7 @@ const LS: &[Column] = &[
     col("id", UNCAPPED).id(),
     col("title", 48).title(),
     col("status", UNCAPPED).status(),
+    col("step", UNCAPPED).rank(5),
     col("age", UNCAPPED).rank(4),
     col("stalled", UNCAPPED).rank(3),
     col("pr", UNCAPPED).rank(2),
@@ -60,7 +60,6 @@ const INDENT: &str = "\n              ";
 /// belongs in a table — `task messages --format json` has all of it, and
 /// `task messages --full` pages every body whole.
 const MESSAGES: &[Column] = &[
-    col("kind", UNCAPPED),
     col("from", 20).title(),
     col("to", 20).rank(1),
     col("body", 60).rank(0),
@@ -73,7 +72,9 @@ const MESSAGES: &[Column] = &[
 const HISTORY: &[Column] = &[
     col("time", UNCAPPED),
     col("from", UNCAPPED).status(),
+    col("from step", UNCAPPED).rank(2),
     col("to", UNCAPPED).status(),
+    col("to step", UNCAPPED).rank(2),
     col("actor", UNCAPPED).rank(1),
     col("reason", 60).rank(0),
 ];
@@ -82,27 +83,23 @@ const HISTORY: &[Column] = &[
 const CREATE_EXAMPLES: &str = "\
 Examples:
   ariadne task create <goal-id> --title \"Add the rate limiter middleware\" \\
-      --author coding,testing=claude-acp:claude-sonnet-5 \\
-      --reviewer code-review=codex-acp:gpt-5.6-luna
+      --agent develop:coding,testing=claude-acp:claude-sonnet-5 \\
+      --agent review=codex-acp:gpt-5.6-luna \\
+      --agent merge=claude-acp:claude-haiku-4-5
 
-  # after another task, reasoned deeply
+  # after another task, reasoned deeply on the develop column
   ariadne task create <goal-id> --title \"Wire it up\" --depends-on <task-id> \\
-      --author coding,testing=codex-acp:gpt-5.6-sol@xhigh \\
-      --reviewer code-review=claude-acp:claude-opus-5@high
-
-  # nothing to review: approved as soon as the author asks
-  ariadne task create <goal-id> --title \"Write the 0.6.0 release notes\" \\
-      --author documentation=claude-acp:claude-sonnet-5 --no-reviewer
+      --agent develop=codex-acp:gpt-5.6-sol@xhigh \\
+      --agent review=claude-acp:claude-opus-5@high \\
+      --agent merge=claude-acp:claude-haiku-4-5
 ";
 
 /// What `task update --help` ends with.
 const UPDATE_EXAMPLES: &str = "\
 Examples:
   ariadne task update <task-id> --title \"Add the rate limiter middleware\"
-  ariadne task update <task-id> --model claude-acp:claude-opus-5 --effort xhigh
-  ariadne task update <task-id> --reviewer code-review=codex-acp:gpt-5.6-luna@high
-  ariadne task update <task-id> --no-reviewer          # nothing left to review
-  ariadne task update <task-id> --effort default       # at whatever the agent reasons it at
+  ariadne task update <task-id> --agent develop=claude-acp:claude-opus-5@xhigh \\
+      --agent review=codex-acp:gpt-5.6-luna --agent merge=claude-acp:claude-haiku-4-5
   ariadne task update <task-id> --clear-depends-on     # free it to start now
 ";
 
@@ -112,35 +109,26 @@ pub(crate) enum TaskCommand {
     ///
     /// What the orchestrator does through its MCP tools, from the terminal: the
     /// task starts out `pending` and is picked up once the goal is active and
-    /// the tasks it depends on have merged. Prints the new task id.
+    /// the tasks it depends on have finished. Prints the new task id.
     #[command(after_help = CREATE_EXAMPLES)]
     Create {
         /// Goal id the task belongs to
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
         goal: String,
-        /// Short task title (what the author is asked to do)
+        /// Short task title (what the agents are asked to do)
         #[arg(long)]
         title: String,
-        /// Task description: the brief the author works from
+        /// Task description: the brief every column's agent works from
         #[arg(short = 'd', long, default_value = "", hide_default_value = true)]
         description: String,
-        /// The author's skills, comma-separated, then `=MODEL` — the agent
-        /// and model it runs on, required — and `@EFFORT` to say how
-        /// deeply it reasons there
-        /// (`--author coding,testing=codex-acp:gpt-5.6-sol@xhigh`).
-        /// Repeatable: several authors each write the task alone, and the
-        /// reviewers pick the one change that lands
-        #[arg(long = "author", required = true, value_name = "SKILLS=MODEL[@EFFORT]", value_parser = parse_author)]
-        authors: Vec<AgentAssignment>,
-        /// One reviewer's skills and its model, in review order; repeatable.
-        /// Spelled the same way as `--author`
-        /// (`--reviewer code-review=codex-acp:gpt-5.6-luna@high`)
-        #[arg(long = "reviewer", value_name = "SKILLS=MODEL[@EFFORT]", conflicts_with = "no_reviewer", value_parser = parse_reviewer)]
-        reviewers: Vec<AgentAssignment>,
-        /// Staff no reviewer: the task is approved as soon as its author asks
-        /// for review. For work with nothing to review, such as a release
-        #[arg(long)]
-        no_reviewer: bool,
+        /// One workflow column's staffing: the column id, then optionally
+        /// `:SKILLS` — comma-separated; empty means the column's own — then
+        /// `=MODEL`, the agent and model it runs on, required, and optionally
+        /// `@EFFORT` to say how deeply it reasons there
+        /// (`--agent review:code-review=codex-acp:gpt-5.6-luna@high`).
+        /// Repeatable, one per column of the goal's workflow
+        #[arg(long = "agent", required = true, value_name = "STEP[:SKILLS]=MODEL[@EFFORT]", value_parser = parse_agent_slot)]
+        agents: Vec<AgentAssignment>,
         /// Id of a task that must finish before this one starts; repeatable
         #[arg(long = "depends-on", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         depends_on: Vec<String>,
@@ -149,13 +137,12 @@ pub(crate) enum TaskCommand {
         #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_repositories))]
         repo: Option<String>,
     },
-    /// Edit a task that has not started yet
+    /// Edit a task that has not started, or failed
     ///
-    /// Title, description, what the author runs on, reviewers and
-    /// dependencies, while the task is still pending or ready — once an
-    /// author is on it the daemon refuses the edit. Every flag left out
-    /// keeps what the task already has; `--reviewer` and `--depends-on`
-    /// replace the whole list they name.
+    /// Title, description, staffing and dependencies, while the task is
+    /// pending, ready or failed — once an agent is on it the daemon refuses
+    /// the edit. Every flag left out keeps what the task already has;
+    /// `--agent` and `--depends-on` replace the whole list they name.
     #[command(after_help = UPDATE_EXAMPLES)]
     Update {
         /// Task id
@@ -167,26 +154,12 @@ pub(crate) enum TaskCommand {
         /// New description
         #[arg(short = 'd', long)]
         description: Option<String>,
-        /// What the author runs on: AGENT:MODEL — the id of an agent of the
-        /// ACP registry and, after the colon, one model of it
-        /// (codex-acp:gpt-5.3-codex). A model is required, so "default" is
-        /// refused: there is nothing to hand the pin back to
-        #[arg(long, value_name = "MODEL", value_parser = parse_model, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
-        model: Option<String>,
-        /// The reasoning effort that model is run at: one of the efforts
-        /// `ariadne models ls` lists for it; "default" runs it at whatever
-        /// the agent runs it at
-        #[arg(long, value_name = "EFFORT|default", value_parser = parse_effort_or_default, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::efforts_or_default))]
-        effort: Option<String>,
-        /// One reviewer's skills and its model, optionally `@EFFORT`, in
-        /// review order; repeatable, and replaces the task's reviewers rather
-        /// than adding to them
-        #[arg(long = "reviewer", value_name = "SKILLS=MODEL[@EFFORT]", conflicts_with = "no_reviewer", value_parser = parse_reviewer)]
-        reviewers: Vec<AgentAssignment>,
-        /// Take every reviewer off the task, leaving it approved as soon as
-        /// its author asks for review
-        #[arg(long)]
-        no_reviewer: bool,
+        /// Every workflow column's staffing, replaced whole: the same
+        /// `STEP[:SKILLS]=MODEL[@EFFORT]` form `task create --agent` takes;
+        /// repeatable, one per column. The way to staff a column a task
+        /// lacks before it is retried
+        #[arg(long = "agent", value_name = "STEP[:SKILLS]=MODEL[@EFFORT]", value_parser = parse_agent_slot)]
+        agents: Vec<AgentAssignment>,
         /// Id of a task that must finish first; repeatable, and replaces the
         /// task's dependencies rather than adding to them
         #[arg(long = "depends-on", conflicts_with = "clear_depends_on", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
@@ -205,10 +178,13 @@ pub(crate) enum TaskCommand {
         /// so it replaces the unfinished/finished split --all makes
         #[arg(long = "status", value_parser = Spelling::<TaskStatus>::new(), value_delimiter = ',')]
         statuses: Vec<TaskStatus>,
-        /// Include finished tasks (merged/cancelled/failed), not just the ones
-        /// still going; nothing to add once --status names one
+        /// Include finished tasks (finished/cancelled/failed), not just the
+        /// ones still going; nothing to add once --status names one
         #[arg(short, long)]
         all: bool,
+        /// Narrow to tasks whose current workflow column is this one
+        #[arg(long)]
+        step: Option<String>,
         /// Redraw the table whenever a task changes, until Ctrl-C
         #[arg(long)]
         watch: bool,
@@ -221,8 +197,8 @@ pub(crate) enum TaskCommand {
     },
     /// Show what a task's agents have said to each other
     ///
-    /// One channel for all of it: the questions and their answers, the
-    /// author's review requests, and the reviewers' verdicts, oldest first.
+    /// One channel for all of it: the questions and their answers, between
+    /// the orchestrator and the agents of every column, oldest first.
     Messages {
         /// Task id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
@@ -265,16 +241,21 @@ pub(crate) enum TaskCommand {
         /// Task id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         id: String,
-        /// author (default) or reviewer
-        #[arg(long, value_parser = Spelling::<ariadne_core::Seat>::new())]
+        /// Which seat's session: agent (default), the agent of the task's
+        /// current column
+        #[arg(long, conflicts_with = "step", value_parser = Spelling::<ariadne_core::Seat>::new())]
         seat: Option<ariadne_core::Seat>,
+        /// Workflow column id; with none, the task's current column
+        #[arg(long)]
+        step: Option<String>,
     },
     /// Show the transcript of the task's agent
     Logs {
         /// Task id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         id: String,
-        /// author (default) or reviewer
+        /// Which seat's session: agent (default), the agent of the task's
+        /// current column
         #[arg(long, value_parser = Spelling::<ariadne_core::Seat>::new())]
         seat: Option<ariadne_core::Seat>,
         /// Keep printing output until the session ends
@@ -298,19 +279,12 @@ pub(crate) async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Re
             goal,
             title,
             description,
-            authors,
-            reviewers,
-            no_reviewer,
+            agents,
             depends_on,
             repo,
         } => {
-            let reviewers = if no_reviewer { Vec::new() } else { reviewers };
             let goal = resolve::id(client, Kind::Goal, &goal).await?;
             let depends_on = resolve::ids(client, Kind::Task, &depends_on).await?;
-            // The authors first, then the reviewers in review order: that is
-            // the order the daemon reads a staffing in.
-            let mut agents = authors;
-            agents.extend(reviewers);
             let repo_id = match repo {
                 Some(spec) => Some(resolve_repo(client, &goal, &spec).await?),
                 None => None,
@@ -338,10 +312,7 @@ pub(crate) async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Re
             id,
             title,
             description,
-            model,
-            effort,
-            reviewers,
-            no_reviewer,
+            agents,
             depends_on,
             clear_depends_on,
         } => {
@@ -350,10 +321,7 @@ pub(crate) async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Re
             let body = update_request(Edits {
                 title,
                 description,
-                model,
-                effort,
-                reviewers,
-                no_reviewer,
+                agents,
                 depends_on,
                 clear_depends_on,
             })?;
@@ -369,12 +337,16 @@ pub(crate) async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Re
             goal,
             statuses,
             all,
+            step,
             watch,
-        } => ls(client, goal, statuses, all, watch, format).await?,
+        } => ls(client, goal, statuses, all, step, watch, format).await?,
         TaskCommand::Inspect { id } => {
             let id = resolve::id(client, Kind::Task, &id).await?;
             let t: TaskDto = client.get_json(&task_path(&id)).await?;
-            print(format, &t, || print_kv(&inspect_pairs(&t)))?;
+            // The goal carries the columns the task runs through, titles and
+            // all; the task alone names only the id of the one it is in.
+            let g: GoalDto = client.get_json(&format!("/v1/goals/{}", t.goal_id)).await?;
+            print(format, &t, || print_kv(&inspect_pairs(&t, &g)))?;
         }
         TaskCommand::Messages { id, full } => {
             let id = resolve::id(client, Kind::Task, &id).await?;
@@ -401,7 +373,6 @@ pub(crate) async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Re
                 MESSAGES,
                 |m| {
                     vec![
-                        m.kind.as_str().into(),
                         party_label(&t, m.from_actor, m.from_agent_id.as_deref()),
                         party_label(&t, m.to_actor, m.to_agent_id.as_deref()),
                         m.body.clone(),
@@ -444,9 +415,27 @@ pub(crate) async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Re
                 Format::Table => pager::page(&pager::diff(&diff, view().color))?,
             }
         }
-        TaskCommand::Attach { id, seat } => {
+        TaskCommand::Attach { id, seat, step } => {
             let id = resolve::id(client, Kind::Task, &id).await?;
-            crate::commands::attach::attach(client, &id, seat).await?;
+            match (step, seat) {
+                (Some(step), _) => crate::commands::attach::attach_step(client, &id, &step).await?,
+                (None, Some(seat)) => {
+                    crate::commands::attach::attach(client, &id, Some(seat)).await?
+                }
+                // Neither flag: the task's own current column says which
+                // agent's session that is — a pending task with no column
+                // yet falls through to the plain seat-based lookup, which
+                // reports the same "nothing to attach to" it always did.
+                (None, None) => {
+                    let t: TaskDto = client.get_json(&task_path(&id)).await?;
+                    match t.step {
+                        Some(step) => {
+                            crate::commands::attach::attach_step(client, &id, &step).await?
+                        }
+                        None => crate::commands::attach::attach(client, &id, None).await?,
+                    }
+                }
+            }
         }
         TaskCommand::Logs {
             id,
@@ -491,6 +480,7 @@ async fn ls(
     goal: Option<String>,
     statuses: Vec<TaskStatus>,
     all: bool,
+    step: Option<String>,
     watch: bool,
     format: Format,
 ) -> Result<()> {
@@ -501,7 +491,7 @@ async fn ls(
         None => None,
     };
     if !watch {
-        return render(client, goal, &statuses, all, format).await;
+        return render(client, goal, &statuses, all, step.as_deref(), format).await;
     }
     // The stream takes the same goal filter the list does, so a watch on one
     // goal is not woken by every other goal in the system.
@@ -513,26 +503,37 @@ async fn ls(
         },
     )?;
     follow::watch(client, &path, relevant, async || {
-        render(client, goal.clone(), &statuses, all, format).await
+        render(
+            client,
+            goal.clone(),
+            &statuses,
+            all,
+            step.as_deref(),
+            format,
+        )
+        .await
     })
     .await
 }
 
-/// The table as it stands, read afresh.
+/// The table as it stands, read afresh. `--step` narrows client-side: the
+/// daemon's own filter is the goal and the one status `one_of` can ask for,
+/// the same split every other listing follows.
 async fn render(
     client: &Client,
     goal: Option<String>,
     statuses: &[TaskStatus],
     all: bool,
+    step: Option<&str>,
     format: Format,
 ) -> Result<()> {
-    let filtered = goal.is_some() || !statuses.is_empty();
+    let filtered = goal.is_some() || !statuses.is_empty() || step.is_some();
     // `GET /v1/tasks` takes one status, so one is asked for and the rest is
     // narrowed on the answer — with the live/finished split.
     let status = one_of(statuses);
     let path = query_path("/v1/tasks", &TaskListQuery { goal, status })?;
     let tasks: Vec<TaskDto> = client.get_json(&path).await?;
-    let tasks = visible(tasks, all, statuses);
+    let tasks = visible(tasks, all, statuses, step);
     let now = chrono::Utc::now();
     print_list(
         format,
@@ -555,6 +556,7 @@ fn ls_row(t: &TaskDto, now: chrono::DateTime<chrono::Utc>) -> Vec<String> {
         t.id.clone(),
         t.title.clone(),
         t.status.as_str().into(),
+        dash(t.step.as_deref()),
         age(&t.created_at, now),
         yes_no(t.stalled, "-"),
         yes_no(t.pr_url.is_some(), "-"),
@@ -563,12 +565,16 @@ fn ls_row(t: &TaskDto, now: chrono::DateTime<chrono::Utc>) -> Vec<String> {
     ]
 }
 
-/// One row of `task history`, in [`HISTORY`]'s order.
+/// One row of `task history`, in [`HISTORY`]'s order. The columns a move
+/// crossed travel beside the statuses they are a reading of, and a dash is
+/// a move that crossed no column — into `ready`, out to `cancelled`.
 fn history_row(t: &TaskTransitionDto) -> Vec<String> {
     vec![
         local_time(&t.created_at),
         t.from_status.clone(),
+        dash(t.from_step.as_deref()),
         t.to_status.clone(),
+        dash(t.to_step.as_deref()),
         t.actor.clone(),
         dash(t.reason.as_deref()),
     ]
@@ -578,17 +584,25 @@ fn history_row(t: &TaskTransitionDto) -> Vec<String> {
 /// still going, newest first, with everything behind --all.
 ///
 /// The same default as `session ls` and `goal ls`. A goal that has run its
-/// course is thirty merged tasks and the two that matter, and the two are
-/// what a list is read for; `--status merged` is how one asks for the thirty.
-/// A named --status takes over, since it has already said which tasks are
-/// wanted.
-fn visible(tasks: Vec<TaskDto>, all: bool, statuses: &[TaskStatus]) -> Vec<TaskDto> {
+/// course is thirty finished tasks and the two that matter, and the two are
+/// what a list is read for; `--status finished` is how one asks for the
+/// thirty. A named --status takes over, since it has already said which tasks
+/// are wanted.
+fn visible(
+    tasks: Vec<TaskDto>,
+    all: bool,
+    statuses: &[TaskStatus],
+    step: Option<&str>,
+) -> Vec<TaskDto> {
     let mut tasks: Vec<TaskDto> = tasks
         .into_iter()
         // `--status` is asked of the daemon one at a time; the rest of what it
         // named is narrowed here, as `session ls --seat` has always been.
         .filter(|t| statuses.is_empty() || statuses.contains(&t.status))
         .filter(|t| all || !statuses.is_empty() || !t.status.is_terminal())
+        // `--step` is a column id, which the daemon's own filters know
+        // nothing of: narrowed here, the same way.
+        .filter(|t| step.is_none() || t.step.as_deref() == step)
         .collect();
     tasks.sort_by(|a, b| b.id.cmp(&a.id));
     tasks
@@ -597,73 +611,19 @@ fn visible(tasks: Vec<TaskDto>, all: bool, statuses: &[TaskStatus]) -> Vec<TaskD
 /// The key/value pairs `task inspect` prints, in the order it prints them —
 /// pulled out of the `Inspect` arm so the block's own content is testable
 /// without a daemon behind it.
-fn inspect_pairs(t: &TaskDto) -> Vec<(&'static str, Kv)> {
-    let authors: Vec<_> = t.agents.iter().filter(|a| a.seat == Seat::Author).collect();
-    let mut pairs = vec![
+///
+/// A task names its goal's workflow, its current column, and the agent of
+/// every column in column order; the goal is what carries the columns, since
+/// a task pending its first column has no `step` of its own yet.
+fn inspect_pairs(t: &TaskDto, g: &GoalDto) -> Vec<(&'static str, Kv)> {
+    vec![
         ("id", Kv::id(t.id.clone())),
         ("goal", Kv::id(t.goal_id.clone())),
         ("title", Kv::title(t.title.clone())),
         ("status", Kv::status(t.status.as_str())),
-        (
-            "author",
-            match authors.as_slice() {
-                [] => "-".to_string(),
-                [a] => agent_pin_label(&a.skills, &a.model, a.effort.as_deref()),
-                // Several authors: each on its own line with the branch it
-                // owns, and the one the reviewers picked marked as such.
-                several => several
-                    .iter()
-                    .map(|a| {
-                        let label = agent_pin_label(&a.skills, &a.model, a.effort.as_deref());
-                        let branch = a.branch.as_deref().unwrap_or("-");
-                        let picked = match t.picked_agent_id.as_deref() == Some(a.id.as_str()) {
-                            true => " — picked",
-                            false => "",
-                        };
-                        format!("{label} on {branch}{picked}")
-                    })
-                    .collect::<Vec<_>>()
-                    .join(INDENT),
-            }
-            .into(),
-        ),
-        (
-            "reviewers",
-            // One reviewer per line: each is its skills and the two facts
-            // after them, and the review order is what the column reads down.
-            t.agents
-                .iter()
-                .filter(|a| a.seat == Seat::Reviewer)
-                .map(|a| agent_pin_label(&a.skills, &a.model, a.effort.as_deref()))
-                .collect::<Vec<_>>()
-                .join(INDENT)
-                .into(),
-        ),
-    ];
-    // The pick, on the tasks that have one to show: who each reviewer chose,
-    // one line per pick. A one-author task prints exactly what it always did.
-    if authors.len() > 1 {
-        pairs.push((
-            "picks",
-            match t.picks.is_empty() {
-                true => "-".to_string(),
-                false => t
-                    .picks
-                    .iter()
-                    .map(|p| {
-                        format!(
-                            "{} picked {}",
-                            staffed_label(t, &p.reviewer_agent_id),
-                            staffed_label(t, &p.author_agent_id)
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join(INDENT),
-            }
-            .into(),
-        ));
-    }
-    pairs.extend(vec![
+        ("workflow", g.workflow.clone().into()),
+        ("step", dash(t.step.as_deref()).into()),
+        ("agents", step_lines(t, &g.steps).into()),
         (
             "depends on",
             Kv::id(match t.depends_on.is_empty() {
@@ -677,61 +637,73 @@ fn inspect_pairs(t: &TaskDto) -> Vec<(&'static str, Kv)> {
         ("stalled", yes_no(t.stalled, "no").into()),
         ("merge", dash(t.merge_commit.as_deref()).into()),
         // Why a failed or cancelled task ended, which is the whole of what
-        // the author that gave it up said about it.
+        // the agent that gave it up said about it.
         ("reason", dash(t.reason.as_deref()).into()),
         // The forge's own link, where the rest of a published task's story
-        // is; only an author that opened one reports it.
+        // is; only a `pr` column that opened one reports it.
         ("pull request", dash(t.pr_url.as_deref()).into()),
         ("created", Kv::meta(moment(&t.created_at))),
         ("description", format!("\n---\n{}", t.description).into()),
-    ]);
-    pairs
+    ]
 }
 
-/// A staffed agent named for a reader: the skills it carries, or its id
-/// where the task no longer staffs it.
-fn staffed_label(t: &TaskDto, agent_id: &str) -> String {
-    match t.agents.iter().find(|a| a.id == agent_id) {
-        Some(a) => agent_label(&a.skills),
-        None => agent_id.to_string(),
+/// One line per column of the task's workflow, in column order: the column,
+/// the skills its agent carries, the pin it runs on, and its session — a
+/// column nobody has staffed yet reads as unstaffed rather than vanishing
+/// from the block, since it is what a retry is refused for.
+fn step_lines(t: &TaskDto, steps: &[WorkflowStepDto]) -> String {
+    if steps.is_empty() {
+        return "-".to_string();
     }
+    steps
+        .iter()
+        .map(|s| match t.agents.iter().find(|a| a.step == s.id) {
+            Some(a) => format!(
+                "{} · {} · {}",
+                s.title,
+                agent_pin_label(&a.skills, &a.model, a.effort.as_deref()),
+                dash(a.session_id.as_deref())
+            ),
+            None => format!("{} · unstaffed", s.title),
+        })
+        .collect::<Vec<_>>()
+        .join(INDENT)
 }
 
-/// What the task cost, spender by spender: the total first, then the
-/// author and each reviewer under it, named by their profiles.
+/// What the task cost, spender by spender: the total first, then the agent
+/// of every column under it, each named by its column and its skills.
 ///
-/// Every reviewer of the task gets a line, whether or not it has spent
-/// anything: a reviewer missing from the block would read as one the task
-/// does not have, and `0` is a fact where a gap is a question. An agent that
-/// spent on the task and is staffed no longer is listed after them, so the
-/// lines still add up to the total.
+/// Every staffed agent gets a line, whether or not it has spent anything: a
+/// column missing from the block would read as one the task does not have,
+/// and `0` is a fact where a gap is a question. An agent that spent on the
+/// task and is staffed no longer is listed after them by its id, so the lines
+/// still add up to the total.
 fn usage_lines(t: &TaskDto) -> String {
-    let staffed: Vec<_> = t
+    let mut agents: Vec<(String, TokenUsageDto)> = t
         .agents
         .iter()
-        .filter(|a| a.seat == Seat::Reviewer)
+        .map(|a| {
+            (
+                format!("{} · {}", a.step, agent_label(&a.skills)),
+                spent_by(t, &a.id).unwrap_or_default(),
+            )
+        })
         .collect();
-    let mut agents: Vec<(String, TokenUsageDto)> = vec![("author".into(), t.usage.author)];
-    for r in &staffed {
-        let spent = spent_by(t, &r.id).unwrap_or_default();
-        agents.push((agent_label(&r.skills), spent));
-    }
     agents.extend(
         t.usage
-            .reviewers
+            .agents
             .iter()
-            .filter(|u| !staffed.iter().any(|r| r.id == u.agent_id))
-            .map(|u| (agent_label(&u.skills), u.usage)),
+            .filter(|u| !t.agents.iter().any(|a| a.id == u.agent_id))
+            .map(|u| (u.agent_id.clone(), u.usage)),
     );
-
     usage_block(&t.usage.total, &agents, INDENT)
 }
 
-/// What one reviewer profile spent on the task, if the daemon reported it at
-/// all — a reviewer that has never been spawned has no entry.
+/// What one staffed agent spent on the task, if the daemon reported it at
+/// all — an agent that has never been spawned has no entry.
 fn spent_by(t: &TaskDto, agent_id: &str) -> Option<TokenUsageDto> {
     t.usage
-        .reviewers
+        .agents
         .iter()
         .find(|u| u.agent_id == agent_id)
         .map(|u| u.usage)
@@ -754,8 +726,6 @@ fn print_status(t: &TaskDto, format: Format) -> Result<()> {
     })
 }
 
-/// How a verdict names the agent that gave it: the skills that agent reviewed
-/// with, and the id where the task no longer staffs it.
 /// One end of a message, as a reader sees it.
 ///
 /// An agent has no name, so it is named by the skills it works with, which is
@@ -776,11 +746,10 @@ fn party_label(task: &TaskDto, actor: Actor, agent_id: Option<&str>) -> String {
 /// it whole is the point of `--full`.
 fn full_message(t: &TaskDto, m: &MessageDto) -> String {
     format!(
-        "{} {} -> {} ({})\n{}",
+        "{} {} -> {}\n{}",
         local_time(&m.created_at),
         party_label(t, m.from_actor, m.from_agent_id.as_deref()),
         party_label(t, m.to_actor, m.to_agent_id.as_deref()),
-        m.kind.as_str(),
         m.body
     )
 }
@@ -799,7 +768,7 @@ fn full_messages(t: &TaskDto, messages: &[MessageDto]) -> String {
 mod tests {
     use super::*;
 
-    use ariadne_api::tasks::{AgentUsageDto, TaskUsageDto};
+    use ariadne_api::tasks::{AgentUsageDto, TaskAgentDto, TaskUsageDto};
     use ariadne_core::MessageKind;
 
     use crate::commands::fixtures;
@@ -831,9 +800,31 @@ mod tests {
         }
     }
 
-    /// One reviewer staffed on the task, named by the skills it reviews with.
-    fn reviewer(id: &str, skill: &str) -> ariadne_api::tasks::TaskAgentDto {
-        fixtures::agent(id, ariadne_core::Seat::Reviewer, &[skill])
+    /// What one agent spent, as the daemon reports it beside the total.
+    fn spent(
+        agent_id: &str,
+        step: Option<&str>,
+        skills: &[&str],
+        u: TokenUsageDto,
+    ) -> AgentUsageDto {
+        AgentUsageDto {
+            step: step.map(Into::into),
+            agent_id: agent_id.into(),
+            skills: skills.iter().map(|s| s.to_string()).collect(),
+            usage: u,
+        }
+    }
+
+    /// One column of a workflow, titled, for the inspect block to read.
+    fn column(id: &str, title: &str, skill: &str) -> WorkflowStepDto {
+        WorkflowStepDto {
+            id: id.into(),
+            title: title.into(),
+            description: String::new(),
+            skills: vec![skill.into()],
+            rank: None,
+            gate: None,
+        }
     }
 
     /// A task nobody has run yet still says what it spent: `0`, which is a
@@ -841,31 +832,40 @@ mod tests {
     /// know".
     #[test]
     fn a_task_that_has_spent_nothing_says_zero() {
-        assert_eq!(ls_row(&dto(), now())[6], "↑0 0.0% ↓0");
+        assert_eq!(ls_row(&dto(), now())[7], "↑0 0.0% ↓0");
         let block = usage_lines(&dto());
         assert_eq!(block.lines().next().unwrap(), "input   0  0.0%");
         assert!(block.contains("output  0"), "{block}");
     }
 
-    /// The block is the total and then who spent it: the author, and every
-    /// reviewer by the skills it reviews with — including the one that has
-    /// never been spawned, which spent `0` rather than nothing at all.
+    /// The block is the total and then who spent it: the agent of every
+    /// column, named by its column and the skills it works with — including
+    /// the one that has never been spawned, which spent `0` rather than
+    /// nothing at all.
     #[test]
-    fn the_block_names_the_author_and_every_reviewer_of_the_task() {
+    fn the_block_names_the_agent_of_every_column_of_the_task() {
         let t = TaskDto {
             agents: vec![
-                fixtures::agent("01AUTHOR", ariadne_core::Seat::Author, &["coding"]),
-                reviewer("01REV", "code-review"),
-                reviewer("01SEC", "security-review"),
+                fixtures::agent("01DEV", "develop", &["coding"]),
+                fixtures::agent("01REV", "review", &["code-review"]),
+                fixtures::agent("01MERGE", "merge", &["merge"]),
             ],
             usage: TaskUsageDto {
                 total: usage(1_204_567, 1_100_000, 45_300),
-                author: usage(1_200_000, 1_100_000, 45_000),
-                reviewers: vec![AgentUsageDto {
-                    agent_id: "01REV".into(),
-                    skills: vec!["code-review".into()],
-                    usage: usage(4_567, 0, 300),
-                }],
+                agents: vec![
+                    spent(
+                        "01DEV",
+                        Some("develop"),
+                        &["coding"],
+                        usage(1_200_000, 1_100_000, 45_000),
+                    ),
+                    spent(
+                        "01REV",
+                        Some("review"),
+                        &["code-review"],
+                        usage(4_567, 0, 300),
+                    ),
+                ],
             },
             ..dto()
         };
@@ -874,40 +874,42 @@ mod tests {
             [
                 "input   1.2M  91.3%",
                 "              output   45k",
-                "              author           ↑1.2M ↓45k",
-                "              code-review      ↑4.6k ↓300",
-                "              security-review  ↑0 ↓0",
+                "              develop · coding      ↑1.2M ↓45k",
+                "              review · code-review  ↑4.6k ↓300",
+                "              merge · merge         ↑0 ↓0",
             ]
             .join("\n")
         );
         assert_eq!(
-            ls_row(&t, now())[6],
+            ls_row(&t, now())[7],
             "↑1.2M 91.3% ↓45k",
             "the row carries the total, and the same share"
         );
     }
 
     /// An agent that spent on the task and is staffed on it no longer is
-    /// still listed: the lines under the total are meant to add up to it.
+    /// still listed, by its id: the lines under the total are meant to add
+    /// up to it.
     #[test]
     fn a_spender_the_task_no_longer_staffs_is_still_listed() {
         let t = TaskDto {
             usage: TaskUsageDto {
                 total: usage(1_000, 0, 100),
-                author: usage(600, 0, 60),
-                reviewers: vec![AgentUsageDto {
-                    agent_id: "01GONE".into(),
-                    skills: Vec::new(),
-                    usage: usage(400, 0, 40),
-                }],
+                agents: vec![
+                    spent("01DEVELOP", Some("develop"), &["coding"], usage(600, 0, 60)),
+                    spent("01GONE", None, &[], usage(400, 0, 40)),
+                ],
             },
             ..dto()
         };
-        assert!(
-            usage_lines(&t).contains("no skills  ↑400 ↓40"),
-            "{}",
-            usage_lines(&t)
-        );
+        let block = usage_lines(&t);
+        let gone = block
+            .lines()
+            .map(str::trim)
+            .find(|line| line.starts_with("01GONE"))
+            .unwrap_or_else(|| panic!("no line for the gone agent: {block}"));
+        assert!(gone.ends_with("↑400 ↓40"), "{gone}");
+        assert!(block.contains("develop · coding"), "{block}");
     }
 
     /// The question is the last thing between the caller and a cancelled
@@ -931,14 +933,11 @@ mod tests {
     #[test]
     fn a_message_names_its_ends_by_the_skills_they_work_with() {
         let t = TaskDto {
-            agents: vec![reviewer("01REV", "code-review")],
+            agents: vec![fixtures::agent("01REV", "review", &["code-review"])],
             ..dto()
         };
-        assert_eq!(
-            party_label(&t, Actor::Reviewer, Some("01REV")),
-            "code-review"
-        );
-        assert_eq!(party_label(&t, Actor::Reviewer, Some("01GONE")), "01GONE");
+        assert_eq!(party_label(&t, Actor::Agent, Some("01REV")), "code-review");
+        assert_eq!(party_label(&t, Actor::Agent, Some("01GONE")), "01GONE");
         assert_eq!(party_label(&t, Actor::Orchestrator, None), "orchestrator");
     }
 
@@ -954,7 +953,7 @@ mod tests {
             depends_on: vec!["01DEP".into()],
             ..dto()
         };
-        let pairs = inspect_pairs(&t);
+        let pairs = inspect_pairs(&t, &fixtures::goal("01GOAL", "Ship the board"));
         let keys: Vec<_> = pairs.iter().map(|(key, _)| *key).collect();
         assert!(keys.contains(&"depends on"), "{keys:?}");
         assert!(keys.contains(&"pull request"), "{keys:?}");
@@ -1011,7 +1010,7 @@ mod tests {
     #[test]
     fn the_list_says_whether_a_task_was_published() {
         let published = TaskDto {
-            status: TaskStatus::Approved,
+            step: Some("pr".into()),
             pr_url: Some("https://github.com/owner/repo/pull/12".into()),
             ..dto()
         };
@@ -1022,7 +1021,8 @@ mod tests {
             [
                 "01TASK",
                 "Add the frobnicator",
-                "approved",
+                "in_progress",
+                "pr",
                 "3h",
                 "-",
                 "yes",
@@ -1031,21 +1031,113 @@ mod tests {
             ]
         );
         assert_eq!(
-            ls_row(&dto(), now())[5],
+            ls_row(&dto(), now())[6],
             "-",
             "and a task nobody published says nothing"
         );
     }
 
+    /// `--step` narrows the list to the one column named, client-side: the
+    /// daemon knows nothing of workflow columns in its own task filters.
+    #[test]
+    fn step_narrows_the_list_to_the_named_column() {
+        let develop = TaskDto {
+            id: "01DEVELOP".into(),
+            step: Some("develop".into()),
+            ..dto()
+        };
+        let review = TaskDto {
+            id: "01REVIEW".into(),
+            step: Some("review".into()),
+            ..dto()
+        };
+        let tasks = visible(
+            vec![develop.clone(), review.clone()],
+            true,
+            &[],
+            Some("review"),
+        );
+        assert_eq!(
+            tasks.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
+            ["01REVIEW"]
+        );
+        let unfiltered = visible(vec![develop, review], true, &[], None);
+        assert_eq!(unfiltered.len(), 2, "no --step leaves every column in");
+    }
+
+    /// A task names its workflow, its current column, and the agent of every
+    /// column of it, in column order — a column nobody has staffed yet still
+    /// gets a line, since it is what a retry is refused for.
+    #[test]
+    fn a_task_lists_its_workflow_and_every_columns_agent() {
+        let t = TaskDto {
+            step: Some("review".into()),
+            agents: vec![TaskAgentDto {
+                session_id: Some("01SESSION".into()),
+                ..fixtures::agent("01REV", "review", &["code-review"])
+            }],
+            ..dto()
+        };
+        let g = GoalDto {
+            steps: vec![
+                column("develop", "Develop", "coding"),
+                column("review", "Review", "code-review"),
+            ],
+            ..fixtures::goal("01GOAL", "Ship the board")
+        };
+        let pairs = inspect_pairs(&t, &g);
+        let keys: Vec<_> = pairs.iter().map(|(key, _)| *key).collect();
+        assert_eq!(
+            &keys[..7],
+            [
+                "id", "goal", "title", "status", "workflow", "step", "agents"
+            ]
+        );
+
+        let block = kv_block(&pairs, &View::plain());
+        assert!(
+            block.contains("workflow      develop-review-merge"),
+            "{block}"
+        );
+        assert!(block.contains("step          review"), "{block}");
+        assert!(
+            block.contains("Develop · unstaffed"),
+            "an unstaffed column still gets a line: {block}"
+        );
+        assert!(
+            block.contains("Review · code-review · stub:test-model · 01SESSION"),
+            "{block}"
+        );
+    }
+
+    /// A task pending its first column has no `step` of its own yet, and the
+    /// block says so with a dash rather than inventing one; a goal whose
+    /// columns the daemon did not send reads the same way.
+    #[test]
+    fn a_task_before_its_first_column_has_no_step_to_name() {
+        let t = TaskDto {
+            status: TaskStatus::Pending,
+            ..dto()
+        };
+        let block = kv_block(
+            &inspect_pairs(&t, &fixtures::goal("01GOAL", "Ship the board")),
+            &View::plain(),
+        );
+        assert!(block.contains("step          -"), "{block}");
+        assert!(block.contains("agents        -"), "{block}");
+    }
+
     /// A transition, in [`HISTORY`]'s order — and a dash where it carries no
-    /// reason, the way every optional cell in this CLI reads.
+    /// reason or no step, the way every optional cell in this CLI reads.
     #[test]
     fn a_history_row_carries_the_transition_and_a_dash_for_no_reason() {
         let t = TaskTransitionDto {
+            from_step: None,
+            to_step: None,
             id: "01TRANS".into(),
-            from_status: "in_progress".into(),
-            to_status: "under_review".into(),
-            actor: "author".into(),
+            from_status: "pending".into(),
+            to_status: "ready".into(),
+            actor: "daemon".into(),
             reason: None,
             created_at: fixtures::NOW.into(),
         };
@@ -1056,16 +1148,37 @@ mod tests {
             "a row per column, in HISTORY's order"
         );
         assert_eq!(row[0], local_time(fixtures::NOW));
-        assert_eq!(row[1], "in_progress");
-        assert_eq!(row[2], "under_review");
-        assert_eq!(row[3], "author");
+        assert_eq!(row[1], "pending");
+        assert_eq!(row[2], "-", "no column on a move that crossed none");
+        assert_eq!(row[3], "ready");
         assert_eq!(row[4], "-");
+        assert_eq!(row[5], "daemon");
+        assert_eq!(row[6], "-");
 
         let reasoned = TaskTransitionDto {
-            reason: Some("asked for review".into()),
+            reason: Some("every dependency finished".into()),
             ..t
         };
-        assert_eq!(history_row(&reasoned)[4], "asked for review");
+        assert_eq!(history_row(&reasoned)[6], "every dependency finished");
+    }
+
+    /// A task's move carries the column it left and the one it entered,
+    /// beside the statuses those columns sit under.
+    #[test]
+    fn a_history_row_paints_the_columns_a_move_crossed() {
+        let t = TaskTransitionDto {
+            from_step: Some("develop".into()),
+            to_step: Some("review".into()),
+            id: "01TRANS".into(),
+            from_status: "in_progress".into(),
+            to_status: "in_progress".into(),
+            actor: "agent".into(),
+            reason: Some("ready for review".into()),
+            created_at: fixtures::NOW.into(),
+        };
+        let row = history_row(&t);
+        assert_eq!(row[2], "develop");
+        assert_eq!(row[4], "review");
     }
 
     /// `task history` colours `from` and `to` the way every status cell is —
@@ -1074,10 +1187,12 @@ mod tests {
     #[test]
     fn history_paints_the_from_and_to_statuses() {
         let row = history_row(&TaskTransitionDto {
+            from_step: Some("merge".into()),
+            to_step: None,
             id: "01TRANS".into(),
             from_status: "in_progress".into(),
-            to_status: "under_review".into(),
-            actor: "author".into(),
+            to_status: "finished".into(),
+            actor: "agent".into(),
             reason: None,
             created_at: fixtures::NOW.into(),
         });
@@ -1103,8 +1218,8 @@ mod tests {
         assert!(
             coloured.contains(&style::paint(
                 true,
-                style::status("under_review").0,
-                "● under_review"
+                style::status("finished").0,
+                "✓ finished"
             )),
             "{coloured}"
         );
@@ -1120,7 +1235,7 @@ mod tests {
     #[test]
     fn a_full_message_carries_its_header_and_its_whole_body() {
         let t = TaskDto {
-            agents: vec![reviewer("01REV", "code-review")],
+            agents: vec![fixtures::agent("01REV", "review", &["code-review"])],
             ..dto()
         };
         let whole_body = "a".repeat(200);
@@ -1129,10 +1244,10 @@ mod tests {
             goal_id: t.goal_id.clone(),
             task_id: Some(t.id.clone()),
             kind: MessageKind::Message,
-            from_actor: Actor::Reviewer,
+            from_actor: Actor::Agent,
             from_agent_id: Some("01REV".into()),
             from_session: None,
-            to_actor: Actor::Author,
+            to_actor: Actor::Orchestrator,
             to_agent_id: None,
             body: whole_body.clone(),
             delivered_at: None,
@@ -1142,7 +1257,7 @@ mod tests {
         let text = full_message(&t, &m);
         assert!(text.contains(&whole_body), "the body is not cut: {text}");
         assert!(
-            text.contains("code-review -> author"),
+            text.contains("code-review -> orchestrator"),
             "the header names both ends: {text}"
         );
 

@@ -6,7 +6,7 @@
 //! worth reading, so [`dto!`] is what writes the first.
 
 use ariadne_api::events::AgentEventDto;
-use ariadne_api::goals::{GoalDto, GoalRepositoryDto, GoalUsageDto};
+use ariadne_api::goals::{GoalDto, GoalUsageDto};
 use ariadne_api::messages::MessageDto;
 use ariadne_api::permissions::{
     LearnedPermissionDto, LearnedPermissionLevel, LearnedPermissionScope, LearnedPermissionTarget,
@@ -14,11 +14,11 @@ use ariadne_api::permissions::{
 use ariadne_api::repositories::{ForgeDto, RepositoryDto};
 use ariadne_api::sessions::{OutsideSessionDto, SessionDto, SessionEntryDto, SessionKind};
 use ariadne_api::skills::{SkillDto, SkillSeat};
-use ariadne_api::tasks::{
-    AgentUsageDto, TaskAgentDto, TaskDto, TaskPickDto, TaskTransitionDto, TaskUsageDto,
-};
+use ariadne_api::tasks::{AgentUsageDto, TaskAgentDto, TaskDto, TaskTransitionDto, TaskUsageDto};
 use ariadne_api::usage::TokenUsageDto;
+use ariadne_api::workflows::{WorkflowDto, WorkflowStepDto};
 use ariadne_core::models::agent_of;
+use ariadne_core::workflow::WorkflowStep;
 use ariadne_core::{Actor, MessageKind, Seat, TokenUsage};
 use ariadne_store::{self as store, AgentUsage, SessionFilter, Store, StoreError};
 
@@ -60,11 +60,21 @@ dto! {
         .. name, created_at, updated_at
     }
 
-pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
+    pub(crate) fn workflow_dto(w: store::Workflow) -> WorkflowDto {
+        document: w.document_text().to_string(),
+        builtin: w.is_builtin(),
+        steps: w.steps().into_iter().map(workflow_step_dto).collect(),
+        .. name, created_at, updated_at
+    }
+
+    pub(crate) fn workflow_step_dto(s: WorkflowStep) -> WorkflowStepDto {
+        .. id, title, description, skills, rank, gate
+    }
+
+    pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
         permission_mode: r.permission_mode(),
-        default_landing: r.default_landing(),
         forge: r.forge.map(forge_dto),
-        .. id, path, base_branch, description, created_at, updated_at
+        .. id, path, base_branch, description, default_workflow, created_at, updated_at
     }
 
     fn forge_dto(f: store::ForgeIntegration) -> ForgeDto {
@@ -79,46 +89,39 @@ pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
         .. host, owner, name, remote, enabled, login, review_model, review_effort
     }
 
-    /// `repos` are the goal's repositories and `usage` its rollup, both of
-    /// which the caller loads.
+    /// `repos` are the goal's repositories, `usage` its rollup and `steps`
+    /// the columns it snapshotted, all of which the caller loads.
     fn goal_dto(
         g: store::Goal,
-        repos: Vec<GoalRepositoryDto>,
+        repos: Vec<RepositoryDto>,
         usage: GoalUsageDto,
+        steps: Vec<WorkflowStepDto>,
     ) -> GoalDto {
         status: g.status(),
-        landing: g.landing(),
+        steps: steps,
         repos: repos,
         usage: usage,
-        .. id, title, description, issue_url, orchestrated, model, effort,
+        .. id, title, description, issue_url, orchestrated, model, effort, workflow,
            created_at, updated_at
     }
 
     /// `skills` is the agent's skill names in load order, which the caller
-    /// loads beside the row; `branch` is the author's own, worked out from
-    /// the task the caller holds, and None for a reviewer; `session_id` is
-    /// this agent's live session, which the caller finds among the task's.
+    /// loads beside the row; `session_id` is this agent's live session, which
+    /// the caller finds among the task's.
     fn task_agent_dto(
         a: store::TaskAgent,
         skills: Vec<String>,
-        branch: Option<String>,
         session_id: Option<String>,
     ) -> TaskAgentDto {
-        seat: a.seat(),
         skills: skills,
-        branch: branch,
         session_id: session_id,
-        .. id, model, effort, brief
-    }
-
-    pub(crate) fn task_pick_dto(p: store::TaskPick) -> TaskPickDto {
-        .. reviewer_agent_id, author_agent_id, created_at
+        .. id, model, effort, brief, step
     }
 
     /// The agents come from the caller, which loads them with their skills,
-    /// authors first and the reviewers in review order. So do the picks, and
-    /// `reason`, which only an ended task has. `sessions` is the task's own,
-    /// which each agent's live one is found among.
+    /// in the order the orchestrator listed them. So does `reason`, which only
+    /// an ended task has. `sessions` is the task's own, which each agent's
+    /// live one is found among.
     fn task_dto(
         t: store::Task,
         agents: Vec<(store::TaskAgent, Vec<String>)>,
@@ -126,30 +129,25 @@ pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
         depends_on: Vec<String>,
         usage: TaskUsageDto,
         reason: Option<String>,
-        picks: Vec<TaskPickDto>,
     ) -> TaskDto {
         status: t.status(),
-        landing: t.landing(),
         stalled: t.is_stalled(),
         agents: agents
             .into_iter()
             .map(|(a, skills)| {
-                let branch = (a.seat() == Seat::Author)
-                    .then(|| store::author_branch(&t.branch, a.ordinal));
                 let session_id = live_session_id(&a.id, &sessions);
-                task_agent_dto(a, skills, branch, session_id)
+                task_agent_dto(a, skills, session_id)
             })
             .collect(),
         depends_on: depends_on,
         usage: usage,
         reason: reason,
-        picks: picks,
-        .. id, goal_id, repo_id, title, description, branch, worktree_path,
-           merge_commit, pr_url, picked_agent_id, created_at, updated_at
+        .. id, goal_id, repo_id, title, description, branch, worktree_path, step,
+           merge_commit, pr_url, created_at, updated_at
     }
 
     pub(crate) fn transition_dto(t: store::TaskTransition) -> TaskTransitionDto {
-        .. id, from_status, to_status, actor, reason, created_at
+        .. id, from_status, to_status, actor, reason, created_at, from_step, to_step
     }
 
     pub(crate) fn message_dto(m: store::Message) -> MessageDto {
@@ -270,15 +268,7 @@ pub(crate) async fn task_dto_of(store: &Store, task: store::Task) -> Result<Task
     let depends_on = store.list_task_dependencies(&task.id).await?;
     let usage = task_usage(store, &task.id, &agents).await?;
     let reason = store.ended_reason(&task).await?;
-    let picks = store
-        .list_task_picks(&task.id)
-        .await?
-        .into_iter()
-        .map(task_pick_dto)
-        .collect();
-    Ok(task_dto(
-        task, agents, sessions, depends_on, usage, reason, picks,
-    ))
+    Ok(task_dto(task, agents, sessions, depends_on, usage, reason))
 }
 
 /// [`session_dto`] with what the session has spent loaded from the store.
@@ -361,26 +351,50 @@ pub(crate) fn outside_entry(outside: &OutsideSessionDto) -> SessionEntryDto {
 /// references, and what every session under it has spent.
 pub(crate) async fn goal_dto_of(store: &Store, goal: store::Goal) -> Result<GoalDto, StoreError> {
     let repos = store
-        .list_goal_repositories_with_branches(&goal.id)
+        .list_goal_repositories(&goal.id)
         .await?
         .into_iter()
-        .map(|(repo, goal_branch)| GoalRepositoryDto {
-            repository: repository_dto(repo),
-            goal_branch,
-        })
+        .map(repository_dto)
         .collect();
     let usage = goal_usage(store, &goal.id).await?;
-    Ok(goal_dto(goal, repos, usage))
+    let steps = store
+        .goal_steps(&goal.id)
+        .await?
+        .into_iter()
+        .map(|s| {
+            let invalid =
+                |field| StoreError::Invalid(format!("column {} has invalid {field}", s.id));
+            Ok(WorkflowStepDto {
+                skills: serde_json::from_str(&s.skills).map_err(|_| invalid("skills"))?,
+                rank: s
+                    .rank
+                    .as_deref()
+                    .map(str::parse)
+                    .transpose()
+                    .map_err(|_| invalid("rank"))?,
+                gate: s
+                    .gate
+                    .as_deref()
+                    .map(str::parse)
+                    .transpose()
+                    .map_err(|_| invalid("gate"))?,
+                id: s.id,
+                title: s.title,
+                description: s.description,
+            })
+        })
+        .collect::<Result<Vec<_>, StoreError>>()?;
+    Ok(goal_dto(goal, repos, usage, steps))
 }
 
-/// What a task has spent, arranged the way it is read: the author's own, one
-/// entry per reviewer in review order, and the total of every session on the
-/// task.
+/// What a task has spent, arranged the way it is read: one entry per agent
+/// in column order, and the total of every session on the task.
 ///
-/// The author's is every author-seat session, not only the agent the task is
-/// staffed with today — a task re-staffed keeps what the first author spent,
-/// and a total that did not count it would not add up. A reviewer no longer
-/// staffed is listed after those that are, for the same reason.
+/// The total is every session of the task, not only those of the agents the
+/// task is staffed with today — a task re-staffed keeps what the first
+/// staffing spent, and a total that did not count it would not add up. An
+/// agent no longer staffed is listed after those that are, for the same
+/// reason, with no column of its own.
 async fn task_usage(
     store: &Store,
     task_id: &str,
@@ -388,18 +402,14 @@ async fn task_usage(
 ) -> Result<TaskUsageDto, StoreError> {
     let spent = store.task_usage(task_id).await?;
     let total: TokenUsage = spent.iter().map(|p| p.usage).sum();
-    let author: TokenUsage = spent
-        .iter()
-        .filter(|p| p.seat == Seat::Author)
-        .map(|p| p.usage)
-        .sum();
-    let mut left: Vec<&AgentUsage> = spent.iter().filter(|p| p.seat == Seat::Reviewer).collect();
+    let mut left: Vec<&AgentUsage> = spent.iter().collect();
 
     let mut listed = Vec::new();
-    for (agent, skills) in agents.iter().filter(|(a, _)| a.seat() == Seat::Reviewer) {
+    for (agent, skills) in agents {
         if let Some(at) = left.iter().position(|p| p.agent_id == agent.id) {
             let spent = left.remove(at);
             listed.push(AgentUsageDto {
+                step: Some(agent.step.clone()),
                 agent_id: spent.agent_id.clone(),
                 skills: skills.clone(),
                 usage: spent.usage.into(),
@@ -408,6 +418,7 @@ async fn task_usage(
     }
     for spent in left {
         listed.push(AgentUsageDto {
+            step: None,
             agent_id: spent.agent_id.clone(),
             skills: agent_skills(store, &spent.agent_id).await,
             usage: spent.usage.into(),
@@ -415,13 +426,12 @@ async fn task_usage(
     }
     Ok(TaskUsageDto {
         total: total.into(),
-        author: author.into(),
-        reviewers: listed,
+        agents: listed,
     })
 }
 
-/// What a goal has spent, by seat: its orchestrator, the authors of its tasks,
-/// their reviewers, and the total of all three.
+/// What a goal has spent: its orchestrator, the agents of every column of
+/// every task, and the total of every session under it.
 async fn goal_usage(store: &Store, goal_id: &str) -> Result<GoalUsageDto, StoreError> {
     let spent = store.goal_usage(goal_id).await?;
     let of = |seat: Seat| -> TokenUsageDto {
@@ -432,11 +442,25 @@ async fn goal_usage(store: &Store, goal_id: &str) -> Result<GoalUsageDto, StoreE
             .sum::<TokenUsage>()
             .into()
     };
+    let mut agents = Vec::new();
+    for task in store
+        .list_tasks(store::TaskFilter {
+            goal_id: Some(goal_id.into()),
+            ..Default::default()
+        })
+        .await?
+    {
+        let mut staffed = Vec::new();
+        for agent in store.list_task_agents(&task.id).await? {
+            let skills = agent_skills(store, &agent.id).await;
+            staffed.push((agent, skills));
+        }
+        agents.extend(task_usage(store, &task.id, &staffed).await?.agents);
+    }
     Ok(GoalUsageDto {
         total: spent.iter().map(|r| r.usage).sum::<TokenUsage>().into(),
         orchestrator: of(Seat::Orchestrator),
-        authors: of(Seat::Author),
-        reviewers: of(Seat::Reviewer),
+        agents,
     })
 }
 
@@ -447,8 +471,8 @@ pub(crate) async fn pull_request_dto_of(
     store: &Store,
     row: ariadne_store::PullRequest,
 ) -> Result<ariadne_api::pull_requests::PullRequestDto, StoreError> {
-    // A request a task opened is its author's (005); any other has a
-    // session of its own (029).
+    // A request a task opened is kept by the agent of the task's current
+    // column (030); any other has a session of its own (029).
     let filter = match &row.origin_task_id {
         Some(task_id) if row.role == "author" => SessionFilter {
             task_id: Some(task_id.clone()),
@@ -459,12 +483,32 @@ pub(crate) async fn pull_request_dto_of(
             ..Default::default()
         },
     };
+    let current_agent = match row.origin_task_id.as_deref() {
+        Some(task_id) if row.role == "author" => {
+            let task = store.get_task(task_id).await?;
+            match task.step.as_deref() {
+                Some(step) => store
+                    .list_task_agents(task_id)
+                    .await?
+                    .into_iter()
+                    .find(|agent| agent.step == step)
+                    .map(|agent| agent.id),
+                None => None,
+            }
+        }
+        _ => None,
+    };
     let session_id = store
         .list_sessions(filter)
         .await?
         .into_iter()
         .rev()
-        .find(|session| row.role != "author" || session.seat() == Some(Seat::Author))
+        .find(|session| {
+            row.role != "author"
+                || (session.seat() == Some(Seat::Agent)
+                    && session.task_agent_id.is_some()
+                    && session.task_agent_id.as_deref() == current_agent.as_deref())
+        })
         .map(|session| session.id);
     Ok(pull_request_dto(row, session_id))
 }
