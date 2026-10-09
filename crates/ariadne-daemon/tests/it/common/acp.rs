@@ -533,9 +533,11 @@ def respond(request):
         params = request["params"]
         if params.get("value") == script.get("reject_config_value"):
             raise Failure(-32000, "the agent refused the option")
+        # An agent that settles a value on another id of its own.
+        settled = script.get("settle_config_values", {}).get(params.get("value"), params.get("value"))
         for option in options:
             if option.get("id") == params.get("configId"):
-                option["currentValue"] = params.get("value")
+                option["currentValue"] = settled
         return {"configOptions": options}
     if method == "session/prompt":
         turn = prompts.pop(0) if prompts else {}

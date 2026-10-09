@@ -2265,7 +2265,7 @@ async fn run_protocol(
             .await?;
         setup.config_options
     } else {
-        set_pinned_option(
+        pin_or_fall_back(
             rpc,
             &session_id,
             setup.config_options,
@@ -2274,10 +2274,10 @@ async fn run_protocol(
             "model",
             &config.model,
         )
-        .await?
+        .await
     };
     if let Some(effort) = &config.effort {
-        options = set_pinned_option(
+        options = pin_or_fall_back(
             rpc,
             &session_id,
             options,
@@ -2286,7 +2286,7 @@ async fn run_protocol(
             "effort",
             effort,
         )
-        .await?;
+        .await;
     }
 
     rpc.sink
@@ -2532,6 +2532,65 @@ async fn session_setup(
     })
 }
 
+/// Pin one option of a launch, or carry on without it.
+///
+/// A launch whose pin does not land — the agent offers no such option,
+/// refuses the value, fails the call, or settles on another value — runs on
+/// whatever the agent runs: its own default, or what the resumed
+/// conversation ran on. A `session.pin_fallback` event names the pin and what
+/// the agent runs instead. The row keeps the pin, so the next launch asks for
+/// it again.
+async fn pin_or_fall_back(
+    rpc: &mut Rpc,
+    session_id: &str,
+    options: Vec<v1::SessionConfigOption>,
+    categories: &[&str],
+    names: &[&str],
+    label: &str,
+    value: &str,
+) -> Vec<v1::SessionConfigOption> {
+    let Unpinned { options, error } =
+        match set_pinned_option(rpc, session_id, options, categories, names, label, value).await {
+            Ok(options) => return options,
+            Err(unpinned) => unpinned,
+        };
+    let running = find_config_option(&options, categories, names)
+        .and_then(current_value)
+        .map(str::to_string);
+    let error = format!("{error:#}");
+    tracing::warn!(session = %rpc.sink.session_id, label, value, ?running, %error, "a pin did not land, running on the agent's own");
+    rpc.sink
+        .emit(
+            "session.pin_fallback",
+            json!({
+                "session_id": session_id,
+                "option": label,
+                "asked": value,
+                "running": running,
+                "error": error,
+            }),
+        )
+        .await;
+    options
+}
+
+/// A pin that did not land, and the options as the agent last reported
+/// them: what a launch carries on from. Where the pin must land — a switch —
+/// it is the error alone.
+#[derive(Debug)]
+struct Unpinned {
+    options: Vec<v1::SessionConfigOption>,
+    error: anyhow::Error,
+}
+
+impl std::fmt::Display for Unpinned {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:#}", self.error)
+    }
+}
+
+impl std::error::Error for Unpinned {}
+
 async fn set_pinned_option(
     rpc: &mut Rpc,
     session_id: &str,
@@ -2540,11 +2599,12 @@ async fn set_pinned_option(
     names: &[&str],
     label: &str,
     value: &str,
-) -> Result<Vec<v1::SessionConfigOption>> {
-    let config_id = find_config_option(&options, categories, names)
-        .ok_or_else(|| anyhow!("ACP agent did not offer a {label} configuration option"))?
-        .id
-        .clone();
+) -> std::result::Result<Vec<v1::SessionConfigOption>, Unpinned> {
+    let Some(option) = find_config_option(&options, categories, names) else {
+        let error = anyhow!("ACP agent did not offer a {label} configuration option");
+        return Err(Unpinned { options, error });
+    };
+    let config_id = option.id.clone();
     // The value rides flattened into the request, which is what puts a
     // select option's id at `value` and a boolean's `type` beside it.
     let request = v1::SetSessionConfigOptionRequest::new(
@@ -2552,10 +2612,14 @@ async fn set_pinned_option(
         config_id,
         v1::SessionConfigOptionValue::value_id(value.to_string()),
     );
-    let response = rpc
+    let response = match rpc
         .call("session/set_config_option", request)
         .await
-        .with_context(|| format!("setting ACP {label} to `{value}`"))?;
+        .with_context(|| format!("setting ACP {label} to `{value}`"))
+    {
+        Ok(response) => response,
+        Err(error) => return Err(Unpinned { options, error }),
+    };
     let options = match response.config_options.is_empty() {
         true => options,
         false => response.config_options,
@@ -2563,16 +2627,53 @@ async fn set_pinned_option(
     // An agent that took the option answers with it set. One that did not —
     // it read the value and made nothing of it — answers the same way, and
     // the session would run on the agent's own model at the agent's own
-    // effort while Ariadne believed it was pinned. The launch fails instead,
+    // effort while Ariadne believed it was pinned. It is an error instead,
     // so a pin that does not land is heard about rather than paid for.
-    let settled = find_config_option(&options, categories, names).and_then(current_value);
-    match settled {
+    let option = find_config_option(&options, categories, names);
+    match option.and_then(current_value) {
         Some(settled) if settled == value => Ok(options),
-        Some(settled) => bail!("ACP agent kept {label} on `{settled}` when asked for `{value}`"),
+        Some(settled) if option.is_some_and(|option| respelled(option, value, settled)) => {
+            Ok(options)
+        }
+        Some(settled) => {
+            let error = anyhow!("ACP agent kept {label} on `{settled}` when asked for `{value}`");
+            Err(Unpinned { options, error })
+        }
         // Nothing to check against: an agent that reports no current value
         // is taken at its word, as it was before this was checked at all.
         None => Ok(options),
     }
+}
+
+/// Whether `settled` is `asked` under the spelling the agent offers it by
+/// now: the same id without its context hint (`claude-fable-5-1` for
+/// `claude-fable-5-1[1m]`), on an option that no longer offers `asked` at all.
+///
+/// Claude's agent lists a model without the hint on a resumed conversation
+/// that it lists with the hint on a new one — the same row of its picker,
+/// under another id — and settles a pin of the hinted id on that row. Where
+/// the hinted id is still offered beside the bare one, the bare one is a
+/// smaller context window, and a pin that lands on it did not land.
+fn respelled(option: &v1::SessionConfigOption, asked: &str, settled: &str) -> bool {
+    let v1::SessionConfigKind::Select(select) = &option.kind else {
+        return false;
+    };
+    let offered: Vec<&v1::SessionConfigSelectOption> = match &select.options {
+        v1::SessionConfigSelectOptions::Ungrouped(options) => options.iter().collect(),
+        v1::SessionConfigSelectOptions::Grouped(groups) => groups
+            .iter()
+            .flat_map(|group| group.options.iter())
+            .collect(),
+        _ => Vec::new(),
+    };
+    let unhinted = asked
+        .strip_suffix(']')
+        .and_then(|rest| rest.rsplit_once('['))
+        .map(|(model, _)| model);
+    unhinted == Some(settled)
+        && !offered
+            .iter()
+            .any(|choice| choice.value.0.as_ref() == asked)
 }
 
 /// What a select option is set to. A boolean one has no id to compare, and

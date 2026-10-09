@@ -262,6 +262,102 @@ async fn spawned_idle(h: &Harness, cast: &Cast) -> ariadne_store::AgentSession {
     session
 }
 
+/// An author pinned to `model` on the stub `scripted`, launched and through
+/// its first turn: the session, and the `session.pin_fallback` its launch
+/// recorded, if any.
+async fn pinned_launch(
+    scripted: Value,
+    model: &str,
+) -> (Harness, ariadne_store::AgentSession, Option<Value>) {
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness().home(registry_home(&stub)).await;
+    let cast = registry_cast(&h).await;
+    let pin = AgentPin {
+        model: model.into(),
+        effort: None,
+    };
+    h.store.set_agent_pin(&cast.author.id, &pin).await.unwrap();
+    let session = spawned_idle(&h, &cast).await;
+    let events: Vec<AgentEventDto> = h.get(&format!("/v1/events?session={}", session.id)).await;
+    assert!(
+        events.iter().all(|event| event.kind != "session.error"),
+        "{events:#?}"
+    );
+    let fallback = events
+        .into_iter()
+        .find(|event| event.kind == "session.pin_fallback")
+        .map(|event| event.payload);
+    (h, session, fallback)
+}
+
+/// The stub, settling a pin of `test-model[1m]` on `test-model` and offering
+/// `offered`.
+fn respelling_script(offered: Value) -> Value {
+    let mut scripted = script();
+    scripted["config_options"][0]["options"] = offered;
+    scripted["settle_config_values"] = json!({"test-model[1m]": "test-model"});
+    scripted
+}
+
+/// Claude's agent offers a model without its context hint on a resumed
+/// conversation, and settles a pin of the hinted id there: that is the pin
+/// landing, under the only spelling the agent still offers.
+#[tokio::test]
+async fn a_pin_settled_on_its_id_without_the_context_hint_lands() {
+    let offered = json!([{"value": "test-model", "name": "Test"}]);
+    let (_h, _session, fallback) =
+        pinned_launch(respelling_script(offered), "stub:test-model[1m]").await;
+
+    assert_eq!(fallback, None);
+}
+
+/// Where the agent still offers the hinted id beside the bare one, the bare
+/// one is a smaller context window: a pin settled there did not land, and
+/// the session runs on the bare one and says so.
+#[tokio::test]
+async fn a_pin_settled_on_the_bare_id_beside_the_hinted_one_falls_back() {
+    let offered = json!([
+        {"value": "test-model", "name": "Test"},
+        {"value": "test-model[1m]", "name": "Test, 1M"},
+    ]);
+    let (_h, _session, fallback) =
+        pinned_launch(respelling_script(offered), "stub:test-model[1m]").await;
+
+    let fallback = fallback.expect("the fallback was recorded");
+    assert_eq!(fallback["option"], "model");
+    assert_eq!(fallback["asked"], "test-model[1m]");
+    assert_eq!(fallback["running"], "test-model");
+    let error = fallback["error"].as_str().unwrap();
+    assert!(
+        error.contains("kept model on `test-model` when asked for `test-model[1m]`"),
+        "{error}"
+    );
+}
+
+/// A model pin the agent refuses does not stop the launch: the session runs
+/// its turn on the agent's own model, records which, and keeps its pin for
+/// the next launch to ask for again.
+#[tokio::test]
+async fn a_refused_model_pin_runs_on_the_agents_own_model() {
+    let mut scripted = script();
+    scripted["reject_config_value"] = json!("test-model");
+    let (h, session, fallback) = pinned_launch(scripted, "stub:test-model").await;
+
+    let fallback = fallback.expect("the fallback was recorded");
+    assert_eq!(fallback["asked"], "test-model");
+    assert_eq!(fallback["running"], "old-model");
+    assert!(
+        fallback["error"]
+            .as_str()
+            .unwrap()
+            .contains("the agent refused the option"),
+        "{fallback}"
+    );
+    let row = h.store.get_session(&session.id).await.unwrap();
+    assert_eq!(row.model, "stub:test-model");
+}
+
 /// Launch, handshake, model and effort pins, the briefing as the first
 /// prompt, the events in the store, the captured agent session id — and the
 /// agent a child of the daemon, on its own stdio.

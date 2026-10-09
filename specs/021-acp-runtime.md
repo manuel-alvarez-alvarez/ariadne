@@ -1,7 +1,7 @@
 ---
 id: acp-runtime
 status: current
-updated: 2026-10-01
+updated: 2026-10-09
 areas: [daemon]
 commits: []
 tests:
@@ -85,14 +85,28 @@ not reject the agent or discard its catalog.
    category `model`, or, where no option has that category, on the option
    whose id or name is `model`. The effort is set the same way, on category
    `thought_level` with `effort`, `reasoning` and `thought_level` as the
-   id-or-name fallback, and only when the launch or a same-agent switch carries one. An agent that
-   offers no matching option fails the launch or switch rather than run on a default
-   (see Known gap).
+   id-or-name fallback, and only when the launch or a same-agent switch carries one.
+   The value the agent answers with is read back. A model pin settled on the
+   same id without its trailing context hint (`claude-fable-5-1` for
+   `claude-fable-5-1[1m]`) has landed, if the option no longer offers the
+   hinted id: Claude's agent lists the model that way on a resumed
+   conversation (`acp_runtime.rs::a_pin_settled_on_its_id_without_the_context_hint_lands`).
+   A launch pin that does not land — no matching option, a refused or failed
+   call, or another value settled on — does not stop the launch: the session
+   runs on whatever the agent runs, its own default or what the resumed
+   conversation ran on, and a `session.pin_fallback` event names the pin, the
+   value the agent runs instead and the reason. The row keeps the pin, so the
+   next launch asks for it again
+   (`::a_refused_model_pin_runs_on_the_agents_own_model`). Where the hinted
+   id is still offered beside the bare one, the bare one is a smaller context
+   window, and a pin settled there falls back the same way
+   (`::a_pin_settled_on_the_bare_id_beside_the_hinted_one_falls_back`).
    A same-agent switch also calls `session/set_config_option` on the live
    conversation, after its running turn and before queued prompts
    (`switch.rs::a_same_agent_switch_keeps_the_row_and_conversation`,
-   `::a_same_agent_switch_during_a_turn_precedes_queued_input`). A refused
-   option fails a switch between turns with the agent's reason
+   `::a_same_agent_switch_during_a_turn_precedes_queued_input`). A switch
+   pin must land: a refused option fails a switch between turns with the
+   agent's reason, and the session keeps its old pin
    (`::a_refused_same_agent_option_keeps_the_old_pin`).
    Loose sessions instead retain and record the loaded model (020).
 4. Every prompt the runtime sends is the system prompt, a blank line, and
@@ -501,10 +515,11 @@ not reject the agent or discard its catalog.
 
 ## Known gap
 
-Two refusals of rules 2 and 3 are proven only at discovery, not at launch:
-an agent on another protocol version, and an agent with no model option.
-Discovery rejects both (007), and no pin can name a model of a rejected
-agent (011), so no test launches one.
+An agent on another protocol version (rule 2) is refused only at discovery,
+not at launch: discovery rejects it (007), and no pin can name a model of a
+rejected agent (011), so no test launches one. Discovery rejects an agent
+with no model option the same way, so the fallback of rule 3 for a missing
+option is proven only by the refused pin, which takes the same path.
 
 ## Sources
 

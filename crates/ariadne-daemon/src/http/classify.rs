@@ -134,6 +134,9 @@ pub(crate) fn summarize(kind: &str, payload: &serde_json::Value) -> String {
     if kind == "session.diagnosis" {
         return finish(&diagnosis_summary(payload));
     }
+    if kind == "session.pin_fallback" {
+        return finish(&pin_fallback_summary(payload));
+    }
     let text = tool_call_summary(payload)
         .or_else(|| {
             (kind == "post_tool_use")
@@ -185,6 +188,18 @@ fn permission_reply_summary(payload: &serde_json::Value) -> String {
 /// `…` for a payload nothing here can read.
 fn diagnosis_summary(payload: &serde_json::Value) -> String {
     ariadne_api::events::diagnosis_note(payload).unwrap_or_else(|| "…".to_string())
+}
+
+/// A `session.pin_fallback` event's one line: the pin the launch asked for
+/// and what the agent runs instead — `model claude-fable-5-1[1m] did not
+/// land, running on opus[1m]`.
+fn pin_fallback_summary(payload: &serde_json::Value) -> String {
+    let option = non_empty_str(payload.get("option")).unwrap_or("pin");
+    let asked = non_empty_str(payload.get("asked")).unwrap_or("…");
+    match non_empty_str(payload.get("running")) {
+        Some(running) => format!("{option} {asked} did not land, running on {running}"),
+        None => format!("{option} {asked} did not land, running on the agent's own"),
+    }
 }
 
 /// A payload's field, where it holds a non-empty string.
@@ -364,6 +379,23 @@ mod tests {
             summarize("session.diagnosis", &payload),
             "AI suggests: quota exhaustion (72%)"
         );
+    }
+
+    /// A pin that did not land reads as the pin asked for and what the agent
+    /// runs instead, and moves neither the status nor the attention.
+    #[test]
+    fn a_pin_fallback_says_what_was_asked_and_what_runs() {
+        let payload = json!({
+            "option": "model",
+            "asked": "claude-fable-5-1[1m]",
+            "running": "opus[1m]",
+        });
+        assert_eq!(
+            summarize("session.pin_fallback", &payload),
+            "model claude-fable-5-1[1m] did not land, running on opus[1m]"
+        );
+        assert_eq!(status_for_event("session.pin_fallback"), None);
+        assert_eq!(attention_for_event("session.pin_fallback", &payload), None);
     }
 
     /// The lifecycle events, and nothing about them raises attention.
