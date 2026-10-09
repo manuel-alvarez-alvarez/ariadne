@@ -745,6 +745,49 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_author() {
     );
 }
 
+/// A task over while the last read of its request still says open asks the
+/// forge again before Ariadne lets go of it (026 rule 23). A read that
+/// fails proves nothing: the row stays. Once the forge says it merged, its
+/// work is taken down and the row goes.
+#[tokio::test]
+async fn a_failed_read_of_an_ended_tasks_request_keeps_its_row() {
+    use ariadne_core::Actor;
+    let Kept {
+        h, stub, task, id, ..
+    } = kept_request(quiet_script()).await;
+    let mut failing = quiet_script();
+    for entry in failing.as_array_mut().unwrap() {
+        if entry["args"] == json!(["pr", "view"]) {
+            entry["exit"] = json!(1);
+            entry["stderr"] = json!("gh: Server Error (HTTP 502)");
+        }
+    }
+    stub.reprogram(failing);
+    let tip = sh(&h.at("repo"), &format!("git rev-parse {}", task.branch));
+    h.store
+        .transition_task(
+            &task.id,
+            TaskStatus::Finished,
+            Actor::Author,
+            None,
+            Some(&tip),
+        )
+        .await
+        .unwrap();
+    pass_over(&h, &id).await;
+    assert!(
+        h.store.get_pull_request(&id).await.is_ok(),
+        "a failed read keeps the row"
+    );
+
+    stub.reprogram(script("MERGED", &[], json!([])));
+    eventually(TIMEOUT, "the merged request's row to go", async || {
+        pass_over(&h, &id).await;
+        h.store.get_pull_request(&id).await.is_err()
+    })
+    .await;
+}
+
 /// A close is told to the author too, and a closed request finishes nothing:
 /// the author fails the task instead.
 #[tokio::test]

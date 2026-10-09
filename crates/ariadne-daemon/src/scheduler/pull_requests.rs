@@ -118,8 +118,9 @@ impl super::Scheduler {
     }
 
     /// The request `pull` as the forge reads it now, where that is merged
-    /// or closed: the last read held for it said open. None while it is
-    /// still open, or where the integration is off or the read fails.
+    /// or closed: the last read held for it said open. None while the forge
+    /// confirms it open, or where the integration is off; a read that fails
+    /// is the error, never a confirmation.
     async fn read_ended(&mut self, pull: &PullRequest) -> anyhow::Result<Option<PullRequest>> {
         let Some(integration) = self
             .store
@@ -133,17 +134,13 @@ impl super::Scheduler {
             "{}/{}/{}",
             integration.host, integration.owner, integration.name
         );
-        let read = match crate::forge::ForgeClient::for_repository(&self.launcher.cfg, &integration)
+        let read = crate::forge::ForgeClient::for_repository(&self.launcher.cfg, &integration)
             .pull_request(&slug, pull.number)
             .await
-        {
-            Ok(read) if read.number == pull.number => read,
-            Ok(_) => return Ok(None),
-            Err(error) => {
-                warn!(pull_request = %pull.id, %error, "cannot read whether the request ended");
-                return Ok(None);
-            }
-        };
+            .map_err(|error| anyhow::anyhow!("cannot read whether the request ended: {error}"))?;
+        if read.number != pull.number {
+            anyhow::bail!("the forge returned another request number");
+        }
         if read.state == "open" {
             return Ok(None);
         }
@@ -187,8 +184,16 @@ impl super::Scheduler {
             // The last read may be older than the merge that ended the task:
             // a finish reads the forge at the call. The forge is asked again,
             // so a merged request still has its work taken down.
-            if let Some(ended) = Box::pin(self.read_ended(pull)).await? {
-                return Box::pin(self.end_kept_request(&ended)).await;
+            // A read that fails proves nothing: the row stays, and the pass
+            // after the retry wait asks again.
+            match Box::pin(self.read_ended(pull)).await {
+                Ok(Some(ended)) => return Box::pin(self.end_kept_request(&ended)).await,
+                Ok(None) => {}
+                Err(e) => {
+                    self.pull_request_cleanup_retry
+                        .insert(pull.id.clone(), Instant::now() + CLEANUP_RETRY);
+                    return Err(e);
+                }
             }
             // Open with nobody to keep it: Ariadne stops working on it, but
             // for the review the user asked of it, which runs on (029).

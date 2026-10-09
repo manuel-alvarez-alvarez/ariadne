@@ -66,13 +66,6 @@ pub(crate) const REVIEW_MARK: &str = "<!-- ariadne:review -->";
 /// rather than post a second.
 pub(crate) const SUMMARY_MARK: &str = "<!-- ariadne:review-summary -->";
 
-/// Whether a forge call failed because what it named is not there: `gh`
-/// and `glab` both say "404" for it. Anything else — a server error, a lost
-/// answer — is no proof the thing is gone.
-pub(crate) fn is_missing(error: &str) -> bool {
-    error.contains("HTTP 404") || error.contains("404 Not Found")
-}
-
 /// `body` signed as a review's, or as its summary's.
 pub(crate) fn signed(body: &str, summary: bool) -> String {
     match summary {

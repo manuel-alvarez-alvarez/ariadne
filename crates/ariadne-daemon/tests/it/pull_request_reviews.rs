@@ -1470,7 +1470,7 @@ async fn a_summary_is_posted_again_only_where_github_says_it_is_gone() {
                 "github.com/acme/widgets",
                 1,
                 Some("ic-301"),
-                "Reviewed a..b."
+                "- P1: Handle HTTP 404 responses (404 Not Found)"
             )
             .await
             .is_err()

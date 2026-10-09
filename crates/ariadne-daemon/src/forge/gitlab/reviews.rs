@@ -148,7 +148,7 @@ impl Gitlab {
         if let Some(id) = existing.and_then(|id| id.strip_prefix("note-")) {
             let edited = self
                 .cli
-                .answer(&[
+                .call(&[
                     "api",
                     &format!("{notes}/{id}"),
                     "--hostname",
@@ -161,8 +161,8 @@ impl Gitlab {
                 .await;
             match edited {
                 Ok(output) => return read(&output),
-                Err(error) if crate::forge::pulls::is_missing(&error) => {}
-                Err(error) => return Err(error),
+                Err(refusal) if refusal.is_missing() => {}
+                Err(refusal) => return Err(refusal.to_string()),
             }
         }
         let output = self

@@ -85,11 +85,13 @@ impl Github {
                 field("-f", format!("comments[][body]={}", comment.body));
             }
             let args: Vec<&str> = args.iter().map(String::as_str).collect();
-            self.cli.answer(&args).await
+            self.cli.call(&args).await
         };
         let output = match post(None).await {
-            Err(e) if refused_for_its_body(&e) => post(Some(POINTER)).await?,
-            answered => answered?,
+            Err(refusal) if refusal.said().is_some_and(refused_for_its_body) => post(Some(POINTER))
+                .await
+                .map_err(|refusal| refusal.to_string())?,
+            answered => answered.map_err(|refusal| refusal.to_string())?,
         };
         let posted: Posted = serde_json::from_str(&output)
             .map_err(|e| format!("cannot read the review GitHub stored: {e}"))?;
@@ -148,7 +150,7 @@ impl Github {
         if let Some(id) = existing.and_then(|id| id.strip_prefix("ic-")) {
             let edited = self
                 .cli
-                .answer(&[
+                .call(&[
                     "api",
                     &format!("repos/{owner}/{name}/issues/comments/{id}"),
                     "--hostname",
@@ -161,8 +163,8 @@ impl Github {
                 .await;
             match edited {
                 Ok(output) => return read_comment(&output),
-                Err(error) if crate::forge::pulls::is_missing(&error) => {}
-                Err(error) => return Err(error),
+                Err(refusal) if refusal.is_missing() => {}
+                Err(refusal) => return Err(refusal.to_string()),
             }
         }
         let output = self
@@ -228,8 +230,8 @@ fn read_comment(output: &str) -> Result<(String, String), String> {
 }
 
 /// Whether GitHub refused a review for having no body: what its own answer
-/// says, `{"message": ..., "errors": [...]}`. The command line the error also
-/// carries names a body in every comment, so it is never read for this.
+/// says, `{"message": ..., "errors": [...]}`. It reads what the forge said
+/// alone, never the command, which names a body in every comment.
 fn refused_for_its_body(error: &str) -> bool {
     error.match_indices("{\"message\"").any(|(at, _)| {
         serde_json::Deserializer::from_str(&error[at..])

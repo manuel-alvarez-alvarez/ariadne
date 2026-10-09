@@ -587,7 +587,18 @@ impl Cli {
     /// Run the CLI and answer its standard output, or its own words on why
     /// it failed.
     async fn answer(&self, args: &[&str]) -> Result<String, String> {
-        let output = self.run(args).await?;
+        self.call(args).await.map_err(|refusal| refusal.to_string())
+    }
+
+    /// Run the CLI and answer its standard output, or the refusal: what the
+    /// forge said, kept apart from the command, whose arguments carry a
+    /// comment's whole text.
+    pub(crate) async fn call(&self, args: &[&str]) -> Result<String, Refusal> {
+        let command = format!("{} {}", self.program, args.join(" "));
+        let output = self.run(args).await.map_err(|message| Refusal {
+            said: None,
+            message,
+        })?;
         if output.status.success() {
             return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
         }
@@ -602,22 +613,69 @@ impl Cli {
             .filter(|part| !part.is_empty())
             .collect::<Vec<_>>()
             .join(" — ");
-        let said = said.trim();
-        Err(match said.is_empty() {
-            true => format!(
-                "`{} {}` failed with {}",
-                self.program,
-                args.join(" "),
-                output.status
-            ),
-            false => format!("`{} {}`: {said}", self.program, args.join(" ")),
+        let message = match said.is_empty() {
+            true => format!("`{command}` failed with {}", output.status),
+            false => format!("`{command}`: {said}"),
+        };
+        Err(Refusal {
+            said: Some(said).filter(|said| !said.is_empty()),
+            message,
         })
+    }
+}
+
+/// A forge CLI call that failed: what the CLI and the forge said, apart
+/// from the command it ran. Only what was said is read for why: the
+/// command's arguments hold a comment's whole text, which can say anything.
+#[derive(Debug, Clone)]
+pub(crate) struct Refusal {
+    /// The CLI's and the forge's words; None where nothing answered — the
+    /// CLI did not start, or did not answer in time.
+    said: Option<String>,
+    message: String,
+}
+
+impl Refusal {
+    /// Whether the forge answered that what the call named is not there:
+    /// `gh` and `glab` both say "404" for it. A server error, a timeout or a
+    /// lost answer is no proof the thing is gone.
+    pub(crate) fn is_missing(&self) -> bool {
+        self.said
+            .as_deref()
+            .is_some_and(|said| said.contains("HTTP 404") || said.contains("404 Not Found"))
+    }
+
+    /// What the forge said, where it answered.
+    pub(crate) fn said(&self) -> Option<&str> {
+        self.said.as_deref()
+    }
+}
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A refusal is read for what the forge said, never for the command:
+    /// a summary whose text says "HTTP 404" is no 404 from the forge.
+    #[test]
+    fn a_refusal_is_missing_only_where_the_forge_said_404() {
+        // What a refused edit of a summary titled "P1: Handle HTTP 404
+        // responses" carries: the title is in the message, never in `said`.
+        let refusal = |said: Option<&str>| Refusal {
+            said: said.map(str::to_string),
+            message: "`gh api -f body=P1: Handle HTTP 404 responses`".into(),
+        };
+        assert!(!refusal(Some("gh: Server Error (HTTP 502)")).is_missing());
+        assert!(!refusal(None).is_missing(), "a timeout is no 404");
+        assert!(refusal(Some("gh: Not Found (HTTP 404)")).is_missing());
+        assert!(refusal(Some("404 Not Found")).is_missing());
+    }
 
     #[test]
     fn pull_request_urls_share_the_repository_and_number_only() {
