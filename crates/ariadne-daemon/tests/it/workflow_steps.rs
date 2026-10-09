@@ -923,6 +923,139 @@ async fn completing_the_request_column_without_a_merge_commit_records_the_forges
     assert_eq!(finished["merge_commit"], "merge-sha-123");
 }
 
+/// A workflow may put its `merged` gate before another column, same as a
+/// `request-merged` one can: `merge[Merge] gate: merged` then
+/// `deploy[Deploy]`, with no gate of its own. Both columns' sessions are
+/// made up front, with no scheduler running to spawn the second one: the
+/// column-agent check `complete` makes only matches a session to its
+/// agent's own column, not to a live process.
+async fn merge_then_deploy(h: &Harness) -> (Task, AgentSession, AgentSession) {
+    let path = h.git_repo("merge-deploy-repo");
+    let repo = h.repository(&path).await;
+    h.store
+        .create_workflow(ariadne_store::NewWorkflow {
+            name: "merge-then-deploy".into(),
+            document:
+                "workflow merge-then-deploy\n merge[Merge]\n  gate: merged\n deploy[Deploy]\n"
+                    .into(),
+        })
+        .await
+        .unwrap();
+    let goal = h
+        .store
+        .create_goal(NewGoal {
+            workflow: Some("merge-then-deploy".into()),
+            title: "Ship it".into(),
+            description: "Land the change.".into(),
+            issue_url: None,
+            repository_ids: vec![repo.id.clone()],
+            pin: test_pin(),
+        })
+        .await
+        .unwrap();
+    let agents = ["merge", "deploy"]
+        .map(|step| NewTaskAgent::new(step, Vec::<String>::new(), test_pin()))
+        .to_vec();
+    let task = h
+        .store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id,
+            title: "Ship it".into(),
+            description: "Do the work.".into(),
+            agents,
+            depends_on: vec![],
+        })
+        .await
+        .unwrap();
+    h.store
+        .transition_task(&task.id, TaskStatus::Ready, Actor::Daemon, None, None)
+        .await
+        .unwrap();
+    let task = h.store.start_first_step(&task.id).await.unwrap();
+    let worktree = h.at("merge-deploy-worktree");
+    h.launcher
+        .git
+        .add_worktree(&path, &worktree, &task.branch, "main")
+        .await
+        .unwrap();
+    h.store
+        .set_task_worktree(&task.id, Some(worktree.to_str().unwrap()))
+        .await
+        .unwrap();
+    let agents = h.store.list_task_agents(&task.id).await.unwrap();
+    let merge_agent = agents.iter().find(|a| a.step == "merge").unwrap().clone();
+    let deploy_agent = agents.iter().find(|a| a.step == "deploy").unwrap().clone();
+    let session_on = |agent_id: String| ariadne_store::NewSession {
+        goal_id: Some(goal.id.clone()),
+        task_id: Some(task.id.clone()),
+        seat: Some(Seat::Agent),
+        task_agent_id: Some(agent_id),
+        model: test_pin().model,
+        effort: None,
+        worktree_path: Some(worktree.to_str().unwrap().into()),
+        pull_request_id: None,
+    };
+    let merge = h
+        .store
+        .create_session(session_on(merge_agent.id))
+        .await
+        .unwrap();
+    let deploy = h
+        .store
+        .create_session(session_on(deploy_agent.id))
+        .await
+        .unwrap();
+    sh(
+        &worktree,
+        "echo change > feature && git add feature && git -c user.name=Test -c user.email=test@test commit -qm 'feat: add the feature'",
+    );
+    (task, merge, deploy)
+}
+
+/// Completing a `merged` gate before the last column still carries the
+/// verified merge commit onward: the move to the column after it must not
+/// drop it, since that later column has none of its own to give the task
+/// when it finishes, and cleanup leaves no branch for the diff route to
+/// read instead.
+#[tokio::test]
+async fn completing_a_merge_column_before_the_last_carries_its_merge_commit_onward() {
+    let h = harness().await;
+    let (task, merge, deploy) = merge_then_deploy(&h).await;
+    let repo = h.store.get_repository(&task.repo_id).await.unwrap();
+    sh(
+        std::path::Path::new(&repo.path),
+        &format!("git merge --ff-only {}", task.branch),
+    );
+    let sha = sh(std::path::Path::new(&repo.path), "git rev-parse HEAD");
+    let sha = sha.trim();
+
+    let moved: Value = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/step/complete", task.id),
+                &merge.id,
+                json!({"reason": "The change is on the base.", "merge_commit": sha}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(moved["step"], "deploy");
+
+    let finished: Value = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/step/complete", task.id),
+                &deploy.id,
+                json!({"reason": "Deployment finished."}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(finished["status"], "finished");
+    assert_eq!(finished["merge_commit"], sha);
+}
+
 #[tokio::test]
 async fn any_column_can_fail_the_task_and_usage_and_facts_name_the_column() {
     let h = harness().scheduler().await;

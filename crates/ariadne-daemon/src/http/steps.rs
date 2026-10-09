@@ -59,11 +59,11 @@ pub(super) async fn complete(
         .transpose()
         .map_err(|_| gate_failed("the stored column has an invalid gate"))?;
     let git = &state.launcher.git;
-    // The request gate's own merge commit, read off the forge rather than
-    // taken from the agent: a column that completes the request itself, as
-    // the `pr-babysit` skill does, sends a reason alone, and a commit the
-    // finished task does not carry is a diff the next cleanup leaves
-    // nowhere to read.
+    // The merge commit a `merged` or `request-merged` gate verified, carried
+    // to wherever the task finishes rather than only to the step that
+    // verified it: a merge or a request column before the last would
+    // otherwise drop it on the way there, and the finished task's diff
+    // route has no branch left for cleanup to leave it to read instead.
     let mut verified_merge_commit = None;
     match gate {
         Some(StepGate::Committed) => {
@@ -115,6 +115,7 @@ pub(super) async fn complete(
                     "the merge commit and task branch must be on the base branch",
                 ));
             }
+            verified_merge_commit = Some(sha.to_string());
         }
         Some(StepGate::RequestMerged) => {
             let url = task
