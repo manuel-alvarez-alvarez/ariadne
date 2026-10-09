@@ -6623,6 +6623,39 @@ async fn the_workflows_only_migration_maps_every_old_row_as_agreed() {
     );
 }
 
+/// The 0023 migration folded into `old_pipeline_database`'s run drops whole
+/// tables and columns. Opening it backs the database up beside itself
+/// first, on its own — not on a copy the caller happened to make — and the
+/// backup recovers what 0023 went on to drop.
+#[tokio::test]
+async fn opening_a_database_with_a_destructive_migration_pending_backs_it_up_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = old_pipeline_database(&dir).await;
+    let backup = std::path::PathBuf::from(format!("{}.backup-schema-20", path.display()));
+    assert!(!backup.is_file(), "no backup before the open");
+
+    let store = Store::open(&path).await.unwrap();
+    store.close().await;
+    assert!(
+        backup.is_file(),
+        "the open backed the database up on its own"
+    );
+
+    // Read before `Store::open` below migrates the backup file itself in
+    // place: it is what 0023 would have dropped from `path`, undone.
+    let raw = raw_pool(&backup).await;
+    assert!(
+        columns_of(&raw, "tasks")
+            .await
+            .contains(&"picked_agent_id".to_string()),
+        "the backup still has what 0023 went on to drop"
+    );
+    raw.close().await;
+
+    let recovered = Store::open(&backup).await.unwrap();
+    assert_eq!(recovered.get_goal("g_merge").await.unwrap().title, "Merge");
+}
+
 #[tokio::test]
 async fn invalid_stored_column_skills_refuse_staffing_without_writing_a_task() {
     use sqlx::Connection;

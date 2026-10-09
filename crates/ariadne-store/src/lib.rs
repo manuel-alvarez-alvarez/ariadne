@@ -54,7 +54,7 @@ pub use tasks::{NewTask, TaskFilter, TaskUpdate, unstaffed_columns};
 pub use usage::{AgentUsage, SeatUsage};
 pub use workflows::NewWorkflow;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -151,6 +151,16 @@ async fn applied_elsewhere(pool: &Pool<Sqlite>) -> Result<bool> {
     }))
 }
 
+/// Where a backup of the database at `path` goes before a migration that
+/// may drop something, named by the schema version it is a copy of: a
+/// repeated attempt at the same upgrade then finds its own backup already
+/// there, rather than overwriting it or failing beside it.
+fn backup_path(path: &Path, version: i64) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(format!(".backup-schema-{version}"));
+    PathBuf::from(name)
+}
+
 /// What a user holding one is told: the fix is one file to delete, named in
 /// full since it is wherever `db_path` puts it.
 fn pre_squash_message(path: &Path) -> String {
@@ -221,6 +231,39 @@ impl Store {
         sqlx::query("PRAGMA foreign_keys = OFF")
             .execute(&mut *connection)
             .await?;
+        // A database already on some schema, with a migration still pending,
+        // loses whatever that migration drops — 0023 drops whole tables and
+        // columns. Back it up beside itself first, so an upgrade a person
+        // did not mean to run is a file away from undone. A database just
+        // created above, or already on every migration this release ships,
+        // has nothing to lose and gets no backup.
+        let on_a_schema: Option<String> = sqlx::query_scalar(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
+        )
+        .fetch_optional(&mut *connection)
+        .await?;
+        if on_a_schema.is_some() {
+            let applied: Vec<i64> = sqlx::query_scalar("SELECT version FROM _sqlx_migrations")
+                .fetch_all(&mut *connection)
+                .await?;
+            if MIGRATIONS.iter().any(|m| !applied.contains(&m.version)) {
+                let backup = backup_path(path.as_ref(), applied.iter().max().copied().unwrap_or(0));
+                if !backup.is_file() {
+                    let to = backup.to_str().ok_or_else(|| {
+                        StoreError::Invalid(format!("{} is not valid UTF-8", backup.display()))
+                    })?;
+                    sqlx::query("VACUUM INTO ?")
+                        .bind(to)
+                        .execute(&mut *connection)
+                        .await
+                        .map_err(|e| {
+                            StoreError::Invalid(format!(
+                                "could not back the database up before migrating it: {e}"
+                            ))
+                        })?;
+                }
+            }
+        }
         let migrated = MIGRATIONS.run_direct(None, &mut *connection, false).await;
         sqlx::query("PRAGMA foreign_keys = ON")
             .execute(&mut *connection)
