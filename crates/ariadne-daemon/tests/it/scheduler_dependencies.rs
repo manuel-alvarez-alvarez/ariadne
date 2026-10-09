@@ -229,6 +229,90 @@ async fn a_task_retried_after_its_dependency_landed_is_not_failed_again() {
     .await;
 }
 
+/// A task failed by its dependency can be retried together with that
+/// dependency: retried while the dependency is still at work, it waits for
+/// it in `pending` rather than starting on a base that does not have it yet,
+/// and starts once the dependency finishes. Nothing has to be cancelled and
+/// created again.
+#[tokio::test]
+async fn a_task_retried_before_its_dependency_finished_waits_for_it() {
+    let w = World::new().await;
+    w.end_first(TaskStatus::Failed).await;
+
+    let sched = w.scheduler();
+    sched
+        .send(SchedEvent::TaskChanged(w.second.id.clone()))
+        .unwrap();
+    eventually(TIMEOUT, "the waiting task to fail", async || {
+        w.status(&w.second.id).await == TaskStatus::Failed
+    })
+    .await;
+
+    // Both retried, the dependency back at work and not finished.
+    w.store
+        .transition_task(&w.first.id, TaskStatus::Ready, Actor::User, None, None)
+        .await
+        .unwrap();
+    let _ = w
+        .store
+        .transition_task(
+            &w.first.id,
+            TaskStatus::InProgress,
+            Actor::Daemon,
+            None,
+            None,
+        )
+        .await;
+    w.store
+        .transition_task(
+            &w.second.id,
+            TaskStatus::Ready,
+            Actor::User,
+            Some("retried by user"),
+            None,
+        )
+        .await
+        .unwrap();
+    sched
+        .send(SchedEvent::TaskChanged(w.second.id.clone()))
+        .unwrap();
+    eventually(TIMEOUT, "the retried task to wait again", async || {
+        w.status(&w.second.id).await == TaskStatus::Pending
+    })
+    .await;
+
+    // The dependency lands, and the task behind it starts.
+    for (status, actor) in [
+        (TaskStatus::UnderReview, Actor::Author),
+        (TaskStatus::Approved, Actor::Daemon),
+    ] {
+        let _ = w
+            .store
+            .transition_task(&w.first.id, status, actor, None, None)
+            .await;
+    }
+    w.store
+        .transition_task(
+            &w.first.id,
+            TaskStatus::Finished,
+            Actor::Author,
+            None,
+            Some("abc123"),
+        )
+        .await
+        .unwrap();
+    sched
+        .send(SchedEvent::TaskChanged(w.first.id.clone()))
+        .unwrap();
+    eventually(TIMEOUT, "the retried task to start", async || {
+        matches!(
+            w.status(&w.second.id).await,
+            TaskStatus::Ready | TaskStatus::InProgress
+        )
+    })
+    .await;
+}
+
 /// A goal being cancelled cancels every task on it, dependents included: the
 /// rule above never sees them, because a pass over a goal that is no longer
 /// active does nothing at all.

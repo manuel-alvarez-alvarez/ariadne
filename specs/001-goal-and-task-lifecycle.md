@@ -48,7 +48,11 @@ Out: how each state is *worked* — planning (003), engineering and review
    allowed to make it — `orchestrator`, `author`, `reviewer`, `daemon`, `user`.
    The legal moves are:
    - `pending → ready` (daemon), when every dependency has finished
-   - `ready → pending` (orchestrator, daemon), when dependencies are added back
+   - `ready → pending` (orchestrator, daemon), when dependencies are added back,
+     and (daemon) when a retried task has a dependency that has not
+     finished: it waits for it as any pending task does, so a task failed by
+     its dependency is retried with that dependency rather than cancelled
+     and created again
    - `ready → in_progress` (daemon), when the author session starts
    - `in_progress → under_review` (author), through `request_review`
    - `under_review → changes_requested` (daemon), on a change request
@@ -118,7 +122,9 @@ Out: how each state is *worked* — planning (003), engineering and review
   (`scheduler_dependencies.rs::a_failed_dependency_fails_the_task_waiting_on_it`,
   `::a_cancelled_dependency_fails_the_task_waiting_on_it`), and a task
   retried after that dependency landed is not failed again
-  (`::a_task_retried_after_its_dependency_landed_is_not_failed_again`).
+  (`::a_task_retried_after_its_dependency_landed_is_not_failed_again`); one
+  retried before that dependency finished waits for it, then starts
+  (`::a_task_retried_before_its_dependency_finished_waits_for_it`).
 - Cancelling a goal leaves every task cancelled and none failed
   (`scheduler_dependencies.rs::cancelling_the_goal_leaves_every_task_cancelled_and_none_failed`).
 - An author fails its own task with the reason on it, and a reviewer may not

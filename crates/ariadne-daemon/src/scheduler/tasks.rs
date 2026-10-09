@@ -127,6 +127,11 @@ impl super::Scheduler {
             return Ok(());
         }
 
+        if task.status() == TaskStatus::Ready && Box::pin(self.wait_for_dependencies(&task)).await?
+        {
+            return Ok(());
+        }
+
         match task.status() {
             TaskStatus::Pending => {
                 // A dependency that ended without merging is never going to,
@@ -1076,6 +1081,35 @@ impl super::Scheduler {
             }
         }
         Ok(out)
+    }
+
+    /// Send a ready task whose dependencies have not all finished back to
+    /// `pending`, and say whether it was.
+    ///
+    /// A retry makes a task ready whatever its dependencies say: one that
+    /// failed because its dependency failed is retried while that dependency,
+    /// retried as well, is still at work. It waits in `pending` again, which
+    /// starts it once they finish — or fails it again, naming the dependency,
+    /// if one has ended unmerged. The next pass decides which, not this one:
+    /// dependencies that move under it would otherwise bounce it between the
+    /// two, a level deeper each time. Boxed by its caller, as
+    /// `reconcile_task`'s future is already as large as a test thread's
+    /// stack holds.
+    async fn wait_for_dependencies(&self, task: &Task) -> anyhow::Result<bool> {
+        if self.store.task_dependencies_merged(&task.id).await? {
+            return Ok(false);
+        }
+        info!(task = %task.id, "retried before its dependencies finished, waiting for them");
+        self.store
+            .transition_task(
+                &task.id,
+                TaskStatus::Pending,
+                Actor::Daemon,
+                Some("waits for its dependencies to finish"),
+                None,
+            )
+            .await?;
+        Ok(true)
     }
 
     async fn dependents_of(&self, task: &Task) -> anyhow::Result<Vec<String>> {

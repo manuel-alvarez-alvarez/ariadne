@@ -626,7 +626,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Start a failed task again, from the beginning. Rewrite it with `update_task` first where it failed on how it was written."
+        description = "Start a failed task again, from the beginning. Rewrite it with `update_task` first where it failed on how it was written. A task with an unfinished dependency waits for it. Retry a task failed by its dependency with that dependency. Do not cancel and recreate it."
     )]
     async fn retry_task(
         &self,
