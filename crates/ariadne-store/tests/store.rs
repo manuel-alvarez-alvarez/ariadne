@@ -3774,6 +3774,78 @@ async fn concurrent_workflow_creation_and_skill_deletion_never_both_succeed() {
     }
 }
 
+/// Creating a goal reads the workflow it starts on, the same reference a
+/// workflow save or a skill deletion checks: racing all three never leaves
+/// a goal's own snapshot naming a skill that does not exist.
+#[tokio::test]
+async fn concurrent_goal_creation_never_outruns_a_workflow_edit_or_skill_deletion() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("race.db");
+    let store = Store::open(&path).await.unwrap();
+    let repo = seed_repository(&store).await;
+    store
+        .create_skill(NewSkill {
+            name: "custom-check".into(),
+            document: "---\nname: custom-check\ndescription: check it\n---\n".into(),
+        })
+        .await
+        .unwrap();
+    store
+        .create_workflow(NewWorkflow {
+            name: "custom-flow".into(),
+            document:
+                "workflow custom-flow\n  build[Build]\n    Do the work.\n    skills: custom-check\n"
+                    .into(),
+        })
+        .await
+        .unwrap();
+
+    let lock = raw_pool(&path).await;
+    let mut held = lock.begin().await.unwrap();
+    sqlx::query("UPDATE skills SET updated_at = updated_at WHERE name = 'custom-check'")
+        .execute(&mut *held)
+        .await
+        .unwrap();
+
+    let edit = store.set_workflow_document(
+        "custom-flow",
+        "workflow custom-flow\n  build[Build]\n    Do the work.\n",
+    );
+    let delete = store.delete_skill("custom-check");
+    let create = store.create_goal(NewGoal {
+        workflow: Some("custom-flow".into()),
+        issue_url: None,
+        title: "Test goal".into(),
+        description: "desc".into(),
+        repository_ids: vec![repo.id.clone()],
+        pin: default_pin(),
+    });
+    let release = async {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        held.rollback().await.unwrap();
+    };
+    let (_edited, deleted, created, ()) = tokio::join!(edit, delete, create, release);
+    lock.close().await;
+
+    if deleted.is_ok() {
+        if let Ok(goal) = created {
+            let steps = store.goal_steps(&goal.id).await.unwrap();
+            assert!(
+                !steps.iter().any(|s| s.skills.contains("custom-check")),
+                "the skill was deleted, so the new goal must not snapshot it"
+            );
+        }
+    } else if let Ok(goal) = created {
+        let steps = store.goal_steps(&goal.id).await.unwrap();
+        if steps.iter().any(|s| s.skills.contains("custom-check")) {
+            assert!(
+                store.get_skill("custom-check").await.is_ok(),
+                "a goal that snapshotted the skill means the deletion must have been refused"
+            );
+        }
+    }
+}
+
 /// An agent can only be staffed on a skill that exists: the name is a
 /// reference, and the refusal says which name it was.
 #[tokio::test]

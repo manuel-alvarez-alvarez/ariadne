@@ -64,16 +64,24 @@ impl Store {
                 repositories.push(repository);
             }
         }
-        let workflow = goal_workflow(new.workflow, &repositories)?;
-        // The columns are read now and kept with the goal: a later edit of
-        // the catalog reaches later goals alone.
-        let steps =
-            ariadne_core::workflow::parse(self.get_workflow(&workflow).await?.document_text())
-                .map_err(|e| StoreError::Invalid(e.to_string()))?
-                .steps;
+        let workflow_name = goal_workflow(new.workflow, &repositories)?;
         let id = new_id();
         let ts = now();
         let mut tx = self.w().begin().await?;
+        // Read on the writer's own connection, inside the same transaction
+        // the snapshot commits in: a read on the separate read pool could
+        // see a workflow a concurrent save or skill deletion is still in
+        // the middle of changing, and the columns are kept with the goal
+        // from here on — a later edit of the catalog reaches later goals
+        // alone.
+        let workflow: crate::Workflow = sqlx::query_as("SELECT * FROM workflows WHERE name = ?")
+            .bind(&workflow_name)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| not_found("workflow", &workflow_name))?;
+        let steps = ariadne_core::workflow::parse(workflow.document_text())
+            .map_err(|e| StoreError::Invalid(e.to_string()))?
+            .steps;
         let (model, effort) = AgentPin::columns(&new.pin);
         sqlx::query(
             "INSERT INTO goals (id, title, description, issue_url, status,
@@ -88,7 +96,7 @@ impl Store {
         .bind(orchestrated)
         .bind(&model)
         .bind(&effort)
-        .bind(&workflow)
+        .bind(&workflow_name)
         .bind(&ts)
         .bind(&ts)
         .execute(&mut *tx)
