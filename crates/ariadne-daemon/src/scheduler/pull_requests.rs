@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use tracing::{info, warn};
 
+use ariadne_core::workflow::StepGate;
 use ariadne_core::{Actor, Seat, SessionStatus, TaskStatus};
 use ariadne_store::{
     AgentPin, AgentSession, PullRequest, PullRequestFilter, SessionFilter, StoreError, Task,
@@ -229,9 +230,7 @@ impl super::Scheduler {
         Ok(())
     }
 
-    /// Whether an approved task's request merged and its pass ended the
-    /// task: the author's turn that read the merge is the task's event, and
-    /// the request's pass is what finishes it (005).
+    /// Whether a merged request moved its task forward or finished it.
     pub(super) async fn merge_ended(&mut self, task: &Task) -> anyhow::Result<bool> {
         let Some(row) = self.store.pull_request_of_task(&task.id).await? else {
             return Ok(false);
@@ -244,7 +243,12 @@ impl super::Scheduler {
             return Ok(false);
         }
         self.reconcile_pull_request(&pull.id).await;
-        Ok(self.store.get_task(&task.id).await?.status() != TaskStatus::Approved)
+        let after = self.store.get_task(&task.id).await?;
+        Ok(if task.step.is_some() {
+            after.status() == TaskStatus::Finished || after.step != task.step
+        } else {
+            after.status() != TaskStatus::Approved
+        })
     }
 
     /// Whether the author of a task whose request merged is done with it:
@@ -272,11 +276,20 @@ impl super::Scheduler {
         answered || waited
     }
 
-    /// End a task whose request a human merged (005): the author's own
-    /// finish is no longer waited on, and the task's cleanup takes its
-    /// sessions and its worktree down, so no agent stays up on a request
-    /// that is done.
+    /// Advance a request column, or end its task when no column follows.
     async fn finish_merged(&mut self, task: &Task, pull: &PullRequest) -> anyhow::Result<()> {
+        let next_step = if let Some(step) = task.step.as_deref() {
+            let columns = self.store.goal_steps(&task.goal_id).await?;
+            let Some(at) = columns.iter().position(|column| column.id == step) else {
+                return Ok(());
+            };
+            if columns[at].gate.as_deref() != Some(StepGate::RequestMerged.as_str()) {
+                return Ok(());
+            }
+            columns.get(at + 1).map(|column| column.id.clone())
+        } else {
+            None
+        };
         let merge_commit = match self.land_merge_locally(pull).await {
             Ok(sha) => sha,
             Err(e) => {
@@ -288,26 +301,40 @@ impl super::Scheduler {
                 return Ok(());
             }
         };
-        info!(task = %task.id, pull_request = %pull.id, %merge_commit, "the request merged, finishing its task");
-        match self
-            .store
-            .transition_task(
-                &task.id,
-                TaskStatus::Finished,
-                Actor::Daemon,
-                Some(&format!("{} merged", pull.url)),
-                Some(&merge_commit),
-            )
-            .await
-        {
+        info!(task = %task.id, pull_request = %pull.id, %merge_commit, "the request merged, advancing its task");
+        let reason = format!("{} merged", pull.url);
+        let advanced = match (task.step.as_deref(), next_step.as_deref()) {
+            (Some(_), Some(next)) => {
+                self.store
+                    .move_step(&task.id, next, Actor::Daemon, &reason)
+                    .await
+            }
+            (Some(step), None) => {
+                self.store
+                    .end_step_by_daemon(&task.id, step, &reason, &merge_commit)
+                    .await
+            }
+            (None, _) => {
+                self.store
+                    .transition_task(
+                        &task.id,
+                        TaskStatus::Finished,
+                        Actor::Daemon,
+                        Some(&reason),
+                        Some(&merge_commit),
+                    )
+                    .await
+            }
+        };
+        match advanced {
             Ok(_) => Ok(()),
             // The author finished it in the meantime.
-            Err(StoreError::Transition(_)) => Ok(()),
+            Err(StoreError::Transition(_) | StoreError::Conflict(_)) => Ok(()),
             Err(e) => Err(e.into()),
         }
     }
 
-    /// Bring the merge of a request into the checkout before its task ends
+    /// Bring the merge of a request into the checkout before its step advances
     /// (005), and answer the commit it landed as. The base is fetched from
     /// the remote, the request's own merge commit — as the forge reported it —
     /// must be on it, and the local base branch is fast-forwarded to it, so
@@ -349,10 +376,18 @@ impl super::Scheduler {
         Ok(merge_commit)
     }
 
-    /// The live session of the author that keeps a task's request: the
-    /// picked winner's on a task with several authors, the lone author's
-    /// everywhere else.
+    /// The live session of the agent that keeps a task's request.
     async fn keeper_of(&self, task: &Task) -> anyhow::Result<Option<AgentSession>> {
+        let current = if let Some(step) = task.step.as_deref() {
+            self.store
+                .list_task_agents(&task.id)
+                .await?
+                .into_iter()
+                .find(|agent| agent.step.as_deref() == Some(step))
+                .map(|agent| agent.id)
+        } else {
+            None
+        };
         let live = self
             .store
             .list_sessions(SessionFilter {
@@ -362,11 +397,15 @@ impl super::Scheduler {
             })
             .await?;
         Ok(live.into_iter().find(|session| {
-            session.seat() == Some(Seat::Author)
-                && task
-                    .picked_agent_id
-                    .as_ref()
-                    .is_none_or(|winner| session.task_agent_id.as_deref() == Some(winner.as_str()))
+            if task.step.is_some() {
+                session.seat() == Some(Seat::Agent)
+                    && session.task_agent_id.as_deref() == current.as_deref()
+            } else {
+                session.seat() == Some(Seat::Author)
+                    && task.picked_agent_id.as_ref().is_none_or(|winner| {
+                        session.task_agent_id.as_deref() == Some(winner.as_str())
+                    })
+            }
         }))
     }
 

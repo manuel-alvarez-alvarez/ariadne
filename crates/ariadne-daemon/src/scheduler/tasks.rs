@@ -5,7 +5,9 @@ use std::collections::HashSet;
 
 use tracing::{info, warn};
 
-use ariadne_core::{Actor, AttentionReason, GoalStatus, MessageKind, PromptKind, Seat, TaskStatus};
+use ariadne_core::{
+    Actor, AttentionReason, GoalStatus, MessageKind, PromptKind, Seat, SessionStatus, TaskStatus,
+};
 use ariadne_store::{
     AgentSession, MessageFilter, SessionFilter, Task, TaskAgent, TaskFilter, author_branch,
 };
@@ -554,6 +556,9 @@ impl super::Scheduler {
             .iter()
             .find(|s| Some(&s.id) == task.step.as_ref())
             .ok_or_else(|| anyhow::anyhow!("task has no current column"))?;
+        if task.pr_url.is_some() && Box::pin(self.merge_ended(&task)).await? {
+            return Ok(());
+        }
         let agents = self.store.list_task_agents(&task.id).await?;
         let agent = agents
             .iter()
@@ -679,6 +684,7 @@ impl super::Scheduler {
         let resume =
             prompts::agent_resume(prompts::template_for(PromptKind::AgentResume), &task, step);
         if launched {
+            self.keep_waiting_user(&session, None).await?;
             let resume = if sessions.iter().any(|s| s.id == session.id) {
                 resume
             } else {
@@ -688,7 +694,7 @@ impl super::Scheduler {
                 )
             };
             self.hand_prompt(&session, resume);
-        } else {
+        } else if !(task.pr_url.is_some() && session.status() == SessionStatus::Idle) {
             self.check_session_quiet(&session, entry.id.clone(), &resume)
                 .await?;
         }
@@ -1468,24 +1474,28 @@ impl super::Scheduler {
     ) -> anyhow::Result<()> {
         let mut owed = carried.is_some_and(|reason| reason.is_for_the_user());
         if !owed
-            && back.seat() == Some(Seat::Author)
+            && matches!(back.seat(), Some(Seat::Author | Seat::Agent))
             && let Some(task_id) = back.task_id.as_deref()
-            && self.store.get_task(task_id).await?.status() == TaskStatus::Approved
         {
-            owed = self
-                .store
-                .pull_request_of_task(task_id)
-                .await?
-                // A row is a request Ariadne still works on: open, or ended
-                // with its work not taken down yet; the forge says which.
-                .is_some_and(|pull| {
-                    pull.ready
-                        && self
-                            .launcher
-                            .live
-                            .get(&pull.id)
-                            .is_none_or(|live| live.pull.state == "open")
-                });
+            let task = self.store.get_task(task_id).await?;
+            if task.status() == TaskStatus::Approved
+                || task.status() == TaskStatus::InProgress && task.step.is_some()
+            {
+                owed = self
+                    .store
+                    .pull_request_of_task(task_id)
+                    .await?
+                    // A row is a request Ariadne still works on: open, or ended
+                    // with its work not taken down yet; the forge says which.
+                    .is_some_and(|pull| {
+                        pull.ready
+                            && self
+                                .launcher
+                                .live
+                                .get(&pull.id)
+                                .is_none_or(|live| live.pull.state == "open")
+                    });
+            }
         }
         if owed {
             info!(session = %back.id, seat = ?back.seat, "the agent is back on its feet and the user is still owed, raising it again");

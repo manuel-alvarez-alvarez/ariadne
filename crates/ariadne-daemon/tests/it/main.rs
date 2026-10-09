@@ -74,4 +74,5 @@ mod pull_requests;
 mod tunnel;
 mod webhooks;
 
+mod workflow_pull_request;
 mod workflow_steps;

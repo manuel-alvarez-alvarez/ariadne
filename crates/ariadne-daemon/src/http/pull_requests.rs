@@ -305,15 +305,22 @@ async fn own_session(
     row: &PullRequestRow,
 ) -> ApiResult<AgentSession> {
     let ctx = call_ctx(&state.store, headers).await?;
-    let keeps = |session: &AgentSession| {
-        row.role == "author"
-            && session.seat() == Some(Seat::Author)
-            && session.task_id.is_some()
-            && session.task_id == row.origin_task_id
-    };
+    if row.role == "author"
+        && let Some(task_id) = row.origin_task_id.as_deref()
+        && let Some(session) = ctx.session.as_ref()
+        && session.task_id.as_deref() == Some(task_id)
+    {
+        let task = state.store.get_task(task_id).await?;
+        if task.step.is_some() {
+            super::steps::current_agent(state, &ctx, &task).await?;
+            return Ok(session.clone());
+        }
+        if session.seat() == Some(Seat::Author) {
+            return Ok(session.clone());
+        }
+    }
     match ctx.session {
         Some(session) if session.pull_request_id.as_deref() == Some(row.id.as_str()) => Ok(session),
-        Some(session) if keeps(&session) => Ok(session),
         Some(session) => Err(ApiError::forbidden(format!(
             "session {} does not watch pull request {}",
             session.id, row.id

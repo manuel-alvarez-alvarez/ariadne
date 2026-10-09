@@ -192,7 +192,8 @@ pub fn check_transition(
         // Re-added dependencies can send a ready task back to waiting.
         (S::Ready, S::Pending) => &[A::Orchestrator, A::Daemon],
         (S::Ready, S::InProgress) => &[A::Daemon],
-        (S::InProgress, S::Finished) => &[A::Agent],
+        // The daemon finishes a request column after its agent read the merge and fell quiet.
+        (S::InProgress, S::Finished) => &[A::Agent, A::Daemon],
         (S::InProgress, S::UnderReview) => &[A::Author],
         (S::UnderReview, S::ChangesRequested) => &[A::Daemon],
         (S::UnderReview, S::Approved) => &[A::Daemon],
@@ -242,6 +243,7 @@ mod tests {
         (S::Ready, S::Pending, A::Orchestrator),
         (S::Ready, S::Pending, A::Daemon),
         (S::Ready, S::InProgress, A::Daemon),
+        (S::InProgress, S::Finished, A::Daemon),
         (S::InProgress, S::UnderReview, A::Author),
         (S::UnderReview, S::ChangesRequested, A::Daemon),
         (S::UnderReview, S::Approved, A::Daemon),

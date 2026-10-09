@@ -10,6 +10,7 @@ tests:
   - crates/ariadne-store/src/defaults.rs
   - crates/ariadne-daemon/tests/it/workflows.rs
   - crates/ariadne-daemon/tests/it/workflow_steps.rs
+  - crates/ariadne-daemon/tests/it/workflow_pull_request.rs
 ---
 
 # Workflows
@@ -171,6 +172,19 @@ every other wire enum (011).
 9. Migration 0022 expands the schema and rebuilds seat and actor checks without removing old rows.
    It preserves child rows with foreign keys disabled outside the migration transaction.
    Foreign key enforcement and validation resume before the store accepts writes.
+10. The `pr` column of `develop-review-pr` stages `pr-babysit`.
+    Its agent pushes the branch and opens the request through `open_pull_request` once.
+    A repeat returns the same URL.
+    The request's news goes to that agent. Its session is the request DTO's `session_id`.
+    Its tools accept that session. An idle agent waits on the forge without a quiet nudge.
+    A ready report raises `waiting_user` on that session. A later false report clears it.
+    The agent makes requested fixes as new commits, runs the changed tests and lint, and pushes.
+    On merge, it brings the remote base into the checkout before completing the step.
+    An open request fails the `request_merged` gate with 409 at `complete_step`.
+    A fresh forge read that says merged lets the step finish. A close is news and finishes nothing.
+    The daemon advances a merged request column if its agent falls quiet for the quiet nudge.
+    It finishes the task when that column is last. A later column runs when one follows.
+    Cleanup stops every agent, removes the worktree and branch, and removes the request row and its marks.
 
 ## Acceptance criteria
 
@@ -226,6 +240,15 @@ every other wire enum (011).
 - A push gate reads the remote tip, and a request gate reads the forge at each call
   (`workflow_steps.rs::the_push_gate_requires_the_current_tip_on_the_remote`,
   `::a_step_agent_opens_its_request_and_completion_reads_the_forge_now`).
+- The `pr` column opens and keeps one request. Its agent gets comments and failed checks once.
+  It reports ready, enforces the merge gate, and cleans up after a merge.
+  A close ends nothing. The daemon finishes the task when its agent falls quiet after merge news
+  (`workflow_pull_request.rs::the_pr_column_opens_the_request_once_and_keeps_it`,
+  `::a_close_is_told_to_the_pr_agent_and_finishes_nothing`,
+  `::a_quiet_pr_agent_is_finished_after_the_merge`).
+- A merged request column advances to a later column after its agent falls quiet.
+  It keeps the task, worktree, and request until later work finishes
+  (`workflow_pull_request.rs::a_quiet_pr_agent_advances_to_the_column_after_the_merge`).
 - Any column can fail the task. Usage and facts name its column
   (`workflow_steps.rs::any_column_can_fail_the_task_and_usage_and_facts_name_the_column`).
 - The orchestrator sees each column. Agents load their assigned models and skill documents

@@ -1808,12 +1808,12 @@ mod tests {
     /// its skill names none of the ways an agent would feed itself: no forge
     /// CLI, no timer, no poll. A human closes a thread and a human merges, so
     /// it names neither the call that resolves one nor a forge merge command.
-    /// Every fix goes through the task's reviewers before it is pushed, and
-    /// the task ends on the merge or the close, by the author's own call.
+    /// The step agent opens the request, pushes each tested fix, and ends
+    /// the task on the merge or the close.
     /// And the turn ends when the news is handled, which is what lets the
     /// next news start a turn of its own.
     #[test]
-    fn the_pr_babysit_skill_is_fed_by_the_daemon_and_ends_its_turn() {
+    fn the_pr_babysit_skill_opens_the_request_and_ends_the_task_on_the_merge() {
         let doc = default_skill_document(PR_BABYSIT_SKILL).expect("the pr-babysit skill");
         let words: Vec<String> = doc
             .split(|c: char| !c.is_ascii_alphanumeric())
@@ -1839,19 +1839,21 @@ mod tests {
             "`list_comments` with `unanswered_only`",
             "`reply_comment` once",
             "`git merge --no-edit <remote>/<base>`",
-            "Never amend, rebase or force a push.",
+            "Push the task branch plainly. Call `open_pull_request`.",
+            "repository's commit conventions",
+            "body from its request template",
+            "Run the tests and lint of what",
+            "Never amend, rebase, or force a push.",
             "`report_pull_request` with `ready: true`",
             "`ready: false`",
-            "Then call `request_review`. Push nothing yet.",
-            "The reviewers approve: Ariadne tells you. Push the branch plainly.",
-            "Then call `finish_task`",
+            "call `complete_step` with the merge as the",
             "call `fail_task`",
-            "End your turn when the news is handled.",
-            "## Do not tell yourself",
+            "End your turn when you handle the news.",
             "## Done",
         ] {
             assert!(doc.contains(step), "the pr-babysit skill has no {step}");
         }
+        assert!(!doc.contains("request_review"));
         assert_eq!(SkillSeat::of(PR_BABYSIT_SKILL), SkillSeat::PullRequest);
     }
 

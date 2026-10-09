@@ -530,12 +530,35 @@ pub(crate) async fn pull_request_dto_of(
             ..Default::default()
         },
     };
+    let current_agent = if let Some(task_id) = row.origin_task_id.as_deref() {
+        let task = store.get_task(task_id).await?;
+        if let Some(step) = task.step.as_deref() {
+            store
+                .list_task_agents(task_id)
+                .await?
+                .into_iter()
+                .find(|agent| agent.step.as_deref() == Some(step))
+                .map(|agent| agent.id)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     let session_id = store
         .list_sessions(filter)
         .await?
         .into_iter()
         .rev()
-        .find(|session| row.role != "author" || session.seat() == Some(Seat::Author))
+        .find(|session| {
+            row.role != "author"
+                || if let Some(agent) = current_agent.as_deref() {
+                    session.seat() == Some(Seat::Agent)
+                        && session.task_agent_id.as_deref() == Some(agent)
+                } else {
+                    session.seat() == Some(Seat::Author)
+                }
+        })
         .map(|session| session.id);
     Ok(pull_request_dto(row, session_id))
 }

@@ -254,6 +254,39 @@ impl Store {
         Ok(task)
     }
 
+    /// Finish the final request column after its agent fell quiet on the merge.
+    pub async fn end_step_by_daemon(
+        &self,
+        task_id: &str,
+        from_step: &str,
+        reason: &str,
+        merge_commit: &str,
+    ) -> Result<Task> {
+        let mut tx = self.w().begin().await?;
+        let task: Task = Self::fetch_by_in_tx(&mut tx, "task", TASK_ROWS, task_id).await?;
+        if task.status() != TaskStatus::InProgress || task.step.as_deref() != Some(from_step) {
+            return Err(StoreError::Conflict(
+                "the column no longer owns this step call".into(),
+            ));
+        }
+        let transition = Self::transition_in_tx(
+            &mut tx,
+            &task,
+            TaskStatus::Finished,
+            Actor::Daemon,
+            Some(reason),
+            Some(merge_commit),
+        )
+        .await?;
+        tx.commit().await?;
+        let task = self.get_task(task_id).await?;
+        self.publish(Change::TaskUpdated {
+            task: task.clone(),
+            transition: Some(transition),
+        });
+        Ok(task)
+    }
+
     /// Move between adjacent columns without changing the task status.
     pub async fn move_step(
         &self,
@@ -265,11 +298,11 @@ impl Store {
         let mut tx = self.w().begin().await?;
         let task: Task = Self::fetch_by_in_tx(&mut tx, "task", TASK_ROWS, task_id).await?;
         if task.status() != TaskStatus::InProgress
-            || actor != Actor::Agent
+            || !matches!(actor, Actor::Agent | Actor::Daemon)
             || reason.trim().is_empty()
         {
             return Err(StoreError::Conflict(
-                "only a working agent can move a step with a reason".into(),
+                "only a working agent or the daemon can move a step with a reason".into(),
             ));
         }
         let steps: Vec<String> =
