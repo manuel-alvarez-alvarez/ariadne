@@ -72,6 +72,8 @@ static MIGRATIONS: Migrator = sqlx::migrate!("./migrations");
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
+    #[error("workflow {0} is still in use")]
+    WorkflowInUse(String),
     #[error("{entity} not found: {id}")]
     NotFound { entity: &'static str, id: String },
     #[error("conflict: {0}")]
@@ -215,10 +217,26 @@ impl Store {
         if applied_elsewhere(&write).await? {
             return Err(StoreError::Invalid(pre_squash_message(path.as_ref())));
         }
-        MIGRATIONS
-            .run(&write)
-            .await
-            .map_err(|e| StoreError::Invalid(format!("migration failed: {e}")))?;
+        // Rebuilds preserve child rows only with foreign keys off outside
+        // the migration transaction. Restore enforcement before any writer runs.
+        let mut connection = write.acquire().await?;
+        sqlx::query("PRAGMA foreign_keys = OFF")
+            .execute(&mut *connection)
+            .await?;
+        let migrated = MIGRATIONS.run_direct(None, &mut *connection, false).await;
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&mut *connection)
+            .await?;
+        migrated.map_err(|e| StoreError::Invalid(format!("migration failed: {e}")))?;
+        let violations = sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&mut *connection)
+            .await?;
+        if !violations.is_empty() {
+            return Err(StoreError::Invalid(
+                "migration left invalid references".into(),
+            ));
+        }
+        drop(connection);
 
         // Opened after the migrations, not before: a connection that read the
         // schema first keeps the old column set, so every `SELECT *` on a

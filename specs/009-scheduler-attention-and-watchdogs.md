@@ -21,6 +21,8 @@ tests:
 The loop that keeps the world matching the plan, and the one clock that
 decides an agent has stopped working.
 
+A goal with a workflow follows [030](030-workflows.md) for its columns, staffing, and step lifecycle.
+
 ## Scope
 
 In: the reconciliation loop, what each entity wants by status, how the

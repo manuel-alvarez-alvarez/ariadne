@@ -843,6 +843,7 @@ impl Harness {
         std::fs::create_dir_all(path).unwrap();
         self.store
             .create_repository(NewRepository {
+                default_workflow: None,
                 path: path.display().to_string(),
                 base_branch: "main".into(),
                 description: None,
@@ -946,6 +947,7 @@ impl Harness {
     ) -> Goal {
         self.store
             .create_goal(NewGoal {
+                workflow: None,
                 issue_url: None,
                 landing,
                 title: "Ship the UI".into(),

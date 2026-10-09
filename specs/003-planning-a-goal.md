@@ -17,6 +17,8 @@ How a goal becomes a plan of tasks, and what the orchestrator does for the
 rest of that goal. It is the one agent type Ariadne defines (017), the one
 seat that talks to the user, and the one that outlives its own hand-off.
 
+A goal with a workflow follows [030](030-workflows.md) for its columns, staffing, and step lifecycle.
+
 ## Scope
 
 In: the orchestrator session, the conversation that removes the uncertainty

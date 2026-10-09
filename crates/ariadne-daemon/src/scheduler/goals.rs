@@ -417,6 +417,7 @@ mod tests {
 
     fn task(title: &str, status: &str, stalled: bool) -> Task {
         Task {
+            step: None,
             id: format!("01{title}"),
             goal_id: "01goal".into(),
             repo_id: "01repo".into(),

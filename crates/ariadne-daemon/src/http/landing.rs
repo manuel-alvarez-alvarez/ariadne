@@ -133,8 +133,8 @@ pub(super) async fn verify_merged(
     params(("id" = String, Path, description = "task id")),
     responses(
         (status = 200, body = TaskDto),
-        (status = 403, description = "not an author session"),
-        (status = 409, description = "the task is not approved, has no forge or \
+        (status = 403, description = "not the author or current workflow agent"),
+        (status = 409, description = "the task cannot open a request, has no forge or \
                                        its integration is off, is not authenticated, \
                                        or is not pushed")
     ))]
@@ -146,17 +146,30 @@ pub(super) async fn open_pull_request(
 ) -> ApiResult<Json<TaskDto>> {
     let ctx = call_ctx(&state.store, &headers).await?;
     ensure_task_scope(&ctx, &id)?;
-    if ctx.session.as_ref().and_then(|s| s.seat()) != Some(Seat::Author) {
-        return Err(ApiError::forbidden(
-            "only the author of a task may open its pull request",
-        ));
-    }
     let task = state.store.get_task(&id).await?;
-    if task.status() != TaskStatus::Approved {
-        return Err(ApiError::conflict(format!(
-            "task is {}, a pull request belongs to an approved task being landed",
-            task.status
-        )));
+    if state
+        .store
+        .get_goal(&task.goal_id)
+        .await?
+        .workflow
+        .is_some()
+    {
+        super::steps::current_agent(&state, &ctx, &task).await?;
+        if task.status() != TaskStatus::InProgress {
+            return Err(ApiError::conflict("the task must be in progress"));
+        }
+    } else {
+        if ctx.session.as_ref().and_then(|s| s.seat()) != Some(Seat::Author) {
+            return Err(ApiError::forbidden(
+                "only the author of a task may open its pull request",
+            ));
+        }
+        if task.status() != TaskStatus::Approved {
+            return Err(ApiError::conflict(format!(
+                "task is {}, a pull request belongs to an approved task being landed",
+                task.status
+            )));
+        }
     }
     // One request per task: a second call answers the same URL.
     if let Some(url) = task.pr_url.as_deref() {
@@ -262,7 +275,7 @@ async fn record_opened_pull_request(state: &AppState, task: &Task, url: &str) ->
 
 /// The state the forge gives the request a task opened at `url`, read now
 /// (005): `open`, `merged` or `closed`.
-async fn request_state(state: &AppState, task: &Task, url: &str) -> ApiResult<String> {
+pub(super) async fn request_state(state: &AppState, task: &Task, url: &str) -> ApiResult<String> {
     let forge = state
         .store
         .forge_integration(&task.repo_id)
@@ -429,7 +442,7 @@ pub(super) async fn send(
                 ));
             }
         }
-        Actor::Author | Actor::Reviewer => {
+        Actor::Agent | Actor::Author | Actor::Reviewer => {
             let Some(agent_id) = &to_agent_id else {
                 return Err(ApiError::bad_request(format!(
                     "a message to the {} needs the to_agent_id `get_task` lists",

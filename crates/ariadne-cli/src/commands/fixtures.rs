@@ -23,6 +23,8 @@ pub(crate) const NOW: &str = "2026-08-18T10:00:00Z";
 
 pub(crate) fn goal(id: &str, title: &str) -> GoalDto {
     GoalDto {
+        steps: Vec::new(),
+        workflow: None,
         issue_url: None,
         id: id.into(),
         title: title.into(),
@@ -42,6 +44,7 @@ pub(crate) fn goal(id: &str, title: &str) -> GoalDto {
 /// A task in progress, titled after its own id.
 pub(crate) fn task(id: &str, goal_id: &str) -> TaskDto {
     TaskDto {
+        step: None,
         id: id.into(),
         goal_id: goal_id.into(),
         repo_id: "01REPO".into(),
@@ -100,6 +103,7 @@ pub(crate) fn session(id: &str, goal_id: &str, task_id: Option<&str>) -> Session
 /// and the model it runs on.
 pub(crate) fn agent(id: &str, seat: Seat, skills: &[&str]) -> TaskAgentDto {
     TaskAgentDto {
+        step: None,
         id: id.into(),
         seat,
         branch: None,
@@ -140,6 +144,7 @@ pub(crate) fn workflow(name: &str) -> WorkflowDto {
 
 pub(crate) fn repository(id: &str, path: &str, base_branch: &str) -> RepositoryDto {
     RepositoryDto {
+        default_workflow: None,
         id: id.into(),
         path: path.into(),
         base_branch: base_branch.into(),

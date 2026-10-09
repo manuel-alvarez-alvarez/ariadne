@@ -339,6 +339,7 @@ pub(super) struct ReadMessagesReq {
 /// what it knows, and the pin it runs at.
 fn assignment(seat: Seat, agent: AgentReq) -> AgentAssignment {
     AgentAssignment {
+        step: None,
         seat,
         skills: agent.skills,
         model: agent.model,
@@ -545,6 +546,7 @@ impl AriadneMcp {
             ));
         }
         let body = UpdateTaskRequest {
+            agents: None,
             title: req.title,
             description: req.description,
             model: req.author_model,

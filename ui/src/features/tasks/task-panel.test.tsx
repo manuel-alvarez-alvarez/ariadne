@@ -78,6 +78,7 @@ const TASK: TaskDto = {
   picks: [],
   stalled: false,
   usage: {
+    agents: [],
     total: { input_tokens: 1_234_567, cached_input_tokens: 1_100_000, output_tokens: 45_300 },
     author: { input_tokens: 1_000_000, cached_input_tokens: 900_000, output_tokens: 40_000 },
     // Only the reviewer that has actually been spawned: the second slot has
@@ -394,6 +395,7 @@ it("says zero for a task whose agents have reported nothing", () => {
   mount({
     ...TASK,
     usage: {
+      agents: [],
       total: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 },
       author: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 },
       reviewers: [],

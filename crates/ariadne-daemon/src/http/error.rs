@@ -57,6 +57,9 @@ impl From<StoreError> for ApiError {
             }
             // The code already says "conflict"; the message must not repeat it
             // (`StoreError::Conflict`'s own Display prefix would).
+            StoreError::WorkflowInUse(_) => {
+                Self::new(StatusCode::CONFLICT, "workflow_in_use", e.to_string())
+            }
             StoreError::Conflict(message) => Self::conflict(message.clone()),
             // Rust variant names are for the log; the envelope gets the
             // sentence a person can act on.

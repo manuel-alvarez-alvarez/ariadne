@@ -145,7 +145,7 @@ impl Launcher {
                     .get_skill(ariadne_store::defaults::ORCHESTRATION_SKILL)
                     .await?,
             ],
-            Seat::Author | Seat::Reviewer => {
+            Seat::Agent | Seat::Author | Seat::Reviewer => {
                 let mut skills = match &session.task_agent_id {
                     Some(id) => self.store.agent_skills(id).await?,
                     None => Vec::new(),
@@ -546,6 +546,18 @@ impl Launcher {
         }
     }
 
+    /// Use the same workflow snapshot for a spawn and a switch.
+    async fn orchestrator_briefing(
+        &self,
+        goal: &ariadne_store::Goal,
+        repos: &[Repository],
+    ) -> Result<String> {
+        let template = prompts::template_for(PromptKind::OrchestratorBriefing);
+        let briefing = prompts::orchestrator_briefing(template, goal, repos);
+        let steps = self.store.goal_steps(&goal.id).await?;
+        Ok(prompts::with_workflow(briefing, goal, &steps))
+    }
+
     /// Spawn the orchestrator for a goal (cwd = first repo).
     pub async fn spawn_orchestrator(&self, goal_id: &str) -> Result<AgentSession> {
         let goal = self.store.get_goal(goal_id).await?;
@@ -568,8 +580,7 @@ impl Launcher {
             })
             .await?;
 
-        let template = prompts::template_for(PromptKind::OrchestratorBriefing);
-        let briefing = prompts::orchestrator_briefing(template, &goal, &repos);
+        let briefing = self.orchestrator_briefing(&goal, &repos).await?;
         self.spawn(&session, PathBuf::from(&repo.path), briefing)
             .await?;
         self.store
@@ -617,6 +628,94 @@ impl Launcher {
         let session = self.store.restart_session(&previous.id, None).await?;
         self.launch_resumed(&session, PathBuf::from(&repo.path), &internal, instruction)
             .await
+    }
+
+    /// Launch one workflow agent on the task's shared branch and worktree.
+    /// The scheduler supplies the durable column prompt after this launch.
+    pub(crate) async fn start_step_agent(
+        &self,
+        task: &Task,
+        agent: &TaskAgent,
+    ) -> Result<AgentSession> {
+        self.assert_no_live_session(&task.goal_id, Some(&task.id), Seat::Agent, Some(&agent.id))
+            .await?;
+        let repo = self.store.get_repository(&task.repo_id).await?;
+        let seat = AuthorSeat {
+            author: agent.clone(),
+            branch: task.branch.clone(),
+            lone: true,
+        };
+        let worktree = self
+            .author_worktree(
+                task,
+                &repo,
+                task.worktree_path.as_deref().map(PathBuf::from),
+                &seat,
+            )
+            .await?;
+        let previous = self
+            .resumable_session(&task.id, Seat::Agent, Some(&agent.id))
+            .await?;
+        let (session, internal) = match previous {
+            Some((previous, internal)) if !previous.died_on_arrival() => (
+                self.store
+                    .restart_session(&previous.id, Some(&worktree.display().to_string()))
+                    .await?,
+                Some(internal),
+            ),
+            _ => (
+                self.store
+                    .create_session(NewSession {
+                        goal_id: Some(task.goal_id.clone()),
+                        task_id: Some(task.id.clone()),
+                        seat: Some(Seat::Agent),
+                        task_agent_id: Some(agent.id.clone()),
+                        model: agent.model.clone(),
+                        effort: agent.effort.clone(),
+                        worktree_path: Some(worktree.display().to_string()),
+                        pull_request_id: None,
+                    })
+                    .await?,
+                None,
+            ),
+        };
+        let ctx = self.spawn_ctx(&session, worktree, String::new()).await?;
+        let mut plan = match internal {
+            Some(internal) => plan_resume(&ctx, &internal, "")?,
+            None => plan_spawn(&ctx)?,
+        };
+        plan.config.initial_prompt = None;
+        self.launch(&session, plan, &ctx.launch_id).await?;
+        self.clear_superseded_attention(&session).await;
+        Ok(self.store.get_session(&session.id).await?)
+    }
+
+    pub(crate) async fn step_first_briefing(
+        &self,
+        task: &Task,
+        step: &ariadne_store::GoalStep,
+        reason: &str,
+    ) -> Result<String> {
+        let task = self.store.get_task(&task.id).await?;
+        let goal = self.store.get_goal(&task.goal_id).await?;
+        let repo = self.store.get_repository(&task.repo_id).await?;
+        let mut deps = Vec::new();
+        for id in self.store.list_task_dependencies(&task.id).await? {
+            let dep = self.store.get_task(&id).await?;
+            deps.push(format!(
+                "{} ({}, branch {})",
+                dep.title, dep.status, dep.branch
+            ));
+        }
+        Ok(prompts::step_briefing(
+            prompts::template_for(PromptKind::StepBriefing),
+            &task,
+            &goal,
+            &repo,
+            step,
+            reason,
+            &deps.join("\n"),
+        ))
     }
 
     /// Spawn the author for a task: worktree + branch + session. On a task
@@ -1420,7 +1519,7 @@ impl Launcher {
                 (Some(Seat::Orchestrator), _, Some(goal_id)) => {
                     self.store.set_goal_pin(goal_id, &pin).await?;
                 }
-                (Some(Seat::Author | Seat::Reviewer), Some(agent_id), _) => {
+                (Some(Seat::Agent | Seat::Author | Seat::Reviewer), Some(agent_id), _) => {
                     self.store.set_agent_pin(agent_id, &pin).await?;
                 }
                 _ => {}
@@ -1461,6 +1560,25 @@ impl Launcher {
             None => self.loose_switch(&old)?,
             Some(Seat::Orchestrator) => self.orchestrator_switch(&old).await?,
             Some(_) if old.pull_request_id.is_some() => self.pull_request_switch(&old).await?,
+            Some(Seat::Agent) => {
+                let task = self
+                    .store
+                    .get_task(old.task_id.as_deref().context("agent has no task")?)
+                    .await?;
+                let steps = self.store.goal_steps(&task.goal_id).await?;
+                let step = steps
+                    .iter()
+                    .find(|s| Some(&s.id) == task.step.as_ref())
+                    .context("task has no column")?;
+                let worktree = task.worktree_path.clone().context("task has no worktree")?;
+                SwitchPlan {
+                    cwd: PathBuf::from(&worktree),
+                    worktree: Some(worktree),
+                    briefing: Some(self.step_first_briefing(&task, step, "").await?),
+                    resume: None,
+                    task_branch: Some(task.branch),
+                }
+            }
             Some(Seat::Author) => self.author_switch(&old).await?,
             Some(Seat::Reviewer) => self.reviewer_switch(&old, review_branch).await?,
         };
@@ -1526,7 +1644,7 @@ impl Launcher {
             (Some(Seat::Orchestrator), _, Some(goal_id)) => {
                 self.store.set_goal_pin(goal_id, &pin).await?;
             }
-            (Some(Seat::Author | Seat::Reviewer), Some(agent_id), _) => {
+            (Some(Seat::Agent | Seat::Author | Seat::Reviewer), Some(agent_id), _) => {
                 self.store.set_agent_pin(agent_id, &pin).await?;
             }
             _ => {}
@@ -1593,8 +1711,7 @@ impl Launcher {
         let goal = self.store.get_goal(goal_id).await?;
         let repos = self.store.list_goal_repositories(goal_id).await?;
         let repo = repos.first().context("goal has no repos")?;
-        let template = prompts::template_for(PromptKind::OrchestratorBriefing);
-        let briefing = prompts::orchestrator_briefing(template, &goal, &repos);
+        let briefing = self.orchestrator_briefing(&goal, &repos).await?;
         let template = prompts::template_for(PromptKind::OrchestratorResume);
         let resume = prompts::orchestrator_resume_briefing(template, &goal);
         Ok(SwitchPlan {

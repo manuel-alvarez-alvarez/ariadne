@@ -703,6 +703,8 @@ mod tests {
         let moved = DomainEvent::TaskUpdated(TaskUpdatedDto {
             task: task(),
             transition: Some(TaskTransitionDto {
+                from_step: None,
+                to_step: None,
                 id: "01TR".into(),
                 from_status: "in_progress".into(),
                 to_status: "under_review".into(),

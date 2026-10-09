@@ -46,6 +46,7 @@ async fn learned_permissions_keep_one_row_per_repository_tool_level_and_key() {
     let (store, _dir) = test_store().await;
     let repo = store
         .create_repository(NewRepository {
+            default_workflow: None,
             path: "/tmp/learned-repo".into(),
             base_branch: "main".into(),
             description: None,
@@ -195,6 +196,7 @@ async fn a_repository_row_wins_over_an_all_row_of_another_repository() {
     let (store, _dir) = test_store().await;
     let repo_a = store
         .create_repository(NewRepository {
+            default_workflow: None,
             path: "/tmp/learned-repo-a".into(),
             base_branch: "main".into(),
             description: None,
@@ -205,6 +207,7 @@ async fn a_repository_row_wins_over_an_all_row_of_another_repository() {
         .unwrap();
     let repo_b = store
         .create_repository(NewRepository {
+            default_workflow: None,
             path: "/tmp/learned-repo-b".into(),
             base_branch: "main".into(),
             description: None,
@@ -215,6 +218,7 @@ async fn a_repository_row_wins_over_an_all_row_of_another_repository() {
         .unwrap();
     let repo_c = store
         .create_repository(NewRepository {
+            default_workflow: None,
             path: "/tmp/learned-repo-c".into(),
             base_branch: "main".into(),
             description: None,
@@ -487,6 +491,7 @@ fn default_pin() -> AgentPin {
 async fn seed_repository(store: &Store) -> Repository {
     store
         .create_repository(NewRepository {
+            default_workflow: None,
             path: format!("/tmp/repo-{}", ariadne_core::id::new_id()),
             base_branch: "main".into(),
             description: None,
@@ -501,6 +506,7 @@ async fn seed_goal(store: &Store) -> (Goal, Repository) {
     let repo = seed_repository(store).await;
     let goal = store
         .create_goal(NewGoal {
+            workflow: None,
             issue_url: None,
             landing: None,
             title: "Test goal".into(),
@@ -713,6 +719,7 @@ async fn repository_crud_and_unique_path_branch() {
     let (store, _dir) = test_store().await;
     let repo = store
         .create_repository(NewRepository {
+            default_workflow: None,
             path: "/tmp/repo".into(),
             base_branch: "main".into(),
             description: Some("the one repo".into()),
@@ -730,6 +737,7 @@ async fn repository_crud_and_unique_path_branch() {
     // The same checkout on another branch is a different repository.
     let other = store
         .create_repository(NewRepository {
+            default_workflow: None,
             path: "/tmp/repo".into(),
             base_branch: "next".into(),
             description: None,
@@ -746,6 +754,7 @@ async fn repository_crud_and_unique_path_branch() {
     // (path, base_branch) is unique.
     let dup = store
         .create_repository(NewRepository {
+            default_workflow: None,
             path: "/tmp/repo".into(),
             base_branch: "main".into(),
             description: None,
@@ -825,6 +834,7 @@ async fn a_task_lands_by_the_ending_its_goal_carries() {
     let (store, _dir) = test_store().await;
     let repo = seed_repository(&store).await;
     let goal_ending_in = |landing: Option<Landing>| NewGoal {
+        workflow: None,
         issue_url: None,
         landing,
         title: "Ship it".into(),
@@ -890,6 +900,7 @@ async fn a_goal_reads_its_repositories_live() {
 
     let goal = store
         .create_goal(NewGoal {
+            workflow: None,
             issue_url: None,
             landing: None,
             title: "Two repos".into(),
@@ -932,6 +943,7 @@ async fn a_goal_needs_repositories_that_exist() {
     let (store, _dir) = test_store().await;
     let repo = seed_repository(&store).await;
     let new_goal = |repository_ids: Vec<String>| NewGoal {
+        workflow: None,
         issue_url: None,
         landing: None,
         title: "Goal".into(),
@@ -4261,6 +4273,7 @@ async fn a_checkpoint_folds_the_write_ahead_log_back_in() {
     for n in 0..200 {
         store
             .create_repository(ariadne_store::NewRepository {
+                default_workflow: None,
                 path: dir.path().join(format!("repo-{n}")).display().to_string(),
                 base_branch: "main".into(),
                 description: None,
@@ -4440,6 +4453,7 @@ async fn a_repository_takes_the_ai_permission_mode() {
     let (store, _dir) = test_store().await;
     let repo = store
         .create_repository(NewRepository {
+            default_workflow: None,
             path: "/tmp/ai-repo".into(),
             base_branch: "main".into(),
             description: None,
@@ -5138,6 +5152,7 @@ async fn store_with_my_pull_request() -> (Store, tempfile::TempDir, PullRequestR
     let (store, dir) = test_store().await;
     let repo = store
         .create_repository(NewRepository {
+            default_workflow: None,
             path: "/tmp/pull-request-comments".into(),
             base_branch: "main".into(),
             description: None,
@@ -5893,4 +5908,335 @@ async fn a_workflow_save_refuses_the_orchestrators_skill_and_the_reviewer_sessio
         })
         .await
         .unwrap();
+}
+
+async fn stepped_goal(store: &Store) -> (Goal, Repository) {
+    let repo = seed_repository(store).await;
+    let goal = store
+        .create_goal(NewGoal {
+            workflow: Some("develop-review-merge".into()),
+            title: "Run columns".into(),
+            description: "Build a change.".into(),
+            issue_url: None,
+            repository_ids: vec![repo.id.clone()],
+            pin: default_pin(),
+            landing: None,
+        })
+        .await
+        .unwrap();
+    (goal, repo)
+}
+
+fn step_agents() -> Vec<NewTaskAgent> {
+    ["develop", "review", "merge"]
+        .into_iter()
+        .map(|step| {
+            let mut agent = NewTaskAgent::new(Seat::Agent, Vec::<String>::new(), default_pin());
+            agent.step = Some(step.into());
+            agent
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn stepped_staffing_requires_one_agent_for_each_column() {
+    let (store, _dir) = test_store().await;
+    let (goal, repo) = stepped_goal(&store).await;
+    let new = |agents| NewTask {
+        goal_id: goal.id.clone(),
+        repo_id: repo.id.clone(),
+        title: "Build".into(),
+        description: "Build it.".into(),
+        agents,
+        depends_on: vec![],
+    };
+    let mut missing = step_agents();
+    missing.pop();
+    let mut duplicate = step_agents();
+    duplicate[1].step = Some("develop".into());
+    let mut unknown = step_agents();
+    unknown[1].step = Some("unknown".into());
+    let mut author = step_agents();
+    author[0].seat = Seat::Author;
+    let mut reviewer = step_agents();
+    reviewer[1].seat = Seat::Reviewer;
+    let mut no_column = step_agents();
+    no_column[1].step = None;
+    for invalid in [missing, duplicate, unknown, author, reviewer, no_column] {
+        assert!(store.create_task(new(invalid)).await.is_err());
+    }
+    assert!(
+        store
+            .list_tasks(TaskFilter {
+                goal_id: Some(goal.id.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let task = store.create_task(new(step_agents())).await.unwrap();
+    let agents = store.list_task_agents(&task.id).await.unwrap();
+    assert_eq!(
+        store.agent_skills(&agents[0].id).await.unwrap()[0].name,
+        "coding"
+    );
+    let mut replacement = step_agents();
+    replacement[0].pin = pin("stub:other-model");
+    store
+        .update_task(
+            &task.id,
+            TaskUpdate {
+                agents: Some(replacement),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store.list_task_agents(&task.id).await.unwrap()[0].model,
+        "stub:other-model"
+    );
+    let before = store.list_task_agents(&task.id).await.unwrap();
+    assert!(
+        store
+            .update_task(
+                &task.id,
+                TaskUpdate {
+                    agents: Some(vec![]),
+                    ..Default::default()
+                }
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        store.list_task_agents(&task.id).await.unwrap()[0].id,
+        before[0].id
+    );
+    store
+        .transition_task(&task.id, TaskStatus::Ready, Actor::Daemon, None, None)
+        .await
+        .unwrap();
+    store.start_first_step(&task.id).await.unwrap();
+    assert!(
+        store
+            .update_task(
+                &task.id,
+                TaskUpdate {
+                    agents: Some(step_agents()),
+                    ..Default::default()
+                }
+            )
+            .await
+            .is_err()
+    );
+    let (plain, repo) = seed_goal(&store).await;
+    assert!(
+        store
+            .create_task(NewTask {
+                goal_id: plain.id,
+                repo_id: repo.id,
+                title: "Plain".into(),
+                description: "No columns.".into(),
+                agents: step_agents(),
+                depends_on: vec![]
+            })
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn workflow_snapshots_keep_their_columns_and_references_prevent_deletion() {
+    let (store, _dir) = test_store().await;
+    store
+        .create_workflow(NewWorkflow {
+            name: "custom".into(),
+            document: "workflow custom\n build[Build]\n skills: pr-babysit\n".into(),
+        })
+        .await
+        .unwrap();
+    let repo = seed_repository(&store).await;
+    store
+        .update_repository(
+            &repo.id,
+            RepositoryUpdate {
+                default_workflow: Some(Some("custom".into())),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.delete_workflow("custom").await,
+        Err(StoreError::WorkflowInUse(_))
+    ));
+    let make = || NewGoal {
+        workflow: None,
+        title: "Keep columns".into(),
+        description: "Use the default.".into(),
+        issue_url: None,
+        repository_ids: vec![repo.id.clone()],
+        pin: default_pin(),
+        landing: None,
+    };
+    let goal = store.create_goal(make()).await.unwrap();
+    assert_eq!(goal.workflow.as_deref(), Some("custom"));
+    store
+        .set_workflow_document("custom", "workflow custom\n other[Other]\n")
+        .await
+        .unwrap();
+    assert_eq!(store.goal_steps(&goal.id).await.unwrap()[0].id, "build");
+    let later = store.create_goal(make()).await.unwrap();
+    assert_eq!(store.goal_steps(&later.id).await.unwrap()[0].id, "other");
+    store
+        .update_repository(
+            &repo.id,
+            RepositoryUpdate {
+                default_workflow: Some(None),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.delete_workflow("custom").await,
+        Err(StoreError::WorkflowInUse(_))
+    ));
+    let mut agent = NewTaskAgent::new(Seat::Agent, Vec::<String>::new(), default_pin());
+    agent.step = Some("build".into());
+    let task = store
+        .create_task(NewTask {
+            goal_id: goal.id,
+            repo_id: repo.id,
+            title: "Keep request".into(),
+            description: "Wait for merge.".into(),
+            agents: vec![agent],
+            depends_on: vec![],
+        })
+        .await
+        .unwrap();
+    let agent = &store.list_task_agents(&task.id).await.unwrap()[0];
+    assert_eq!(
+        store.agent_skills(&agent.id).await.unwrap()[0].name,
+        "pr-babysit"
+    );
+}
+
+#[tokio::test]
+async fn stepped_migration_preserves_old_rows_and_the_backup_can_be_opened() {
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("old.db");
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true)
+                .foreign_keys(true),
+        )
+        .await
+        .unwrap();
+    let migrator = sqlx::migrate::Migrator::new(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/migrations"
+    )))
+    .await
+    .unwrap();
+    migrator.run_to(21, &pool).await.unwrap();
+    sqlx::raw_sql("INSERT INTO repositories (id,path,base_branch,created_at,updated_at) VALUES ('r','/tmp/old','main','now','now');
+        INSERT INTO goals (id,title,description,model,created_at,updated_at) VALUES ('g','Keep','Text','stub:test','now','now');
+        INSERT INTO goal_repositories (goal_id,repository_id) VALUES ('g','r');
+        INSERT INTO tasks (id,goal_id,repo_id,title,description,branch,created_at,updated_at) VALUES ('t','g','r','Task','Text','task','now','now');
+        INSERT INTO skills (name,document,builtin,created_at,updated_at) VALUES ('custom','Do the work.',0,'now','now');
+        INSERT INTO task_agents (id,task_id,seat,ordinal,model,brief) VALUES ('a','t','author',0,'stub:test','Keep this brief.'),('b','t','reviewer',0,'stub:test',NULL);
+        INSERT INTO task_agent_skills VALUES ('a','custom',0);
+        INSERT INTO task_picks VALUES ('t','b','a','now');
+        INSERT INTO agent_sessions (id,goal_id,task_id,seat,task_agent_id,model,created_at,internal_session_id) VALUES ('s','g','t','author','a','stub:test','now','conversation');
+        INSERT INTO session_usage VALUES ('s','acp',12,3,4,'now');
+        INSERT INTO messages (id,goal_id,task_id,kind,from_actor,from_agent_id,from_session,to_actor,to_agent_id,body,created_at) VALUES ('m','g','t','message','author','a','s','reviewer','b','Keep the message.','now');
+        INSERT INTO task_transitions VALUES ('tr','t','ready','in_progress','daemon','Started.','now');
+        INSERT INTO agent_events VALUES ('e','s','t','stop',X'7B7D','none','now');").execute(&pool).await.unwrap();
+    pool.close().await;
+    let backup = dir.path().join("backup.db");
+    std::fs::copy(&path, &backup).unwrap();
+    let store = Store::open(&path).await.unwrap();
+    assert_eq!(
+        store.get_task_agent("a").await.unwrap().brief.as_deref(),
+        Some("Keep this brief.")
+    );
+    assert_eq!(
+        store
+            .get_session("s")
+            .await
+            .unwrap()
+            .internal_session_id
+            .as_deref(),
+        Some("conversation")
+    );
+    assert_eq!(store.session_usage("s").await.unwrap().input_tokens, 12);
+    assert_eq!(
+        store.get_message("m").await.unwrap().body,
+        "Keep the message."
+    );
+    assert_eq!(store.list_task_picks("t").await.unwrap().len(), 1);
+    assert_eq!(store.agent_skills("a").await.unwrap().len(), 1);
+    assert_eq!(store.list_session_events("s").await.unwrap().len(), 1);
+    assert_eq!(
+        store.list_task_transitions("t").await.unwrap()[0]
+            .reason
+            .as_deref(),
+        Some("Started.")
+    );
+    assert!(store.get_goal("g").await.unwrap().workflow.is_none());
+    assert!(store.get_task("t").await.unwrap().step.is_none());
+    let recovered = Store::open(&backup).await.unwrap();
+    assert_eq!(
+        recovered.get_message("m").await.unwrap().body,
+        "Keep the message."
+    );
+}
+
+#[tokio::test]
+async fn invalid_stored_column_skills_refuse_staffing_without_writing_a_task() {
+    use sqlx::Connection;
+
+    let (store, dir) = test_store().await;
+    let (goal, repo) = stepped_goal(&store).await;
+    let mut db = sqlx::SqliteConnection::connect(&format!(
+        "sqlite://{}",
+        dir.path().join("test.db").display()
+    ))
+    .await
+    .unwrap();
+    sqlx::query("UPDATE goal_steps SET skills = '{}' WHERE goal_id = ? AND id = 'develop'")
+        .bind(&goal.id)
+        .execute(&mut db)
+        .await
+        .unwrap();
+    let error = store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id,
+            title: "Build".into(),
+            description: "Use valid skills.".into(),
+            agents: step_agents(),
+            depends_on: vec![],
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(error, StoreError::Invalid(_)));
+    assert!(error.to_string().contains("develop"));
+    assert!(
+        store
+            .list_tasks(TaskFilter {
+                goal_id: Some(goal.id),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }

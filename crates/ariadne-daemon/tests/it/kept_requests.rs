@@ -917,6 +917,7 @@ async fn goal_on_branch(h: &Harness, repository_id: &str, branch: &str) {
     let goal = h
         .store
         .create_goal(NewGoal {
+            workflow: None,
             issue_url: None,
             landing: None,
             title: "Ship widgets".into(),

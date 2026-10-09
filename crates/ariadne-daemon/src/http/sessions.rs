@@ -272,6 +272,11 @@ pub(super) async fn debug_spawn(
     use ariadne_core::Seat;
     let launcher = &state.launcher;
     let session = match req.seat {
+        Seat::Agent => {
+            return Err(ApiError::conflict(
+                "the scheduler starts the current column agent",
+            ));
+        }
         Seat::Orchestrator => {
             let goal = req
                 .goal_id

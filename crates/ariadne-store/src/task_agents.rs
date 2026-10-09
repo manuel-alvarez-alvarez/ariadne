@@ -14,6 +14,7 @@ use crate::{AgentPin, Result, Skill, SkillSeat, Store, StoreError, TaskAgent, no
 /// One agent to staff on a task, as the orchestrator describes it.
 #[derive(Debug, Clone)]
 pub struct NewTaskAgent {
+    pub step: Option<String>,
     /// `Author` or `Reviewer`. A task takes one author or more; several
     /// authors need a reviewer to pick the winner.
     pub seat: Seat,
@@ -36,6 +37,7 @@ impl NewTaskAgent {
         pin: AgentPin,
     ) -> Self {
         Self {
+            step: None,
             seat,
             skills: skills.into_iter().map(Into::into).collect(),
             pin,
@@ -56,9 +58,13 @@ impl Store {
         task_id: &str,
         agents: &[NewTaskAgent],
     ) -> Result<()> {
-        let mut ordinals = (0i64, 0i64);
+        let mut ordinals = (0i64, 0i64, 0i64);
         for agent in agents {
             let ordinal = match agent.seat {
+                Seat::Agent => {
+                    ordinals.2 += 1;
+                    ordinals.2 - 1
+                }
                 Seat::Author => {
                     ordinals.0 += 1;
                     ordinals.0 - 1
@@ -76,8 +82,8 @@ impl Store {
             let id = new_id();
             let (model, effort) = AgentPin::columns(&agent.pin);
             sqlx::query(
-                "INSERT INTO task_agents (id, task_id, seat, ordinal, model, effort, brief)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO task_agents (id, task_id, seat, ordinal, model, effort, brief, step)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&id)
             .bind(task_id)
@@ -86,9 +92,10 @@ impl Store {
             .bind(&model)
             .bind(&effort)
             .bind(&agent.brief)
+            .bind(&agent.step)
             .execute(&mut **tx)
             .await?;
-            Self::write_agent_skills_in_tx(tx, &id, &agent.skills).await?;
+            Self::write_agent_skills_in_tx(tx, &id, &agent.skills, agent.seat).await?;
         }
         Ok(())
     }
@@ -97,6 +104,7 @@ impl Store {
         tx: &mut Transaction<'_, Sqlite>,
         agent_id: &str,
         skills: &[String],
+        seat: Seat,
     ) -> Result<()> {
         for (ordinal, name) in skills.iter().enumerate() {
             // The orchestrator's skill is nobody's to staff: its seat is a
@@ -111,6 +119,7 @@ impl Store {
                 // The daemon loads these itself, never an orchestrator (017):
                 // `pr-babysit` onto the author of a task that lands by
                 // request, `pr-reviewer` onto a review session.
+                SkillSeat::PullRequest if seat == Seat::Agent && name == "pr-babysit" => {}
                 SkillSeat::PullRequest => {
                     return Err(StoreError::Conflict(format!(
                         "skill {name} is loaded by Ariadne itself, where a request is kept or \
@@ -213,13 +222,13 @@ impl Store {
     /// Replace the skills an agent loads. The list is written whole: a skill
     /// left out is one the agent no longer loads.
     pub async fn set_agent_skills(&self, agent_id: &str, skills: &[String]) -> Result<()> {
-        self.get_task_agent(agent_id).await?;
+        let agent = self.get_task_agent(agent_id).await?;
         let mut tx = self.w().begin().await?;
         sqlx::query("DELETE FROM task_agent_skills WHERE agent_id = ?")
             .bind(agent_id)
             .execute(&mut *tx)
             .await?;
-        Self::write_agent_skills_in_tx(&mut tx, agent_id, skills).await?;
+        Self::write_agent_skills_in_tx(&mut tx, agent_id, skills, agent.seat()).await?;
         tx.commit().await?;
         Ok(())
     }

@@ -51,6 +51,10 @@ impl super::Scheduler {
             return Ok(());
         }
 
+        if goal.workflow.is_some() {
+            return Box::pin(self.reconcile_steps(task)).await;
+        }
+
         // Who writes this task: one author for most tasks, several for a
         // contested one — which runs them side by side until the reviewers
         // pick a winner, and reads as one-author again once they have.
@@ -132,6 +136,9 @@ impl super::Scheduler {
             return Ok(());
         }
 
+        // Heap-allocate the large branch futures. Dependency reconciliation can
+        // poll this method recursively, so its inline state multiplies on the
+        // stack even when a different branch owns the current task.
         match task.status() {
             TaskStatus::Pending => {
                 // A dependency that ended without merging is never going to,
@@ -175,9 +182,7 @@ impl super::Scheduler {
                         .is_none()
                     {
                         info!(task = %task.id, author = %author.id, "spawning author");
-                        self.launcher
-                            .spawn_author_agent(&task.id, &author.id)
-                            .await?;
+                        Box::pin(self.launcher.spawn_author_agent(&task.id, &author.id)).await?;
                     }
                 }
                 self.store
@@ -191,7 +196,7 @@ impl super::Scheduler {
                     .is_empty()
                 {
                     info!(task = %task.id, "spawning author");
-                    self.launcher.spawn_author(&task.id).await?;
+                    Box::pin(self.launcher.spawn_author(&task.id)).await?;
                 }
                 self.store
                     .transition_task(&task.id, TaskStatus::InProgress, Actor::Daemon, None, None)
@@ -202,15 +207,14 @@ impl super::Scheduler {
                 // what moves the task on — so every author is still writing.
                 for author in &authors {
                     let situation = format!("in_progress:{}", author.id);
-                    self.check_contested_author(&task, author, situation)
-                        .await?;
+                    Box::pin(self.check_contested_author(&task, author, situation)).await?;
                 }
             }
             TaskStatus::InProgress => {
-                self.check_stall(&task).await?;
+                Box::pin(self.check_stall(&task)).await?;
             }
             TaskStatus::UnderReview if contested => {
-                self.reconcile_contest(&task, &authors).await?;
+                Box::pin(self.reconcile_contest(&task, &authors)).await?;
             }
             TaskStatus::UnderReview => {
                 let reviewers = self.store.list_task_reviewers(&task.id).await?;
@@ -331,7 +335,7 @@ impl super::Scheduler {
                         {
                             continue;
                         }
-                        self.check_session_quiet(&reviewer, situation.clone(), &resume)
+                        Box::pin(self.check_session_quiet(&reviewer, situation.clone(), &resume))
                             .await?;
                         if self
                             .quiet
@@ -376,8 +380,7 @@ impl super::Scheduler {
                         info!(task = %task.id, reviewer = %agent_id, "starting reviewer");
                         // Resumes the reviewer's earlier session when there is
                         // one, spawns a first for it otherwise.
-                        self.launcher
-                            .resume_reviewer(&task.id, &agent_id, &resume)
+                        Box::pin(self.launcher.resume_reviewer(&task.id, &agent_id, &resume))
                             .await?;
                         // Marked only once the resume above actually
                         // succeeded: a spawn refused because the seat is
@@ -422,12 +425,11 @@ impl super::Scheduler {
                 }
                 info!(task = %task.id, "resuming author with review feedback");
                 let template = prompts::template_for(PromptKind::ChangesRequested);
-                self.launcher
-                    .resume_author(
-                        &task.id,
-                        &prompts::changes_requested_briefing(template, &feedback),
-                    )
-                    .await?;
+                Box::pin(self.launcher.resume_author(
+                    &task.id,
+                    &prompts::changes_requested_briefing(template, &feedback),
+                ))
+                .await?;
                 // This briefing is the delivery of every change request it
                 // carries, so each one is stamped by it — the same rule the
                 // reviewer's briefing holds a review request to. Stamped
@@ -463,10 +465,10 @@ impl super::Scheduler {
                 // clock eventually nudged it. Left unmarked on failure, the
                 // next pass tries again.
                 if self.landing_briefed.contains(&task.id) {
-                    self.check_stall(&task).await?;
+                    Box::pin(self.check_stall(&task)).await?;
                 } else {
                     info!(task = %task.id, "approved: briefing the author to land it");
-                    self.start_author(&task).await?;
+                    Box::pin(self.start_author(&task)).await?;
                     self.landing_briefed.insert(task.id.clone());
                 }
             }
@@ -475,6 +477,29 @@ impl super::Scheduler {
                 // Worktrees and the branch go by default; set
                 // delete_merged_worktrees = false to keep merged work around
                 // for inspection.
+                Box::pin(self.launcher.cleanup_task(
+                    &task.id,
+                    self.launcher.cfg.delete_merged_worktrees,
+                    self.launcher.cfg.delete_merged_branches,
+                ))
+                .await?;
+                for dependent in self.dependents_of(&task).await? {
+                    Box::pin(self.reconcile_task(&dependent)).await?;
+                }
+            }
+            TaskStatus::Cancelled => {
+                // Kill leftover agents; always keep worktrees and branch — a
+                // cancelled task may hold uncommitted work worth salvaging.
+                Box::pin(self.launcher.cleanup_task(&task.id, false, false)).await?;
+            }
+            TaskStatus::Failed => {}
+        }
+        Ok(())
+    }
+
+    async fn reconcile_steps(&mut self, mut task: Task) -> anyhow::Result<()> {
+        match task.status() {
+            TaskStatus::Finished => {
                 self.launcher
                     .cleanup_task(
                         &task.id,
@@ -485,13 +510,187 @@ impl super::Scheduler {
                 for dependent in self.dependents_of(&task).await? {
                     Box::pin(self.reconcile_task(&dependent)).await?;
                 }
+                return Ok(());
             }
-            TaskStatus::Cancelled => {
-                // Kill leftover agents; always keep worktrees and branch — a
-                // cancelled task may hold uncommitted work worth salvaging.
+            TaskStatus::Failed | TaskStatus::Cancelled => {
                 self.launcher.cleanup_task(&task.id, false, false).await?;
+                return Ok(());
             }
-            TaskStatus::Failed => {}
+            TaskStatus::Pending => {
+                if let Some(blocker) = self.store.task_dependencies_blocked(&task.id).await? {
+                    self.store
+                        .transition_task(
+                            &task.id,
+                            TaskStatus::Failed,
+                            Actor::Daemon,
+                            Some(&blocked_reason(&blocker)),
+                            None,
+                        )
+                        .await?;
+                    return Ok(());
+                }
+                if !self.store.task_dependencies_merged(&task.id).await? {
+                    return Ok(());
+                }
+                task = self
+                    .store
+                    .transition_task(&task.id, TaskStatus::Ready, Actor::Daemon, None, None)
+                    .await?;
+            }
+            _ => {}
+        }
+        if task.status() == TaskStatus::Ready && Box::pin(self.wait_for_dependencies(&task)).await?
+        {
+            return Ok(());
+        }
+        if task.status() == TaskStatus::Ready {
+            task = self.store.start_first_step(&task.id).await?;
+        }
+        if task.status() != TaskStatus::InProgress {
+            return Ok(());
+        }
+        let steps = self.store.goal_steps(&task.goal_id).await?;
+        let step = steps
+            .iter()
+            .find(|s| Some(&s.id) == task.step.as_ref())
+            .ok_or_else(|| anyhow::anyhow!("task has no current column"))?;
+        let agents = self.store.list_task_agents(&task.id).await?;
+        let agent = agents
+            .iter()
+            .find(|a| a.step == task.step)
+            .ok_or_else(|| anyhow::anyhow!("column has no agent"))?;
+        let sessions = self
+            .store
+            .list_sessions(SessionFilter {
+                task_id: Some(task.id.clone()),
+                ..Default::default()
+            })
+            .await?;
+        for session in &sessions {
+            if session.task_agent_id.as_ref() != Some(&agent.id)
+                && session.attention_reason().is_some()
+            {
+                self.store.clear_session_attention(&session.id).await?;
+            }
+        }
+        let live = sessions.iter().rev().find(|s| {
+            s.task_agent_id.as_ref() == Some(&agent.id) && self.launcher.acp.is_running(&s.id)
+        });
+        let launched = live.is_none();
+        let session = match live {
+            Some(session) => {
+                self.spent_on_a_dead_launch(&agent.id, &task.id, session);
+                session.clone()
+            }
+            None => {
+                if let Some(last) = sessions
+                    .iter()
+                    .rev()
+                    .find(|s| s.task_agent_id.as_ref() == Some(&agent.id))
+                {
+                    if last.attention_reason() == Some(AttentionReason::Exhausted) {
+                        return Ok(());
+                    }
+                    if self.spent_on_a_dead_launch(&agent.id, &task.id, last)
+                        && self
+                            .record_spawn_failure(
+                                &task.id,
+                                "its agent stopped as soon as it started",
+                            )
+                            .await
+                    {
+                        return Ok(());
+                    }
+                }
+                self.launcher.start_step_agent(&task, agent).await?
+            }
+        };
+        let transitions = self.store.list_task_transitions(&task.id).await?;
+        let entry = transitions
+            .last()
+            .ok_or_else(|| anyhow::anyhow!("step has no entry transition"))?;
+        if !self.store.step_briefed(&entry.id).await? {
+            let seen = transitions[..transitions.len() - 1]
+                .iter()
+                .any(|t| t.to_status == "in_progress" && t.to_step.as_ref() == Some(&step.id));
+            let retry = entry.from_status == "ready"
+                && transitions
+                    .iter()
+                    .any(|t| t.from_status == "failed" && t.to_status == "ready");
+            let reason = entry
+                .reason
+                .as_deref()
+                .or_else(|| {
+                    if retry {
+                        transitions
+                            .iter()
+                            .rev()
+                            .find(|t| t.to_status == "failed")
+                            .and_then(|t| t.reason.as_deref())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("");
+            let mut briefing = if seen {
+                let direction = if retry {
+                    "retry"
+                } else if entry.from_step.as_ref().is_some_and(|id| {
+                    steps
+                        .iter()
+                        .any(|s| &s.id == id && s.ordinal > step.ordinal)
+                }) {
+                    "back"
+                } else {
+                    "forward"
+                };
+                prompts::step_return(
+                    prompts::template_for(PromptKind::StepReturn),
+                    &task,
+                    step,
+                    direction,
+                    reason,
+                )
+            } else {
+                self.launcher
+                    .step_first_briefing(&task, step, reason)
+                    .await?
+            };
+            if seen && launched && !sessions.iter().any(|s| s.id == session.id) {
+                briefing = format!(
+                    "{}\n\n{briefing}",
+                    self.launcher
+                        .step_first_briefing(&task, step, reason)
+                        .await?
+                );
+            }
+            if let Some(brief) = &agent.brief {
+                briefing.push_str("\n\n");
+                briefing.push_str(brief);
+            }
+            let handed = self
+                .launcher
+                .acp
+                .send_step(&session.id, &entry.id, briefing);
+            self.handed(&session, handed);
+            return Ok(());
+        }
+        self.deliver_task_messages(&task.id).await;
+        let resume =
+            prompts::agent_resume(prompts::template_for(PromptKind::AgentResume), &task, step);
+        if launched {
+            let resume = if sessions.iter().any(|s| s.id == session.id) {
+                resume
+            } else {
+                format!(
+                    "{}\n\n{resume}",
+                    self.launcher.step_first_briefing(&task, step, "").await?
+                )
+            };
+            self.hand_prompt(&session, resume);
+        } else {
+            self.check_session_quiet(&session, entry.id.clone(), &resume)
+                .await?;
         }
         Ok(())
     }

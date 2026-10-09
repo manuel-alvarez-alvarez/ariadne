@@ -973,6 +973,7 @@ async fn feature_tasks_land_on_the_goal_branch_and_keep_the_base_unchanged() {
     let goal = h
         .store
         .create_goal(ariadne_store::NewGoal {
+            workflow: None,
             issue_url: None,
             title: "Ship feature".into(),
             description: String::new(),

@@ -26,7 +26,7 @@ function task(id: string, status: TaskStatus, extra: Partial<TaskDto> = {}): Tas
     agents: [],
     picks: [],
     stalled: false,
-    usage: { total: NO_TOKENS, author: NO_TOKENS, reviewers: [] },
+    usage: { total: NO_TOKENS, author: NO_TOKENS, reviewers: [], agents: [] },
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     ...extra,

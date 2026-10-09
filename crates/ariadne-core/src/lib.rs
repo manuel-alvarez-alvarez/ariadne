@@ -65,12 +65,14 @@ pub(crate) use wire_enum;
 )]
 #[serde(rename_all = "snake_case")]
 pub enum Seat {
+    Agent,
     Orchestrator,
     Author,
     Reviewer,
 }
 
 wire_enum! { Seat, "seat", [
+    Agent = "agent",
     Orchestrator = "orchestrator",
     Author = "author",
     Reviewer = "reviewer",
@@ -192,6 +194,9 @@ impl Landing {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum PromptKind {
+    StepBriefing,
+    StepReturn,
+    AgentResume,
     /// Initial briefing of an orchestrator session.
     OrchestratorBriefing,
     /// What an orchestrator that has gone quiet is nudged with.
@@ -220,6 +225,9 @@ pub enum PromptKind {
 }
 
 wire_enum! { PromptKind, "prompt kind", [
+    StepBriefing = "step_briefing",
+    StepReturn = "step_return",
+    AgentResume = "agent_resume",
     OrchestratorBriefing = "orchestrator_briefing",
     OrchestratorResume = "orchestrator_resume",
     GoalAttention = "goal_attention",
@@ -240,7 +248,15 @@ impl PromptKind {
             | PromptKind::OrchestratorResume
             | PromptKind::GoalAttention => &[Seat::Orchestrator],
             // Every seat can be written to, so every seat is briefed with it.
-            PromptKind::IncomingMessage => &[Seat::Orchestrator, Seat::Author, Seat::Reviewer],
+            PromptKind::IncomingMessage => &[
+                Seat::Orchestrator,
+                Seat::Author,
+                Seat::Reviewer,
+                Seat::Agent,
+            ],
+            PromptKind::StepBriefing | PromptKind::StepReturn | PromptKind::AgentResume => {
+                &[Seat::Agent]
+            }
             PromptKind::AuthorBriefing
             | PromptKind::AuthorResume
             | PromptKind::ChangesRequested => &[Seat::Author],
@@ -253,6 +269,12 @@ impl PromptKind {
     /// The prompts a session of `seat` is briefed with, in briefing order.
     pub fn for_seat(seat: Seat) -> &'static [PromptKind] {
         match seat {
+            Seat::Agent => &[
+                PromptKind::StepBriefing,
+                PromptKind::StepReturn,
+                PromptKind::AgentResume,
+                PromptKind::IncomingMessage,
+            ],
             Seat::Orchestrator => &[
                 PromptKind::OrchestratorBriefing,
                 PromptKind::OrchestratorResume,
@@ -310,6 +332,22 @@ impl PromptKind {
                 "landing",
                 "dependencies",
             ],
+            PromptKind::StepBriefing => &[
+                "task_title",
+                "task_description",
+                "goal_title",
+                "worktree_path",
+                "branch",
+                "base_branch",
+                "repo_path",
+                "step_id",
+                "step_title",
+                "step_description",
+                "previous_summary",
+                "dependencies",
+            ],
+            PromptKind::StepReturn => &["task_title", "step_title", "direction", "reason"],
+            PromptKind::AgentResume => &["task_title", "step_title"],
             PromptKind::AuthorResume => &["task_title", "branch"],
             PromptKind::ChangesRequested => &["feedback"],
             PromptKind::ReviewerBriefing => &[

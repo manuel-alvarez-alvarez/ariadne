@@ -77,7 +77,7 @@ pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
         permission_mode: r.permission_mode(),
         default_landing: r.default_landing(),
         forge: r.forge.map(forge_dto),
-        .. id, path, base_branch, description, created_at, updated_at
+        .. id, path, base_branch, description, default_workflow, created_at, updated_at
     }
 
     fn forge_dto(f: store::ForgeIntegration) -> ForgeDto {
@@ -98,12 +98,14 @@ pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
         g: store::Goal,
         repos: Vec<GoalRepositoryDto>,
         usage: GoalUsageDto,
+        steps: Vec<WorkflowStepDto>,
     ) -> GoalDto {
         status: g.status(),
         landing: g.landing(),
+        steps: steps,
         repos: repos,
         usage: usage,
-        .. id, title, description, issue_url, orchestrated, model, effort,
+        .. id, title, description, issue_url, orchestrated, model, effort, workflow,
            created_at, updated_at
     }
 
@@ -121,7 +123,7 @@ pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
         skills: skills,
         branch: branch,
         session_id: session_id,
-        .. id, model, effort, brief
+        .. id, model, effort, brief, step
     }
 
     pub(crate) fn task_pick_dto(p: store::TaskPick) -> TaskPickDto {
@@ -147,8 +149,7 @@ pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
         agents: agents
             .into_iter()
             .map(|(a, skills)| {
-                let branch = (a.seat() == Seat::Author)
-                    .then(|| store::author_branch(&t.branch, a.ordinal));
+                let branch = match a.seat() { Seat::Agent => Some(t.branch.clone()), Seat::Author => Some(store::author_branch(&t.branch, a.ordinal)), _ => None };
                 let session_id = live_session_id(&a.id, &sessions);
                 task_agent_dto(a, skills, branch, session_id)
             })
@@ -157,12 +158,12 @@ pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
         usage: usage,
         reason: reason,
         picks: picks,
-        .. id, goal_id, repo_id, title, description, branch, worktree_path,
+        .. id, goal_id, repo_id, title, description, branch, worktree_path, step,
            merge_commit, pr_url, picked_agent_id, created_at, updated_at
     }
 
     pub(crate) fn transition_dto(t: store::TaskTransition) -> TaskTransitionDto {
-        .. id, from_status, to_status, actor, reason, created_at
+        .. id, from_status, to_status, actor, reason, created_at, from_step, to_step
     }
 
     pub(crate) fn message_dto(m: store::Message) -> MessageDto {
@@ -383,7 +384,34 @@ pub(crate) async fn goal_dto_of(store: &Store, goal: store::Goal) -> Result<Goal
         })
         .collect();
     let usage = goal_usage(store, &goal.id).await?;
-    Ok(goal_dto(goal, repos, usage))
+    let steps = store
+        .goal_steps(&goal.id)
+        .await?
+        .into_iter()
+        .map(|s| {
+            let invalid =
+                |field| StoreError::Invalid(format!("column {} has invalid {field}", s.id));
+            Ok(WorkflowStepDto {
+                skills: serde_json::from_str(&s.skills).map_err(|_| invalid("skills"))?,
+                rank: s
+                    .rank
+                    .as_deref()
+                    .map(str::parse)
+                    .transpose()
+                    .map_err(|_| invalid("rank"))?,
+                gate: s
+                    .gate
+                    .as_deref()
+                    .map(str::parse)
+                    .transpose()
+                    .map_err(|_| invalid("gate"))?,
+                id: s.id,
+                title: s.title,
+                description: s.description,
+            })
+        })
+        .collect::<Result<Vec<_>, StoreError>>()?;
+    Ok(goal_dto(goal, repos, usage, steps))
 }
 
 /// What a task has spent, arranged the way it is read: the author's own, one
@@ -413,6 +441,7 @@ async fn task_usage(
         if let Some(at) = left.iter().position(|p| p.agent_id == agent.id) {
             let spent = left.remove(at);
             listed.push(AgentUsageDto {
+                step: agent.step.clone(),
                 agent_id: spent.agent_id.clone(),
                 skills: skills.clone(),
                 usage: spent.usage.into(),
@@ -421,12 +450,25 @@ async fn task_usage(
     }
     for spent in left {
         listed.push(AgentUsageDto {
+            step: None,
             agent_id: spent.agent_id.clone(),
             skills: agent_skills(store, &spent.agent_id).await,
             usage: spent.usage.into(),
         });
     }
+    let mut step_usage = Vec::new();
+    for (agent, skills) in agents.iter().filter(|(a, _)| a.seat() == Seat::Agent) {
+        if let Some(usage) = spent.iter().find(|p| p.agent_id == agent.id) {
+            step_usage.push(AgentUsageDto {
+                agent_id: agent.id.clone(),
+                step: agent.step.clone(),
+                skills: skills.clone(),
+                usage: usage.usage.into(),
+            });
+        }
+    }
     Ok(TaskUsageDto {
+        agents: step_usage,
         total: total.into(),
         author: author.into(),
         reviewers: listed,
@@ -445,7 +487,23 @@ async fn goal_usage(store: &Store, goal_id: &str) -> Result<GoalUsageDto, StoreE
             .sum::<TokenUsage>()
             .into()
     };
+    let mut agents = Vec::new();
+    for task in store
+        .list_tasks(store::TaskFilter {
+            goal_id: Some(goal_id.into()),
+            ..Default::default()
+        })
+        .await?
+    {
+        let mut staffed = Vec::new();
+        for agent in store.list_task_agents(&task.id).await? {
+            let skills = agent_skills(store, &agent.id).await;
+            staffed.push((agent, skills));
+        }
+        agents.extend(task_usage(store, &task.id, &staffed).await?.agents);
+    }
     Ok(GoalUsageDto {
+        agents,
         total: spent.iter().map(|r| r.usage).sum::<TokenUsage>().into(),
         orchestrator: of(Seat::Orchestrator),
         authors: of(Seat::Author),

@@ -3688,10 +3688,10 @@
             }
           },
           "403": {
-            "description": "not an author session"
+            "description": "not the author or current workflow agent"
           },
           "409": {
-            "description": "the task is not approved, has no forge or its integration is off, is not authenticated, or is not pushed"
+            "description": "the task cannot open a request, has no forge or its integration is off, is not authenticated, or is not pushed"
           }
         }
       }
@@ -3714,6 +3714,100 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/tasks/{id}/step/complete": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "operationId": "complete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteStepRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": ""
+          },
+          "409": {
+            "description": "step_gate_failed"
+          }
+        }
+      }
+    },
+    "/v1/tasks/{id}/step/fail": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "operationId": "fail",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FailStepRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "",
@@ -4190,6 +4284,7 @@
         "type": "string",
         "description": "Who is attempting a transition: a seat, the daemon, or the user.",
         "enum": [
+          "agent",
           "orchestrator",
           "author",
           "reviewer",
@@ -4227,7 +4322,7 @@
           },
           "seat": {
             "$ref": "#/components/schemas/Seat",
-            "description": "`author` or `reviewer`. A task takes one author or more; several\nauthors need at least one reviewer, to pick the winner."
+            "description": "`agent` for a workflow column, or `author` or `reviewer` without a workflow.\nA task without a workflow takes at least one author; several authors need a reviewer to pick the winner."
           },
           "skills": {
             "type": "array",
@@ -4239,6 +4334,13 @@
               "coding",
               "documentation"
             ]
+          },
+          "step": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The workflow column id. Required for `agent`; omitted for `author` and `reviewer`."
           }
         },
         "additionalProperties": false
@@ -4367,6 +4469,12 @@
               "type": "string"
             },
             "description": "The skills the agent loads; empty only if the agent is gone."
+          },
+          "step": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "usage": {
             "$ref": "#/components/schemas/TokenUsageDto"
@@ -4699,6 +4807,24 @@
         "description": "Body of `POST /v1/goals/{id}/complete`: the orchestrator says the goal is\ndone. Its call, not the user's, and it carries nothing — every task being\nfinished or cancelled is the whole of the argument, and the daemon checks\nthat itself.",
         "additionalProperties": false
       },
+      "CompleteStepRequest": {
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "merge_commit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "ConsoleInputRequest": {
         "type": "object",
         "description": "Body of `POST /v1/sessions/{id}/console/input`.\n\nWhile a permission request is pending, the text selects that request's\noption; otherwise it becomes a fresh `session/prompt`, sent at once or\nqueued behind the turn still running.",
@@ -4762,6 +4888,12 @@
           },
           "title": {
             "type": "string"
+          },
+          "workflow": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "additionalProperties": false
@@ -4788,6 +4920,12 @@
                 "$ref": "#/components/schemas/Landing",
                 "description": "Omit for `merge`."
               }
+            ]
+          },
+          "default_workflow": {
+            "type": [
+              "string",
+              "null"
             ]
           },
           "description": {
@@ -5535,6 +5673,18 @@
           "desc"
         ]
       },
+      "FailStepRequest": {
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "FailedCheckDto": {
         "type": "object",
         "description": "One check that failed on a request's head.",
@@ -5730,6 +5880,7 @@
       "GoalDto": {
         "type": "object",
         "required": [
+          "steps",
           "id",
           "title",
           "description",
@@ -5789,6 +5940,12 @@
           "status": {
             "$ref": "#/components/schemas/GoalStatus"
           },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowStepDto"
+            }
+          },
           "title": {
             "type": "string"
           },
@@ -5798,6 +5955,12 @@
           "usage": {
             "$ref": "#/components/schemas/GoalUsageDto",
             "description": "What the agents of this goal have spent between them."
+          },
+          "workflow": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -5835,12 +5998,19 @@
         "type": "object",
         "description": "What a goal cost, by the seat that spent it. Grouped by seat rather than\nby agent: a goal's authors are as many as it has tasks, and what is\nread at this height is where the tokens went, not which agent went there.",
         "required": [
+          "agents",
           "total",
           "orchestrator",
           "authors",
           "reviewers"
         ],
         "properties": {
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentUsageDto"
+            }
+          },
           "authors": {
             "$ref": "#/components/schemas/TokenUsageDto",
             "description": "Every author session of every task of the goal."
@@ -7165,6 +7335,12 @@
             "$ref": "#/components/schemas/Landing",
             "description": "The landing a new goal uses where its request leaves landing out."
           },
+          "default_workflow": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "description": {
             "type": [
               "string",
@@ -7267,6 +7443,7 @@
         "type": "string",
         "description": "Where an agent sits: the orchestrator of a goal, or the author or a\nreviewer of one task.\n\nA seat is a position, not an identity. Every agent below the orchestrator\nis generic, and what it can do comes from the skills it loads; the seat is\nonly what the state machine and the launcher need to know about it.",
         "enum": [
+          "agent",
           "orchestrator",
           "author",
           "reviewer"
@@ -8050,6 +8227,12 @@
               "coding",
               "documentation"
             ]
+          },
+          "step": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -8177,6 +8360,12 @@
           "status": {
             "$ref": "#/components/schemas/TaskStatus"
           },
+          "step": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "title": {
             "type": "string"
           },
@@ -8251,6 +8440,12 @@
           "from_status": {
             "type": "string"
           },
+          "from_step": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "id": {
             "type": "string"
           },
@@ -8262,6 +8457,12 @@
           },
           "to_status": {
             "type": "string"
+          },
+          "to_step": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -8292,11 +8493,18 @@
         "type": "object",
         "description": "What a task cost, by who spent it: its author, its reviewers one entry\neach, and the total of every session on the task.",
         "required": [
+          "agents",
           "total",
           "author",
           "reviewers"
         ],
         "properties": {
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentUsageDto"
+            }
+          },
           "author": {
             "$ref": "#/components/schemas/TokenUsageDto",
             "description": "The author's own, across every run of it."
@@ -8633,6 +8841,12 @@
               }
             ]
           },
+          "default_workflow": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "description": {
             "type": [
               "string",
@@ -8689,6 +8903,15 @@
         "type": "object",
         "description": "Partial update; only allowed while the task is pending/ready.",
         "properties": {
+          "agents": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/AgentAssignment"
+            }
+          },
           "authors": {
             "type": [
               "array",

@@ -233,6 +233,7 @@ struct Prompt {
 /// prompt was never written.
 #[derive(Debug, Clone)]
 pub(crate) enum Delivery {
+    Step(String),
     /// An agent message, by id (018).
     Message(String),
     /// The news of a pull request (026). Boxed: it carries two marks and a
@@ -256,6 +257,7 @@ impl Delivery {
     /// pull request, whose next news waits until the queued one is claimed.
     fn key(&self) -> String {
         match self {
+            Delivery::Step(id) => format!("step:{id}"),
             Delivery::Message(id) => format!("message:{id}"),
             Delivery::PullRequestNews(news) => format!("news:{}", news.pull_request_id),
         }
@@ -618,6 +620,10 @@ impl AcpRuntime {
     ///
     /// Errs where there is nobody here to hear it: no agent runs for this
     /// session.
+    pub(crate) fn send_step(&self, session_id: &str, transition: &str, text: String) -> Result<()> {
+        self.queue_daemon_prompt(session_id, text, Some(Delivery::Step(transition.into())))
+    }
+
     pub(crate) fn send_prompt(&self, session_id: &str, text: String) -> Result<()> {
         self.queue_daemon_prompt(session_id, text, None)
     }
@@ -1226,6 +1232,7 @@ impl AcpRuntime {
         // agent, or for a read, again (018, 026).
         if let Some(delivery) = in_flight.unwritten() {
             let released = match &delivery {
+                Delivery::Step(id) => self.inner.store.release_step_briefing(id).await,
                 Delivery::Message(id) => self.inner.store.unmark_message_delivered(id).await,
                 Delivery::PullRequestNews(news) => {
                     self.inner
@@ -2404,6 +2411,7 @@ async fn claim_message(rpc: &Rpc, prompt: &Prompt) -> bool {
         .dequeue_message(&sink.session_id, &sink.launch_id, &delivery.key());
     let store = &sink.runtime.inner.store;
     let claimed = match delivery {
+        Delivery::Step(id) => store.claim_step_briefing(id).await,
         Delivery::Message(id) => store.mark_message_delivered(id).await,
         Delivery::PullRequestNews(news) => {
             store

@@ -230,6 +230,7 @@ pub fn skill_text(document: &str) -> String {
 pub fn default_system_prompt(seat: Seat) -> &'static str {
     match seat {
         Seat::Orchestrator => ORCHESTRATOR_SYSTEM_PROMPT,
+        Seat::Agent => AGENT_SYSTEM_PROMPT,
         Seat::Author => AUTHOR_SYSTEM_PROMPT,
         Seat::Reviewer => REVIEWER_SYSTEM_PROMPT,
     }
@@ -243,6 +244,9 @@ pub fn default_prompt_text(kind: PromptKind) -> &'static str {
         PromptKind::OrchestratorResume => ORCHESTRATOR_RESUME,
         PromptKind::GoalAttention => GOAL_ATTENTION,
         PromptKind::IncomingMessage => INCOMING_MESSAGE,
+        PromptKind::StepBriefing => STEP_BRIEFING,
+        PromptKind::StepReturn => STEP_RETURN,
+        PromptKind::AgentResume => AGENT_RESUME,
         PromptKind::AuthorBriefing => AUTHOR_BRIEFING,
         PromptKind::AuthorResume => AUTHOR_RESUME,
         PromptKind::ChangesRequested => CHANGES_REQUESTED,
@@ -332,6 +336,27 @@ pub fn default_landing_prompt(landing: Landing) -> &'static str {
 /// them — it writes no code, and a point it cannot settle goes to the user
 /// rather than being decided alone.
 const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"Plan one goal with the user. Never write code. Ask the user where blocked. After a question, end your turn. Do not poll `read_messages`. Ariadne delivers the answer as a new turn."#;
+
+const AGENT_SYSTEM_PROMPT: &str = r#"Work only in the task's shared worktree, on its branch. Work on your current column alone. Read its skills first.
+1. Read the task and the column's instructions.
+2. Complete the step with `complete_step` and a reason that briefs the next agent.
+3. Return work with `fail_step` and a reason that tells the previous agent what to fix.
+4. Call `fail_task` if the task cannot be done.
+5. Ask only where the task cannot continue without an answer.
+6. End your turn after a step call or a question. Do not poll."#;
+
+const STEP_BRIEFING: &str = r#"# {task_title}: {step_title} ({step_id})
+{task_description}
+{step_description}
+Goal: {goal_title}
+Worktree: {worktree_path}
+Branch: {branch}
+Base: {base_branch}
+Repo: {repo_path}
+Previous: {previous_summary}
+Dependencies: {dependencies}"#;
+const STEP_RETURN: &str = "Resume {task_title} at {step_title}.\nDirection: {direction}\n{reason}";
+const AGENT_RESUME: &str = "Continue {task_title} at {step_title}.";
 
 /// Author persona and playbook: what it may touch, what it writes, and the
 /// one place `request_review` is explained. Landing is its own too, but the
@@ -936,7 +961,8 @@ mod tests {
     fn size_caps_hold() {
         // Raised from 1500 for the reviewer's pick briefing: a kind that did
         // not exist before several authors could share a task.
-        const KIND_TOTAL: usize = 2020;
+        // Three step prompts add at most 400 characters to the existing kinds.
+        const KIND_TOTAL: usize = 2420;
         // Three now rather than two: the ending that lands nothing used to be
         // counted apart, because a repository could rewrite the other two and
         // never that one. Nothing rewrites any of them now, so they are one
@@ -946,7 +972,8 @@ mod tests {
         // A pull request session added three texts of its own (026): its
         // seat text, its briefing and the news it is woken with. They are
         // capped together at 700 below, and the grand total rose by that.
-        const GRAND_TOTAL: usize = 9830;
+        // The agent seat adds 600 characters, and its prompts add 400.
+        const GRAND_TOTAL: usize = 10830;
 
         // A cap per seat, not one for the three. The orchestrator's carried
         // its playbook up to 1750; the playbook is the `orchestration` skill
@@ -958,6 +985,7 @@ mod tests {
         // it could. Then the author's alone went to 1250 for the division of
         // the checks, which is its text to state and no other seat's.
         let system_cap = |seat: Seat| match seat {
+            Seat::Agent => 600,
             Seat::Orchestrator => 200,
             Seat::Author => 1250,
             Seat::Reviewer => 1400,

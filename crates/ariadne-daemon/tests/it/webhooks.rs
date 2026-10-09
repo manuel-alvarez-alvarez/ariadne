@@ -617,6 +617,7 @@ async fn startup_checks_a_stored_hook_without_creating_another_and_fetches_once(
     let repo = store
         .create_repository_with_forge(
             NewRepository {
+                default_workflow: None,
                 path: "/test/widgets".into(),
                 base_branch: "main".into(),
                 description: None,

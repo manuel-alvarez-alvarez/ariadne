@@ -84,6 +84,7 @@ pub(super) async fn create(
     let goal = state
         .store
         .create_goal(NewGoal {
+            workflow: req.workflow,
             title: req.title,
             description: req.description,
             issue_url: req.issue_url,

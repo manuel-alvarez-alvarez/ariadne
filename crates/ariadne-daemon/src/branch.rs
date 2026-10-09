@@ -477,6 +477,7 @@ mod tests {
 
     fn task(repo: &Path) -> Task {
         Task {
+            step: None,
             id: "task-1".into(),
             goal_id: "goal-1".into(),
             repo_id: "repo-1".into(),

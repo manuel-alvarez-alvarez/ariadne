@@ -200,6 +200,7 @@ pub(crate) async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Re
                 .post_json(
                     "/v1/goals",
                     &CreateGoalRequest {
+                        workflow: None,
                         title,
                         description,
                         repository_ids,
@@ -712,6 +713,7 @@ mod tests {
         let g = GoalDto {
             issue_url: None,
             usage: GoalUsageDto {
+                agents: Vec::new(),
                 total: usage(12_345_000, 11_000_000, 456_000),
                 orchestrator: usage(345_000, 300_000, 6_000),
                 authors: usage(10_000_000, 9_000_000, 400_000),

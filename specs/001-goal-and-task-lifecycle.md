@@ -19,6 +19,8 @@ tests:
 What a goal and a task are, the states they move through, and who may move
 them. Every other spec assumes this vocabulary.
 
+A goal with a workflow follows [030](030-workflows.md) for its columns, staffing, and step lifecycle.
+
 ## Scope
 
 In: goal statuses, task statuses, the transition table and its actors, the

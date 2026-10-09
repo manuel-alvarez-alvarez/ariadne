@@ -29,6 +29,20 @@ impl error::Error for BranchHasNoCommits {}
 pub struct GitManager;
 
 impl GitManager {
+    pub(crate) async fn committed_clean(
+        &self,
+        repo: &Path,
+        worktree: &Path,
+        base: &str,
+        branch: &str,
+    ) -> Result<bool> {
+        let ahead = self
+            .git(repo, &["rev-list", "--count", &format!("{base}..{branch}")])
+            .await?;
+        let status = self.git(worktree, &["status", "--porcelain"]).await?;
+        Ok(ahead.trim().parse::<u64>()? > 0 && status.trim().is_empty())
+    }
+
     async fn git(&self, repo: &Path, args: &[&str]) -> Result<String> {
         let mut command = Command::new("git");
         if args.first() == Some(&"push") {

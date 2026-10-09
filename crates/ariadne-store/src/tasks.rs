@@ -39,6 +39,7 @@ pub struct NewTask {
 
 #[derive(Debug, Clone, Default)]
 pub struct TaskUpdate {
+    pub agents: Option<Vec<NewTaskAgent>>,
     pub title: Option<String>,
     pub description: Option<String>,
     /// What the author runs on: `Some(pin)` moves it there, None leaves it
@@ -150,6 +151,175 @@ fn slug(title: &str) -> String {
 }
 
 impl Store {
+    /// Whether the prompt for this column entry has reached its agent.
+    pub async fn step_briefed(&self, transition: &str) -> Result<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT step_briefed_at IS NOT NULL FROM task_transitions WHERE id = ?",
+        )
+        .bind(transition)
+        .fetch_one(self.r())
+        .await?)
+    }
+
+    /// Claim a column entry only while it is still current.
+    pub async fn claim_step_briefing(&self, transition: &str) -> Result<bool> {
+        Ok(sqlx::query("UPDATE task_transitions SET step_briefed_at = ? WHERE id = ? AND step_briefed_at IS NULL AND id = (SELECT tr.id FROM task_transitions tr WHERE tr.task_id = task_transitions.task_id ORDER BY tr.id DESC LIMIT 1) AND EXISTS (SELECT 1 FROM tasks t WHERE t.id = task_transitions.task_id AND t.status = 'in_progress' AND t.step = task_transitions.to_step)")
+            .bind(now()).bind(transition).execute(self.w()).await?.rows_affected() == 1)
+    }
+
+    /// An unwritten prompt gives its claim back for the next launch.
+    pub async fn release_step_briefing(&self, transition: &str) -> Result<()> {
+        sqlx::query("UPDATE task_transitions SET step_briefed_at = NULL WHERE id = ?")
+            .bind(transition)
+            .execute(self.w())
+            .await?;
+        Ok(())
+    }
+
+    async fn check_workflow_staffing(
+        &self,
+        goal_id: &str,
+        agents: &mut [NewTaskAgent],
+    ) -> Result<()> {
+        let steps = self.goal_steps(goal_id).await?;
+        if steps.is_empty() {
+            if agents
+                .iter()
+                .any(|a| a.seat == Seat::Agent || a.step.is_some())
+            {
+                return Err(StoreError::Invalid("a step agent needs a workflow".into()));
+            }
+            return check_staffing(agents);
+        }
+        let mut staffed = HashSet::new();
+        for agent in agents.iter_mut() {
+            if agent.seat != Seat::Agent {
+                return Err(StoreError::Invalid(
+                    "a workflow takes only agent seats".into(),
+                ));
+            }
+            let step = steps
+                .iter()
+                .find(|s| Some(&s.id) == agent.step.as_ref())
+                .ok_or_else(|| StoreError::Invalid("the agent names an unknown column".into()))?;
+            if !staffed.insert(step.id.clone()) {
+                return Err(StoreError::Invalid("a column is staffed twice".into()));
+            }
+            if agent.skills.is_empty() {
+                agent.skills = serde_json::from_str(&step.skills).map_err(|_| {
+                    StoreError::Invalid(format!("column {} has an invalid skills list", step.id))
+                })?;
+            }
+        }
+        if staffed.len() != steps.len() {
+            return Err(StoreError::Invalid("each column needs one agent".into()));
+        }
+        Ok(())
+    }
+
+    /// Start or retry at the first column, with the status and audit in one write.
+    pub async fn start_first_step(&self, task_id: &str) -> Result<Task> {
+        self.transition_task(task_id, TaskStatus::InProgress, Actor::Daemon, None, None)
+            .await
+    }
+
+    /// End the task only if the column whose gate was checked still owns it.
+    pub async fn end_step(
+        &self,
+        task_id: &str,
+        from_step: &str,
+        to: TaskStatus,
+        reason: &str,
+        merge_commit: Option<&str>,
+    ) -> Result<Task> {
+        let mut tx = self.w().begin().await?;
+        let task: Task = Self::fetch_by_in_tx(&mut tx, "task", TASK_ROWS, task_id).await?;
+        if task.status() != TaskStatus::InProgress
+            || task.step.as_deref() != Some(from_step)
+            || !matches!(to, TaskStatus::Finished | TaskStatus::Failed)
+        {
+            return Err(StoreError::Conflict(
+                "the column no longer owns this step call".into(),
+            ));
+        }
+        let transition =
+            Self::transition_in_tx(&mut tx, &task, to, Actor::Agent, Some(reason), merge_commit)
+                .await?;
+        tx.commit().await?;
+        let task = self.get_task(task_id).await?;
+        self.publish(Change::TaskUpdated {
+            task: task.clone(),
+            transition: Some(transition),
+        });
+        Ok(task)
+    }
+
+    /// Move between adjacent columns without changing the task status.
+    pub async fn move_step(
+        &self,
+        task_id: &str,
+        to_step: &str,
+        actor: Actor,
+        reason: &str,
+    ) -> Result<Task> {
+        let mut tx = self.w().begin().await?;
+        let task: Task = Self::fetch_by_in_tx(&mut tx, "task", TASK_ROWS, task_id).await?;
+        if task.status() != TaskStatus::InProgress
+            || actor != Actor::Agent
+            || reason.trim().is_empty()
+        {
+            return Err(StoreError::Conflict(
+                "only a working agent can move a step with a reason".into(),
+            ));
+        }
+        let steps: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM goal_steps WHERE goal_id = ? ORDER BY ordinal")
+                .bind(&task.goal_id)
+                .fetch_all(&mut *tx)
+                .await?;
+        let from = steps.iter().position(|s| Some(s) == task.step.as_ref());
+        let to = steps.iter().position(|s| s == to_step);
+        match (from, to) {
+            (Some(from), Some(to)) => {
+                ariadne_core::state_machine::check_step_move(from, to, steps.len())
+                    .map_err(|e| StoreError::Conflict(e.into()))?
+            }
+            _ => {
+                return Err(StoreError::Invalid(
+                    "the task names an unknown column".into(),
+                ));
+            }
+        }
+        let transition = TaskTransition {
+            id: new_id(),
+            task_id: task.id.clone(),
+            from_status: task.status.clone(),
+            to_status: task.status.clone(),
+            actor: actor.as_str().into(),
+            reason: Some(reason.into()),
+            from_step: task.step,
+            to_step: Some(to_step.into()),
+            created_at: now(),
+        };
+        sqlx::query("UPDATE tasks SET step = ?, updated_at = ? WHERE id = ?")
+            .bind(to_step)
+            .bind(&transition.created_at)
+            .bind(task_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("INSERT INTO task_transitions (id, task_id, from_status, to_status, actor, reason, from_step, to_step, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            .bind(&transition.id).bind(task_id).bind(&transition.from_status).bind(&transition.to_status)
+            .bind(&transition.actor).bind(reason).bind(&transition.from_step).bind(to_step).bind(&transition.created_at)
+            .execute(&mut *tx).await?;
+        tx.commit().await?;
+        let task = self.get_task(task_id).await?;
+        self.publish(Change::TaskUpdated {
+            task: task.clone(),
+            transition: Some(transition),
+        });
+        Ok(task)
+    }
+
     /// Create a task in `pending`. Checks the staffing, and checks that the
     /// dependencies belong to the same goal and are acyclic.
     ///
@@ -161,9 +331,10 @@ impl Store {
     /// In an active `feature_branch` goal the new task joins the
     /// dependencies of the final task of its repository, so the final task
     /// still waits for every other task there.
-    pub async fn create_task(&self, new: NewTask) -> Result<Task> {
-        check_staffing(&new.agents)?;
+    pub async fn create_task(&self, mut new: NewTask) -> Result<Task> {
         let goal = self.get_goal(&new.goal_id).await?;
+        self.check_workflow_staffing(&goal.id, &mut new.agents)
+            .await?;
         let repo = self.get_repository(&new.repo_id).await?;
         if !self
             .list_goal_repositories(&goal.id)
@@ -508,7 +679,7 @@ impl Store {
             .await
     }
 
-    pub async fn update_task(&self, id: &str, update: TaskUpdate) -> Result<Task> {
+    pub async fn update_task(&self, id: &str, mut update: TaskUpdate) -> Result<Task> {
         let mut tx = self.w().begin().await?;
         // Status is validated on the row inside the write transaction: a check
         // against the read pool could be stale by the time we hold the lock.
@@ -518,6 +689,25 @@ impl Store {
                 "task can only be edited while pending/ready, it is {}",
                 task.status
             )));
+        }
+        let stepped = self.get_goal(&task.goal_id).await?.workflow.is_some();
+        if (stepped || update.agents.is_some())
+            && (update.authors.is_some()
+                || update.reviewers.is_some()
+                || update.pin.is_some()
+                || update.effort.is_some())
+        {
+            return Err(StoreError::Invalid(
+                "replace the whole staffing with agents".into(),
+            ));
+        }
+        if let Some(agents) = &mut update.agents {
+            self.check_workflow_staffing(&task.goal_id, agents).await?;
+            sqlx::query("DELETE FROM task_agents WHERE task_id = ?")
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+            Self::staff_agents_in_tx(&mut tx, id, agents).await?;
         }
         let title = update.title.unwrap_or(task.title);
         let description = update.description.unwrap_or(task.description);
@@ -564,7 +754,9 @@ impl Store {
         .bind(id)
         .fetch_one(&mut *tx)
         .await?;
-        check_seat_counts(authors.len(), reviewers as usize)?;
+        if !stepped {
+            check_seat_counts(authors.len(), reviewers as usize)?;
+        }
         // The pins live on the author, which is the agent the task's own
         // `--model` and `--effort` have always meant. A task with several
         // authors has no such agent: each one was named with its own pin.
@@ -685,28 +877,51 @@ impl Store {
         // A task that lands something is finished by the sha it landed as.
         // One that lands nothing has no sha to give, and demanding one would
         // make a filed report or a cut release impossible to finish.
-        if to == TaskStatus::Finished && task.landing() != Landing::None && merge_commit.is_none() {
+        if to == TaskStatus::Finished
+            && task.step.is_none()
+            && task.landing() != Landing::None
+            && merge_commit.is_none()
+        {
             return Err(StoreError::Invalid(
                 "finished transition requires a merge commit".into(),
             ));
         }
 
+        let first_step: Option<String> =
+            if to == TaskStatus::InProgress && from == TaskStatus::Ready {
+                sqlx::query_scalar(
+                    "SELECT id FROM goal_steps WHERE goal_id = ? ORDER BY ordinal LIMIT 1",
+                )
+                .bind(&task.goal_id)
+                .fetch_optional(&mut **tx)
+                .await?
+            } else {
+                None
+            };
+        let to_step = if to == TaskStatus::Ready && from == TaskStatus::Failed {
+            None
+        } else {
+            first_step.or_else(|| task.step.clone())
+        };
         // The stall is not reset here: it belongs to the agent that stopped
         // working and comes down when that agent's own flag does
         // (`sync_task_stall`).
         sqlx::query(
             "UPDATE tasks SET status = ?, merge_commit = COALESCE(?, merge_commit),
-                              updated_at = ?
+                              updated_at = ?, step = ?
              WHERE id = ?",
         )
         .bind(to.as_str())
         .bind(merge_commit)
         .bind(&timestamp)
+        .bind(&to_step)
         .bind(&task.id)
         .execute(&mut **tx)
         .await?;
 
         let transition = TaskTransition {
+            from_step: task.step.clone(),
+            to_step,
             id: new_id(),
             task_id: task.id.clone(),
             from_status: from.as_str().to_string(),
@@ -716,8 +931,8 @@ impl Store {
             created_at: timestamp,
         };
         sqlx::query(
-            "INSERT INTO task_transitions (id, task_id, from_status, to_status, actor, reason, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO task_transitions (id, task_id, from_status, to_status, actor, reason, created_at, from_step, to_step)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&transition.id)
         .bind(&transition.task_id)
@@ -726,6 +941,8 @@ impl Store {
         .bind(&transition.actor)
         .bind(&transition.reason)
         .bind(&transition.created_at)
+        .bind(&transition.from_step)
+        .bind(&transition.to_step)
         .execute(&mut **tx)
         .await?;
 
@@ -752,9 +969,10 @@ impl Store {
     ) -> Result<()> {
         let authors: Vec<(String, String, Option<String>)> = sqlx::query_as(
             "SELECT id, model, effort FROM task_agents
-              WHERE task_id = ? AND seat = 'author' ORDER BY ordinal",
+              WHERE task_id = ? AND (seat = 'author' OR (seat = 'agent' AND step = ?)) ORDER BY ordinal",
         )
         .bind(&task.id)
+        .bind(&task.step)
         .fetch_all(&mut **tx)
         .await?;
         let author = match (&task.picked_agent_id, authors.as_slice()) {
@@ -788,7 +1006,7 @@ impl Store {
             _ => 0,
         };
         let status_secs = Self::task_status_secs_in_tx(tx, task).await?;
-        let data = serde_json::json!({
+        let mut data = serde_json::json!({
             "status": to.as_str(),
             "reason": reason,
             "landing": task.landing().as_str(),
@@ -798,6 +1016,9 @@ impl Store {
             "authors": authors.len(),
             "picked": task.picked_agent_id.is_some(),
         });
+        if let Some(step) = &task.step {
+            data["step"] = serde_json::json!(step);
+        }
         let skills_json = serde_json::to_string(&skills).expect("a list of names serializes");
         sqlx::query(
             "INSERT INTO stat_facts (id, kind, created_at, repo_id, goal_id, task_id, session_id,
@@ -810,7 +1031,13 @@ impl Store {
         .bind(&task.repo_id)
         .bind(&task.goal_id)
         .bind(&task.id)
-        .bind(author.map(|_| "author"))
+        .bind(author.map(|_| {
+            if task.step.is_some() {
+                "agent"
+            } else {
+                "author"
+            }
+        }))
         .bind(author.map(|(_, model, _)| model.clone()))
         .bind(author.and_then(|(_, _, effort)| effort.clone()))
         .bind(skills_json)

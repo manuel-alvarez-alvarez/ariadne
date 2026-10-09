@@ -859,9 +859,11 @@ mod tests {
                 reviewer("01SEC", "security-review"),
             ],
             usage: TaskUsageDto {
+                agents: Vec::new(),
                 total: usage(1_204_567, 1_100_000, 45_300),
                 author: usage(1_200_000, 1_100_000, 45_000),
                 reviewers: vec![AgentUsageDto {
+                    step: None,
                     agent_id: "01REV".into(),
                     skills: vec!["code-review".into()],
                     usage: usage(4_567, 0, 300),
@@ -893,9 +895,11 @@ mod tests {
     fn a_spender_the_task_no_longer_staffs_is_still_listed() {
         let t = TaskDto {
             usage: TaskUsageDto {
+                agents: Vec::new(),
                 total: usage(1_000, 0, 100),
                 author: usage(600, 0, 60),
                 reviewers: vec![AgentUsageDto {
+                    step: None,
                     agent_id: "01GONE".into(),
                     skills: Vec::new(),
                     usage: usage(400, 0, 40),
@@ -1042,6 +1046,8 @@ mod tests {
     #[test]
     fn a_history_row_carries_the_transition_and_a_dash_for_no_reason() {
         let t = TaskTransitionDto {
+            from_step: None,
+            to_step: None,
             id: "01TRANS".into(),
             from_status: "in_progress".into(),
             to_status: "under_review".into(),
@@ -1074,6 +1080,8 @@ mod tests {
     #[test]
     fn history_paints_the_from_and_to_statuses() {
         let row = history_row(&TaskTransitionDto {
+            from_step: None,
+            to_step: None,
             id: "01TRANS".into(),
             from_status: "in_progress".into(),
             to_status: "under_review".into(),

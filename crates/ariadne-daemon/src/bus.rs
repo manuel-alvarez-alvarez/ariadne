@@ -462,6 +462,7 @@ mod tests {
         let store = Store::open(dir.path().join("test.db")).await.unwrap();
         let repository = store
             .create_repository(NewRepository {
+                default_workflow: None,
                 path: "/tmp/probe".into(),
                 base_branch: "main".into(),
                 description: None,
@@ -472,6 +473,7 @@ mod tests {
             .unwrap();
         let goal = store
             .create_goal(NewGoal {
+                workflow: None,
                 issue_url: None,
                 landing: None,
                 title: "probe".into(),

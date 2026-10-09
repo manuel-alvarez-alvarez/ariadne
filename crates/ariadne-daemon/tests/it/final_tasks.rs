@@ -33,6 +33,7 @@ fn forge_script(url: &str, head: &str) -> serde_json::Value {
 async fn feature_goal(h: &Harness, repo: &Repository) -> Goal {
     h.store
         .create_goal(ariadne_store::NewGoal {
+            workflow: None,
             issue_url: None,
             title: "Ship feature".into(),
             description: String::new(),

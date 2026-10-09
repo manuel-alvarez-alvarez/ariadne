@@ -30,6 +30,7 @@ pub(super) async fn resolve_agents(
     let mut agents = Vec::with_capacity(assignments.len());
     for assignment in assignments {
         agents.push(NewTaskAgent {
+            step: assignment.step.clone(),
             seat: assignment.seat,
             skills: assignment.skills.clone(),
             pin: pins::chosen(
@@ -183,7 +184,17 @@ pub(super) async fn update(
     };
     // What the author is pinned to now: an effort written on its own is run at
     // that model, and moves without disturbing it.
-    let author = state.store.task_author(&id).await?;
+    let agents = match &req.agents {
+        Some(a) => Some(resolve_agents(&state, a).await?),
+        None => None,
+    };
+    let author = state
+        .store
+        .list_task_agents(&id)
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| ApiError::conflict("the task has no agents"))?;
     let (pin, effort) = match pins::rechosen(
         &state.store,
         &state.agent_registry,
@@ -204,6 +215,7 @@ pub(super) async fn update(
         .update_task(
             &id,
             TaskUpdate {
+                agents,
                 title: req.title,
                 description: req.description,
                 pin,
@@ -243,6 +255,11 @@ pub(crate) async fn apply_transition(
     task_id: &str,
     req: TransitionRequest,
 ) -> ApiResult<Task> {
+    if ctx.actor == Actor::Agent && req.to != TaskStatus::Failed {
+        return Err(ApiError::forbidden(
+            "use the step route to complete a column",
+        ));
+    }
     // `finished` is never taken on faith.
     if req.to == TaskStatus::Finished {
         let task = state.store.get_task(task_id).await?;

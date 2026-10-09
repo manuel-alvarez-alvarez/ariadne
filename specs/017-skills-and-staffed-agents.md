@@ -21,6 +21,8 @@ Ariadne defines one agent type, the orchestrator — and even its playbook is a
 skill, fixed by name rather than staffed. Every other agent is generic, and
 becomes what its task needs by loading skills.
 
+A goal with a workflow follows [030](030-workflows.md) for its columns, staffing, and step lifecycle.
+
 ## Scope
 
 In: what a skill is, the catalog Ariadne ships, who may edit one, how a task

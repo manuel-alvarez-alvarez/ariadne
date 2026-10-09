@@ -54,6 +54,7 @@ mod tests {
         for n in 0..200 {
             store
                 .create_repository(NewRepository {
+                    default_workflow: None,
                     path: format!("/tmp/repo-{n}"),
                     base_branch: "main".to_string(),
                     description: None,

@@ -9,6 +9,10 @@ use crate::usage::TokenUsageDto;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct GoalDto {
+    pub workflow: Option<String>,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub steps: Vec<crate::workflows::WorkflowStepDto>,
     pub id: String,
     pub title: String,
     pub description: String,
@@ -40,6 +44,9 @@ pub struct GoalDto {
 /// read at this height is where the tokens went, not which agent went there.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 pub struct GoalUsageDto {
+    #[serde(default)]
+    #[schema(required = true)]
+    pub agents: Vec<crate::tasks::AgentUsageDto>,
     /// Every session of the goal summed, the orchestrator's included.
     pub total: TokenUsageDto,
     /// The orchestrator's sessions, which belong to no task.
@@ -68,6 +75,7 @@ pub struct CompleteGoalRequest {}
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateGoalRequest {
+    pub workflow: Option<String>,
     pub title: String,
     #[serde(default)]
     pub description: String,

@@ -38,8 +38,10 @@ function goal(status: GoalStatus): GoalDto {
     orchestrated: true,
     landing: "merge",
     repos: [],
+    steps: [],
     status,
     usage: {
+      agents: [],
       total: NO_TOKENS,
       orchestrator: NO_TOKENS,
       authors: NO_TOKENS,

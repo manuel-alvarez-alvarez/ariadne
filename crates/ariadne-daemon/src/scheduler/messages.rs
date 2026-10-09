@@ -104,6 +104,11 @@ impl super::Scheduler {
                 debug!(message = %message.id, "nothing live to deliver the message to yet");
                 continue;
             };
+            if session.seat() == Some(Seat::Agent)
+                && !crate::attention::work_is_active(&self.store, &session).await
+            {
+                continue;
+            }
             let seat = message.from_actor().map_or("agent", |actor| actor.as_str());
             let task_title = self.sender_task_title(&message).await;
             let skills = self.sender_skills(&message).await;

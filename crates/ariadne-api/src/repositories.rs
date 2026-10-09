@@ -9,6 +9,7 @@ use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RepositoryDto {
+    pub default_workflow: Option<String>,
     pub id: String,
     /// Absolute path of the checkout.
     pub path: String,
@@ -113,6 +114,7 @@ pub struct ForgeUpdate {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateRepositoryRequest {
+    pub default_workflow: Option<String>,
     /// Absolute path of an existing git work tree.
     #[schema(example = "/home/me/dev/ariadne")]
     pub path: String,
@@ -134,6 +136,7 @@ pub struct CreateRepositoryRequest {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateRepositoryRequest {
+    pub default_workflow: Option<String>,
     pub path: Option<String>,
     pub base_branch: Option<String>,
     /// New description, or empty to clear it. Absent = unchanged.

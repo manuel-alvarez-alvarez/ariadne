@@ -35,8 +35,13 @@ async fn fact_of(
     store: &Store,
     session: AgentSession,
     kind: &str,
-    data: serde_json::Value,
+    mut data: serde_json::Value,
 ) -> Result<NewStatFact> {
+    if session.seat() == Some(ariadne_core::Seat::Agent)
+        && let Some(id) = &session.task_agent_id
+    {
+        data["step"] = serde_json::json!(store.get_task_agent(id).await?.step);
+    }
     let repo_id = match (&session.task_id, &session.goal_id) {
         (Some(task_id), _) => Some(store.get_task(task_id).await?.repo_id),
         (None, Some(goal_id)) => match store.list_goal_repositories(goal_id).await?.as_slice() {

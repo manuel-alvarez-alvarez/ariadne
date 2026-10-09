@@ -48,6 +48,7 @@ pub(super) async fn create(
         .store
         .create_repository_with_forge(
             NewRepository {
+                default_workflow: req.default_workflow,
                 path: req.path,
                 base_branch,
                 description: req.description,
@@ -128,6 +129,9 @@ pub(super) async fn update(
         .update_repository_with_forge(
             &id,
             RepositoryUpdate {
+                default_workflow: req
+                    .default_workflow
+                    .map(|v| if v.is_empty() { None } else { Some(v) }),
                 path: req.path,
                 base_branch,
                 description: req.description.map(|d| match d.is_empty() {

@@ -157,6 +157,39 @@ pub(crate) fn orchestrator_briefing(template: &str, goal: &Goal, repos: &[Reposi
     }
 }
 
+/// Name a stepped goal's workflow and every column in its briefing.
+pub(crate) fn with_workflow(
+    briefing: String,
+    goal: &Goal,
+    steps: &[ariadne_store::GoalStep],
+) -> String {
+    let Some(workflow) = &goal.workflow else {
+        return briefing;
+    };
+    let columns = steps
+        .iter()
+        .map(|s| format!("- {} [{}]: {}", s.id, s.title, s.description))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let landing = format!("Landing: {}", goal.landing().as_str());
+    let workflow = format!("Workflow: {workflow}\n{columns}");
+    if briefing.lines().any(|line| line == landing) {
+        briefing
+            .lines()
+            .map(|line| {
+                if line == landing {
+                    workflow.as_str()
+                } else {
+                    line
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        format!("{briefing}\n\n{workflow}")
+    }
+}
+
 /// What an orchestrator that has gone quiet is nudged with.
 pub(crate) fn orchestrator_resume_briefing(template: &str, goal: &Goal) -> String {
     render(template, &[("goal_title", &goal.title)])
@@ -392,6 +425,60 @@ pub(crate) fn pull_request_news(template: &str, pull: &PullRequest, news: &[Stri
     )
 }
 
+/// Fill every value carried by a workflow column's first briefing.
+pub(crate) fn step_briefing(
+    template: &str,
+    task: &Task,
+    goal: &Goal,
+    repo: &Repository,
+    step: &ariadne_store::GoalStep,
+    previous: &str,
+    dependencies: &str,
+) -> String {
+    render(
+        template,
+        &[
+            ("task_title", &task.title),
+            ("task_description", &task.description),
+            ("goal_title", &goal.title),
+            ("worktree_path", task.worktree_path.as_deref().unwrap_or("")),
+            ("branch", &task.branch),
+            ("base_branch", &repo.base_branch),
+            ("repo_path", &repo.path),
+            ("step_id", &step.id),
+            ("step_title", &step.title),
+            ("step_description", &step.description),
+            ("previous_summary", previous),
+            ("dependencies", dependencies),
+        ],
+    )
+}
+
+pub(crate) fn step_return(
+    template: &str,
+    task: &Task,
+    step: &ariadne_store::GoalStep,
+    direction: &str,
+    reason: &str,
+) -> String {
+    render(
+        template,
+        &[
+            ("task_title", &task.title),
+            ("step_title", &step.title),
+            ("direction", direction),
+            ("reason", reason),
+        ],
+    )
+}
+
+pub(crate) fn agent_resume(template: &str, task: &Task, step: &ariadne_store::GoalStep) -> String {
+    render(
+        template,
+        &[("task_title", &task.title), ("step_title", &step.title)],
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,6 +489,7 @@ mod tests {
 
     fn goal() -> Goal {
         Goal {
+            workflow: None,
             issue_url: None,
             id: "01goalxxxxxxxxxxxxxxxxxxxx".into(),
             title: "Ship the UI".into(),
@@ -418,6 +506,7 @@ mod tests {
 
     fn repo() -> Repository {
         Repository {
+            default_workflow: None,
             id: "01repoxxxxxxxxxxxxxxxxxxxx".into(),
             path: "/repos/ariadne".into(),
             base_branch: "main".into(),
@@ -449,6 +538,7 @@ mod tests {
 
     fn task() -> Task {
         Task {
+            step: None,
             id: "01taskxxxxxxxxxxxxxxxxxxxx".into(),
             goal_id: "01goalxxxxxxxxxxxxxxxxxxxx".into(),
             repo_id: "01repoxxxxxxxxxxxxxxxxxxxx".into(),
@@ -531,7 +621,22 @@ mod tests {
                 .map(|name| format!("{{{name}}}"))
                 .collect::<Vec<_>>()
                 .join("\n");
+            let step = ariadne_store::GoalStep {
+                goal_id: goal.id.clone(),
+                ordinal: 0,
+                id: "develop".into(),
+                title: "Develop".into(),
+                description: "Build it.".into(),
+                skills: "[]".into(),
+                rank: None,
+                gate: None,
+            };
             let rendered = match kind {
+                PromptKind::StepBriefing => {
+                    step_briefing(&template, &task, &goal, &repo, &step, "summary", "none")
+                }
+                PromptKind::StepReturn => step_return(&template, &task, &step, "back", "fix it"),
+                PromptKind::AgentResume => agent_resume(&template, &task, &step),
                 PromptKind::OrchestratorBriefing => {
                     orchestrator_briefing(&template, &goal, std::slice::from_ref(&repo))
                 }
@@ -1080,5 +1185,37 @@ mod tests {
         );
         assert!(briefing.contains("- Worktree (your cwd): <worktree>"));
         assert!(briefing.contains("- Finished dependencies:\nnone"));
+    }
+    #[test]
+    fn workflow_columns_are_named_with_or_without_a_landing_line() {
+        let mut goal = goal();
+        goal.workflow = Some("one-step".into());
+        let steps = [ariadne_store::GoalStep {
+            goal_id: goal.id.clone(),
+            ordinal: 0,
+            id: "build".into(),
+            title: "Build".into(),
+            description: "Build the change.".into(),
+            skills: "[]".into(),
+            rank: None,
+            gate: None,
+        }];
+        for template in [
+            "Plan {goal_title}.",
+            "Plan {goal_title}.\nLanding: {landing}",
+        ] {
+            let rendered = orchestrator_briefing(template, &goal, &[]);
+            let briefing = with_workflow(rendered, &goal, &steps);
+            assert_eq!(briefing.matches("Workflow: one-step").count(), 1);
+            assert!(
+                briefing
+                    .lines()
+                    .any(|line| line == "- build [Build]: Build the change.")
+            );
+            assert!(!briefing.lines().any(|line| line.starts_with("Landing:")));
+        }
+        goal.workflow = None;
+        let rendered = "Plan this goal.\nLanding: merge\n".to_string();
+        assert_eq!(with_workflow(rendered.clone(), &goal, &[]), rendered);
     }
 }

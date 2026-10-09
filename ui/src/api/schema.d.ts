@@ -1474,6 +1474,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/tasks/{id}/step/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["tasks_complete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks/{id}/step/fail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["tasks_fail"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tasks/{id}/transitions": {
         parameters: {
             query?: never;
@@ -1633,7 +1665,7 @@ export interface components {
          * @description Who is attempting a transition: a seat, the daemon, or the user.
          * @enum {string}
          */
-        Actor: "orchestrator" | "author" | "reviewer" | "daemon" | "user";
+        Actor: "agent" | "orchestrator" | "author" | "reviewer" | "daemon" | "user";
         /**
          * @description One agent to staff on a task: where it sits, the skills it loads, and what
          *     it is to run on.
@@ -1664,8 +1696,8 @@ export interface components {
              */
             model: string;
             /**
-             * @description `author` or `reviewer`. A task takes one author or more; several
-             *     authors need at least one reviewer, to pick the winner.
+             * @description `agent` for a workflow column, or `author` or `reviewer` without a workflow.
+             *     A task without a workflow takes at least one author; several authors need a reviewer to pick the winner.
              */
             seat: components["schemas"]["Seat"];
             /**
@@ -1677,6 +1709,8 @@ export interface components {
              *     ]
              */
             skills?: string[];
+            /** @description The workflow column id. Required for `agent`; omitted for `author` and `reviewer`. */
+            step?: string | null;
         };
         /**
          * @description How one registry agent is launched, shared by every session that runs on
@@ -1736,6 +1770,7 @@ export interface components {
             agent_id: string;
             /** @description The skills the agent loads; empty only if the agent is gone. */
             skills: string[];
+            step?: string | null;
             usage: components["schemas"]["TokenUsageDto"];
         };
         /**
@@ -1925,6 +1960,10 @@ export interface components {
          *     that itself.
          */
         CompleteGoalRequest: Record<string, never>;
+        CompleteStepRequest: {
+            merge_commit?: string | null;
+            reason: string;
+        };
         /**
          * @description Body of `POST /v1/sessions/{id}/console/input`.
          *
@@ -1960,11 +1999,13 @@ export interface components {
             /** @description Ids of registered repositories (`POST /v1/repositories`); at least one. */
             repository_ids: string[];
             title: string;
+            workflow?: string | null;
         };
         CreateRepositoryRequest: {
             /** @description Omit for the repo's currently checked-out branch. */
             base_branch?: string | null;
             default_landing?: null | components["schemas"]["Landing"];
+            default_workflow?: string | null;
             description?: string | null;
             forge?: null | components["schemas"]["ForgeUpdate"];
             /**
@@ -2219,6 +2260,9 @@ export interface components {
          * @enum {string}
          */
         EventOrder: "asc" | "desc";
+        FailStepRequest: {
+            reason: string;
+        };
         /** @description One check that failed on a request's head. */
         FailedCheckDto: {
             /**
@@ -2327,10 +2371,12 @@ export interface components {
              */
             repos: components["schemas"]["GoalRepositoryDto"][];
             status: components["schemas"]["GoalStatus"];
+            steps: components["schemas"]["WorkflowStepDto"][];
             title: string;
             updated_at: string;
             /** @description What the agents of this goal have spent between them. */
             usage: components["schemas"]["GoalUsageDto"];
+            workflow?: string | null;
         };
         /** @description A registered repository together with the branch this goal owns in it. */
         GoalRepositoryDto: components["schemas"]["RepositoryDto"] & {
@@ -2348,6 +2394,7 @@ export interface components {
          *     read at this height is where the tokens went, not which agent went there.
          */
         GoalUsageDto: {
+            agents: components["schemas"]["AgentUsageDto"][];
             /** @description Every author session of every task of the goal. */
             authors: components["schemas"]["TokenUsageDto"];
             /** @description The orchestrator's sessions, which belong to no task. */
@@ -2952,6 +2999,7 @@ export interface components {
             created_at: string;
             /** @description The landing a new goal uses where its request leaves landing out. */
             default_landing: components["schemas"]["Landing"];
+            default_workflow?: string | null;
             description?: string | null;
             forge?: null | components["schemas"]["ForgeDto"];
             id: string;
@@ -3008,7 +3056,7 @@ export interface components {
          *     only what the state machine and the launcher need to know about it.
          * @enum {string}
          */
-        Seat: "orchestrator" | "author" | "reviewer";
+        Seat: "agent" | "orchestrator" | "author" | "reviewer";
         /**
          * @description Body of `POST /v1/tasks/{id}/messages` and `POST /v1/goals/{id}/messages`.
          *
@@ -3371,6 +3419,7 @@ export interface components {
              *     ]
              */
             skills: string[];
+            step?: string | null;
         };
         /**
          * @description Payload of `task_branch_updated`: where a task's branch points now.
@@ -3435,6 +3484,7 @@ export interface components {
             /** @description Set when the agent went idle without advancing the task. */
             stalled: boolean;
             status: components["schemas"]["TaskStatus"];
+            step?: string | null;
             title: string;
             updated_at: string;
             /** @description What the agents of this task have spent between them. */
@@ -3469,9 +3519,11 @@ export interface components {
             actor: string;
             created_at: string;
             from_status: string;
+            from_step?: string | null;
             id: string;
             reason?: string | null;
             to_status: string;
+            to_step?: string | null;
         };
         /**
          * @description Payload of `task_updated`: the task as it now stands, plus the audit row
@@ -3486,6 +3538,7 @@ export interface components {
          *     each, and the total of every session on the task.
          */
         TaskUsageDto: {
+            agents: components["schemas"]["AgentUsageDto"][];
             /** @description The author's own, across every run of it. */
             author: components["schemas"]["TokenUsageDto"];
             /**
@@ -3628,6 +3681,7 @@ export interface components {
         UpdateRepositoryRequest: {
             base_branch?: string | null;
             default_landing?: null | components["schemas"]["Landing"];
+            default_workflow?: string | null;
             /** @description New description, or empty to clear it. Absent = unchanged. */
             description?: string | null;
             forge?: null | components["schemas"]["ForgeUpdate"];
@@ -3644,6 +3698,7 @@ export interface components {
         };
         /** @description Partial update; only allowed while the task is pending/ready. */
         UpdateTaskRequest: {
+            agents?: components["schemas"]["AgentAssignment"][] | null;
             /**
              * @description The whole author list, replaced: every author is staffed afresh, with
              *     the skills and the model it names. The way to give a task several
@@ -6653,14 +6708,14 @@ export interface operations {
                     "application/json": components["schemas"]["TaskDto"];
                 };
             };
-            /** @description not an author session */
+            /** @description not the author or current workflow agent */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description the task is not approved, has no forge or its integration is off, is not authenticated, or is not pushed */
+            /** @description the task cannot open a request, has no forge or its integration is off, is not authenticated, or is not pushed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -6680,6 +6735,83 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    tasks_complete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description task id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompleteStepRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description step_gate_failed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    tasks_fail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description task id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FailStepRequest"];
+            };
+        };
         responses: {
             200: {
                 headers: {

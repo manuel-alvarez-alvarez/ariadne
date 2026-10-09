@@ -15,6 +15,7 @@ const GOAL_ENDED: &str = "goal_ended";
 
 #[derive(Debug, Clone)]
 pub struct NewGoal {
+    pub workflow: Option<String>,
     pub title: String,
     pub description: String,
     pub issue_url: Option<String>,
@@ -66,14 +67,33 @@ impl Store {
                 repositories.push(repository);
             }
         }
+        if new.workflow.is_some() && new.landing.is_some() {
+            return Err(StoreError::Invalid(
+                "workflow and landing cannot be set together".into(),
+            ));
+        }
+        let workflow = new.workflow.or_else(|| {
+            repositories
+                .iter()
+                .min_by_key(|r| (&r.path, &r.base_branch))
+                .and_then(|r| r.default_workflow.clone())
+        });
+        let steps = match &workflow {
+            Some(name) => {
+                ariadne_core::workflow::parse(self.get_workflow(name).await?.document_text())
+                    .map_err(|e| StoreError::Invalid(e.to_string()))?
+                    .steps
+            }
+            None => Vec::new(),
+        };
         let id = new_id();
         let ts = now();
         let mut tx = self.w().begin().await?;
         let (model, effort) = AgentPin::columns(&new.pin);
         sqlx::query(
             "INSERT INTO goals (id, title, description, issue_url, status,
-                                orchestrated, model, effort, landing, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                orchestrated, model, effort, landing, workflow, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.title)
@@ -83,11 +103,19 @@ impl Store {
         .bind(orchestrated)
         .bind(&model)
         .bind(&effort)
-        .bind(goal_landing(new.landing, &repositories).as_str())
+        .bind(if workflow.is_some() { Landing::Merge } else { goal_landing(new.landing, &repositories) }.as_str())
+        .bind(&workflow)
         .bind(&ts)
         .bind(&ts)
         .execute(&mut *tx)
         .await?;
+        for (ordinal, step) in steps.iter().enumerate() {
+            sqlx::query("INSERT INTO goal_steps (goal_id, ordinal, id, title, description, skills, rank, gate) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+                .bind(&id).bind(ordinal as i64).bind(&step.id).bind(&step.title)
+                .bind(&step.description).bind(serde_json::to_string(&step.skills).expect("skills serialize"))
+                .bind(step.rank.map(|r| r.as_str())).bind(step.gate.map(|g| g.as_str()))
+                .execute(&mut *tx).await?;
+        }
         for repository_id in &repository_ids {
             sqlx::query("INSERT INTO goal_repositories (goal_id, repository_id) VALUES (?, ?)")
                 .bind(&id)
@@ -99,6 +127,15 @@ impl Store {
         let goal = self.get_goal(&id).await?;
         self.publish(Change::GoalCreated(goal.clone()));
         Ok(goal)
+    }
+
+    pub async fn goal_steps(&self, id: &str) -> Result<Vec<crate::GoalStep>> {
+        Ok(
+            sqlx::query_as("SELECT * FROM goal_steps WHERE goal_id = ? ORDER BY ordinal")
+                .bind(id)
+                .fetch_all(self.r())
+                .await?,
+        )
     }
 
     pub async fn get_goal(&self, id: &str) -> Result<Goal> {

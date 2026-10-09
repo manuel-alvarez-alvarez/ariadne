@@ -159,6 +159,7 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
                 .post_json(
                     "/v1/repositories",
                     &CreateRepositoryRequest {
+                        default_workflow: None,
                         path,
                         base_branch: branch,
                         description,
@@ -210,6 +211,7 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
                 .put_json(
                     &repo_path(&id),
                     &UpdateRepositoryRequest {
+                        default_workflow: None,
                         path,
                         base_branch: branch,
                         description,

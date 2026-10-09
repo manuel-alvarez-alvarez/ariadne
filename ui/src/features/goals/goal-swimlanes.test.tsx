@@ -38,6 +38,7 @@ import { GoalSwimlanes } from "./goal-swimlanes"
 
 const GOAL: GoalDto = aGoal({
   usage: {
+    agents: [],
     total: { input_tokens: 1_234_567, cached_input_tokens: 1_100_000, output_tokens: 45_300 },
     orchestrator: { input_tokens: 234_567, cached_input_tokens: 200_000, output_tokens: 5_300 },
     authors: { input_tokens: 1_000_000, cached_input_tokens: 900_000, output_tokens: 40_000 },

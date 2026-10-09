@@ -8,6 +8,7 @@ use crate::usage::TokenUsageDto;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TaskDto {
+    pub step: Option<String>,
     pub id: String,
     pub goal_id: String,
     /// Id of the repository the task works in, one of its goal's.
@@ -55,6 +56,9 @@ pub struct TaskDto {
 /// each, and the total of every session on the task.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 pub struct TaskUsageDto {
+    #[serde(default)]
+    #[schema(required = true)]
+    pub agents: Vec<AgentUsageDto>,
     /// Every session on the task summed, whatever its seat.
     pub total: TokenUsageDto,
     /// The author's own, across every run of it.
@@ -70,6 +74,7 @@ pub struct TaskUsageDto {
 /// it: an agent has no name of its own, so its skills are what identify it.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AgentUsageDto {
+    pub step: Option<String>,
     pub agent_id: String,
     /// The skills the agent loads; empty only if the agent is gone.
     pub skills: Vec<String>,
@@ -97,6 +102,7 @@ pub struct TaskPickDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TaskAgentDto {
+    pub step: Option<String>,
     pub id: String,
     /// `author` or `reviewer`.
     pub seat: Seat,
@@ -133,8 +139,11 @@ pub struct TaskAgentDto {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentAssignment {
-    /// `author` or `reviewer`. A task takes one author or more; several
-    /// authors need at least one reviewer, to pick the winner.
+    /// The workflow column id. Required for `agent`; omitted for `author` and `reviewer`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<String>,
+    /// `agent` for a workflow column, or `author` or `reviewer` without a workflow.
+    /// A task without a workflow takes at least one author; several authors need a reviewer to pick the winner.
     pub seat: Seat,
     /// The names of the skills this agent loads, in the order they reach it.
     /// A name no skill answers to is refused.
@@ -165,6 +174,7 @@ impl AgentAssignment {
         model: impl Into<String>,
     ) -> Self {
         Self {
+            step: None,
             seat,
             skills: skills.into_iter().map(Into::into).collect(),
             model: model.into(),
@@ -196,6 +206,7 @@ pub struct CreateTaskRequest {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateTaskRequest {
+    pub agents: Option<Vec<AgentAssignment>>,
     pub title: Option<String>,
     pub description: Option<String>,
     /// What the author runs on, `<agent>:<model>`: absent leaves the
@@ -259,6 +270,8 @@ pub struct OpenPullRequestRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TaskTransitionDto {
+    pub from_step: Option<String>,
+    pub to_step: Option<String>,
     pub id: String,
     pub from_status: String,
     pub to_status: String,
@@ -273,4 +286,17 @@ pub struct TaskListQuery {
     pub goal: Option<String>,
     /// Filter by status.
     pub status: Option<TaskStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CompleteStepRequest {
+    pub reason: String,
+    pub merge_commit: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FailStepRequest {
+    pub reason: String,
 }

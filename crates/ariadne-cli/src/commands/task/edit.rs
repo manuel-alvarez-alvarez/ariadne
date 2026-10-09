@@ -66,6 +66,7 @@ fn parse_agent(seat: Seat, s: &str) -> Result<AgentAssignment, String> {
     }
     let model = parse_model(model).map_err(|e| format!("in \"{s}\": {e}"))?;
     Ok(AgentAssignment {
+        step: None,
         seat,
         skills,
         model,
@@ -140,6 +141,7 @@ pub(crate) fn update_request(edits: Edits) -> Result<UpdateTaskRequest> {
         clear_depends_on,
     } = edits;
     let req = UpdateTaskRequest {
+        agents: None,
         title,
         description,
         // Whatever was typed, in the daemon's own spelling. There is no

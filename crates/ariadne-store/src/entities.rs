@@ -318,6 +318,7 @@ pub struct GoalRepository {
 /// A git repository registered once, globally, and named by id from there on.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Repository {
+    pub default_workflow: Option<String>,
     pub id: String,
     /// Absolute path of the checkout.
     pub path: String,
@@ -407,6 +408,7 @@ impl AgentPin {
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Goal {
+    pub workflow: Option<String>,
     pub id: String,
     pub title: String,
     pub description: String,
@@ -436,6 +438,7 @@ impl Goal {
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Task {
+    pub step: Option<String>,
     pub id: String,
     pub goal_id: String,
     pub repo_id: String,
@@ -491,6 +494,7 @@ impl Task {
 /// need; everything about the work itself comes from its skills.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct TaskAgent {
+    pub step: Option<String>,
     pub id: String,
     pub task_id: String,
     /// `author` or `reviewer`; never `orchestrator`, which belongs to a goal.
@@ -668,6 +672,8 @@ pub struct AgentEvent {
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct TaskTransition {
+    pub from_step: Option<String>,
+    pub to_step: Option<String>,
     pub id: String,
     pub task_id: String,
     pub from_status: String,
@@ -907,4 +913,17 @@ pub struct PullRequestComment {
     /// An Ariadne review session posted it (029): on a request of the
     /// user's own it is a finding for the task's author, not the user's.
     pub from_review: bool,
+}
+
+/// A column captured when a goal starts.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct GoalStep {
+    pub goal_id: String,
+    pub ordinal: i64,
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub skills: String,
+    pub rank: Option<String>,
+    pub gate: Option<String>,
 }

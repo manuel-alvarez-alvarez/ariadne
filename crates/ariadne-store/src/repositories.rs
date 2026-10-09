@@ -9,6 +9,7 @@ use crate::{Change, Repository, Result, SetForgeIntegration, Store, StoreError, 
 
 #[derive(Debug, Clone)]
 pub struct NewRepository {
+    pub default_workflow: Option<String>,
     /// Absolute path of the checkout.
     pub path: String,
     pub base_branch: String,
@@ -22,6 +23,7 @@ pub struct NewRepository {
 /// Partial update; `None` leaves a field alone.
 #[derive(Debug, Clone, Default)]
 pub struct RepositoryUpdate {
+    pub default_workflow: Option<Option<String>>,
     pub path: Option<String>,
     pub base_branch: Option<String>,
     /// Some(None) clears the description.
@@ -43,13 +45,16 @@ impl Store {
         new: NewRepository,
         forge: Option<SetForgeIntegration>,
     ) -> Result<Repository> {
+        if let Some(name) = &new.default_workflow {
+            self.get_workflow(name).await?;
+        }
         let id = new_id();
         let ts = now();
         let mut tx = self.w().begin().await?;
         sqlx::query(
-            "INSERT INTO repositories (id, path, base_branch, description, permission_mode, default_landing,
+            "INSERT INTO repositories (id, path, base_branch, description, permission_mode, default_landing, default_workflow,
                                        created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.path)
@@ -57,6 +62,7 @@ impl Store {
         .bind(&new.description)
         .bind(new.permission_mode.unwrap_or(PermissionMode::Auto).as_str())
         .bind(new.default_landing.unwrap_or(Landing::Merge).as_str())
+        .bind(&new.default_workflow)
         .bind(&ts)
         .bind(&ts)
         .execute(&mut *tx)
@@ -122,13 +128,17 @@ impl Store {
         let default_landing = update
             .default_landing
             .unwrap_or_else(|| current.default_landing());
+        let default_workflow = update.default_workflow.unwrap_or(current.default_workflow);
+        if let Some(name) = &default_workflow {
+            self.get_workflow(name).await?;
+        }
         let path = update.path.unwrap_or(current.path);
         let base_branch = update.base_branch.unwrap_or(current.base_branch);
         let description = update.description.unwrap_or(current.description);
         let mut tx = self.w().begin().await?;
         sqlx::query(
             "UPDATE repositories SET path = ?, base_branch = ?, description = ?,
-                                     permission_mode = ?, default_landing = ?, updated_at = ?
+                                     permission_mode = ?, default_landing = ?, default_workflow = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(&path)
@@ -136,6 +146,7 @@ impl Store {
         .bind(&description)
         .bind(permission_mode.as_str())
         .bind(default_landing.as_str())
+        .bind(&default_workflow)
         .bind(now())
         .bind(id)
         .execute(&mut *tx)

@@ -206,6 +206,7 @@ export function folderName(path: string): string {
  * to compile here until it is given a name.
  */
 export const SEAT_LABELS: Record<Seat, string> = {
+  agent: "Agent",
   orchestrator: "Orchestrator",
   author: "Author",
   reviewer: "Reviewer",

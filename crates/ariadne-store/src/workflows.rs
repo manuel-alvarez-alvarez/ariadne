@@ -7,10 +7,8 @@
 //! stored with a `NULL` document while it runs on the text Ariadne ships, and
 //! a reset is a `NULL` rather than a copy of the default.
 //!
-//! Goals and tasks do not read a workflow yet — that is the step engine, a
-//! later task — so a workflow holds nothing a foreign key points at, and
-//! dropping one from the catalog never meets the "still loaded" case a skill
-//! can.
+//! Goals snapshot their workflow columns. Goals and repository defaults keep
+//! a reference to the catalog name, so a workflow in use cannot be deleted.
 
 use ariadne_core::workflow::{self, WorkflowParseError};
 
@@ -149,6 +147,11 @@ impl Store {
     /// reset rather than removed.
     pub async fn delete_workflow(&self, name: &str) -> Result<()> {
         let workflow = self.get_workflow(name).await?;
+        let used: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM goals WHERE workflow = ?1 UNION ALL SELECT 1 FROM repositories WHERE default_workflow = ?1)")
+            .bind(name).fetch_one(self.r()).await?;
+        if used {
+            return Err(StoreError::WorkflowInUse(name.into()));
+        }
         if workflow.is_builtin() {
             return Err(StoreError::Conflict(format!(
                 "workflow {name} is one Ariadne ships; reset it instead of deleting it"

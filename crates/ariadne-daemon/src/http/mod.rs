@@ -23,6 +23,7 @@ mod sessions;
 mod skills;
 mod sse;
 mod stats;
+mod steps;
 mod stream;
 mod tasks;
 mod terminal;
@@ -152,7 +153,7 @@ impl AppState {
         tasks::transition, tasks::cancel, tasks::retry, tasks::list_transitions,
         landing::list_task_messages, landing::post_task_message,
         goals::list_goal_messages, goals::post_goal_message, landing::diff,
-        landing::open_pull_request, landing::pick_winner,
+        landing::open_pull_request, landing::pick_winner, steps::complete, steps::fail,
         sessions::list, sessions::create, sessions::resume_outside,
         sessions::get, sessions::kill, sessions::resume, sessions::switch,
         console::snapshot, console::stream, console::input, console::cancel,
@@ -324,6 +325,8 @@ pub fn router(state: AppState) -> Router {
             get(landing::list_task_messages).post(landing::post_task_message),
         )
         .route("/v1/tasks/{id}/diff", get(landing::diff))
+        .route("/v1/tasks/{id}/step/complete", post(steps::complete))
+        .route("/v1/tasks/{id}/step/fail", post(steps::fail))
         .route("/v1/tasks/{id}/pick", post(landing::pick_winner))
         .route(
             "/v1/tasks/{id}/pull-request",

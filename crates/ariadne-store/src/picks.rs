@@ -271,6 +271,7 @@ mod tests {
 
     fn author(id: &str, ordinal: i64) -> TaskAgent {
         TaskAgent {
+            step: None,
             id: id.into(),
             task_id: "01task".into(),
             seat: "author".into(),

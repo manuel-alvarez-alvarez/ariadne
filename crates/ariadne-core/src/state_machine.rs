@@ -54,6 +54,7 @@ pub enum TaskStatus {
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum Actor {
+    Agent,
     Orchestrator,
     Author,
     Reviewer,
@@ -135,6 +136,7 @@ wire_enum! { TaskStatus, "task status", [
 ]}
 
 wire_enum! { Actor, "actor", [
+    Agent = "agent",
     Orchestrator = "orchestrator",
     Author = "author",
     Reviewer = "reviewer",
@@ -176,7 +178,7 @@ pub fn check_transition(
         // fails the one it owns: a task that cannot be done as written is the
         // author's own finding, and `fail_task` is where it says so.
         S::Failed if !from.is_terminal() && from != S::Failed => {
-            return if matches!(actor, A::Daemon | A::Author) {
+            return if matches!(actor, A::Daemon | A::Author | A::Agent) {
                 Ok(())
             } else {
                 Err(TransitionError::Forbidden { from, to, actor })
@@ -190,6 +192,7 @@ pub fn check_transition(
         // Re-added dependencies can send a ready task back to waiting.
         (S::Ready, S::Pending) => &[A::Orchestrator, A::Daemon],
         (S::Ready, S::InProgress) => &[A::Daemon],
+        (S::InProgress, S::Finished) => &[A::Agent],
         (S::InProgress, S::UnderReview) => &[A::Author],
         (S::UnderReview, S::ChangesRequested) => &[A::Daemon],
         (S::UnderReview, S::Approved) => &[A::Daemon],
@@ -213,6 +216,15 @@ pub fn check_transition(
         Ok(())
     } else {
         Err(TransitionError::Forbidden { from, to, actor })
+    }
+}
+
+/// A step moves to one adjacent column within the snapshot.
+pub fn check_step_move(from: usize, to: usize, len: usize) -> Result<(), &'static str> {
+    if from < len && to < len && from.abs_diff(to) == 1 {
+        Ok(())
+    } else {
+        Err("a step must move to an adjacent column")
     }
 }
 
@@ -387,5 +399,37 @@ mod tests {
         for s in S::ALL {
             assert_eq!(s.as_str().parse::<S>().unwrap(), s);
         }
+    }
+}
+
+#[cfg(test)]
+mod step_tests {
+    use super::*;
+
+    #[test]
+    fn step_moves_only_reach_adjacent_columns() {
+        for (from, to, len) in [(0, 1, 3), (1, 0, 3), (1, 2, 3), (2, 1, 3)] {
+            assert!(check_step_move(from, to, len).is_ok());
+        }
+        for (from, to, len) in [(0, 2, 3), (1, 1, 3), (2, 3, 3), (3, 2, 3), (0, 0, 0)] {
+            assert!(check_step_move(from, to, len).is_err());
+        }
+    }
+
+    #[test]
+    fn an_agent_finishes_work_or_fails_an_unfinished_task() {
+        assert!(
+            check_transition(TaskStatus::InProgress, TaskStatus::Finished, Actor::Agent).is_ok()
+        );
+        assert!(check_transition(TaskStatus::InProgress, TaskStatus::Failed, Actor::Agent).is_ok());
+        assert!(check_transition(TaskStatus::Finished, TaskStatus::Failed, Actor::Agent).is_err());
+        assert!(
+            check_transition(
+                TaskStatus::InProgress,
+                TaskStatus::UnderReview,
+                Actor::Agent
+            )
+            .is_err()
+        );
     }
 }

@@ -42,6 +42,7 @@ pub(super) async fn call_ctx(store: &Store, headers: &HeaderMap) -> ApiResult<Ca
     let actor = match session.seat() {
         None => return Err(ApiError::forbidden("a loose session has no task authority")),
         Some(Seat::Orchestrator) => Actor::Orchestrator,
+        Some(Seat::Agent) => Actor::Agent,
         Some(Seat::Author) => Actor::Author,
         Some(Seat::Reviewer) => Actor::Reviewer,
     };
