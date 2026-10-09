@@ -11,19 +11,13 @@
 //! nothing here returns an error. A mangled briefing is a bad briefing, never
 //! a session that refuses to start. A `{token}` nothing here fills in is
 //! caught where a template is *saved* instead — see
-//! [`MergeStrategy::validate_landing_template`](ariadne_core::MergeStrategy::validate_landing_template)
-//! for the one text that is still written by hand, whose allowed names are
-//! the ones the landing briefing below passes.
-//!
-//! One briefing is not a constant: the landing procedure belongs to the
-//! repository the task lands in (`Repository::landing_prompt_text`), since
-//! how a change reaches a base branch is the repository's to say.
+//! [`PromptKind::validate_template`](ariadne_core::PromptKind::validate_template).
 
 use std::path::Path;
 
 use ariadne_core::{PromptKind, Seat};
 use ariadne_store::defaults::{default_prompt_text, default_system_prompt};
-use ariadne_store::{Goal, Message, PullRequest, Repository, Skill, Task};
+use ariadne_store::{Goal, GoalStep, Message, PullRequest, Repository, Skill, Task};
 
 /// The template `kind` is rendered from: the built-in text of that kind,
 /// which every launch and every resume reads straight from the code.
@@ -118,17 +112,17 @@ const SKILLS_HEADER: &str =
 /// A repository's description is what its owner wrote it down as, so it goes
 /// into the briefing right after the checkout it describes.
 ///
-/// The briefing also carries the procedure that puts the approved spec on a
-/// base branch, since the orchestrator lands that spec itself. It is the one of
-/// [`default_spec_landing_prompt`] the goal's first repository calls for —
-/// the checkout the orchestrator is started in, and the one its commands name.
-/// A goal with no repository is not one an orchestrator is ever started for, so
-/// what that case renders only has to stay readable, never to work.
-///
-/// The goal's own landing goes in too, read with `Goal::landing`: it is
-/// what tells the orchestrator whether to plan a `feature_branch` goal's
-/// final task, so it has to be in the one text that starts the plan.
-pub(crate) fn orchestrator_briefing(template: &str, goal: &Goal, repos: &[Repository]) -> String {
+/// The goal's workflow goes in too, with every column of it one line each:
+/// it is what the orchestrator staffs every task against, so it has to be in
+/// the one text that starts the plan. A goal with no repository is not one
+/// an orchestrator is ever started for, so what that case renders only has to
+/// stay readable, never to work.
+pub(crate) fn orchestrator_briefing(
+    template: &str,
+    goal: &Goal,
+    repos: &[Repository],
+    steps: &[GoalStep],
+) -> String {
     let repo_lines = repos
         .iter()
         .map(|r| {
@@ -145,49 +139,37 @@ pub(crate) fn orchestrator_briefing(template: &str, goal: &Goal, repos: &[Reposi
         &[
             ("goal_title", &goal.title),
             ("goal_description", &goal.description),
-            ("landing", goal.landing().as_str()),
+            ("workflow", &goal.workflow),
+            ("columns", &column_lines(steps)),
             ("repositories", &repo_lines),
         ],
     );
     match &goal.issue_url {
         Some(url) => format!(
-            "{briefing}\n\nThis goal comes from {url}. Every request an author opens must say `Closes {url}` in its body."
+            "{briefing}\n\nThis goal comes from {url}. Every request a task opens must say `Closes {url}` in its body."
         ),
         None => briefing,
     }
 }
 
-/// Name a stepped goal's workflow and every column in its briefing.
-pub(crate) fn with_workflow(
-    briefing: String,
-    goal: &Goal,
-    steps: &[ariadne_store::GoalStep],
-) -> String {
-    let Some(workflow) = &goal.workflow else {
-        return briefing;
-    };
-    let columns = steps
+/// One line per column of a goal's workflow, in column order: its id, its
+/// title, what it does, and the skills and rank its agent is staffed on.
+fn column_lines(steps: &[GoalStep]) -> String {
+    steps
         .iter()
-        .map(|s| format!("- {} [{}]: {}", s.id, s.title, s.description))
+        .map(|s| {
+            let skills: Vec<String> = serde_json::from_str(&s.skills).unwrap_or_default();
+            let mut line = format!("- {} [{}]: {}", s.id, s.title, s.description);
+            if !skills.is_empty() {
+                line.push_str(&format!(" Skills: {}.", skills.join(", ")));
+            }
+            if let Some(rank) = &s.rank {
+                line.push_str(&format!(" Rank: {rank}."));
+            }
+            line
+        })
         .collect::<Vec<_>>()
-        .join("\n");
-    let landing = format!("Landing: {}", goal.landing().as_str());
-    let workflow = format!("Workflow: {workflow}\n{columns}");
-    if briefing.lines().any(|line| line == landing) {
-        briefing
-            .lines()
-            .map(|line| {
-                if line == landing {
-                    workflow.as_str()
-                } else {
-                    line
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    } else {
-        format!("{briefing}\n\n{workflow}")
-    }
+        .join("\n")
 }
 
 /// What an orchestrator that has gone quiet is nudged with.
@@ -242,152 +224,7 @@ pub(crate) fn incoming_message_briefing(
     )
 }
 
-/// Initial prompt for an author session.
-pub fn author_briefing(
-    template: &str,
-    task: &Task,
-    goal: &Goal,
-    repo: &Repository,
-    base_branch: &str,
-    deps: &[Task],
-) -> String {
-    let dep_lines = if deps.is_empty() {
-        "none".to_string()
-    } else {
-        deps.iter()
-            .map(|d| format!("- {} ({}, branch {})", d.title, d.status, d.branch))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    render(
-        template,
-        &[
-            ("task_title", &task.title),
-            ("task_description", &task.description),
-            ("goal_title", &goal.title),
-            (
-                "worktree_path",
-                task.worktree_path.as_deref().unwrap_or("<worktree>"),
-            ),
-            ("branch", &task.branch),
-            ("base_branch", base_branch),
-            ("repo_path", &repo.path),
-            ("landing", goal.landing().as_str()),
-            ("dependencies", &dep_lines),
-        ],
-    )
-}
-
-/// What an author holding unfinished work is picked up with: the session
-/// that ended and is started again, and the one that has gone quiet with the
-/// task still open. Both want the same thing said, so both say it here.
-pub fn author_resume_briefing(template: &str, task: &Task) -> String {
-    render(
-        template,
-        &[("task_title", &task.title), ("branch", &task.branch)],
-    )
-}
-
-/// Initial prompt for a reviewer session.
-pub(crate) fn reviewer_briefing(
-    template: &str,
-    task: &Task,
-    goal: &Goal,
-    repo: &Repository,
-    base_branch: &str,
-    summary: Option<&str>,
-) -> String {
-    render(
-        template,
-        &[
-            ("task_title", &task.title),
-            ("task_description", &task.description),
-            ("goal_title", &goal.title),
-            ("branch", &task.branch),
-            ("base_branch", base_branch),
-            ("repo_path", &repo.path),
-            ("summary", summary.unwrap_or("(none provided)")),
-        ],
-    )
-}
-
-/// What a reviewer that owes a verdict is picked up with: a task it already
-/// reviewed and was asked to review again, and a review it has gone quiet in.
-///
-/// Its worktree may have moved under it while it was away, so what it is told
-/// is that the diff it read may be stale.
-pub fn reviewer_resume_briefing(template: &str, task: &Task, summary: Option<&str>) -> String {
-    render(
-        template,
-        &[
-            ("task_title", &task.title),
-            ("branch", &task.branch),
-            ("summary", summary.unwrap_or("(none provided)")),
-        ],
-    )
-}
-
-/// What a reviewer is asked with once every author of a several-author task
-/// is approved: the task, and one line per author to pick between.
-///
-/// `authors` is (id, branch) per author, in the order the orchestrator
-/// listed them — the id is what `pick_winner` takes, so each line leads with
-/// it.
-pub(crate) fn reviewer_pick_briefing(
-    template: &str,
-    task: &Task,
-    authors: &[(String, String)],
-) -> String {
-    let lines = authors
-        .iter()
-        .map(|(id, branch)| format!("- {id}: branch {branch}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    render(
-        template,
-        &[("task_title", &task.title), ("authors", &lines)],
-    )
-}
-
-/// Resume prompt for an author with a round of requested changes.
-///
-/// `feedback` is one entry per source, each a heading naming who asked and
-/// what they wrote: the reviewers of the round, or the people reading a
-/// published request, whose comments the daemon relays itself.
-pub(crate) fn changes_requested_briefing(template: &str, feedback: &[(String, String)]) -> String {
-    let items = feedback
-        .iter()
-        .map(|(who, body)| format!("### From {who}\n{body}"))
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    render(template, &[("feedback", &items)])
-}
-
-/// What the author of an approved task is briefed with: the branch, the base
-/// and the checkout the procedure's commands act on.
-///
-/// The template is the repository's own ([`Repository::landing_prompt_text`]),
-/// which is the text set on it or the default of its merge strategy — so what
-/// is rendered here is the one procedure the author runs, and nothing of the
-/// other.
-pub(crate) fn landing_briefing(
-    template: &str,
-    task: &Task,
-    repo: &Repository,
-    base_branch: &str,
-) -> String {
-    render(
-        template,
-        &[
-            ("task_title", &task.title),
-            ("branch", &task.branch),
-            ("base_branch", base_branch),
-            ("repo_path", &repo.path),
-        ],
-    )
-}
-
-/// Initial prompt for a pull request session (026): the request, the
+/// Initial prompt for a pull request session (029): the request, the
 /// checkout and worktree its commands act on, its two branches and the
 /// login whose request it is.
 pub(crate) fn pull_request_briefing(
@@ -431,7 +268,7 @@ pub(crate) fn step_briefing(
     task: &Task,
     goal: &Goal,
     repo: &Repository,
-    step: &ariadne_store::GoalStep,
+    step: &GoalStep,
     previous: &str,
     dependencies: &str,
 ) -> String {
@@ -454,10 +291,12 @@ pub(crate) fn step_briefing(
     )
 }
 
+/// What a column's agent is briefed with when the task comes back to its
+/// column: which way it came, and why.
 pub(crate) fn step_return(
     template: &str,
     task: &Task,
-    step: &ariadne_store::GoalStep,
+    step: &GoalStep,
     direction: &str,
     reason: &str,
 ) -> String {
@@ -472,7 +311,8 @@ pub(crate) fn step_return(
     )
 }
 
-pub(crate) fn agent_resume(template: &str, task: &Task, step: &ariadne_store::GoalStep) -> String {
+/// What the agent of the current column is nudged with.
+pub(crate) fn agent_resume(template: &str, task: &Task, step: &GoalStep) -> String {
     render(
         template,
         &[("task_title", &task.title), ("step_title", &step.title)],
@@ -483,13 +323,9 @@ pub(crate) fn agent_resume(template: &str, task: &Task, step: &ariadne_store::Go
 mod tests {
     use super::*;
 
-    use ariadne_core::Landing;
-
-    use ariadne_store::defaults::default_landing_prompt;
-
     fn goal() -> Goal {
         Goal {
-            workflow: None,
+            workflow: "develop-review-merge".into(),
             issue_url: None,
             id: "01goalxxxxxxxxxxxxxxxxxxxx".into(),
             title: "Ship the UI".into(),
@@ -498,7 +334,6 @@ mod tests {
             orchestrated: true,
             model: "stub:test-model".into(),
             effort: None,
-            landing: "merge".into(),
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
         }
@@ -506,7 +341,7 @@ mod tests {
 
     fn repo() -> Repository {
         Repository {
-            default_workflow: None,
+            default_workflow: "develop-review-merge".into(),
             id: "01repoxxxxxxxxxxxxxxxxxxxx".into(),
             path: "/repos/ariadne".into(),
             base_branch: "main".into(),
@@ -514,7 +349,6 @@ mod tests {
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
             permission_mode: "auto".into(),
-            default_landing: "merge".into(),
             forge: None,
         }
     }
@@ -524,12 +358,12 @@ mod tests {
             id: "01msgxxxxxxxxxxxxxxxxxxxxx".into(),
             goal_id: "01goalxxxxxxxxxxxxxxxxxxxx".into(),
             task_id: Some("01taskxxxxxxxxxxxxxxxxxxxx".into()),
-            kind: "question".into(),
-            from_actor: "reviewer".into(),
+            kind: "message".into(),
+            from_actor: "agent".into(),
             from_agent_id: Some("01agentxxxxxxxxxxxxxxxxxxx".into()),
             from_session: None,
-            to_actor: "author".into(),
-            to_agent_id: Some("01authorxxxxxxxxxxxxxxxxxx".into()),
+            to_actor: "agent".into(),
+            to_agent_id: Some("01otherxxxxxxxxxxxxxxxxxxx".into()),
             body: "Why is the retry unbounded?".into(),
             delivered_at: None,
             created_at: "2026-01-01T00:00:00Z".into(),
@@ -538,7 +372,7 @@ mod tests {
 
     fn task() -> Task {
         Task {
-            step: None,
+            step: Some("develop".into()),
             id: "01taskxxxxxxxxxxxxxxxxxxxx".into(),
             goal_id: "01goalxxxxxxxxxxxxxxxxxxxx".into(),
             repo_id: "01repoxxxxxxxxxxxxxxxxxxxx".into(),
@@ -546,15 +380,40 @@ mod tests {
             description: "Read them from the store.".into(),
             status: "in_progress".into(),
             branch: "render-prompts-from-the-database-xxxxxx".into(),
-            landing: "merge".into(),
             worktree_path: Some("/worktrees/task-eng".into()),
             stalled: 0,
             merge_commit: None,
             pr_url: None,
-            picked_agent_id: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
         }
+    }
+
+    fn step(ordinal: i64, id: &str, title: &str, skills: &str, rank: Option<&str>) -> GoalStep {
+        GoalStep {
+            goal_id: goal().id,
+            ordinal,
+            id: id.into(),
+            title: title.into(),
+            description: format!("{title} the change."),
+            skills: skills.into(),
+            rank: rank.map(str::to_string),
+            gate: None,
+        }
+    }
+
+    fn steps() -> Vec<GoalStep> {
+        vec![
+            step(0, "develop", "Develop", r#"["coding"]"#, Some("balanced")),
+            step(
+                1,
+                "review",
+                "Review",
+                r#"["code-review"]"#,
+                Some("frontier"),
+            ),
+            step(2, "merge", "Merge", r#"["merge"]"#, None),
+        ]
     }
 
     fn default(kind: PromptKind) -> &'static str {
@@ -613,7 +472,7 @@ mod tests {
     #[test]
     fn every_allowed_placeholder_is_one_a_briefing_fills_in() {
         let (task, goal, repo) = (task(), goal(), repo());
-        let feedback = vec![("reviewer 01a".to_string(), "Split it.".to_string())];
+        let steps = steps();
         for kind in PromptKind::ALL {
             let template = kind
                 .placeholders()
@@ -621,24 +480,16 @@ mod tests {
                 .map(|name| format!("{{{name}}}"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            let step = ariadne_store::GoalStep {
-                goal_id: goal.id.clone(),
-                ordinal: 0,
-                id: "develop".into(),
-                title: "Develop".into(),
-                description: "Build it.".into(),
-                skills: "[]".into(),
-                rank: None,
-                gate: None,
-            };
             let rendered = match kind {
                 PromptKind::StepBriefing => {
-                    step_briefing(&template, &task, &goal, &repo, &step, "summary", "none")
+                    step_briefing(&template, &task, &goal, &repo, &steps[0], "summary", "none")
                 }
-                PromptKind::StepReturn => step_return(&template, &task, &step, "back", "fix it"),
-                PromptKind::AgentResume => agent_resume(&template, &task, &step),
+                PromptKind::StepReturn => {
+                    step_return(&template, &task, &steps[0], "back", "fix it")
+                }
+                PromptKind::AgentResume => agent_resume(&template, &task, &steps[0]),
                 PromptKind::OrchestratorBriefing => {
-                    orchestrator_briefing(&template, &goal, std::slice::from_ref(&repo))
+                    orchestrator_briefing(&template, &goal, std::slice::from_ref(&repo), &steps)
                 }
                 PromptKind::OrchestratorResume => orchestrator_resume_briefing(&template, &goal),
                 PromptKind::GoalAttention => {
@@ -647,30 +498,9 @@ mod tests {
                 PromptKind::IncomingMessage => incoming_message_briefing(
                     &template,
                     &message(),
-                    "reviewer",
+                    "agent",
                     Some(task.title.as_str()),
                     &["code-review".to_string()],
-                ),
-                PromptKind::AuthorBriefing => {
-                    author_briefing(&template, &task, &goal, &repo, &repo.base_branch, &[])
-                }
-                PromptKind::AuthorResume => author_resume_briefing(&template, &task),
-                PromptKind::ChangesRequested => changes_requested_briefing(&template, &feedback),
-                PromptKind::ReviewerBriefing => reviewer_briefing(
-                    &template,
-                    &task,
-                    &goal,
-                    &repo,
-                    &repo.base_branch,
-                    Some("done"),
-                ),
-                PromptKind::ReviewerResume => {
-                    reviewer_resume_briefing(&template, &task, Some("done"))
-                }
-                PromptKind::ReviewerPick => reviewer_pick_briefing(
-                    &template,
-                    &task,
-                    &[("01author".to_string(), "a-branch".to_string())],
                 ),
             };
             assert!(
@@ -679,19 +509,6 @@ mod tests {
                 kind.as_str()
             );
         }
-
-        // And the landing briefing, whose allowed names belong to the ending
-        // rather than to a kind.
-        let template = Landing::LANDING_PLACEHOLDERS
-            .iter()
-            .map(|name| format!("{{{name}}}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let rendered = landing_briefing(&template, &task, &repo, &repo.base_branch);
-        assert!(
-            !rendered.contains('{'),
-            "the landing briefing left a placeholder of its own unfilled: {rendered}"
-        );
     }
 
     /// The two texts of a pull request session name only the placeholders
@@ -800,30 +617,9 @@ mod tests {
     #[test]
     fn every_default_briefing_is_its_template_with_the_values_put_in() {
         let (task, goal, repo) = (task(), goal(), repo());
-        let deps = vec![Task {
-            title: "Store: per-profile prompts".into(),
-            status: "finished".into(),
-            branch: "store-per-profile-prompts-xxxxxx".into(),
-            ..task.clone()
-        }];
-        let dep_lines = deps
-            .iter()
-            .map(|d| format!("- {} ({}, branch {})", d.title, d.status, d.branch))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let feedback = vec![
-            (
-                "reviewer 01a".to_string(),
-                "Split the function.".to_string(),
-            ),
-            ("reviewer 01b".to_string(), "Add a test.".to_string()),
-        ];
-        let items = feedback
-            .iter()
-            .map(|(who, body)| format!("### From {who}\n{body}"))
-            .collect::<Vec<_>>()
-            .join("\n\n");
+        let steps = steps();
         let repo_line = format!("- {} (base branch: {})", repo.path, repo.base_branch);
+        let columns = column_lines(&steps);
         let attention = "- Render prompts (01task) failed".to_string();
 
         // The values every kind is rendered with, and what the briefing that
@@ -842,11 +638,13 @@ mod tests {
                     default(PromptKind::OrchestratorBriefing),
                     &goal,
                     std::slice::from_ref(&repo),
+                    &steps,
                 ),
                 vec![
                     ("goal_title", &goal.title),
                     ("goal_description", &goal.description),
-                    ("landing", goal.landing().as_str()),
+                    ("workflow", &goal.workflow),
+                    ("columns", &columns),
                     ("repositories", &repo_line),
                 ],
             ),
@@ -861,14 +659,15 @@ mod tests {
                 vec![("goal_title", &goal.title), ("tasks", &attention)],
             ),
             (
-                PromptKind::AuthorBriefing,
-                author_briefing(
-                    default(PromptKind::AuthorBriefing),
+                PromptKind::StepBriefing,
+                step_briefing(
+                    default(PromptKind::StepBriefing),
                     &task,
                     &goal,
                     &repo,
-                    &repo.base_branch,
-                    &deps,
+                    &steps[1],
+                    "The change is committed.",
+                    "none",
                 ),
                 vec![
                     ("task_title", &task.title),
@@ -878,52 +677,33 @@ mod tests {
                     ("branch", &task.branch),
                     ("base_branch", &repo.base_branch),
                     ("repo_path", &repo.path),
-                    ("landing", "merge"),
-                    ("dependencies", &dep_lines),
+                    ("step_id", "review"),
+                    ("step_title", "Review"),
+                    ("step_description", "Review the change."),
+                    ("previous_summary", "The change is committed."),
+                    ("dependencies", "none"),
                 ],
             ),
             (
-                PromptKind::AuthorResume,
-                author_resume_briefing(default(PromptKind::AuthorResume), &task),
-                vec![("task_title", &task.title), ("branch", &task.branch)],
-            ),
-            (
-                PromptKind::ChangesRequested,
-                changes_requested_briefing(default(PromptKind::ChangesRequested), &feedback),
-                vec![("feedback", &items)],
-            ),
-            (
-                PromptKind::ReviewerBriefing,
-                reviewer_briefing(
-                    default(PromptKind::ReviewerBriefing),
+                PromptKind::StepReturn,
+                step_return(
+                    default(PromptKind::StepReturn),
                     &task,
-                    &goal,
-                    &repo,
-                    &repo.base_branch,
-                    None,
+                    &steps[0],
+                    "back",
+                    "Add a test.",
                 ),
                 vec![
                     ("task_title", &task.title),
-                    ("task_description", &task.description),
-                    ("goal_title", &goal.title),
-                    ("branch", &task.branch),
-                    ("base_branch", &repo.base_branch),
-                    ("repo_path", &repo.path),
-                    ("summary", "(none provided)"),
+                    ("step_title", "Develop"),
+                    ("direction", "back"),
+                    ("reason", "Add a test."),
                 ],
             ),
             (
-                PromptKind::ReviewerResume,
-                reviewer_resume_briefing(
-                    default(PromptKind::ReviewerResume),
-                    &task,
-                    Some("I rewrote the thing."),
-                ),
-                vec![
-                    ("task_title", &task.title),
-                    ("branch", &task.branch),
-                    ("summary", "I rewrote the thing."),
-                ],
+                PromptKind::AgentResume,
+                agent_resume(default(PromptKind::AgentResume), &task, &steps[0]),
+                vec![("task_title", &task.title), ("step_title", "Develop")],
             ),
         ];
 
@@ -941,158 +721,35 @@ mod tests {
                 kind.as_str()
             );
         }
-
-        // And the landing briefing of each ending, the same way: the built-in
-        // text with this task's values put in.
-        let landing_values = vec![
-            ("task_title", task.title.as_str()),
-            ("branch", task.branch.as_str()),
-            ("base_branch", repo.base_branch.as_str()),
-            ("repo_path", repo.path.as_str()),
-        ];
-        for landing in Landing::ALL {
-            let task = Task {
-                landing: landing.as_str().into(),
-                ..task.clone()
-            };
-            let template = default_landing_prompt(landing);
-            let rendered =
-                landing_briefing(task.landing_prompt_text(), &task, &repo, &repo.base_branch);
-            assert_eq!(
-                rendered,
-                filled(template, &landing_values),
-                "the {} landing briefing, substituted",
-                landing.as_str()
-            );
-            assert!(
-                !rendered.contains('{'),
-                "the {} landing briefing left a placeholder unfilled: {rendered}",
-                landing.as_str()
-            );
-        }
     }
 
-    /// And the values themselves are the ones the daemon builds: the lists it
-    /// formats, the headings a briefing opens on, and the stand-in for a
-    /// summary an author never wrote.
+    /// The orchestrator is briefed with the goal's own workflow and every
+    /// column of it, skills and rank included: that is what it staffs every
+    /// task against, and nothing of a landing is left in the text.
     #[test]
-    fn the_briefings_carry_the_values_the_daemon_builds() {
-        let (task, goal, repo) = (task(), goal(), repo());
-        let deps = vec![Task {
-            title: "Store: per-profile prompts".into(),
-            status: "finished".into(),
-            branch: "store-per-profile-prompts-xxxxxx".into(),
-            ..task.clone()
-        }];
-        let author = author_briefing(
-            default(PromptKind::AuthorBriefing),
-            &task,
-            &goal,
-            &repo,
-            &repo.base_branch,
-            &deps,
-        );
-        assert!(author.starts_with(&format!("# Task: {}", task.title)));
-        assert!(
-            author.contains(&format!(
-                "- {} ({}, branch {})",
-                deps[0].title, deps[0].status, deps[0].branch
-            )),
-            "{author}"
-        );
-
-        let reviewer = reviewer_briefing(
-            default(PromptKind::ReviewerBriefing),
-            &task,
-            &goal,
-            &repo,
-            &repo.base_branch,
-            None,
-        );
-        assert!(reviewer.starts_with(&format!("# Review task: {}", task.title)));
-        assert!(reviewer.contains("- Author's summary: (none provided)"));
-
-        let feedback = vec![("reviewer 01a".to_string(), "Split it.".to_string())];
-        let changes = changes_requested_briefing(default(PromptKind::ChangesRequested), &feedback);
-        assert!(
-            changes.contains("### From reviewer 01a\nSplit it."),
-            "{changes}"
-        );
-
-        let landing = landing_briefing(task.landing_prompt_text(), &task, &repo, &repo.base_branch);
-        assert!(landing.starts_with(&format!("# Land task: {}", task.title)));
-    }
-
-    /// The task says what its author lands with: one procedure, not three.
-    /// The repository it works in has no say — a checkout and a base branch
-    /// is all a repository is.
-    #[test]
-    fn the_task_says_what_the_author_lands_with() {
-        let repo = repo();
-        let merging = task();
-        let publishing = Task {
-            landing: "pull_request".into(),
-            ..merging.clone()
-        };
-
-        let direct = landing_briefing(
-            merging.landing_prompt_text(),
-            &merging,
-            &repo,
-            &repo.base_branch,
+    fn the_orchestrator_is_briefed_with_the_workflow_and_its_columns() {
+        let briefing = orchestrator_briefing(
+            default(PromptKind::OrchestratorBriefing),
+            &goal(),
+            &[repo()],
+            &steps(),
         );
         assert!(
-            direct.contains("git reset --soft \"$(git merge-base main HEAD)\""),
-            "{direct}"
+            briefing.contains("Workflow: develop-review-merge"),
+            "{briefing}"
         );
-        assert!(!direct.contains("gh pr"), "{direct}");
-
-        let published = landing_briefing(
-            publishing.landing_prompt_text(),
-            &publishing,
-            &repo,
-            &repo.base_branch,
+        assert!(
+            briefing.contains(
+                "- develop [Develop]: Develop the change. Skills: coding. Rank: balanced."
+            ),
+            "{briefing}"
         );
-        assert!(published.contains("`open_pull_request`"), "{published}");
-        assert!(!published.contains("reset --soft"), "{published}");
-        assert!(!published.contains("gh pr"), "{published}");
-
-        // The branch, the base and the checkout the commands act on.
-        for value in [merging.branch.as_str(), "main", "/repos/ariadne"] {
-            assert!(published.contains(value), "{value}: {published}");
-        }
-        assert!(!published.contains('{'), "{published}");
-
-        // And the third ending runs neither: nothing is landed, so nothing
-        // about the repository is in it.
-        let nothing = Task {
-            landing: "none".into(),
-            ..merging.clone()
-        };
-        let landed = landing_briefing(
-            nothing.landing_prompt_text(),
-            &nothing,
-            &repo,
-            &repo.base_branch,
+        assert!(
+            briefing.contains("- merge [Merge]: Merge the change. Skills: merge."),
+            "a column with no rank names none: {briefing}"
         );
-        assert!(landed.contains("lands nothing"), "{landed}");
-        assert!(!landed.contains("gh pr"), "{landed}");
-        assert!(!landed.contains("reset --soft"), "{landed}");
-    }
-
-    /// The orchestrator is briefed with the goal's own landing, whatever it
-    /// is: a `feature_branch` goal has to reach it, since that is the one
-    /// value that tells the orchestrator to plan a final task per
-    /// repository.
-    #[test]
-    fn the_orchestrator_is_briefed_with_the_goals_landing() {
-        let goal = Goal {
-            landing: "feature_branch".into(),
-            ..goal()
-        };
-        let briefing =
-            orchestrator_briefing(default(PromptKind::OrchestratorBriefing), &goal, &[repo()]);
-        assert!(briefing.contains("feature_branch"), "{briefing}");
+        assert!(!briefing.contains("Landing"), "{briefing}");
+        assert!(!briefing.contains('{'), "{briefing}");
     }
 
     /// A repository is registered with a description; the orchestrator is
@@ -1115,6 +772,7 @@ mod tests {
             default(PromptKind::OrchestratorBriefing),
             &goal(),
             &[described, blank, repo()],
+            &steps(),
         );
         assert!(
             briefing.contains("- /repos/ui (base branch: main) — the web client"),
@@ -1134,14 +792,18 @@ mod tests {
     /// one all the same reads as a briefing rather than as a broken template.
     #[test]
     fn a_goal_without_a_repository_still_briefs() {
-        let briefing =
-            orchestrator_briefing(default(PromptKind::OrchestratorBriefing), &goal(), &[]);
+        let briefing = orchestrator_briefing(
+            default(PromptKind::OrchestratorBriefing),
+            &goal(),
+            &[],
+            &steps(),
+        );
         assert!(briefing.contains("# Goal: Ship the UI"), "{briefing}");
         assert!(!briefing.contains('{'), "{briefing}");
     }
 
     /// The orchestrator is briefed with every repository the goal works in,
-    /// each with the base branch a task's landing merges onto, so it can
+    /// each with the base branch a task's last column lands onto, so it can
     /// plan against the right branch before any task exists.
     #[test]
     fn the_orchestrator_is_briefed_with_every_repository_and_its_base_branch() {
@@ -1154,6 +816,7 @@ mod tests {
             default(PromptKind::OrchestratorBriefing),
             &goal(),
             &[repo(), other],
+            &steps(),
         );
         assert!(
             briefing.contains("- /repos/ariadne (base branch: main)"),
@@ -1166,8 +829,31 @@ mod tests {
         assert!(!briefing.contains('{'), "{briefing}");
     }
 
-    /// A dependency with no worktree still briefs: the fallbacks the daemon
-    /// used to inline are part of the values now.
+    /// A goal from an issue tells the orchestrator which request body line
+    /// closes it, once, after the briefing proper.
+    #[test]
+    fn a_goal_from_an_issue_names_the_line_that_closes_it() {
+        let goal = Goal {
+            issue_url: Some("https://github.com/acme/widgets/issues/9".into()),
+            ..goal()
+        };
+        let briefing = orchestrator_briefing(
+            default(PromptKind::OrchestratorBriefing),
+            &goal,
+            &[repo()],
+            &steps(),
+        );
+        assert!(
+            briefing.ends_with(
+                "This goal comes from https://github.com/acme/widgets/issues/9. Every request \
+                 a task opens must say `Closes https://github.com/acme/widgets/issues/9` in its body."
+            ),
+            "{briefing}"
+        );
+    }
+
+    /// A step briefing with no worktree yet still renders every value: the
+    /// fallbacks the daemon used to inline are part of the values now.
     #[test]
     fn missing_values_keep_their_fallbacks() {
         let (goal, repo) = (goal(), repo());
@@ -1175,47 +861,17 @@ mod tests {
             worktree_path: None,
             ..task()
         };
-        let briefing = author_briefing(
-            default(PromptKind::AuthorBriefing),
+        let briefing = step_briefing(
+            default(PromptKind::StepBriefing),
             &task,
             &goal,
             &repo,
-            &repo.base_branch,
-            &[],
+            &steps()[0],
+            "",
+            "none",
         );
-        assert!(briefing.contains("- Worktree (your cwd): <worktree>"));
-        assert!(briefing.contains("- Finished dependencies:\nnone"));
-    }
-    #[test]
-    fn workflow_columns_are_named_with_or_without_a_landing_line() {
-        let mut goal = goal();
-        goal.workflow = Some("one-step".into());
-        let steps = [ariadne_store::GoalStep {
-            goal_id: goal.id.clone(),
-            ordinal: 0,
-            id: "build".into(),
-            title: "Build".into(),
-            description: "Build the change.".into(),
-            skills: "[]".into(),
-            rank: None,
-            gate: None,
-        }];
-        for template in [
-            "Plan {goal_title}.",
-            "Plan {goal_title}.\nLanding: {landing}",
-        ] {
-            let rendered = orchestrator_briefing(template, &goal, &[]);
-            let briefing = with_workflow(rendered, &goal, &steps);
-            assert_eq!(briefing.matches("Workflow: one-step").count(), 1);
-            assert!(
-                briefing
-                    .lines()
-                    .any(|line| line == "- build [Build]: Build the change.")
-            );
-            assert!(!briefing.lines().any(|line| line.starts_with("Landing:")));
-        }
-        goal.workflow = None;
-        let rendered = "Plan this goal.\nLanding: merge\n".to_string();
-        assert_eq!(with_workflow(rendered.clone(), &goal, &[]), rendered);
+        assert!(briefing.contains("Worktree: \n"), "{briefing}");
+        assert!(briefing.contains("Dependencies: none"), "{briefing}");
+        assert!(!briefing.contains('{'), "{briefing}");
     }
 }

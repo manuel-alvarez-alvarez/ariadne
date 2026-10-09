@@ -298,14 +298,14 @@ async fn wakes_during_a_fetch_coalesce_into_one_following_fetch() {
     assert_eq!(lists(), 4, "the five wakes must coalesce");
 }
 
-/// A request of mine is Ariadne's to work on once a task opened it (005):
-/// the open gives it a row, the task its origin, and the list joins the
-/// row's id and the task to the forge's read. The fetch that lists it alone
-/// gives it none.
+/// A request of mine is Ariadne's to work on once a task opened it (005,
+/// 030): the agent of the task's `pr` column opens it, the open gives it a
+/// row, the task its origin, and the list joins the row's id and the task to
+/// the forge's read. The fetch that lists it alone gives it none.
 #[tokio::test]
 async fn a_request_of_mine_has_a_row_once_a_task_opened_it_and_not_before() {
     use crate::common::{TIMEOUT, as_session, eventually};
-    use ariadne_core::{Actor, ForgeKind, Landing, Seat, TaskStatus};
+    use ariadne_core::{ForgeKind, Seat};
     use ariadne_daemon::forge::poll::Mode;
     use ariadne_store::SetForgeIntegration;
     let mut initial = script(vec![github_pull(42, "me")], github_pull(42, "me"));
@@ -317,7 +317,7 @@ async fn a_request_of_mine_has_a_row_once_a_task_opened_it_and_not_before() {
     let stub = stub_forge_cli(initial);
     let h = harness().forge_cli(&stub).await;
     let checkout = h.git_repo("repo");
-    let cast = h.active_cast_ending_in(Landing::PullRequest).await;
+    let cast = h.active_cast_running(Some("develop-review-pr")).await;
     let remote = h.dir.path().join("remote.git");
     sh(
         &checkout,
@@ -328,20 +328,8 @@ async fn a_request_of_mine_has_a_row_once_a_task_opened_it_and_not_before() {
             cast.task.branch
         ),
     );
-    for (status, actor) in [
-        (TaskStatus::Ready, Actor::Daemon),
-        (TaskStatus::InProgress, Actor::Daemon),
-        (TaskStatus::UnderReview, Actor::Author),
-        (TaskStatus::Approved, Actor::Daemon),
-    ] {
-        h.store
-            .transition_task(&cast.task.id, status, actor, None, None)
-            .await
-            .unwrap();
-    }
-    let author = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    h.advance_to(&cast.task, "pr").await;
+    let agent = h.agent_session(&cast, "pr").await;
     h.store
         .set_forge_integration(SetForgeIntegration {
             repository_id: cast.repo.id.clone(),
@@ -373,11 +361,22 @@ async fn a_request_of_mine_has_a_row_once_a_task_opened_it_and_not_before() {
             .is_empty(),
         "listed alone, it is nobody's work"
     );
+    // Only the agent of the current column opens the task's request.
+    let develop = h.agent_session(&cast, "develop").await;
+    h.error(
+        as_session(
+            &format!("/v1/tasks/{}/pull-request", cast.task.id),
+            &develop.id,
+            json!({"title":"Fix widgets","body":"Fix widgets."}),
+        ),
+        StatusCode::FORBIDDEN,
+    )
+    .await;
     let _: Value = h
         .json(
             as_session(
                 &format!("/v1/tasks/{}/pull-request", cast.task.id),
-                &author.id,
+                &agent.id,
                 json!({"title":"Fix widgets","body":"Fix widgets."}),
             ),
             StatusCode::OK,
@@ -390,6 +389,7 @@ async fn a_request_of_mine_has_a_row_once_a_task_opened_it_and_not_before() {
         .unwrap()
         .expect("the open gives it a row");
     assert_eq!(row.role, "author");
+    assert_eq!(agent.seat(), Some(Seat::Agent));
     let kept: Vec<Value> = h
         .get(&format!("/v1/pull-requests?task={}", cast.task.id))
         .await;

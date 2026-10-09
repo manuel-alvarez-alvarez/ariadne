@@ -1,7 +1,7 @@
 ---
 id: skills-and-staffed-agents
 status: current
-updated: 2026-10-08
+updated: 2026-10-09
 areas: [store, api, cli, ui, daemon, prompts]
 commits: [03f9c8b7, 29e6d84e]
 tests:
@@ -10,8 +10,7 @@ tests:
   - crates/ariadne-daemon/tests/it/skill_documents.rs
   - crates/ariadne-daemon/tests/it/adapters.rs
   - crates/ariadne-daemon/tests/it/prompts.rs
-  - crates/ariadne-daemon/tests/it/unreviewed_tasks.rs
-  - crates/ariadne-daemon/tests/it/kept_requests.rs
+  - crates/ariadne-daemon/tests/it/workflow_pull_request.rs
   - crates/ariadne-daemon/tests/it/pull_request_reviews.rs
 ---
 
@@ -21,7 +20,7 @@ Ariadne defines one agent type, the orchestrator — and even its playbook is a
 skill, fixed by name rather than staffed. Every other agent is generic, and
 becomes what its task needs by loading skills.
 
-A goal with a workflow follows [030](030-workflows.md) for its columns, staffing, and step lifecycle.
+A task is staffed one agent per column of its goal's workflow (030).
 
 ## Scope
 
@@ -30,7 +29,7 @@ staffs an agent on skills, and what a seat means once identity is gone.
 
 Out: how a skill document reaches the agent (007), how the index is
 written into the system prompt (006), and the lifecycle the seats sit in
-(001, 004).
+(001, 030).
 
 ## Behavior
 
@@ -42,29 +41,28 @@ written into the system prompt (006), and the lifecycle the seats sit in
    `<agent>:<model>`, where `<agent>` is the id of an agent in the daemon's
    ACP registry (011). The agent and the model are both required, so every
    agent names both. No agent kind is stored beside the pin. A **seat** says
-   only where it sits. The author of a specification, of a fix and of a
-   release are all `author`, and differ only in the skills they hold.
-3. There are three seats. `orchestrator` belongs to a goal; `author` and
-   `reviewer` belong to a task, or to a pull request (rule 14). A task takes one author or more: most staff
-   one, and one staffed with several runs them side by side, each on its own
-   model, until the reviewers pick the change that lands (004). Every task
-   has one reviewer by default. The orchestrator asks the user which tasks
-   to leave unreviewed and what each review is for (003). It leaves a task
-   unreviewed only when nothing can be tested whole, such as a release or a
-   report. That task is approved as soon as its author asks (001). A task
-   with several authors needs at least one reviewer, to pick the winner.
-4. Ariadne ships a catalog of fifteen skills, in four scopes:
+   only where it sits. The agent of a develop column, of a review column and
+   of a merge column are all `agent`, and differ only in the column they
+   staff and the skills they hold.
+3. There are three seats. `orchestrator` belongs to a goal; `agent` belongs
+   to one column of one task; `reviewer` belongs to a pull request (029,
+   rule 14). A task has one agent per column of its goal's workflow (030):
+   a task agent is written with its column (`step`) and its ordinal, which
+   is the column's position in the task's staffing list. Whether a task is
+   reviewed, and how it lands, is the workflow's to say, so the orchestrator
+   asks the user neither (003).
+4. Ariadne ships a catalog of sixteen skills, in four scopes:
    - **orchestrate** — `orchestration`, the orchestrator's own playbook;
    - **produce** — `spec-writing`, `coding`, `debugging`, `refactoring`,
      `documentation`, `research`;
    - **review** — `code-review`, `spec-review`, `performance-review`,
      `architecture-review`, `pr-reviewer`;
-   - **operate** — `migration`, `conflict-resolution`, `pr-babysit`.
+   - **operate** — `migration`, `conflict-resolution`, `merge`,
+     `pr-babysit`.
 
    `pull-request` left the catalog once opening a request became the
    daemon's own tool (`open_pull_request`) rather than an agent's to read a
-   procedure for (005): what used to be staffed, or added on an author's
-   behalf, is now one call in the landing briefing.
+   procedure for: the `pr` column's agent makes that one call (030).
 
    The catalog holds what Ariadne is staffed on, so a skill nothing is ever
    staffed on leaves it. `release`, `dependency-upgrade`, `security-review`
@@ -91,8 +89,7 @@ written into the system prompt (006), and the lifecycle the seats sit in
    dropping a skill reaches an old database the way adding one does. A skill
    that merged into another goes first: the staffings that named it name the
    skill that does its work now, and an agent staffed on both keeps one row.
-   A row
-   still on the shipped text holds nothing of anybody's and goes. A row
+   A row still on the shipped text holds nothing of anybody's and goes. A row
    somebody wrote a document over keeps their text and becomes a skill of
    their own, theirs to delete and no longer resettable. A row a staffed
    agent still loads stays a built-in, so an old task still reads as the
@@ -103,11 +100,12 @@ written into the system prompt (006), and the lifecycle the seats sit in
 9. A skill still loaded by a staffed agent cannot be deleted, and an agent
    cannot be staffed on a skill nothing answers to.
 10. A skill has a seat, read off its name and stored in no column
-    (`Skill::seat`): `orchestration` is the orchestrator's, `pr-babysit` and
-    `pr-reviewer` are loaded by the daemon itself, and every other skill a
-    task agent's. The store refuses a task agent staffed on any of those three,
-    and `list_skills` lists none of them (013). The launcher loads the orchestrator's
-    skill from the store for
+    (`Skill::seat`): `orchestration` is the orchestrator's, `pr-reviewer` is
+    loaded by the daemon itself for a review session, and every other skill
+    is a column agent's — `pr-babysit` included, which the `pr` column of
+    `develop-review-pr` stages (030). The store refuses a task agent staffed
+    on `orchestration` or `pr-reviewer`, and `list_skills` lists neither
+    (013). The launcher loads the orchestrator's skill from the store for
     every orchestrator session — indexed and written to disk the way a task
     agent's skills are (006, 007) — so an edit or a reset of it reaches the
     next launch.
@@ -115,32 +113,31 @@ written into the system prompt (006), and the lifecycle the seats sit in
     same as every other default text. It also obeys the rules the seat texts
     state. No skill divides a task into slices or small commits. `coding`
     builds the whole task and commits it once, and `refactoring` holds every
-    move in one commit (004). `coding`, `debugging` and `code-review` each
-    state one more rule, in their own words and place:
-    run a check in the foreground and never poll a background one, and send
-    its full output to a log file outside the worktree, so only the summary
-    and the failures reach the agent.
-    `coding` ends its search step when the agent can name each definition
-    it changes and its callers, not when a tool named every file it opened.
+    move in one commit (006). `coding`, `debugging` and `code-review` each
+    state one more rule, in their own words and place: run a check in the
+    foreground and never poll a background one, and send its full output to
+    a log file outside the worktree, so only the summary and the failures
+    reach the agent. `coding` ends its search step when the agent can name
+    each definition it changes and its callers, not when a tool named every
+    file it opened. A skill that ends a column ends on `complete_step` or
+    `fail_step` (030): `code-review` completes the step only when both axes
+    pass and edits no file, and `merge` completes it with the base branch's
+    sha.
 
     A skill document holds one text. The launcher writes that whole text to
     disk for the agent to read.
-12. The orchestrator staffs each task: it names the skills of each agent and
-    the model each runs on (011), may size the effort beside it, and may add
-    a brief that the task itself does not carry. How the task ends is agreed
-    the same way (005). Once the task is running, its playbook's last step
-    switches an exhausted, stuck or unsuitable agent to another pin over
-    `switch_session` (013), rather than leave the task to fail.
+12. The orchestrator staffs each task: for every column it names the skills
+    of the agent — the column's own where it names none — and the model the
+    agent runs on (011), may size the effort beside it, and may add a brief
+    that the task itself does not carry. Once the task is running, its
+    playbook's last step switches an exhausted, stuck or unsuitable agent to
+    another pin over `switch_session` (013), rather than leave the task to
+    fail.
 13. Every user-facing skill action exists in both the CLI (`ariadne skill`)
     and the desktop app, per the parity rule of spec 015.
-14. The daemon loads `pr-babysit` for every author of a task that lands by
-    request — a task of a `pull_request` goal, or the final task of a
-    `feature_branch` goal — beside the skills the orchestrator staffed it on
-    (005, 026). It is named in code as the orchestrator's skill is, and
-    indexed and written to disk the way a task agent's skills are; no
-    orchestrator staffs it. A review session (029) is staffed by the daemon
-    on the repository's `review_model` and `review_effort` (025), and loads
-    `pr-reviewer` the same way.
+14. A review session (029) is staffed by the daemon on the repository's
+    `review_model` and `review_effort` (025), and loads `pr-reviewer` the
+    way a column agent loads its skills; no orchestrator staffs it.
 
 ## Acceptance criteria
 
@@ -158,16 +155,14 @@ written into the system prompt (006), and the lifecycle the seats sit in
   (`store.rs::a_skill_an_agent_still_loads_cannot_be_deleted`), and an agent
   cannot be staffed on a skill nothing answers to
   (`store.rs::an_agent_cannot_be_staffed_on_a_skill_nothing_answers_to`).
-- A task agent cannot be staffed on the orchestrator's skill, at creation or
-  by a later edit
-  (`store.rs::a_task_agent_cannot_be_staffed_on_the_orchestrators_skill`),
-  nor on `pr-babysit`
-  (`store.rs::a_task_agent_cannot_be_staffed_on_the_pull_request_skill`).
-- The author of a task that lands by request indexes `pr-babysit`
-  (`landing_lifecycle.rs::opening_a_pull_request_runs_the_forge_cli_once_and_keeps_the_task_until_the_merge`,
-  `final_tasks.rs::the_final_task_waits_then_lands_the_goal_branch_on_the_base`),
-  and the skill is fed by the daemon and ends its turn
-  (`defaults.rs::the_pr_babysit_skill_is_fed_by_the_daemon_and_ends_its_turn`).
+- A task agent cannot be staffed on the orchestrator's skill or the review
+  session's, at creation or by a later edit, and can load `pr-babysit`
+  (`store.rs::a_task_agent_cannot_be_staffed_on_the_orchestrators_skill`,
+  `::a_task_agent_cannot_be_staffed_on_the_reviewer_sessions_skill`).
+- The `pr` column's agent indexes `pr-babysit`
+  (`workflow_pull_request.rs::the_pr_column_opens_the_request_once_and_keeps_it`),
+  and the skill opens the request and ends the step on the merge
+  (`defaults.rs::the_pr_babysit_skill_opens_the_request_and_ends_the_step_on_the_merge`).
 - A review session is staffed on the review pin and indexes
   `pr-reviewer`
   (`pull_request_reviews.rs::an_open_request_i_review_gets_one_session_detached_at_its_head`),
@@ -189,34 +184,36 @@ written into the system prompt (006), and the lifecycle the seats sit in
   (`skill_documents.rs::an_orchestrator_session_indexes_the_orchestration_skill`),
   and an edit of it reaches the next launch
   (`skill_documents.rs::an_edited_orchestration_skill_reaches_the_next_launch`).
-- Every task has a reviewer by default. A task is left unreviewed only when
-  nothing can be tested whole, such as a release or a report
-  (`defaults.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`).
-- A task staffed with no reviewer is approved as soon as its author asks
-  (`unreviewed_tasks.rs::a_task_with_no_reviewer_is_approved_as_soon_as_its_author_asks`).
+- The playbook staffs one agent per column and asks no reviewer question
+  (`defaults.rs::the_orchestration_skill_staffs_one_agent_per_column_and_asks_no_reviewer_question`).
 - The playbook switches a struggling agent's session to a model the ladder
   gives, and tells the user
   (`defaults.rs::the_orchestration_skill_switches_a_struggling_agents_session`).
 - Every shipped skill is named once and describes itself
-  (`defaults.rs::every_shipped_skill_is_named_once_and_describes_itself`), and
-  every document is within its cap (`defaults.rs::skill_size_caps_hold`).
+  (`defaults.rs::every_shipped_skill_is_named_once_and_describes_itself`),
+  every document is within its cap (`defaults.rs::skill_size_caps_hold`),
+  and every shipped workflow stages shipped skills
+  (`::every_shipped_workflow_parses_and_stages_shipped_skills`).
 - `coding`, `debugging` and `code-review` run a check in the
   foreground and send its output to a log file outside the worktree, rather
   than poll a background run
   (`defaults.rs::checks_run_in_the_foreground_and_print_only_failures`).
 - `coding` ends its search step on what the agent knows
   (`::the_coding_search_step_ends_on_what_the_agent_knows`).
-- A skill document is written whole for its agent.
 - No shipped skill divides a task, and `coding` and `refactoring` each name
   one commit
-  (`defaults.rs::a_task_is_one_commit_and_a_review_answer_is_one_more`).
+  (`defaults.rs::a_task_is_one_commit_and_nothing_amends_a_pushed_one`).
+- The review skill ends on a step call, and the merge skill lands in order
+  (`defaults.rs::the_review_skill_starts_its_checks_before_the_read_and_ends_on_a_step_call`,
+  `::the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself`).
 - An agent is written on the pin it was given, whole
   (`store.rs::an_agent_is_written_on_the_pin_it_was_given_whole`), and no
   table names an agent by anything but the registry id at the head of its
   pin (`store.rs::the_schema_names_agents_by_registry_id_alone`).
 - A staffed agent's skills reach it as an index and as documents on disk
-  (`prompts.rs::a_spawned_author_is_briefed_from_the_builtin_template`).
-- No author reads a `pull-request` skill: opening a request is the daemon's
+  (`prompts.rs::a_started_column_agent_is_briefed_from_the_builtin_template`,
+  `workflow_steps.rs::the_orchestrator_reads_the_workflow_and_agents_load_their_own_skills`).
+- No agent reads a `pull-request` skill: opening a request is the daemon's
   own tool now. An old staffing on it — the row a database written before
   this release still carries — keeps its row, because the task that staffed
   it still names it, and reads as empty, since nothing ships under the name

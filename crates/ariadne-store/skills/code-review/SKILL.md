@@ -20,8 +20,8 @@ Judge two axes apart: repository conventions, and task acceptance.
    For nextest: `cargo nextest run --status-level fail --final-status-level fail 2>&1 | tail -n 40`.
    For another runner: `| tail -n 40`.
    Done when every check printed its failures.
-2. Pin the review scope. For a second review, read the last verdict SHA with
-   `read_messages` and `all: true`.
+2. Pin the review scope. For a second review, read the SHA you judged last
+   from your own conversation.
    Run `git merge-base --is-ancestor <sha> HEAD`.
    If HEAD is not after that SHA, use `get_diff`.
    Otherwise, run `git log <sha>..HEAD` and `git diff <sha>..HEAD`.
@@ -44,6 +44,10 @@ Judge two axes apart: repository conventions, and task acceptance.
    behavior.
    Done when every criterion has a status and scope creep is listed.
 8. Report both axes under separate headings, each with its own verdict.
+   Record `git rev-parse HEAD` as the SHA you judged.
+9. Where both axes pass, call `complete_step` with what you checked. Else
+   call `fail_step` with every finding: file, function, must-fix or
+   optional, and the SHA you judged.
 
 ## Repository conventions axis
 
@@ -67,7 +71,8 @@ Judge two axes apart: repository conventions, and task acceptance.
 - Treat a claim without a failure as a question, not a defect.
 - Mark each finding as must-fix or optional.
 - Judge the change against the task, not your preferred design.
-- Approve only when both axes pass.
+- Complete the step only when both axes pass.
+- Edit no file: the worktree is the develop column's to change.
 
 ## Do not tell yourself
 

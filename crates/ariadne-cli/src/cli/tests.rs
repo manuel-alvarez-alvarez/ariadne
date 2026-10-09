@@ -5,7 +5,7 @@ use super::*;
 
 use clap::FromArgMatches;
 
-use ariadne_core::{GoalStatus, Landing, PermissionMode, Seat, SessionStatus, TaskStatus};
+use ariadne_core::{GoalStatus, PermissionMode, Seat, SessionStatus, TaskStatus};
 
 use crate::commands::models::ModelsCommand;
 use crate::commands::permissions::{
@@ -76,6 +76,32 @@ fn no_help_screen_leaks_the_endpoint_of_the_shell_it_runs_in() {
             .find(|line| line.starts_with("Usage:"))
             .unwrap_or_else(|| panic!("{name}: no usage line"));
         assert!(!usage.contains("--endpoint"), "{name}: {usage}");
+    }
+}
+
+/// The old pipeline's words are gone from every help screen: a task is
+/// staffed one agent per workflow column, and how it ends is the workflow's
+/// own gate, so no screen offers an author, a reviewer or a landing. The
+/// `reviewer` seat is the pull request review session's and stays where a
+/// seat is named.
+#[test]
+fn no_help_screen_names_an_author_a_reviewer_or_a_landing() {
+    fn screens(cmd: &clap::Command, path: &mut Vec<String>, out: &mut Vec<(String, String)>) {
+        out.push((path.join(" "), cmd.clone().render_long_help().to_string()));
+        for sub in cmd.get_subcommands() {
+            path.push(sub.get_name().to_string());
+            screens(sub, path, out);
+            path.pop();
+        }
+    }
+    let mut out = Vec::new();
+    screens(&built(), &mut Vec::new(), &mut out);
+    assert!(out.len() > 50, "the walk reached {} screens", out.len());
+    for (name, help) in out {
+        let lower = help.to_lowercase();
+        for gone in ["author", "landing", "--reviewer", "no-reviewer"] {
+            assert!(!lower.contains(gone), "{name} names {gone}: {help}");
+        }
     }
 }
 
@@ -584,38 +610,46 @@ fn a_filter_takes_only_the_values_the_daemon_knows() {
     assert!(msg.contains("invalid value 'done'"), "{msg}");
     assert!(msg.contains("completed"), "the refusal lists the real ones");
 
-    let Command::Session {
-        command: SessionCommand::Ls { seat, .. },
-    } = parse(&["ariadne", "session", "ls", "--seat", "reviewer"]).command
-    else {
-        panic!("session ls");
-    };
-    assert_eq!(seat, Some(Seat::Reviewer));
-    assert!(
-        try_parse(&["ariadne", "session", "ls", "--seat", "critic"]).is_err(),
-        "an unknown seat is a usage error"
-    );
-    // A stepped task's session carries seat `agent` too, so it is listed the
-    // same way every other seat is.
-    let Command::Session {
-        command: SessionCommand::Ls { seat, .. },
-    } = parse(&["ariadne", "session", "ls", "--seat", "agent"]).command
-    else {
-        panic!("session ls");
-    };
-    assert_eq!(seat, Some(Seat::Agent));
+    // The three seats: the orchestrator, the agent of a task's column, and
+    // the reviewer of a pull request the user was asked to review.
+    for (word, seat) in [
+        ("orchestrator", Seat::Orchestrator),
+        ("agent", Seat::Agent),
+        ("reviewer", Seat::Reviewer),
+    ] {
+        let Command::Session {
+            command: SessionCommand::Ls { seat: parsed, .. },
+        } = parse(&["ariadne", "session", "ls", "--seat", word]).command
+        else {
+            panic!("session ls");
+        };
+        assert_eq!(parsed, Some(seat), "{word}");
+    }
+    for gone in ["critic", "author"] {
+        assert!(
+            try_parse(&["ariadne", "session", "ls", "--seat", gone]).is_err(),
+            "{gone} is no seat, so it is a usage error"
+        );
+    }
 
     let Command::Task {
         command: TaskCommand::Ls { statuses, .. },
-    } = parse(&["ariadne", "task", "ls", "--status", "approved"]).command
+    } = parse(&["ariadne", "task", "ls", "--status", "finished"]).command
     else {
         panic!("task ls");
     };
-    assert_eq!(statuses, [TaskStatus::Approved]);
-    assert!(
-        try_parse(&["ariadne", "task", "ls", "--status", "integrating"]).is_err(),
-        "and the status a task was landed from by a fourth seat is gone"
-    );
+    assert_eq!(statuses, [TaskStatus::Finished]);
+    for gone in [
+        "integrating",
+        "under-review",
+        "changes-requested",
+        "approved",
+    ] {
+        assert!(
+            try_parse(&["ariadne", "task", "ls", "--status", gone]).is_err(),
+            "{gone}: a task is in one of six statuses, and the review ones are gone"
+        );
+    }
 }
 
 /// A status is typed either way round: the kebab-case spelling the help
@@ -626,30 +660,7 @@ fn a_filter_takes_only_the_values_the_daemon_knows() {
 fn a_status_is_spelled_in_kebab_or_in_snake() {
     assert_eq!(task_statuses(&["in-progress"]), [TaskStatus::InProgress]);
     assert_eq!(task_statuses(&["in_progress"]), [TaskStatus::InProgress]);
-    let Command::Goal {
-        command: GoalCommand::Create { landing, .. },
-    } = parse(&[
-        "ariadne",
-        "goal",
-        "create",
-        "--title",
-        "t",
-        "--repo",
-        "/r",
-        "--model",
-        "claude-agent-acp:claude-sonnet-5",
-        "--landing",
-        "pull-request",
-    ])
-    .command
-    else {
-        panic!("goal create");
-    };
-    assert_eq!(
-        landing,
-        Some(Landing::PullRequest),
-        "and so is every other enum a flag takes"
-    );
+    // And so is every other enum a flag takes.
     let Command::Repo {
         command: RepoCommand::Add {
             permission_mode, ..
@@ -668,8 +679,8 @@ fn a_status_is_spelled_in_kebab_or_in_snake() {
             "01GOAL",
             "--title",
             "t",
-            "--author",
-            "coding=claude-agent-acp:claude-sonnet-5",
+            "--agent",
+            "develop=claude-agent-acp:claude-sonnet-5",
             "--permission-mode",
             "learn",
         ])
@@ -681,9 +692,9 @@ fn a_status_is_spelled_in_kebab_or_in_snake() {
 /// every `ls` takes them the same way.
 #[test]
 fn several_statuses_ride_on_one_flag() {
-    let both = [TaskStatus::InProgress, TaskStatus::UnderReview];
-    assert_eq!(task_statuses(&["in-progress,under_review"]), both);
-    assert_eq!(task_statuses(&["in-progress", "under-review"]), both);
+    let both = [TaskStatus::InProgress, TaskStatus::Finished];
+    assert_eq!(task_statuses(&["in_progress,finished"]), both);
+    assert_eq!(task_statuses(&["in-progress", "finished"]), both);
 
     let Command::Session {
         command: SessionCommand::Ls { statuses, .. },
@@ -722,9 +733,9 @@ fn task_statuses(values: &[&str]) -> Vec<TaskStatus> {
 }
 
 /// What each agent runs on is chosen on the way in, as one string: `--model`
-/// for the orchestrator and the author, `--reviewer SKILLS=MODEL` per
-/// reviewer slot, and every spelling lands in the field the request is built
-/// from. A model is required, so every spelling carries one.
+/// for the orchestrator, `--agent STEP[:SKILLS]=MODEL` per workflow column,
+/// and every spelling lands in the field the request is built from. A model
+/// is required, so every spelling carries one.
 #[test]
 fn a_model_can_be_chosen_for_every_agent_on_the_line() {
     let orchestrator = |args: &[&str]| {
@@ -747,9 +758,7 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
     );
 
     let Command::Task {
-        command: TaskCommand::Create {
-            authors, reviewers, ..
-        },
+        command: TaskCommand::Create { agents, .. },
     } = parse(&[
         "ariadne",
         "task",
@@ -757,57 +766,59 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
         "01GOAL",
         "--title",
         "Do it",
-        "--author",
-        "coding,documentation=claude-agent-acp:claude-opus-5",
-        "--reviewer",
-        "code-review=codex-acp:o3",
-        "--reviewer",
-        "security-review=opencode-acp:ollama/llama3:8b",
+        "--agent",
+        "develop:coding,documentation=claude-agent-acp:claude-opus-5",
+        "--agent",
+        "review:code-review=codex-acp:o3",
+        "--agent",
+        "merge=opencode-acp:ollama/llama3:8b",
     ])
     .command
     else {
         panic!("task create")
     };
-    assert_eq!(authors.len(), 1);
-    assert_eq!(authors[0].skills, ["coding", "documentation"]);
-    assert_eq!(authors[0].model, "claude-agent-acp:claude-opus-5");
     assert_eq!(
-        reviewers
+        agents
             .iter()
-            .map(|r| (r.skills.join(","), r.model.as_str()))
+            .map(|a| (a.step.as_str(), a.skills.join(","), a.model.as_str()))
             .collect::<Vec<_>>(),
         [
-            ("code-review".to_string(), "codex-acp:o3"),
             (
-                "security-review".to_string(),
-                "opencode-acp:ollama/llama3:8b"
+                "develop",
+                "coding,documentation".to_string(),
+                "claude-agent-acp:claude-opus-5"
             ),
+            ("review", "code-review".to_string(), "codex-acp:o3"),
+            ("merge", String::new(), "opencode-acp:ollama/llama3:8b"),
         ],
-        "in the order they were typed, which is review order"
+        "one agent per column, in the order they were typed"
     );
 
     let edited = |args: &[&str]| {
         let mut argv = vec!["ariadne", "task", "update", "01TASK"];
         argv.extend_from_slice(args);
         let Command::Task {
-            command: TaskCommand::Update { model, .. },
+            command: TaskCommand::Update { agents, .. },
         } = parse(&argv).command
         else {
             panic!("task update")
         };
-        model
+        agents
     };
     assert_eq!(
-        edited(&["--model", "codex-acp:gpt-5.3-codex"]).as_deref(),
-        Some("codex-acp:gpt-5.3-codex")
+        edited(&["--agent", "develop=codex-acp:gpt-5.3-codex"])
+            .iter()
+            .map(|a| a.model.as_str())
+            .collect::<Vec<_>>(),
+        ["codex-acp:gpt-5.3-codex"]
     );
-    assert_eq!(edited(&["--title", "Do it better"]), None);
+    assert!(edited(&["--title", "Do it better"]).is_empty());
 }
 
 /// A model is required wherever an agent is chosen: `goal create` refuses a
-/// line with no `--model`, `task create` a line with no `--author`, an agent
-/// slot the `=MODEL` half, and `task update --model` the word `default` —
-/// there is no longer anything to hand a pin back to.
+/// line with no `--model`, `task create` a line with no `--agent`, and an
+/// agent slot the `=MODEL` half — there is no agent default to hand a pin
+/// back to, so `default` names no agent either.
 #[test]
 fn a_line_with_no_model_is_a_usage_error() {
     assert!(
@@ -820,7 +831,7 @@ fn a_line_with_no_model_is_a_usage_error() {
 
     assert!(
         try_parse(&["ariadne", "task", "create", "01GOAL", "--title", "Do it"]).is_err(),
-        "task create parses with no --author"
+        "task create parses with no --agent"
     );
 
     let err = try_parse(&[
@@ -830,14 +841,14 @@ fn a_line_with_no_model_is_a_usage_error() {
         "01GOAL",
         "--title",
         "Do it",
-        "--author",
-        "coding,testing",
+        "--agent",
+        "develop:coding,testing",
     ])
     .map(|_| ())
-    .expect_err("an author with no model")
+    .expect_err("an agent with no model")
     .to_string();
     assert!(err.contains("a model is required"), "{err}");
-    assert!(err.contains("SKILLS=MODEL"), "{err}");
+    assert!(err.contains("STEP=MODEL"), "{err}");
 
     // A bare agent parses nowhere: it names no model.
     let err = try_parse(&[
@@ -845,8 +856,8 @@ fn a_line_with_no_model_is_a_usage_error() {
         "task",
         "update",
         "01TASK",
-        "--model",
-        "codex-acp",
+        "--agent",
+        "develop=codex-acp",
     ])
     .map(|_| ())
     .expect_err("a bare agent")
@@ -854,10 +865,17 @@ fn a_line_with_no_model_is_a_usage_error() {
     assert!(err.contains("`codex-acp` names no agent"), "{err}");
     assert!(err.contains("a model is required"), "{err}");
 
-    let err = try_parse(&["ariadne", "task", "update", "01TASK", "--model", "default"])
-        .map(|_| ())
-        .expect_err("default is no model")
-        .to_string();
+    let err = try_parse(&[
+        "ariadne",
+        "task",
+        "update",
+        "01TASK",
+        "--agent",
+        "develop=default",
+    ])
+    .map(|_| ())
+    .expect_err("default is no model")
+    .to_string();
     assert!(err.contains("names no agent"), "{err}");
 
     // Whitespace after the colon is an empty model too: it would create a
@@ -867,8 +885,8 @@ fn a_line_with_no_model_is_a_usage_error() {
         "task",
         "update",
         "01TASK",
-        "--model",
-        "codex-acp: ",
+        "--agent",
+        "develop=codex-acp: ",
     ])
     .map(|_| ())
     .expect_err("whitespace is no model")
@@ -878,10 +896,9 @@ fn a_line_with_no_model_is_a_usage_error() {
 }
 
 /// `--agent STEP[:SKILLS]=MODEL[@EFFORT]` staffs one workflow column at a
-/// time, in place of `--author`/`--reviewer`/`--no-reviewer`: every half
-/// parses, a missing model is refused the way `--author`'s is, and naming
-/// `--agent` beside `--author` is a usage error — the two staffing models
-/// cannot mix on one line.
+/// time, and is the one way a task is staffed: every half parses, a missing
+/// model is refused where it was typed, and the pin flags of the old
+/// one-agent task — `--model`, `--effort` — are gone rather than ignored.
 #[test]
 fn an_agent_slot_names_its_column_skills_model_and_effort() {
     let Command::Task {
@@ -903,11 +920,11 @@ fn an_agent_slot_names_its_column_skills_model_and_effort() {
         panic!("task create")
     };
     assert_eq!(agents.len(), 2);
-    assert_eq!(agents[0].step.as_deref(), Some("develop"));
+    assert_eq!(agents[0].step, "develop");
     assert_eq!(agents[0].skills, ["coding"]);
     assert_eq!(agents[0].model, "codex-acp:gpt-5.6-sol");
     assert_eq!(agents[0].effort.as_deref(), Some("xhigh"));
-    assert_eq!(agents[1].step.as_deref(), Some("review"));
+    assert_eq!(agents[1].step, "review");
     assert!(agents[1].skills.is_empty(), "empty means the column's own");
 
     let err = try_parse(&[
@@ -919,25 +936,7 @@ fn an_agent_slot_names_its_column_skills_model_and_effort() {
     assert!(err.contains("a model is required"), "{err}");
     assert!(err.contains("STEP=MODEL"), "{err}");
 
-    // The two staffing models are mutually exclusive on one line: naming
-    // `--agent` beside `--author` is refused before anything is sent.
-    assert!(
-        try_parse(&[
-            "ariadne",
-            "task",
-            "create",
-            "01GOAL",
-            "--title",
-            "Do it",
-            "--author",
-            "coding=codex-acp:o3",
-            "--agent",
-            "develop=codex-acp:o3",
-        ])
-        .is_err()
-    );
-    // And `task create` with neither staffs nobody, which is a usage error
-    // too.
+    // `task create` with no `--agent` staffs nobody, which is a usage error.
     assert!(try_parse(&["ariadne", "task", "create", "01GOAL", "--title", "Do it"]).is_err());
 
     let Command::Task {
@@ -955,27 +954,44 @@ fn an_agent_slot_names_its_column_skills_model_and_effort() {
         panic!("task update")
     };
     assert_eq!(agents.len(), 1);
-    assert!(
-        try_parse(&[
+
+    // The staffing flags of the old pipeline are gone, not ignored: a line
+    // that still carries one is refused.
+    for gone in [
+        &["--model", "codex-acp:o3"][..],
+        &["--effort", "high"][..],
+        &["--reviewer", "code-review=codex-acp:o3"][..],
+        &["--no-reviewer"][..],
+    ] {
+        let mut argv = vec!["ariadne", "task", "update", "01TASK"];
+        argv.extend_from_slice(gone);
+        assert!(try_parse(&argv).is_err(), "{gone:?} still parses");
+    }
+    for gone in [
+        &["--author", "coding=codex-acp:o3"][..],
+        &["--reviewer", "code-review=codex-acp:o3"][..],
+        &["--no-reviewer"][..],
+    ] {
+        let mut argv = vec![
             "ariadne",
             "task",
-            "update",
-            "01TASK",
+            "create",
+            "01GOAL",
+            "--title",
+            "Do it",
             "--agent",
             "develop=codex-acp:o3",
-            "--model",
-            "codex-acp:o3",
-        ])
-        .is_err(),
-        "--agent replaces the whole staffing, so a pin beside it is refused"
-    );
+        ];
+        argv.extend_from_slice(gone);
+        assert!(try_parse(&argv).is_err(), "{gone:?} still parses");
+    }
 }
 
-/// `goal create --workflow` names a workflow in place of the fixed
-/// author/reviewer/landing pipeline, and `--landing` is refused beside it —
-/// a workflow's own gates say how every task of the goal ends.
+/// `goal create --workflow` names the workflow every task of the goal runs
+/// on, and the `--landing` of the old pipeline is gone — a workflow's own
+/// gates say how every task of the goal ends.
 #[test]
-fn goal_create_workflow_sends_the_name_and_refuses_landing_beside_it() {
+fn goal_create_workflow_sends_the_name_and_landing_is_gone() {
     let Command::Goal {
         command: GoalCommand::Create { workflow, .. },
     } = parse(&[
@@ -1008,13 +1024,11 @@ fn goal_create_workflow_sends_the_name_and_refuses_landing_beside_it() {
             "01REPO",
             "--model",
             "codex-acp:gpt-5.3-codex",
-            "--workflow",
-            "develop-review-merge",
             "--landing",
             "merge",
         ])
         .is_err(),
-        "a workflow's own gates say how a task ends, so --landing is refused beside it"
+        "a workflow's own gates say how a task ends, so --landing is gone"
     );
 }
 
@@ -1046,8 +1060,7 @@ fn session_switch_requires_a_model_and_accepts_effort_default() {
 }
 
 /// The other half of a pin, on every line a model is chosen on: `--effort`
-/// beside `--model`, `@EFFORT` on a reviewer slot, and the word an update
-/// writes to run the model at whatever its CLI reasons it at.
+/// beside `--model`, and `@EFFORT` on an agent slot.
 #[test]
 fn an_effort_can_be_chosen_beside_every_model() {
     let Command::Goal {
@@ -1073,9 +1086,7 @@ fn an_effort_can_be_chosen_beside_every_model() {
     assert_eq!(effort.as_deref(), Some("xhigh"));
 
     let Command::Task {
-        command: TaskCommand::Create {
-            authors, reviewers, ..
-        },
+        command: TaskCommand::Create { agents, .. },
     } = parse(&[
         "ariadne",
         "task",
@@ -1083,73 +1094,54 @@ fn an_effort_can_be_chosen_beside_every_model() {
         "01GOAL",
         "--title",
         "Do it",
-        "--author",
-        "coding=claude-agent-acp:claude-opus-5@xhigh",
-        "--reviewer",
-        "code-review=codex-acp:gpt-5.6-sol@xhigh",
-        "--reviewer",
-        "security-review=claude-agent-acp:claude-sonnet-5@high",
-        "--reviewer",
-        "performance-review=codex-acp:gpt-5.6-luna",
+        "--agent",
+        "develop:coding=claude-agent-acp:claude-opus-5@xhigh",
+        "--agent",
+        "review:code-review=codex-acp:gpt-5.6-sol@xhigh",
+        "--agent",
+        "merge=codex-acp:gpt-5.6-luna",
     ])
     .command
     else {
         panic!("task create")
     };
-    assert_eq!(authors[0].effort.as_deref(), Some("xhigh"));
     assert_eq!(
-        reviewers
+        agents
             .iter()
-            .map(|r| (r.skills.join(","), r.model.as_str(), r.effort.as_deref()))
+            .map(|a| (a.step.as_str(), a.model.as_str(), a.effort.as_deref()))
             .collect::<Vec<_>>(),
         [
-            (
-                "code-review".to_string(),
-                "codex-acp:gpt-5.6-sol",
-                Some("xhigh")
-            ),
-            (
-                "security-review".to_string(),
-                "claude-agent-acp:claude-sonnet-5",
-                Some("high")
-            ),
-            (
-                "performance-review".to_string(),
-                "codex-acp:gpt-5.6-luna",
-                None
-            ),
+            ("develop", "claude-agent-acp:claude-opus-5", Some("xhigh")),
+            ("review", "codex-acp:gpt-5.6-sol", Some("xhigh")),
+            ("merge", "codex-acp:gpt-5.6-luna", None),
         ],
         "an agent names its model, and the effort beside it where one was \
          chosen"
     );
 
-    let edited = |args: &[&str]| {
-        let mut argv = vec!["ariadne", "task", "update", "01TASK"];
-        argv.extend_from_slice(args);
-        let Command::Task {
-            command: TaskCommand::Update { effort, .. },
-        } = parse(&argv).command
-        else {
-            panic!("task update")
-        };
-        effort
-    };
-    assert_eq!(edited(&["--effort", "ultra"]).as_deref(), Some("ultra"));
-    assert_eq!(edited(&["--effort", "default"]).as_deref(), Some("default"));
-    assert_eq!(edited(&["--model", "codex-acp:gpt-5.3-codex"]), None);
+    // An effort rides on the slot it belongs to; there is no `--effort` for
+    // a task, since a task has as many models as its workflow has columns.
+    assert!(try_parse(&["ariadne", "task", "update", "01TASK", "--effort", "ultra"]).is_err());
 }
 
 /// An effort is the model's to accept, and the daemon holds the catalogue —
-/// so the only thing the line itself refuses is a flag with no effort in it.
+/// so the only thing the line itself refuses is a slot with no effort after
+/// its `@`.
 #[test]
 fn an_effort_that_says_nothing_is_a_usage_error() {
-    let err = try_parse(&["ariadne", "task", "update", "01TASK", "--effort", " "])
-        .map(|_| ())
-        .expect_err("no effort at all")
-        .to_string();
+    let err = try_parse(&[
+        "ariadne",
+        "task",
+        "update",
+        "01TASK",
+        "--agent",
+        "develop=codex-acp:o3@ ",
+    ])
+    .map(|_| ())
+    .expect_err("no effort at all")
+    .to_string();
     assert!(err.contains("no effort was named"), "{err}");
     assert!(err.contains("ariadne models ls"), "{err}");
-    assert!(err.contains("default"), "{err}");
 
     // Which efforts a model takes is the daemon's answer, not this one's: an
     // effort no model of that agent runs at is still sent, and refused there.
@@ -1159,10 +1151,8 @@ fn an_effort_that_says_nothing_is_a_usage_error() {
             "task",
             "update",
             "01TASK",
-            "--model",
-            "claude-agent-acp:claude-opus-5",
-            "--effort",
-            "ultra",
+            "--agent",
+            "develop=claude-agent-acp:claude-opus-5@ultra",
         ])
         .is_ok()
     );
@@ -1192,18 +1182,16 @@ fn a_model_naming_no_agent_is_a_usage_error() {
             "01GOAL",
             "--title",
             "Do it",
-            "--author",
-            "coding=gpt-5.3-codex",
+            "--agent",
+            "develop:coding=gpt-5.3-codex",
         ],
         &[
             "ariadne",
             "task",
-            "create",
-            "01GOAL",
-            "--title",
-            "Do it",
-            "--reviewer",
-            "code-review=gpt-5.3-codex",
+            "update",
+            "01TASK",
+            "--agent",
+            "review=gpt-5.3-codex",
         ],
     ];
     for argv in lines {
@@ -1232,49 +1220,52 @@ fn a_model_naming_no_agent_is_a_usage_error() {
 #[test]
 fn an_agent_id_is_the_daemons_to_check() {
     assert!(
-        try_parse(&["ariadne", "task", "update", "01TASK", "--model", "llama:x"]).is_ok(),
+        try_parse(&[
+            "ariadne",
+            "task",
+            "update",
+            "01TASK",
+            "--agent",
+            "develop=llama:x"
+        ])
+        .is_ok(),
         "the line has no registry to check an agent against"
     );
 }
 
-/// A `--reviewer` that says half of what it means is a typo, and it is
+/// An `--agent` slot that says half of what it means is a typo, and it is
 /// refused where it was typed rather than sent to the daemon to be refused
 /// there — with the form it accepts.
 #[test]
-fn a_reviewer_that_names_no_real_agent_is_a_usage_error() {
+fn an_agent_slot_that_names_no_real_agent_is_a_usage_error() {
     let refused = |spec: &str| {
         try_parse(&[
-            "ariadne",
-            "task",
-            "create",
-            "01GOAL",
-            "--title",
-            "Do it",
-            "--reviewer",
-            spec,
+            "ariadne", "task", "create", "01GOAL", "--title", "Do it", "--agent", spec,
         ])
         .map(|_| ())
-        .expect_err("a reviewer that says half of what it means")
+        .expect_err("an agent slot that says half of what it means")
         .to_string()
     };
-    let err = refused("code-review=llama");
+    let err = refused("review:code-review=llama");
     assert!(err.contains("names no agent"), "{err}");
-    assert!(refused("code-review=").contains("no model after the ="));
-    assert!(refused("code-review=codex-acp:").contains("no model after the `:`"));
-    // Skills with no `=MODEL` at all are half a slot too, `@EFFORT` or not.
-    let err = refused("code-review");
+    assert!(refused("review:code-review=").contains("no model after the ="));
+    assert!(refused("review=codex-acp:").contains("no model after the `:`"));
+    // A column with no `=MODEL` at all is half a slot too, `@EFFORT` or not.
+    let err = refused("review:code-review");
     assert!(err.contains("a model is required"), "{err}");
-    let err = refused("Reviewer@high");
+    let err = refused("review@high");
     assert!(err.contains("a model is required"), "{err}");
+    // A model with no column is the other half missing.
+    assert!(refused("=codex-acp:o3").contains("no column"));
     // And the half after the `@`, which the forms in the refusal spell out.
-    let err = refused("code-review=codex-acp:o3@");
+    let err = refused("review=codex-acp:o3@");
     assert!(err.contains("no effort was named"), "{err}");
-    assert!(refused("code-review=@high").contains("SKILLS=MODEL@EFFORT"));
+    assert!(refused("review=@high").contains("STEP:SKILLS=MODEL@EFFORT"));
 }
 
-/// A repository supplies the landing for a new goal that leaves it out.
+/// A repository supplies the workflow for a new goal that leaves it out.
 #[test]
-fn a_repository_sets_the_default_landing_for_new_goals() {
+fn a_repository_sets_the_default_workflow_for_new_goals() {
     let Command::Repo {
         command:
             RepoCommand::Add {
@@ -1282,7 +1273,7 @@ fn a_repository_sets_the_default_landing_for_new_goals() {
                 branch,
                 description,
                 permission_mode,
-                default_landing,
+                workflow,
                 ..
             },
     } = parse(&[
@@ -1294,8 +1285,8 @@ fn a_repository_sets_the_default_landing_for_new_goals() {
         "next",
         "--description",
         "the API",
-        "--default-landing",
-        "pull-request",
+        "--workflow",
+        "develop-review-pr",
     ])
     .command
     else {
@@ -1305,10 +1296,11 @@ fn a_repository_sets_the_default_landing_for_new_goals() {
     assert_eq!(branch.as_deref(), Some("next"));
     assert_eq!(description.as_deref(), Some("the API"));
     assert_eq!(permission_mode, None, "the daemon's `auto` stands in");
-    assert_eq!(default_landing, Some(Landing::PullRequest));
+    assert_eq!(workflow.as_deref(), Some("develop-review-pr"));
 
     // The flags that used to say how landing works are gone, not ignored.
     for gone in [
+        &["--default-landing", "pull-request"][..],
         &["--merge-strategy", "pull-request"][..],
         &["--landing-prompt", "Land it."][..],
         &["--landing-prompt-file", "brief.md"][..],
@@ -1318,6 +1310,7 @@ fn a_repository_sets_the_default_landing_for_new_goals() {
         assert!(try_parse(&argv).is_err(), "{gone:?} still parses");
     }
     for gone in [
+        &["--default-landing", "merge"][..],
         &["--merge-strategy", "direct"][..],
         &["--reset-landing-prompt"][..],
     ] {

@@ -29,7 +29,7 @@ pub struct WorkTotals {
     pub tasks_cancelled: i64,
     /// `tasks_finished` over the three endings; 0 where there are none.
     pub finish_rate: f64,
-    /// Finished tasks whose `landing` was `merge` or `pull_request`.
+    /// Finished tasks whose last column reported the commit they landed as.
     pub landed: i64,
 }
 
@@ -92,10 +92,7 @@ impl Store {
                 ("task_ended", "finished") => {
                     totals.tasks_finished += 1;
                     bump(&mut buckets, &start).tasks_finished += 1;
-                    if matches!(
-                        data["landing"].as_str(),
-                        Some("merge") | Some("pull_request")
-                    ) {
+                    if data["landed"].as_bool() == Some(true) {
                         totals.landed += 1;
                         bump(&mut buckets, &start).landed += 1;
                     }
@@ -219,17 +216,17 @@ mod tests {
                 fact(
                     "task_ended",
                     "2026-10-01T12:00:00Z",
-                    serde_json::json!({"status": "finished", "landing": "merge", "lead_time_secs": 10}),
+                    serde_json::json!({"status": "finished", "landed": true, "lead_time_secs": 10}),
                 ),
                 fact(
                     "task_ended",
                     "2026-10-01T13:00:00Z",
-                    serde_json::json!({"status": "failed", "landing": "merge"}),
+                    serde_json::json!({"status": "failed", "landed": false}),
                 ),
                 fact(
                     "task_ended",
                     "2026-10-01T14:00:00Z",
-                    serde_json::json!({"status": "cancelled", "landing": "none"}),
+                    serde_json::json!({"status": "cancelled", "landed": false}),
                 ),
                 fact(
                     "goal_ended",
@@ -265,7 +262,7 @@ mod tests {
             vec![fact(
                 "task_ended",
                 &(now - Duration::hours(2)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-                serde_json::json!({"status": "finished", "landing": "none"}),
+                serde_json::json!({"status": "finished", "landed": false}),
             )],
         )
         .await;
@@ -332,7 +329,7 @@ mod tests {
             vec![fact(
                 "task_ended",
                 &(now - Duration::days(3)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-                serde_json::json!({"status": "finished", "landing": "none"}),
+                serde_json::json!({"status": "finished", "landed": false}),
             )],
         )
         .await;
@@ -367,12 +364,12 @@ mod tests {
                 fact(
                     "task_ended",
                     &(now - Duration::days(9)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-                    serde_json::json!({"status": "finished", "landing": "none"}),
+                    serde_json::json!({"status": "finished", "landed": false}),
                 ),
                 fact(
                     "task_ended",
                     &(now - Duration::days(1)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-                    serde_json::json!({"status": "finished", "landing": "none"}),
+                    serde_json::json!({"status": "finished", "landed": false}),
                 ),
             ],
         )
@@ -396,12 +393,12 @@ mod tests {
                     "task_ended",
                     &(now - Duration::days(65))
                         .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-                    serde_json::json!({"status": "finished", "landing": "none"}),
+                    serde_json::json!({"status": "finished", "landed": false}),
                 ),
                 fact(
                     "task_ended",
                     &(now - Duration::days(1)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-                    serde_json::json!({"status": "finished", "landing": "none"}),
+                    serde_json::json!({"status": "finished", "landed": false}),
                 ),
             ],
         )
@@ -422,13 +419,13 @@ mod tests {
                     kind: "task_ended".into(),
                     created_at: "2026-09-01T00:00:00Z".into(),
                     repo_id: Some("01REPO_A".into()),
-                    data: serde_json::json!({"status": "finished", "landing": "none"}),
+                    data: serde_json::json!({"status": "finished", "landed": false}),
                 },
                 NewFact {
                     kind: "task_ended".into(),
                     created_at: "2026-10-01T00:00:00Z".into(),
                     repo_id: Some("01REPO_B".into()),
-                    data: serde_json::json!({"status": "finished", "landing": "none"}),
+                    data: serde_json::json!({"status": "finished", "landed": false}),
                 },
             ],
         )

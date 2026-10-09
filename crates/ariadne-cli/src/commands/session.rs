@@ -889,7 +889,7 @@ mod tests {
             goal: Some("01GOAL".into()),
             task: Some("01TASK".into()),
             statuses: vec![SessionStatus::Idle],
-            seat: Some(Seat::Author),
+            seat: Some(Seat::Agent),
             attention: true,
             dir: Some("/work/api".into()),
             since: Some("2026-09-01T00:00:00Z".into()),
@@ -902,7 +902,7 @@ mod tests {
         };
         assert_eq!(
             sessions_path(&options, None).unwrap(),
-            "/v1/sessions?kind=outside&agent=codex-acp&goal=01GOAL&task=01TASK&status=idle&seat=author&attention=true&dir=%2Fwork%2Fapi&since=2026-09-01T00%3A00%3A00Z&until=2026-09-12T12%3A30%3A00%2B02%3A00&q=rate+limit&limit=25&cursor=next%2Fpage&refresh=true"
+            "/v1/sessions?kind=outside&agent=codex-acp&goal=01GOAL&task=01TASK&status=idle&seat=agent&attention=true&dir=%2Fwork%2Fapi&since=2026-09-01T00%3A00%3A00Z&until=2026-09-12T12%3A30%3A00%2B02%3A00&q=rate+limit&limit=25&cursor=next%2Fpage&refresh=true"
         );
     }
 

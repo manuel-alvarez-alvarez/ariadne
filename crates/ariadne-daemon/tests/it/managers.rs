@@ -6,19 +6,10 @@
 use crate::common;
 
 use std::path::PathBuf;
-#[cfg(unix)]
-use std::process::Command;
 
 use ariadne_daemon::gitwt::GitManager;
-#[cfg(unix)]
-use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
 
-#[cfg(unix)]
-use common::harness;
 use common::sh;
-
-#[cfg(unix)]
-const FAILED_GIT_CHILD: &str = "ARIADNE_FAILED_GIT_CHILD";
 
 /// A toy repo with an initial commit on `main`.
 fn toy_repo() -> (tempfile::TempDir, PathBuf) {
@@ -38,7 +29,7 @@ async fn git_worktree_lifecycle_and_merge_verification() {
     let (dir, repo) = toy_repo();
     let git = GitManager;
 
-    // Author worktree on a new branch.
+    // The task's worktree on a new branch.
     let wt = dir.path().join("wt-eng");
     git.add_worktree(&repo, &wt, "fix-the-widget-aaa111", "main")
         .await
@@ -51,7 +42,7 @@ async fn git_worktree_lifecycle_and_merge_verification() {
         "echo v2 > file.txt && git add . && git commit -qm change",
     );
 
-    // Reviewer worktree, detached at the branch tip.
+    // A pull request review's worktree, detached at the branch tip.
     let wt_rev = dir.path().join("wt-rev");
     git.add_detached_worktree(&repo, &wt_rev, "fix-the-widget-aaa111")
         .await
@@ -80,7 +71,7 @@ async fn git_worktree_lifecycle_and_merge_verification() {
             .unwrap()
     );
 
-    // Merge in the primary checkout (what the author agent will do).
+    // Merge in the primary checkout (what the merge column's agent does).
     sh(&repo, "git merge -q --no-ff fix-the-widget-aaa111 -m merge");
     assert!(
         git.is_ancestor(&repo, "fix-the-widget-aaa111", "main")
@@ -112,8 +103,10 @@ async fn git_worktree_lifecycle_and_merge_verification() {
     git.remove_worktree(&repo, &wt).await.unwrap();
 }
 
+/// A detached worktree — what a pull request review runs in (029) — is
+/// moved to the branch's new tip, and whatever was left in it goes.
 #[tokio::test]
-async fn reviewer_worktree_refresh_between_rounds() {
+async fn a_detached_worktree_is_refreshed_to_the_new_tip() {
     let (dir, repo) = toy_repo();
     let git = GitManager;
 
@@ -134,7 +127,7 @@ async fn reviewer_worktree_refresh_between_rounds() {
         "r1"
     );
 
-    // Round 2: author pushes more commits; reviewer worktree is refreshed.
+    // More commits on the branch; the detached worktree is refreshed.
     sh(&wt, "echo r2 > file.txt && git add . && git commit -qm r2");
     git.checkout_detached(&wt_rev, "fix-the-widget-aaa111")
         .await
@@ -146,9 +139,9 @@ async fn reviewer_worktree_refresh_between_rounds() {
         "r2"
     );
 
-    // Round 3: the reviewer broke the code to prove a test, and left the edit
-    // and a scratch file behind. The refresh still moves the tree, and what
-    // the reviewer left is gone.
+    // The review broke the code to prove a test, and left the edit and a
+    // scratch file behind. The refresh still moves the tree, and what the
+    // review left is gone.
     sh(&wt, "echo r3 > file.txt && git add . && git commit -qm r3");
     sh(&wt_rev, "echo broken > file.txt && echo scratch > red.txt");
     git.checkout_detached(&wt_rev, "fix-the-widget-aaa111")
@@ -164,7 +157,7 @@ async fn reviewer_worktree_refresh_between_rounds() {
 }
 
 /// A repository nobody has committed to yet: the base branch is unborn, so the
-/// author's worktree is cut orphan and its first commit is the repository's.
+/// task's worktree is cut orphan and its first commit is the repository's.
 /// The diff has no merge base to be read against, and is the whole branch —
 /// nor, once it has landed, a first parent, since it is the commit the
 /// repository starts from.
@@ -184,13 +177,9 @@ async fn a_worktree_is_cut_from_a_base_branch_with_no_commits() {
     git.add_worktree(&repo, &wt, "first-task-aaa111", "main")
         .await
         .unwrap();
-    // Nothing to check out, and nothing to review until the author commits.
+    // Nothing to check out, and no branch until the first column commits.
     assert!(!wt.join("file.txt").exists());
-    assert!(
-        git.ensure_branch_has_commits(&repo, "first-task-aaa111")
-            .await
-            .is_err()
-    );
+    assert!(!git.branch_exists(&repo, "first-task-aaa111").await.unwrap());
 
     sh(
         &wt,
@@ -202,7 +191,7 @@ async fn a_worktree_is_cut_from_a_base_branch_with_no_commits() {
     let diff = git.diff(&repo, "main", "first-task-aaa111").await.unwrap();
     assert!(diff.contains("+v1"), "{diff}");
 
-    // And the base fast-forwards onto it, which is what `direct` landing does.
+    // And the base fast-forwards onto it, which is what the merge column does.
     sh(&repo, "git merge --ff-only first-task-aaa111");
     assert!(
         git.is_ancestor(&repo, "first-task-aaa111", "main")
@@ -221,63 +210,4 @@ async fn a_worktree_is_cut_from_a_base_branch_with_no_commits() {
     assert!(diff.contains("+v1"), "{diff}");
 
     git.remove_worktree(&repo, &wt).await.unwrap();
-}
-
-/// A ref that git could not inspect is not an unborn ref. The review request
-/// must preserve the start error, so the scheduler can retry it later.
-#[tokio::test]
-#[cfg(unix)]
-async fn a_git_start_failure_is_not_reported_as_an_empty_review() {
-    if std::env::var_os(FAILED_GIT_CHILD).is_none() {
-        let output = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "managers::a_git_start_failure_is_not_reported_as_an_empty_review",
-                "--nocapture",
-            ])
-            .env(FAILED_GIT_CHILD, "1")
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "child failed:\n{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        return;
-    }
-
-    let h = harness().await;
-    let repo = h.git_repo("repo");
-    let cast = h.cast().await;
-    sh(&repo, &format!("git branch {}", cast.task.branch));
-    let original = getrlimit(Resource::Nofile);
-    setrlimit(
-        Resource::Nofile,
-        Rlimit {
-            current: Some(original.maximum.map_or(64, |maximum| maximum.min(64))),
-            maximum: original.maximum,
-        },
-    )
-    .unwrap();
-    let mut held = Vec::new();
-    while let Ok(file) = std::fs::File::open("/dev/null") {
-        held.push(file);
-    }
-    // Leave enough room for the store lookup that leads to the git check,
-    // but not enough for Command::output to create its pipes and child.
-    for _ in 0..3 {
-        drop(held.pop());
-    }
-    let error = h
-        .launcher
-        .spawn_reviewer(&cast.task.id, &cast.reviewer.id)
-        .await
-        .unwrap_err();
-    drop(held);
-    setrlimit(Resource::Nofile, original).unwrap();
-    let error = format!("{error:#}");
-    assert!(error.contains("git could not start"), "{error}");
-    assert!(!error.contains("nothing to review"), "{error}");
-    assert!(!error.contains("has no commits yet"), "{error}");
 }

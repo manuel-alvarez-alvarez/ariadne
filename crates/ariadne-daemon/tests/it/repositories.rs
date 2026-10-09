@@ -5,7 +5,7 @@
 //! checkout knows, born or not — that the same checkout is registered once per
 //! base branch, and that every write reaches the domain-event stream.
 //!
-//! A repository supplies the landing default for a goal created without one.
+//! A repository supplies the workflow for a goal created without one.
 
 use crate::common;
 
@@ -14,7 +14,7 @@ use axum::http::StatusCode;
 use ariadne_api::goals::GoalDto;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::stream::DomainEvent;
-use ariadne_core::{Landing, PermissionMode};
+use ariadne_core::PermissionMode;
 
 use common::{delete, get, harness, next_event, post_json, put_json, sh};
 
@@ -242,8 +242,11 @@ async fn the_same_path_and_branch_cannot_be_registered_twice() {
     .await;
 }
 
-/// A repository supplies the landing for a goal that does not name one. A
-/// goal that does name one keeps it, and an edit does not change either goal.
+/// A repository supplies the workflow for a goal that does not name one —
+/// the first repository's, in the order the goal's repositories are read —
+/// and a repository created without one is on `develop-review-merge`. A
+/// goal that does name one keeps it, and an edit of the repository changes
+/// neither goal: a goal snapshots its workflow when it is created.
 #[tokio::test]
 async fn a_repository_defaults_new_goals_without_changing_existing_ones() {
     let h = harness().await;
@@ -255,25 +258,26 @@ async fn a_repository_defaults_new_goals_without_changing_existing_ones() {
                 "/v1/repositories",
                 serde_json::json!({
                     "path": first_path.display().to_string(),
-                    "default_landing": "pull_request",
+                    "default_workflow": "develop-review-pr",
                 }),
             ),
             StatusCode::CREATED,
         )
         .await;
-    assert_eq!(created.default_landing, Landing::PullRequest);
+    assert_eq!(created.default_workflow, "develop-review-pr");
     let second: RepositoryDto = h
         .json(
             post_json(
                 "/v1/repositories",
-                serde_json::json!({
-                    "path": second_path.display().to_string(),
-                    "default_landing": "none",
-                }),
+                serde_json::json!({"path": second_path.display().to_string()}),
             ),
             StatusCode::CREATED,
         )
         .await;
+    assert_eq!(
+        second.default_workflow, "develop-review-merge",
+        "a repository that names no workflow is on the shipped default"
+    );
 
     let goal: GoalDto = h
         .json(
@@ -288,7 +292,12 @@ async fn a_repository_defaults_new_goals_without_changing_existing_ones() {
             StatusCode::CREATED,
         )
         .await;
-    assert_eq!(goal.landing, Landing::PullRequest);
+    assert_eq!(goal.workflow, "develop-review-pr");
+    assert_eq!(
+        goal.steps.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+        ["develop", "review", "pr"],
+        "the goal exposes the columns of the workflow it took"
+    );
 
     let explicit: GoalDto = h
         .json(
@@ -298,29 +307,87 @@ async fn a_repository_defaults_new_goals_without_changing_existing_ones() {
                     "title": "Keep the choice",
                     "repository_ids": [created.id],
                     "model": common::test_pin().model,
-                    "landing": "merge",
+                    "workflow": "develop-review-merge",
                 }),
             ),
             StatusCode::CREATED,
         )
         .await;
-    assert_eq!(explicit.landing, Landing::Merge);
+    assert_eq!(explicit.workflow, "develop-review-merge");
 
     let edited: RepositoryDto = h
         .json(
             put_json(
                 &format!("/v1/repositories/{}", created.id),
-                serde_json::json!({"default_landing": "none"}),
+                serde_json::json!({"default_workflow": "develop-review-merge"}),
             ),
             StatusCode::OK,
         )
         .await;
-    assert_eq!(edited.default_landing, Landing::None);
+    assert_eq!(edited.default_workflow, "develop-review-merge");
 
     let unchanged: GoalDto = h.get(&format!("/v1/goals/{}", goal.id)).await;
-    assert_eq!(unchanged.landing, Landing::PullRequest);
+    assert_eq!(unchanged.workflow, "develop-review-pr");
+    assert_eq!(
+        unchanged.repos[0].default_workflow, "develop-review-merge",
+        "the goal reads its repository live, and its own workflow stays"
+    );
     let unchanged: GoalDto = h.get(&format!("/v1/goals/{}", explicit.id)).await;
-    assert_eq!(unchanged.landing, Landing::Merge);
+    assert_eq!(unchanged.workflow, "develop-review-merge");
+}
+
+/// A workflow the catalog does not hold is refused by name, on a create and
+/// on an update, and the refusal leaves the repository as it was.
+#[tokio::test]
+async fn an_unknown_default_workflow_is_refused_by_name() {
+    let h = harness().await;
+    let repo = h.git_repo("repo");
+
+    let err = h
+        .error(
+            post_json(
+                "/v1/repositories",
+                serde_json::json!({
+                    "path": repo.display().to_string(),
+                    "default_workflow": "no-such-workflow",
+                }),
+            ),
+            StatusCode::NOT_FOUND,
+        )
+        .await;
+    assert!(
+        err.error.message.contains("no-such-workflow"),
+        "the refusal names the workflow: {}",
+        err.error.message
+    );
+    let all: Vec<RepositoryDto> = h.json(get("/v1/repositories"), StatusCode::OK).await;
+    assert!(all.is_empty(), "a refused create registers nothing");
+
+    let created: RepositoryDto = h
+        .json(
+            post_json(
+                "/v1/repositories",
+                serde_json::json!({"path": repo.display().to_string()}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let err = h
+        .error(
+            put_json(
+                &format!("/v1/repositories/{}", created.id),
+                serde_json::json!({"default_workflow": "no-such-workflow"}),
+            ),
+            StatusCode::NOT_FOUND,
+        )
+        .await;
+    assert!(
+        err.error.message.contains("no-such-workflow"),
+        "{}",
+        err.error.message
+    );
+    let kept: RepositoryDto = h.get(&format!("/v1/repositories/{}", created.id)).await;
+    assert_eq!(kept.default_workflow, "develop-review-merge");
 }
 
 /// A repository answers its sessions' permission requests with `auto` until

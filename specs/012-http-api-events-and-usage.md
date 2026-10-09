@@ -9,7 +9,7 @@ tests:
   - crates/ariadne-daemon/tests/it/session_list.rs
   - crates/ariadne-daemon/tests/it/switch.rs
   - crates/ariadne-daemon/tests/it/unknown_fields.rs
-  - crates/ariadne-daemon/tests/it/landing_lifecycle.rs
+  - crates/ariadne-daemon/tests/it/workflow_steps.rs
   - crates/ariadne-daemon/tests/it/logs.rs
   - crates/ariadne-daemon/tests/it/doctor.rs
   - crates/ariadne-daemon/tests/it/ai_permissions.rs
@@ -55,11 +55,10 @@ and the ACP runtime that reports the agent events (021).
    was refused (001). Every request DTO denies unknown fields, so a body that
    carries a field its DTO does not declare is refused in that same envelope,
    and the refusal names the field. A response DTO denies nothing.
-   `CreateGoalRequest` takes the goal's `landing` and `GoalDto` carries it.
-   The task requests take none, and `TaskDto.landing` is a read-only copy of
-   the goal's (005). Each repository in `GoalDto.repos` carries `goal_branch`,
-   a string after feature branch finalization, or null before it and for
-   other landings.
+   `CreateGoalRequest` takes the goal's `workflow` and `GoalDto` carries it
+   with the columns it snapshotted (030). The task requests take `agents`,
+   one per column, and `TaskDto.step` is the column the task is in; neither
+   carries a landing.
 4. Every write emits a **fat event**: the changed entity, whole, so a client
    can apply it without a re-fetch. A task transition carries the transition
    that caused it, whether it came through HTTP or from the scheduler.
@@ -113,8 +112,8 @@ and the ACP runtime that reports the agent events (021).
 10. An idle report clears the stall and the error and nothing else, so a
     permission request survives it. A permission reply hands control back to
     the agent and takes the wait down.
-11. Attention is raised only on an agent somebody is still waiting on: a
-    reviewer that already cast its verdict, and an orchestrator of a finished
+11. Attention is raised only on an agent somebody is still waiting on: the
+    agent of a column the task has left, and an orchestrator of a finished
     goal, raise none. Their events are recorded, and the status still follows
     them.
 12. An event is believed only where it comes from the launch the session is
@@ -155,7 +154,7 @@ and the ACP runtime that reports the agent events (021).
     uses.
 15. Token usage is kept per session and per source, and a source replaces
     its own totals rather than adding to them. Usage rolls up to the task and
-    the goal; every session of one reviewer groups together; a session that
+    the goal; every session of one column agent groups together; a session that
     has reported nothing reads as zeros; and usage goes when its session
     does. A session also carries its latest context-window `used` and `size`
     pair from an ACP `usage_update`; both stay null when no update arrived,
@@ -349,17 +348,12 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
 - A body with a field its DTO does not declare is refused, and the refusal
   names the field
   (`unknown_fields.rs::an_unknown_field_is_refused_and_named`).
-- Repository entries in `GoalDto` carry null `goal_branch` during planning
-  and the created branch after feature branch finalization
-  (`landing_lifecycle.rs::feature_tasks_land_on_the_goal_branch_and_keep_the_base_unchanged`).
-  Other landings keep null
-  (`goal_repositories.rs::other_landings_finalize_without_a_goal_branch`).
-- A goal is created with the `landing` its request names, and `TaskDto`
-  answers it back for each task
-  (`landing_lifecycle.rs::a_pull_request_goal_briefs_every_task_to_land_by_pull_request`);
-  a goal request with none answers `merge`, and a task request that names a
-  landing is refused and the refusal names the field
-  (`landing_lifecycle.rs::a_goal_with_no_landing_merges_and_a_task_takes_none_of_its_own`).
+- A goal is created with the `workflow` its request names, or its first
+  repository's default, and `GoalDto` carries its columns
+  (`workflow_steps.rs::a_goal_takes_the_repository_default_and_snapshots_its_workflow`);
+  the OpenAPI document describes the step routes and every workflow field,
+  and nothing of a landing
+  (`workflow_steps.rs::openapi_describes_the_step_routes_and_workflow_fields`).
 - The three AI permission paths, their schemas and the
   `ai_permissions_updated` kind are in the OpenAPI document, the doctor's
   report carries the interpreter
@@ -384,7 +378,7 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
   (`events.rs::ingested_events_raise_and_clear_session_attention`,
   `::an_idle_report_clears_the_stall_and_the_error_and_nothing_else`,
   `::a_permission_request_flags_the_session_as_blocked`), and not on an agent
-  nobody waits on (`::a_reviewer_that_already_voted_raises_no_attention`,
+  nobody waits on (`::the_agent_of_a_column_the_task_has_left_raises_no_attention`,
   `::an_orchestrator_of_a_finished_goal_raises_no_attention`).
 - An event from a launch the session has moved past is recorded and changes
   nothing, all but its `session_end`, which is not recorded
@@ -429,7 +423,7 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
   `events.rs::a_malformed_report_is_dropped_and_its_event_still_lands`).
 - Usage rolls up to the task and the goal
   (`events.rs::reported_usage_rolls_up_to_the_task_and_the_goal`,
-  `store.rs::a_tasks_usage_groups_every_round_of_a_reviewer_together`,
+  `store.rs::a_tasks_usage_groups_every_session_of_an_agent_together`,
   `::a_goals_usage_is_grouped_by_seat_and_counts_its_orchestrator`), a source
   replaces its own totals
   (`store.rs::a_source_replaces_its_own_totals_and_sources_add_up`), a

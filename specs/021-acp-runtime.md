@@ -21,7 +21,8 @@ Client Protocol.
 `ariadned` spawns the agent executable with piped standard input and output,
 speaks ACP version 1 over those pipes, and reports what the agent does through
 the daemon's one event ingestion path. Every seat of every session runs this
-way — orchestrator, author and reviewer. The runtime is
+way — the orchestrator, the agent of a column and the reviewer of a pull
+request. The runtime is
 `crates/ariadne-daemon/src/acp.rs`; the launch it consumes — the command and
 the launch file — is described in 007.
 
@@ -179,9 +180,7 @@ not reject the agent or discard its catalog.
    each on an unbounded channel so that no report is ever dropped, followed
    by session and launch and refused for a launch that is not the one
    running, so a report of the process before never passes for the current
-   one. The turn an author asked for its review in is ended that way
-   (004): its own launch's report of the review call ended, then the cancel,
-   which never lands on the next launch's briefing.
+   one.
 9. The ACP permission mode is the repository's (002), read at launch: a
    task's sessions take its repository's, an orchestrator its goal's first
    repository's, and a loose session (020) the registered repository its
@@ -221,11 +220,8 @@ not reject the agent or discard its catalog.
      to 64 hex characters in either case, with a letter and a digit,
      `<HASH>`, and an Ariadne id (`0` and 25 of `[0-9a-z]`, a whole word)
      `<ID>`. Numbers stay. An
-     orchestrator and a loose session have no branch. An author's branch is
-     its own, the task branch with a suffix for a second author. A
-     reviewer's is the branch it reviews, the task branch or one author's,
-     and it changes when a live reviewer is moved to the next author's
-     review. Another author's branch stays as it is.
+     orchestrator and a loose session have no branch. A column agent's
+     branch is its task's, shared by every column of the task (030).
    - The key is the compact JSON of the kept fields with sorted keys:
      `git rebase main 2>&1 | tail -40` with a `description` is
      `{"command":"git rebase main"}`, and a `merge_commit` of any SHA is
@@ -355,7 +351,7 @@ not reject the agent or discard its catalog.
   `reject_always` (`ai_permissions_decisions.rs::a_console_reject_uses_the_only_agent_rejection_option`).
 - `ask` keeps the agent's choices and records a one-time row
   (`acp_console.rs::ask_records_the_console_choice_and_never_auto_allows`).
-- An author runs end to end — the handshake in order, the worktree, the
+- A column's agent runs end to end — the handshake in order, the worktree, the
   `ariadne` MCP server, the model and effort pins, the briefing behind the
   system prompt as the first prompt, the events in the store, the captured
   agent session id, and the agent still up after the turn
@@ -367,7 +363,7 @@ not reject the agent or discard its catalog.
   remains plain. The stub preserves configured error data
   (`auto_switch.rs::a_codex_exhaustion_switches_to_another_agent_at_the_same_rank`,
   `auto_switch.rs::claude_and_message_signals_classify_while_a_plain_error_does_not`).
-- A reviewer seat runs the same way, in its detached worktree
+- The review column's agent runs the same way, in the task's one worktree
   (`acp_runtime.rs::a_reviewer_runs_on_the_registry_agent`).
 - Killing the session kills the agent process and retires the row
   (`acp_runtime.rs::killing_an_acp_session_kills_its_agent_process`), and
@@ -417,9 +413,9 @@ not reject the agent or discard its catalog.
 - The key keeps the fields of each tool, drops a `cd` into the worktree, a
   `2>&1` and an output filter, and replaces one-time values in order
   (`learned_key.rs::the_four_forms_of_one_rebase_give_one_key`,
-  `::two_finish_task_inputs_with_different_shas_give_one_key`,
+  `::two_complete_step_inputs_with_different_shas_give_one_key`,
   `::two_edits_of_one_file_give_one_key`,
-  `::two_verdicts_with_different_bodies_give_one_key`,
+  `::two_step_returns_with_different_bodies_give_one_key`,
   `::a_cd_into_the_worktree_and_an_output_filter_are_dropped`,
   `::a_cd_elsewhere_and_a_writing_filter_are_kept`,
   `::the_worktree_the_repository_the_branch_and_the_home_are_replaced_in_order`,
@@ -427,9 +423,6 @@ not reject the agent or discard its catalog.
   `::one_time_values_are_placeholders_and_numbers_are_kept`,
   `::an_uppercase_hash_is_a_placeholder`,
   `::only_the_sessions_own_branch_is_the_branch_placeholder`,
-  `acp_console.rs::a_second_authors_branch_is_the_branch_placeholder`,
-  `::a_reviewer_of_a_second_author_names_the_reviewed_branch`,
-  `multi_author_tasks.rs::a_live_reviewer_is_briefed_for_the_next_author_without_the_quiet_clock`,
   `::a_fetch_keys_on_its_host_and_a_search_on_nothing`), and the family is
   the program and its subcommand
   (`::the_family_is_the_program_and_its_subcommand`).
@@ -483,17 +476,7 @@ not reject the agent or discard its catalog.
   (`acp_console.rs::console_input_is_reported_as_its_text_from_the_console`).
 - A cancel ends the running turn as `cancelled`
   (`acp_console.rs::cancelling_a_running_turn_ends_it_as_cancelled`), and is
-  refused between turns (`::cancel_with_no_turn_running_is_refused`); an
-  author's review request draws one such cancel once the agent reports the
-  call ended, keeps what the turn spent, and leaves the agent up for the
-  verdict's prompt
-  (`::an_authors_review_request_ends_its_turn_and_the_verdict_still_reaches_it`),
-  and a launch's turn reports are its own: the process before reports to
-  nobody but itself
-  (`::a_prior_launchs_late_review_report_does_not_end_the_new_launchs_turn`);
-  a burst of reports before the review call's loses none of them, and the
-  cancel still follows
-  (`::a_burst_of_reports_before_the_review_calls_loses_none_and_the_cancel_follows`).
+  refused between turns (`::cancel_with_no_turn_running_is_refused`).
 - Prompt usage keeps cache writes in input and counts only cache reads as
   cached input, prefers quota, adds up one
   launch's turns, adds a resumed launch, and leaves an absent report at zero

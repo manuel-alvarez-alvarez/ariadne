@@ -106,9 +106,10 @@ Examples:
 const TASK_EXAMPLES: &str = "\
 Examples:
   ariadne task ls --goal <goal-id>
-  ariadne task ls --status in-progress,under-review
+  ariadne task ls --status in-progress,failed
   ariadne task inspect <task-id>           # and: diff, messages, history
-  ariadne task attach <task-id>            # the author's console
+  ariadne task attach <task-id>            # the current column's console
+  ariadne task attach <task-id> --step review
 ";
 
 const SESSION_EXAMPLES: &str = "\
@@ -126,8 +127,8 @@ Examples:
 const ATTACH_EXAMPLES: &str = "\
 Examples:
   ariadne attach <goal-id>                 # the goal's orchestrator
-  ariadne attach <task-id>                 # the task's author
-  ariadne attach <task-id> --seat reviewer # its reviewer instead
+  ariadne attach <task-id>                 # the agent of the task's current column
+  ariadne task attach <task-id> --step review   # one column's agent instead
   ariadne attach <session-id>              # that one session
   ariadne attach <outside-id> --agent codex-acp
 ";
@@ -152,11 +153,11 @@ Exit codes:
     about = "Coding-agent orchestrator CLI",
     long_about = "Coding-agent orchestrator CLI.\n\n\
         Every command here asks the ariadned daemon for something. It plans a \
-        goal with an orchestrator agent, hands each task to an author that owns it \
-        from its first commit to the end, and gates it behind reviewer \
-        agents. Each of them is an ACP agent the daemon drives, with a \
-        console `ariadne attach` drops you into, and `ariadne attention` is \
-        what says which of them is waiting for you.",
+        goal with an orchestrator agent and steps each task through the \
+        columns of its workflow, one agent per column, in one worktree from \
+        the first commit to the end. Each of them is an ACP agent the daemon \
+        drives, with a console `ariadne attach` drops you into, and `ariadne \
+        attention` is what says which of them is waiting for you.",
     after_help = format!("{EXAMPLES}\n{EXIT_CODES}")
 )]
 pub(crate) struct Cli {
@@ -356,9 +357,9 @@ pub(crate) enum Command {
     },
     /// Manage workflows
     ///
-    /// A workflow is a linear kanban of columns that an orchestrator steps a
-    /// task through in place of the fixed author, reviewer and landing
-    /// pipeline. Ariadne ships a catalog of them and you add your own; a
+    /// A workflow is a linear kanban of columns that every task of a goal is
+    /// stepped through, one agent per column, each column's gate saying what
+    /// it hands on. Ariadne ships a catalog of them and you add your own; a
     /// shipped workflow is reset rather than deleted, one of yours is
     /// deleted rather than reset, and `check` reads a draft back without
     /// saving it anywhere.
@@ -383,7 +384,7 @@ pub(crate) enum Command {
     /// The checkouts goals may work in. A repository is registered once —
     /// with the base branch its tasks branch off — and named by every goal
     /// after that; the same checkout can be registered once per base branch.
-    /// Its default landing applies when a goal leaves `--landing` out.
+    /// Its default workflow applies when a goal leaves `--workflow` out.
     #[command(after_help = REPO_EXAMPLES)]
     Repo {
         #[command(subcommand)]
@@ -423,9 +424,10 @@ pub(crate) enum Command {
     },
     /// Manage tasks
     ///
-    /// A task is one unit of a goal, owned by an author agent in a worktree
-    /// of its own from its first commit to the end, with reviewer agents
-    /// gating it. Its diff, its messages and its history are all here.
+    /// A task is one unit of a goal, worked through the columns of the
+    /// goal's workflow by one agent per column, all of them in one worktree
+    /// of its own from its first commit to the end. Its diff, its messages
+    /// and its history are all here.
     #[command(after_help = TASK_EXAMPLES)]
     Task {
         #[command(subcommand)]
@@ -434,7 +436,7 @@ pub(crate) enum Command {
     /// Manage agent sessions
     ///
     /// A session is one agent process the daemon drives: the agent an
-    /// orchestrator, an author or a reviewer is actually working in. They are
+    /// orchestrator or a column's agent is actually working in. They are
     /// listed docker-style — live ones by default, finished ones behind --all
     /// — and one that has ended can be revived with the same conversation.
     #[command(after_help = SESSION_EXAMPLES)]
@@ -445,7 +447,7 @@ pub(crate) enum Command {
     /// Show what the daemon has been doing, one line per event
     ///
     /// The agent events already recorded, and with -f the live stream on top
-    /// of them: goals, tasks, sessions and reviews as they change.
+    /// of them: goals, tasks, sessions and pull requests as they change.
     /// Each line is `time · kind · subject · detail`; `--format json` writes
     /// one object per line, so a pipe can read it as it goes.
     Events {
@@ -484,8 +486,9 @@ pub(crate) enum Command {
         /// Session, outside session, task or goal id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::attach_ids))]
         id: String,
-        /// Which agent of that id to attach to (default: author for tasks,
-        /// orchestrator for goals; not valid with a session id)
+        /// Which seat of that id to attach to (default: agent for a task,
+        /// which is the agent of its current column; orchestrator for a
+        /// goal; not valid with a session id)
         #[arg(long, value_parser = values::Spelling::<ariadne_core::Seat>::new())]
         seat: Option<ariadne_core::Seat>,
         /// Registry agent for an outside session id

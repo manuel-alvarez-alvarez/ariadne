@@ -50,8 +50,8 @@ macro_rules! wire_enum {
 }
 pub(crate) use wire_enum;
 
-/// Where an agent sits: the orchestrator of a goal, or the author or a
-/// reviewer of one task.
+/// Where an agent sits: the orchestrator of a goal, the agent of one workflow
+/// column of a task, or the reviewer of a pull request (029).
 ///
 /// A seat is a position, not an identity. Every agent below the orchestrator
 /// is generic, and what it can do comes from the skills it loads; the seat is
@@ -65,16 +65,18 @@ pub(crate) use wire_enum;
 )]
 #[serde(rename_all = "snake_case")]
 pub enum Seat {
-    Agent,
+    /// The one agent of a goal that plans it with the user.
     Orchestrator,
-    Author,
+    /// The agent of one column of a task's workflow.
+    Agent,
+    /// The session that reviews a pull request the user was asked to review
+    /// (029). It sits on no task.
     Reviewer,
 }
 
 wire_enum! { Seat, "seat", [
-    Agent = "agent",
     Orchestrator = "orchestrator",
-    Author = "author",
+    Agent = "agent",
     Reviewer = "reviewer",
 ]}
 
@@ -117,70 +119,6 @@ wire_enum! { ForgeKind, "forge kind", [
     Github = "github", Gitlab = "gitlab",
 ]}
 
-/// How the tasks of one goal end.
-///
-/// The one thing about the end of a task the author has to be told, since the
-/// commands it runs differ entirely between the endings. The user chooses it
-/// once, for the whole goal, when the goal is created, and every task of the
-/// goal follows it: some work lands on the base branch, some goes through a
-/// request the author then sees to its merge, and some has nothing to land at
-/// all — a report filed, a document published, a release cut. Every ending
-/// reaches [`TaskStatus::Finished`]; landing is one way of getting there
-/// rather than the meaning of being there.
-///
-/// Which forge a published request goes to is *not* here: `origin` says
-/// whether it is GitHub or GitLab, and asking the remote at landing time
-/// cannot go stale the way a second copy of the answer would.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[cfg_attr(
-    feature = "clap",
-    derive(clap::ValueEnum),
-    value(rename_all = "kebab-case")
-)]
-#[serde(rename_all = "snake_case")]
-pub enum Landing {
-    /// The author puts the change on the base branch itself.
-    Merge,
-    /// The author publishes a request and sees it through: it answers what is
-    /// written on it, and the task ends when the request is merged.
-    PullRequest,
-    /// Nothing is landed: what the task produced is the whole of it — a
-    /// published tag, a filed report, a document that lives elsewhere.
-    None,
-    /// The tasks land on a branch of the goal, which then lands whole. Until
-    /// that branch exists, a task lands exactly as [`Landing::Merge`] does.
-    FeatureBranch,
-}
-
-wire_enum! { Landing, "landing", [
-    Merge = "merge", PullRequest = "pull_request", None = "none",
-    FeatureBranch = "feature_branch",
-]}
-
-impl Landing {
-    /// The placeholders a landing briefing may name, whichever ending it is
-    /// written for: the branch, the base and the checkout its commands act
-    /// on, and the task they are landing.
-    ///
-    /// The contract between a repository's landing text and the daemon's
-    /// `landing_briefing` builder, read the same way
-    /// [`PromptKind::placeholders`] is read: a `{token}` outside this list is
-    /// one nothing will ever substitute.
-    pub const LANDING_PLACEHOLDERS: &'static [&'static str] =
-        &["task_title", "branch", "base_branch", "repo_path"];
-
-    /// Refuse a landing template that names a placeholder nothing fills in.
-    ///
-    /// The same check, and the same leniency about what is text, as
-    /// [`PromptKind::validate_template`]: saving is the last moment anyone
-    /// looks at a `{task_titel}`, since rendering carries it through to the
-    /// agent as it stands.
-    pub fn validate_landing_template(template: &str) -> Result<(), UnknownPlaceholders> {
-        unknown_placeholders("landing", Self::LANDING_PLACEHOLDERS, template)
-    }
-}
-
 /// A lifecycle briefing of Ariadne's own: one of the texts an agent is
 /// started, resumed or nudged with. Each kind belongs to the seat that
 /// receives it (see [`PromptKind::seats`]), and its text is a constant of the
@@ -194,8 +132,14 @@ impl Landing {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum PromptKind {
+    /// First briefing of a column's agent: the task, and the column's
+    /// instructions.
     StepBriefing,
+    /// What a column's agent is briefed with when the task comes back to its
+    /// column: forward, back, or a retry, with the reason.
     StepReturn,
+    /// What the agent of the current column is nudged with when it has gone
+    /// quiet.
     AgentResume,
     /// Initial briefing of an orchestrator session.
     OrchestratorBriefing,
@@ -207,21 +151,6 @@ pub enum PromptKind {
     GoalAttention,
     /// What one agent said to another, as the recipient reads it.
     IncomingMessage,
-    /// Initial briefing of an author session.
-    AuthorBriefing,
-    /// What an author with unfinished work is picked up with, whether its
-    /// session ended or is merely sitting idle.
-    AuthorResume,
-    /// Author resume briefing carrying the changes a review asked for, from
-    /// the reviewers or from the people on a published request.
-    ChangesRequested,
-    /// Initial briefing of a reviewer session.
-    ReviewerBriefing,
-    /// What a reviewer that owes a verdict is picked up with.
-    ReviewerResume,
-    /// What a reviewer is asked with once every author of a several-author
-    /// task is approved: pick the one whose change lands.
-    ReviewerPick,
 }
 
 wire_enum! { PromptKind, "prompt kind", [
@@ -232,12 +161,6 @@ wire_enum! { PromptKind, "prompt kind", [
     OrchestratorResume = "orchestrator_resume",
     GoalAttention = "goal_attention",
     IncomingMessage = "incoming_message",
-    AuthorBriefing = "author_briefing",
-    AuthorResume = "author_resume",
-    ChangesRequested = "changes_requested",
-    ReviewerBriefing = "reviewer_briefing",
-    ReviewerResume = "reviewer_resume",
-    ReviewerPick = "reviewer_pick",
 ]}
 
 impl PromptKind {
@@ -247,26 +170,18 @@ impl PromptKind {
             PromptKind::OrchestratorBriefing
             | PromptKind::OrchestratorResume
             | PromptKind::GoalAttention => &[Seat::Orchestrator],
-            // Every seat can be written to, so every seat is briefed with it.
-            PromptKind::IncomingMessage => &[
-                Seat::Orchestrator,
-                Seat::Author,
-                Seat::Reviewer,
-                Seat::Agent,
-            ],
+            // Every seat on a goal can be written to, so every seat on a goal
+            // is briefed with it. A pull request reviewer sits on none.
+            PromptKind::IncomingMessage => &[Seat::Orchestrator, Seat::Agent],
             PromptKind::StepBriefing | PromptKind::StepReturn | PromptKind::AgentResume => {
                 &[Seat::Agent]
             }
-            PromptKind::AuthorBriefing
-            | PromptKind::AuthorResume
-            | PromptKind::ChangesRequested => &[Seat::Author],
-            PromptKind::ReviewerBriefing
-            | PromptKind::ReviewerResume
-            | PromptKind::ReviewerPick => &[Seat::Reviewer],
         }
     }
 
     /// The prompts a session of `seat` is briefed with, in briefing order.
+    /// A pull request reviewer (029) is briefed with texts of its own, which
+    /// are no lifecycle kind.
     pub fn for_seat(seat: Seat) -> &'static [PromptKind] {
         match seat {
             Seat::Agent => &[
@@ -281,18 +196,7 @@ impl PromptKind {
                 PromptKind::GoalAttention,
                 PromptKind::IncomingMessage,
             ],
-            Seat::Author => &[
-                PromptKind::AuthorBriefing,
-                PromptKind::AuthorResume,
-                PromptKind::ChangesRequested,
-                PromptKind::IncomingMessage,
-            ],
-            Seat::Reviewer => &[
-                PromptKind::ReviewerBriefing,
-                PromptKind::ReviewerResume,
-                PromptKind::ReviewerPick,
-                PromptKind::IncomingMessage,
-            ],
+            Seat::Reviewer => &[],
         }
     }
 
@@ -305,9 +209,15 @@ impl PromptKind {
     /// Adding a value to a builder means adding its name here.
     pub fn placeholders(&self) -> &'static [&'static str] {
         match self {
-            PromptKind::OrchestratorBriefing => {
-                &["goal_title", "goal_description", "landing", "repositories"]
-            }
+            // The workflow the goal runs on, and its columns one line each:
+            // what the orchestrator staffs every task against.
+            PromptKind::OrchestratorBriefing => &[
+                "goal_title",
+                "goal_description",
+                "workflow",
+                "columns",
+                "repositories",
+            ],
             // A nudge says what is waiting and nothing else: the orchestrator
             // it reaches has read the goal already.
             PromptKind::OrchestratorResume => &["goal_title"],
@@ -317,21 +227,6 @@ impl PromptKind {
             // What was said, who said it, the task it is of, and whether to
             // say how to answer.
             PromptKind::IncomingMessage => &["from", "body", "answer_hint"],
-            PromptKind::AuthorBriefing => &[
-                "task_title",
-                "task_description",
-                "goal_title",
-                "worktree_path",
-                "branch",
-                "base_branch",
-                "repo_path",
-                // How that repository takes the change the task ends in,
-                // said once at the start as well as in the landing briefing:
-                // a branch that will be published is written differently
-                // from one that is squashed away.
-                "landing",
-                "dependencies",
-            ],
             PromptKind::StepBriefing => &[
                 "task_title",
                 "task_description",
@@ -348,24 +243,6 @@ impl PromptKind {
             ],
             PromptKind::StepReturn => &["task_title", "step_title", "direction", "reason"],
             PromptKind::AgentResume => &["task_title", "step_title"],
-            PromptKind::AuthorResume => &["task_title", "branch"],
-            PromptKind::ChangesRequested => &["feedback"],
-            PromptKind::ReviewerBriefing => &[
-                "task_title",
-                "task_description",
-                "goal_title",
-                "branch",
-                "base_branch",
-                "repo_path",
-                "summary",
-            ],
-            // Fewer than the initial briefing: a resumed reviewer is told what
-            // moved under it, and the goal and the repository are things it
-            // read when it was briefed.
-            PromptKind::ReviewerResume => &["task_title", "branch", "summary"],
-            // The authors to pick between, one line each, rendered by the
-            // scheduler that saw them all approved.
-            PromptKind::ReviewerPick => &["task_title", "authors"],
         }
     }
 
@@ -385,7 +262,7 @@ impl PromptKind {
     }
 }
 
-/// The check both `validate` calls make: the names `template` would have
+/// The check `validate_template` makes: the names `template` would have
 /// looked up, minus what rendering treats as text and minus `allowed`.
 /// `whose` names the template in the message.
 fn unknown_placeholders(
@@ -413,12 +290,11 @@ fn unknown_placeholders(
     })
 }
 
-/// A template saved with `{token}`s the daemon has no value for, and what
-/// would have had to fill them in: a prompt kind, or a landing briefing.
+/// A template saved with `{token}`s the daemon has no value for, and the
+/// prompt kind that would have had to fill them in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnknownPlaceholders {
-    /// How the template is named in the message: a prompt kind's spelling, or
-    /// `landing` for a repository's landing briefing.
+    /// How the template is named in the message: the prompt kind's spelling.
     pub whose: &'static str,
     /// The names the template was allowed to use.
     pub allowed: &'static [&'static str],
@@ -627,20 +503,17 @@ impl AttentionReason {
 
 /// What one agent is saying to another.
 ///
-/// Agents talk to each other through one channel, and this is what tells a
-/// message from the three steps of a review. A verdict used to be a row of its own; it is a
-/// message like the rest now, which is what carries a review's whole
-/// conversation in one place.
+/// Agents talk to each other through one channel, and one kind carries
+/// everything they say on it, whether it asks something or answers it. There
+/// is no `answer` kind and no `reply` tool: an answer is a message to whoever
+/// asked, addressed the way the question was, so nothing threads. Each
+/// message reaches its agent as a turn — which is why the tool that sends one
+/// takes questions and answers and nothing else, no confirmation and no
+/// thanks.
 ///
-/// One kind carries everything the agents say outside a review, whether it
-/// asks something or answers it. There is no `answer` kind and no `reply`
-/// tool: an answer is a message to whoever asked, addressed the way the
-/// question was, so nothing threads. Each message reaches its agent as a turn
-/// — which is why the tool that sends one takes questions and answers and
-/// nothing else, no confirmation and no thanks.
-///
-/// The kind is what the daemon reads. Two of them move the task
-/// ([`TaskStatus`]), and the rest are said and left.
+/// A review used to run on the channel too, as three kinds of its own; a
+/// workflow column moves a task through the step routes now, and the one
+/// kind left is what the agents say.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(
@@ -650,35 +523,14 @@ impl AttentionReason {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum MessageKind {
-    /// The author asking a reviewer to look at what it wrote.
-    ReviewRequest,
-    /// A reviewer's verdict on the review it was asked for.
-    Approve,
-    /// A reviewer's verdict: the author starts again on this feedback.
-    RequestChanges,
     /// A message: one agent asking another something, or answering what it
-    /// was asked. The one kind that is not part of the review, and the only
-    /// thing an agent writes of its own accord.
+    /// was asked.
     Message,
 }
 
 wire_enum! { MessageKind, "message kind", [
-    ReviewRequest = "review_request",
-    Approve = "approve",
-    RequestChanges = "request_changes",
     Message = "message",
 ]}
-
-impl MessageKind {
-    /// Whether this kind is a reviewer's verdict.
-    ///
-    /// The two that are is what the daemon counts when it decides whether a
-    /// review is settled, and one verdict per reviewer per review request is
-    /// what the daemon holds them to.
-    pub fn is_verdict(&self) -> bool {
-        matches!(self, MessageKind::Approve | MessageKind::RequestChanges)
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -737,12 +589,12 @@ mod tests {
 
     #[test]
     fn a_typo_is_refused_with_the_token_and_the_allowed_set() {
-        let err = PromptKind::AuthorBriefing
+        let err = PromptKind::StepBriefing
             .validate_template("# {task_titel}\n\n{task_description}")
             .unwrap_err();
         assert_eq!(err.unknown, ["task_titel"]);
         let message = err.to_string();
-        assert!(message.contains("author_briefing"), "{message}");
+        assert!(message.contains("step_briefing"), "{message}");
         assert!(message.contains("{task_titel}"), "{message}");
         assert!(message.contains("{task_title}"), "{message}");
         assert!(message.contains("{dependencies}"), "{message}");
@@ -752,8 +604,8 @@ mod tests {
     /// pass, not one save per typo.
     #[test]
     fn every_unknown_token_is_named_once() {
-        let err = PromptKind::ChangesRequested
-            .validate_template("{feedback} {who} {what} {who}")
+        let err = PromptKind::StepReturn
+            .validate_template("{reason} {who} {what} {who}")
             .unwrap_err();
         assert_eq!(err.unknown, ["who", "what"]);
         assert!(err.to_string().contains("{who}, {what}"), "{err}");
@@ -768,15 +620,15 @@ mod tests {
                 .validate_template("Plan {goal_title} for {task_title}.")
                 .is_err()
         );
-        // A resumed reviewer is briefed with less than a fresh one.
+        // A nudged agent is briefed with less than a fresh one.
         assert!(
-            PromptKind::ReviewerResume
-                .validate_template("{task_title} in {repo_path} needs your verdict.")
+            PromptKind::AgentResume
+                .validate_template("{task_title} in {repo_path} waits at {step_title}.")
                 .is_err()
         );
         assert_eq!(
-            PromptKind::ReviewerBriefing
-                .validate_template("{task_title} in {repo_path} needs your verdict."),
+            PromptKind::StepBriefing
+                .validate_template("{task_title} in {repo_path} waits at {step_title}."),
             Ok(())
         );
     }
@@ -799,7 +651,7 @@ mod tests {
             r"printf '%s' {} \;",
         ] {
             assert_eq!(
-                PromptKind::AuthorBriefing.validate_template(template),
+                PromptKind::StepBriefing.validate_template(template),
                 Ok(()),
                 "refused text that renders as itself: {template}"
             );
@@ -811,42 +663,29 @@ mod tests {
     #[test]
     fn a_template_may_use_none_of_its_placeholders() {
         assert_eq!(
-            PromptKind::AuthorResume.validate_template("Carry on."),
-            Ok(())
-        );
-        assert_eq!(
-            Landing::validate_landing_template("Land it yourself."),
+            PromptKind::AgentResume.validate_template("Carry on."),
             Ok(())
         );
     }
 
-    /// A landing briefing is a repository's, not a kind's, and it is checked
-    /// the same way: what the daemon fills in passes, a typo is named with
-    /// the whole allowed set, and what renders as text is text here too.
+    /// The three seats are the orchestrator of a goal, the agent of a
+    /// column and the reviewer of a pull request, in that order, and each
+    /// one answers to the word the wire spells it with.
     #[test]
-    fn a_landing_template_names_only_what_the_landing_briefing_fills_in() {
-        let all = Landing::LANDING_PLACEHOLDERS
-            .iter()
-            .map(|name| format!("{{{name}}}"))
-            .collect::<Vec<_>>()
-            .join(" ");
-        assert_eq!(Landing::validate_landing_template(&all), Ok(()));
+    fn the_seats_are_the_orchestrator_the_agent_and_the_pull_request_reviewer() {
+        use std::str::FromStr;
 
-        let err =
-            Landing::validate_landing_template("Squash {branch} onto {base_brunch}.").unwrap_err();
-        assert_eq!(err.unknown, ["base_brunch"]);
-        let message = err.to_string();
-        assert!(message.contains("landing"), "{message}");
-        assert!(message.contains("{base_brunch}"), "{message}");
-        assert!(message.contains("{base_branch}"), "{message}");
-        assert!(message.contains("{repo_path}"), "{message}");
-
-        // A placeholder of a profile's briefing is not one a landing text can
-        // use: the sets are per template, not one pool.
-        assert!(Landing::validate_landing_template("{task_description}").is_err());
-        assert_eq!(
-            Landing::validate_landing_template("Answer with {\"ok\": true} and {}."),
-            Ok(())
-        );
+        assert_eq!(Seat::ALL, [Seat::Orchestrator, Seat::Agent, Seat::Reviewer]);
+        for (word, seat) in [
+            ("orchestrator", Seat::Orchestrator),
+            ("agent", Seat::Agent),
+            ("reviewer", Seat::Reviewer),
+        ] {
+            assert_eq!(Seat::from_str(word), Ok(seat));
+            assert_eq!(seat.as_str(), word);
+        }
+        assert!(Seat::from_str("author").is_err());
+        assert_eq!(MessageKind::ALL, [MessageKind::Message]);
+        assert!(MessageKind::from_str("approve").is_err());
     }
 }

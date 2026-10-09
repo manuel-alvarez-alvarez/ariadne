@@ -30,8 +30,8 @@ pub struct Timeouts {
     /// cancelled.
     ///
     /// The prompt response a cancel draws is the only report of what that
-    /// turn spent: an agent killed mid-turn — a relaunch that hands an author
-    /// its review, a cleanup after `finish_task` — otherwise takes the turn's
+    /// turn spent: an agent killed mid-turn — a relaunch that hands a column's
+    /// agent its return, a cleanup after the last `complete_step` — otherwise takes the turn's
     /// tokens with it. An adapter that honours `session/cancel` answers
     /// within a second; one that does not is killed when this runs out, as it
     /// was before.

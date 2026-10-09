@@ -47,7 +47,7 @@ impl super::Scheduler {
             // A goal under way wants its orchestrator too. It is the one agent
             // that outlives its own hand-off: the user talks to it about work
             // already running, and the daemon has somebody to tell when a task
-            // needs a decision no author can make. What it is *not* under way
+            // needs a decision no column's agent can make. What it is *not* under way
             // is quiet — an orchestrator with every task running has nothing
             // to do — so no watchdog nudges it here. It is woken by what
             // happened, and by nothing else.
@@ -117,7 +117,7 @@ impl super::Scheduler {
     /// machine can perform (a model the agent does not know, an agent that
     /// is not installed) would put a fresh alarm on the strip every tick, for
     /// ever. [`SPAWN_RETRY_BUDGET`] attempts is what it gets, the same budget
-    /// a task's author spends, out of the same map.
+    /// a task's agents spend, out of the same map.
     ///
     /// What holds the daemon back afterwards is the alarm itself rather than
     /// the count, which is how a task retried out of `failed` gets a clean
@@ -379,7 +379,7 @@ fn alarm_row(orchestrators: &[AgentSession]) -> Option<&AgentSession> {
 /// `None` where they need nothing.
 ///
 /// Three situations, and a goal can be in more than one. A failed task and a
-/// stalled task are both decisions somebody has to make and no author can:
+/// stalled task are both decisions somebody has to make and no column's agent can:
 /// retry it, rewrite it, staff it differently, or give it up. A goal whose
 /// tasks are all done is the one moment `complete_goal` is called.
 ///
@@ -425,12 +425,10 @@ mod tests {
             description: String::new(),
             status: status.into(),
             branch: title.into(),
-            landing: "merge".into(),
             worktree_path: None,
             stalled: stalled as i64,
             merge_commit: None,
             pr_url: None,
-            picked_agent_id: None,
             created_at: String::new(),
             updated_at: String::new(),
         }
@@ -441,17 +439,14 @@ mod tests {
     #[test]
     fn a_goal_whose_tasks_are_running_needs_nothing() {
         assert_eq!(
-            goal_attention(&[
-                task("a", "in_progress", false),
-                task("b", "under_review", false)
-            ]),
+            goal_attention(&[task("a", "in_progress", false), task("b", "ready", false)]),
             None
         );
         // Nor is a goal with no tasks at all, which is a plan being written.
         assert_eq!(goal_attention(&[]), None);
     }
 
-    /// The two decisions no author can make, each named with the task it is
+    /// The two decisions no column's agent can make, each named with the task it is
     /// about: the orchestrator has to know which one to act on.
     #[test]
     fn a_failed_task_and_a_quiet_one_are_each_named() {

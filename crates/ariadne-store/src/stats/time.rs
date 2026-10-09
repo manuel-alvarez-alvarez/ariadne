@@ -3,14 +3,7 @@
 use super::{StatsFilter, median, narrowed, p90};
 use crate::{Result, Store};
 
-const STATUSES: [&str; 6] = [
-    "pending",
-    "ready",
-    "in_progress",
-    "under_review",
-    "changes_requested",
-    "approved",
-];
+const STATUSES: [&str; 3] = ["pending", "ready", "in_progress"];
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct LeadTime {

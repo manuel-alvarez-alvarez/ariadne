@@ -1,79 +1,55 @@
 //! Resuming an agent keeps its session row.
 //!
-//! A task bounced back by its reviewers is the same author, in the same
-//! conversation, in the same worktree — so it stays one session however many
-//! rounds it takes, rather than growing a sibling row per round. The same
-//! holds for each reviewer: one session for the whole review.
+//! A task that comes back to a column is the same agent, in the same
+//! conversation, in the same worktree — so a column's agent stays one session
+//! however many times its column is entered, rather than growing a sibling
+//! row per entry. Every column of a task works in the one worktree the task
+//! has (030).
 //!
 //! The agents are the harness's stub, and what each was launched with is read
-//! from the session's launch file. `git` is real — a reviewer's worktree has
-//! to actually move to the branch tip between rounds.
+//! from the session's launch file. `git` is real — a column's first launch
+//! cuts the task's worktree from the repository.
 
 use crate::common;
 
-use std::path::PathBuf;
-
 use ariadne_api::stream::DomainEvent;
-use ariadne_core::{GoalStatus, PromptKind, Seat, SessionStatus, TaskStatus};
-use ariadne_daemon::agents::prompts;
-use ariadne_store::{AgentSession, Task};
+use ariadne_core::{Actor, GoalStatus, SessionStatus, TaskStatus};
+use ariadne_store::AgentSession;
+use axum::http::StatusCode;
 
-use common::{Cast, Harness, TIMEOUT, eventually, harness, next_event, sh};
+use common::{Cast, Harness, TIMEOUT, eventually, harness, heard_from, next_event};
 
-/// A task with an author session that has already run once: a worktree on
-/// disk and no agent left running.
-///
-/// Its repository is not a git repo, so a fresh spawn cannot get off the
-/// ground here — which is what the fallback tests lean on.
-async fn author_session(h: &Harness) -> (Cast, AgentSession) {
-    let cast = h.cast().await;
-    let session = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
-    h.store
-        .set_task_worktree(&cast.task.id, session.worktree_path.as_deref())
-        .await
-        .unwrap();
+/// A task in its first column for real: a repo on disk, the goal active and
+/// the task in progress, its agents carrying `model` at the moment it was
+/// created — so that is what every column's agent is pinned to.
+async fn in_progress(h: &Harness, model: &str) -> Cast {
+    h.git_repo("repo");
+    let cast = h.cast_pinned(model).await;
+    let goal = h.activate(&cast.goal).await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
     let task = h.store.get_task(&cast.task.id).await.unwrap();
-    (Cast { task, ..cast }, session)
+    Cast { goal, task, ..cast }
 }
 
-/// A task under review for real: a repo on disk with a commit on the task
-/// branch, its agents carrying `model` at the moment it was created — so
-/// that is what the task and the reviewer slot are pinned to.
-async fn under_review(h: &Harness, model: &str) -> Cast {
-    let repo_path = h.git_repo("repo");
-    let cast = h.cast_pinned(model, 1).await;
-    sh(&repo_path, &format!("git branch {}", cast.task.branch));
-    h.advance(&cast.task, TaskStatus::UnderReview).await;
+/// The same, from the fixture whose first column's agent has already run
+/// once ([`Harness::resumable_agent`]): no repo is needed, since the task's
+/// worktree is already on disk.
+async fn resumable_in_progress(h: &Harness) -> (Cast, AgentSession) {
+    let (cast, session) = h.resumable_agent().await;
+    let goal = h.activate(&cast.goal).await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
     let task = h.store.get_task(&cast.task.id).await.unwrap();
-    Cast { task, ..cast }
+    (Cast { goal, task, ..cast }, session)
 }
 
-/// The reviewer bounces the task back and the author pushes another commit:
-/// the task returns to review one commit ahead.
-async fn reviewed_again(h: &Harness, task: &Task) -> Task {
-    let repo_path = PathBuf::from(&h.store.get_repository(&task.repo_id).await.unwrap().path);
-    sh(
-        &repo_path,
-        &format!(
-            "git checkout -q {branch} && echo v2 > file.txt && git add . && \
-             git -c user.email=t@t -c user.name=t commit -qm revision && \
-             git checkout -q main",
-            branch = task.branch
-        ),
-    );
-    for (to, actor) in [
-        (TaskStatus::ChangesRequested, ariadne_core::Actor::Daemon),
-        (TaskStatus::InProgress, ariadne_core::Actor::Daemon),
-        (TaskStatus::UnderReview, ariadne_core::Actor::Author),
-    ] {
-        h.store
-            .transition_task(&task.id, to, actor, None, None)
-            .await
-            .unwrap();
-    }
-    h.store.get_task(&task.id).await.unwrap()
+/// Start the agent of the task's first column, the way the scheduler does
+/// when the column has no live agent.
+async fn start_develop(h: &Harness, cast: &Cast) -> AgentSession {
+    let task = h.store.get_task(&cast.task.id).await.unwrap();
+    // The staffing as it stands now, not as the cast was built: a re-pin
+    // between two starts is what some of these tests are about.
+    let develop = h.store.get_task_agent(&cast.develop().id).await.unwrap();
+    h.launcher.start_step_agent(&task, &develop).await.unwrap()
 }
 
 /// The environment a session's last launch gave its MCP server.
@@ -94,36 +70,31 @@ fn launched_model(h: &Harness, session_id: &str) -> String {
 }
 
 /// The session once its agent has reported the conversation it runs — what a
-/// resume goes back to, which the agent names at its session start.
+/// resume goes back to, which the agent names at its session start — and has
+/// been heard from since its launch, so a kill after this is not a launch
+/// that died on arrival.
 async fn heard(h: &Harness, session: &AgentSession) -> AgentSession {
     eventually(TIMEOUT, "the agent to report its session", || async {
-        h.store
-            .get_session(&session.id)
-            .await
-            .unwrap()
-            .internal_session_id
-            .is_some()
+        let row = h.store.get_session(&session.id).await.unwrap();
+        row.internal_session_id.is_some() && heard_from(&row)
     })
     .await;
     h.store.get_session(&session.id).await.unwrap()
 }
 
 /// Which agent and model a session runs on comes off the pin its seat
-/// carries — the reviewer slot here — and a profile edited afterwards does not
-/// reach it, on any launch path: not the resume that carries a reviewer into
-/// round two, and not the fresh session a round with nothing to resume gets.
+/// carries — the column's agent here — and a session freezes that pin at
+/// its first launch: a staffing edited afterwards does not reach a running
+/// session, nor a relaunch of it on the same pin. An edit that moves the
+/// pin reaches the next entry of the column instead: the agent gets a
+/// session of its own on the new pin, and the old session stays as history.
 #[tokio::test]
-async fn a_running_reviewer_keeps_the_model_its_session_started_on() {
+async fn a_relaunched_agent_stays_on_the_model_its_session_started_on() {
     let h = harness().await;
-    let cast = under_review(&h, "stub:opus").await;
-    let (task, reviewer) = (cast.task.clone(), cast.reviewer.id.clone());
+    let cast = in_progress(&h, "stub:opus").await;
+    let develop = cast.develop().id.clone();
 
-    // Nothing to resume yet, so this is the reviewer's first spawn.
-    let first = h
-        .launcher
-        .resume_reviewer(&task.id, &reviewer, "(unused: no session yet)")
-        .await
-        .unwrap();
+    let first = start_develop(&h, &cast).await;
     assert_eq!(first.model, "stub:opus");
     assert_eq!(
         launched_model(&h, &first.id),
@@ -132,76 +103,132 @@ async fn a_running_reviewer_keeps_the_model_its_session_started_on() {
     );
     heard(&h, &first).await;
 
+    // The column is entered again on the same pin: the same session, on the
+    // conversation it was having.
+    h.launcher.kill_session(&first.id).await.unwrap();
+    let second = start_develop(&h, &cast).await;
+    assert_eq!(second.id, first.id, "the relaunch reused the session");
+    assert_eq!(second.model, "stub:opus");
+    heard(&h, &second).await;
+
     // The agent is re-pinned to another model while the session is alive.
     // The row is not rewritten behind it.
-    h.move_agent(&reviewer, "stub:sonnet").await;
+    h.move_agent(&develop, "stub:sonnet").await;
     assert_eq!(
-        h.store.get_session(&first.id).await.unwrap().model,
+        h.store.get_session(&second.id).await.unwrap().model,
         "stub:opus",
         "a re-pin rewrote a running session's model"
     );
 
-    // Round two relaunches the same session, on the same model it was
-    // launched with — the agent itself now says sonnet.
-    h.launcher.kill_session(&first.id).await.unwrap();
-    let task = reviewed_again(&h, &task).await;
-    let second = h
-        .launcher
-        .resume_reviewer(&task.id, &reviewer, "Have another look.")
-        .await
-        .unwrap();
-    assert_eq!(second.id, first.id, "the second review reused the session");
-    assert_eq!(second.model, "stub:opus");
-    assert_eq!(
-        launched_model(&h, &second.id),
-        "opus",
-        "and that is what the agent was launched with"
-    );
-
-    // A round that finds nothing to resume spawns afresh — and a fresh spawn
-    // reads the agent as it stands, which is where the re-pin does land.
+    // The next entry of the column is on the new pin: a session of its own,
+    // launched on sonnet, beside the one that ran on opus.
     h.launcher.kill_session(&second.id).await.unwrap();
-    h.forget_session(&second).await;
-    let third = h
-        .launcher
-        .spawn_reviewer(&task.id, &reviewer)
-        .await
-        .unwrap();
-    assert_ne!(third.id, second.id, "a fresh session, not the old one");
+    let third = start_develop(&h, &cast).await;
+    assert_ne!(third.id, second.id, "a new pin gets a session of its own");
+    assert_eq!(third.model, "stub:sonnet");
+    assert_eq!(launched_model(&h, &third.id), "sonnet");
+    let kept = h.store.get_session(&second.id).await.unwrap();
     assert_eq!(
-        third.model, "stub:sonnet",
-        "a fresh session reads the agent's pin as it stands"
+        kept.model, "stub:opus",
+        "the old session is history, as it was"
     );
+    assert!(kept.internal_session_id.is_some());
+    assert_eq!(h.sessions_of(&cast.task.id).await.len(), 2);
 }
 
-/// The same for the author, whose pin is the task's: the spawn that starts
-/// the work and every resume that carries it through review run on the model
-/// the task was created with.
+/// The retry of a failed task after a staffing edit runs the column on the
+/// edited pin: the orchestrator fixes a model or an effort with `update_task`
+/// before it retries, and the retry starts a session on that pin rather than
+/// resuming the conversation the old pin was having. That conversation stays
+/// on its own row, with the id the agent gave it.
 #[tokio::test]
-async fn a_resumed_author_stays_on_the_model_its_session_started_on() {
+async fn a_retry_after_a_staffing_edit_starts_a_new_session_on_the_new_pin() {
     let h = harness().await;
-    let cast = under_review(&h, "stub:opus").await;
-    let task = cast.task.clone();
+    let cast = in_progress(&h, "stub:opus").await;
+    let first = start_develop(&h, &cast).await;
+    let first = heard(&h, &first).await;
+    let conversation = first
+        .internal_session_id
+        .clone()
+        .expect("a conversation id");
+    assert_eq!(launched_model(&h, &first.id), "opus");
+    assert_eq!(h.launch_file(&first.id).unwrap().effort, None);
 
-    let first = h.launcher.spawn_author(&task.id).await.unwrap();
-    assert_eq!(first.model, "stub:opus");
-    heard(&h, &first).await;
-
-    // Re-pinned under a session that is already running: what it was launched
-    // with is what every relaunch of it carries.
-    h.move_agent(&cast.author.id, "stub:sonnet").await;
+    // The task fails, the staffing is edited, and the task is retried.
     h.launcher.kill_session(&first.id).await.unwrap();
-    let resumed = h
-        .launcher
-        .resume_author(&task.id, "Round 1: please fix things.")
+    h.store
+        .transition_task(
+            &cast.task.id,
+            TaskStatus::Failed,
+            Actor::Agent,
+            Some("the input is missing"),
+            None,
+        )
         .await
         .unwrap();
-    assert_eq!(resumed.id, first.id, "the resume reused the session");
-    assert_eq!(resumed.model, "stub:opus");
+    let _: serde_json::Value = h
+        .json(
+            crate::common::patch_json(
+                &format!("/v1/tasks/{}", cast.task.id),
+                serde_json::json!({"agents": [
+                    {"step": "develop", "model": "stub:sonnet", "effort": "high"},
+                    {"step": "review", "model": "stub:opus"},
+                    {"step": "merge", "model": "stub:opus"},
+                ]}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
     assert_eq!(
-        launched_model(&h, &resumed.id),
-        "opus",
-        "the resume did not re-read the agent's pin"
+        h.store
+            .get_task_agent(&cast.develop().id)
+            .await
+            .unwrap()
+            .model,
+        "stub:sonnet",
+        "the edit kept the agent's row and moved its pin"
+    );
+    let _: serde_json::Value = h
+        .json(
+            crate::common::post_json(
+                &format!("/v1/tasks/{}/retry", cast.task.id),
+                serde_json::json!({}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+
+    let retried = start_develop(&h, &cast).await;
+    assert_ne!(retried.id, first.id, "the retry runs a session of its own");
+    assert_eq!(retried.model, "stub:sonnet");
+    assert_eq!(retried.effort.as_deref(), Some("high"));
+    let launch = h.launch_file(&retried.id).expect("a launch file");
+    assert_eq!(launch.model, "sonnet", "launched on the edited model");
+    assert_eq!(
+        launch.effort.as_deref(),
+        Some("high"),
+        "at the edited effort"
+    );
+    assert_eq!(
+        launch.resume_session_id, None,
+        "a fresh conversation, not the old pin's"
+    );
+
+    // The history stays: the old row, its conversation id and its pin.
+    let kept = h.store.get_session(&first.id).await.unwrap();
+    assert_eq!(kept.model, "stub:opus");
+    assert_eq!(
+        kept.internal_session_id.as_deref(),
+        Some(conversation.as_str())
+    );
+    assert_eq!(
+        h.sessions_of(&cast.task.id)
+            .await
+            .iter()
+            .map(|s| s.id.as_str())
+            .collect::<Vec<_>>(),
+        [first.id.as_str(), retried.id.as_str()]
     );
 }
 
@@ -242,7 +269,7 @@ async fn an_orchestrator_respawn_stays_on_the_goals_pin() {
 
 /// Every launch of a session reports under a name of its own.
 ///
-/// The row is the same one on a resume — the same conversation, the same
+/// The row is the same one on a relaunch — the same conversation, the same
 /// worktree — so a report carrying its id says nothing about *which* agent
 /// sent it. Between the kill and the agent that replaces it, two of them can:
 /// the one being torn down still has its exit to report, and on a resumed
@@ -253,10 +280,9 @@ async fn an_orchestrator_respawn_stays_on_the_goals_pin() {
 #[tokio::test]
 async fn every_launch_of_a_session_reports_under_a_new_id() {
     let h = harness().await;
-    let cast = under_review(&h, "stub:opus").await;
-    let task = cast.task.clone();
+    let cast = in_progress(&h, "stub:opus").await;
 
-    let first = h.launcher.spawn_author(&task.id).await.unwrap();
+    let first = start_develop(&h, &cast).await;
     let launch = h.launch_id(&first).await.expect("the launch was named");
     assert!(
         mcp_env_of(&h, &first.id).contains(&("ARIADNE_LAUNCH_ID".to_string(), launch.clone())),
@@ -266,12 +292,8 @@ async fn every_launch_of_a_session_reports_under_a_new_id() {
     heard(&h, &first).await;
 
     h.launcher.kill_session(&first.id).await.unwrap();
-    let resumed = h
-        .launcher
-        .resume_author(&task.id, "Round 1: please fix things.")
-        .await
-        .unwrap();
-    assert_eq!(resumed.id, first.id, "the resume reused the session");
+    let resumed = start_develop(&h, &cast).await;
+    assert_eq!(resumed.id, first.id, "the relaunch reused the session");
 
     let relaunch = h.launch_id(&resumed).await.expect("the launch was named");
     assert_ne!(relaunch, launch, "a launch of its own");
@@ -296,9 +318,7 @@ async fn every_launch_of_a_session_reports_under_a_new_id() {
 async fn agent_runs_on_a_reused_idle_session_waits_for_its_own_report() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    let session = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    let session = h.agent_session(&cast, "develop").await;
     h.agent_runs(&session).await;
     h.set_status(&session, SessionStatus::Idle).await;
     let before = h
@@ -336,9 +356,7 @@ async fn agent_runs_on_a_reused_idle_session_waits_for_its_own_report() {
 async fn agent_runs_stays_open_through_the_clock_alone_and_settles_on_the_status_write() {
     let h = std::sync::Arc::new(harness().await);
     let cast = h.active_cast().await;
-    let session = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    let session = h.agent_session(&cast, "develop").await;
     h.agent_runs(&session).await;
     h.set_status(&session, SessionStatus::Idle).await;
     let launched_before = h.launch_id(&session).await;
@@ -384,21 +402,19 @@ async fn agent_runs_stays_open_through_the_clock_alone_and_settles_on_the_status
         .unwrap();
 }
 
-/// The changes-requested bounce, twice over: the task panel's Sessions tab
-/// must still list one author, live again, on the same conversation.
+/// The column entered again, twice over: the task panel's Sessions tab must
+/// still list one agent for the column, live again, on the same conversation.
+/// The launch itself carries no prompt — the scheduler hands the column's
+/// briefing to the agent once it is up.
 #[tokio::test]
-async fn resuming_the_author_reuses_its_session_across_reviews() {
+async fn relaunching_a_columns_agent_reuses_its_session_across_entries() {
     let h = harness().await;
-    let (cast, first) = h.resumable_author().await;
+    let (cast, first) = resumable_in_progress(&h).await;
     let task = cast.task.clone();
 
-    for round in 1..=2 {
-        let resumed = h
-            .launcher
-            .resume_author(&task.id, &format!("Round {round}: please fix things."))
-            .await
-            .unwrap();
-        assert_eq!(resumed.id, first.id, "round {round} reused the session");
+    for entry in 1..=2 {
+        let resumed = start_develop(&h, &cast).await;
+        assert_eq!(resumed.id, first.id, "entry {entry} reused the session");
         assert_eq!(resumed.status(), SessionStatus::Running);
         assert_eq!(resumed.ended_at, None, "the session is live again");
         assert_eq!(
@@ -411,21 +427,22 @@ async fn resuming_the_author_reuses_its_session_across_reviews() {
         assert_eq!(
             sessions.len(),
             1,
-            "round {round} left more than one author session: {sessions:?}"
+            "entry {entry} left more than one session on the column: {sessions:?}"
         );
         // Each relaunch resumed the stored conversation rather than starting
-        // one, and carried its instruction as the next prompt.
+        // one, and carried no prompt of its own.
         let launch = h.launch_file(&resumed.id).expect("a launch file");
         assert_eq!(
             launch.resume_session_id.as_deref(),
             Some("uuid-1234"),
-            "round {round}"
+            "entry {entry}"
         );
         assert_eq!(
-            launch.initial_prompt.as_deref(),
-            Some(format!("Round {round}: please fix things.").as_str()),
-            "round {round} carried its instruction"
+            launch.initial_prompt, None,
+            "entry {entry}: the briefing is the scheduler's to send"
         );
+        heard(&h, &resumed).await;
+        h.launcher.kill_session(&resumed.id).await.unwrap();
     }
 }
 
@@ -459,17 +476,18 @@ async fn a_resume_passes_over_a_launch_that_never_had_a_prompt() {
 }
 
 /// What an agent is told has no size limit on its way there: a briefing of a
-/// hundred kilobytes reaches the agent whole, as the prompt of the turn it
-/// is resumed into.
+/// hundred kilobytes reaches the agent whole, as the prompt of the next turn
+/// of the session it was resumed into.
 #[tokio::test]
 async fn a_briefing_of_any_size_reaches_the_agent_whole() {
     let h = harness().await;
-    let (cast, first) = h.resumable_author().await;
+    let (cast, first) = resumable_in_progress(&h).await;
     let briefing = "B".repeat(100_000);
 
+    start_develop(&h, &cast).await;
     h.launcher
-        .resume_author(&cast.task.id, &briefing)
-        .await
+        .acp
+        .send_prompt(&first.id, briefing.clone())
         .unwrap();
     eventually(TIMEOUT, "the briefing to reach the agent", || async {
         h.prompts_to(&first)
@@ -479,106 +497,60 @@ async fn a_briefing_of_any_size_reaches_the_agent_whole() {
     .await;
 }
 
-/// A reviewer asked to look at a task twice is one reviewer with one memory
-/// of it: the second review wakes the session it already has — same row, same
-/// conversation — in a worktree moved to the new tip.
+/// The scheduler puts the current column's agent back on its feet in the
+/// session it already has: an agent that went down with the task still in
+/// its column is relaunched — same row, same conversation — and nudged to
+/// go on, rather than replaced by a sibling.
 #[tokio::test]
-async fn a_reviewer_reuses_its_session_across_reviews() {
-    let h = harness().await;
-    let cast = under_review(&h, "stub:opus").await;
-    let (task, reviewer) = (cast.task.clone(), cast.reviewer.id.clone());
+async fn the_scheduler_relaunches_the_current_columns_agent_in_its_session() {
+    let h = harness().scheduler().await;
+    h.git_repo("repo");
+    let cast = h.active_cast().await;
+    let develop = h.step_session(&cast.task, "develop").await;
+    let heard_once = heard(&h, &develop).await;
+    let launched = heard_once.launched_at.clone();
+    let prompts = h.prompts_to(&develop).len();
 
-    // Nothing to resume, so this is the reviewer's first spawn.
-    let first = h
-        .launcher
-        .resume_reviewer(&task.id, &reviewer, "(unused: no session yet)")
-        .await
-        .unwrap();
-    assert_eq!(first.seat(), Some(Seat::Reviewer));
-    let internal = heard(&h, &first)
-        .await
-        .internal_session_id
-        .expect("the agent reported its session");
+    h.launcher.kill_session(&develop.id).await.unwrap();
+    h.notify(&cast.task.id);
 
-    // The task leaves review, so the daemon takes the reviewer's agent down;
-    // then the author revises and asks for a review again.
-    h.launcher.kill_session(&first.id).await.unwrap();
-    let task = reviewed_again(&h, &task).await;
-
-    // The briefing is the built-in resume template, rendered — the same path
-    // the scheduler takes.
-    let template = prompts::template_for(PromptKind::ReviewerResume);
-    let second = h
-        .launcher
-        .resume_reviewer(
-            &task.id,
-            &reviewer,
-            &prompts::reviewer_resume_briefing(template, &task, Some("I rewrote the thing.")),
-        )
-        .await
-        .unwrap();
-    assert_eq!(second.id, first.id, "the second review reused the session");
+    eventually(TIMEOUT, "the column's agent to be relaunched", || async {
+        h.relaunched(&develop, &launched).await
+    })
+    .await;
+    let sessions = h.sessions_of(&cast.task.id).await;
+    assert_eq!(sessions.len(), 1, "a relaunch, not a sibling: {sessions:?}");
     assert_eq!(
-        second.internal_session_id.as_deref(),
-        Some(internal.as_str()),
+        sessions[0].internal_session_id, heard_once.internal_session_id,
         "on the same agent conversation"
     );
-    assert_eq!(second.status(), SessionStatus::Running);
-    assert_eq!(second.ended_at, None, "the session is live again");
-    let sessions: Vec<AgentSession> = h
-        .sessions_of(&task.id)
-        .await
-        .into_iter()
-        .filter(|s| s.seat() == Some(Seat::Reviewer))
-        .collect();
-    assert_eq!(
-        sessions.len(),
-        1,
-        "two rounds left more than one reviewer session: {sessions:?}"
-    );
-
-    // The worktree it wakes up in is the branch as it stands now.
-    let worktree = PathBuf::from(second.worktree_path.as_deref().unwrap());
-    assert_eq!(
-        std::fs::read_to_string(worktree.join("file.txt")).unwrap(),
-        "v2\n",
-        "the reviewer woke up in the tree it already reviewed"
-    );
-
-    let launch = h.launch_file(&second.id).expect("a launch file");
-    assert_eq!(
-        launch.resume_session_id.as_deref(),
-        Some(internal.as_str()),
-        "the second review resumed the stored conversation"
-    );
+    assert!(h.prompts_to(&develop).len() > prompts);
     assert!(
-        launch
-            .initial_prompt
-            .as_deref()
-            .is_some_and(|prompt| prompt.contains("needs your verdict")),
-        "and was told what it is being woken for: {:?}",
-        launch.initial_prompt
+        h.prompted(&develop).contains("Continue task at Develop."),
+        "the relaunched agent is told to go on: {}",
+        h.prompted(&develop)
     );
 }
 
-/// A reviewer session that never reported an agent id is no conversation to
-/// go back to — an agent reports its own at its session start — so the next
-/// round spawns a fresh one rather than failing.
+/// A session that never reported an agent id is no conversation to go back
+/// to — an agent reports its own at its session start — so the column's
+/// next entry spawns a fresh one rather than failing, and a revive of it is
+/// refused.
 #[tokio::test]
-async fn a_reviewer_without_an_agent_id_is_spawned_afresh() {
+async fn a_session_without_an_agent_id_is_not_resumed_and_a_fresh_one_is_spawned() {
     let h = harness().await;
-    let cast = under_review(&h, "stub:opus").await;
-    let (task, reviewer) = (cast.task.clone(), cast.reviewer.id.clone());
-    let stillborn = h
-        .session(&cast.goal, Some(&task), Seat::Reviewer, &reviewer)
-        .await;
+    let cast = in_progress(&h, "stub:opus").await;
+    let stillborn = h.agent_session(&cast, "develop").await;
     h.set_status(&stillborn, SessionStatus::Exited).await;
 
-    let spawned = h
-        .launcher
-        .resume_reviewer(&task.id, &reviewer, "(unused: nothing to resume)")
-        .await
-        .unwrap();
+    assert!(
+        h.launcher
+            .revive_session(&stillborn.id, None)
+            .await
+            .is_err(),
+        "there is no conversation to revive"
+    );
+    let spawned = start_develop(&h, &cast).await;
     assert_ne!(spawned.id, stillborn.id, "a fresh session, not that one");
     assert_eq!(spawned.status(), SessionStatus::Running);
     heard(&h, &spawned).await;
@@ -587,6 +559,7 @@ async fn a_reviewer_without_an_agent_id_is_spawned_afresh() {
         SessionStatus::Exited,
         "an un-resumable session stays finished"
     );
+    assert_eq!(h.sessions_of(&cast.task.id).await.len(), 2);
 }
 
 /// The UI's caches are driven by domain events, and a reused row only ever
@@ -594,14 +567,10 @@ async fn a_reviewer_without_an_agent_id_is_spawned_afresh() {
 #[tokio::test]
 async fn a_relaunch_announces_the_session_as_updated() {
     let h = harness().await;
-    let (cast, first) = h.resumable_author().await;
-    let task = cast.task.clone();
+    let (cast, first) = resumable_in_progress(&h).await;
     let mut rx = h.bus.subscribe();
 
-    h.launcher
-        .resume_author(&task.id, "fix things")
-        .await
-        .unwrap();
+    start_develop(&h, &cast).await;
 
     let event = next_event(
         &mut rx,
@@ -621,25 +590,24 @@ async fn a_relaunch_announces_the_session_as_updated() {
 
 /// Manual resume (the UI's button, `ariadne attach`): the caller gets the very
 /// session it named back, live again, not a sibling to go and find — in place
-/// down to the agent and the model, so a profile edited in the meantime does
+/// down to the agent and the model, so a staffing edited in the meantime does
 /// not get to move the conversation somewhere else either.
 #[tokio::test]
 async fn reviving_a_session_revives_it_in_place() {
     let h = harness().await;
-    let cast = under_review(&h, "stub:opus").await;
-    let task = cast.task.clone();
-    let session = h.launcher.spawn_author(&task.id).await.unwrap();
+    let cast = in_progress(&h, "stub:opus").await;
+    let session = start_develop(&h, &cast).await;
     heard(&h, &session).await;
     h.launcher.kill_session(&session.id).await.unwrap();
 
-    h.move_agent(&cast.author.id, "stub:sonnet").await;
+    h.move_agent(&cast.develop().id, "stub:sonnet").await;
 
     let revived = h.launcher.revive_session(&session.id, None).await.unwrap();
     assert_eq!(revived.id, session.id, "the same session, revived");
     assert_eq!(revived.status(), SessionStatus::Running);
     assert_eq!(revived.ended_at, None);
     assert_eq!(revived.worktree_path, session.worktree_path);
-    assert_eq!(h.sessions_of(&task.id).await.len(), 1);
+    assert_eq!(h.sessions_of(&cast.task.id).await.len(), 1);
     assert_eq!(revived.model, "stub:opus");
     assert_eq!(
         launched_model(&h, &revived.id),
@@ -648,36 +616,10 @@ async fn reviving_a_session_revives_it_in_place() {
     );
 }
 
-/// Nothing to resume from: an author session that never reported an agent id
-/// is not a conversation, so it is left alone and a fresh spawn is what runs
-/// (which fails here for want of a git repo — the point is the path taken).
-#[tokio::test]
-async fn a_session_without_an_agent_id_is_not_revived() {
-    let h = harness().await;
-    let (cast, first) = author_session(&h).await;
-    let task = cast.task.clone();
-    h.set_status(&first, SessionStatus::Exited).await;
-
-    assert!(
-        h.launcher
-            .resume_author(&task.id, "carry on")
-            .await
-            .is_err(),
-        "there is no repo to spawn a fresh author in"
-    );
-    let after = h.store.get_session(&first.id).await.unwrap();
-    assert_eq!(
-        after.status(),
-        SessionStatus::Exited,
-        "an un-resumable session stays finished"
-    );
-    assert_eq!(h.sessions_of(&task.id).await.len(), 1);
-}
-
 #[tokio::test]
 async fn a_session_of_a_completed_goal_revives_and_the_goal_stays_completed() {
     let h = harness().scheduler().await;
-    let (cast, session) = h.resumable_author().await;
+    let (cast, session) = h.resumable_agent().await;
     h.store
         .set_goal_status(&cast.goal.id, GoalStatus::Completed)
         .await
@@ -698,7 +640,7 @@ async fn a_session_of_a_completed_goal_revives_and_the_goal_stays_completed() {
 #[tokio::test]
 async fn a_session_with_a_deleted_worktree_revives_in_the_repository_checkout() {
     let h = harness().await;
-    let (cast, session) = h.resumable_author().await;
+    let (cast, session) = h.resumable_agent().await;
     let worktree = session.worktree_path.as_deref().unwrap();
     h.git_repo("repo");
     std::fs::remove_dir(worktree).unwrap();

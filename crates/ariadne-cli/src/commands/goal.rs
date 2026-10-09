@@ -9,8 +9,9 @@ use ariadne_api::goals::{CreateGoalRequest, GoalDto};
 use ariadne_api::issues::IssueDto;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::tasks::{TaskDto, TaskListQuery};
+use ariadne_api::usage::TokenUsageDto;
 use ariadne_client::{Client, SseEvent};
-use ariadne_core::{GoalStatus, Landing};
+use ariadne_core::GoalStatus;
 
 use super::follow;
 use super::query_path;
@@ -94,16 +95,9 @@ pub(crate) enum GoalCommand {
         /// it at
         #[arg(long, value_name = "EFFORT", value_parser = parse_effort, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::efforts))]
         effort: Option<String>,
-        /// How every task of the goal ends: merge on the base branch,
-        /// pull-request opened and pushed, none where there is nothing to
-        /// land, or feature-branch. Fixed once the goal is created. Default:
-        /// merge. Refused beside --workflow, whose own gates say how each
-        /// task ends
-        #[arg(long, value_enum, conflicts_with = "workflow")]
-        landing: Option<Landing>,
-        /// Run the goal through this workflow's columns instead of the fixed
-        /// author/reviewer/landing pipeline. Default: the first repository's
-        /// own default workflow, else none
+        /// Run every task of the goal through this workflow's columns, whose
+        /// gates say how each task ends. Fixed once the goal is created.
+        /// Default: the first repository's own default workflow
         #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::workflow_names))]
         workflow: Option<String>,
     },
@@ -179,7 +173,6 @@ pub(crate) async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Re
             repos,
             model,
             effort,
-            landing,
             workflow,
         } => {
             let (issue, issue_repository) = match from_issue.as_deref() {
@@ -214,7 +207,6 @@ pub(crate) async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Re
                         issue_url: issue.map(|issue| issue.url),
                         model,
                         effort,
-                        landing,
                     },
                 )
                 .await?;
@@ -242,11 +234,7 @@ pub(crate) async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Re
                         g.issue_url.clone().unwrap_or_else(|| "-".into()).into(),
                     ),
                     ("status", Kv::status(g.status.as_str())),
-                    ("landing", landing_row(&g)),
-                    (
-                        "workflow",
-                        g.workflow.clone().unwrap_or_else(|| "-".into()).into(),
-                    ),
+                    ("workflow", g.workflow.clone().into()),
                     ("columns", workflow_columns(&g.steps).into()),
                     (
                         "orchestrator",
@@ -356,18 +344,27 @@ async fn issue_reference(client: &Client, url: &str) -> Result<(String, i64)> {
 }
 
 /// What the goal cost, seat by seat: every session of it summed, then the
-/// orchestrator, its authors and its reviewers under that.
+/// orchestrator and the agents of every column of every task under that.
 ///
-/// By seat rather than by profile, the way [`GoalUsageDto`] groups it: a goal
-/// has as many authors as it has tasks, and at this height the question is
-/// where the tokens went, not which agent went there. Each of the three lines
-/// is always printed, `0` included — a seat a goal has not spent on yet is a
-/// figure, not a gap.
+/// By seat rather than by agent, the way [`ariadne_api::goals::GoalUsageDto`]
+/// groups it: a goal has as many agents as its tasks have columns, and at
+/// this height the question is where the tokens went, not which agent went
+/// there — `task inspect` is where that is answered. Both lines are always
+/// printed, `0` included — a seat a goal has not spent on yet is a figure,
+/// not a gap.
 fn usage_lines(g: &GoalDto) -> String {
+    let agents = g
+        .usage
+        .agents
+        .iter()
+        .fold(TokenUsageDto::default(), |sum, agent| TokenUsageDto {
+            input_tokens: sum.input_tokens + agent.usage.input_tokens,
+            cached_input_tokens: sum.cached_input_tokens + agent.usage.cached_input_tokens,
+            output_tokens: sum.output_tokens + agent.usage.output_tokens,
+        });
     let seats = [
         ("orchestrator".to_string(), g.usage.orchestrator),
-        ("authors".to_string(), g.usage.authors),
-        ("reviewers".to_string(), g.usage.reviewers),
+        ("agents".to_string(), agents),
     ];
     usage_block(&g.usage.total, &seats, INDENT)
 }
@@ -499,9 +496,9 @@ async fn cancel_question(client: &Client, goal: &GoalDto, subject: &Subject) -> 
     format!("Cancel goal {} — {tail}?", subject.named())
 }
 
-/// What `goal rm` asks before it deletes: the goal's tasks and their review
-/// history go with it and none of it comes back, so the question names how
-/// much history is about to be dropped.
+/// What `goal rm` asks before it deletes: the goal's tasks and their history
+/// go with it and none of it comes back, so the question names how much
+/// history is about to be dropped.
 async fn rm_question(client: &Client, goal: &GoalDto, subject: &Subject) -> String {
     let tail = match goal_tasks(client, &goal.id).await.len() {
         0 => "no tasks".into(),
@@ -509,7 +506,7 @@ async fn rm_question(client: &Client, goal: &GoalDto, subject: &Subject) -> Stri
         n => format!("{n} tasks"),
     };
     format!(
-        "Delete {} goal {} for good, with {tail} and their reviews?",
+        "Delete {} goal {} for good, with {tail} and their history?",
         goal.status.as_str(),
         subject.named()
     )
@@ -594,24 +591,16 @@ fn pin_label(model: &str, effort: Option<&str>) -> String {
     }
 }
 
-fn goal_repo_label(repo: &ariadne_api::goals::GoalRepositoryDto) -> String {
-    match repo.goal_branch.as_deref() {
-        Some(branch) => format!(
-            "{} [{} → {}] ({})",
-            repo.path, repo.base_branch, branch, repo.id
-        ),
-        None => format!("{} [{}] ({})", repo.path, repo.base_branch, repo.id),
-    }
-}
-
-fn landing_row(goal: &GoalDto) -> Kv {
-    goal.landing.as_str().into()
+/// One repository of the goal, as `goal inspect` names it: the path, the base
+/// branch its tasks branch off, and the id `task create --repo` takes.
+fn goal_repo_label(repo: &RepositoryDto) -> String {
+    format!("{} [{}] ({})", repo.path, repo.base_branch, repo.id)
 }
 
 /// A goal's workflow columns, one line each, in column order: the id and the
 /// title, then the rank and the gate the document named it — a dash for
-/// either where the column left it to the default. An unstepped goal has
-/// none, which reads as a dash rather than an empty line.
+/// either where the column left it to the default. A goal whose columns the
+/// daemon did not send reads as a dash rather than an empty line.
 fn workflow_columns(steps: &[ariadne_api::workflows::WorkflowStepDto]) -> String {
     if steps.is_empty() {
         return "-".to_string();
@@ -636,7 +625,7 @@ mod tests {
     use super::*;
 
     use ariadne_api::goals::GoalUsageDto;
-    use ariadne_api::usage::TokenUsageDto;
+    use ariadne_api::tasks::AgentUsageDto;
 
     use crate::commands::fixtures::{goal, repository};
 
@@ -708,7 +697,6 @@ mod tests {
                 repos: vec![],
                 model: "stub:test-model".into(),
                 effort: None,
-                landing: None,
                 workflow: None,
             },
             Format::Json,
@@ -742,18 +730,30 @@ mod tests {
         }
     }
 
+    /// What one agent spent, as the daemon lists it under the goal.
+    fn spent(agent_id: &str, step: &str, u: TokenUsageDto) -> AgentUsageDto {
+        AgentUsageDto {
+            step: Some(step.into()),
+            agent_id: agent_id.into(),
+            skills: Vec::new(),
+            usage: u,
+        }
+    }
+
     /// The total first, then where it went: a goal is read by seat, since its
-    /// authors are as many as it has tasks.
+    /// agents are as many as its tasks have columns — the agents of every
+    /// task summed into one line.
     #[test]
     fn the_block_splits_the_goal_total_by_seat() {
         let g = GoalDto {
             issue_url: None,
             usage: GoalUsageDto {
-                agents: Vec::new(),
                 total: usage(12_345_000, 11_000_000, 456_000),
                 orchestrator: usage(345_000, 300_000, 6_000),
-                authors: usage(10_000_000, 9_000_000, 400_000),
-                reviewers: usage(2_000_000, 1_700_000, 50_000),
+                agents: vec![
+                    spent("01DEV", "develop", usage(10_000_000, 9_000_000, 400_000)),
+                    spent("01REV", "review", usage(2_000_000, 1_700_000, 50_000)),
+                ],
             },
             ..goal("01GOAL", "Ship the board")
         };
@@ -763,8 +763,7 @@ mod tests {
                 "input    12M  89.1%",
                 "             output  456k",
                 "             orchestrator  ↑345k ↓6k",
-                "             authors       ↑10M ↓400k",
-                "             reviewers     ↑2M ↓50k",
+                "             agents        ↑12M ↓450k",
             ]
             .join("\n")
         );
@@ -781,54 +780,25 @@ mod tests {
                 "input   0  0.0%",
                 "             output  0",
                 "             orchestrator  ↑0 ↓0",
-                "             authors       ↑0 ↓0",
-                "             reviewers     ↑0 ↓0",
+                "             agents        ↑0 ↓0",
             ]
             .join("\n")
         );
     }
 
+    /// A repository of the goal is named by the three things `task create
+    /// --repo` and a reader need: its path, its base branch and its id.
     #[test]
-    fn goal_inspect_shows_goal_branches_only_when_set() {
-        use ariadne_api::goals::GoalRepositoryDto;
-
-        let base = repository("01REPO", "/home/me/api", "main");
-        let feature = GoalRepositoryDto {
-            repository: base.clone(),
-            goal_branch: Some("goal/ship-board".into()),
-        };
-        let regular = GoalRepositoryDto {
-            repository: base,
-            goal_branch: None,
-        };
-
+    fn goal_inspect_names_each_repository_by_path_branch_and_id() {
         assert_eq!(
-            goal_repo_label(&feature),
-            "/home/me/api [main → goal/ship-board] (01REPO)"
-        );
-        assert_eq!(goal_repo_label(&regular), "/home/me/api [main] (01REPO)");
-    }
-
-    #[test]
-    fn goal_inspect_prints_its_landing() {
-        let g = GoalDto {
-            issue_url: None,
-            landing: Landing::FeatureBranch,
-            ..goal("01GOAL", "Ship the board")
-        };
-
-        assert_eq!(
-            crate::output::kv_block(
-                &[("landing", landing_row(&g))],
-                &crate::output::View::plain()
-            ),
-            "landing  feature_branch"
+            goal_repo_label(&repository("01REPO", "/home/me/api", "main")),
+            "/home/me/api [main] (01REPO)"
         );
     }
 
     /// A column reads as its id, its title, and the rank and the gate the
-    /// document named it, with a dash for either it left to the default; an
-    /// unstepped goal's columns are a dash and not an empty line.
+    /// document named it, with a dash for either it left to the default; a
+    /// goal with no columns to show is a dash and not an empty line.
     #[test]
     fn workflow_columns_reads_the_rank_and_the_gate() {
         use ariadne_api::workflows::WorkflowStepDto;
@@ -928,8 +898,8 @@ mod tests {
     }
 
     /// What `goal rm` asks about is everything that goes with the goal: its
-    /// tasks and their reviews, which is the whole of a goal's history now.
-    /// The question is the last thing a person reads before something
+    /// tasks and their history, every column they moved through. The
+    /// question is the last thing a person reads before something
     /// irreversible, so its words are pinned rather than left to drift.
     #[tokio::test]
     async fn the_delete_question_names_what_goes_with_the_goal() {
@@ -945,7 +915,7 @@ mod tests {
         assert_eq!(
             rm_question(&client, &g, &subject).await,
             "Delete cancelled goal \"Ship the board\" (…amkhsfgt) for good, \
-             with no tasks and their reviews?"
+             with no tasks and their history?"
         );
     }
 

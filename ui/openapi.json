@@ -405,7 +405,7 @@
           "goals"
         ],
         "summary": "Create a goal on registered repositories; the orchestrator session is\nspawned by the scheduler once agent execution lands.",
-        "description": "The repos are referenced, not copied: whatever `POST /v1/repositories`\nvalidated about a checkout holds for every goal that names it, and an edit\nthere moves this goal too.",
+        "description": "The repos are referenced, not copied: whatever `POST /v1/repositories`\nvalidated about a checkout holds for every goal that names it, and an edit\nthere moves this goal too. The workflow is the one the request names, or\nthe first repository's default, and its columns are copied onto the goal.",
         "operationId": "create",
         "requestBody": {
           "content": {
@@ -432,7 +432,7 @@
             "description": ""
           },
           "404": {
-            "description": "no such repository or orchestrator profile"
+            "description": "no such repository or workflow"
           }
         }
       }
@@ -641,7 +641,7 @@
         "tags": [
           "goals"
         ],
-        "summary": "Finalize the plan: goal moves planning -> active and its tasks start. The\norchestrator's call alone, and there is nothing left for the user to\napprove.",
+        "summary": "Finalize the plan: goal moves planning -> active and its tasks start. The\norchestrator's call alone, and there is nothing left for the user to\napprove. A task with a column nobody staffs is refused by the column's\nname: every task runs through every column, and one with nobody on it\nwould stop there.",
         "operationId": "finalize",
         "parameters": [
           {
@@ -3350,7 +3350,7 @@
         "tags": [
           "tasks"
         ],
-        "summary": "Edit a pending/ready task (orchestrator or user).",
+        "summary": "Edit a task that is not running (orchestrator or user): pending, ready,\nor failed and waiting for a retry.",
         "operationId": "update",
         "parameters": [
           {
@@ -3399,7 +3399,7 @@
           "tasks"
         ],
         "summary": "Cancel a task: the user's, or the orchestrator's, which holds the plan\nthe task belongs to.",
-        "description": "Who called it is read from the session header rather than assumed, so the\ntransition log says which of the two it was — and so the state machine\nrefuses an author or a reviewer reaching for it.",
+        "description": "Who called it is read from the session header rather than assumed, so the\ntransition log says which of the two it was — and so the state machine\nrefuses a column's agent reaching for it.",
         "operationId": "cancel",
         "parameters": [
           {
@@ -3438,7 +3438,6 @@
           "tasks"
         ],
         "summary": "Diff of the task branch against its base (`git diff base...branch`), or,\nonce the task is merged, the diff its merge commit brought into the base —\nafter the merge the branch is contained in the base, so the three-dot diff\nwould be forever empty.",
-        "description": "On a task staffed with several authors, `agent` names the author whose\nbranch to read; left out, the task's own branch is read — the first\nauthor's until the pick settles, and the winner's after it.",
         "operationId": "diff",
         "parameters": [
           {
@@ -3448,18 +3447,6 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
-          },
-          {
-            "name": "agent",
-            "in": "query",
-            "description": "Id of the author whose branch to read, on a task staffed with several.",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
             }
           }
         ],
@@ -3595,65 +3582,13 @@
         }
       }
     },
-    "/v1/tasks/{id}/pick": {
-      "post": {
-        "tags": [
-          "tasks"
-        ],
-        "summary": "One reviewer's pick of the winning author, on a task staffed with several.",
-        "description": "The gate is here: the pick starts only once every author is approved, and\na pick before that is refused. One pick per reviewer per task — a second\nis refused by the reviewer's name — and the daemon settles the winner once\nevery staffed reviewer has picked.",
-        "operationId": "pick_winner",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "task id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PickWinnerRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "not an author of the task"
-          },
-          "403": {
-            "description": "not a reviewer session"
-          },
-          "409": {
-            "description": "the pick has not started, or this reviewer has picked already"
-          }
-        }
-      }
-    },
     "/v1/tasks/{id}/pull-request": {
       "post": {
         "tags": [
           "tasks"
         ],
         "summary": "Open the pull or merge request a task lands by, through the repository's\nown forge CLI, and answer its URL.",
-        "description": "The daemon runs the forge call, never the agent: `gh` or `glab` only ever\nrun here, with the authentication the user already set up for them\n([`crate::forge`]). The author supplies only what the daemon cannot read\noff the task or the repository — the title and the body — and gets the\nURL back to show the user.\n\nOne request per task: a task that already has a `pr_url` answers it again\nand opens nothing, so a retried call never opens a second request.",
+        "description": "The daemon runs the forge call, never the agent: `gh` or `glab` only ever\nrun here, with the authentication the user already set up for them\n([`crate::forge`]). The current column's agent supplies only what the\ndaemon cannot read off the task or the repository — the title and the\nbody — and gets the URL back to show the user.\n\nOne request per task: a task that already has a `pr_url` answers it again\nand opens nothing, so a retried call never opens a second request.",
         "operationId": "open_pull_request",
         "parameters": [
           {
@@ -3688,10 +3623,10 @@
             }
           },
           "403": {
-            "description": "not the author or current workflow agent"
+            "description": "not the current column's agent"
           },
           "409": {
-            "description": "the task cannot open a request, has no forge or its integration is off, is not authenticated, or is not pushed"
+            "description": "the task is not in progress, has no forge or its integration is off, is not authenticated, or is not pushed"
           }
         }
       }
@@ -3701,7 +3636,7 @@
         "tags": [
           "tasks"
         ],
-        "summary": "Retry a failed task: failed -> ready. The user's call, and the\norchestrator's — the daemon wakes it when a task fails, and retrying is\none of the three answers it has.",
+        "summary": "Retry a failed task: failed -> ready, which starts it on its first column\nagain. The user's call, and the orchestrator's — the daemon wakes it when\na task fails, and retrying is one of the three answers it has. A task\nwith a column nobody staffs is refused by that column's name.",
         "operationId": "retry",
         "parameters": [
           {
@@ -4284,19 +4219,17 @@
         "type": "string",
         "description": "Who is attempting a transition: a seat, the daemon, or the user.",
         "enum": [
-          "agent",
           "orchestrator",
-          "author",
-          "reviewer",
+          "agent",
           "daemon",
           "user"
         ]
       },
       "AgentAssignment": {
         "type": "object",
-        "description": "One agent to staff on a task: where it sits, the skills it loads, and what\nit is to run on.\n\nThe model is written `<agent>:<model>`: the id of an agent in the ACP\nregistry, and after the `:` one model of it. Both halves are required — a\nmodel is required, and no agent default stands in for one — and a string\nnaming no registry agent is refused: nothing here derives one from the\nother.",
+        "description": "One agent to staff on a task: the column it works, the skills it loads,\nand what it is to run on.\n\nThe model is written `<agent>:<model>`: the id of an agent in the ACP\nregistry, and after the `:` one model of it. Both halves are required — a\nmodel is required, and no agent default stands in for one — and a string\nnaming no registry agent is refused: nothing here derives one from the\nother.",
         "required": [
-          "seat",
+          "step",
           "model"
         ],
         "properties": {
@@ -4320,27 +4253,20 @@
             "description": "What this agent runs on, `<agent>:<model>`. Required; the empty\nstring and the word \"default\" are refused.",
             "example": "codex-acp:o3"
           },
-          "seat": {
-            "$ref": "#/components/schemas/Seat",
-            "description": "`agent` for a workflow column, or `author` or `reviewer` without a workflow.\nA task without a workflow takes at least one author; several authors need a reviewer to pick the winner."
-          },
           "skills": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "The names of the skills this agent loads, in the order they reach it.\nA name no skill answers to is refused.",
+            "description": "The names of the skills this agent loads, in the order they reach it.\nOmitted or empty = the column's own skills. A name no skill answers\nto is refused.",
             "example": [
               "coding",
               "documentation"
             ]
           },
           "step": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The workflow column id. Required for `agent`; omitted for `author` and `reviewer`."
+            "type": "string",
+            "description": "The id of the workflow column this agent works, one of the goal's\ncolumns. A task takes one agent per column, and a column named twice\nis refused."
           }
         },
         "additionalProperties": false
@@ -4453,7 +4379,7 @@
       },
       "AgentUsageDto": {
         "type": "object",
-        "description": "What one staffed agent spent on a task, named the way a reader addresses\nit: an agent has no name of its own, so its skills are what identify it.",
+        "description": "What one staffed agent spent on a task, named the way a reader addresses\nit: an agent has no name of its own, so its column and its skills are what\nidentify it.",
         "required": [
           "agent_id",
           "skills",
@@ -4474,7 +4400,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "The column the agent works; null for an agent the task no longer\nstaffs."
           },
           "usage": {
             "$ref": "#/components/schemas/TokenUsageDto"
@@ -4809,6 +4736,7 @@
       },
       "CompleteStepRequest": {
         "type": "object",
+        "description": "Body of `POST /v1/tasks/{id}/step/complete`: the current column's agent\nhands the task to the next column, or finishes it from the last one.",
         "required": [
           "reason"
         ],
@@ -4817,10 +4745,12 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "The commit the task landed as, which the `merged` gate checks."
           },
           "reason": {
-            "type": "string"
+            "type": "string",
+            "description": "What the next column's agent is briefed with."
           }
         },
         "additionalProperties": false
@@ -4863,17 +4793,6 @@
               "null"
             ]
           },
-          "landing": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/Landing",
-                "description": "How every task of the goal ends. Omitted = `merge`. It cannot change\nonce the goal is created."
-              }
-            ]
-          },
           "model": {
             "type": "string",
             "description": "What the orchestrator runs on, `<agent>:<model>` — the id of an agent\nin the ACP registry and, after the `:`, the model of it:\n`codex-acp:gpt-5.3-codex`, `opencode:ollama/llama3:8b`. Required —\na model is required, and no agent default stands in for one. The model\nhalf is free text, handed to that agent as typed; a string naming no\nregistry agent is refused, and so are the empty string and the word\n\"default\".",
@@ -4893,7 +4812,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "The workflow every task of the goal runs on, a name of the catalog\n(`GET /v1/workflows`). Omitted = the default of the first repository.\nIt cannot change once the goal is created."
           }
         },
         "additionalProperties": false
@@ -4911,22 +4831,12 @@
             ],
             "description": "Omit for the repo's currently checked-out branch."
           },
-          "default_landing": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/Landing",
-                "description": "Omit for `merge`."
-              }
-            ]
-          },
           "default_workflow": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "The workflow a new goal in this repository runs on where its request\nnames none. Omit for `develop-review-merge`."
           },
           "description": {
             "type": [
@@ -4995,7 +4905,7 @@
             "items": {
               "$ref": "#/components/schemas/AgentAssignment"
             },
-            "description": "The agents to staff: the authors first — one or more, each with its\nown model — then the reviewers in review order. Several authors need\nat least one reviewer, to pick the winner."
+            "description": "The agents to staff: one per column of the goal's workflow, each with\nits own model. A column left out is named when the plan is finalized."
           },
           "depends_on": {
             "type": "array",
@@ -5675,12 +5585,14 @@
       },
       "FailStepRequest": {
         "type": "object",
+        "description": "Body of `POST /v1/tasks/{id}/step/fail`: the current column's agent hands\nthe task back to the previous column, or fails it from the first one.",
         "required": [
           "reason"
         ],
         "properties": {
           "reason": {
-            "type": "string"
+            "type": "string",
+            "description": "What the previous column's agent is told to fix."
           }
         },
         "additionalProperties": false
@@ -5880,6 +5792,7 @@
       "GoalDto": {
         "type": "object",
         "required": [
+          "workflow",
           "steps",
           "id",
           "title",
@@ -5887,7 +5800,6 @@
           "status",
           "orchestrated",
           "model",
-          "landing",
           "repos",
           "usage",
           "created_at",
@@ -5917,13 +5829,9 @@
               "null"
             ]
           },
-          "landing": {
-            "$ref": "#/components/schemas/Landing",
-            "description": "How every task of the goal ends, chosen when the goal was created."
-          },
           "model": {
             "type": "string",
-            "description": "What the orchestrator or adopted author runs on, `<agent>:<model>`:\nthe registry agent and, after the `:`, the model of it.",
+            "description": "What the orchestrator runs on, `<agent>:<model>`: the registry agent\nand, after the `:`, the model of it.",
             "example": "claude-acp:claude-opus-5"
           },
           "orchestrated": {
@@ -5933,7 +5841,7 @@
           "repos": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/GoalRepositoryDto"
+              "$ref": "#/components/schemas/RepositoryDto"
             },
             "description": "The registered repositories the goal works in, as they stand now: a\ngoal references them, so an edit to one shows up here."
           },
@@ -5944,7 +5852,8 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/WorkflowStepDto"
-            }
+            },
+            "description": "The columns of that workflow as they were when the goal was created:\na later edit of the catalog reaches later goals alone."
           },
           "title": {
             "type": "string"
@@ -5957,32 +5866,10 @@
             "description": "What the agents of this goal have spent between them."
           },
           "workflow": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string",
+            "description": "The workflow every task of the goal runs on, chosen when the goal was\ncreated."
           }
         }
-      },
-      "GoalRepositoryDto": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/RepositoryDto"
-          },
-          {
-            "type": "object",
-            "properties": {
-              "goal_branch": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "Null until a feature branch goal creates its branch at plan finalization."
-              }
-            }
-          }
-        ],
-        "description": "A registered repository together with the branch this goal owns in it."
       },
       "GoalStatus": {
         "type": "string",
@@ -5996,32 +5883,23 @@
       },
       "GoalUsageDto": {
         "type": "object",
-        "description": "What a goal cost, by the seat that spent it. Grouped by seat rather than\nby agent: a goal's authors are as many as it has tasks, and what is\nread at this height is where the tokens went, not which agent went there.",
+        "description": "What a goal cost, by the seat that spent it, and by the agent of every\ncolumn of every task under it.",
         "required": [
-          "agents",
           "total",
           "orchestrator",
-          "authors",
-          "reviewers"
+          "agents"
         ],
         "properties": {
           "agents": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/AgentUsageDto"
-            }
-          },
-          "authors": {
-            "$ref": "#/components/schemas/TokenUsageDto",
-            "description": "Every author session of every task of the goal."
+            },
+            "description": "One entry per agent of every task of the goal that has a session,\ntask by task and column by column."
           },
           "orchestrator": {
             "$ref": "#/components/schemas/TokenUsageDto",
             "description": "The orchestrator's sessions, which belong to no task."
-          },
-          "reviewers": {
-            "$ref": "#/components/schemas/TokenUsageDto",
-            "description": "Every reviewer session of every task of the goal, all rounds."
           },
           "total": {
             "$ref": "#/components/schemas/TokenUsageDto",
@@ -6173,16 +6051,6 @@
             "type": "string"
           }
         }
-      },
-      "Landing": {
-        "type": "string",
-        "description": "How the tasks of one goal end.\n\nThe one thing about the end of a task the author has to be told, since the\ncommands it runs differ entirely between the endings. The user chooses it\nonce, for the whole goal, when the goal is created, and every task of the\ngoal follows it: some work lands on the base branch, some goes through a\nrequest the author then sees to its merge, and some has nothing to land at\nall — a report filed, a document published, a release cut. Every ending\nreaches [`TaskStatus::Finished`]; landing is one way of getting there\nrather than the meaning of being there.\n\nWhich forge a published request goes to is *not* here: `origin` says\nwhether it is GitHub or GitLab, and asking the remote at landing time\ncannot go stale the way a second copy of the answer would.",
-        "enum": [
-          "merge",
-          "pull_request",
-          "none",
-          "feature_branch"
-        ]
       },
       "LeadTimeDto": {
         "type": "object",
@@ -6444,11 +6312,8 @@
       },
       "MessageKind": {
         "type": "string",
-        "description": "What one agent is saying to another.\n\nAgents talk to each other through one channel, and this is what tells a\nmessage from the three steps of a review. A verdict used to be a row of its own; it is a\nmessage like the rest now, which is what carries a review's whole\nconversation in one place.\n\nOne kind carries everything the agents say outside a review, whether it\nasks something or answers it. There is no `answer` kind and no `reply`\ntool: an answer is a message to whoever asked, addressed the way the\nquestion was, so nothing threads. Each message reaches its agent as a turn\n— which is why the tool that sends one takes questions and answers and\nnothing else, no confirmation and no thanks.\n\nThe kind is what the daemon reads. Two of them move the task\n([`TaskStatus`]), and the rest are said and left.",
+        "description": "What one agent is saying to another.\n\nAgents talk to each other through one channel, and one kind carries\neverything they say on it, whether it asks something or answers it. There\nis no `answer` kind and no `reply` tool: an answer is a message to whoever\nasked, addressed the way the question was, so nothing threads. Each\nmessage reaches its agent as a turn — which is why the tool that sends one\ntakes questions and answers and nothing else, no confirmation and no\nthanks.\n\nA review used to run on the channel too, as three kinds of its own; a\nworkflow column moves a task through the step routes now, and the one\nkind left is what the agents say.",
         "enum": [
-          "review_request",
-          "approve",
-          "request_changes",
           "message"
         ]
       },
@@ -6556,17 +6421,10 @@
           "goals",
           "tokens",
           "time_secs",
-          "messages"
+          "messages",
+          "tasks_finished"
         ],
         "properties": {
-          "changes_per_task": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double",
-            "description": "Changes requested over the tasks this reviewer model gave a verdict on;\nnull except for reviewers."
-          },
           "goals": {
             "type": "integer",
             "format": "int64",
@@ -6582,14 +6440,6 @@
           "model": {
             "type": "string"
           },
-          "rounds_per_task": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double",
-            "description": "The mean review requests over this author model's finished tasks; null\nexcept for authors."
-          },
           "seat": {
             "type": [
               "string",
@@ -6600,6 +6450,12 @@
             "type": "integer",
             "format": "int64",
             "description": "Distinct tasks with a session of this model in this seat.",
+            "minimum": 0
+          },
+          "tasks_finished": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The tasks this model's column ended `finished`.",
             "minimum": 0
           },
           "time_secs": {
@@ -6659,7 +6515,7 @@
       },
       "OpenPullRequestRequest": {
         "type": "object",
-        "description": "The author asking the daemon to open the pull or merge request its task\nlands by. The daemon runs the forge's own CLI, so this carries only what\nthe author cannot read off the task or the repository itself.",
+        "description": "The agent of the `pr` column asking the daemon to open the pull or merge\nrequest its task lands by. The daemon runs the forge's own CLI, so this\ncarries only what the agent cannot read off the task or the repository\nitself.",
         "required": [
           "title",
           "body"
@@ -6958,20 +6814,6 @@
             "format": "double"
           }
         }
-      },
-      "PickWinnerRequest": {
-        "type": "object",
-        "description": "One reviewer picking the winning author of a task staffed with several:\nthe author whose branch lands.",
-        "required": [
-          "author_agent_id"
-        ],
-        "properties": {
-          "author_agent_id": {
-            "type": "string",
-            "description": "Id of the author picked, one of the task's authors."
-          }
-        },
-        "additionalProperties": false
       },
       "PullRequestCommentDto": {
         "type": "object",
@@ -7316,11 +7158,11 @@
       "RepositoryDto": {
         "type": "object",
         "required": [
+          "default_workflow",
           "id",
           "path",
           "base_branch",
           "permission_mode",
-          "default_landing",
           "created_at",
           "updated_at"
         ],
@@ -7331,15 +7173,10 @@
           "created_at": {
             "type": "string"
           },
-          "default_landing": {
-            "$ref": "#/components/schemas/Landing",
-            "description": "The landing a new goal uses where its request leaves landing out."
-          },
           "default_workflow": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string",
+            "description": "The workflow a new goal runs on where its request names none, a name\nof the catalog (`GET /v1/workflows`).",
+            "example": "develop-review-merge"
           },
           "description": {
             "type": [
@@ -7441,11 +7278,10 @@
       },
       "Seat": {
         "type": "string",
-        "description": "Where an agent sits: the orchestrator of a goal, or the author or a\nreviewer of one task.\n\nA seat is a position, not an identity. Every agent below the orchestrator\nis generic, and what it can do comes from the skills it loads; the seat is\nonly what the state machine and the launcher need to know about it.",
+        "description": "Where an agent sits: the orchestrator of a goal, the agent of one workflow\ncolumn of a task, or the reviewer of a pull request (029).\n\nA seat is a position, not an identity. Every agent below the orchestrator\nis generic, and what it can do comes from the skills it loads; the seat is\nonly what the state machine and the launcher need to know about it.",
         "enum": [
-          "agent",
           "orchestrator",
-          "author",
+          "agent",
           "reviewer"
         ]
       },
@@ -7453,16 +7289,12 @@
         "type": "object",
         "description": "Body of `POST /v1/tasks/{id}/messages` and `POST /v1/goals/{id}/messages`.\n\nWho it is *from* comes from the session header rather than the body: an\nagent cannot send a message as somebody else, and a message with no session\nbehind it is the user's.",
         "required": [
-          "kind",
           "to_actor",
           "body"
         ],
         "properties": {
           "body": {
             "type": "string"
-          },
-          "kind": {
-            "$ref": "#/components/schemas/MessageKind"
           },
           "to_actor": {
             "$ref": "#/components/schemas/Actor",
@@ -7473,7 +7305,7 @@
               "string",
               "null"
             ],
-            "description": "The staffed agent it is for, as `GET /v1/tasks/{id}` lists them.\nRequired for `author` and `reviewer`, refused for the orchestrator."
+            "description": "The staffed agent it is for, as `GET /v1/tasks/{id}` lists them.\nRequired for `agent`, refused for the orchestrator."
           }
         },
         "additionalProperties": false
@@ -8169,20 +8001,14 @@
       },
       "TaskAgentDto": {
         "type": "object",
+        "description": "One agent staffed on a task: the column it works, what it knows, and what\nit runs on.\n\nThe agent has no identity of its own. `step` says only which column of\nthe workflow it works; the skills are what it can do. What it runs on was\nsized by the orchestrator when it staffed the task, or chosen by the user\nsince — either way it is what this agent runs on, and nothing behind it\nchanges that.",
         "required": [
+          "step",
           "id",
-          "seat",
           "skills",
           "model"
         ],
         "properties": {
-          "branch": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The branch this agent works on: the task branch for the first author,\na suffixed sibling of it for every later one. None for a reviewer,\nwhich owns no branch."
-          },
           "brief": {
             "type": [
               "string",
@@ -8206,10 +8032,6 @@
             "description": "What this agent runs on, `<agent>:<model>`.",
             "example": "codex-acp:o3"
           },
-          "seat": {
-            "$ref": "#/components/schemas/Seat",
-            "description": "`author` or `reviewer`."
-          },
           "session_id": {
             "type": [
               "string",
@@ -8229,10 +8051,8 @@
             ]
           },
           "step": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string",
+            "description": "The id of the workflow column this agent works."
           }
         }
       },
@@ -8274,9 +8094,7 @@
           "agents",
           "depends_on",
           "branch",
-          "landing",
           "stalled",
-          "picks",
           "usage",
           "created_at",
           "updated_at"
@@ -8287,10 +8105,11 @@
             "items": {
               "$ref": "#/components/schemas/TaskAgentDto"
             },
-            "description": "The agents staffed on the task: the authors first, then the reviewers\nin review order. What each one can do is the skills it carries. Most\ntasks staff one author; one staffed with several runs them in\nparallel, and the reviewers pick the branch that lands."
+            "description": "The agents staffed on the task, one per column of its goal's\nworkflow, in the order the orchestrator listed them. What each one can\ndo is the skills it carries."
           },
           "branch": {
-            "type": "string"
+            "type": "string",
+            "description": "The branch every column works on, in the one worktree the task has."
           },
           "created_at": {
             "type": "string"
@@ -8300,7 +8119,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Ids of tasks that must merge before this one starts."
+            "description": "Ids of tasks that must finish before this one starts."
           },
           "description": {
             "type": "string"
@@ -8311,43 +8130,26 @@
           "id": {
             "type": "string"
           },
-          "landing": {
-            "$ref": "#/components/schemas/Landing",
-            "description": "How the task ends: a read-only copy of its goal's landing, which every\ntask of the goal follows."
-          },
           "merge_commit": {
             "type": [
               "string",
               "null"
-            ]
-          },
-          "picked_agent_id": {
-            "type": [
-              "string",
-              "null"
             ],
-            "description": "The author the reviewers picked, on a task staffed with several: the\none whose branch lands. None for a one-author task, and until the\npick settles."
-          },
-          "picks": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TaskPickDto"
-            },
-            "description": "The picks the reviewers have recorded so far, oldest first. Empty for\na one-author task."
+            "description": "The commit the task landed as, where its last column reported one."
           },
           "pr_url": {
             "type": [
               "string",
               "null"
             ],
-            "description": "URL of the pull or merge request the task was published as, once its\nauthor has reported one; None for a task landed directly."
+            "description": "URL of the pull or merge request the task's `pr` column opened, once\nit has; null for a task landed directly."
           },
           "reason": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Why a `failed` or `cancelled` task ended — the author's own\n`fail_task` reason, a dependency that never landed, a cancelled goal.\nNone for every other status, and for an ending nobody gave a reason\nfor."
+            "description": "Why a `failed` or `cancelled` task ended — an agent's own `fail_task`\nreason, a dependency that never landed, a cancelled goal. Null for\nevery other status, and for an ending nobody gave a reason for."
           },
           "repo_id": {
             "type": "string",
@@ -8364,7 +8166,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "The column of its goal's workflow the task is in while it is\n`in_progress`; null before its first column and once it has ended."
           },
           "title": {
             "type": "string"
@@ -8384,28 +8187,6 @@
           }
         }
       },
-      "TaskPickDto": {
-        "type": "object",
-        "description": "One agent staffed on a task: where it sits, what it knows, and what it\nruns on.\n\nThe agent has no identity of its own. `seat` says only whether it authors\nthe task or reviews it; the skills are what it can do. What it runs on was\nsized by the orchestrator when it staffed the task, or chosen by the user\nsince — either way it is what this agent runs on, and nothing behind it\nchanges that.\nOne reviewer's pick of the winning author, on a task staffed with several\nauthors.",
-        "required": [
-          "reviewer_agent_id",
-          "author_agent_id",
-          "created_at"
-        ],
-        "properties": {
-          "author_agent_id": {
-            "type": "string",
-            "description": "The author it picked."
-          },
-          "created_at": {
-            "type": "string"
-          },
-          "reviewer_agent_id": {
-            "type": "string",
-            "description": "The reviewer that picked. One pick per reviewer per task."
-          }
-        }
-      },
       "TaskStatus": {
         "type": "string",
         "description": "Task lifecycle status.",
@@ -8413,9 +8194,6 @@
           "pending",
           "ready",
           "in_progress",
-          "under_review",
-          "changes_requested",
-          "approved",
           "finished",
           "cancelled",
           "failed"
@@ -8444,7 +8222,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "The column the task left, where the move crossed columns."
           },
           "id": {
             "type": "string"
@@ -8462,7 +8241,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "The column the task entered."
           }
         }
       },
@@ -8491,34 +8271,22 @@
       },
       "TaskUsageDto": {
         "type": "object",
-        "description": "What a task cost, by who spent it: its author, its reviewers one entry\neach, and the total of every session on the task.",
+        "description": "What a task cost, by who spent it: one entry per agent that has a session\non the task, and the total of every session on it.",
         "required": [
-          "agents",
           "total",
-          "author",
-          "reviewers"
+          "agents"
         ],
         "properties": {
           "agents": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/AgentUsageDto"
-            }
-          },
-          "author": {
-            "$ref": "#/components/schemas/TokenUsageDto",
-            "description": "The author's own, across every run of it."
-          },
-          "reviewers": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/AgentUsageDto"
             },
-            "description": "One entry per reviewer that has a session on the task, every review\nround of it summed, in review order. A reviewer whose session has yet\nto report anything is listed with zeros; one that has never been\nspawned is not listed at all."
+            "description": "One entry per agent that has a session on the task, every run of it\nsummed, in column order. An agent whose session has yet to report\nanything is listed with zeros; one that has never been spawned is not\nlisted at all."
           },
           "total": {
             "$ref": "#/components/schemas/TokenUsageDto",
-            "description": "Every session on the task summed, whatever its seat."
+            "description": "Every session on the task summed, whatever its column."
           }
         }
       },
@@ -8712,7 +8480,7 @@
               "string",
               "null"
             ],
-            "description": "Required when `to` is `finished`, unless the task lands nothing."
+            "description": "The commit the task landed as, where `to` is `finished` and a column\nreported one."
           },
           "reason": {
             "type": [
@@ -8830,22 +8598,12 @@
               "null"
             ]
           },
-          "default_landing": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/Landing",
-                "description": "Absent = unchanged."
-              }
-            ]
-          },
           "default_workflow": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Absent = unchanged."
           },
           "description": {
             "type": [
@@ -8901,7 +8659,7 @@
       },
       "UpdateTaskRequest": {
         "type": "object",
-        "description": "Partial update; only allowed while the task is pending/ready.",
+        "description": "Partial update; only allowed while the task is pending, ready or failed.",
         "properties": {
           "agents": {
             "type": [
@@ -8910,17 +8668,8 @@
             ],
             "items": {
               "$ref": "#/components/schemas/AgentAssignment"
-            }
-          },
-          "authors": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "$ref": "#/components/schemas/AgentAssignment"
             },
-            "description": "The whole author list, replaced: every author is staffed afresh, with\nthe skills and the model it names. The way to give a task several\nauthors, or to take them back to one. `model` and `effort` above are\nrefused while a task has several authors: each author names its own."
+            "description": "The whole staffing, replaced: every column is staffed afresh, with\nthe skills and the model it names. The way to staff a column a task\nlacks before it is retried."
           },
           "depends_on": {
             "type": [
@@ -8929,39 +8678,14 @@
             ],
             "items": {
               "type": "string"
-            }
+            },
+            "description": "The whole dependency list, replaced."
           },
           "description": {
             "type": [
               "string",
               "null"
             ]
-          },
-          "effort": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The reasoning effort to run the model at: absent leaves it alone,\n\"default\" (or the empty string) puts it back on whatever the agent\nruns the model at, and anything else is checked against the model it\nwill run at — the one this request names, or the task's own where it\nnames none — and refused where that model does not take it. A `model`\nwritten without an effort runs at the agent's own default: the effort\nbelonged to the model that was left behind.",
-            "example": "xhigh"
-          },
-          "model": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "What the author runs on, `<agent>:<model>`: absent leaves the\nauthor's pins alone, and anything else pins what it spells. A model is\nrequired, so \"default\" and the empty string are refused — there is no\ndefault to hand the pin back to.",
-            "example": "codex-acp:gpt-5.3-codex"
-          },
-          "reviewers": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "$ref": "#/components/schemas/AgentAssignment"
-            },
-            "description": "The whole reviewer list, replaced: every reviewer is staffed afresh,\nwith the skills and the model it names."
           },
           "title": {
             "type": [

@@ -1,7 +1,7 @@
 ---
 id: planning-a-goal
 status: current
-updated: 2026-10-03
+updated: 2026-10-09
 areas: [prompts, daemon, mcp]
 commits: [d421e30b, fdd0c5b6, 09955c22, 305ad2fb, 7bcb30a0, 31bb7611, 29e6d84e, 1b09ac10, a4d7da95]
 tests:
@@ -9,6 +9,7 @@ tests:
   - crates/ariadne-daemon/src/agents/prompts.rs
   - crates/ariadne-daemon/tests/it/plan_finalize.rs
   - crates/ariadne-daemon/tests/it/goal_completion.rs
+  - crates/ariadne-daemon/tests/it/scheduler_attention.rs
 ---
 
 # Planning a goal
@@ -17,7 +18,8 @@ How a goal becomes a plan of tasks, and what the orchestrator does for the
 rest of that goal. It is the one agent type Ariadne defines (017), the one
 seat that talks to the user, and the one that outlives its own hand-off.
 
-A goal with a workflow follows [030](030-workflows.md) for its columns, staffing, and step lifecycle.
+Every goal runs on a workflow (030). The orchestrator plans the tasks; the
+workflow's columns say how each task is built, checked and landed.
 
 ## Scope
 
@@ -25,17 +27,17 @@ In: the orchestrator session, the conversation that removes the uncertainty
 from a goal, writing and staffing the tasks, `finalize_plan`, what the
 orchestrator is woken for afterwards, and `complete_goal`.
 
-Out: the landing procedures themselves (005), the model catalog the sizing
-reads (011), the skills the staffing names (017), and the MCP tools' shapes
-(013).
+Out: the columns and their gates (030), the model catalog the sizing reads
+(011), the skills the staffing names (017), and the MCP tools' shapes (013).
 
 ## Behavior
 
 1. A goal opens with one orchestrator session, started in the primary
    checkout of the goal's first repository and briefed with the goal, its
-   landing and its repositories. The landing is chosen when the goal is
-   created, or taken from the default of its first repository (005); the
-   orchestrator reads it off the briefing and does not ask for it. No
+   workflow — the name, then one line per column with its id, title, skills,
+   rank and gate — and its repositories. The workflow is chosen when the
+   goal is created, or taken from the default of its first repository (030);
+   the orchestrator reads it off the briefing and does not ask for it. No
    numbers: how many tasks the goal takes is what the conversation settles.
    Resuming an outside session starts no planning (020).
 2. The orchestrator never writes code. Its whole output is the plan.
@@ -51,45 +53,37 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
    files run together. Where one task hands another a route, a response
    shape, a function or a file, it names that interface in both tickets
    instead of a `depends_on` edge.
-   Under a `feature_branch` landing, each repository also gets one final
-   task: the one that depends on every other task of that repository. It
-   has one author and no reviewer, and it opens the pull request from the
-   repository's goal branch to the base branch, makes it green, merges it,
-   and deletes the goal branch (005). `finalize_plan` refuses such a plan
-   with no final task in a repository it touches.
-6. It staffs one author per task, on the skills that work needs (017), and
-   gives every agent one model from the catalog (011) — a model is required,
-   so no agent is staffed without one. Across a plan it spreads the agents
-   evenly over the tasks, and never onto a task the agent does not suit:
-   fit is the first question, and an even mix is the second.
-   It sizes each agent down the ladder of the user-set ranks (011): `fast`,
-   then `balanced`, then `frontier`, taking the lowest rank that does the task
-   and the lowest effort that finishes it. `local` is off the ladder and
-   staffed only where the user names it. A rank compares with the same rank of
-   another agent, and a model the user left unranked is sized from its
-   description. What it balances is power against cost and time, so a step up
-   a rank or an effort carries a reason it states.
-7. Three things are settled with the user rather than decided alone, because
+6. It staffs one agent on every column of each task (030), and gives every
+   agent one model from the catalog (011) — a model is required, so no agent
+   is staffed without one. A column's agent runs on the column's skills
+   unless the task names others. Across a plan it spreads the agents evenly
+   over the tasks, and never onto a task the agent does not suit: fit is the
+   first question, and an even mix is the second. For each column it takes a
+   model of the column's preferred rank (030), and it states a reason where
+   it takes another rank; it takes the lowest effort that finishes the step.
+   `local` is staffed only where the user names it. A rank compares with the
+   same rank of another agent, and a model the user left unranked is sized
+   from its description.
+7. Two things are settled with the user rather than decided alone, because
    each is a judgement about the work and not about the code:
    - what the goal actually asks for (3);
-   - which tasks to leave unreviewed, and what each review is for — every
-     task has one reviewer by default, and a task is left unreviewed only
-     when nothing can be tested whole, such as a release or a report (017);
    - what each agent runs on. The orchestrator sizes every one of them from
      the catalog (011) and shows the user what it chose; the model the user
      names instead is the one that is staffed.
-   How a task ends is not asked about: it follows from the goal's landing,
-   settled when the goal was created (005).
+   Nothing a column settles is asked about: whether a task is reviewed, and
+   how it lands, follow from the goal's workflow, settled when the goal was
+   created (030).
 8. It writes the tasks into Ariadne before it asks for the yes, not after.
    So what the user is shown is the tasks themselves — to read, and to edit —
    and the yes is given to a plan that already exists. It revises them until
    that yes is explicit.
 9. It writes no specification of its own. Where a goal wants one, that is a
-   task like any other, staffed with `spec-writing` and reviewed with
-   `spec-review`.
+   task like any other, staffed with `spec-writing` on its develop column.
 10. `finalize_plan` ends planning: it moves the goal to `active` and starts
     every task at once. Only the goal's orchestrator may call it, only out of
-    `planning`, and never on a plan with no tasks.
+    `planning`, and never on a plan with no tasks. It refuses a plan with a
+    task that has no agent on a column, and the refusal names the task and
+    the column.
 11. Nothing runs while the goal is in `planning`. A task created there stays
     `pending` however often the scheduler is woken about it: the daemon
     reconciles the tasks of active goals alone. That is what makes 8 safe —
@@ -97,18 +91,22 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
 12. The plan is a hand-off, not an ending. The orchestrator stays up for the
     rest of the goal: it is what the user talks to about work already running.
     Nothing is sent to it for the hand-off itself.
-13. The daemon wakes it when its tasks need a decision no author can make: a
-    task that failed, a task that has gone quiet, or a goal with nothing left
-    to do. Once per situation, as a prompt of its own. Work in progress is
-    what the orchestrator delegated, and it is not woken for that.
+13. The daemon wakes it when its tasks need a decision no column's agent can
+    make: a task that failed, a task that has gone quiet, or a goal with
+    nothing left to do. Once per situation, as a prompt of its own. Work in
+    progress is what the orchestrator delegated, and it is not woken for
+    that.
 14. It is also open to the agents themselves. Any of them can write to it
     about anything it needs to know, and the message arrives as a turn
     (018). It acts on what it is told — the plan is its to change — rather
     than writing back.
 15. It answers with `list_tasks`, and then with `retry_task`, `cancel_task`,
-    `update_task`, `switch_session` (013) or nothing at all. It switches a
-    task's session where the agent reported exhausted, stuck or unsuitable,
-    to a model the ladder gives, and says so to the user.
+    `update_task`, `switch_session` (013) or nothing at all. Before it
+    retries a failed task it staffs every column the task lacks with
+    `update_task`, since the retry is refused by the column's name otherwise
+    (001 rule 12). It switches a task's session where the agent reported
+    exhausted, stuck or unsuitable, to a model the ladder gives, and says so
+    to the user.
 16. `complete_goal` ends the goal. Whether the goal is *met* is a judgement
     about the work, so the daemon does not make it — but it refuses the call
     while any task is still going, which is the part it can see. The user may
@@ -117,14 +115,14 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
 
 ## Acceptance criteria
 
-- The playbook asks before it plans and plans before it starts, and staffs a
-  reviewer by default (`defaults.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`),
-  and it staffs a plan on a mix of agents rather than on one
-  (`defaults.rs::the_orchestrator_staffs_a_plan_on_a_mix_of_agents`).
-- The playbook states the staffing ladder — the rank order from `fast` upward,
-  `local` off it, the lowest effort that finishes the task, and the balance of
-  power against cost and time
-  (`defaults.rs::the_orchestrator_staffs_the_lowest_rank_the_task_earns`).
+- The playbook asks before it plans and plans before it starts
+  (`defaults.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`),
+  staffs one agent on every column and asks no reviewer question
+  (`::the_orchestration_skill_staffs_one_agent_per_column_and_asks_no_reviewer_question`),
+  and staffs a plan on a mix of agents rather than on one
+  (`::the_orchestrator_staffs_a_plan_on_a_mix_of_agents`).
+- The playbook takes each column's preferred rank unless it states a reason
+  (`defaults.rs::the_orchestrator_staffs_each_column_on_its_rank`).
 - The orchestrator is briefed to end planning with `finalize_plan` and with no
   other plan call
   (`defaults.rs::the_orchestrator_is_briefed_with_finalize_plan_and_no_other_plan_call`).
@@ -132,10 +130,15 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
   gives, and tells the user
   (`defaults.rs::the_orchestration_skill_switches_a_struggling_agents_session`).
 - The nudge fits the conversation and the goal under way
-  (`defaults.rs::the_orchestrator_nudge_fits_the_conversation_and_the_goal_under_way`).
-- The orchestrator's own texts name no forge and no landing procedure
-  (`defaults.rs::the_orchestrator_is_told_nothing_of_forges_or_landing`), and
-  its briefing names every repository with its base branch
+  (`defaults.rs::the_orchestrator_nudge_fits_the_conversation_and_the_goal_under_way`),
+  and the attention prompt names the staffing a retry needs
+  (`::the_goal_attention_names_the_staffing_a_retry_needs`).
+- The orchestrator's own texts name no forge
+  (`defaults.rs::the_orchestrator_is_told_nothing_of_forges`), its briefing
+  names the workflow and its columns
+  (`::the_orchestrator_briefing_names_the_workflow_and_its_columns`,
+  `prompts.rs::the_orchestrator_is_briefed_with_the_workflow_and_its_columns`),
+  and it names every repository with its base branch
   (`prompts.rs::the_orchestrator_is_briefed_with_every_repository_and_its_base_branch`).
 - The tasks are written before the yes and start only with it
   (`plan_finalize.rs::the_tasks_of_a_plan_wait_for_the_yes_that_finalizes_it`).
@@ -145,6 +148,10 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
   (`::only_the_orchestrator_may_finalize_the_plan`), never with no tasks
   (`::a_plan_with_no_tasks_cannot_be_finalized`), and only out of planning
   (`::a_plan_is_finalized_only_out_of_planning`).
+- A goal created with no workflow runs on its repository's default, and a
+  plan with an unstaffed column is refused by the column's name
+  (`plan_finalize.rs::a_goal_created_without_a_workflow_runs_its_first_repositorys_default`,
+  `::finalize_refuses_a_task_with_an_unstaffed_column_by_name_until_it_is_staffed`).
 - Work waits on the orchestrator until the goal is over
   (`plan_finalize.rs::an_orchestrator_is_the_agent_work_waits_on_until_the_goal_is_over`),
   and it is kept and left alone rather than let go
@@ -168,6 +175,7 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
 
 `crates/ariadne-store/src/defaults.rs` (`ORCHESTRATOR_SYSTEM_PROMPT`,
 `ORCHESTRATOR_BRIEFING`, `ORCHESTRATOR_RESUME`, `GOAL_ATTENTION`),
+`crates/ariadne-store/skills/orchestration/SKILL.md`,
 `crates/ariadne-daemon/src/agents/prompts.rs`,
 `crates/ariadne-daemon/src/scheduler/goals.rs`,
 `crates/ariadne-daemon/src/scheduler/tasks.rs` (the guard behind 11),

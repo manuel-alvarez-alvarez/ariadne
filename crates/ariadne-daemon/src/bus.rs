@@ -467,7 +467,6 @@ mod tests {
                 base_branch: "main".into(),
                 description: None,
                 permission_mode: None,
-                default_landing: None,
             })
             .await
             .unwrap();
@@ -475,7 +474,6 @@ mod tests {
             .create_goal(NewGoal {
                 workflow: None,
                 issue_url: None,
-                landing: None,
                 title: "probe".into(),
                 description: String::new(),
                 repository_ids: vec![repository.id.clone()],

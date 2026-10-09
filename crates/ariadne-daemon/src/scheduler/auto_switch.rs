@@ -85,7 +85,7 @@ impl super::Scheduler {
                     let _ = self.store.clear_session_attention(&session.id).await;
                 }
                 info!(session = %session.id, to = %next.id, model, "switched an exhausted session");
-                if let (Some(goal_id), Some(task_id), Some(Seat::Author | Seat::Reviewer)) =
+                if let (Some(goal_id), Some(task_id), Some(Seat::Agent)) =
                     (&session.goal_id, &session.task_id, session.seat())
                 {
                     self.exhausted_notices.insert(

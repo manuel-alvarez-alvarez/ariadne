@@ -26,7 +26,7 @@ use common::{Cast, Harness, TIMEOUT, eventually, harness, sh};
 async fn acp_cast(h: &Harness) -> Cast {
     let cast = registry_cast(h).await;
     h.store
-        .set_agent_pin(&cast.author.id, &registry_pin(Some("high")))
+        .set_agent_pin(&cast.develop().id, &registry_pin(Some("high")))
         .await
         .unwrap();
     cast
@@ -65,7 +65,7 @@ fn registry_pin(effort: Option<&str>) -> AgentPin {
 /// A task whose agents run on the registry agent `stub`, in a real repo.
 async fn registry_cast(h: &Harness) -> Cast {
     h.git_repo("repo");
-    h.cast_pinned("stub:test-model", 1).await
+    h.cast_pinned("stub:test-model").await
 }
 
 /// Every Codex process starts its sessions in codex-acp's full-access mode,
@@ -115,7 +115,7 @@ async fn failed_prompt_event_with_data(data: Option<Value>) -> AgentEventDto {
     let stub = stub_acp_agent(agent_dir.path(), scripted);
     let h = harness().home(registry_home(&stub)).await;
     let cast = acp_cast(&h).await;
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.start_agent(&cast.task, "develop").await;
     eventually(TIMEOUT, "the failed session to retire", || async {
         h.session_status(&session).await == SessionStatus::Exited
     })
@@ -254,7 +254,7 @@ async fn an_acp_error_does_not_repeat_its_message_as_the_detail() {
 
 /// Spawn the task's author against the stub and wait for the turn to end.
 async fn spawned_idle(h: &Harness, cast: &Cast) -> ariadne_store::AgentSession {
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.start_agent(&cast.task, "develop").await;
     eventually(TIMEOUT, "the prompt round trip to end", || async {
         h.session_status(&session).await == SessionStatus::Idle
     })
@@ -513,7 +513,7 @@ async fn resuming_an_acp_author_replaces_the_agent_and_keeps_the_session() {
 
     let resumed = h
         .launcher
-        .resume_author(&cast.task.id, "fix it")
+        .relaunch_session(&session.id, "fix it")
         .await
         .unwrap();
     assert_eq!(resumed.id, session.id, "the same session comes back");
@@ -555,7 +555,7 @@ async fn resuming_an_acp_author_replaces_the_agent_and_keeps_the_session() {
     assert_eq!(h.session_status(&session).await, SessionStatus::Idle);
 }
 
-/// In auto mode every permission request is approved: the agent hears the
+/// In auto mode every permission request is allowed: the agent hears the
 /// allowing option wherever it stands in the list, and the ask and answer
 /// are events.
 #[tokio::test]
@@ -623,7 +623,7 @@ async fn a_dead_acp_agent_is_reaped_and_its_session_retired() {
     let h = harness().home(registry_home(&stub)).await;
     let cast = acp_cast(&h).await;
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.start_agent(&cast.task, "develop").await;
 
     eventually(TIMEOUT, "the session to retire", || async {
         h.session_status(&session).await == SessionStatus::Exited
@@ -666,7 +666,7 @@ async fn an_agent_that_dies_mid_turn_keeps_the_text_it_was_writing() {
     let h = harness().home(registry_home(&stub)).await;
     let cast = acp_cast(&h).await;
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.start_agent(&cast.task, "develop").await;
 
     eventually(TIMEOUT, "the session to retire", || async {
         h.session_status(&session).await == SessionStatus::Exited
@@ -706,7 +706,7 @@ async fn each_message_the_agent_names_is_stored_on_its_own() {
     let h = harness().home(registry_home(&stub)).await;
     let cast = acp_cast(&h).await;
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.start_agent(&cast.task, "develop").await;
 
     eventually(TIMEOUT, "the turn to end", || async {
         event_kinds(&h, &session.id)
@@ -772,9 +772,9 @@ async fn an_orchestrator_runs_on_the_registry_agent() {
     assert!(h.launcher.acp.is_running(&session.id));
 }
 
-/// A reviewer seat runs on the registry agent the same way: a detached
-/// worktree as its cwd, the ariadne MCP server, and the briefing as the
-/// first prompt.
+/// The review column's agent runs on the registry agent the same way: the
+/// task's one shared worktree as its cwd, the ariadne MCP server, and the
+/// briefing as the first prompt.
 #[tokio::test]
 async fn a_reviewer_runs_on_the_registry_agent() {
     let agent_dir = tempfile::tempdir().unwrap();
@@ -784,21 +784,24 @@ async fn a_reviewer_runs_on_the_registry_agent() {
     // Something on the task branch to review.
     sh(&h.at("repo"), &format!("git branch {}", cast.task.branch));
 
-    let session = h
-        .launcher
-        .spawn_reviewer(&cast.task.id, &cast.reviewer.id)
-        .await
-        .unwrap();
+    let session = h.start_agent(&cast.task, "review").await;
     eventually(TIMEOUT, "the reviewer's first turn to end", || async {
         h.session_status(&session).await == SessionStatus::Idle
     })
     .await;
 
     let new = &stub.calls_of("session/new")[0];
-    assert!(
-        new["cwd"].as_str().unwrap().contains("-rev-"),
-        "{}",
-        new["cwd"]
+    let worktree = h
+        .store
+        .get_task(&cast.task.id)
+        .await
+        .unwrap()
+        .worktree_path
+        .expect("the task has its worktree");
+    assert_eq!(
+        new["cwd"].as_str().unwrap(),
+        worktree,
+        "every column works in the task's one worktree"
     );
     assert_eq!(new["mcpServers"][0]["args"], json!(["mcp", "serve"]));
     assert_eq!(
@@ -877,7 +880,7 @@ async fn a_session_of_an_agent_without_session_load_is_not_resumable() {
 
     let error = h
         .launcher
-        .resume_author(&cast.task.id, "fix it")
+        .revive_session(&session.id, Some("fix it"))
         .await
         .unwrap_err();
     assert!(format!("{error:#}").contains("not resumable"), "{error:#}");
@@ -899,7 +902,7 @@ async fn a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt() {
     // The scheduler starts the author; its first turn ends idle.
     let idle_author = || async {
         h.sessions_of(&cast.task.id).await.into_iter().find(|s| {
-            s.seat() == Some(ariadne_core::Seat::Author) && s.status() == SessionStatus::Idle
+            s.seat() == Some(ariadne_core::Seat::Agent) && s.status() == SessionStatus::Idle
         })
     };
     eventually(TIMEOUT, "the author's first turn to end", || async {
@@ -910,6 +913,7 @@ async fn a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt() {
 
     // Quiet past the nudge threshold, in the situation it went idle in.
     h.launched_ago(&author, 240).await;
+    h.idle_for(&author, 240).await;
     h.set_status(&author, SessionStatus::Idle).await;
     h.notify(&cast.task.id);
 
@@ -917,7 +921,7 @@ async fn a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt() {
         stub.calls_of("session/prompt").iter().any(|prompt| {
             prompt["prompt"][0]["text"]
                 .as_str()
-                .is_some_and(|text| text.contains("Continue \"task\""))
+                .is_some_and(|text| text.contains("Continue task at"))
         })
     })
     .await;

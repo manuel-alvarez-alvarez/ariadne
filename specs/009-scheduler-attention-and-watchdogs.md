@@ -1,7 +1,7 @@
 ---
 id: scheduler-attention-and-watchdogs
 status: current
-updated: 2026-10-08
+updated: 2026-10-09
 areas: [daemon]
 commits: [f68b8ec1, 506e9d76, 7add2a61, a69b953f, 29e6d84e]
 tests:
@@ -10,10 +10,10 @@ tests:
   - crates/ariadne-daemon/tests/it/agent_messages.rs
   - crates/ariadne-daemon/tests/it/events.rs
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
-  - crates/ariadne-daemon/tests/it/landing_lifecycle.rs
+  - crates/ariadne-daemon/tests/it/workflow_steps.rs
+  - crates/ariadne-daemon/tests/it/workflow_pull_request.rs
   - crates/ariadne-daemon/tests/it/auto_switch.rs
   - crates/ariadne-daemon/src/scheduler/mod.rs
-  - crates/ariadne-daemon/tests/it/kept_requests.rs
 ---
 
 # Scheduler, attention and watchdogs
@@ -21,7 +21,8 @@ tests:
 The loop that keeps the world matching the plan, and the one clock that
 decides an agent has stopped working.
 
-A goal with a workflow follows [030](030-workflows.md) for its columns, staffing, and step lifecycle.
+A task runs through the columns of its goal's workflow (030): what the
+scheduler wants for a task is the agent of its current column.
 
 ## Scope
 
@@ -56,16 +57,19 @@ the ACP runtime that takes a prompt (021).
    decision: a task that failed, or a goal with nothing left running. It is
    told once per situation. Running work is what it delegated, and it is not
    woken for that.
-5. A task wants an author from `ready` to the merge, the reviewers a review
-   is waiting on, and the cleanup its ending owes (001, 004).
-6. Everything the scheduler says to an agent — a nudge, a review briefing, an
+5. A task wants the agent of its current column from `ready` to `finished`,
+   briefed on entry to the column and resumed where it went away, and the
+   cleanup its ending owes (001, 030). The agents of the other columns are
+   left idle until their column is current: nothing is wanted of them, so
+   nothing is sent to them and no clock watches them.
+6. Everything the scheduler says to an agent — a nudge, a step briefing, an
    agent message — is handed to the session's ACP agent as a
    `session/prompt` (021). The runtime sends it at once to an agent between
-   turns and queues it behind a running turn. A live reviewer that owes a
-   verdict on a new review request is handed that briefing at once, after its
-   worktree moves to the branch it is asked to review. An agent message is
-   handed with its id, and the scheduler stamps nothing: the stamp is the
-   driver's, when the prompt goes out (018).
+   turns and queues it behind a running turn. An agent message is handed
+   with its id, and the scheduler stamps nothing: the stamp is the driver's,
+   when the prompt goes out (018). A step entry is handed the same way: the
+   transition that moved the task owns its delivery mark, and the runtime
+   claims it right before the prompt is written (030).
 7. A pass never waits on a delivery: the runtime queues each prompt, so a
    pass with several agents to nudge hands them all their prompt at once.
    A message still unstamped is handed again on every pass, and the runtime
@@ -78,14 +82,14 @@ the ACP runtime that takes a prompt (021).
    1800 s the agent killed and put back on its feet (`QUIET_NUDGE_SECS`,
    `QUIET_FLAG_SECS`, `QUIET_RELAUNCH_SECS`).
 10. The flag clears 600 s because it is spent whatever the agent is doing,
-    and the landing briefing sends an author to sleep up to five minutes at a
-    time. The build fails if the three thresholds fall out of that order.
+    and a merge column's agent waits on a suite that runs for minutes. The
+    build fails if the three thresholds fall out of that order.
 11. Only an idle agent is nudged. An agent inside a turn is left to the
     thresholds behind the nudge, since a nudge would only queue behind the
     turn it is in.
 12. An agent is nudged once for the situation it went quiet in, not once per
-    pass. A new task status or a new review is a new situation. The new
-    review's briefing is delivered before this quiet clock watches it.
+    pass. A new task status or a new column entry is a new situation. The
+    entry's briefing is delivered before this quiet clock watches it.
 13. The agent that comes back from a relaunch is the one the row belongs to
     from then on: the exit the killed one still has to report changes
     nothing (008, 012).
@@ -94,9 +98,9 @@ the ACP runtime that takes a prompt (021).
     relaunch fails.
 15. Attention on a session means a human must act. It is raised only while
     the work that session was started for is still its own to do.
-16. A reviewer that has voted, an author whose task is under review and an
-    orchestrator of a finished goal are agents nobody is waiting on, and
-    none of them raises attention.
+16. The agent of a column that is not current, and an orchestrator of a
+    finished goal, are agents nobody is waiting on, and neither raises
+    attention.
 17. A session waiting on a person is never nudged and never relaunched: the
     quiet is the point.
 18. A flag raised for the user (`waiting_user`) is not an agent waiting on
@@ -111,12 +115,12 @@ the ACP runtime that takes a prompt (021).
     launch that is not coming, and it is swept.
 22. An agent that vanished while its work is still active is flagged
     `disconnected`. One nobody is waiting on is retired and not raised.
-23. The author of an active task with no live session is resumed. Where its
-    last launch died on arrival (rule 27), a fresh author is spawned instead,
-    briefed on the task and then told what the resume would have said: an
-    agent that would not reopen a conversation will not reopen it the next
-    time either. When even that cannot start, its session is flagged
-    `disconnected`.
+23. The current column's agent of an active task with no live session is
+    resumed. Where its last launch died on arrival (rule 27), a fresh agent
+    is spawned instead, briefed on the task and the column and then told
+    what the resume would have said: an agent that would not reopen a
+    conversation will not reopen it the next time either. When even that
+    cannot start, its session is flagged `disconnected`.
 24. Attention is cleared by the thing that answers it: resuming the session,
     input on its console (008), or the work moving on. A superseded session
     drops its attention when its replacement starts.
@@ -143,16 +147,16 @@ the ACP runtime that takes a prompt (021).
     budget, so an agent that keeps reporting, or one that reported before it
     went away, does not give back what another agent of the task keeps
     failing. A goal whose orchestrator dies on arrival every time is left
-    with one alarm and nothing started again. A task whose author or
-    reviewer does fails, saying its agent stopped as soon as it started.
-    That one alarm stands however the deaths were noticed: each of those rows
-    is a dead agent, so the liveness sweep raises `disconnected` on any it
-    reaches before the runtime's own retirement, which is this same trouble
-    seen a moment earlier rather than news of its own. So every pass that
-    finds the daemon holding off leaves one row carrying the alarm and takes
-    the rest down — a row that never launched, and a row that came up and
-    died without a word (rule 27) — since the count that cleared the others
-    is never spent again after the give-up. A session that was heard from and
+    with one alarm and nothing started again. A task whose column agent does
+    fails, saying its agent stopped as soon as it started. That one alarm
+    stands however the deaths were noticed: each of those rows is a dead
+    agent, so the liveness sweep raises `disconnected` on any it reaches
+    before the runtime's own retirement, which is this same trouble seen a
+    moment earlier rather than news of its own. So every pass that finds the
+    daemon holding off leaves one row carrying the alarm and takes the rest
+    down — a row that never launched, and a row that came up and died
+    without a word (rule 27) — since the count that cleared the others is
+    never spent again after the give-up. A session that was heard from and
     then lost its agent keeps an alarm of its own.
 30. A goal whose tasks have all landed wakes its orchestrator, which decides
     whether the goal is met. A session that outlived its completed goal is
@@ -182,9 +186,7 @@ the ACP runtime that takes a prompt (021).
 34. A task launch that fails because the daemon reached its open-file limit
     names that limit in the task's failure reason. Attempts after that error
     are at least 30 seconds apart, so adjacent wakes cannot spend the whole
-    retry budget before another task can release descriptors. A git process
-    that cannot inspect a reviewer branch keeps its start error, so this same
-    retry applies instead of refusing the review as an empty branch.
+    retry budget before another task can release descriptors.
 35. A shortage is asked of the machine rather than read off the error. Only
     the spawn says "too many open files": the store answers "unable to open
     database file", and a file the adapter could not write says neither. So a
@@ -209,11 +211,11 @@ the ACP runtime that takes a prompt (021).
     an idle planning orchestrator waits on the user (rule 31): it is never
     nudged, never flagged stalled and never relaunched for sitting idle. A
     turn that never ends is still flagged and relaunched, and the relaunch
-    briefs it on its request again. So is the idle author of an approved
-    task whose request is open, which keeps that request until a human
-    merges it (005). The news of a request is handed as any other prompt is
-    (rules 4 and 6): once, and queued behind a running turn. Its messages
-    are agent messages (018).
+    briefs it on its request again. So is the idle agent of a `pr` column
+    whose request is open, which keeps that request until a human merges it
+    (030). The news of a request is handed as any other prompt is (rules 4
+    and 6): once, and queued behind a running turn. Its messages are agent
+    messages (018).
 
 ## Acceptance criteria
 
@@ -231,26 +233,20 @@ the ACP runtime that takes a prompt (021).
   (`acp_runtime.rs::a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt`).
 - A pass with three agents to nudge hands all three their prompt at once
   (`scheduler_attention.rs::a_pass_with_three_agents_to_nudge_does_not_wait_on_the_deliveries`).
-- A live reviewer receives a second review briefing at once, and its request
-  is stamped delivered
-  (`agent_messages.rs::a_live_reviewer_is_briefed_at_once_for_a_second_review`).
-  A request a failed hand-off could not deliver is not stamped delivered,
-  and reaches the reviewer once the hand-off can succeed
-  (`::a_review_request_survives_a_failed_hand_off_to_a_live_reviewer`), and
-  the same for a request a failed resume could not spawn its first reviewer
-  for
-  (`::a_review_request_survives_a_failed_resume_of_its_first_reviewer`).
-- An idle reviewer or author past the threshold is raised on its session
-  (`scheduler_attention.rs::a_reviewer_idle_past_the_threshold_is_raised_on_its_session`,
-  `::an_author_stall_flags_the_task_and_its_session`).
+- An idle column agent past the threshold is raised on its session and its
+  task (`scheduler_attention.rs::a_step_agent_stall_flags_the_task_and_its_session`).
+- Only the current column is nudged, and an idle column raises no attention
+  (`workflow_steps.rs::only_the_current_column_is_nudged_and_idle_columns_raise_no_attention`).
 - An idle orchestrator in planning is waiting on the user, not silent, so it
   is never nudged or flagged stalled, however long it sits idle
   (`scheduler_attention.rs::an_idle_planning_orchestrator_is_never_nudged_or_flagged`).
 - An idle review session is not nudged past `QUIET_NUDGE_SECS` and not
   relaunched, and one mid-turn past the relaunch threshold is relaunched
   (`scheduler_attention.rs::an_idle_pull_request_session_is_waiting_on_the_forge_and_a_wedged_one_is_relaunched`).
-  The news of a request is handed to the author that keeps it once
-  (`kept_requests.rs::the_news_of_its_request_reaches_the_author_once`).
+  The news of a request reaches the `pr` column's agent once, and an idle
+  agent keeping its open request is never nudged
+  (`workflow_pull_request.rs::the_pr_column_opens_the_request_once_and_keeps_it`,
+  `scheduler_attention.rs::an_idle_pr_agent_keeping_its_open_request_is_never_nudged`).
 - An idle agent is nudged once for the situation it went quiet in
   (`::an_idle_agent_is_nudged_once_for_the_situation_it_went_quiet_in`), and
   an agent mid-turn is not nudged
@@ -263,9 +259,8 @@ the ACP runtime that takes a prompt (021).
   (`::a_running_agent_that_keeps_reporting_is_left_alone`), and one that
   wedges after every relaunch fails its task
   (`::an_agent_that_wedges_after_every_relaunch_fails_its_task`).
-- A reviewer that voted and an orchestrator of a finished goal raise no
-  attention (`events.rs::a_reviewer_that_already_voted_raises_no_attention`,
-  `::an_orchestrator_of_a_finished_goal_raises_no_attention`).
+- An orchestrator of a finished goal raises no attention
+  (`events.rs::an_orchestrator_of_a_finished_goal_raises_no_attention`).
 - A session waiting on a person is never nudged or relaunched
   (`scheduler_attention.rs::a_session_waiting_on_a_person_is_never_nudged`,
   `::a_running_agent_waiting_on_a_person_is_never_relaunched`), and an agent
@@ -273,9 +268,9 @@ the ACP runtime that takes a prompt (021).
   (`::an_agent_that_reported_an_error_is_left_alone`).
 - A wedged agent flagged for the user keeps the flag and is relaunched
   (`::a_wedged_agent_flagged_for_the_user_keeps_the_flag_and_is_relaunched`),
-  and a published task still says the merge is the user's after its author
-  is resumed
-  (`::a_published_task_still_says_the_merge_is_the_users_after_its_author_is_resumed`).
+  and a `pr` agent whose open request reads ready is owed the user again on
+  its restart
+  (`::a_pr_agent_whose_open_request_reads_ready_is_owed_the_user_again_on_its_restart`).
 - A dead agent is reaped and its session retired
   (`acp_runtime.rs::a_dead_acp_agent_is_reaped_and_its_session_retired`), and
   a starting session is swept only once its grace window has run out
@@ -283,12 +278,9 @@ the ACP runtime that takes a prompt (021).
 - A vanished agent with work still active is flagged disconnected
   (`::a_vanished_agent_with_work_still_active_is_flagged_disconnected`), one
   nobody waits on is not raised
-  (`::a_vanished_agent_nobody_is_waiting_on_is_not_raised`), and an author
-  that cannot be resumed is flagged disconnected
-  (`::an_author_that_cannot_be_resumed_is_flagged_disconnected`).
-- An approved task whose author cannot reopen its conversation is not failed:
-  a fresh author is briefed on the task and then to land it
-  (`landing_lifecycle.rs::an_author_that_cannot_reopen_its_conversation_is_started_afresh_to_land`).
+  (`::a_vanished_agent_nobody_is_waiting_on_is_not_raised`), and a column
+  agent that cannot be resumed is flagged disconnected
+  (`::a_step_agent_that_cannot_be_resumed_is_flagged_disconnected`).
 - Resuming clears attention (`::resuming_a_session_clears_its_attention`), a
   superseded session drops it
   (`::a_superseded_session_drops_its_attention_when_the_replacement_starts`),
@@ -309,20 +301,18 @@ the ACP runtime that takes a prompt (021).
   its reason, whichever layer reported it — a read that failed spending no
   attempt
   (`::a_descriptor_shortage_is_waited_out_whichever_layer_noticed_it`).
-- An open-file shortage buys one attempt at the reviewer, and the adjacent
+- An open-file shortage buys one attempt at the agent, and the adjacent
   wakes add none, whether that attempt left a session row or not
   (`scheduler_attention.rs::a_descriptor_shortage_does_not_spend_adjacent_retry_attempts`).
-- A reviewer ref check that cannot start git reports the start error
-  (`managers.rs::a_git_start_failure_is_not_reported_as_an_empty_review`).
 - An orchestrator that dies the moment it starts is given up on, with one
   alarm and nothing started again — one alarm still after a sweep found a
   death whose retirement lagged behind it and raised its own
   (`::an_orchestrator_that_dies_the_moment_it_starts_is_given_up_on`), and a
   task whose agent does fails with the reason on it
   (`::a_task_whose_agent_dies_the_moment_it_starts_fails_with_the_reason_on_it`).
-- A reviewer heard from once that cannot be started again fails its task
+- A column agent heard from once that cannot be started again fails its task
   rather than being tried for ever
-  (`::a_reviewer_heard_from_once_that_cannot_be_started_again_fails_its_task`).
+  (`::a_step_agent_heard_from_once_that_cannot_be_started_again_fails_its_task`).
 - A session outliving its completed goal is killed
   (`::a_session_that_outlived_its_completed_goal_is_killed`).
 - An orchestrator whose agent went away is resumed in its own row, on its
@@ -353,7 +343,7 @@ the ACP runtime that takes a prompt (021).
   reconciles, where a window measured from the wake costs 100
   (`coalesce.rs::a_burst_behind_passes_slower_than_a_window_still_costs_two_reconciles`),
   and the same holds of the scheduler itself over the pass that starts a
-  task's author
+  task's first column
   (`scheduler_attention.rs::a_burst_that_queues_behind_a_slow_reconcile_still_costs_two_reconciles`).
 - Exhausted sessions prefer another agent at the same rank and keep no pinned
   effort
@@ -378,5 +368,5 @@ the ACP runtime that takes a prompt (021).
 ## Sources
 
 `crates/ariadne-daemon/src/scheduler/` (`mod`, `goals`, `tasks`, `sweeps`,
-`quiet`, `messages`), `crates/ariadne-daemon/src/attention.rs`,
+`quiet`, `messages`, `pull_requests`), `crates/ariadne-daemon/src/attention.rs`,
 `crates/ariadne-daemon/src/http/events.rs`.

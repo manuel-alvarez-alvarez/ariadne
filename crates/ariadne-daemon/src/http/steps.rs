@@ -3,7 +3,7 @@
 use super::caller::{CallCtx, call_ctx};
 use super::convert::task_dto_of;
 use super::error::{ApiError, ApiResult, Json};
-use super::{AppState, landing};
+use super::{AppState, channel};
 use ariadne_api::tasks::{CompleteStepRequest, FailStepRequest, TaskDto};
 use ariadne_core::workflow::StepGate;
 use ariadne_core::{Actor, Seat, TaskStatus};
@@ -21,7 +21,7 @@ pub(super) async fn current_agent(state: &AppState, ctx: &CallCtx, task: &Task) 
         .store
         .get_task_agent(session.task_agent_id.as_deref().ok_or_else(refused)?)
         .await?;
-    if task.step.is_none() || agent.step != task.step || agent.task_id != task.id {
+    if task.step.as_deref() != Some(agent.step.as_str()) || agent.task_id != task.id {
         return Err(refused());
     }
     Ok(())
@@ -115,7 +115,7 @@ pub(super) async fn complete(
                 .pr_url
                 .as_deref()
                 .ok_or_else(|| gate_failed("open the task request before completing this step"))?;
-            if landing::request_state(&state, &task, url)
+            if channel::request_state(&state, &task, url)
                 .await
                 .map_err(|_| gate_failed("the request gate could not read the forge"))?
                 != "merged"

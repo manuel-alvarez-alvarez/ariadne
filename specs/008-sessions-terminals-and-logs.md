@@ -55,7 +55,7 @@ goal id to a seat (014).
 
 ## Behavior
 
-1. A staffed session belongs to a goal and seat, and authors and reviewers also belong to a task.
+1. A staffed session belongs to a goal and seat, and a column's agent also belongs to a task.
    A loose session has no goal, task or seat (020).
 2. A session holds its worktree, the model it runs on, the effort where one
    was pinned, and the agent's own session id once the agent reports one.
@@ -66,7 +66,7 @@ goal id to a seat (014).
    session has a terminal, a pane or a grid.
 5. A session is `starting`, `running`, `idle`, `exited` or `failed`. The
    first three are live.
-6. Sessions are long-lived: one author per task, one reviewer per task across
+6. Sessions are long-lived: one session per column agent of a task across
    every review of it, one orchestrator per goal. Restarting one reopens the
    same row.
 7. Every launch of a session is dated, and every launch runs under a launch
@@ -609,7 +609,7 @@ goal id to a seat (014).
     row. It runs in a new conversation, and it is launched through the spawn
     path: a launch id, a launch file and the MCP server, as every spawn.
 35. The switch moves the seat's pin (011): the goal's pin for an
-    orchestrator, and the staffed agent's pin for an author or a reviewer. A
+    orchestrator, and the staffed agent's pin for a column's agent. A
     later spawn or resume of the seat runs on it. A loose session has no
     seat pin, and nothing is moved.
     A same-agent switch also changes the running session's model and effort.
@@ -651,8 +651,7 @@ goal id to a seat (014).
 
 - A session keeps the model it started on, however the seat's pin moves
   afterwards
-  (`resume.rs::a_running_reviewer_keeps_the_model_its_session_started_on`,
-  `::a_resumed_author_stays_on_the_model_its_session_started_on`).
+  (`resume.rs::a_relaunched_agent_stays_on_the_model_its_session_started_on`).
 - The schema names an agent by its registry id alone, and a session stores no
   agent kind (`store.rs::the_schema_names_agents_by_registry_id_alone`).
 - A session's agent runs on the daemon's own stdio
@@ -673,9 +672,8 @@ goal id to a seat (014).
   (`events.rs::a_session_put_back_to_starting_has_moved_past_its_last_launch`).
 - A relaunch announces the session as updated
   (`resume.rs::a_relaunch_announces_the_session_as_updated`).
-- The author and the reviewer reuse one session across reviews
-  (`resume.rs::resuming_the_author_reuses_its_session_across_reviews`,
-  `::a_reviewer_reuses_its_session_across_reviews`).
+- A column's agent reuses one session across its entries
+  (`resume.rs::relaunching_a_columns_agent_reuses_its_session_across_entries`).
 - Killing a session kills its agent process
   (`acp_runtime.rs::killing_an_acp_session_kills_its_agent_process`), and a
   status decided before the kill is never written after it, race included
@@ -1336,14 +1334,13 @@ goal id to a seat (014).
   `::a_followed_log_uses_the_console_event_stream`). Chunks stream under one
   block header (`::followed_chunks_stream_text_under_one_block_header`).
 
-- A switched author gets a new row that names the old one, the old row is
+- A switched column agent gets a new row that names the old one, the old row is
   `exited` with its `session.switched` event, the first prompt is the
   briefing, the handoff and the resume text in that order, and the
-  author's pin moves
-  (`switch.rs::a_switched_author_starts_a_new_session_briefed_with_the_handoff`).
-  A reviewer and an orchestrator switch the same way, and the goal's pin
+  agent's pin moves
+  (`switch.rs::a_switched_agent_starts_a_new_session_briefed_on_its_column`).
+  An orchestrator switches the same way, and the goal's pin
   moves for the orchestrator
-  (`::a_switched_reviewer_starts_a_new_session_on_the_review_it_owes`,
   `::a_switched_orchestrator_moves_the_goals_pin`). A loose session gets the
   handoff alone (`::a_switched_loose_session_gets_the_handoff_alone`).
 - A bounded cross-agent handoff keeps older user corrections, plans, blockers,

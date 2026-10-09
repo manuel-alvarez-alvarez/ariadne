@@ -1,10 +1,9 @@
 //! What a `task create` or `task update` line means before it is sent.
 //!
 //! Both are refused here rather than by the daemon where the answer is already
-//! known: an update with nothing in it, an agent with no skills, one whose
-//! model is missing or names no agent, one whose `@` is
-//! followed by no effort, and a `--repo` that names none of the goal's
-//! repositories.
+//! known: an update with nothing in it, an agent slot that names no column,
+//! one whose model is missing or names no agent, one whose `@` is followed by
+//! no effort, and a `--repo` that names none of the goal's repositories.
 
 use anyhow::{Result, bail};
 
@@ -13,94 +12,39 @@ use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::tasks::{AgentAssignment, UpdateTaskRequest};
 use ariadne_client::Client;
 
-use ariadne_core::Seat;
-
 use crate::commands::{parse_effort, parse_model, resolve};
 
-/// One `--author` or `--reviewer` argument, `SKILLS=MODEL[@EFFORT]`: what
-/// the agent knows, then — after the `=`, required — what it runs on, in the
-/// one spelling a model is chosen by, `<agent>:<model>`, and — after an
-/// `@` — the effort that model is reasoned at.
+/// One `--agent STEP[:SKILLS]=MODEL[@EFFORT]` argument: the workflow column
+/// this agent staffs, then — after a `:`, optionally — what it knows, then —
+/// after the `=`, required — what it runs on, in the one spelling a model is
+/// chosen by, `<agent>:<model>`, and — after an `@` — the effort that model
+/// is reasoned at. `review:code-review=codex-acp:o3@high` staffs `review` on
+/// `code-review`, run at `high`; `review=codex-acp:o3` staffs it on nothing
+/// but the column's own skills.
 ///
 /// The skills are comma-separated and in the order they reach the agent:
-/// `--author coding,testing=…` is an agent that codes and tests, and that is
+/// `develop:coding,testing=…` is an agent that codes and tests, and that is
 /// the whole of what it is. A name no skill answers to is the daemon's to
 /// refuse, which is where the list of them lives.
 ///
-/// The `=` splits first and the last `@` after it splits the effort off, and
-/// nothing else splits at all: a model id may carry `/` and `:` of its own,
-/// so `code-review=opencode-acp:ollama/llama3:8b` reaches the request as that
-/// one id, tag and all. The `=MODEL` half is mandatory — a model is required,
-/// and no agent default stands in for one — so skills on their own, with or without
-/// an `@EFFORT`, are refused.
+/// The `=` splits first and the last `@` after it splits the effort off. What
+/// is in front of the `=` is the column id alone, or the column id and its
+/// skills split on the first `:` — a model id's own `:` and `/` are on the
+/// other side of the `=` and never reach this split, so
+/// `merge=opencode-acp:ollama/llama3:8b` reaches the request as that one id,
+/// tag and all. The `=MODEL` half is mandatory — a model is required, and no
+/// agent default stands in for one — so a column on its own, with or without
+/// an `@EFFORT`, is refused.
 ///
-/// What is after the `=` is the same string `--model` takes, and it is refused
-/// here in the same words; what is after the `@` is only checked for being
-/// something, since which efforts a model takes is the daemon's to know.
-fn parse_agent(seat: Seat, s: &str) -> Result<AgentAssignment, String> {
-    let Some((skills, model)) = s.split_once('=') else {
-        return Err(format!(
-            "no model in \"{s}\" — a model is required, so {}",
-            accepted()
-        ));
-    };
-    let (model, effort) = split_effort(model);
-    let skills: Vec<String> = skills
-        .split(',')
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .map(str::to_string)
-        .collect();
-    if skills.is_empty() {
-        return Err(format!("no skills in \"{s}\" — {}", accepted()));
-    }
-    let effort = match effort {
-        Some(effort) => Some(parse_effort(effort).map_err(|e| format!("in \"{s}\": {e}"))?),
-        None => None,
-    };
-    if model.is_empty() {
-        return Err(format!(
-            "no model after the = in \"{s}\" — a model is required, so {}",
-            accepted()
-        ));
-    }
-    let model = parse_model(model).map_err(|e| format!("in \"{s}\": {e}"))?;
-    Ok(AgentAssignment {
-        step: None,
-        seat,
-        skills,
-        model,
-        effort,
-        brief: None,
-    })
-}
-
-/// One `--author SKILLS=MODEL[@EFFORT]`.
-pub(crate) fn parse_author(s: &str) -> Result<AgentAssignment, String> {
-    parse_agent(Seat::Author, s)
-}
-
-/// One `--reviewer SKILLS=MODEL[@EFFORT]`, in review order.
-pub(crate) fn parse_reviewer(s: &str) -> Result<AgentAssignment, String> {
-    parse_agent(Seat::Reviewer, s)
-}
-
-/// One `--agent STEP[:SKILLS]=MODEL[@EFFORT]`, naming the workflow column
-/// this agent staffs — [`parse_agent`]'s two halves, with the column id
-/// written in front of the skills: `review:code-review=codex-acp:o3@high`
-/// staffs `review` on `code-review`, `review=codex-acp:o3` staffs it on
-/// nothing but the column's own skills.
-///
-/// The `=` still splits first, the way [`parse_agent`] splits it, and the
-/// model half is checked in exactly the same words. What is in front of the
-/// `=` is the column id alone, or the column id and its skills split on the
-/// first `:` — a model id's own `:` is on the other side of the `=` and
-/// never reaches this split.
+/// What is after the `=` is the same string `goal create --model` takes, and
+/// it is refused here in the same words; what is after the `@` is only
+/// checked for being something, since which efforts a model takes is the
+/// daemon's to know.
 pub(crate) fn parse_agent_slot(s: &str) -> Result<AgentAssignment, String> {
     let Some((head, model)) = s.split_once('=') else {
         return Err(format!(
             "no model in \"{s}\" — a model is required, so {}",
-            accepted_slot()
+            accepted()
         ));
     };
     let (model, effort) = split_effort(model);
@@ -117,7 +61,7 @@ pub(crate) fn parse_agent_slot(s: &str) -> Result<AgentAssignment, String> {
         None => (head, Vec::new()),
     };
     if step.is_empty() {
-        return Err(format!("no column in \"{s}\" — {}", accepted_slot()));
+        return Err(format!("no column in \"{s}\" — {}", accepted()));
     }
     let effort = match effort {
         Some(effort) => Some(parse_effort(effort).map_err(|e| format!("in \"{s}\": {e}"))?),
@@ -126,13 +70,12 @@ pub(crate) fn parse_agent_slot(s: &str) -> Result<AgentAssignment, String> {
     if model.is_empty() {
         return Err(format!(
             "no model after the = in \"{s}\" — a model is required, so {}",
-            accepted_slot()
+            accepted()
         ));
     }
     let model = parse_model(model).map_err(|e| format!("in \"{s}\": {e}"))?;
     Ok(AgentAssignment {
-        step: Some(step.to_string()),
-        seat: Seat::Agent,
+        step: step.to_string(),
         skills,
         model,
         effort,
@@ -141,8 +84,8 @@ pub(crate) fn parse_agent_slot(s: &str) -> Result<AgentAssignment, String> {
 }
 
 /// What an `--agent` argument missing one of its halves is told it may
-/// write.
-fn accepted_slot() -> String {
+/// write: the two forms, and the spelling each half is in.
+fn accepted() -> String {
     "write STEP=MODEL or STEP:SKILLS=MODEL@EFFORT, where STEP is the id of a workflow \
      column, SKILLS is optionally one or more skill names separated by commas — empty \
      means the column's own — MODEL is the id of an agent of the ACP registry and, \
@@ -161,30 +104,16 @@ fn split_effort(half: &str) -> (&str, Option<&str>) {
     }
 }
 
-/// What an agent argument missing one of its halves is told it may write: the
-/// two forms, and the spelling each half is in.
-fn accepted() -> String {
-    "write SKILLS=MODEL or SKILLS=MODEL@EFFORT, where SKILLS is one or more \
-     skill names separated by commas, MODEL is the id of an agent of the ACP \
-     registry and, after a colon, one model of it, and EFFORT is one of the \
-     efforts `ariadne models ls` lists for that model"
-        .to_string()
-}
-
 /// The flags of `task update`, as clap parsed them: one field per flag, in
 /// the order the help screen lists them.
 ///
-/// A struct rather than nine positional arguments, because five of them are
+/// A struct rather than five positional arguments, because three of them are
 /// an `Option` or a `bool` and a caller that swapped two would still compile.
 #[derive(Debug, Default)]
 pub(crate) struct Edits {
     pub title: Option<String>,
     pub description: Option<String>,
-    pub model: Option<String>,
-    pub effort: Option<String>,
     pub agents: Vec<AgentAssignment>,
-    pub reviewers: Vec<AgentAssignment>,
-    pub no_reviewer: bool,
     pub depends_on: Vec<String>,
     pub clear_depends_on: bool,
 }
@@ -193,42 +122,25 @@ pub(crate) struct Edits {
 ///
 /// A flag that was not given is `None` — the field keeps what the task has.
 /// The two list flags are all-or-nothing by design: they replace the list they
-/// name, and each has a flag of its own for the empty list — `--no-reviewer`
-/// and `--clear-depends-on` — since a repeatable flag cannot be given zero
-/// times on purpose.
+/// name. The dependencies have a flag of their own for the empty list —
+/// `--clear-depends-on` — since a repeatable flag cannot be given zero times
+/// on purpose; a staffing has no empty list to ask for, since every column
+/// wants an agent.
 pub(crate) fn update_request(edits: Edits) -> Result<UpdateTaskRequest> {
     let Edits {
         title,
         description,
-        model,
-        effort,
         agents,
-        reviewers,
-        no_reviewer,
         depends_on,
         clear_depends_on,
     } = edits;
     let req = UpdateTaskRequest {
         // The whole staffing, replaced: `task update --agent` restages every
-        // column at once, the way `--reviewer` restages every reviewer.
+        // column at once, which is how a column a task lacks is staffed
+        // before it is retried.
         agents: (!agents.is_empty()).then_some(agents),
         title,
         description,
-        // Whatever was typed, in the daemon's own spelling. There is no
-        // `default` for a model: a model is required, so the flag is already
-        // parsed as one.
-        model,
-        // Three answers, about how deeply the model reasons: nothing said,
-        // `default` for the agent's own, or one effort of it.
-        effort,
-        // The author list is edited over the API and the MCP tools; the CLI
-        // re-staffs a task's authors by re-creating it.
-        authors: None,
-        reviewers: match (no_reviewer, reviewers.is_empty()) {
-            (true, _) => Some(Vec::new()),
-            (false, true) => None,
-            (false, false) => Some(reviewers),
-        },
         depends_on: match (clear_depends_on, depends_on.is_empty()) {
             (true, _) => Some(Vec::new()),
             (false, true) => None,
@@ -239,16 +151,10 @@ pub(crate) fn update_request(edits: Edits) -> Result<UpdateTaskRequest> {
     // started task, which reads as a failure the caller never asked for.
     if req.title.is_none()
         && req.description.is_none()
-        && req.model.is_none()
-        && req.effort.is_none()
         && req.agents.is_none()
-        && req.reviewers.is_none()
         && req.depends_on.is_none()
     {
-        bail!(
-            "nothing to update — pass --title, --description, --model, \
-             --effort, --agent, --reviewer, --no-reviewer or --depends-on"
-        );
+        bail!("nothing to update — pass --title, --description, --agent or --depends-on");
     }
     Ok(req)
 }
@@ -260,12 +166,7 @@ pub(crate) fn update_request(edits: Edits) -> Result<UpdateTaskRequest> {
 /// have not been given.
 pub(crate) async fn resolve_repo(client: &Client, goal_id: &str, spec: &str) -> Result<String> {
     let g: GoalDto = client.get_json(&format!("/v1/goals/{goal_id}")).await?;
-    let repos = g
-        .repos
-        .iter()
-        .map(|r| r.repository.clone())
-        .collect::<Vec<_>>();
-    match pick_repo(&repos, spec) {
+    match pick_repo(&g.repos, spec) {
         Some(id) => Ok(id),
         None => bail!(
             "goal {goal_id} has no repo \"{spec}\" — it has {}",
@@ -324,69 +225,52 @@ mod tests {
     #[test]
     fn an_agent_slot_names_its_column_skills_model_and_effort() {
         let full = parse_agent_slot("review:code-review=codex-acp:o3@high").expect("a full slot");
-        assert_eq!(full.step.as_deref(), Some("review"));
+        assert_eq!(full.step, "review");
         assert_eq!(full.skills, ["code-review"]);
         assert_eq!(full.model, "codex-acp:o3");
         assert_eq!(full.effort.as_deref(), Some("high"));
-        assert_eq!(full.seat, Seat::Agent);
+        assert_eq!(full.brief, None, "the brief is the MCP tools' alone");
 
         let bare = parse_agent_slot("review=codex-acp:o3").expect("no skills named");
-        assert_eq!(bare.step.as_deref(), Some("review"));
+        assert_eq!(bare.step, "review");
         assert!(bare.skills.is_empty(), "empty means the column's own");
         assert_eq!(bare.model, "codex-acp:o3");
-        assert_eq!(bare.effort, None);
+        assert_eq!(bare.effort, None, "no effort at all is the agent's own");
+
+        // The skills are what an agent is, in the order they were written.
+        let several = parse_agent_slot("review:code-review,security-review=opencode-acp:x")
+            .expect("two skills");
+        assert_eq!(several.skills, ["code-review", "security-review"]);
 
         // A model id of its own `:` never reaches the column/skills split:
         // that split is on the other side of the `=`.
         let provider =
             parse_agent_slot("merge=opencode-acp:ollama/llama3:8b").expect("a provider model id");
         assert_eq!(provider.model, "opencode-acp:ollama/llama3:8b");
-
-        // A missing model is refused the same way `--author` refuses it.
-        let err = parse_agent_slot("review").expect_err("no model at all");
-        assert!(err.contains("a model is required"), "{err}");
-        assert!(err.contains("STEP=MODEL"), "{err}");
-    }
-
-    /// The skills are what an agent is, and what follows the `=` is a model:
-    /// both travel as written, since the daemon is what knows the catalog.
-    #[test]
-    fn an_agent_keeps_its_skills_and_what_it_runs_on() {
-        let pinned =
-            parse_reviewer("code-review,security-review=opencode-acp:ollama/llama3:8b@thinking")
-                .expect("skills, a model and an effort");
-        assert_eq!(pinned.skills, ["code-review", "security-review"]);
-        assert_eq!(pinned.model, "opencode-acp:ollama/llama3:8b");
-        assert_eq!(pinned.effort.as_deref(), Some("thinking"));
-
-        let both = parse_reviewer("code-review=codex-acp:gpt-5.3-codex").expect("a model");
-        assert_eq!(both.skills, ["code-review"]);
-        assert_eq!(both.model, "codex-acp:gpt-5.3-codex");
-        assert_eq!(both.effort, None, "no effort at all is the agent's own");
     }
 
     /// The other half an agent may carry: the effort after the `@` — and the
     /// `@` is the last one, so a model id keeps every `:` and `/` it came
     /// with.
     #[test]
-    fn a_reviewer_runs_at_the_effort_after_the_at_sign() {
-        let both = parse_reviewer("code-review=codex-acp:gpt-5.6-sol@xhigh")
+    fn an_agent_runs_at_the_effort_after_the_at_sign() {
+        let both = parse_agent_slot("develop:coding=codex-acp:gpt-5.6-sol@xhigh")
             .expect("a model and an effort");
-        assert_eq!(both.skills, ["code-review"]);
+        assert_eq!(both.skills, ["coding"]);
         assert_eq!(both.model, "codex-acp:gpt-5.6-sol");
         assert_eq!(both.effort.as_deref(), Some("xhigh"));
 
         // The model half is cut at the last `@` and nothing else: a model id
         // may be `provider/model` with a tag of its own, and all of it is model.
-        let opencode = parse_reviewer("code-review=opencode-acp:openrouter/x/y:z@high")
-            .expect("a provider id");
+        let opencode =
+            parse_agent_slot("review=opencode-acp:openrouter/x/y:z@high").expect("a provider id");
         assert_eq!(opencode.model, "opencode-acp:openrouter/x/y:z");
         assert_eq!(opencode.effort.as_deref(), Some("high"));
 
         // Which efforts a model takes is the daemon's to know: anything that
         // is an effort at all travels, and is refused where the model is.
         let unknown =
-            parse_reviewer("Reviewer=claude-agent-acp:claude-opus-5@ultra").expect("an effort");
+            parse_agent_slot("review=claude-agent-acp:claude-opus-5@ultra").expect("an effort");
         assert_eq!(unknown.effort.as_deref(), Some("ultra"));
     }
 
@@ -395,50 +279,53 @@ mod tests {
     /// would have been refused in. A model is required, so a slot with no
     /// `=MODEL` at all is half a form too.
     #[test]
-    fn a_reviewer_missing_a_half_is_refused_before_it_is_sent() {
-        let err = parse_reviewer("code-review").expect_err("no model at all");
-        assert!(err.contains("no model in \"code-review\""), "{err}");
+    fn an_agent_slot_missing_a_half_is_refused_before_it_is_sent() {
+        let err = parse_agent_slot("review:code-review").expect_err("no model at all");
+        assert!(err.contains("no model in \"review:code-review\""), "{err}");
         assert!(err.contains("a model is required"), "{err}");
-        assert!(err.contains("SKILLS=MODEL"), "{err}");
+        assert!(err.contains("STEP=MODEL"), "{err}");
 
-        // Skills at an effort still name no model, and an agent needs one.
-        let err = parse_reviewer("code-review@high").expect_err("no model at all");
+        // A column at an effort still names no model, and an agent needs one.
+        let err = parse_agent_slot("review@high").expect_err("no model at all");
         assert!(err.contains("a model is required"), "{err}");
 
-        let err = parse_reviewer("code-review=").expect_err("no model");
+        let err = parse_agent_slot("review=").expect_err("no model");
         assert!(err.contains("no model after the ="), "{err}");
         assert!(err.contains("a model is required"), "{err}");
-        assert!(err.contains("SKILLS=MODEL"), "{err}");
+        assert!(err.contains("STEP=MODEL"), "{err}");
         assert!(err.contains("ACP registry"), "{err}");
 
-        let err = parse_reviewer("code-review=codex-acp:").expect_err("no model after the colon");
-        assert!(err.contains("in \"code-review=codex-acp:\""), "{err}");
+        let err = parse_agent_slot("review=codex-acp:").expect_err("no model after the colon");
+        assert!(err.contains("in \"review=codex-acp:\""), "{err}");
         assert!(err.contains("no model after the `:`"), "{err}");
 
         // Whitespace after the colon is an empty model too.
-        let err = parse_reviewer("code-review=codex-acp: ").expect_err("whitespace is no model");
+        let err = parse_agent_slot("review=codex-acp: ").expect_err("whitespace is no model");
         assert!(err.contains("no model after the `:`"), "{err}");
         assert!(err.contains("a model is required"), "{err}");
 
-        let err = parse_reviewer("code-review=llama").expect_err("no agent");
+        let err = parse_agent_slot("review=llama").expect_err("no agent");
         assert!(err.contains("`llama` names no agent"), "{err}");
         assert!(err.contains("`<agent>:llama`"), "{err}");
 
-        let err = parse_reviewer("=codex-acp:o3").expect_err("no skills");
-        assert!(err.contains("no skills"), "{err}");
+        // A slot has to say which column it staffs.
+        let err = parse_agent_slot("=codex-acp:o3").expect_err("no column");
+        assert!(err.contains("no column"), "{err}");
+        let err = parse_agent_slot(":code-review=codex-acp:o3").expect_err("no column");
+        assert!(err.contains("no column"), "{err}");
 
         // An `@` that says nothing after it is the same kind of typo, and the
         // refusal names the forms one of which was meant.
-        let err = parse_reviewer("code-review=codex-acp:o3@").expect_err("no effort");
-        assert!(err.contains("in \"code-review=codex-acp:o3@\""), "{err}");
+        let err = parse_agent_slot("review=codex-acp:o3@").expect_err("no effort");
+        assert!(err.contains("in \"review=codex-acp:o3@\""), "{err}");
         assert!(err.contains("no effort was named"), "{err}");
         assert!(err.contains("ariadne models ls"), "{err}");
 
         // An effort without the model it belongs to is still a missing model:
         // the `=` was written, so something was meant to follow it.
-        let err = parse_reviewer("code-review=@high").expect_err("no model");
+        let err = parse_agent_slot("review=@high").expect_err("no model");
         assert!(err.contains("no model after the ="), "{err}");
-        assert!(err.contains("SKILLS=MODEL@EFFORT"), "{err}");
+        assert!(err.contains("STEP:SKILLS=MODEL@EFFORT"), "{err}");
     }
 
     /// The lists replace rather than extend, so an absent flag must not send an
@@ -453,63 +340,34 @@ mod tests {
         .expect("body");
         assert_eq!(req.title.as_deref(), Some("new"));
         assert!(req.description.is_none());
-        assert!(req.model.is_none(), "and the pin is left alone");
-        assert!(req.agents.is_none());
-        assert!(req.reviewers.is_none());
+        assert!(req.agents.is_none(), "and the staffing is left alone");
         assert!(req.depends_on.is_none());
 
-        // `--agent` restages every column at once, the way `--reviewer`
-        // restages every reviewer.
+        // `--agent` restages every column at once.
         let req = update_request(Edits {
             agents: vec![
                 parse_agent_slot("develop=codex-acp:o3").expect("a slot"),
                 parse_agent_slot("review=claude-agent-acp:claude-opus-5@high").expect("a slot"),
-            ],
-            ..Edits::default()
-        })
-        .expect("body");
-        assert_eq!(
-            req.agents
-                .as_ref()
-                .map(|agents| agents.iter().map(|a| a.step.clone()).collect::<Vec<_>>()),
-            Some(vec![
-                Some("develop".to_string()),
-                Some("review".to_string())
-            ])
-        );
-        assert!(req.reviewers.is_none(), "and nothing else was touched");
-
-        let req = update_request(Edits {
-            reviewers: vec![
-                parse_reviewer("code-review=claude-agent-acp:claude-sonnet-5").expect("a model"),
-                parse_reviewer("security-review=codex-acp:gpt-5.6-luna@high").expect("a model"),
             ],
             depends_on: vec!["01TASK".into()],
             ..Edits::default()
         })
         .expect("body");
         assert_eq!(
-            req.reviewers.as_ref().map(|r| r
+            req.agents.as_ref().map(|agents| agents
                 .iter()
-                .map(|a| (a.skills.join(","), a.model.as_str(), a.effort.as_deref()))
+                .map(|a| (a.step.as_str(), a.model.as_str(), a.effort.as_deref()))
                 .collect::<Vec<_>>()),
             Some(vec![
-                (
-                    "code-review".to_string(),
-                    "claude-agent-acp:claude-sonnet-5",
-                    None
-                ),
-                (
-                    "security-review".to_string(),
-                    "codex-acp:gpt-5.6-luna",
-                    Some("high")
-                )
+                ("develop", "codex-acp:o3", None),
+                ("review", "claude-agent-acp:claude-opus-5", Some("high")),
             ])
         );
         assert_eq!(
             req.depends_on.as_deref(),
             Some(["01TASK".to_string()].as_slice())
         );
+        assert!(req.title.is_none(), "and nothing else was touched");
 
         let req = update_request(Edits {
             clear_depends_on: true,
@@ -517,64 +375,14 @@ mod tests {
         })
         .expect("body");
         assert_eq!(req.depends_on.as_deref(), Some([].as_slice()));
-
-        // And the reviewers have their own way of saying the empty list, for
-        // the same reason: a task with nothing to review is staffed with none.
-        let req = update_request(Edits {
-            no_reviewer: true,
-            ..Edits::default()
-        })
-        .expect("body");
-        assert_eq!(req.reviewers.as_ref().map(Vec::len), Some(0));
-        assert!(req.depends_on.is_none(), "and nothing else was touched");
-    }
-
-    /// What the author runs on is three answers, and the one field carries
-    /// each of them: nothing said at all, back to auto, or an agent — with a
-    /// model of it after the `:` where one was named.
-    #[test]
-    fn the_pin_travels_as_the_three_things_it_can_say() {
-        for model in ["default", "codex-acp", "codex-acp:gpt-5.3-codex"] {
-            let req = update_request(Edits {
-                model: Some(model.into()),
-                ..Edits::default()
-            })
-            .expect("body");
-            assert_eq!(req.model.as_deref(), Some(model));
-            assert!(req.title.is_none(), "and nothing else was touched");
-        }
-    }
-
-    /// The effort travels beside the model and says the same three things:
-    /// nothing at all, back to the agent's own, or one effort of the model —
-    /// and an effort on its own is an edit like any other.
-    #[test]
-    fn the_effort_travels_the_way_the_pin_does() {
-        for effort in ["xhigh", "default"] {
-            let req = update_request(Edits {
-                effort: Some(effort.into()),
-                ..Edits::default()
-            })
-            .expect("body");
-            assert_eq!(req.effort.as_deref(), Some(effort));
-            assert!(req.model.is_none(), "the model it runs at is left alone");
-        }
-
-        let req = update_request(Edits {
-            model: Some("claude-agent-acp:claude-opus-5".into()),
-            effort: Some("xhigh".into()),
-            ..Edits::default()
-        })
-        .expect("body");
-        assert_eq!(req.model.as_deref(), Some("claude-agent-acp:claude-opus-5"));
-        assert_eq!(req.effort.as_deref(), Some("xhigh"));
+        assert!(req.agents.is_none(), "and nothing else was touched");
     }
 
     #[test]
     fn an_update_with_no_flags_is_refused_before_it_is_sent() {
         let err = update_request(Edits::default()).expect_err("no-op");
         assert!(err.to_string().starts_with("nothing to update"), "{err}");
-        assert!(err.to_string().contains("--model"), "{err}");
-        assert!(err.to_string().contains("--effort"), "{err}");
+        assert!(err.to_string().contains("--agent"), "{err}");
+        assert!(err.to_string().contains("--depends-on"), "{err}");
     }
 }

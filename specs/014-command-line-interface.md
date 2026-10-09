@@ -67,21 +67,19 @@ same binary also serves (013).
    lists the real ones.
 7. A model is chosen for every agent on the line, with an effort beside it,
    and it is required: `goal create --model` and the `=MODEL` half of every
-   `--author`/`--reviewer` slot must be written, a bare agent names no model,
-   and `task update --model` refuses `default` — only `--effort` still takes
-   that word. A missing model, a model naming no agent, an effort with no
-   meaning and a reviewer slot missing a half are usage errors, refused
-   before anything is sent. Which agents exist is the daemon's registry: an
-   agent id is sent as typed, and the daemon refuses one it does not hold
-   (011).
+   `--agent` slot must be written, a bare agent names no model, and
+   `--model default` is refused — only `--effort` still takes that word. A
+   missing model, a model naming no agent, an effort with no meaning and an
+   agent slot missing a half are usage errors, refused before anything is
+   sent. Which agents exist is the daemon's registry: an agent id is sent as
+   typed, and the daemon refuses one it does not hold (011).
 8. The empty list is a flag of its own wherever a repeatable flag names one,
    since a repeatable flag cannot be given zero times on purpose:
-   `--no-reviewer` for a task with nothing to review, `--clear-depends-on` for
-   one with nothing to wait for.
-9. Every judgement about a goal's work can be made from here too: how its
-   tasks end (`goal create --landing`, fixed once the goal is created, and
-   `merge` where it is not given; a task takes no landing of its own: 005),
-   whether a task is reviewed (`--reviewer`, `--no-reviewer`), and whether
+   `--clear-depends-on` for a task with nothing to wait for.
+9. Every judgement about a goal's work can be made from here too: the
+   workflow its tasks run through (`goal create --workflow`, fixed once the
+   goal is created, and the first repository's default where it is not
+   given: 030), how each task is staffed (`--agent`, rule 38), and whether
    the goal is over (`goal complete`).
 10. What the agents said to each other is readable from here: `task messages`
     lists the whole channel of a task, oldest first (018); `--full` prints
@@ -140,8 +138,8 @@ same binary also serves (013).
     listing, it reads no `--columns` and so refuses none.
 24. Human mutation output is one styled line. Quiet mutation output is only
     the affected id. Inspect keys use lowercase space-separated words.
-    `ariadne goal inspect` shows its landing and each repository's goal branch
-    when one exists.
+    `ariadne goal inspect` shows its workflow and its columns (rule 40), and
+    no landing and no goal branch.
     Missing session goals, tasks and seats print a dash.
     A row's subject column is `title`, except that the agent listing keeps `agent`.
     Boolean columns use the shared `yes_no` wording. Every empty listing states
@@ -255,35 +253,37 @@ same binary also serves (013).
     the rest — the line named in its `details` beside the sentence next to
     it, `line <N>: <message>` — as a usage error; every other daemon refusal
     of a workflow command prints whole, the way any other command's does.
-37. A goal is run through a workflow with `goal create --workflow <name>`,
-    refused beside `--landing` since a workflow's own gates decide how a
-    task ends; `repo add --workflow <name>` and `repo update --workflow
-    <name>` set a repository's own default, which `repo ls` and `repo
-    inspect` show. Both complete the name against `GET /v1/workflows`.
-38. A stepped task is staffed with `--agent STEP[:SKILLS]=MODEL[@EFFORT]`,
-    repeatable, one per column, sent as `agents` with seat `agent` — in
-    place of `--author`, `--reviewer` and `--no-reviewer`, which it is
-    mutually exclusive with on the same line. `SKILLS` is optional and
-    comma-separated; left out, the column stages its own. The
-    `STEP:SKILLS=MODEL[@EFFORT]` parser sits beside `--author`'s and shares
-    its model and effort checks. `task update --agent` replaces the task's
-    whole staffing, the way `--reviewer` replaces the reviewer list.
+37. A goal is run through a workflow with `goal create --workflow <name>`;
+    `repo add --workflow <name>` and `repo update --workflow <name>` set a
+    repository's own default, which `repo ls` and `repo inspect` show. Both
+    complete the name against `GET /v1/workflows`. There is no `--landing`:
+    a workflow's own gates decide how a task ends (030).
+38. A task is staffed with `--agent STEP[:SKILLS]=MODEL[@EFFORT]`,
+    repeatable, one per column, sent as `agents`. `SKILLS` is optional and
+    comma-separated; left out, the column stages its own. `task update
+    --agent` replaces the task's whole staffing, and `task update` takes no
+    `--model` or `--effort` of its own: a pin belongs to a column's agent.
+    There is no `--author`, `--reviewer` or `--no-reviewer`, and no help
+    text names an author, a reviewer or a landing.
 39. `task ls` carries a `step` column after `status`; `--step <id>` narrows
     the list to it, client-side, the way every filter the daemon's own
     listing does not know narrows elsewhere in this tree. `task inspect`
-    prints a stepped task's `workflow`, its current `step`, and one line per
+    prints the task's `workflow`, its current `step`, and one line per
     column of the goal's workflow — the column, its skills, its pin and its
-    session, a column nobody has staffed yet included; an unstepped task
-    keeps its author, reviewers and picks exactly as before. `task history`
+    session, a column nobody has staffed yet included. `task history`
     paints the column a move left and the one it entered beside the from and
     to statuses.
 40. `goal inspect` prints the goal's workflow and, one line per column, its
     rank and its gate.
 41. `task attach --step <id>` opens the console of that column's agent,
     live or revived, whether or not it is the task's current column; left
-    out, it opens the current column's agent the way `task attach` already
-    did. `--seat agent` is accepted wherever a seat is, and
-    `session ls --seat agent` lists every stepped session the same way.
+    out, `task attach`, `ariadne attach` and `task logs` resolve the task's
+    current column first and pick that column's agent's session, live or
+    revived, however the sessions of the columns the task has left are
+    listed. `--seat` takes `orchestrator`,
+    `agent` or `reviewer` wherever a seat is, and `session ls --seat agent`
+    lists every column session. A status filter takes the six statuses of
+    001 and no other word.
 
 ## Acceptance criteria
 
@@ -318,10 +318,10 @@ same binary also serves (013).
   `::the_listing_flags_are_advertised_exactly_where_they_are_honored`), and
   parse on either side (`::the_display_flags_parse_on_either_side_of_the_subcommand`).
 - A status is spelled in kebab or snake, and so is every other enum a flag
-  takes — `goal create --landing` and `repo add --permission-mode` among
-  them, `ai` included, while
-  `task create` takes no permission mode; several statuses ride on one flag,
-  and a non-status lists the real ones
+  takes — `--seat` and `repo add --permission-mode` among them, `ai`
+  included, while `task create` takes no permission mode; several statuses
+  ride on one flag, a non-status lists the six real ones, and a retired
+  status word is one of them
   (`::a_status_is_spelled_in_kebab_or_in_snake`, `::several_statuses_ride_on_one_flag`,
   `::a_status_that_is_no_spelling_of_one_lists_the_real_ones`,
   `::repo_add_permission_mode_ai_parses`).
@@ -331,7 +331,7 @@ same binary also serves (013).
 - Model and effort misuse is a usage error
   (`::a_model_naming_no_agent_is_a_usage_error`,
   `::an_effort_that_says_nothing_is_a_usage_error`,
-  `::a_reviewer_that_names_no_real_agent_is_a_usage_error`), and so is a line
+  `::an_agent_slot_that_names_no_real_agent_is_a_usage_error`), and so is a line
   with no model (`::a_line_with_no_model_is_a_usage_error`), while an agent id
   is the daemon's to check (`::an_agent_id_is_the_daemons_to_check`).
 - `models ls` narrows to an agent and `models show` takes and refuses a model
@@ -452,34 +452,39 @@ same binary also serves (013).
   `::create_and_update_send_the_document_whole_and_nothing_else`,
   `::check_prints_the_line_of_a_refusal_as_a_usage_error`,
   `::check_reads_back_the_columns_of_a_good_document`).
-- `goal create --workflow` sends the name and is refused beside `--landing`,
-  whose own gates then say how a task ends
-  (`cli/tests.rs::goal_create_workflow_sends_the_name_and_refuses_landing_beside_it`).
+- `goal create --workflow` sends the name, and `--landing` does not parse
+  (`cli/tests.rs::goal_create_workflow_sends_the_name_and_landing_is_gone`).
   `repo add --workflow` and `repo update --workflow` send `default_workflow`,
   and `repo ls` and `repo inspect` show it
   (`commands/repo.rs::repo_add_and_update_take_the_workflow_flag`).
-- `--agent STEP[:SKILLS]=MODEL[@EFFORT]` stages one workflow column, in
-  place of `--author`/`--reviewer`/`--no-reviewer`, which it is mutually
-  exclusive with; the skills half is optional, and left out the column
-  stages its own. `task create` sends one `agents` entry per `--agent`,
-  seat `agent`; `task update --agent` replaces the whole staffing
+- `--agent STEP[:SKILLS]=MODEL[@EFFORT]` stages one workflow column; the
+  skills half is optional, and left out the column stages its own. `task
+  create` sends one `agents` entry per `--agent`; `task update --agent`
+  replaces the whole staffing, and `--author`, `--reviewer`,
+  `--no-reviewer`, `task update --model` and `task update --effort` do not
+  parse
   (`cli/tests.rs::an_agent_slot_names_its_column_skills_model_and_effort`,
   `commands/task/edit.rs::an_agent_slot_names_its_column_skills_model_and_effort`,
   `::only_the_flags_that_were_given_reach_the_daemon`).
+- No help screen names an author, a reviewer or a landing
+  (`cli/tests.rs::no_help_screen_names_an_author_a_reviewer_or_a_landing`).
 - `task ls` carries a `step` column after `status`, and `--step` narrows the
   list to it client-side; `task inspect` prints a stepped task's `workflow`,
   `step`, and one line per column — its skills, its pin and its session,
   unstaffed columns included; `task history` paints the column a move left
   and the one it entered beside the statuses
   (`commands/task.rs::step_narrows_the_list_to_the_named_column`,
-  `::a_stepped_task_lists_its_workflow_and_every_columns_agent`,
+  `::a_task_lists_its_workflow_and_every_columns_agent`,
   `::a_history_row_paints_the_columns_a_move_crossed`).
 - `goal inspect` prints the workflow and, one line per column, its rank and
   its gate (`commands/goal.rs::workflow_columns_reads_the_rank_and_the_gate`).
 - `task attach --step` resolves the named column's session whether or not it
-  is the task's current one; `session ls --seat agent` parses the seat every
-  stepped session carries
+  is the task's current one; without it, attach, logs and the revive pick
+  the current column's session with the sessions of two columns live and
+  the left column listed first; `--seat` parses the three seats and no other
+  word
   (`commands/attach.rs::resolve_step_finds_the_named_columns_session`,
+  `::resolve_live_and_revive_pick_the_current_columns_session`,
   `cli/tests.rs::a_filter_takes_only_the_values_the_daemon_knows`).
 - `--watch` is advertised on exactly `task ls`, `goal ls`, `session ls` and
   `attention`, and nowhere else

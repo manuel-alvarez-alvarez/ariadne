@@ -15,7 +15,6 @@ tests:
   - crates/ariadne-daemon/tests/it/scheduler_attention.rs
   - crates/ariadne-daemon/tests/it/adapters.rs
   - crates/ariadne-daemon/tests/it/session_list.rs
-  - crates/ariadne-daemon/tests/it/landing_lifecycle.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-cli/src/commands/pr.rs
   - crates/ariadne-cli/src/commands/mcp.rs
@@ -40,17 +39,16 @@ tests:
 
 Ariadne reads pull requests live off the forge and stores none of what the forge holds.
 It keeps a row only for a request it works on — the request a task opened, one that asks for the user's review on a repository with a review pin, and one of the user's they asked Ariadne to review (029) — and lets go of it once the request merged or closed.
-A task's author keeps its request until a human merges or closes it.
-In a stepped goal, the current column's agent keeps it. The daemon sends news to that session.
+The agent of the task's `pr` column keeps its request until a human merges or closes it (030). The daemon sends news to that session.
 
 ## Scope
 
 In: request identity, the rows Ariadne keeps, forge reads, fetch modes, HTTP, events, CLI, and desktop views.
-Also in: the author who keeps a request, its comments and checks, the detail read, the news, the tools, and the cleanup.
+Also in: the agent who keeps a request, its comments and checks, the detail read, the news, the tools, and the cleanup.
 
 Out: webhook delivery, and review sessions, on a request that asks for the user's review or one of theirs they asked Ariadne to review ([029](029-reviewing-a-request.md)).
 Forge detection and integration settings belong to [025](025-forge-integration.md).
-Task completion belongs to [005](005-how-a-task-ends.md).
+The `pr` column, its gate and how its task ends belong to [030](030-workflows.md).
 
 ## Behavior
 
@@ -68,7 +66,7 @@ Task completion belongs to [005](005-how-a-task-ends.md).
    `role` is `author` when the request's author is the integration login, ignoring case, else `reviewer`.
    An upsert keeps the existing id and creation time, and the first origin task.
 3. A row exists while Ariadne works on the request, and only then:
-   - the request a task opened: `open_pull_request` writes it, with the task as origin (005 rule 6);
+   - the request a task opened: `open_pull_request` writes it, with the task as origin (030 rule 10);
    - a request that asks for the user's review, out of draft, on a repository whose integration names a `review_model`: the first fetch that finds it writes it (029);
    - a request of the user's they asked Ariadne to review: the ask writes it (029).
    A request nobody works on has no row, whatever the lists hold.
@@ -86,7 +84,7 @@ Task completion belongs to [005](005-how-a-task-ends.md).
    `Mode::WakeOnly` has no timer fetches; only explicit wakes fetch.
    Enabled integrations start with one immediate fetch.
    [027](027-webhooks-and-tunnel.md) chooses `WakeOnly` for a live hook and `Timer` otherwise.
-   Enabling starts one immediate fetch; disabling cancels its worker and wakes the scheduler for each row of the repository (rule 25).
+   Enabling starts one immediate fetch; disabling cancels its worker and wakes the scheduler for each row of the repository (rule 24).
    Daemon startup fetches every enabled integration once.
 7. `unanswered_comments` counts unresolved threads whose last comment is by the other side: a login other than the integration login, or, on a request of the user's own, an Ariadne review (029).
    A thread answered last by the integration login's own side counts zero. A resolved thread counts zero.
@@ -95,23 +93,17 @@ Task completion belongs to [005](005-how-a-task-ends.md).
    A row Ariadne starts or stops working on, or one whose ready flag or review ask moves, publishes it too.
    The event carries no request: the desktop reads its lists and panels again (012).
 
-## The author who keeps a request
+## The agent who keeps a request
 
-9. A row with role `author` and an origin task is kept by that task's author (005).
-   The current column's agent keeps it for a stepped task (030).
+9. A row with role `author` and an origin task is kept by the agent of the task's current column (030): the `pr` column of `develop-review-pr`.
    It gets no session of its own: that agent's own session is told its news.
-   The author is the picked winner's session on a task with several authors, the lone author's everywhere else.
-10. The daemon loads the `pr-babysit` skill for every author of a task that lands by request: a task of a `pull_request` goal, or the final task of a `feature_branch` goal (017).
-    It is how the author keeps the request: answer comments, fix checks, keep the branch current, and send every fix through `request_review` before it is pushed.
-    The `pr` column of a stepped goal also loads this skill.
-    Its agent opens the request and pushes tested fixes without another review call (030).
-11. An author whose agent went away while its request is open is picked up by the task's own pass, with the keep-request briefing: push what an approved revision added, read the request, and wait for its news (005 rule 8).
-    The same briefing picks up an author approved again after a revision.
-    A restart that resumes the author while its open request still reads ready raises `waiting_user` again.
+10. The `pr` column stages the `pr-babysit` skill (030).
+    It is how the agent keeps the request: open it once, answer comments, fix checks, keep the branch current, and push tested fixes as new commits.
+11. An agent whose session went away while its request is open is resumed by the task's own pass, as any column's agent is (009 rule 23): it reads the request again and waits for its news.
+    A restart that resumes the agent while its open request still reads ready raises `waiting_user` again.
 12. The scheduler reconciles requests on every full pass, on every request change, and on every event of a request's session (`scheduler/pull_requests.rs`).
-    An idle author on an approved task with an open request waits on the forge: it is never nudged for sitting idle (009 rule 41).
-    The current column's agent of a stepped task waits the same way.
-    A disabled integration tells the author nothing; its task stays approved until the integration is on again.
+    An idle `pr` agent with an open request waits on the forge: it is never nudged for sitting idle (009 rule 41).
+    A disabled integration tells the agent nothing; its task stays on the `pr` column until the integration is on again.
 
 ## Comments, checks and the detail read
 
@@ -129,7 +121,7 @@ Task completion belongs to [005](005-how-a-task-ends.md).
     What Ariadne posts itself is held beside the last read until the next fetch reads it back.
 15. The DTO joins the forge's read and the row.
     It includes the request's fields, `failed_checks`, `behind_base`, `id`, `origin_task_id`, `ready`, review ask, and `session_id`.
-    For an origin task, `session_id` names the newest author or current column agent session.
+    For an origin task, `session_id` names the current column agent's newest session.
     Otherwise it names the newest review session on the request.
     A request nobody works on has a null `id`.
 
@@ -150,37 +142,30 @@ Task completion belongs to [005](005-how-a-task-ends.md).
 
 ## Tools and replies
 
-19. The author seat lists `get_pull_request`, `list_comments`, `get_comment`, `reply_comment` and `report_pull_request` beside its task tools (013).
-    The current column's agent of a stepped task has these request tools too (030).
+19. The agent seat lists `get_pull_request`, `list_comments`, `get_comment`, `reply_comment` and `report_pull_request` beside its task tools (013).
     `get_pull_request`, `list_comments` and `get_comment` read the forge at the call: what a session works from is never an earlier read.
     Each finds the request its task opened through `GET /v1/pull-requests?task=<id>&role=author`; with none, it says to call `open_pull_request` first.
-    No author tool resolves a thread. A review session resolves a thread it opened, once a push fixed it (029); every other thread is its author's to resolve.
+    No agent tool resolves a thread. A review session resolves a thread it opened, once a push fixed it (029); every other thread is the keeping agent's to resolve.
 20. A reply posts through the forge CLI: `gh api .../pulls/<n>/comments/<id>/replies` on the thread's first review comment, else `gh pr comment`; GitLab adds a note to the discussion.
     A review session's reply is marked `from_review`. The repository is fetched again, which reads the reply back.
 21. A report with `ready: true` on a change raises `waiting_user` on the keeping agent's session. `ready: false` on a change clears it. A repeat raises nothing.
     The state is the forge's to say: no session reports it.
-    Accept comments, replies, and reports only from the author, current column agent, or review session (029).
+    Accept comments, replies, and reports only from the current column agent or the review session (029).
     Another session gets 403. A report or reply with no session gets 403. The user reads comments freely.
-22. `finish_task` of a `pull_request` task is accepted once the forge, read at the call, says its request merged (005 rule 12). A close is told to the author, which fails the task.
+22. `complete_step` on the `pr` column is accepted once the forge, read at the call, says its request merged (030 rule 5). A close is told to the agent, which fails the task.
 
 ## Cleanup
 
-23. A `merged` or `closed` request is told to its author like any other news; the author finishes or fails the task.
-    A merged request whose task is still `approved` once the author read the news is finished by the daemon (005 rule 9), which stops the author.
-    For a stepped task, the current column's agent receives that news.
-    It completes the step on a merge or fails the task on a close.
-    The daemon advances a merged request column when that agent falls quiet after the news.
-    It finishes the task when that column is last.
-    Once the task is over, what is left of the request is taken down: any session or worktree an earlier release started on it, and, on a merge whose head is a goal branch, that goal branch, local and remote.
+23. A `merged` or `closed` request is told to the keeping agent like any other news; the agent completes its step on a merge or fails the task on a close.
+    The daemon advances a merged request column itself when that agent falls quiet after the news, and finishes the task when that column is last (030 rule 10).
+    Once the task is over, what is left of the request is taken down: any session or worktree an earlier release started on it.
     The task's own cleanup took its worktree and its branch.
     Then Ariadne stops working on the request: its row and its marks go, so an ended request takes no room. Its sessions stay, with their history and spend, let go of it.
     A deletion that fails keeps the row: the next change of the request tries it again, and the tick after 60 seconds, and so does a restarted daemon.
-    A task that ends while the last read says its request is open reads the forge again first: a finish reads it at the call, so a merge no fetch has read yet still has its work taken down. A request still open lets go of it too, unless the user asked Ariadne to review it.
-24. A head branch that is a `goal_repositories.goal_branch` is the goal's.
-    A merged request deletes it, local and remote. A closed one deletes neither.
-25. With the integration disabled, nothing reads the forge for its requests: each review session ends and its worktree goes, and Ariadne stops working on every request but a task's. Nobody merged or closed anything, so nothing is told and no branch is deleted.
+    A task that ends while the last read says its request is open reads the forge again first: a step completion reads it at the call, so a merge no fetch has read yet still has its work taken down. A request still open lets go of it too, unless the user asked Ariadne to review it.
+24. With the integration disabled, nothing reads the forge for its requests: each review session ends and its worktree goes, and Ariadne stops working on every request but a task's. Nobody merged or closed anything, so nothing is told.
     A task's row stays, and the next fetch with the integration on reads it again.
-26. Nothing adds or removes a request by hand, from the desktop or the CLI: Ariadne starts and stops working on requests on its own.
+25. Nothing adds or removes a request by hand, from the desktop or the CLI: Ariadne starts and stops working on requests on its own.
 
 ## HTTP
 
@@ -221,7 +206,7 @@ A row holds no button: a click on it, or Enter on it, opens the request's panel.
 The header offers Refresh only while a repository in view is not pushed live: the tunnel is off, the tunnel or its hook is down, or the last fetch failed. With every webhook live the events bring each change and there is no Refresh.
 A row opens the floating pane through `?pr=<repository>:<number>` and `paths.pullRequest`: a request is named by its repository and number, which every request has, and not by Ariadne's id, which only the requests it works on have.
 The panel reads the request off the forge by its repository and number. Its header carries the number and title, pills for the state, the checks, the review decision and an Ariadne review, Ariadne's id where it works on it, and when it opened and moved.
-Under it are the facts by name — a link to the request on the forge, the repository, the author, the branches, the head, the unanswered comments, the base, what Ariadne does with it, the task that keeps it and each failed check linked to its run — then two tabs: Description, the body rendered as Markdown, and Sessions, the request's review sessions and the task's author.
+Under it are the facts by name — a link to the request on the forge, the repository, the author, the branches, the head, the unanswered comments, the base, what Ariadne does with it, the task that keeps it and each failed check linked to its run — then two tabs: Description, the body rendered as Markdown, and Sessions, the request's review sessions and the task's keeping agent.
 Picking a session drills into it in the panel, as `?session=` beside `?pr=`, with a way back to the request.
 The panel offers Start review and Stop review on a request of the user's own (029). Nothing on the screen adds or removes a request.
 `pull_requests_changed` invalidates every pull request key; no screen polls.
@@ -281,20 +266,18 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `::links each failed check to its run, and lists the request's review sessions`.
 - Opening a task or session replaces the request panel and preserves list filters:
   `paths.test.ts::pull request panel navigation`.
-- A new comment by another login is told once by id to the author of the task that opened the request; a failed check is told by name; the request has no session of its own:
-  `kept_requests.rs::the_news_of_its_request_reaches_the_author_once`.
-- The author replies, which the next read finds answering the thread, and reports; its resolve is refused; another session and no session get 403:
-  `kept_requests.rs::the_author_replies_and_reports_and_no_other_session_may`.
-- The task stays approved and its finish is refused until a merge, which is told to the author; the daemon then finishes the task, the author is stopped, and the row goes:
-  `kept_requests.rs::a_merge_is_told_to_the_author_and_then_ends_the_task_and_its_agent`.
-- A close is told to the author and finishes nothing:
-  `kept_requests.rs::a_close_is_told_to_the_author_and_finishes_nothing`.
+- A new comment by another login is told once by id to the `pr` agent of the task that opened the request; a failed check is told by name; the request has no session of its own:
+  `workflow_pull_request.rs::the_pr_column_opens_the_request_once_and_keeps_it`.
+- The agent replies and reports; another session and no session get 403:
+  `kept_requests.rs::the_pr_agent_replies_and_reports_and_no_other_session_may`.
+- The step stays on the `pr` column and its completion is refused until a merge, which is told to the agent; a quiet agent is then finished by the daemon and the row goes:
+  `workflow_pull_request.rs::a_quiet_pr_agent_is_finished_after_the_merge`.
+- A close is told to the agent and finishes nothing:
+  `workflow_pull_request.rs::a_close_is_told_to_the_pr_agent_and_finishes_nothing`.
 - A check that recovers and fails again is told again:
   `kept_requests.rs::a_check_that_recovers_and_fails_again_is_told_again`.
 - The detail read reads every page of threads and check runs:
   `kept_requests.rs::the_detail_fetch_reads_every_page_of_threads_and_check_runs`.
-- A merged goal branch goes once its task is over, and a failed remote delete is tried again by a restarted daemon:
-  `kept_requests.rs::a_merged_goal_branch_goes_once_its_task_is_over_and_a_failed_remote_delete_is_tried_again`.
 - A closed request the user reviews deletes no branch, and its row goes:
   `kept_requests.rs::a_closed_request_i_review_deletes_no_branch`.
 - An approval before the checks end, the checks ending green, and checks going back to pending are told:
@@ -311,15 +294,13 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `store.rs::a_pull_request_reports_ready_once`.
 - The session migration keeps every old session:
   `store.rs::pull_request_session_migration_preserves_sessions_and_requests`.
-- The author lists the request's tools beside its task tools:
-  `mcp.rs::tests::the_author_lists_the_request_tools_beside_its_task_tools`.
+- The agent seat lists the request's tools beside its task tools:
+  `mcp.rs::tests::the_agent_seat_lists_its_step_tools_and_nothing_of_a_review`.
 - Its request tools find the request its task opened, then call its routes, and say to open one where there is none:
-  `tools.rs::tests::the_authors_request_tools_call_the_routes_of_the_request_its_task_opened`,
-  `::an_author_with_no_request_is_told_to_open_one`.
-- The migration that gives requests to their authors drops a request of mine no task opened and its session, and keeps task and review rows:
-  `store.rs::the_migration_that_gives_requests_to_their_authors_keeps_task_and_review_rows`.
-- The skill is within its caps, names no forge CLI, timer, poll or resolve, sends every fix through the reviewers, ends the task on the merge, and ends the turn:
-  `defaults.rs::tests::the_pr_babysit_skill_is_fed_by_the_daemon_and_ends_its_turn`, `::skill_size_caps_hold`.
+  `tools.rs::tests::the_agents_request_tools_call_the_routes_of_the_request_its_task_opened`,
+  `::an_agent_with_no_request_is_told_to_open_one`.
+- The skill is within its caps, names no forge CLI, timer, poll or resolve, opens the request once, and ends the step on the merge:
+  `defaults.rs::tests::the_pr_babysit_skill_opens_the_request_and_ends_the_step_on_the_merge`, `::skill_size_caps_hold`.
 - `session ls` titles a request session with its title and URL:
   `session.rs::tests::a_pull_request_session_shows_the_request_title_and_url`.
 - `ariadne attention` lists a request ready to merge by its title:
@@ -355,5 +336,5 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 `crates/ariadne-cli/src/commands/mcp.rs`, `crates/ariadne-cli/src/commands/mcp/tools.rs`,
 `crates/ariadne-daemon/src/forge/`, `crates/ariadne-daemon/src/forge/live.rs`,
 `crates/ariadne-daemon/src/http/pull_requests.rs`,
-`crates/ariadne-daemon/src/http/landing.rs`, `crates/ariadne-daemon/src/bus.rs`,
+`crates/ariadne-daemon/src/http/channel.rs`, `crates/ariadne-daemon/src/bus.rs`,
 `crates/ariadne-cli/src/commands/pr.rs`, `ui/src/features/pull-requests/`.

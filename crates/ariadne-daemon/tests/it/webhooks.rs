@@ -622,7 +622,6 @@ async fn startup_checks_a_stored_hook_without_creating_another_and_fetches_once(
                 base_branch: "main".into(),
                 description: None,
                 permission_mode: None,
-                default_landing: None,
             },
             Some(SetForgeIntegration {
                 repository_id: String::new(),

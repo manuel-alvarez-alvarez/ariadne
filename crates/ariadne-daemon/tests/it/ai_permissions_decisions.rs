@@ -428,10 +428,10 @@ async fn ai_permissions_harness_on(
         )
         .await;
     h.git_repo("repo");
-    let cast = h.cast_pinned("stub:test-model", 1).await;
+    let cast = h.cast_pinned("stub:test-model").await;
     h.store
         .set_agent_pin(
-            &cast.author.id,
+            &cast.develop().id,
             &AgentPin {
                 model: "stub:test-model".into(),
                 effort: None,
@@ -526,8 +526,8 @@ async fn a_confident_allow_runs_at_once_and_reports_ai() {
     let server = ModelServer::answer(0.05).await;
     let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.05, Timeouts::default()).await;
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
-    eventually(TIMEOUT, "the AI-approved turn to finish", || async {
+    let session = h.start_agent(&cast.task, "develop").await;
+    eventually(TIMEOUT, "the AI-allowed turn to finish", || async {
         h.session_status(&session).await == SessionStatus::Idle
     })
     .await;
@@ -590,8 +590,8 @@ async fn the_recorded_outside_workspace_read_is_allowed() {
     )
     .await;
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
-    eventually(TIMEOUT, "the AI-approved turn to finish", || async {
+    let session = h.start_agent(&cast.task, "develop").await;
+    eventually(TIMEOUT, "the AI-allowed turn to finish", || async {
         h.session_status(&session).await == SessionStatus::Idle
     })
     .await;
@@ -619,7 +619,7 @@ async fn a_test_request_with_locations_derives_what_the_live_request_does() {
     let (h, cast, _agent_dir) =
         ai_permissions_harness_with(&server, 0.05, Timeouts::default(), located_script()).await;
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.start_agent(&cast.task, "develop").await;
     wait_for_question(&h, &session).await;
     let live = permission_request(&h, &session.id).await;
     let live_state = server.requests.lock().unwrap()[0]["state"].clone();
@@ -721,8 +721,8 @@ async fn a_request_made_while_the_server_loads_waits_for_it() {
         "the server is still loading"
     );
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
-    eventually(TIMEOUT, "the AI-approved turn to finish", || async {
+    let session = h.start_agent(&cast.task, "develop").await;
+    eventually(TIMEOUT, "the AI-allowed turn to finish", || async {
         h.session_status(&session).await == SessionStatus::Idle
     })
     .await;
@@ -739,8 +739,8 @@ async fn a_score_answer_is_used_as_the_danger() {
     let server = ModelServer::answer(0.05).await;
     let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.2, Timeouts::default()).await;
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
-    eventually(TIMEOUT, "the AI-approved turn to finish", || async {
+    let session = h.start_agent(&cast.task, "develop").await;
+    eventually(TIMEOUT, "the AI-allowed turn to finish", || async {
         h.session_status(&session).await == SessionStatus::Idle
     })
     .await;
@@ -756,7 +756,7 @@ async fn a_score_equal_to_the_deny_threshold_is_denied() {
     let server = ModelServer::answer(0.8).await;
     let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.2, Timeouts::default()).await;
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.start_agent(&cast.task, "develop").await;
     eventually(TIMEOUT, "the boundary denial to finish", || async {
         h.session_status(&session).await == SessionStatus::Idle
     })
@@ -773,13 +773,13 @@ async fn an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval() 
     let server = ModelServer::answer(0.4).await;
     let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.2, Timeouts::default()).await;
 
-    let asked = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let asked = h.start_agent(&cast.task, "develop").await;
     wait_for_question(&h, &asked).await;
     assert_eq!(
         h.send(answer(&asked.id, "command")).await.0,
         StatusCode::NO_CONTENT
     );
-    eventually(TIMEOUT, "the console-approved turn to finish", || async {
+    eventually(TIMEOUT, "the console-allowed turn to finish", || async {
         h.session_status(&asked).await == SessionStatus::Idle
     })
     .await;
@@ -806,19 +806,13 @@ async fn an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval() 
     assert_eq!(learned[0].scope, "repository");
 
     let again = h
-        .task_on(
-            &cast.goal,
-            &cast.repo,
-            "Again",
-            1,
-            crate::common::test_pin(),
-        )
+        .task_on(&cast.goal, &cast.repo, "Again", crate::common::test_pin())
         .await;
     h.store
         .transition_task(&again.id, TaskStatus::Ready, Actor::Daemon, None, None)
         .await
         .unwrap();
-    let remembered = h.launcher.spawn_author(&again.id).await.unwrap();
+    let remembered = h.start_agent(&again, "develop").await;
     eventually(TIMEOUT, "the learned turn to finish", || async {
         h.session_status(&remembered).await == SessionStatus::Idle
     })
@@ -844,8 +838,8 @@ async fn the_model_receives_the_raw_input_and_not_the_learned_key() {
     let (h, cast, _agent_dir) =
         ai_permissions_harness_with(&server, 0.05, Timeouts::default(), scripted).await;
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
-    eventually(TIMEOUT, "the AI-approved turn to finish", || async {
+    let session = h.start_agent(&cast.task, "develop").await;
+    eventually(TIMEOUT, "the AI-allowed turn to finish", || async {
         h.session_status(&session).await == SessionStatus::Idle
     })
     .await;
@@ -869,7 +863,7 @@ async fn a_cap_changes_a_model_allow_to_a_console_question() {
     )
     .await;
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.start_agent(&cast.task, "develop").await;
     wait_for_question(&h, &session).await;
     let request = permission_request(&h, &session.id).await;
     assert_eq!(request["label"], "ask");
@@ -903,7 +897,7 @@ async fn a_confident_deny_selects_the_rejecting_option_and_reports_ai() {
     let _guard =
         tracing::subscriber::set_default(tracing_subscriber::registry().with(h.logs.layer()));
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.start_agent(&cast.task, "develop").await;
     eventually(TIMEOUT, "the AI-denied turn to finish", || async {
         h.session_status(&session).await == SessionStatus::Idle
     })
@@ -955,7 +949,7 @@ async fn a_deny_without_a_rejecting_option_waits_for_the_console() {
     let (h, cast, _agent_dir) =
         ai_permissions_harness_with(&server, 0.2, Timeouts::default(), scripted).await;
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.start_agent(&cast.task, "develop").await;
     wait_for_question(&h, &session).await;
     assert_eq!(
         model_part(&permission_request(&h, &session.id).await),
@@ -1008,7 +1002,7 @@ async fn a_console_reject_uses_the_only_agent_rejection_option() {
     let (h, cast, _agent_dir) =
         ai_permissions_harness_with(&server, 0.2, Timeouts::default(), scripted).await;
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.start_agent(&cast.task, "develop").await;
     wait_for_question(&h, &session).await;
     let request = permission_request(&h, &session.id).await;
     assert_eq!(
@@ -1040,7 +1034,7 @@ async fn an_allow_without_an_allowing_option_waits_for_the_console() {
     let (h, cast, _agent_dir) =
         ai_permissions_harness_with(&server, 0.2, Timeouts::default(), scripted).await;
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.start_agent(&cast.task, "develop").await;
     wait_for_question(&h, &session).await;
     assert_eq!(
         model_part(&answered(&h, &session.id, "reject").await),
@@ -1057,7 +1051,7 @@ async fn a_malformed_answer_warns_and_waits_for_the_console() {
     let _guard =
         tracing::subscriber::set_default(tracing_subscriber::registry().with(h.logs.layer()));
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.start_agent(&cast.task, "develop").await;
     wait_for_question(&h, &session).await;
     let snapshot: LogSnapshotResponse = h.get("/v1/logs").await;
     assert!(
@@ -1091,7 +1085,7 @@ async fn a_stopped_model_warns_and_waits_for_the_console() {
     let _guard =
         tracing::subscriber::set_default(tracing_subscriber::registry().with(h.logs.layer()));
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.start_agent(&cast.task, "develop").await;
     wait_for_question(&h, &session).await;
     let snapshot: LogSnapshotResponse = h.get("/v1/logs").await;
     assert!(
@@ -1120,7 +1114,7 @@ async fn a_model_timeout_waits_for_the_console() {
     };
     let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.2, timeouts).await;
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.start_agent(&cast.task, "develop").await;
     wait_for_question(&h, &session).await;
     assert_eq!(
         model_part(&answered(&h, &session.id, "reject").await),
@@ -1141,7 +1135,7 @@ async fn a_disabled_model_waits_for_the_console() {
         )
         .await;
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.start_agent(&cast.task, "develop").await;
     wait_for_question(&h, &session).await;
     assert!(server.requests.lock().unwrap().is_empty());
     assert_eq!(

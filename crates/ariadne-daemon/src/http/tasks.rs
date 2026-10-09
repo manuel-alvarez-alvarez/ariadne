@@ -1,5 +1,7 @@
-//! Task endpoints: CRUD and transitions. What a task being reviewed and
-//! landed goes through is in [`super::landing`].
+//! Task endpoints: CRUD and transitions. What a task's agents say to each
+//! other and the request its `pr` column opens are in [`super::channel`];
+//! the two step calls that move it through its columns are in
+//! [`super::steps`].
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -8,16 +10,14 @@ use ariadne_api::tasks::{
     AgentAssignment, CreateTaskRequest, TaskDto, TaskListQuery, TaskTransitionDto,
     TransitionRequest, UpdateTaskRequest,
 };
-use ariadne_core::{Actor, MessageKind, Seat, TaskStatus};
+use ariadne_core::{Actor, TaskStatus};
 use ariadne_store::{NewTask, NewTaskAgent, Task, TaskFilter, TaskUpdate};
 
 use super::AppState;
 use super::caller::{CallCtx, call_ctx, ensure_task_scope};
 use super::convert::{task_dto_of, transition_dto};
 use super::error::{ApiError, ApiResult, Json};
-use super::landing;
-use super::pins::{self, Repin, Standing};
-use crate::acp::TurnReport;
+use super::pins;
 
 /// The agents an assignment list asks for, in the order it names them.
 ///
@@ -31,7 +31,6 @@ pub(super) async fn resolve_agents(
     for assignment in assignments {
         agents.push(NewTaskAgent {
             step: assignment.step.clone(),
-            seat: assignment.seat,
             skills: assignment.skills.clone(),
             pin: pins::chosen(
                 &state.store,
@@ -44,24 +43,6 @@ pub(super) async fn resolve_agents(
         });
     }
     Ok(agents)
-}
-
-/// One seat's half of an edit's staffing, refusing an agent of the other
-/// seat among them: each list replaces one seat whole, and an agent filed
-/// under the wrong one would silently change the other list.
-async fn resolve_seat(
-    state: &AppState,
-    assignments: &[AgentAssignment],
-    seat: Seat,
-) -> ApiResult<Vec<NewTaskAgent>> {
-    if assignments.iter().any(|a| a.seat != seat) {
-        return Err(ApiError::bad_request(format!(
-            "the `{}s` list replaces that seat alone; every agent in it says seat `{}`",
-            seat.as_str(),
-            seat.as_str()
-        )));
-    }
-    resolve_agents(state, assignments).await
 }
 
 /// Create a task in a goal (orchestrator via MCP, or the user).
@@ -157,7 +138,8 @@ pub(super) async fn get(
     Ok(Json(task_dto_of(&state.store, task).await?))
 }
 
-/// Edit a pending/ready task (orchestrator or user).
+/// Edit a task that is not running (orchestrator or user): pending, ready,
+/// or failed and waiting for a retry.
 #[utoipa::path(patch, path = "/v1/tasks/{id}", tag = "tasks",
     request_body = UpdateTaskRequest,
     params(("id" = String, Path, description = "task id")),
@@ -174,41 +156,9 @@ pub(super) async fn update(
             "only the orchestrator or the user may edit tasks",
         ));
     }
-    let authors = match &req.authors {
-        Some(assignments) => Some(resolve_seat(&state, assignments, Seat::Author).await?),
-        None => None,
-    };
-    let reviewers = match &req.reviewers {
-        Some(assignments) => Some(resolve_seat(&state, assignments, Seat::Reviewer).await?),
-        None => None,
-    };
-    // What the author is pinned to now: an effort written on its own is run at
-    // that model, and moves without disturbing it.
     let agents = match &req.agents {
         Some(a) => Some(resolve_agents(&state, a).await?),
         None => None,
-    };
-    let author = state
-        .store
-        .list_task_agents(&id)
-        .await?
-        .into_iter()
-        .next()
-        .ok_or_else(|| ApiError::conflict("the task has no agents"))?;
-    let (pin, effort) = match pins::rechosen(
-        &state.store,
-        &state.agent_registry,
-        req.model.as_deref(),
-        req.effort.as_deref(),
-        Standing {
-            model: &author.model,
-        },
-    )
-    .await?
-    {
-        Repin::Untouched => (None, None),
-        Repin::To(pin) => (Some(pin), None),
-        Repin::Effort(effort) => (None, Some(effort)),
     };
     let task = state
         .store
@@ -218,10 +168,6 @@ pub(super) async fn update(
                 agents,
                 title: req.title,
                 description: req.description,
-                pin,
-                effort,
-                authors,
-                reviewers,
             },
         )
         .await?;
@@ -249,6 +195,8 @@ pub(super) async fn transition(
     Ok(Json(task_dto_of(&state.store, task).await?))
 }
 
+/// The one status move an agent makes through this route is to give its task
+/// up; every other move of a task is a step call, or the daemon's.
 pub(crate) async fn apply_transition(
     state: &AppState,
     ctx: &CallCtx,
@@ -260,26 +208,18 @@ pub(crate) async fn apply_transition(
             "use the step route to complete a column",
         ));
     }
-    // `finished` is never taken on faith.
-    if req.to == TaskStatus::Finished {
+    // A retry starts the task on its first column again, and runs it through
+    // every column: one with nobody on it is named now, not met later with
+    // the task stuck in it.
+    if req.to == TaskStatus::Ready {
         let task = state.store.get_task(task_id).await?;
-        let repo = state.store.get_repository(&task.repo_id).await?;
-        landing::verify_merged(state, &task, &repo, req.merge_commit.as_deref()).await?;
-    }
-    // On a task staffed with several authors the reviews run side by side,
-    // and the task is `under_review` from the first request to the pick. A
-    // later author's `request_review` is therefore not a status change: it
-    // opens that author's own review on the channel, and the task stands
-    // where it is.
-    if req.to == TaskStatus::UnderReview && ctx.actor == Actor::Author {
-        let task = state.store.get_task(task_id).await?;
-        if task.status() == TaskStatus::UnderReview
-            && state.store.list_task_authors(task_id).await?.len() > 1
-        {
-            announce_review(state, ctx, &task, req.reason.as_deref()).await;
-            end_authors_turn(state, ctx);
-            state.notify_scheduler(task_id);
-            return Ok(task);
+        let unstaffed = state.store.unstaffed_columns(&task).await?;
+        if !unstaffed.is_empty() {
+            return Err(ApiError::conflict(format!(
+                "task {task_id} has no agent on column {}; staff it with update_task before \
+                 the retry",
+                unstaffed.join(", ")
+            )));
         }
     }
     let task = state
@@ -292,16 +232,6 @@ pub(crate) async fn apply_transition(
             req.merge_commit.as_deref(),
         )
         .await?;
-    // Asking for a review is the author writing to its reviewers, so the
-    // channel carries it like everything else the agents say. One message per
-    // reviewer, because one recipient each is what makes "has it seen this
-    // yet" answerable at all.
-    if req.to == TaskStatus::UnderReview {
-        announce_review(state, ctx, &task, req.reason.as_deref()).await;
-        if ctx.actor == Actor::Author {
-            end_authors_turn(state, ctx);
-        }
-    }
     // A task going back to `ready` is a task starting over, and the only way
     // there is a retry of a failed one. Whatever it was published as is not
     // its request any more — a request closed unmerged is what fails a
@@ -311,9 +241,6 @@ pub(crate) async fn apply_transition(
     let task = match req.to == TaskStatus::Ready {
         true => {
             state.store.clear_task_pull_request(task_id).await?;
-            // A retried task reviews its authors afresh, so the picks of the
-            // run that failed say nothing about the one starting.
-            state.store.clear_task_picks(task_id).await?;
             state.store.get_task(task_id).await?
         }
         false => task,
@@ -327,7 +254,7 @@ pub(crate) async fn apply_transition(
 ///
 /// Who called it is read from the session header rather than assumed, so the
 /// transition log says which of the two it was — and so the state machine
-/// refuses an author or a reviewer reaching for it.
+/// refuses a column's agent reaching for it.
 #[utoipa::path(post, path = "/v1/tasks/{id}/cancel", tag = "tasks",
     params(("id" = String, Path, description = "task id")),
     responses((status = 200, body = TaskDto), (status = 403), (status = 409)))]
@@ -352,9 +279,10 @@ pub(super) async fn cancel(
     Ok(Json(task_dto_of(&state.store, task).await?))
 }
 
-/// Retry a failed task: failed -> ready. The user's call, and the
-/// orchestrator's — the daemon wakes it when a task fails, and retrying is
-/// one of the three answers it has.
+/// Retry a failed task: failed -> ready, which starts it on its first column
+/// again. The user's call, and the orchestrator's — the daemon wakes it when
+/// a task fails, and retrying is one of the three answers it has. A task
+/// with a column nobody staffs is refused by that column's name.
 #[utoipa::path(post, path = "/v1/tasks/{id}/retry", tag = "tasks",
     params(("id" = String, Path, description = "task id")),
     responses((status = 200, body = TaskDto), (status = 403), (status = 409)))]
@@ -390,97 +318,4 @@ pub(super) async fn list_transitions(
     state.store.get_task(&id).await?;
     let rows = state.store.list_task_transitions(&id).await?;
     Ok(Json(rows.into_iter().map(transition_dto).collect()))
-}
-
-/// What the tool an author asks for its review with is called, as the
-/// agent's own tool call reports name it: `mcp__ariadne__request_review` on
-/// one adapter, `mcp.ariadne.request_review` on another, and always this
-/// inside.
-const REVIEW_TOOL: &str = "request_review";
-
-/// End the turn an author asked for its review in. The agent reports the
-/// tool call ended once it holds the answer — the runtime's word of the
-/// launch that made the call, and of no launch before it (021) — and only
-/// then does ACP `session/cancel` go to the session that made the call, so
-/// the author sees its own call succeed. From there it sits idle until the
-/// daemon has something to say — a message, a verdict, the landing briefing
-/// — each of which starts a new turn.
-///
-/// Once, and never on a guess: a turn that ends before the report is over
-/// already, a session that is gone or has been relaunched since is left
-/// alone, and an agent that never reports the call is never cancelled and
-/// runs on as before. The cancelled turn's response records what it spent as
-/// any other does (021).
-fn end_authors_turn(state: &AppState, ctx: &CallCtx) {
-    let Some(session) = ctx.session.as_ref() else {
-        return;
-    };
-    let Some(launch_id) = session.launch_id.clone() else {
-        return;
-    };
-    // Followed before the answer goes out, so the report cannot pass by
-    // unseen; the launch that made the call, so no other launch's report is
-    // taken for it.
-    let acp = state.launcher.acp.clone();
-    let mut reports = match acp.turn_reports(&session.id, &launch_id) {
-        Ok(reports) => reports,
-        Err(e) => {
-            tracing::debug!(session = %session.id, error = %e, "the author's turn was not ended");
-            return;
-        }
-    };
-    let session_id = session.id.clone();
-    tokio::spawn(async move {
-        loop {
-            match reports.recv().await {
-                Some(TurnReport::ToolEnded(tool)) if tool.contains(REVIEW_TOOL) => break,
-                Some(TurnReport::ToolEnded(_)) => {}
-                // The turn is over on its own, or the agent with it.
-                Some(TurnReport::TurnEnded) | None => return,
-            }
-        }
-        match acp.cancel_launch(&session_id, &launch_id).await {
-            Ok(()) => {
-                tracing::info!(session = %session_id, "review requested: ending the author's turn")
-            }
-            Err(e) => {
-                tracing::debug!(session = %session_id, error = %e, "the author's turn was not ended")
-            }
-        }
-    });
-}
-
-/// Tell every reviewer of `task` that there is a round to look at, carrying
-/// the summary the author asked with.
-///
-/// Best effort: the round is open whether or not the channel took the news,
-/// and a task that could not be announced is one the scheduler still starts
-/// its reviewers for.
-async fn announce_review(state: &AppState, ctx: &CallCtx, task: &Task, summary: Option<&str>) {
-    let Ok(reviewers) = state.store.list_task_reviewers(&task.id).await else {
-        return;
-    };
-    let body = summary
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or("The author asks you to review this round.");
-    for reviewer in reviewers {
-        let sent = state
-            .store
-            .send_message(ariadne_store::NewMessage {
-                goal_id: task.goal_id.clone(),
-                task_id: Some(task.id.clone()),
-                kind: MessageKind::ReviewRequest,
-                from_actor: ctx.actor,
-                from_agent_id: ctx.session.as_ref().and_then(|s| s.task_agent_id.clone()),
-                from_session: ctx.session.as_ref().map(|s| s.id.clone()),
-                to_actor: Actor::Reviewer,
-                to_agent_id: Some(reviewer.id.clone()),
-                body: body.to_string(),
-            })
-            .await;
-        if let Err(e) = sent {
-            tracing::warn!(task = %task.id, reviewer = %reviewer.id, error = %e, "announcing the review round failed");
-        }
-    }
 }

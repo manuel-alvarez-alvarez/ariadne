@@ -3,10 +3,9 @@
 use crate::common;
 
 use ariadne_api::stats::ModelStatsDto;
-use ariadne_core::{Seat, TaskStatus};
-use axum::http::StatusCode;
+use ariadne_core::{Actor, TaskStatus};
 
-use common::{as_session, harness};
+use common::harness;
 
 /// `GET /v1/stats/models` answers 200 with the family's DTO, and the route is
 /// in the API document under the `stats` tag.
@@ -20,8 +19,7 @@ async fn the_models_stat_answers_and_is_in_the_api_document() {
 }
 
 /// Each model and seat answers its tasks, goals, tokens, time and messages,
-/// authors their rounds per task and reviewers their changes per task, under
-/// both filters.
+/// and the tasks its column ended `finished`, under both filters.
 #[tokio::test]
 async fn each_model_and_seat_answers_its_figures_under_both_filters() {
     use ariadne_api::stats::ModelStatDto;
@@ -46,7 +44,7 @@ async fn each_model_and_seat_answers_its_figures_under_both_filters() {
         fact(
             "session_ended",
             "writer",
-            "author",
+            "agent",
             "one",
             json!({"input_tokens": 1_000, "cached_input_tokens": 600, "output_tokens": 200,
                 "lifetime_secs": 300}),
@@ -54,51 +52,37 @@ async fn each_model_and_seat_answers_its_figures_under_both_filters() {
         fact(
             "session_ended",
             "writer",
-            "author",
+            "agent",
             "two",
             json!({"input_tokens": 500, "output_tokens": 100, "lifetime_secs": 120}),
         ),
         fact(
             "message",
             "writer",
-            "author",
+            "agent",
             "one",
-            json!({"kind": "review_request"}),
+            json!({"kind": "message"}),
         ),
         fact(
             "task_ended",
             "writer",
-            "author",
+            "agent",
             "one",
-            json!({"status": "finished", "review_requests": 3}),
+            json!({"status": "finished", "landed": true, "step": "merge"}),
         ),
         fact(
             "task_ended",
             "writer",
-            "author",
+            "agent",
             "two",
-            json!({"status": "finished", "review_requests": 1}),
+            json!({"status": "failed", "landed": false, "step": "develop"}),
         ),
         fact(
-            "verdict",
-            "judge",
-            "reviewer",
+            "message",
+            "planner",
+            "orchestrator",
             "one",
-            json!({"verdict": "request_changes", "author_model": "writer"}),
-        ),
-        fact(
-            "verdict",
-            "judge",
-            "reviewer",
-            "one",
-            json!({"verdict": "approve", "author_model": "writer"}),
-        ),
-        fact(
-            "verdict",
-            "judge",
-            "reviewer",
-            "two",
-            json!({"verdict": "approve", "author_model": "writer"}),
+            json!({"kind": "message"}),
         ),
     ];
     for fact in facts {
@@ -108,31 +92,31 @@ async fn each_model_and_seat_answers_its_figures_under_both_filters() {
     let stats: ModelStatsDto = h
         .get("/v1/stats/models?since=2000-01-01T00:00:00Z&repo=repo")
         .await;
+    // The orchestrator's rows come first, then the agents', then the rows
+    // of no seat.
     assert_eq!(
         stats.items,
         vec![
             ModelStatDto {
+                model: "planner".into(),
+                seat: Some("orchestrator".into()),
+                messages: 1,
+                ..ModelStatDto::default()
+            },
+            ModelStatDto {
                 model: "writer".into(),
-                seat: Some("author".into()),
+                seat: Some("agent".into()),
                 tasks: 2,
                 goals: 1,
                 tokens: 1_800,
                 time_secs: 420.0,
                 messages: 1,
-                rounds_per_task: Some(2.0),
-                changes_per_task: None,
-            },
-            ModelStatDto {
-                model: "judge".into(),
-                seat: Some("reviewer".into()),
-                rounds_per_task: None,
-                changes_per_task: Some(0.5),
-                ..ModelStatDto::default()
+                tasks_finished: 1,
             },
         ]
     );
     let json: Value = h.get("/v1/stats/models?repo=repo").await;
-    let mut keys: Vec<_> = json["items"][1]
+    let mut keys: Vec<_> = json["items"][0]
         .as_object()
         .unwrap()
         .keys()
@@ -142,61 +126,51 @@ async fn each_model_and_seat_answers_its_figures_under_both_filters() {
     assert_eq!(
         keys,
         [
-            "changes_per_task",
             "goals",
             "messages",
             "model",
-            "rounds_per_task",
             "seat",
             "tasks",
+            "tasks_finished",
             "time_secs",
             "tokens"
         ]
     );
-    assert_eq!(json["items"][1]["rounds_per_task"], Value::Null);
     let excluded: ModelStatsDto = h.get("/v1/stats/models?repo=elsewhere").await;
     assert!(excluded.items.is_empty());
 }
 
-/// A reviewer's real `request_changes` verdict, sent through the messages
-/// API as the daemon records it, counts in `changes_per_task`.
+/// A real task finished in its column, the fact the daemon writes for it,
+/// counts in `tasks_finished` under the model of the agent of that column.
 #[tokio::test]
-async fn a_real_request_changes_verdict_lifts_the_reviewers_changes_per_task() {
+async fn a_task_finished_in_its_column_lifts_its_agents_tasks_finished() {
     let h = harness().await;
-    let cast = h.active_cast().await;
-    let author = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
-    let reviewer = h
-        .session(
-            &cast.goal,
-            Some(&cast.task),
-            Seat::Reviewer,
-            &cast.reviewer.id,
+    let cast = h.cast_pinned("stub:finisher").await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    h.store
+        .transition_task(
+            &cast.task.id,
+            TaskStatus::Finished,
+            Actor::Agent,
+            Some("Done."),
+            Some("abc123"),
         )
-        .await;
-    h.advance(&cast.task, TaskStatus::UnderReview).await;
-    let uri = format!("/v1/tasks/{}/messages", cast.task.id);
-    let review = as_session(
-        &uri,
-        &author.id,
-        serde_json::json!({"kind": "review_request", "to_actor": "reviewer",
-            "to_agent_id": cast.reviewer.id, "body": "review"}),
-    );
-    let _: ariadne_api::messages::MessageDto = h.json(review, StatusCode::CREATED).await;
-    let verdict = as_session(
-        &uri,
-        &reviewer.id,
-        serde_json::json!({"kind": "request_changes", "to_actor": "author",
-            "to_agent_id": cast.author.id, "body": "revise"}),
-    );
-    let _: ariadne_api::messages::MessageDto = h.json(verdict, StatusCode::CREATED).await;
+        .await
+        .unwrap();
 
     let stats: ModelStatsDto = h.get("/v1/stats/models").await;
-    let reviewer_row = stats
+    let agent_row = stats
         .items
         .iter()
-        .find(|r| r.seat.as_deref() == Some("reviewer"))
-        .unwrap();
-    assert!(reviewer_row.changes_per_task.unwrap() > 0.0);
+        .find(|r| r.seat.as_deref() == Some("agent"))
+        .unwrap_or_else(|| panic!("no agent row: {stats:?}"));
+    assert_eq!(agent_row.model, "stub:finisher");
+    assert_eq!(agent_row.tasks_finished, 1);
+    assert!(
+        stats
+            .items
+            .iter()
+            .all(|r| r.seat.as_deref() != Some("author")),
+        "no author seat is left: {stats:?}"
+    );
 }

@@ -1,11 +1,11 @@
 //! What clients hear when a task branch moves.
 //!
-//! Nothing in the store changes when an author commits, so the daemon
+//! Nothing in the store changes when an agent commits, so the daemon
 //! watches the branch ref itself and publishes `task_branch_updated` off that
-//! watch. `git` is real here: the commits are made in the author's worktree
-//! by the test, exactly where the agent would have made them. The author is
-//! the harness's stub agent, which answers its briefing and then says
-//! nothing.
+//! watch. `git` is real here: the commits are made in the task's worktree by
+//! the test, exactly where the agent of its first column would have made
+//! them. That agent is the harness's stub agent, which answers its briefing
+//! and then says nothing.
 
 use crate::common;
 
@@ -25,30 +25,30 @@ use common::{Harness, QUIET, Sse, TIMEOUT, eventually, get, harness, next_sse, p
 /// running the rest of the suite beside it.
 const PATIENCE: Duration = Duration::from_secs(20);
 
-/// A task whose author has been spawned: a real repository, a worktree
-/// checked out on the task branch, and the daemon following it.
+/// A task whose first column's agent the scheduler has started: a real
+/// repository, a worktree checked out on the task branch, and the daemon
+/// following it.
 ///
-/// The harness is the caller's, so that the tests about what the scheduler
-/// does can run one.
+/// The harness is the caller's, and it runs a scheduler: a column's agent is
+/// started by nothing else.
 async fn at_work(h: &Harness) -> (Task, PathBuf, PathBuf) {
     let repo = h.git_repo("repo");
     let cast = h.active_cast().await;
-    let author = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    h.notify(&cast.task.id);
+    let develop = h.step_session(&cast.task, "develop").await;
     // The stub answers its briefing at once; what the tests hear from here on
     // is the branch, not the agent's turn.
-    eventually(TIMEOUT, "the author's first turn to end", || async {
-        h.session_status(&author).await == SessionStatus::Idle
+    eventually(TIMEOUT, "the develop agent's first turn to end", || async {
+        h.session_status(&develop).await == SessionStatus::Idle
     })
     .await;
     let task = h.store.get_task(&cast.task.id).await.unwrap();
-    let worktree = task
-        .worktree_path
-        .clone()
-        .expect("the author has a worktree");
+    let worktree = task.worktree_path.clone().expect("the task has a worktree");
     (task, repo, PathBuf::from(worktree))
 }
 
-/// A commit in the author's worktree, and the sha it landed as.
+/// A commit in the task's worktree, and the sha it landed as.
 fn commit(worktree: &Path, what: &str) -> String {
     sh(
         worktree,
@@ -108,7 +108,7 @@ async fn stays_quiet(body: &mut axum::body::Body, why: &str) {
 /// `packed-refs`, and the next commit writes it back.
 #[tokio::test]
 async fn a_commit_on_the_task_branch_reaches_the_stream() {
-    let h = harness().await;
+    let h = harness().scheduler().await;
     let (task, repo, worktree) = at_work(&h).await;
     let mut body = h
         .stream(get(&format!("/v1/events/stream?task={}", task.id)))
@@ -161,7 +161,7 @@ async fn commit_until_seen(worktree: &Path, rx: &mut Receiver<BusEvent>) {
 /// running the startup sweep is what a restart amounts to from in here.
 #[tokio::test]
 async fn the_startup_sweep_follows_the_worktrees_it_finds() {
-    let h = harness().await;
+    let h = harness().scheduler().await;
     let (task, _repo, worktree) = at_work(&h).await;
     h.launcher.branches.unwatch(&task.id);
     assert!(!h.launcher.branches.is_watching(&task.id));
@@ -202,7 +202,7 @@ async fn a_failed_task_stops_being_followed() {
         async || !h.launcher.branches.is_watching(&task.id),
     )
     .await;
-    // The worktree is still there: a retry puts the author back in it.
+    // The worktree is still there: a retry puts the agent back in it.
     assert!(worktree.is_dir());
     h.launcher.watch_task_branches().await.unwrap();
     assert!(
@@ -224,7 +224,7 @@ async fn a_failed_task_stops_being_followed() {
 /// away takes the watch with it, and the startup sweep does not put it back.
 #[tokio::test]
 async fn the_watch_goes_with_the_worktree() {
-    let h = harness().await;
+    let h = harness().scheduler().await;
     let (task, _repo, _worktree) = at_work(&h).await;
     assert!(h.launcher.branches.is_watching(&task.id));
 

@@ -20,12 +20,12 @@ use ariadne_client::{Client, ClientError};
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum McpSeat {
     Orchestrator,
+    /// The agent of one workflow column of a task.
     Agent,
-    Author,
-    Reviewer,
     /// The reviewer seat of a pull request session (029): a session with
     /// `ARIADNE_PULL_REQUEST_ID` set and seat `reviewer`, which reviews a
-    /// request that asks for the user's review.
+    /// request that asks for the user's review. It sits on no task, and the
+    /// seat word exists only beside a request.
     PullRequestReviewer,
 }
 
@@ -34,8 +34,6 @@ impl McpSeat {
         match self {
             McpSeat::Orchestrator => "orchestrator",
             McpSeat::Agent => "agent",
-            McpSeat::Author => "author",
-            McpSeat::Reviewer => "reviewer",
             McpSeat::PullRequestReviewer => "pull request reviewer",
         }
     }
@@ -59,6 +57,11 @@ impl McpSeat {
                 "send_message",
                 "read_messages",
             ],
+            // The current column's agent moves the task with the two step
+            // tools, and the `pr` column keeps the request its task opens
+            // until a human merges it (005): the request's tools are its own
+            // too. None of them resolves a thread: the reviewer that opened
+            // it does.
             McpSeat::Agent => &[
                 "get_task",
                 "complete_step",
@@ -71,31 +74,6 @@ impl McpSeat {
                 "get_comment",
                 "reply_comment",
                 "report_pull_request",
-                "send_message",
-                "read_messages",
-            ],
-            // The author keeps the request its task opens until a human
-            // merges it (005): the request's tools are its own too. None of
-            // them resolves a thread: the reviewer that opened it does.
-            McpSeat::Author => &[
-                "get_task",
-                "request_review",
-                "fail_task",
-                "finish_task",
-                "open_pull_request",
-                "get_pull_request",
-                "list_comments",
-                "get_comment",
-                "reply_comment",
-                "report_pull_request",
-                "send_message",
-                "read_messages",
-            ],
-            McpSeat::Reviewer => &[
-                "get_task",
-                "get_diff",
-                "submit_verdict",
-                "pick_winner",
                 "send_message",
                 "read_messages",
             ],
@@ -127,8 +105,8 @@ pub(crate) struct AriadneMcp {
     task_id: Option<String>,
     /// The workflow column an agent session works in.
     step: Option<String>,
-    /// The request a review session reviews. An author finds the request
-    /// its task opened through the daemon instead (005).
+    /// The request a review session reviews. A column's agent finds the
+    /// request its task opened through the daemon instead (005).
     pull_request_id: Option<String>,
     tool_router: ToolRouter<Self>,
 }
@@ -166,7 +144,7 @@ impl AriadneMcp {
     }
 
     /// An endpoint under the request this session answers for: the one a
-    /// review session reviews, or the one an author's task opened (005).
+    /// review session reviews, or the one this agent's task opened (005).
     async fn pull_request_path(&self, tail: &str) -> Result<String, McpError> {
         let id = match &self.pull_request_id {
             Some(id) => id.clone(),
@@ -246,8 +224,8 @@ impl AriadneMcp {
 
 /// The daemon's refusal, as the agent reads it.
 ///
-/// A 4xx is the agent's own doing — a transition its task cannot make, a
-/// reviewer it is not assigned as — and the daemon already spelled out what
+/// A 4xx is the agent's own doing — a gate its column has not passed, a
+/// column it is not the agent of — and the daemon already spelled out what
 /// would have worked, so it comes back as bad parameters carrying that
 /// sentence rather than as a server failure.
 fn to_mcp_err(e: ClientError) -> McpError {
@@ -266,20 +244,20 @@ fn json_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
 }
 
 /// Whether a session gets an answer to a question: the orchestrator writes a
-/// spec with the user, who is there in the console to ask; an author or
-/// reviewer works its task alone, and asks only where the task cannot go on
-/// without the answer.
+/// spec with the user, who is there in the console to ask; a column's agent
+/// works its task alone, and asks only where the task cannot go on without
+/// the answer.
 ///
-/// An author or reviewer that does ask reaches the other agents through
-/// `send_message` — the seat's own playbook says so, so this rule names no
-/// channel and only says when to reach for one.
+/// An agent that does ask reaches the other agents through `send_message` —
+/// the seat's own playbook says so, so this rule names no channel and only
+/// says when to reach for one.
 fn ask_rule(seat: &McpSeat) -> &'static str {
     match seat {
         McpSeat::Orchestrator => {
             "The user answers in your console. Ask in plain turn text, one \
              question at a time. Then wait."
         }
-        McpSeat::Agent | McpSeat::Author | McpSeat::Reviewer => {
+        McpSeat::Agent => {
             "Work alone. Ask only where the task cannot go on without an \
              answer."
         }
@@ -291,14 +269,13 @@ fn ask_rule(seat: &McpSeat) -> &'static str {
 }
 
 /// The seat a session's environment names: `ARIADNE_SEAT`, read as a seat
-/// of a pull request where `ARIADNE_PULL_REQUEST_ID` is set.
+/// of a pull request where `ARIADNE_PULL_REQUEST_ID` is set. A `reviewer`
+/// exists only beside a request: no task has one.
 fn mcp_seat(seat: &str, pull_request: bool) -> Result<McpSeat> {
     Ok(match (seat, pull_request) {
         ("reviewer", true) => McpSeat::PullRequestReviewer,
         ("orchestrator", false) => McpSeat::Orchestrator,
         ("agent", false) => McpSeat::Agent,
-        ("author", false) => McpSeat::Author,
-        ("reviewer", false) => McpSeat::Reviewer,
         (other, _) => anyhow::bail!("unknown ARIADNE_SEAT for this session: {other:?}"),
     })
 }
@@ -342,7 +319,7 @@ Write all text in ASD-STE100 Simplified Technical English (STE):
 STE holds for all you write:
 - your turn text and your visible reasoning
 - task titles and descriptions
-- `request_review` summaries, verdicts and `fail_task` reasons
+- `complete_step`, `fail_step` and `fail_task` reasons
 - commit subjects and bodies, and pull request text"#,
         ask_rule(seat)
     )
@@ -433,11 +410,9 @@ pub(crate) async fn serve() -> Result<()> {
 pub(crate) mod tests {
     use super::*;
 
-    const SEATS: [McpSeat; 5] = [
+    const SEATS: [McpSeat; 3] = [
         McpSeat::Orchestrator,
         McpSeat::Agent,
-        McpSeat::Author,
-        McpSeat::Reviewer,
         McpSeat::PullRequestReviewer,
     ];
 
@@ -461,11 +436,11 @@ pub(crate) mod tests {
     /// invisible from inside the session and an extra one is surface nothing
     /// asks for.
     ///
-    /// The author owns its task from the first commit to the merge, so the
-    /// tools that land one are its own — and the send-back a fourth seat once
-    /// had is gone with it. What it has no tools for is reading: the verdicts
-    /// reach it in the briefing it is resumed with, and the diff is in the
-    /// worktree it is standing in.
+    /// A column's agent owns its task while its column is current, so the
+    /// two step calls and the request's tools are its own. What it has no
+    /// tools for is reading the review: the reason of a step move reaches it
+    /// in the briefing it is resumed with, and the diff is in the worktree it
+    /// is standing in.
     #[test]
     fn every_seat_has_the_tools_its_playbook_names_and_no_others() {
         for (seat, tools) in [
@@ -488,23 +463,6 @@ pub(crate) mod tests {
                 ][..],
             ),
             (
-                McpSeat::Author,
-                &[
-                    "get_task",
-                    "request_review",
-                    "fail_task",
-                    "finish_task",
-                    "open_pull_request",
-                    "get_pull_request",
-                    "list_comments",
-                    "get_comment",
-                    "reply_comment",
-                    "report_pull_request",
-                    "send_message",
-                    "read_messages",
-                ][..],
-            ),
-            (
                 McpSeat::Agent,
                 &[
                     "get_task",
@@ -518,17 +476,6 @@ pub(crate) mod tests {
                     "get_comment",
                     "reply_comment",
                     "report_pull_request",
-                    "send_message",
-                    "read_messages",
-                ][..],
-            ),
-            (
-                McpSeat::Reviewer,
-                &[
-                    "get_task",
-                    "get_diff",
-                    "submit_verdict",
-                    "pick_winner",
                     "send_message",
                     "read_messages",
                 ][..],
@@ -560,7 +507,6 @@ pub(crate) mod tests {
             "fail_step",
             "fail_task",
             "finalize_plan",
-            "finish_task",
             "get_comment",
             "get_diff",
             "get_pull_request",
@@ -570,70 +516,68 @@ pub(crate) mod tests {
             "list_skills",
             "list_tasks",
             "open_pull_request",
-            "pick_winner",
             "read_messages",
             "reply_comment",
             "report_pull_request",
-            "request_review",
             "resolve_thread",
             "retry_task",
             "send_message",
             "submit_review",
-            "submit_verdict",
             "switch_session",
             "update_task",
         ];
         assert_eq!(distinct_tools(), EVERY_TOOL);
-        assert!(
-            !distinct_tools().contains(&"return_to_author"),
-            "the send-back a fourth seat once had is gone"
-        );
-    }
-
-    /// The author keeps the request its task opens (005): it is listed the
-    /// request's four tools beside its task tools, and no seat of a session
-    /// with a request in its environment is an author. Nothing it is listed
-    /// resolves a thread.
-    #[test]
-    fn the_author_lists_the_request_tools_beside_its_task_tools() {
-        assert_eq!(mcp_seat("author", false).unwrap(), McpSeat::Author);
-        assert!(mcp_seat("author", true).is_err());
-        assert!(mcp_seat("orchestrator", true).is_err());
-        let mcp = server_at(
-            McpSeat::Author,
-            Client::resolve(Some("http://127.0.0.1:1"), None),
-        );
-        for tool in [
-            "get_pull_request",
-            "list_comments",
-            "reply_comment",
-            "report_pull_request",
-            "open_pull_request",
+        for gone in [
+            "return_to_author",
+            "request_review",
+            "submit_verdict",
+            "pick_winner",
             "finish_task",
         ] {
-            assert!(mcp.allows(tool), "{tool} is the author's");
+            assert!(
+                !distinct_tools().contains(&gone),
+                "{gone} went with the pipeline it served"
+            );
         }
-        assert!(
-            mcp.listed_tools()
-                .iter()
-                .all(|tool| !tool.name.contains("resolve"))
-        );
     }
 
+    /// The agent of a column is listed its thirteen tools: the task, the
+    /// two step calls, the failure, the diff, the request its task opens and
+    /// the request's five tools, and the two message tools. No seat word of
+    /// the old pipeline names a seat, and no seat of a session with a request
+    /// in its environment is a column's agent. Nothing it is listed resolves
+    /// a thread.
     #[test]
     fn the_agent_seat_lists_its_step_tools_and_nothing_of_a_review() {
         assert_eq!(mcp_seat("agent", false).unwrap(), McpSeat::Agent);
         assert!(mcp_seat("agent", true).is_err());
+        assert!(mcp_seat("orchestrator", true).is_err());
+        for old in ["author", "reviewer"] {
+            assert!(mcp_seat(old, false).is_err(), "{old} is no seat of a task");
+        }
         let mcp = server_at(
             McpSeat::Agent,
             Client::resolve(Some("http://127.0.0.1:1"), None),
         );
         assert_eq!(mcp.seat.tools().len(), 13);
         for tool in [
+            "get_pull_request",
+            "list_comments",
+            "reply_comment",
+            "report_pull_request",
+            "open_pull_request",
+            "complete_step",
+            "fail_step",
+        ] {
+            assert!(mcp.allows(tool), "{tool} is the agent's");
+        }
+        for tool in [
             "request_review",
             "finish_task",
             "submit_verdict",
             "pick_winner",
+            "resolve_thread",
+            "submit_review",
         ] {
             assert!(!mcp.allows(tool), "{tool} is not the agent's");
         }
@@ -647,12 +591,11 @@ pub(crate) mod tests {
     /// a thread it opened, one review and the report. It has no task tool and no
     /// message tool, and nothing it is listed approves or merges.
     #[test]
-    fn the_pull_request_reviewer_seat_lists_its_eight_tools_and_no_task_or_message_tool() {
+    fn the_pull_request_reviewer_seat_lists_its_tools_and_no_task_or_message_tool() {
         assert_eq!(
             mcp_seat("reviewer", true).unwrap(),
             McpSeat::PullRequestReviewer
         );
-        assert_eq!(mcp_seat("reviewer", false).unwrap(), McpSeat::Reviewer);
         let mcp = server_at(
             McpSeat::PullRequestReviewer,
             Client::resolve(Some("http://127.0.0.1:1"), None),
@@ -769,8 +712,8 @@ pub(crate) mod tests {
     }
 
     /// The orchestrator is told the user answers in the console and to ask;
-    /// an author or reviewer is told to work alone and ask only where the
-    /// task cannot go on without the answer. No seat is told nobody answers.
+    /// a column's agent is told to work alone and ask only where the task
+    /// cannot go on without the answer. No seat is told nobody answers.
     #[test]
     fn only_the_orchestrator_is_told_to_ask() {
         let orchestrator = server_at(
@@ -794,20 +737,18 @@ pub(crate) mod tests {
             );
         }
 
-        for seat in [McpSeat::Agent, McpSeat::Author, McpSeat::Reviewer] {
-            let mcp = server_at(
-                seat.clone(),
-                Client::resolve(Some("http://127.0.0.1:1"), None),
-            );
-            let instructions = mcp.get_info().instructions.expect("instructions");
-            assert!(
-                instructions.contains(
-                    "Work alone. Ask only where the task cannot go on \
-                     without an answer."
-                ),
-                "{seat:?}: {instructions}"
-            );
-        }
+        let agent = server_at(
+            McpSeat::Agent,
+            Client::resolve(Some("http://127.0.0.1:1"), None),
+        );
+        let instructions = agent.get_info().instructions.expect("instructions");
+        assert!(
+            instructions.contains(
+                "Work alone. Ask only where the task cannot go on \
+                 without an answer."
+            ),
+            "{instructions}"
+        );
     }
 
     /// And no session is told about a conversation there is not: the thread,
@@ -841,8 +782,8 @@ pub(crate) mod tests {
     /// The cap rises to 800 for one more rule: run a check in the
     /// foreground, and never poll a background one with a no-op command.
     /// It holds for every seat the way the others here do, even though
-    /// only an author or a reviewer runs a check, because it is the one
-    /// place all three are told the same thing at once.
+    /// only a column's agent runs a check, because it is the one place all
+    /// three are told the same thing at once.
     ///
     /// The cap rises to 1000 for the load rule: load a deferred tool before
     /// the first call. Claude Code defers MCP tools, and an agent that was
@@ -944,7 +885,8 @@ pub(crate) mod tests {
     /// reach the agent instead of a generic "call failed".
     #[test]
     fn a_refused_call_reaches_the_agent_in_the_daemons_words() {
-        let refusal = "only an approved task can be marked merged (task is in_progress)";
+        let refusal =
+            "only a task in progress can be finished, from its last column (task is ready)";
         let err = to_mcp_err(ClientError::Api {
             status: http::StatusCode::BAD_REQUEST,
             code: "bad_request".into(),

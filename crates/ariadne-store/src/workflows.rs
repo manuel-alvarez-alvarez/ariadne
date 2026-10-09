@@ -1,8 +1,8 @@
 //! Workflow repository.
 //!
-//! A workflow is a linear kanban of columns that stages an author and
-//! reviewer agent through a task, in place of the fixed author, reviewer and
-//! landing pipeline. Ariadne ships two (`defaults::BUILTIN_WORKFLOWS`) and
+//! A workflow is a linear kanban of columns, each staffed with one agent,
+//! that a task walks from its first commit to its landing. Every goal runs on
+//! one. Ariadne ships two (`defaults::BUILTIN_WORKFLOWS`) and
 //! the user adds and edits their own, the same way a skill is: a built-in is
 //! stored with a `NULL` document while it runs on the text Ariadne ships, and
 //! a reset is a `NULL` rather than a copy of the default.

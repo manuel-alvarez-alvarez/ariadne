@@ -77,9 +77,9 @@ impl Reason {
 /// Whether this task wants the user, and what for. Kept identical to
 /// `taskAttentionReason` in the UI.
 ///
-/// `changes_requested` is deliberately not one of them: the reviewer has
-/// spoken and the daemon resumes the author itself, so that task waits on an
-/// agent. A resume that does not happen shows up as the session's own
+/// A task sent back to an earlier column is deliberately not one of them: the
+/// review column has spoken and the daemon briefs the develop agent itself,
+/// so that task waits on an agent. A resume that does not happen shows up as the session's own
 /// `disconnected` or `stalled` flag. And `stalled` is checked last because it
 /// is a flag on top of a status — the task's column mirrors any of its
 /// sessions carrying `stalled` and comes down when that session's does — so a
@@ -324,15 +324,10 @@ pub(crate) mod tests {
         assert_eq!(reason(TaskStatus::InProgress, false), None);
         assert_eq!(reason(TaskStatus::Finished, false), None);
 
-        // Waiting on an agent, not on a person — but a stall on top of either
-        // is still a stall.
-        for status in [TaskStatus::ChangesRequested, TaskStatus::Approved] {
-            assert_eq!(reason(status, false), None, "{}", status.as_str());
-            assert_eq!(reason(status, true), Some(Reason::Stalled));
-        }
+        // A task on its `pr` column waits on the forge, not on a person.
         let published = TaskDto {
             pr_url: Some("https://github.com/owner/repo/pull/12".into()),
-            ..task("01T", "01G", TaskStatus::Approved, false)
+            ..task("01T", "01G", TaskStatus::InProgress, false)
         };
         assert_eq!(task_reason(&published), None);
     }

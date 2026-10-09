@@ -1,4 +1,4 @@
-use crate::common::{Harness, TIMEOUT, as_session, eventually, sh, test_pin};
+use crate::common::{Harness, TIMEOUT, as_session, eventually, sh, test_pin, with_forge};
 use ariadne_core::{Actor, GoalStatus, Seat, TaskStatus};
 use ariadne_store::{AgentSession, NewGoal, NewTask, NewTaskAgent, SessionFilter, Task};
 use axum::http::StatusCode;
@@ -6,18 +6,25 @@ use serde_json::{Value, json};
 
 use crate::common::{harness, post_json};
 
+/// A goal created with no workflow runs on its repository's default and
+/// exposes that workflow's columns; one that names a workflow snapshots it.
 #[tokio::test]
-async fn a_goal_snapshots_its_workflow_and_an_unstepped_goal_has_no_columns() {
+async fn a_goal_takes_the_repository_default_and_snapshots_its_workflow() {
     let h = harness().await;
-    let (old, repo) = h.goal().await;
-    let mut old: Value = h.get(&format!("/v1/goals/{}", old.id)).await;
-    assert_eq!(old["steps"], json!([]));
-    assert_eq!(old["workflow"], Value::Null);
-    old.as_object_mut().unwrap().remove("steps");
-    old.as_object_mut().unwrap().remove("workflow");
-    old["usage"].as_object_mut().unwrap().remove("agents");
-    let old: ariadne_api::goals::GoalDto = serde_json::from_value(old).unwrap();
-    assert!(old.steps.is_empty() && old.usage.agents.is_empty());
+    let (defaulted, repo) = h.goal().await;
+    let defaulted: ariadne_api::goals::GoalDto =
+        h.get(&format!("/v1/goals/{}", defaulted.id)).await;
+    assert_eq!(defaulted.workflow, repo.default_workflow);
+    assert_eq!(defaulted.workflow, "develop-review-merge");
+    assert_eq!(
+        defaulted
+            .steps
+            .iter()
+            .map(|s| s.id.as_str())
+            .collect::<Vec<_>>(),
+        ["develop", "review", "merge"]
+    );
+    assert!(defaulted.usage.agents.is_empty());
     let goal: Value = h
         .json(
             post_json(
@@ -25,13 +32,13 @@ async fn a_goal_snapshots_its_workflow_and_an_unstepped_goal_has_no_columns() {
                 json!({
                     "title": "Build a change", "description": "Run its workflow.",
                     "repository_ids": [repo.id], "model": "stub:test-model",
-                    "workflow": "develop-review-merge"
+                    "workflow": "develop-review-pr"
                 }),
             ),
             StatusCode::CREATED,
         )
         .await;
-    assert_eq!(goal["workflow"], "develop-review-merge");
+    assert_eq!(goal["workflow"], "develop-review-pr");
     assert_eq!(
         goal["steps"]
             .as_array()
@@ -39,7 +46,7 @@ async fn a_goal_snapshots_its_workflow_and_an_unstepped_goal_has_no_columns() {
             .iter()
             .map(|s| s["id"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        ["develop", "review", "merge"]
+        ["develop", "review", "pr"]
     );
 }
 
@@ -54,7 +61,6 @@ async fn stepped(h: &Harness) -> Task {
             issue_url: None,
             repository_ids: vec![repo.id.clone()],
             pin: test_pin(),
-            landing: None,
             workflow: Some("develop-review-merge".into()),
         })
         .await
@@ -64,9 +70,7 @@ async fn stepped(h: &Harness) -> Task {
         .map(|step| {
             let mut pin = test_pin();
             pin.model = format!("stub:{step}-model");
-            let mut agent = NewTaskAgent::new(Seat::Agent, Vec::<String>::new(), pin);
-            agent.step = Some(step.into());
-            agent
+            NewTaskAgent::new(step, Vec::<String>::new(), pin)
         })
         .collect();
     let task = h
@@ -95,7 +99,7 @@ async fn session_at(h: &Harness, task: &Task, step: &str) -> AgentSession {
         .await
         .unwrap()
         .into_iter()
-        .find(|a| a.step.as_deref() == Some(step))
+        .find(|a| a.step == step)
         .unwrap();
     eventually(
         TIMEOUT,
@@ -397,6 +401,194 @@ async fn a_first_column_failure_retries_on_develop_with_the_same_session() {
     );
 }
 
+/// A retry puts a task back on its first column, so every column has to be
+/// staffed before it: a failed task with a column nobody staffs is refused by
+/// that column's name, and the task stays failed until `update_task` staffs
+/// it, after which the same retry is taken.
+#[tokio::test]
+async fn a_retry_refuses_a_task_with_an_unstaffed_column_by_name() {
+    let h = harness().await;
+    let task = stepped(&h).await;
+    h.advance(&task, TaskStatus::InProgress).await;
+    h.store
+        .transition_task(
+            &task.id,
+            TaskStatus::Failed,
+            Actor::Agent,
+            Some("the input is missing"),
+            None,
+        )
+        .await
+        .unwrap();
+    // The merge column has no agent, the way a database written before
+    // workflows leaves a task of a request goal with no agent on `pr`
+    // (0023). No edit produces that on an active goal, so the row goes the
+    // way the migration left it: straight from the table.
+    h.unstaff_column(&task, "merge").await;
+    let unstaffed: Value = h.get(&format!("/v1/tasks/{}", task.id)).await;
+    assert_eq!(unstaffed["agents"].as_array().unwrap().len(), 2);
+
+    let refused = h
+        .error(
+            post_json(&format!("/v1/tasks/{}/retry", task.id), json!({})),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    assert!(
+        refused.error.message.contains("no agent on column merge"),
+        "{}",
+        refused.error.message
+    );
+    assert!(
+        refused.error.message.contains("update_task"),
+        "{}",
+        refused.error.message
+    );
+    assert_eq!(h.status(&task.id).await, TaskStatus::Failed);
+
+    let _: Value = h
+        .json(
+            crate::common::patch_json(
+                &format!("/v1/tasks/{}", task.id),
+                json!({"agents": [
+                    {"step": "develop", "model": "stub:develop-model"},
+                    {"step": "review", "model": "stub:review-model"},
+                    {"step": "merge", "model": "stub:merge-model"},
+                ]}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    let retried: Value = h
+        .json(
+            post_json(&format!("/v1/tasks/{}/retry", task.id), json!({})),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(retried["status"], "ready");
+}
+
+/// A task that can start needs an agent on every column. Once its goal runs,
+/// a create or an edit that leaves a column unstaffed is refused by name; a
+/// task that reaches the scheduler unstaffed all the same — one a database
+/// from before workflows carried — fails before it starts, naming the column,
+/// and the retry takes it once the column is staffed.
+#[tokio::test]
+async fn a_runnable_task_with_an_unstaffed_column_fails_before_it_starts() {
+    let h = harness().scheduler().await;
+    let path = h.git_repo("steps-repo");
+    let repo = h.repository(&path).await;
+    let goal = h
+        .store
+        .create_goal(NewGoal {
+            title: "Run the columns".into(),
+            description: "Build and land a change.".into(),
+            issue_url: None,
+            repository_ids: vec![repo.id.clone()],
+            pin: test_pin(),
+            workflow: Some("develop-review-merge".into()),
+        })
+        .await
+        .unwrap();
+    // Written while the goal was planned, with its first column alone.
+    let task = h
+        .store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id.clone(),
+            title: "Build the feature".into(),
+            description: "Commit the change.".into(),
+            agents: vec![NewTaskAgent::new(
+                "develop",
+                Vec::<String>::new(),
+                test_pin(),
+            )],
+            depends_on: vec![],
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_goal_status(&goal.id, GoalStatus::Active)
+        .await
+        .unwrap();
+
+    // On the active goal, a create or an edit that leaves a column out is
+    // refused by name before anything is written.
+    let refused = h
+        .error(
+            post_json(
+                &format!("/v1/goals/{}/tasks", goal.id),
+                json!({"title": "Another", "description": "", "agents": [
+                    {"step": "review", "model": "stub:test-model"}
+                ]}),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert!(
+        refused.error.message.contains("none staffs develop, merge"),
+        "{}",
+        refused.error.message
+    );
+    let refused = h
+        .error(
+            crate::common::patch_json(
+                &format!("/v1/tasks/{}", task.id),
+                json!({"agents": [{"step": "develop", "model": "stub:test-model"}]}),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert!(
+        refused.error.message.contains("none staffs review, merge"),
+        "{}",
+        refused.error.message
+    );
+
+    // The scheduler finds the task runnable and unstaffed: it fails naming
+    // the columns, and spends no launch on it.
+    h.notify(&task.id);
+    eventually(TIMEOUT, "the unstaffed task to fail", || async {
+        h.status(&task.id).await == TaskStatus::Failed
+    })
+    .await;
+    let failed: Value = h.get(&format!("/v1/tasks/{}", task.id)).await;
+    assert!(
+        failed["reason"]
+            .as_str()
+            .is_some_and(|r| r.contains("no agent on column review, merge")),
+        "{}",
+        failed["reason"]
+    );
+    assert!(
+        h.sessions_of(&task.id).await.is_empty(),
+        "no agent was started"
+    );
+
+    // Staffed whole, the retry starts the task on its first column.
+    let _: Value = h
+        .json(
+            crate::common::patch_json(
+                &format!("/v1/tasks/{}", task.id),
+                json!({"agents": [
+                    {"step": "develop", "model": "stub:test-model"},
+                    {"step": "review", "model": "stub:test-model"},
+                    {"step": "merge", "model": "stub:test-model"},
+                ]}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    let _: Value = h
+        .json(
+            post_json(&format!("/v1/tasks/{}/retry", task.id), json!({})),
+            StatusCode::OK,
+        )
+        .await;
+    let develop = session_at(&h, &task, "develop").await;
+    assert!(h.launcher.acp.is_running(&develop.id));
+}
+
 #[tokio::test]
 async fn another_column_and_the_orchestrator_cannot_move_a_step() {
     let h = harness().await;
@@ -413,7 +605,7 @@ async fn another_column_and_the_orchestrator_cannot_move_a_step() {
         .await
         .unwrap()
         .into_iter()
-        .find(|a| a.step.as_deref() == Some("review"))
+        .find(|a| a.step == "review")
         .unwrap();
     let other = h.session(&goal, Some(&task), Seat::Agent, &review.id).await;
     let orchestrator = h.orchestrator_session(&goal).await;
@@ -560,12 +752,10 @@ async fn gated_task(h: &Harness, gate: &str) -> (Task, AgentSession) {
             issue_url: None,
             repository_ids: vec![repo.id.clone()],
             pin: test_pin(),
-            landing: None,
         })
         .await
         .unwrap();
-    let mut agent = NewTaskAgent::new(Seat::Agent, Vec::<String>::new(), test_pin());
-    agent.step = Some("build".into());
+    let agent = NewTaskAgent::new("build", Vec::<String>::new(), test_pin());
     let task = h
         .store
         .create_task(NewTask {
@@ -616,7 +806,7 @@ async fn the_push_gate_requires_the_current_tip_on_the_remote() {
     let h = harness().await;
     let (task, session) = gated_task(&h, "pushed").await;
     let repo = h.store.get_repository(&task.repo_id).await.unwrap();
-    crate::landing_lifecycle::with_forge(&h, &repo).await;
+    with_forge(&h, &repo).await;
     let uri = format!("/v1/tasks/{}/step/complete", task.id);
     let refused = h
         .error(
@@ -643,7 +833,7 @@ async fn a_step_agent_opens_its_request_and_completion_reads_the_forge_now() {
     let h = harness().forge_cli(&forge).await;
     let (task, session) = gated_task(&h, "request-merged").await;
     let repo = h.store.get_repository(&task.repo_id).await.unwrap();
-    crate::landing_lifecycle::with_forge(&h, &repo).await;
+    with_forge(&h, &repo).await;
     sh(
         std::path::Path::new(session.worktree_path.as_deref().unwrap()),
         "git push -q origin HEAD",
@@ -809,9 +999,7 @@ async fn the_orchestrator_reads_the_workflow_and_agents_load_their_own_skills() 
         .map(|a| {
             let mut pin = test_pin();
             pin.model = a.model;
-            let mut agent = NewTaskAgent::new(Seat::Agent, ["code-review"], pin);
-            agent.step = a.step;
-            agent
+            NewTaskAgent::new(a.step, ["code-review"], pin)
         })
         .collect();
     h.store

@@ -23,7 +23,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use ariadne_api::sessions::{
     TerminalClientMessage, TerminalKey, TerminalModifier, TerminalServerMessage,
 };
-use ariadne_core::{Actor, AttentionReason, PermissionMode, Seat, SessionStatus, TaskStatus};
+use ariadne_core::{Actor, AttentionReason, PermissionMode, SessionStatus, TaskStatus};
 use ariadne_store::{AgentPin, NewTask, NewTaskAgent};
 
 use common::acp::{StubAcpAgent, discovery_settled, registry_home, script, stub_acp_agent};
@@ -33,10 +33,10 @@ use common::{Cast, Harness, TIMEOUT, eventually, harness, post, post_json};
 /// the same fixture `acp_console.rs` casts.
 async fn acp_cast(h: &Harness) -> Cast {
     h.git_repo("repo");
-    let cast = h.cast_pinned("stub:test-model", 1).await;
+    let cast = h.cast_pinned("stub:test-model").await;
     h.store
         .set_agent_pin(
-            &cast.author.id,
+            &cast.develop().id,
             &AgentPin {
                 model: "stub:test-model".into(),
                 effort: Some("high".into()),
@@ -50,7 +50,7 @@ async fn acp_cast(h: &Harness) -> Cast {
 /// Spawn the task's author against the stub and wait for the initial turn to
 /// end.
 async fn spawned_idle(h: &Harness, cast: &Cast) -> ariadne_store::AgentSession {
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.start_agent(&cast.task, "develop").await;
     eventually(TIMEOUT, "the prompt round trip to end", || async {
         h.session_status(&session).await == SessionStatus::Idle
     })
@@ -297,7 +297,7 @@ async fn the_terminal_draws_the_transcript_and_the_status_line_at_the_client_siz
         .unwrap_or_else(|| panic!("the input box spans the client's width:\n{screen}"));
     assert_eq!(
         rows[top - 1].trim_end(),
-        " author · stub:test-model · idle",
+        " agent · stub:test-model · idle",
         "the status row names the seat, the model and the status:\n{screen}"
     );
     let bottom = top
@@ -367,8 +367,8 @@ async fn a_key_answers_a_pending_permission_question() {
             title: "Ask before writing".into(),
             description: "do things".into(),
             agents: vec![
-                NewTaskAgent::new(Seat::Author, ["coding"], common::test_pin()),
-                NewTaskAgent::new(Seat::Reviewer, ["code-review"], common::test_pin()),
+                NewTaskAgent::new("develop", ["coding"], common::test_pin()),
+                NewTaskAgent::new("review", ["code-review"], common::test_pin()),
             ],
             depends_on: vec![],
         })
@@ -378,7 +378,7 @@ async fn a_key_answers_a_pending_permission_question() {
         .transition_task(&task.id, TaskStatus::Ready, Actor::Daemon, None, None)
         .await
         .unwrap();
-    let session = h.launcher.spawn_author(&task.id).await.unwrap();
+    let session = h.start_agent(&task, "develop").await;
     eventually(TIMEOUT, "the permission attention to rise", || async {
         h.attention(&session).await == Some(AttentionReason::WaitingPermission)
     })
@@ -486,7 +486,7 @@ async fn a_relaunch_keeps_the_socket_open_and_a_later_socket_too() {
     stub.reprogram(resumed_script);
     let resumed = h
         .launcher
-        .resume_author(&cast.task.id, "address the review")
+        .relaunch_session(&session.id, "address the review")
         .await
         .unwrap();
     assert_eq!(resumed.id, session.id);

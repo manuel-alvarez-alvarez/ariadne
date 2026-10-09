@@ -18,7 +18,6 @@ mod goals;
 mod messages;
 mod models;
 mod permissions;
-mod picks;
 mod pull_request_comments;
 mod pull_requests;
 mod query;
@@ -40,7 +39,6 @@ pub use forge::{ForgeWrite, SetForgeIntegration};
 pub use goals::NewGoal;
 pub use messages::{MessageFilter, NewMessage};
 pub use permissions::NewLearnedPermission;
-pub use picks::picked_winner;
 pub use pull_request_comments::NewPullRequestComment;
 pub use pull_requests::{NewPullRequest, PullRequestFilter, PullRequestTold};
 pub use repositories::{NewRepository, RepositoryUpdate};
@@ -52,7 +50,7 @@ pub use stats::{
     TimeStats, WorkStats,
 };
 pub use task_agents::NewTaskAgent;
-pub use tasks::{NewTask, TaskFilter, TaskUpdate, author_branch};
+pub use tasks::{NewTask, TaskFilter, TaskUpdate, unstaffed_columns};
 pub use usage::{AgentUsage, SeatUsage};
 pub use workflows::NewWorkflow;
 

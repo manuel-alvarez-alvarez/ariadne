@@ -1,15 +1,18 @@
 //! Repository DTOs.
 //!
-//! A repository is a checkout and a base branch. It also supplies the landing
-//! that a new goal uses where its request does not name one.
+//! A repository is a checkout and a base branch. It also supplies the
+//! workflow that a new goal runs on where its request does not name one.
 
-use ariadne_core::{ForgeKind, Landing, PermissionMode};
+use ariadne_core::{ForgeKind, PermissionMode};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RepositoryDto {
-    pub default_workflow: Option<String>,
+    /// The workflow a new goal runs on where its request names none, a name
+    /// of the catalog (`GET /v1/workflows`).
+    #[schema(example = "develop-review-merge")]
+    pub default_workflow: String,
     pub id: String,
     /// Absolute path of the checkout.
     pub path: String,
@@ -18,8 +21,6 @@ pub struct RepositoryDto {
     /// How the ACP permission requests of every session in this checkout are
     /// answered.
     pub permission_mode: PermissionMode,
-    /// The landing a new goal uses where its request leaves landing out.
-    pub default_landing: Landing,
     /// The forge its remote is on, or null where the checkout has no usable
     /// remote (025).
     pub forge: Option<ForgeDto>,
@@ -114,6 +115,9 @@ pub struct ForgeUpdate {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateRepositoryRequest {
+    /// The workflow a new goal in this repository runs on where its request
+    /// names none. Omit for `develop-review-merge`.
+    #[serde(default)]
     pub default_workflow: Option<String>,
     /// Absolute path of an existing git work tree.
     #[schema(example = "/home/me/dev/ariadne")]
@@ -124,9 +128,6 @@ pub struct CreateRepositoryRequest {
     /// Omit for `auto`.
     #[serde(default)]
     pub permission_mode: Option<PermissionMode>,
-    /// Omit for `merge`.
-    #[serde(default)]
-    pub default_landing: Option<Landing>,
     /// The forge integration to set up once the remote is detected.
     #[serde(default)]
     pub forge: Option<ForgeUpdate>,
@@ -136,6 +137,8 @@ pub struct CreateRepositoryRequest {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateRepositoryRequest {
+    /// Absent = unchanged.
+    #[serde(default)]
     pub default_workflow: Option<String>,
     pub path: Option<String>,
     pub base_branch: Option<String>,
@@ -144,9 +147,6 @@ pub struct UpdateRepositoryRequest {
     /// Absent = unchanged.
     #[serde(default)]
     pub permission_mode: Option<PermissionMode>,
-    /// Absent = unchanged.
-    #[serde(default)]
-    pub default_landing: Option<Landing>,
     /// Absent = unchanged.
     #[serde(default)]
     pub forge: Option<ForgeUpdate>,

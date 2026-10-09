@@ -73,9 +73,9 @@ impl super::Scheduler {
     /// Take down attention nobody can act on any more.
     ///
     /// A flag raised by an agent event is only ever taken down by another
-    /// one, and a session waiting on an answer emits nothing: an author
-    /// blocked on a permission request whose task then goes under review
-    /// would keep asking for the user for ever. Whatever put a flag up, it comes
+    /// one, and a session waiting on an answer emits nothing: an agent
+    /// blocked on a permission request whose task then moves to its next
+    /// column would keep asking for the user for ever. Whatever put a flag up, it comes
     /// down once the work it was about stopped being this session's — the
     /// same question the sweep above asks before raising one.
     ///

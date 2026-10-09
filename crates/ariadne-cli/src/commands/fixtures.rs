@@ -15,16 +15,22 @@ use ariadne_api::sessions::SessionDto;
 use ariadne_api::skills::{SkillDto, SkillSeat};
 use ariadne_api::tasks::{TaskAgentDto, TaskDto};
 use ariadne_api::workflows::WorkflowDto;
-use ariadne_core::{GoalStatus, Landing, PermissionMode, Seat, SessionStatus, TaskStatus};
+use ariadne_core::{GoalStatus, PermissionMode, Seat, SessionStatus, TaskStatus};
 
 /// A stamp every fixture is created and updated at, so a rendered row is
 /// reproducible.
 pub(crate) const NOW: &str = "2026-08-18T10:00:00Z";
 
+/// The workflow every fixture runs on, which is the one Ariadne ships as the
+/// default.
+pub(crate) const WORKFLOW: &str = "develop-review-merge";
+
+/// An active goal on the shipped workflow, with no columns of its own: the
+/// caller adds the steps it is testing with struct-update syntax.
 pub(crate) fn goal(id: &str, title: &str) -> GoalDto {
     GoalDto {
+        workflow: WORKFLOW.into(),
         steps: Vec::new(),
-        workflow: None,
         issue_url: None,
         id: id.into(),
         title: title.into(),
@@ -33,7 +39,6 @@ pub(crate) fn goal(id: &str, title: &str) -> GoalDto {
         orchestrated: true,
         model: "stub:test-model".into(),
         effort: None,
-        landing: Landing::Merge,
         repos: Vec::new(),
         usage: Default::default(),
         created_at: NOW.into(),
@@ -41,7 +46,8 @@ pub(crate) fn goal(id: &str, title: &str) -> GoalDto {
     }
 }
 
-/// A task in progress, titled after its own id.
+/// A task in progress, titled after its own id, with one agent staffed on
+/// its `develop` column.
 pub(crate) fn task(id: &str, goal_id: &str) -> TaskDto {
     TaskDto {
         step: None,
@@ -51,16 +57,13 @@ pub(crate) fn task(id: &str, goal_id: &str) -> TaskDto {
         title: format!("task {id}"),
         description: String::new(),
         status: TaskStatus::InProgress,
-        agents: vec![agent("01AUTHOR", Seat::Author, &["coding"])],
+        agents: vec![agent("01DEVELOP", "develop", &["coding"])],
         depends_on: Vec::new(),
         branch: format!("a-task-{id}"),
-        landing: Landing::Merge,
         worktree_path: None,
         stalled: false,
         merge_commit: None,
         pr_url: None,
-        picked_agent_id: None,
-        picks: Vec::new(),
         reason: None,
         usage: Default::default(),
         created_at: NOW.into(),
@@ -68,18 +71,19 @@ pub(crate) fn task(id: &str, goal_id: &str) -> TaskDto {
     }
 }
 
-/// A running session: an author's when it names a task, an orchestrator's
-/// when it does not, and one the daemon has raised no attention flag for.
+/// A running session: a column agent's when it names a task, an
+/// orchestrator's when it does not, and one the daemon has raised no
+/// attention flag for.
 pub(crate) fn session(id: &str, goal_id: &str, task_id: Option<&str>) -> SessionDto {
     SessionDto {
         id: id.into(),
         goal_id: Some(goal_id.into()),
         task_id: task_id.map(Into::into),
         seat: Some(match task_id {
-            Some(_) => Seat::Author,
+            Some(_) => Seat::Agent,
             None => Seat::Orchestrator,
         }),
-        task_agent_id: Some("01AUTHOR".into()),
+        task_agent_id: Some("01DEVELOP".into()),
         model: "stub:test-model".into(),
         effort: None,
         internal_session_id: None,
@@ -99,14 +103,12 @@ pub(crate) fn session(id: &str, goal_id: &str, task_id: Option<&str>) -> Session
     }
 }
 
-/// One agent staffed on a task: the seat it sits in, the skills it carries,
+/// One agent staffed on a task: the column it works, the skills it carries,
 /// and the model it runs on.
-pub(crate) fn agent(id: &str, seat: Seat, skills: &[&str]) -> TaskAgentDto {
+pub(crate) fn agent(id: &str, step: &str, skills: &[&str]) -> TaskAgentDto {
     TaskAgentDto {
-        step: None,
+        step: step.into(),
         id: id.into(),
-        seat,
-        branch: None,
         skills: skills.iter().map(|s| s.to_string()).collect(),
         model: "stub:test-model".into(),
         effort: None,
@@ -144,13 +146,12 @@ pub(crate) fn workflow(name: &str) -> WorkflowDto {
 
 pub(crate) fn repository(id: &str, path: &str, base_branch: &str) -> RepositoryDto {
     RepositoryDto {
-        default_workflow: None,
+        default_workflow: WORKFLOW.into(),
         id: id.into(),
         path: path.into(),
         base_branch: base_branch.into(),
         description: None,
         permission_mode: PermissionMode::Auto,
-        default_landing: Landing::Merge,
         forge: None,
         created_at: NOW.into(),
         updated_at: NOW.into(),

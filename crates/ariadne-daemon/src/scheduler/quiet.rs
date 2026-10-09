@@ -7,7 +7,7 @@
 
 use tracing::{info, warn};
 
-use ariadne_core::{Actor, AttentionReason, Seat, SessionStatus, TaskStatus};
+use ariadne_core::{Actor, AttentionReason, SessionStatus, TaskStatus};
 use ariadne_store::AgentSession;
 
 use super::{QUIET_FLAG_SECS, QUIET_NUDGE_SECS, QUIET_RELAUNCH_SECS, SPAWN_RETRY_BUDGET};
@@ -20,10 +20,10 @@ use super::{QUIET_FLAG_SECS, QUIET_NUDGE_SECS, QUIET_RELAUNCH_SECS, SPAWN_RETRY_
 /// it, and so has one that was just put back on its feet.
 #[derive(Debug, Default)]
 pub(super) struct Quiet {
-    /// What the two steps below were taken in: the status of the task for an
-    /// author or a reviewer, of the goal for an orchestrator — and, for a
-    /// task under review, the review it is under, since two reviews of one
-    /// task read as the same status and are not the same situation.
+    /// What the two steps below were taken in: the column entry for a task's
+    /// agent — two visits of one task to one column read as the same status
+    /// and are not the same situation — and the status of the goal for an
+    /// orchestrator.
     pub(super) situation: String,
     /// Whether the one nudge for that situation has been spent.
     pub(super) nudged: bool,
@@ -178,12 +178,10 @@ impl super::Scheduler {
     /// than restarted for ever. An orchestrator has no task to fail — its own
     /// flag is what is left, and it stands.
     ///
-    /// An author is started the way a task with no live author is started —
-    /// [`Self::start_author`], which renders what it is picked up with, the
-    /// landing briefing included where the task is approved. An orchestrator
-    /// and a reviewer have no such path: they are revived with the resume the
-    /// caller already rendered, through the same `revive_session` a message
-    /// addressed to a dead agent takes.
+    /// Every seat is revived with the resume the caller already rendered,
+    /// through the same `revive_session` a message addressed to a dead agent
+    /// takes: a column's agent comes back on its conversation, in the task's
+    /// one worktree.
     ///
     /// What the user is owed outlives the relaunch: whatever this session was
     /// carrying for them goes back on whatever came back up
@@ -227,16 +225,9 @@ impl super::Scheduler {
         info!(session = %session.id, seat = ?session.seat, relaunch = spent, "the agent has reported nothing for too long, relaunching it");
         let carried = session.attention_reason();
         self.launcher.kill_session(&session.id).await?;
-        if let Some(task_id) = session.task_id.clone()
-            && session.seat() == Some(Seat::Author)
-        {
-            let task = self.store.get_task(&task_id).await?;
-            self.start_author(&task).await?;
-        } else {
-            self.launcher
-                .revive_session(&session.id, Some(revival))
-                .await?;
-        }
+        self.launcher
+            .revive_session(&session.id, Some(revival))
+            .await?;
         let back = self.relaunched_session(session).await;
         self.keep_waiting_user(&back, carried).await
     }

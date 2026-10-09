@@ -13,7 +13,7 @@ fn ctx_with_flags(run_dir: PathBuf, extra_flags: Vec<String>) -> SpawnCtx {
         goal_id: Some("01goalxxxxxxxxxxxxxxxxxxxx".into()),
         task_id: Some("01taskxxxxxxxxxxxxxxxxxxxx".into()),
         pull_request_id: None,
-        seat: Seat::Author,
+        seat: Seat::Agent,
         run_dir,
         cwd: PathBuf::from("/tmp/worktree"),
         socket_path: PathBuf::from("/tmp/ariadne.sock"),
@@ -67,7 +67,7 @@ fn a_pull_request_session_tells_its_mcp_server_the_request_and_no_goal() {
         named("ARIADNE_PULL_REQUEST_ID"),
         Some("01prxxxxxxxxxxxxxxxxxxxxxx")
     );
-    assert_eq!(named("ARIADNE_SEAT"), Some("author"));
+    assert_eq!(named("ARIADNE_SEAT"), Some("agent"));
     assert_eq!(named("ARIADNE_GOAL_ID"), None);
     assert_eq!(named("ARIADNE_TASK_ID"), None);
 }
@@ -151,7 +151,7 @@ fn every_launch_carries_the_session_context() {
     assert_eq!(env["ARIADNE_LAUNCH_ID"], "01launchxxxxxxxxxxxxxxxxxx");
     assert_eq!(env["ARIADNE_GOAL_ID"], "01goalxxxxxxxxxxxxxxxxxxxx");
     assert_eq!(env["ARIADNE_TASK_ID"], "01taskxxxxxxxxxxxxxxxxxxxx");
-    assert_eq!(env["ARIADNE_SEAT"], "author");
+    assert_eq!(env["ARIADNE_SEAT"], "agent");
     assert_eq!(env["ARIADNE_SOCKET"], "/tmp/ariadne.sock");
 
     let mcp: Vec<(String, String)> = plan.config.mcp_servers[0]

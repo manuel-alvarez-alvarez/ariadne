@@ -1,49 +1,18 @@
-//! What a task wants, by status: an author from `ready` to the merge, the
-//! reviewers a review is waiting on, and the cleanup its ending owes.
-
-use std::collections::HashSet;
+//! What a task wants, by status: its dependencies watched while it waits, the
+//! agent of its current column from `ready` to the last column, and the
+//! cleanup its ending owes.
 
 use tracing::{info, warn};
 
 use ariadne_core::{
-    Actor, AttentionReason, GoalStatus, MessageKind, PromptKind, Seat, SessionStatus, TaskStatus,
+    Actor, AttentionReason, GoalStatus, PromptKind, Seat, SessionStatus, TaskStatus,
 };
-use ariadne_store::{
-    AgentSession, MessageFilter, SessionFilter, Task, TaskAgent, TaskFilter, author_branch,
-};
+use ariadne_store::{AgentSession, SessionFilter, Task, TaskFilter};
 
 use crate::agents::prompts;
 use crate::launcher;
 
 use super::SPAWN_RETRY_BUDGET;
-
-/// What a review request is called before the announcement writes its row: not
-/// a row id, but the author whose review that row will open.
-///
-/// A request id is a ULID, whose alphabet holds no colon, so the two can never
-/// be taken for each other. Named by the author rather than left empty because
-/// a contested task's reviewer owes verdicts on several authors at once: one
-/// marker for all of them would let one author's briefing take over another
-/// author's request row, which leaves that one unbriefed.
-fn unannounced_request(author_id: &str) -> String {
-    format!(":{author_id}")
-}
-
-/// What a task's agent is in, as the watchdog spends its one nudge and its one
-/// flag per situation.
-///
-/// The status alone is not enough while a task is under review: a task sent
-/// back for changes and sent for review again reads as `under_review` both
-/// times, and a reviewer that went quiet in the first one would have spent the
-/// nudge it is owed in the second. So the review it is under is named too — by
-/// the request that opened it, which is what a round number used to stand for.
-async fn review_situation(task: &Task, store: &ariadne_store::Store) -> anyhow::Result<String> {
-    if task.status() != TaskStatus::UnderReview {
-        return Ok(task.status.clone());
-    }
-    let review = store.open_review_request(&task.id).await?;
-    Ok(format!("{}:{}", task.status, review.unwrap_or_default()))
-}
 
 impl super::Scheduler {
     pub(super) async fn reconcile_task(&mut self, task_id: &str) -> anyhow::Result<()> {
@@ -52,456 +21,29 @@ impl super::Scheduler {
         if goal.status() != GoalStatus::Active {
             return Ok(());
         }
-
-        if goal.workflow.is_some() {
-            return Box::pin(self.reconcile_steps(task)).await;
-        }
-
-        // Who writes this task: one author for most tasks, several for a
-        // contested one — which runs them side by side until the reviewers
-        // pick a winner, and reads as one-author again once they have.
-        let authors = self.store.list_task_authors(&task.id).await?;
-        let contested = authors.len() > 1 && task.picked_agent_id.is_none();
-
-        // The branch is only followed while somebody is working on it. Finished
-        // and cancelled tasks are let go by the cleanup below, but a failed
-        // one keeps its worktree — a user can retry it — and until one does
-        // there is nobody committing on its branch to report. Here rather than
-        // in an arm of the match, so that every way a task can stop being
-        // worked on converges on the same pass. A contested task keeps its
-        // worktrees on the sessions rather than on the task, so only its
-        // ending lets the watches go.
-        let followed = match authors.len() > 1 {
-            true => !task.status().is_terminal() && task.status() != TaskStatus::Failed,
-            false => launcher::worth_following(&task),
-        };
-        if !followed {
+        // The branch is only followed while somebody is working on it.
+        // Finished and cancelled tasks are let go by the cleanup below, but a
+        // failed one keeps its worktree — a user can retry it — and until one
+        // does there is nobody committing on its branch to report.
+        if !launcher::worth_following(&task) {
             self.launcher.branches.unwatch(&task.id);
         }
+        // Heap-allocate the large branch future. Dependency reconciliation
+        // can poll this method recursively, so its inline state multiplies on
+        // the stack even when a different branch owns the current task.
+        Box::pin(self.reconcile_steps(task)).await
+    }
 
-        // Whatever the agents of this task have said to each other since the
-        // last pass, delivered before anything else is decided: a question
-        // answered is what unblocks the agent that asked, and the answer is
-        // no use to it a pass later than it could have had it.
-        self.deliver_task_messages(&task.id).await;
-
-        // Every agent of a task stays up until the task is over. A reviewer
-        // that has voted is not done with the task — the author may have
-        // something to ask it, and it may have something to ask the author —
-        // so it sits idle instead of being killed and started again for the
-        // next review. What ends them is the task ending, which the terminal
-        // arms below do through `cleanup_task`.
-
-        // A task that has left `approved` — landed, or sent back to the
-        // reviewers with a revision — is one whose author wants briefing
-        // again the next time it is approved.
-        if task.status() != TaskStatus::Approved {
-            self.landing_briefed.remove(&task.id);
-        }
-        // And one that has left the pick — settled, retried, or reopened by a
-        // review — is one whose reviewers want asking afresh next time.
-        if !contested || task.status() != TaskStatus::UnderReview {
-            self.pick_briefed.retain(|(t, _)| t != &task.id);
-        }
-
-        // A settlement interrupted between its writes: the winner is on the
-        // task, but the approval never committed. The picks and the
-        // approvals are all still there to read, so the settlement simply
-        // runs again — losers removed, task approved — on this pass, which
-        // after a daemon restart is the startup sweep. What this must not
-        // catch is the winner's own revision of a published request: that
-        // reopens the winner's review, so `authors_all_approved` is false
-        // there and the ordinary review flow below handles it.
-        if authors.len() > 1
-            && task.status() == TaskStatus::UnderReview
-            && let Some(winner_id) = task.picked_agent_id.clone()
-        {
-            let reviewers = self.store.list_task_reviewers(&task.id).await?;
-            let picks = self.store.list_task_picks(&task.id).await?;
-            if picks.len() >= reviewers.len() && self.store.authors_all_approved(&task.id).await? {
-                info!(task = %task.id, winner = %winner_id, "finishing an interrupted pick settlement");
-                return self.settle_pick(&task, &winner_id).await;
-            }
-        }
-
-        // A task joined the final task as it was about to start. The final
-        // task waits again, and the wait is no failed spawn.
-        if task.status() == TaskStatus::Ready
-            && self.store.start_on_goal_branch(&task.id).await?.is_none()
-        {
-            info!(task = %task.id, "final task waits for a task that joined it");
-            return Ok(());
-        }
-
-        if task.status() == TaskStatus::Ready && Box::pin(self.wait_for_dependencies(&task)).await?
-        {
-            return Ok(());
-        }
-
-        // Heap-allocate the large branch futures. Dependency reconciliation can
-        // poll this method recursively, so its inline state multiplies on the
-        // stack even when a different branch owns the current task.
+    /// One pass over a stepped task: the dependencies it waits on, the column
+    /// it is in and the one agent of that column, and the cleanup its ending
+    /// owes.
+    async fn reconcile_steps(&mut self, mut task: Task) -> anyhow::Result<()> {
         match task.status() {
-            TaskStatus::Pending => {
-                // A dependency that ended without merging is never going to,
-                // so neither is the wait on it: the task ends too, naming what
-                // stopped it, and the user can retry it once the dependency
-                // has landed. Only the terminal endings count — a dependency
-                // retried and working again is one this task can still wait
-                // for. A goal being cancelled never reaches here: its tasks
-                // are cancelled by `reconcile_goal`, and this pass returns
-                // above as soon as the goal is no longer active.
-                if let Some(blocker) = self.store.task_dependencies_blocked(&task.id).await? {
-                    let reason = blocked_reason(&blocker);
-                    warn!(task = %task.id, dependency = %blocker.id, "dependency ended unmerged, failing task");
-                    self.store
-                        .transition_task(
-                            &task.id,
-                            TaskStatus::Failed,
-                            Actor::Daemon,
-                            Some(&reason),
-                            None,
-                        )
-                        .await?;
-                    return Ok(());
-                }
-                if self.store.task_dependencies_merged(&task.id).await? {
-                    info!(task = %task.id, "dependencies finished, task ready");
-                    self.store
-                        .transition_task(&task.id, TaskStatus::Ready, Actor::Daemon, None, None)
-                        .await?;
-                    // Fall through on the next event/tick.
-                    return Box::pin(self.reconcile_task(task_id)).await;
-                }
-            }
-            TaskStatus::Ready if contested => {
-                // Every author starts at once, each in a worktree and on a
-                // branch of its own.
-                for author in &authors {
-                    if self
-                        .live_author_session(&task.id, &author.id)
-                        .await?
-                        .is_none()
-                    {
-                        info!(task = %task.id, author = %author.id, "spawning author");
-                        Box::pin(self.launcher.spawn_author_agent(&task.id, &author.id)).await?;
-                    }
-                }
-                self.store
-                    .transition_task(&task.id, TaskStatus::InProgress, Actor::Daemon, None, None)
-                    .await?;
-            }
-            TaskStatus::Ready => {
-                if self
-                    .live_sessions(&goal.id, Some(&task.id), Seat::Author)
-                    .await?
-                    .is_empty()
-                {
-                    info!(task = %task.id, "spawning author");
-                    Box::pin(self.launcher.spawn_author(&task.id)).await?;
-                }
-                self.store
-                    .transition_task(&task.id, TaskStatus::InProgress, Actor::Daemon, None, None)
-                    .await?;
-            }
-            TaskStatus::InProgress if contested => {
-                // Nobody has asked for a review yet — the first request is
-                // what moves the task on — so every author is still writing.
-                for author in &authors {
-                    let situation = format!("in_progress:{}", author.id);
-                    Box::pin(self.check_contested_author(&task, author, situation)).await?;
-                }
-            }
-            TaskStatus::InProgress => {
-                Box::pin(self.check_stall(&task)).await?;
-            }
-            TaskStatus::UnderReview if contested => {
-                Box::pin(self.reconcile_contest(&task, &authors)).await?;
-            }
-            TaskStatus::UnderReview => {
-                let reviewers = self.store.list_task_reviewers(&task.id).await?;
-                let verdicts = self.store.open_verdicts(&task.id).await?;
-                // What "this review" is, for the watchdog: two reviews of one
-                // task read as the same status, and are not the same thing to
-                // have gone quiet in.
-                let situation = review_situation(&task, &self.store).await?;
-
-                // Verdicts first: they may settle the review.
-                let changes_requested = verdicts
-                    .iter()
-                    .any(|m| m.kind() == Some(MessageKind::RequestChanges));
-                let approvals = verdicts
-                    .iter()
-                    .filter(|m| m.kind() == Some(MessageKind::Approve))
-                    .count() as i64;
-                if changes_requested {
-                    info!(task = %task.id, "changes requested");
-                    self.store
-                        .transition_task(
-                            &task.id,
-                            TaskStatus::ChangesRequested,
-                            Actor::Daemon,
-                            None,
-                            None,
-                        )
-                        .await?;
-                    return Box::pin(self.reconcile_task(task_id)).await;
-                }
-                // Every reviewer the task was staffed with, and no number of
-                // its own: the orchestrator staffs the review the work needs
-                // and agrees it with the user, so each reviewer it put there
-                // is one whose verdict was wanted.
-                if approvals >= reviewers.len() as i64 {
-                    info!(task = %task.id, approvals, "every reviewer has approved");
-                    self.store
-                        .transition_task(&task.id, TaskStatus::Approved, Actor::Daemon, None, None)
-                        .await?;
-                    return Box::pin(self.reconcile_task(task_id)).await;
-                }
-
-                // Start the reviewers that have no verdict and no live
-                // session. A reviewer keeps one session for the whole task,
-                // so what runs for a second review is that same session
-                // resumed — which review it is on is not part of its
-                // identity, only of the briefing it is woken with.
-                let verdict_by: std::collections::HashSet<_> = verdicts
-                    .iter()
-                    .filter_map(|m| m.from_agent_id.clone())
-                    .collect();
-                let pending: Vec<String> = reviewers
-                    .into_iter()
-                    .map(|r| r.id)
-                    .filter(|id| !verdict_by.contains(id))
-                    .collect();
-                if pending.is_empty() {
-                    return Ok(());
-                }
-                let author = self.store.task_author(&task.id).await?;
-                let summary = self.store.review_summary(&task.id).await?;
-                for agent_id in pending {
-                    // What this reviewer was asked for, read as its own row.
-                    // The status is committed before any of them, so a pass
-                    // can read the review open and this row not written yet;
-                    // it briefs on the unannounced id, and the hand-over below
-                    // gives the stamp to the row that lands next.
-                    let request = self
-                        .review_request_to(&task.id, &author.id, &agent_id)
-                        .await?;
-                    self.adopt_briefing_sent_before_the_request(
-                        &task, &author, &agent_id, &request,
-                    )
-                    .await?;
-                    let live = self
-                        .store
-                        .list_sessions(SessionFilter {
-                            task_id: Some(task.id.clone()),
-                            live_only: true,
-                            ..Default::default()
-                        })
-                        .await?;
-                    // As in `live_sessions`: only a running agent counts, so
-                    // a reviewer whose agent died is started again.
-                    let mut running = None;
-                    for s in &live {
-                        if s.seat() == Some(Seat::Reviewer)
-                            && s.task_agent_id.as_deref() == Some(agent_id.as_str())
-                            && self.launcher.session_process_alive(s).await
-                        {
-                            running = Some(s.clone());
-                            break;
-                        }
-                    }
-                    // One text for either way this reviewer is picked up:
-                    // the verdict the review is waiting on and the diff that
-                    // may have moved under it are what it is told whether its
-                    // session is being started again or merely nudged.
-                    let template = prompts::template_for(PromptKind::ReviewerResume);
-                    let resume =
-                        prompts::reviewer_resume_briefing(template, &task, summary.as_deref());
-                    // A reviewer with no verdict yet is the review's only
-                    // reason to still be open, so an idle one is watched the
-                    // same way an author is. Reviewers that already voted
-                    // are not in `pending` and are left to sit: waiting for
-                    // the others is not a stall. There is no task-level flag
-                    // for this — the session's own is the signal.
-                    if let Some(reviewer) = running {
-                        // Up and reporting: what earlier attempts at starting
-                        // this reviewer spent of the task's budget comes back
-                        // here rather than at the launch that started it.
-                        self.spent_on_a_dead_launch(&reviewer.id, &task.id, &reviewer);
-                        if self
-                            .brief_live_reviewer_for(
-                                &task, &author, &agent_id, &request, &reviewer, &resume,
-                            )
-                            .await?
-                        {
-                            continue;
-                        }
-                        Box::pin(self.check_session_quiet(&reviewer, situation.clone(), &resume))
-                            .await?;
-                        if self
-                            .quiet
-                            .get(&reviewer.id)
-                            .is_some_and(|quiet| quiet.situation == situation && quiet.nudged)
-                        {
-                            // The nudge carries this review's briefing, so it
-                            // delivers the request recorded on the channel.
-                            self.store
-                                .mark_review_requests_delivered(&task.id, &author.id, &reviewer.id)
-                                .await?;
-                        }
-                    } else {
-                        // A reviewer that came up and was never heard from
-                        // spends an attempt of the task's, like its author
-                        // does: a review whose reviewer exits the moment it
-                        // starts is not one to start a reviewer for every tick.
-                        let last = self
-                            .last_session(&task.id, |s| {
-                                s.task_agent_id.as_deref() == Some(agent_id.as_str())
-                            })
-                            .await;
-                        if last.as_ref().is_some_and(|session| {
-                            session.attention_reason() == Some(AttentionReason::Exhausted)
-                        }) {
-                            continue;
-                        }
-                        if let Some(last) = last
-                            && self.spent_on_a_dead_launch(&last.id, &task.id, &last)
-                        {
-                            warn!(task = %task.id, session = %last.id, "the reviewer came up and was never heard from");
-                            if self
-                                .record_spawn_failure(
-                                    &task.id,
-                                    "its agent stopped as soon as it started",
-                                )
-                                .await
-                            {
-                                return Ok(());
-                            }
-                        }
-                        info!(task = %task.id, reviewer = %agent_id, "starting reviewer");
-                        // Resumes the reviewer's earlier session when there is
-                        // one, spawns a first for it otherwise.
-                        Box::pin(self.launcher.resume_reviewer(&task.id, &agent_id, &resume))
-                            .await?;
-                        // Marked only once the resume above actually
-                        // succeeded: a spawn refused because the seat is
-                        // still a dying session's own would otherwise be
-                        // counted as briefed and never retried.
-                        self.review_briefed
-                            .insert((agent_id.clone(), request.clone()));
-                        // The launch briefing delivers the review request
-                        // recorded on the channel.
-                        self.store
-                            .mark_review_requests_delivered(&task.id, &author.id, &agent_id)
-                            .await?;
-                    }
-                }
-            }
-            TaskStatus::ChangesRequested => {
-                let verdicts = self.store.open_verdicts(&task.id).await?;
-                // Who asked, as the author reads it. An agent has no name of
-                // its own, so it is named by the skills it reviewed with, and
-                // by its id where it is staffed no longer.
-                let mut feedback: Vec<(String, String)> = Vec::new();
-                let mut carried: Vec<String> = Vec::new();
-                for verdict in verdicts
-                    .iter()
-                    .filter(|m| m.kind() == Some(MessageKind::RequestChanges))
-                {
-                    carried.push(verdict.id.clone());
-                    let agent_id = verdict.from_agent_id.clone().unwrap_or_default();
-                    let skills = self.store.agent_skills(&agent_id).await.unwrap_or_default();
-                    let who = match skills.is_empty() {
-                        false => format!(
-                            "reviewer ({})",
-                            skills
-                                .iter()
-                                .map(|s| s.name.as_str())
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        ),
-                        true => format!("reviewer {agent_id}"),
-                    };
-                    feedback.push((who, verdict.body.clone()));
-                }
-                info!(task = %task.id, "resuming author with review feedback");
-                let template = prompts::template_for(PromptKind::ChangesRequested);
-                Box::pin(self.launcher.resume_author(
-                    &task.id,
-                    &prompts::changes_requested_briefing(template, &feedback),
-                ))
-                .await?;
-                // This briefing is the delivery of every change request it
-                // carries, so each one is stamped by it — the same rule the
-                // reviewer's briefing holds a review request to. Stamped
-                // after the resume rather than before it: a briefing that
-                // never went out has delivered nothing.
-                for id in carried {
-                    self.store.mark_message_delivered(&id).await?;
-                }
-                self.store
-                    .transition_task(&task.id, TaskStatus::InProgress, Actor::Daemon, None, None)
-                    .await?;
-            }
-            TaskStatus::Approved => {
-                // The author's own turns are this task's events, not its
-                // request's: a merge it has just read is the request's to
-                // act on, which ends the task (005).
-                if task.pr_url.is_some() && Box::pin(self.merge_ended(&task)).await? {
-                    return Ok(());
-                }
-                // Landing the change is the author's last turn, and the
-                // session that wrote it is still there to take it: nothing
-                // took the worktree away. What it has not had is the briefing
-                // that says the task is approved and how its repository takes
-                // it, so that goes out once — and from there the turn is
-                // watched like any other.
-                //
-                // Counted as sent only once it has gone out. An approval that
-                // lands while the author's agent is still coming up finds a
-                // session with no conversation to resume yet, and the spawn
-                // that falls back to is refused because the seat is taken:
-                // marked at the attempt, that briefing would never be sent
-                // again, and the task would sit approved until the quiet
-                // clock eventually nudged it. Left unmarked on failure, the
-                // next pass tries again.
-                if self.landing_briefed.contains(&task.id) {
-                    Box::pin(self.check_stall(&task)).await?;
-                } else {
-                    info!(task = %task.id, "approved: briefing the author to land it");
-                    Box::pin(self.start_author(&task)).await?;
-                    self.landing_briefed.insert(task.id.clone());
-                }
-            }
             TaskStatus::Finished => {
                 // Post-merge cleanup (idempotent), then wake dependents.
                 // Worktrees and the branch go by default; set
                 // delete_merged_worktrees = false to keep merged work around
                 // for inspection.
-                Box::pin(self.launcher.cleanup_task(
-                    &task.id,
-                    self.launcher.cfg.delete_merged_worktrees,
-                    self.launcher.cfg.delete_merged_branches,
-                ))
-                .await?;
-                for dependent in self.dependents_of(&task).await? {
-                    Box::pin(self.reconcile_task(&dependent)).await?;
-                }
-            }
-            TaskStatus::Cancelled => {
-                // Kill leftover agents; always keep worktrees and branch — a
-                // cancelled task may hold uncommitted work worth salvaging.
-                Box::pin(self.launcher.cleanup_task(&task.id, false, false)).await?;
-            }
-            TaskStatus::Failed => {}
-        }
-        Ok(())
-    }
-
-    async fn reconcile_steps(&mut self, mut task: Task) -> anyhow::Result<()> {
-        match task.status() {
-            TaskStatus::Finished => {
                 self.launcher
                     .cleanup_task(
                         &task.id,
@@ -515,17 +57,30 @@ impl super::Scheduler {
                 return Ok(());
             }
             TaskStatus::Failed | TaskStatus::Cancelled => {
+                // Kill leftover agents; always keep worktrees and branch — a
+                // failed or cancelled task may hold uncommitted work worth
+                // salvaging, and a failed one may be retried into it.
                 self.launcher.cleanup_task(&task.id, false, false).await?;
                 return Ok(());
             }
             TaskStatus::Pending => {
+                // A dependency that ended without finishing is never going
+                // to, so neither is the wait on it: the task ends too, naming
+                // what stopped it, and the user can retry it once the
+                // dependency has landed. Only the terminal endings count — a
+                // dependency retried and working again is one this task can
+                // still wait for. A goal being cancelled never reaches here:
+                // its tasks are cancelled by `reconcile_goal`, and this pass
+                // returns above as soon as the goal is no longer active.
                 if let Some(blocker) = self.store.task_dependencies_blocked(&task.id).await? {
+                    let reason = blocked_reason(&blocker);
+                    warn!(task = %task.id, dependency = %blocker.id, "dependency ended unfinished, failing task");
                     self.store
                         .transition_task(
                             &task.id,
                             TaskStatus::Failed,
                             Actor::Daemon,
-                            Some(&blocked_reason(&blocker)),
+                            Some(&reason),
                             None,
                         )
                         .await?;
@@ -534,6 +89,7 @@ impl super::Scheduler {
                 if !self.store.task_dependencies_merged(&task.id).await? {
                     return Ok(());
                 }
+                info!(task = %task.id, "dependencies finished, task ready");
                 task = self
                     .store
                     .transition_task(&task.id, TaskStatus::Ready, Actor::Daemon, None, None)
@@ -546,8 +102,41 @@ impl super::Scheduler {
             return Ok(());
         }
         if task.status() == TaskStatus::Ready {
+            // A task starts on its first column and walks every one of them,
+            // so each needs its agent before the first is started. The store
+            // refuses a staffing that leaves one out once the goal runs, and
+            // `finalize_plan` and a retry refuse by name; what reaches here
+            // unstaffed is a task a database from before workflows carried
+            // (0023). It fails naming the column rather than spending its
+            // launch budget on an agent that is not there, and the retry is
+            // refused until the orchestrator staffs it.
+            let unstaffed = self.store.unstaffed_columns(&task).await?;
+            if !unstaffed.is_empty() {
+                let reason = format!(
+                    "no agent on column {}; staff it with update_task and retry",
+                    unstaffed.join(", ")
+                );
+                warn!(task = %task.id, columns = %unstaffed.join(", "), "a column has no agent, failing the task before it starts");
+                self.store
+                    .transition_task(
+                        &task.id,
+                        TaskStatus::Failed,
+                        Actor::Daemon,
+                        Some(&reason),
+                        None,
+                    )
+                    .await?;
+                return Ok(());
+            }
             task = self.store.start_first_step(&task.id).await?;
         }
+        // Whatever the agents of this task have said to each other since the
+        // last pass, delivered before anything else is decided: a question
+        // answered is what unblocks the agent that asked, and the answer is
+        // no use to it a pass later than it could have had it. A task in no
+        // column has no agent to tell, but what its agents said to the
+        // orchestrator still reaches it (018).
+        self.deliver_task_messages(&task.id).await;
         if task.status() != TaskStatus::InProgress {
             return Ok(());
         }
@@ -556,14 +145,16 @@ impl super::Scheduler {
             .iter()
             .find(|s| Some(&s.id) == task.step.as_ref())
             .ok_or_else(|| anyhow::anyhow!("task has no current column"))?;
+        // A merged request is the request column's to act on, which moves
+        // the task on (030).
         if task.pr_url.is_some() && Box::pin(self.merge_ended(&task)).await? {
             return Ok(());
         }
         let agents = self.store.list_task_agents(&task.id).await?;
         let agent = agents
             .iter()
-            .find(|a| a.step == task.step)
-            .ok_or_else(|| anyhow::anyhow!("column has no agent"))?;
+            .find(|a| Some(&a.step) == task.step.as_ref())
+            .ok_or_else(|| anyhow::anyhow!("column {} has no agent", step.id))?;
         let sessions = self
             .store
             .list_sessions(SessionFilter {
@@ -571,6 +162,8 @@ impl super::Scheduler {
                 ..Default::default()
             })
             .await?;
+        // Only the current column's agent is owed anything: a flag another
+        // column's agent still carries says nothing anybody has to act on.
         for session in &sessions {
             if session.task_agent_id.as_ref() != Some(&agent.id)
                 && session.attention_reason().is_some()
@@ -584,10 +177,19 @@ impl super::Scheduler {
         let launched = live.is_none();
         let session = match live {
             Some(session) => {
+                // Up and reporting: what earlier attempts at starting this
+                // agent spent of the task's budget comes back here rather
+                // than at the launch that started it.
                 self.spent_on_a_dead_launch(&agent.id, &task.id, session);
                 session.clone()
             }
             None => {
+                // An agent that came up and was never heard from spends an
+                // attempt like a launch that never got off the ground.
+                // Without that, a CLI that exits the moment it starts — a
+                // dialog nobody answered, a folder it will not open — is a
+                // task that starts an agent every tick for as long as its
+                // goal is active, and says so to nobody.
                 if let Some(last) = sessions
                     .iter()
                     .rev()
@@ -607,7 +209,17 @@ impl super::Scheduler {
                         return Ok(());
                     }
                 }
-                self.launcher.start_step_agent(&task, agent).await?
+                info!(task = %task.id, column = %step.id, "the column has no live agent, starting one");
+                match self.launcher.start_step_agent(&task, agent).await {
+                    Ok(session) => session,
+                    Err(e) => {
+                        // The task still wants this agent and could not get
+                        // one: the ended session is the thing the user has to
+                        // look at.
+                        self.flag_last_disconnected(&task, &agent.id).await;
+                        return Err(e);
+                    }
+                }
             }
         };
         let transitions = self.store.list_task_transitions(&task.id).await?;
@@ -661,6 +273,9 @@ impl super::Scheduler {
                     .step_first_briefing(&task, step, reason)
                     .await?
             };
+            // A fresh conversation on a column the task has visited before
+            // has read nothing: it is briefed on the task first, then told
+            // what the return says.
             if seen && launched && !sessions.iter().any(|s| s.id == session.id) {
                 briefing = format!(
                     "{}\n\n{briefing}",
@@ -680,10 +295,13 @@ impl super::Scheduler {
             self.handed(&session, handed);
             return Ok(());
         }
-        self.deliver_task_messages(&task.id).await;
         let resume =
             prompts::agent_resume(prompts::template_for(PromptKind::AgentResume), &task, step);
         if launched {
+            // Whatever the user is owed comes back up with the agent
+            // ([`Self::keep_waiting_user`]): starting the agent again is the
+            // recovery for the agent, and no answer at all to a person who
+            // still has a request to merge.
             self.keep_waiting_user(&session, None).await?;
             let resume = if sessions.iter().any(|s| s.id == session.id) {
                 resume
@@ -695,549 +313,13 @@ impl super::Scheduler {
             };
             self.hand_prompt(&session, resume);
         } else if !(task.pr_url.is_some() && session.status() == SessionStatus::Idle) {
+            // An agent that keeps an open request waits on the forge between
+            // its news (030): idle there is not quiet, and it is never nudged
+            // for it. Only a turn that never ends is watched.
             self.check_session_quiet(&session, entry.id.clone(), &resume)
                 .await?;
         }
         Ok(())
-    }
-
-    /// One pass over a contested task under review: each author's own review
-    /// runs to approval side by side, and once every one of them stands
-    /// approved the reviewers are asked to pick the winner.
-    ///
-    /// A reviewer works one review at a time, so a pass rouses it for at
-    /// most one: the oldest it owes, in the order the authors were listed.
-    /// The verdict that settles that one is the event whose reconcile hands
-    /// it the next — at once, not on the quiet clock.
-    async fn reconcile_contest(
-        &mut self,
-        task: &Task,
-        authors: &[TaskAgent],
-    ) -> anyhow::Result<()> {
-        let reviewers = self.store.list_task_reviewers(&task.id).await?;
-        let mut all_approved = true;
-        // The first review each reviewer still owes a verdict on, by
-        // reviewer id: (the author under review, the request that opened it).
-        let mut owed: Vec<(&TaskAgent, &TaskAgent, String)> = Vec::new();
-        for author in authors {
-            let Some(request) = self
-                .store
-                .open_review_request_of(&task.id, &author.id)
-                .await?
-            else {
-                // Still writing: the task moved on when a sibling asked
-                // first, and this author's own review has not opened yet.
-                all_approved = false;
-                let situation = format!("in_progress:{}", author.id);
-                self.check_contested_author(task, author, situation).await?;
-                continue;
-            };
-            let verdicts = self.store.open_verdicts_of(&task.id, &author.id).await?;
-            if verdicts
-                .iter()
-                .any(|m| m.kind() == Some(MessageKind::RequestChanges))
-            {
-                // The change request reached the author as a message on the
-                // channel; what is watched here is the author revising.
-                all_approved = false;
-                let situation = format!("changes:{request}");
-                self.check_contested_author(task, author, situation).await?;
-                continue;
-            }
-            let approved_by: HashSet<&str> = verdicts
-                .iter()
-                .filter(|m| m.kind() == Some(MessageKind::Approve))
-                .filter_map(|m| m.from_agent_id.as_deref())
-                .collect();
-            if approved_by.len() >= reviewers.len() {
-                continue;
-            }
-            all_approved = false;
-            for reviewer in reviewers
-                .iter()
-                .filter(|r| !approved_by.contains(r.id.as_str()))
-            {
-                if !owed.iter().any(|(claimed, _, _)| claimed.id == reviewer.id) {
-                    owed.push((reviewer, author, request.clone()));
-                }
-            }
-        }
-        for (reviewer, author, request) in owed {
-            self.rouse_reviewer_for(task, reviewer, author, &request)
-                .await?;
-        }
-        if !all_approved {
-            // A review reopened is a pick to ask for afresh once it closes.
-            self.pick_briefed.retain(|(t, _)| t != &task.id);
-            return Ok(());
-        }
-        self.run_the_pick(task, authors, &reviewers).await
-    }
-
-    /// The pick itself: every reviewer asked once, and the winner settled as
-    /// soon as the last pick is in.
-    async fn run_the_pick(
-        &mut self,
-        task: &Task,
-        authors: &[TaskAgent],
-        reviewers: &[TaskAgent],
-    ) -> anyhow::Result<()> {
-        let picks = self.store.list_task_picks(&task.id).await?;
-        if picks.len() >= reviewers.len() {
-            let Some(winner) = ariadne_store::picked_winner(authors, &picks) else {
-                return Ok(());
-            };
-            info!(task = %task.id, winner = %winner.id, "every reviewer has picked; landing this author");
-            let winner_session = self
-                .last_session(&task.id, |s| {
-                    s.task_agent_id.as_deref() == Some(winner.id.as_str())
-                })
-                .await;
-            self.store
-                .set_task_picked(
-                    &task.id,
-                    &winner.id,
-                    winner_session.as_ref().map(|s| s.id.as_str()),
-                    winner_session.as_ref().and_then(|s| s.launch_id.as_deref()),
-                )
-                .await?;
-            return self.settle_pick(task, &winner.id.clone()).await;
-        }
-
-        let picked_by: HashSet<&str> = picks.iter().map(|p| p.reviewer_agent_id.as_str()).collect();
-        let lines: Vec<(String, String)> = authors
-            .iter()
-            .map(|a| (a.id.clone(), author_branch(&task.branch, a.ordinal)))
-            .collect();
-        let template = prompts::template_for(PromptKind::ReviewerPick);
-        let briefing = prompts::reviewer_pick_briefing(template, task, &lines);
-        for reviewer in reviewers
-            .iter()
-            .filter(|r| !picked_by.contains(r.id.as_str()))
-        {
-            let situation = format!("pick:{}", task.id);
-            if let Some(session) = self.live_reviewer_session(&task.id, &reviewer.id).await? {
-                self.spent_on_a_dead_launch(&reviewer.id, &task.id, &session);
-                // Asked once, straight to the agent; from there the quiet
-                // clock takes over like any other owed answer. Counted as
-                // asked only once the prompt actually goes out: the
-                // reviewer's runtime entry can be gone in the moment between
-                // the liveness check above and this hand-off, and asked at
-                // the attempt regardless, it would never be asked again.
-                let key = (task.id.clone(), reviewer.id.clone());
-                if self.pick_briefed.contains(&key) {
-                    self.check_session_quiet(&session, situation, &briefing)
-                        .await?;
-                } else {
-                    info!(task = %task.id, reviewer = %reviewer.id, "asking the reviewer to pick the winner");
-                    if self.hand_prompt(&session, briefing.clone()) {
-                        self.pick_briefed.insert(key);
-                    }
-                }
-            } else {
-                let last = self
-                    .last_session(&task.id, |s| {
-                        s.task_agent_id.as_deref() == Some(reviewer.id.as_str())
-                    })
-                    .await;
-                if last.as_ref().is_some_and(|session| {
-                    session.attention_reason() == Some(AttentionReason::Exhausted)
-                }) {
-                    continue;
-                }
-                if let Some(last) = last
-                    && self.spent_on_a_dead_launch(&reviewer.id, &task.id, &last)
-                {
-                    warn!(task = %task.id, session = %last.id, "the reviewer came up and was never heard from");
-                    if self
-                        .record_spawn_failure(&task.id, "its agent stopped as soon as it started")
-                        .await
-                    {
-                        return Ok(());
-                    }
-                }
-                info!(task = %task.id, reviewer = %reviewer.id, "starting a reviewer for the pick");
-                // Counted as started only once the resume succeeds: an
-                // approval that lands while the reviewer's agent is still
-                // coming up finds no conversation to resume yet, the same
-                // way a landing briefing can (`scheduler/tasks.rs`'s
-                // `TaskStatus::Approved` arm). Marked at the attempt
-                // regardless, a failed resume would never be retried.
-                self.launcher
-                    .resume_reviewer(&task.id, &reviewer.id, &briefing)
-                    .await?;
-                self.pick_briefed
-                    .insert((task.id.clone(), reviewer.id.clone()));
-            }
-        }
-        Ok(())
-    }
-
-    /// Finish a settled pick, from wherever the last pass got: the winner's
-    /// worktree onto the task, the losers removed, and the task moved to
-    /// `approved`.
-    ///
-    /// Idempotent by construction, because `picked_agent_id` is written
-    /// before any of it: a daemon that dies between the pick and the
-    /// approval leaves a task that is `under_review` with a winner on it,
-    /// and [`Self::reconcile_task`] routes that state straight back here —
-    /// on the startup pass, and on every tick until the approval commits.
-    async fn settle_pick(&mut self, task: &Task, winner_id: &str) -> anyhow::Result<()> {
-        // The winner's worktree becomes the task's own, which is what the
-        // landing resumes the author in.
-        if task.worktree_path.is_none()
-            && let Some(worktree) = self
-                .last_session(&task.id, |s| {
-                    s.task_agent_id.as_deref() == Some(winner_id) && s.worktree_path.is_some()
-                })
-                .await
-                .and_then(|s| s.worktree_path)
-        {
-            self.store
-                .set_task_worktree(&task.id, Some(&worktree))
-                .await?;
-        }
-        // The losers go before the approval: their changes were judged and
-        // set aside, and nothing later comes back for their branches or
-        // worktrees.
-        self.launcher.cleanup_losing_authors(&task.id).await?;
-        self.store
-            .transition_task(
-                &task.id,
-                TaskStatus::Approved,
-                Actor::Daemon,
-                Some(&format!("the reviewers picked author {winner_id}")),
-                None,
-            )
-            .await?;
-        Box::pin(self.reconcile_task(&task.id)).await
-    }
-
-    /// One author of a contested task, watched the way [`Self::check_stall`]
-    /// watches a lone one: started again where its session is gone, nudged
-    /// where it has gone quiet, and its dead launches spent against the
-    /// task's budget.
-    async fn check_contested_author(
-        &mut self,
-        task: &Task,
-        author: &TaskAgent,
-        situation: String,
-    ) -> anyhow::Result<()> {
-        // What this author is picked up or nudged with: its own branch, in
-        // the words a lone author gets.
-        let seen = Task {
-            branch: author_branch(&task.branch, author.ordinal),
-            ..task.clone()
-        };
-        let template = prompts::template_for(PromptKind::AuthorResume);
-        let resume = prompts::author_resume_briefing(template, &seen);
-
-        let Some(session) = self.live_author_session(&task.id, &author.id).await? else {
-            let last = self
-                .last_session(&task.id, |s| {
-                    s.seat() == Some(Seat::Author)
-                        && s.task_agent_id.as_deref() == Some(author.id.as_str())
-                })
-                .await;
-            if last.as_ref().is_some_and(|session| {
-                session.attention_reason() == Some(AttentionReason::Exhausted)
-            }) {
-                return Ok(());
-            }
-            if let Some(last) = &last
-                && self.spent_on_a_dead_launch(&author.id, &task.id, last)
-            {
-                warn!(task = %task.id, session = %last.id, "the author came up and was never heard from");
-                if self
-                    .record_spawn_failure(&task.id, "its agent stopped as soon as it started")
-                    .await
-                {
-                    return Ok(());
-                }
-            }
-            info!(task = %task.id, author = %author.id, "the task is waiting on an author and has none live, starting one");
-            // A fresh conversation where the last launch died on arrival, as
-            // for a lone author (`check_stall`).
-            match last.as_ref().is_some_and(|last| last.died_on_arrival()) {
-                true => {
-                    self.launcher
-                        .spawn_author_agent_told(&task.id, &author.id, &resume)
-                        .await?
-                }
-                false => {
-                    self.launcher
-                        .resume_author_agent(&task.id, &author.id, &resume)
-                        .await?
-                }
-            };
-            return Ok(());
-        };
-        self.spent_on_a_dead_launch(&author.id, &task.id, &session);
-        self.check_session_quiet(&session, situation, &resume).await
-    }
-
-    /// The live session one staffed author runs, if it has one.
-    async fn live_author_session(
-        &self,
-        task_id: &str,
-        agent_id: &str,
-    ) -> anyhow::Result<Option<AgentSession>> {
-        self.live_agent_session(task_id, agent_id, Seat::Author)
-            .await
-    }
-
-    /// The live session one staffed reviewer runs, if it has one.
-    async fn live_reviewer_session(
-        &self,
-        task_id: &str,
-        agent_id: &str,
-    ) -> anyhow::Result<Option<AgentSession>> {
-        self.live_agent_session(task_id, agent_id, Seat::Reviewer)
-            .await
-    }
-
-    async fn live_agent_session(
-        &self,
-        task_id: &str,
-        agent_id: &str,
-        seat: Seat,
-    ) -> anyhow::Result<Option<AgentSession>> {
-        let live = self
-            .store
-            .list_sessions(SessionFilter {
-                task_id: Some(task_id.to_string()),
-                live_only: true,
-                ..Default::default()
-            })
-            .await?;
-        for session in live {
-            if session.seat() == Some(seat)
-                && session.task_agent_id.as_deref() == Some(agent_id)
-                && self.launcher.session_process_alive(&session).await
-            {
-                return Ok(Some(session));
-            }
-        }
-        Ok(None)
-    }
-
-    /// One reviewer that owes a verdict on one author's review of a contested
-    /// task: resumed onto that author's branch where its session is gone,
-    /// and — where its agent survived the last review — handed this one's
-    /// briefing the moment it owes it, its worktree moved to the branch the
-    /// briefing names first. The quiet clock watches it from there.
-    ///
-    /// `review` names the author's review for the watchdog, which watches one
-    /// author's review as a whole. What this reviewer was briefed for is its
-    /// own request row, read below.
-    async fn rouse_reviewer_for(
-        &mut self,
-        task: &Task,
-        reviewer: &TaskAgent,
-        author: &TaskAgent,
-        review: &str,
-    ) -> anyhow::Result<()> {
-        let summary = self
-            .store
-            .author_review_summary(&task.id, &author.id)
-            .await?;
-        let summary = launcher::verdict_addressed_to(&author.id, summary.as_deref());
-        let seen = Task {
-            branch: author_branch(&task.branch, author.ordinal),
-            ..task.clone()
-        };
-        let template = prompts::template_for(PromptKind::ReviewerResume);
-        let resume = prompts::reviewer_resume_briefing(template, &seen, Some(&summary));
-        let situation = format!("under_review:{review}");
-        // This author's announcement writes one row per reviewer, so the
-        // newest of them walks forward while it runs. What this reviewer was
-        // asked for is its own row, as on an uncontested task above.
-        let request = self
-            .review_request_to(&task.id, &author.id, &reviewer.id)
-            .await?;
-        self.adopt_briefing_sent_before_the_request(task, author, &reviewer.id, &request)
-            .await?;
-        let briefed = (reviewer.id.clone(), request.clone());
-
-        if let Some(session) = self.live_reviewer_session(&task.id, &reviewer.id).await? {
-            self.spent_on_a_dead_launch(&session.id, &task.id, &session);
-            if self
-                .brief_live_reviewer_for(task, author, &reviewer.id, &request, &session, &resume)
-                .await?
-            {
-                return Ok(());
-            }
-            self.check_session_quiet(&session, situation, &resume)
-                .await?;
-        } else {
-            let last = self
-                .last_session(&task.id, |s| {
-                    s.task_agent_id.as_deref() == Some(reviewer.id.as_str())
-                })
-                .await;
-            if last.as_ref().is_some_and(|session| {
-                session.attention_reason() == Some(AttentionReason::Exhausted)
-            }) {
-                return Ok(());
-            }
-            if let Some(last) = last
-                && self.spent_on_a_dead_launch(&last.id, &task.id, &last)
-            {
-                warn!(task = %task.id, session = %last.id, "the reviewer came up and was never heard from");
-                if self
-                    .record_spawn_failure(&task.id, "its agent stopped as soon as it started")
-                    .await
-                {
-                    return Ok(());
-                }
-            }
-            info!(task = %task.id, reviewer = %reviewer.id, author = %author.id, "starting reviewer");
-            self.launcher
-                .resume_reviewer_for(&task.id, &reviewer.id, Some(&author.id), &resume)
-                .await?;
-            // Marked only once the resume above actually succeeded: a spawn
-            // refused because the seat is still the dying session's own
-            // would otherwise be counted as briefed and never retried. The
-            // resume carries this briefing itself, so once it has landed the
-            // live path above must not say it again to the session that
-            // comes up with it.
-            self.review_briefed.insert(briefed);
-            // The launch's briefing is this review request's delivery, the
-            // same as the live agent's above.
-            self.store
-                .mark_review_requests_delivered(&task.id, &author.id, &reviewer.id)
-                .await?;
-        }
-        Ok(())
-    }
-
-    /// The open review request one author asked one reviewer for, as the id of
-    /// its row, or [`unannounced_request`] while the announcement has not
-    /// written that row.
-    ///
-    /// Read per reviewer rather than per task. A review is one request row per
-    /// reviewer, written one after the other, so the newest row on the task
-    /// walks forward while the announcement runs: a key written against it on
-    /// one pass is missed by the next, and every reviewer is briefed again. A
-    /// reviewer's own row is written once and stands for the whole review.
-    async fn review_request_to(
-        &self,
-        task_id: &str,
-        author_id: &str,
-        reviewer_id: &str,
-    ) -> anyhow::Result<String> {
-        let addressed = self
-            .store
-            .list_messages(MessageFilter {
-                task_id: Some(task_id.to_string()),
-                to_agent_id: Some(reviewer_id.to_string()),
-                ..Default::default()
-            })
-            .await?;
-        // Oldest first, so the last request from this author is the one that
-        // opened the review standing now.
-        Ok(addressed
-            .into_iter()
-            .rev()
-            .find(|m| {
-                m.kind() == Some(MessageKind::ReviewRequest)
-                    && m.from_agent_id.as_deref() == Some(author_id)
-            })
-            .map(|m| m.id)
-            .unwrap_or_else(|| unannounced_request(author_id)))
-    }
-
-    /// Give a briefing sent before this review had a request row to the row
-    /// that has since appeared, and stamp that request delivered.
-    ///
-    /// A review opens in two writes: `transition_task` commits the status, and
-    /// the announcement writes one request row per reviewer. A pass between
-    /// the two finds no row for this reviewer and stamps it under
-    /// [`unannounced_request`]. The row that lands next opens that same review
-    /// — the briefing already carried its summary, which is the transition's
-    /// own reason — so it inherits the stamp. Without the hand-over the stamp
-    /// misses, and the reviewer is briefed a second time for one request.
-    ///
-    /// A no-op for every pass that reads a row, which is all of them but the
-    /// ones in that window.
-    async fn adopt_briefing_sent_before_the_request(
-        &mut self,
-        task: &Task,
-        author: &TaskAgent,
-        reviewer_id: &str,
-        request: &str,
-    ) -> anyhow::Result<()> {
-        if request == unannounced_request(&author.id)
-            || !self
-                .review_briefed
-                .remove(&(reviewer_id.to_string(), unannounced_request(&author.id)))
-        {
-            return Ok(());
-        }
-        info!(task = %task.id, reviewer = %reviewer_id, request, "the briefing already sent is this review request's");
-        self.review_briefed
-            .insert((reviewer_id.to_string(), request.to_string()));
-        // That briefing was the request's delivery, and it went out before
-        // there was a row to stamp.
-        self.store
-            .mark_review_requests_delivered(&task.id, &author.id, reviewer_id)
-            .await?;
-        Ok(())
-    }
-
-    /// Brief a live reviewer once for the review request it owes a verdict on.
-    /// The worktree moves before the prompt that names its branch, and the
-    /// prompt stamps that request delivered. A move that cannot happen yet
-    /// leaves the caller to the quiet clock and the next pass.
-    async fn brief_live_reviewer_for(
-        &mut self,
-        task: &Task,
-        author: &TaskAgent,
-        reviewer_id: &str,
-        request: &str,
-        session: &AgentSession,
-        resume: &str,
-    ) -> anyhow::Result<bool> {
-        let briefed = (reviewer_id.to_string(), request.to_string());
-        if self.review_briefed.contains(&briefed) {
-            return Ok(false);
-        }
-        // A live agent is briefed the way a resumed one is, and at the same
-        // moment: when the verdict becomes owed, not when the quiet clock
-        // notices. Its detached worktree moves first, so the briefing lands
-        // in a tree already on the branch it names.
-        if let Err(e) = self
-            .launcher
-            .refresh_reviewer_worktree(&task.id, reviewer_id, Some(&author.id))
-            .await
-        {
-            warn!(task = %task.id, reviewer = %reviewer_id, error = %format!("{e:#}"), "moving the reviewer's worktree failed");
-            return Ok(false);
-        }
-        // Its learned keys name the branch it reviews now.
-        self.launcher.acp.set_task_branch(
-            &session.id,
-            Some(author_branch(&task.branch, author.ordinal)),
-        );
-        // Counted as briefed only once the prompt has actually gone out: a
-        // live agent's runtime entry can be gone in the moment between the
-        // worktree move above and this hand-off — a process just killed, one
-        // still coming up under a relaunch — and `hand_prompt` says so by
-        // failing. Marked at the attempt regardless, that briefing would
-        // never be sent again, and the reviewer would sit unbriefed until
-        // the quiet clock nudged it instead.
-        if !self.hand_prompt(session, resume.to_string()) {
-            return Ok(false);
-        }
-        info!(task = %task.id, reviewer = %reviewer_id, author = %author.id, "briefing the live reviewer for this author's review");
-        self.review_briefed.insert(briefed);
-        // The briefing is this review request's delivery: generic delivery
-        // leaves it alone, so the channel's stamp is written here as the
-        // briefing goes out.
-        self.store
-            .mark_review_requests_delivered(&task.id, &author.id, reviewer_id)
-            .await?;
-        Ok(true)
     }
 
     /// Count an attempt at giving this task an agent that came to nothing, and
@@ -1340,115 +422,6 @@ impl super::Scheduler {
         Ok(out)
     }
 
-    /// The agent a task is waiting on, watched.
-    ///
-    /// Whose turn it is, is the author's from the first commit to the merge,
-    /// so the author is the only seat this asks about.
-    /// A task with no live author gets one started; one that has
-    /// reported nothing for too long goes under [`Self::check_session_quiet`],
-    /// which is one nudge per situation, then the user, then a relaunch.
-    /// The task shows that stall too, but nothing here writes it: the flag on
-    /// the session is the record of it, and the task's own column is the
-    /// store's projection of that (`sync_task_stall`).
-    async fn check_stall(&mut self, task: &Task) -> anyhow::Result<()> {
-        let sessions = self
-            .store
-            .list_sessions(SessionFilter {
-                task_id: Some(task.id.clone()),
-                live_only: true,
-                ..Default::default()
-            })
-            .await?;
-        let Some(agent) = sessions.iter().find(|s| s.seat() == Some(Seat::Author)) else {
-            // An author that came up and was never heard from spends an
-            // attempt like a launch that never got off the ground. Without
-            // that, a CLI that exits the moment it starts — a dialog nobody
-            // answered, a folder it will not open — is a task that starts an
-            // agent every tick for as long as its goal is active, and says so
-            // to nobody.
-            let last = self
-                .last_session(&task.id, |s| s.seat() == Some(Seat::Author))
-                .await;
-            if last.as_ref().is_some_and(|session| {
-                session.attention_reason() == Some(AttentionReason::Exhausted)
-            }) {
-                return Ok(());
-            }
-            if let Some(last) = &last
-                && self.spent_on_a_dead_launch(&task.id, &task.id, last)
-            {
-                warn!(task = %task.id, session = %last.id, "the author came up and was never heard from");
-                if self
-                    .record_spawn_failure(&task.id, "its agent stopped as soon as it started")
-                    .await
-                {
-                    return Ok(());
-                }
-            }
-            info!(task = %task.id, "the task is waiting on an author and has none live, starting one");
-            let started = match last.as_ref().is_some_and(|last| last.died_on_arrival()) {
-                // Not on the conversation the launch that died on arrival was
-                // given: an agent that would not reopen it — one it never
-                // saved, or no longer has — will not reopen it the next time
-                // either, and every try spends the budget. A fresh author
-                // takes over, told what the resume would have told it.
-                true => self.start_author_afresh(task).await,
-                false => self.start_author(task).await,
-            };
-            if let Err(e) = started {
-                // The task still wants this agent and could not get one: the
-                // ended session is the thing the user has to look at.
-                self.flag_last_disconnected(task).await;
-                return Err(e);
-            }
-            return Ok(());
-        };
-        // What the attempts before this one spent comes back here, where the
-        // author is up and has said something, rather than at the launch that
-        // started it: a launch that worked is not yet an agent that runs.
-        self.spent_on_a_dead_launch(&task.id, &task.id, agent);
-        // An author that keeps an open request waits on the forge between
-        // its news (005): idle there is not quiet, and it is never nudged
-        // for it (009 rule 41). Only a turn that never ends is watched.
-        if task.status() == TaskStatus::Approved
-            && task.pr_url.is_some()
-            && agent.status() == ariadne_core::SessionStatus::Idle
-        {
-            return Ok(());
-        }
-        // The same words it would be started again with: an agent that has
-        // gone quiet with the work still in front of it and one whose session
-        // ended are in the same situation, and there is one text for it.
-        let nudge = self.resume_text(task).await?;
-        self.check_session_quiet(agent, review_situation(task, &self.store).await?, &nudge)
-            .await
-    }
-
-    /// Put the agent a task is waiting on back on it: its author, resumed
-    /// where its session merely ended and started afresh where there is none.
-    ///
-    /// Whatever the user is owed comes back up with it
-    /// ([`Self::keep_waiting_user`]): starting the author again is the
-    /// recovery for the agent, and no answer at all to a person who still has
-    /// a request to merge.
-    pub(super) async fn start_author(&mut self, task: &Task) -> anyhow::Result<()> {
-        let instruction = self.resume_text(task).await?;
-        let session = self.launcher.resume_author(&task.id, &instruction).await?;
-        self.keep_waiting_user(&session, None).await
-    }
-
-    /// [`Self::start_author`], on a fresh conversation rather than the one
-    /// the author last had: briefed on its task, then told what the resume
-    /// would have said.
-    async fn start_author_afresh(&mut self, task: &Task) -> anyhow::Result<()> {
-        let instruction = self.resume_text(task).await?;
-        let session = self
-            .launcher
-            .spawn_author_told(&task.id, &instruction)
-            .await?;
-        self.keep_waiting_user(&session, None).await
-    }
-
     /// Put back on the agent that came up what a human still owes its work.
     ///
     /// `waiting_user` is nobody's flag but the user's: it says a person owes
@@ -1464,9 +437,9 @@ impl super::Scheduler {
     /// Two ways to know it is owed, and either is enough. `carried` is what
     /// the row that went down was flagged with, for the caller that has that
     /// row. The task is the other, and the one that answers where the flag
-    /// was already lost: an approved task whose open request last read ready
-    /// to merge has handed the merge to a human (005), and no restart of its
-    /// author merges it for them.
+    /// was already lost: a task whose open request last read ready to merge
+    /// has handed the merge to a human (030), and no restart of its agent
+    /// merges it for them.
     pub(super) async fn keep_waiting_user(
         &self,
         back: &AgentSession,
@@ -1474,13 +447,11 @@ impl super::Scheduler {
     ) -> anyhow::Result<()> {
         let mut owed = carried.is_some_and(|reason| reason.is_for_the_user());
         if !owed
-            && matches!(back.seat(), Some(Seat::Author | Seat::Agent))
+            && back.seat() == Some(Seat::Agent)
             && let Some(task_id) = back.task_id.as_deref()
         {
             let task = self.store.get_task(task_id).await?;
-            if task.status() == TaskStatus::Approved
-                || task.status() == TaskStatus::InProgress && task.step.is_some()
-            {
+            if task.status() == TaskStatus::InProgress {
                 owed = self
                     .store
                     .pull_request_of_task(task_id)
@@ -1506,42 +477,10 @@ impl super::Scheduler {
         Ok(())
     }
 
-    /// What the agent a task is waiting on is picked up with, whether its
-    /// session ended or it merely went quiet: its profile's template for the
-    /// situation, rendered.
-    ///
-    /// Two situations, and the task's status tells them apart. An approved
-    /// task is one the author is landing, and what it is picked up with is
-    /// the landing briefing — the whole procedure, which is what a session
-    /// that ended over it has to be given back. Anything earlier is work in
-    /// the worktree, and the resume nudge is what that wants.
-    async fn resume_text(&self, task: &Task) -> anyhow::Result<String> {
-        self.launcher.author_resume_text(task).await
-    }
-
-    /// The session that was last this task's, of the ones `which` picks out,
-    /// whatever state it ended in: the author's seat, or the one staffed
-    /// agent's among several reviewers.
-    async fn last_session(
-        &self,
-        task_id: &str,
-        which: impl Fn(&AgentSession) -> bool,
-    ) -> Option<AgentSession> {
-        let sessions = self
-            .store
-            .list_sessions(SessionFilter {
-                task_id: Some(task_id.to_string()),
-                ..Default::default()
-            })
-            .await
-            .ok()?;
-        sessions.into_iter().rev().find(|s| which(s))
-    }
-
-    /// Raise `disconnected` on the author session that was last on this
-    /// task, whatever state it ended in. Best effort: this runs while another
+    /// Raise `disconnected` on the session that was last this agent's,
+    /// whatever state it ended in. Best effort: this runs while another
     /// failure is being reported, and adds nothing to it if it fails too.
-    async fn flag_last_disconnected(&self, task: &Task) {
+    async fn flag_last_disconnected(&self, task: &Task, agent_id: &str) {
         let Ok(sessions) = self
             .store
             .list_sessions(SessionFilter {
@@ -1555,9 +494,9 @@ impl super::Scheduler {
         if let Some(previous) = sessions
             .iter()
             .rev()
-            .find(|s| s.seat() == Some(Seat::Author))
+            .find(|s| s.task_agent_id.as_deref() == Some(agent_id))
         {
-            warn!(task = %task.id, session = %previous.id, "starting the author failed, flagging its last session disconnected");
+            warn!(task = %task.id, session = %previous.id, "starting the column's agent failed, flagging its last session disconnected");
             let _ = self
                 .store
                 .set_session_attention(&previous.id, AttentionReason::Disconnected)
@@ -1592,17 +531,42 @@ fn short_id(id: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    /// A task is approved when every reviewer staffed on it has approved, so
-    /// a task with no reviewer is approved as soon as its author asks: there
-    /// is nobody to ask. That is what makes work with nothing to review — a
-    /// release, a dependency bump the suite already judged — a task rather
-    /// than a special case.
+    use super::*;
+
+    fn dependency(title: &str, id: &str, status: &str) -> Task {
+        Task {
+            step: None,
+            id: id.into(),
+            goal_id: "01goal".into(),
+            repo_id: "01repo".into(),
+            title: title.into(),
+            description: String::new(),
+            status: status.into(),
+            branch: "dep".into(),
+            worktree_path: None,
+            stalled: 0,
+            merge_commit: None,
+            pr_url: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    /// A task that fails because its dependency ended carries which one and
+    /// how, with the id shortened the way the board shows it.
     #[test]
-    fn a_task_is_approved_by_every_reviewer_staffed_on_it() {
-        let approved = |approvals: i64, reviewers: usize| approvals >= reviewers as i64;
-        assert!(approved(0, 0), "nobody to ask");
-        assert!(!approved(0, 1));
-        assert!(!approved(1, 2), "one of two is not the round closed");
-        assert!(approved(2, 2));
+    fn a_blocked_task_names_the_dependency_and_how_it_ended() {
+        assert_eq!(
+            blocked_reason(&dependency(
+                "Build it",
+                "01m0sktv47w6b8ze6xf4r9jr7c",
+                "failed"
+            )),
+            "dependency \"Build it\" (…f4r9jr7c) failed"
+        );
+        assert_eq!(
+            blocked_reason(&dependency("Ship it", "short", "cancelled")),
+            "dependency \"Ship it\" (short) was cancelled"
+        );
     }
 }

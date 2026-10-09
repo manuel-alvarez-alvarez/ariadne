@@ -365,11 +365,11 @@ mod tests {
                 "/v1/tasks",
                 &TaskListQuery {
                     goal: Some("a b&c".into()),
-                    status: Some(TaskStatus::UnderReview),
+                    status: Some(TaskStatus::InProgress),
                 }
             )
             .unwrap(),
-            "/v1/tasks?goal=a+b%26c&status=under_review"
+            "/v1/tasks?goal=a+b%26c&status=in_progress"
         );
         assert_eq!(
             query_path(

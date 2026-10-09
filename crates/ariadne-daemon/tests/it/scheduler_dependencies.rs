@@ -1,6 +1,6 @@
 //! What a task waiting on its dependencies does when one of them ends.
 //!
-//! A `pending` task is waiting for every dependency to merge. Two of the
+//! A `pending` task is waiting for every dependency to finish. Two of the
 //! statuses a dependency can end in are not that — `failed` and `cancelled` —
 //! and neither of them is ever going to become one: the wait behind such a
 //! dependency is over before it started, so the task ends too, saying which
@@ -16,7 +16,7 @@ use crate::common;
 
 use std::ops::Deref;
 
-use ariadne_core::{Actor, Seat, TaskStatus};
+use ariadne_core::{Actor, TaskStatus};
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_store::{Goal, NewTask, NewTaskAgent, Task};
 
@@ -28,7 +28,7 @@ struct World {
     goal: Goal,
     /// The dependency: the task the second one is waiting on.
     first: Task,
-    /// The dependent: `pending` until the first one merges.
+    /// The dependent: `pending` until the first one finishes.
     second: Task,
 }
 
@@ -47,8 +47,17 @@ impl World {
     async fn on(h: Harness) -> World {
         let (goal, repo) = h.goal().await;
         let first = h
-            .task_on(&goal, &repo, "Build the engine", 1, test_pin())
+            .task_on(&goal, &repo, "Build the engine", test_pin())
             .await;
+        // Staffed like the first, one agent per column, and waiting on it.
+        let agents = h
+            .store
+            .goal_steps(&goal.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|step| NewTaskAgent::new(step.id, Vec::<String>::new(), test_pin()))
+            .collect();
         let second = h
             .store
             .create_task(NewTask {
@@ -56,10 +65,7 @@ impl World {
                 repo_id: repo.id.clone(),
                 title: "Drive what the engine built".into(),
                 description: "do things".into(),
-                agents: vec![
-                    NewTaskAgent::new(Seat::Author, ["coding"], test_pin()),
-                    NewTaskAgent::new(Seat::Reviewer, ["code-review"], test_pin()),
-                ],
+                agents,
                 depends_on: vec![first.id.clone()],
             })
             .await
@@ -177,28 +183,20 @@ async fn a_task_retried_after_its_dependency_landed_is_not_failed_again() {
     })
     .await;
 
-    // The dependency retried and taken all the way to finished. The scheduler
-    // is running over the same task, so a move it has already made is not a
-    // failure of the walk: only the merge at the end of it is this test's.
+    // The dependency retried and taken all the way to finished: through every
+    // column to the last, and out of it with its merge commit. The scheduler
+    // is running over the same task, so a step it has already taken is not a
+    // failure of the walk: only the finish at the end of it is this test's.
     w.store
         .transition_task(&w.first.id, TaskStatus::Ready, Actor::User, None, None)
         .await
         .unwrap();
-    for (status, actor) in [
-        (TaskStatus::InProgress, Actor::Daemon),
-        (TaskStatus::UnderReview, Actor::Author),
-        (TaskStatus::Approved, Actor::Daemon),
-    ] {
-        let _ = w
-            .store
-            .transition_task(&w.first.id, status, actor, None, None)
-            .await;
-    }
+    w.advance_to(&w.first, "merge").await;
     w.store
         .transition_task(
             &w.first.id,
             TaskStatus::Finished,
-            Actor::Author,
+            Actor::Daemon,
             None,
             Some("abc123"),
         )

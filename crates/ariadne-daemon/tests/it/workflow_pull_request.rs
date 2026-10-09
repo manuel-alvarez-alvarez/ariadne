@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use ariadne_core::{AttentionReason, GoalStatus, Seat, SessionStatus, TaskStatus};
+use ariadne_core::{AttentionReason, GoalStatus, SessionStatus, TaskStatus};
 use ariadne_daemon::forge::poll::Mode;
 use ariadne_store::{
     AgentSession, NewGoal, NewTask, NewTaskAgent, NewWorkflow, SessionFilter, Task,
@@ -11,8 +11,7 @@ use axum::http::StatusCode;
 use serde_json::{Value, json};
 
 use crate::common::forge::{StubForgeCli, answer, opened_pull, stub_forge_cli};
-use crate::common::{Harness, TIMEOUT, as_session, eventually, harness, sh, test_pin};
-use crate::landing_lifecycle::with_forge;
+use crate::common::{Harness, TIMEOUT, as_session, eventually, harness, sh, test_pin, with_forge};
 
 const URL: &str = "https://github.com/acme/widgets/pull/1";
 
@@ -72,7 +71,7 @@ async fn session_at(h: &Harness, task: &Task, step: &str) -> AgentSession {
         .await
         .unwrap()
         .into_iter()
-        .find(|a| a.step.as_deref() == Some(step))
+        .find(|a| a.step == step)
         .unwrap();
     eventually(
         TIMEOUT,
@@ -127,7 +126,6 @@ async fn request_column(hold_news: bool, deploy_after: bool) -> RequestColumn {
             issue_url: None,
             repository_ids: vec![repo.id.clone()],
             pin: test_pin(),
-            landing: None,
             workflow: Some(workflow.into()),
         })
         .await
@@ -140,11 +138,7 @@ async fn request_column(hold_news: bool, deploy_after: bool) -> RequestColumn {
     let agents = steps
         .iter()
         .copied()
-        .map(|step| {
-            let mut agent = NewTaskAgent::new(Seat::Agent, Vec::<String>::new(), test_pin());
-            agent.step = Some(step.into());
-            agent
-        })
+        .map(|step| NewTaskAgent::new(step, Vec::<String>::new(), test_pin()))
         .collect();
     let task = h
         .store
@@ -188,7 +182,7 @@ async fn request_column(hold_news: bool, deploy_after: bool) -> RequestColumn {
         h.agent.reprogram(held);
     }
     let _: Value = h
-        .json(step(&review, "The change is approved."), StatusCode::OK)
+        .json(step(&review, "The change passes review."), StatusCode::OK)
         .await;
     let agent = session_at(&h, &task, "pr").await;
     let remote = h.at("remote.git");

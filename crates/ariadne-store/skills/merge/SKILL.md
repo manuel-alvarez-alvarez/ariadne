@@ -1,11 +1,11 @@
 ---
 name: merge
-description: Land an approved task on the base branch. Rebase, run the whole suite once, squash, fast-forward and push.
+description: Land a reviewed task on the base branch. Rebase, run the whole suite once, squash, fast-forward and push.
 ---
 
 # Merge
 
-Land the approved task on the base branch, in your worktree. `<remote>`
+Land the reviewed task on the base branch, in your worktree. `<remote>`
 is what `git remote -v` names, if it names one.
 
 ## Steps

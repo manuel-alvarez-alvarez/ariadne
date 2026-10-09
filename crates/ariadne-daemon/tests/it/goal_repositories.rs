@@ -3,8 +3,9 @@
 //! What a goal is created with is a repository id; what its tasks branch from
 //! is whatever that repository says at the time. So the checks here run the
 //! whole way through: register a repository over HTTP, create a goal on it,
-//! create a task, and see the worktree the launcher makes from the path and
-//! base branch the repository holds — including after that base branch moves.
+//! create a task, and see the worktree the daemon cuts for the task's first
+//! column from the path and base branch the repository holds — including
+//! after that base branch moves.
 //!
 //! No coding-agent CLI: every agent is pinned to the harness's stub ACP agent,
 //! so nothing here looks for one on `PATH`. `git` is real.
@@ -18,18 +19,21 @@ use axum::http::StatusCode;
 use ariadne_api::goals::GoalDto;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::tasks::TaskDto;
+use ariadne_core::TaskStatus;
+use ariadne_store::AgentSession;
 
 use common::{Harness, delete, harness, post_json, put_json, sh};
 
 /// The pin every goal and every agent here is created with: the harness's
-/// own stub agent. What is under test here is the worktree a spawn cuts, not
+/// own stub agent. What is under test here is the worktree a start cuts, not
 /// the agent it starts.
 fn pinned() -> String {
     common::test_pin().model
 }
 
+/// A daemon with a scheduler: a column's agent is started by nothing else.
 async fn pinned_harness() -> Harness {
-    harness().await
+    harness().scheduler().await
 }
 
 async fn register(h: &Harness, path: &Path, base_branch: &str) -> RepositoryDto {
@@ -56,20 +60,36 @@ async fn goal_on(h: &Harness, repository_ids: Vec<&str>) -> GoalDto {
     .await
 }
 
+/// A task on `goal`, one agent per column of its workflow.
 async fn task_in(h: &Harness, goal: &GoalDto) -> TaskDto {
+    let agents: Vec<_> = goal
+        .steps
+        .iter()
+        .map(|step| serde_json::json!({"step": step.id, "model": pinned()}))
+        .collect();
     h.json(
         post_json(
             &format!("/v1/goals/{}/tasks", goal.id),
-            serde_json::json!({"title": "Do the thing", "agents": [
-                {"seat": "author", "skills": ["coding"], "model": pinned()},
-                {"seat": "reviewer", "skills": ["code-review"], "model": pinned()}]}),
+            serde_json::json!({"title": "Do the thing", "agents": agents}),
         ),
         StatusCode::CREATED,
     )
     .await
 }
 
-/// Register a repository, create a goal on it, create a task: the author's
+/// Start the task: the goal leaves planning, the daemon puts the task in its
+/// first column, and the scheduler starts that column's agent in the
+/// worktree it cuts for the task.
+async fn started(h: &Harness, task: &TaskDto) -> AgentSession {
+    let stored = h.store.get_task(&task.id).await.unwrap();
+    let goal = h.store.get_goal(&task.goal_id).await.unwrap();
+    h.activate(&goal).await;
+    h.advance(&stored, TaskStatus::InProgress).await;
+    h.notify(&task.id);
+    h.step_session(&stored, "develop").await
+}
+
+/// Register a repository, create a goal on it, create a task: the task's
 /// worktree is cut from that repository's checkout and base branch.
 #[tokio::test]
 async fn a_task_branches_from_the_repository_its_goal_references() {
@@ -83,7 +103,7 @@ async fn a_task_branches_from_the_repository_its_goal_references() {
     let task = task_in(&h, &goal).await;
     assert_eq!(task.repo_id, registered.id, "the goal has one repository");
 
-    let session = h.launcher.spawn_author(&task.id).await.unwrap();
+    let session = started(&h, &task).await;
     let worktree = PathBuf::from(session.worktree_path.unwrap());
     assert!(worktree.is_dir(), "the worktree was created");
     assert_eq!(
@@ -120,7 +140,7 @@ async fn editing_the_base_branch_moves_what_new_tasks_branch_from() {
     assert_eq!(goal.repos[0].base_branch, "main", "the goal moved with it");
 
     let task = task_in(&h, &goal).await;
-    let session = h.launcher.spawn_author(&task.id).await.unwrap();
+    let session = started(&h, &task).await;
     let worktree = PathBuf::from(session.worktree_path.unwrap());
     assert_eq!(
         sh(&worktree, "git rev-parse HEAD"),
@@ -201,127 +221,22 @@ async fn a_goal_cannot_be_created_on_an_unknown_repository() {
     assert!(goals.is_empty(), "neither attempt left a goal behind");
 }
 
+/// A goal's repositories are the registered rows as they stand, and nothing
+/// of the goal's own rides on them: no branch of the goal's, since every
+/// task branches from the repository's base.
 #[tokio::test]
-async fn other_landings_finalize_without_a_goal_branch() {
-    for landing in ["none", "merge", "pull_request"] {
-        let h = harness().await;
-        let path = h.git_repo("repo");
-        let repo = register(&h, &path, "main").await;
-        let goal: GoalDto = h.json(post_json("/v1/goals", serde_json::json!({
-            "title": "Ship it", "repository_ids": [repo.id], "model": pinned(), "landing": landing,
-        })), StatusCode::CREATED).await;
-        task_in(&h, &goal).await;
-        let stored = h.store.get_goal(&goal.id).await.unwrap();
-        let orchestrator = h.orchestrator_session(&stored).await;
-        let refs = sh(&path, "git show-ref");
-        let finalized: serde_json::Value = h
-            .json(
-                common::as_session(
-                    &format!("/v1/goals/{}/finalize", goal.id),
-                    &orchestrator.id,
-                    serde_json::json!({}),
-                ),
-                StatusCode::OK,
-            )
-            .await;
-        assert!(
-            finalized["repos"][0]
-                .get("goal_branch")
-                .is_some_and(serde_json::Value::is_null)
-        );
-        assert_eq!(sh(&path, "git show-ref"), refs);
-    }
-}
-
-#[tokio::test]
-async fn a_failed_goal_branch_push_keeps_planning_and_can_retry() {
-    let h = harness().await;
-    let path = h.git_repo("repo");
-    let repo = register(&h, &path, "main").await;
-    let goal: GoalDto = h.json(post_json("/v1/goals", serde_json::json!({
-        "title": "Ship it", "repository_ids": [repo.id], "model": pinned(), "landing": "feature_branch",
-    })), StatusCode::CREATED).await;
-    let task = task_in(&h, &goal).await;
-    let stored = h.store.get_goal(&goal.id).await.unwrap();
-    let orchestrator = h.orchestrator_session(&stored).await;
-    let remote = h.at("remote.git");
-    sh(
-        &path,
-        &format!("git remote add origin '{}'", remote.display()),
-    );
-    h.error(
-        common::as_session(
-            &format!("/v1/goals/{}/finalize", goal.id),
-            &orchestrator.id,
-            serde_json::json!({}),
-        ),
-        StatusCode::CONFLICT,
-    )
-    .await;
-    assert_eq!(
-        h.store.get_goal(&goal.id).await.unwrap().status(),
-        ariadne_core::GoalStatus::Planning
-    );
-    assert_eq!(h.status(&task.id).await, ariadne_core::TaskStatus::Pending);
-    let before_retry = sh(&path, "git show-ref --heads");
-    std::fs::write(
-        path.join(".git/hooks/pre-push"),
-        "#!/bin/sh\ntest \"$GIT_TERMINAL_PROMPT\" = 0\n",
-    )
-    .unwrap();
-    sh(&path, "chmod +x .git/hooks/pre-push");
-    sh(&path, &format!("git init -q --bare '{}'", remote.display()));
-    let finalized: serde_json::Value = h
-        .json(
-            common::as_session(
-                &format!("/v1/goals/{}/finalize", goal.id),
-                &orchestrator.id,
-                serde_json::json!({}),
-            ),
-            StatusCode::OK,
-        )
-        .await;
-    assert_eq!(sh(&path, "git show-ref --heads"), before_retry);
-    let branch = finalized["repos"][0]["goal_branch"].as_str().unwrap();
-    assert_eq!(
-        sh(&remote, &format!("git rev-parse {branch}")),
-        sh(&path, "git rev-parse main")
-    );
-}
-
-#[tokio::test]
-async fn a_feature_goal_refuses_an_unborn_base_with_a_clear_message() {
-    let h = harness().await;
-    let path = h.at("empty");
-    std::fs::create_dir_all(&path).unwrap();
-    sh(&path, "git init -q -b main");
-    let repo = register(&h, &path, "main").await;
-    let goal: GoalDto = h.json(post_json("/v1/goals", serde_json::json!({
-        "title": "Ship it", "repository_ids": [repo.id], "model": pinned(), "landing": "feature_branch",
-    })), StatusCode::CREATED).await;
-    task_in(&h, &goal).await;
-    let stored = h.store.get_goal(&goal.id).await.unwrap();
-    let orchestrator = h.orchestrator_session(&stored).await;
-    let error = h
-        .error(
-            common::as_session(
-                &format!("/v1/goals/{}/finalize", goal.id),
-                &orchestrator.id,
-                serde_json::json!({}),
-            ),
-            StatusCode::CONFLICT,
-        )
-        .await;
+async fn a_goal_lists_its_repositories_as_registered() {
+    let h = pinned_harness().await;
+    let registered = register(&h, &h.git_repo("repo"), "main").await;
+    let goal = goal_on(&h, vec![&registered.id]).await;
+    let read: serde_json::Value = h.get(&format!("/v1/goals/{}", goal.id)).await;
+    let repos = read["repos"].as_array().unwrap();
+    assert_eq!(repos.len(), 1);
+    assert_eq!(repos[0]["id"], registered.id);
+    assert_eq!(repos[0]["base_branch"], "main");
+    assert_eq!(repos[0]["default_workflow"], registered.default_workflow);
     assert!(
-        error
-            .error
-            .message
-            .contains("base branch main has no commits; create its first commit before finalizing"),
-        "{}",
-        error.error.message
-    );
-    assert_eq!(
-        h.store.get_goal(&goal.id).await.unwrap().status(),
-        ariadne_core::GoalStatus::Planning
+        repos[0].get("goal_branch").is_none(),
+        "a goal has no branch of its own: {repos:?}"
     );
 }

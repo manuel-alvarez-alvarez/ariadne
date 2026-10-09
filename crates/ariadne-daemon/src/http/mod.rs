@@ -4,6 +4,7 @@ pub use events::ingest_event;
 
 mod caller;
 mod catalog;
+mod channel;
 pub(crate) mod classify;
 mod console;
 pub(crate) mod convert;
@@ -13,7 +14,6 @@ pub(crate) mod events;
 mod forge;
 mod goals;
 mod issues;
-mod landing;
 mod logs;
 mod permissions;
 mod pins;
@@ -151,9 +151,9 @@ impl AppState {
         goals::cancel, goals::complete, goals::finalize,
         tasks::create, tasks::list, tasks::get, tasks::update,
         tasks::transition, tasks::cancel, tasks::retry, tasks::list_transitions,
-        landing::list_task_messages, landing::post_task_message,
-        goals::list_goal_messages, goals::post_goal_message, landing::diff,
-        landing::open_pull_request, landing::pick_winner, steps::complete, steps::fail,
+        channel::list_task_messages, channel::post_task_message,
+        goals::list_goal_messages, goals::post_goal_message, channel::diff,
+        channel::open_pull_request, steps::complete, steps::fail,
         sessions::list, sessions::create, sessions::resume_outside,
         sessions::get, sessions::kill, sessions::resume, sessions::switch,
         console::snapshot, console::stream, console::input, console::cancel,
@@ -322,15 +322,14 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/tasks/{id}/retry", post(tasks::retry))
         .route(
             "/v1/tasks/{id}/messages",
-            get(landing::list_task_messages).post(landing::post_task_message),
+            get(channel::list_task_messages).post(channel::post_task_message),
         )
-        .route("/v1/tasks/{id}/diff", get(landing::diff))
+        .route("/v1/tasks/{id}/diff", get(channel::diff))
         .route("/v1/tasks/{id}/step/complete", post(steps::complete))
         .route("/v1/tasks/{id}/step/fail", post(steps::fail))
-        .route("/v1/tasks/{id}/pick", post(landing::pick_winner))
         .route(
             "/v1/tasks/{id}/pull-request",
-            post(landing::open_pull_request),
+            post(channel::open_pull_request),
         )
         // sessions
         .route("/v1/sessions", get(sessions::list).post(sessions::create))

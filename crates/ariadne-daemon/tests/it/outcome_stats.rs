@@ -1,20 +1,15 @@
-//! Integration tests for the stats ledger (023): the `task_ended`
-//! fact a task writes once it reaches `finished`, `cancelled` or `failed`,
-//! and the `pick` fact a contested task's settled pick writes.
+//! Integration tests for the stats ledger (023): the `task_ended` fact a
+//! task writes once it reaches `finished`, `cancelled` or `failed`, filled
+//! from the agent of the column it ended in.
 
 use crate::common;
 
-use ariadne_core::{Actor, MessageKind, Seat, TaskStatus};
-use ariadne_store::{AgentPin, AgentSession, NewMessage, NewTask, NewTaskAgent, SessionFilter};
+use ariadne_core::{Actor, TaskStatus};
 use chrono::{Duration as ChronoDuration, Utc};
 
-use common::{Harness, eventually, harness, test_pin};
-use std::time::Duration;
+use common::{Harness, harness};
 
-/// How long a test waits for the scheduler to reach a state.
-const TIMEOUT: Duration = Duration::from_secs(20);
-
-/// Walk a fresh task from `pending` straight to `in_progress`, with no agent
+/// Walk a fresh task from `pending` into its first column, with no agent
 /// started: the sessions here are rows, and the moves are the ones the
 /// daemon itself makes between them.
 async fn start(h: &Harness, task_id: &str) {
@@ -42,39 +37,30 @@ async fn transition_at(
         .unwrap();
 }
 
-/// A task that finishes writes one `task_ended` fact: its status, its
-/// author's model, and a lead time counted from its own creation.
+/// A task that finishes writes one `task_ended` fact: its status, the column
+/// it ended in and that column's agent — its model and its skills — whether
+/// its change landed, and a lead time counted from its own creation.
 #[tokio::test]
 async fn a_finished_task_writes_one_task_ended_fact() {
     let h = harness().await;
     let cast = h.cast().await;
     start(&h, &cast.task.id).await;
-    h.store
-        .transition_task(
-            &cast.task.id,
-            TaskStatus::UnderReview,
-            Actor::Author,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    h.store
-        .transition_task(
-            &cast.task.id,
-            TaskStatus::Approved,
-            Actor::Daemon,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
+    assert_eq!(
+        h.store
+            .get_task(&cast.task.id)
+            .await
+            .unwrap()
+            .step
+            .as_deref(),
+        Some("develop"),
+        "the daemon put the task in its first column"
+    );
     h.store
         .transition_task(
             &cast.task.id,
             TaskStatus::Finished,
-            Actor::Author,
-            None,
+            Actor::Agent,
+            Some("The change is on the base."),
             Some("abc123"),
         )
         .await
@@ -84,28 +70,55 @@ async fn a_finished_task_writes_one_task_ended_fact() {
     assert_eq!(facts.len(), 1, "{facts:?}");
     let fact = &facts[0];
     assert_eq!(fact.model.as_deref(), Some("stub:test-model"));
-    assert_eq!(fact.seat.as_deref(), Some("author"));
-    assert_eq!(fact.skills, ["coding"]);
+    assert_eq!(fact.seat.as_deref(), Some("agent"));
+    assert_eq!(fact.skills, ["coding"], "the develop column's own skills");
     assert_eq!(fact.data["status"], "finished");
-    assert_eq!(fact.data["authors"], 1);
-    assert_eq!(fact.data["picked"], false);
+    assert_eq!(fact.data["step"], "develop");
+    assert_eq!(fact.data["landed"], true);
+    assert_eq!(fact.data["reason"], "The change is on the base.");
     assert!(fact.data["lead_time_secs"].as_i64().unwrap() >= 0);
-    for status in [
-        "pending",
-        "ready",
-        "in_progress",
-        "under_review",
-        "approved",
-    ] {
+    for status in ["pending", "ready", "in_progress"] {
         assert!(
             fact.data["status_secs"][status].is_number(),
             "{status}: {fact:?}"
         );
     }
+    for gone in ["landing", "review_requests", "authors", "picked"] {
+        assert!(fact.data.get(gone).is_none(), "{gone} is no fact: {fact:?}");
+    }
+}
+
+/// A task cancelled before it entered a column names no agent: the fact has
+/// no seat, no model, no skills and no column, and its change never landed.
+#[tokio::test]
+async fn a_task_cancelled_before_its_first_column_names_no_agent() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    h.store
+        .transition_task(
+            &cast.task.id,
+            TaskStatus::Cancelled,
+            Actor::User,
+            Some("Not wanted."),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let facts = h.facts("task_ended").await;
+    assert_eq!(facts.len(), 1, "{facts:?}");
+    let fact = &facts[0];
+    assert_eq!(fact.data["status"], "cancelled");
+    assert_eq!(fact.seat, None);
+    assert_eq!(fact.model, None);
+    assert!(fact.skills.is_empty());
+    assert!(fact.data.get("step").is_none(), "{fact:?}");
+    assert_eq!(fact.data["landed"], false);
 }
 
 /// A task retried after it failed, and that fails again, writes a fact for
-/// each of the two endings.
+/// each of the two endings, each with the time the task spent `ready` before
+/// that ending.
 #[tokio::test]
 async fn a_retried_task_that_fails_again_writes_two_facts() {
     let h = harness().await;
@@ -134,7 +147,7 @@ async fn a_retried_task_that_fails_again_writes_two_facts() {
         &h,
         &cast.task.id,
         TaskStatus::Failed,
-        Actor::Author,
+        Actor::Agent,
         Some("could not do it"),
         at(2),
     )
@@ -161,7 +174,7 @@ async fn a_retried_task_that_fails_again_writes_two_facts() {
         &h,
         &cast.task.id,
         TaskStatus::Failed,
-        Actor::Author,
+        Actor::Agent,
         Some("still could not do it"),
         at(5),
     )
@@ -170,140 +183,10 @@ async fn a_retried_task_that_fails_again_writes_two_facts() {
     let facts = h.facts("task_ended").await;
     assert_eq!(facts.len(), 2, "{facts:?}");
     assert!(facts.iter().all(|f| f.data["status"] == "failed"));
+    assert!(
+        facts.iter().all(|f| f.data["step"] == "develop"),
+        "both endings happened in the first column: {facts:?}"
+    );
     assert_eq!(facts[0].data["status_secs"]["ready"], 1, "{facts:?}");
     assert_eq!(facts[1].data["status_secs"]["ready"], 2, "{facts:?}");
-}
-
-/// The live author sessions of a task, in no particular order.
-async fn live_authors(h: &Harness, task_id: &str) -> Vec<AgentSession> {
-    h.store
-        .list_sessions(SessionFilter {
-            task_id: Some(task_id.to_string()),
-            live_only: true,
-            ..Default::default()
-        })
-        .await
-        .unwrap()
-        .into_iter()
-        .filter(|s| s.seat() == Some(Seat::Author))
-        .collect()
-}
-
-/// A two-author task writes one `pick` fact once the reviewer settles it: the
-/// winner's model, the loser's model, and the one reviewer that picked.
-#[tokio::test]
-async fn a_contested_pick_writes_one_pick_fact() {
-    let h = harness().scheduler().await;
-    h.git_repo("repo");
-    let repo = h.repository(&h.at("repo")).await;
-    let goal = h.goal_on(&repo, test_pin()).await;
-    let loser_pin = AgentPin {
-        model: "stub:model-a".into(),
-        effort: None,
-    };
-    let winner_pin = AgentPin {
-        model: "stub:model-b".into(),
-        effort: None,
-    };
-    let task = h
-        .store
-        .create_task(NewTask {
-            goal_id: goal.id.clone(),
-            repo_id: repo.id.clone(),
-            title: "Contested work".into(),
-            description: "do things".into(),
-            agents: vec![
-                NewTaskAgent::new(Seat::Author, ["coding"], loser_pin.clone()),
-                NewTaskAgent::new(Seat::Author, ["coding"], winner_pin.clone()),
-                NewTaskAgent::new(Seat::Reviewer, ["code-review"], test_pin()),
-            ],
-            depends_on: vec![],
-        })
-        .await
-        .unwrap();
-    let authors = h.store.list_task_authors(&task.id).await.unwrap();
-    let loser = authors[0].clone();
-    let winner = authors[1].clone();
-    let reviewer = h
-        .store
-        .list_task_reviewers(&task.id)
-        .await
-        .unwrap()
-        .remove(0);
-
-    h.activate(&goal).await;
-    h.notify(&task.id);
-    eventually(TIMEOUT, "both authors to be spawned", async || {
-        h.status(&task.id).await == TaskStatus::InProgress
-            && live_authors(&h, &task.id).await.len() == 2
-    })
-    .await;
-    // The session the pick settles against: the landing that follows it
-    // resumes the winner under its own session, which a lookup made after
-    // the settlement would find instead of this one.
-    let winner_session = live_authors(&h, &task.id)
-        .await
-        .into_iter()
-        .find(|s| s.task_agent_id.as_deref() == Some(winner.id.as_str()))
-        .expect("the winner's session");
-
-    h.store
-        .transition_task(&task.id, TaskStatus::UnderReview, Actor::Author, None, None)
-        .await
-        .unwrap();
-    for author in [&loser, &winner] {
-        h.store
-            .send_message(NewMessage {
-                goal_id: task.goal_id.clone(),
-                task_id: Some(task.id.clone()),
-                kind: MessageKind::ReviewRequest,
-                from_actor: Actor::Author,
-                from_agent_id: Some(author.id.clone()),
-                from_session: None,
-                to_actor: Actor::Reviewer,
-                to_agent_id: Some(reviewer.id.clone()),
-                body: "an attempt".into(),
-            })
-            .await
-            .unwrap();
-        h.store
-            .send_message(NewMessage {
-                goal_id: task.goal_id.clone(),
-                task_id: Some(task.id.clone()),
-                kind: MessageKind::Approve,
-                from_actor: Actor::Reviewer,
-                from_agent_id: Some(reviewer.id.clone()),
-                from_session: None,
-                to_actor: Actor::Author,
-                to_agent_id: Some(author.id.clone()),
-                body: "judged".into(),
-            })
-            .await
-            .unwrap();
-    }
-
-    h.store
-        .record_pick(&task.id, &reviewer.id, &winner.id)
-        .await
-        .unwrap();
-    h.notify(&task.id);
-    eventually(TIMEOUT, "the pick to settle", async || {
-        h.store.get_task(&task.id).await.unwrap().status() == TaskStatus::Approved
-    })
-    .await;
-
-    let facts = h.facts("pick").await;
-    assert_eq!(facts.len(), 1, "{facts:?}");
-    assert_eq!(facts[0].model.as_deref(), Some(winner_pin.model.as_str()));
-    assert_eq!(
-        facts[0].session_id.as_deref(),
-        Some(winner_session.id.as_str())
-    );
-    assert_eq!(facts[0].launch_id, winner_session.launch_id);
-    assert_eq!(facts[0].data["winner_model"], winner_pin.model);
-    assert_eq!(
-        facts[0].data["loser_models"],
-        serde_json::json!([loser_pin.model])
-    );
-    assert_eq!(facts[0].data["reviewers"], 1);
 }
