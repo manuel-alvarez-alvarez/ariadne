@@ -6740,6 +6740,28 @@ async fn opening_a_database_with_a_destructive_migration_pending_backs_it_up_fir
     assert_eq!(recovered.get_goal("g_merge").await.unwrap().title, "Merge");
 }
 
+/// `VACUUM INTO` creates its destination the moment it starts, so a process
+/// killed partway through a backup leaves an empty file at that name. A
+/// later open must not take that file for a finished backup and run the
+/// destructive migration straight over it with nothing recoverable behind.
+#[tokio::test]
+async fn opening_a_database_redoes_a_backup_an_earlier_attempt_left_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = old_pipeline_database(&dir).await;
+    let backup = std::path::PathBuf::from(format!("{}.backup-schema-20", path.display()));
+    std::fs::write(&backup, b"").unwrap();
+
+    let store = Store::open(&path).await.unwrap();
+    store.close().await;
+
+    assert!(
+        std::fs::metadata(&backup).unwrap().len() > 0,
+        "the empty file an earlier attempt left was redone, not trusted"
+    );
+    let recovered = Store::open(&backup).await.unwrap();
+    assert_eq!(recovered.get_goal("g_merge").await.unwrap().title, "Merge");
+}
+
 #[tokio::test]
 async fn invalid_stored_column_skills_refuse_staffing_without_writing_a_task() {
     use sqlx::Connection;

@@ -248,9 +248,27 @@ impl Store {
                 .await?;
             if MIGRATIONS.iter().any(|m| !applied.contains(&m.version)) {
                 let backup = backup_path(path.as_ref(), applied.iter().max().copied().unwrap_or(0));
-                if !backup.is_file() {
-                    let to = backup.to_str().ok_or_else(|| {
-                        StoreError::Invalid(format!("{} is not valid UTF-8", backup.display()))
+                // `VACUUM INTO` creates its destination the moment it starts
+                // and fills it as it runs: a process killed mid-backup, on a
+                // release before this one wrote straight to this name, left
+                // it holding an empty file, which a plain existence check
+                // takes for a finished backup and skips redoing. A backup
+                // worth trusting is never empty.
+                let done = std::fs::metadata(&backup)
+                    .map(|m| m.len() > 0)
+                    .unwrap_or(false);
+                if !done {
+                    // Written under a name of its own and renamed into place
+                    // only once whole, so this release's own attempt never
+                    // leaves a half-written file at the final name for a
+                    // later open to mistake for one — `rename` replaces
+                    // whatever stale, empty file sat there already.
+                    let mut tmp = backup.clone().into_os_string();
+                    tmp.push(".tmp");
+                    let tmp = PathBuf::from(tmp);
+                    let _ = std::fs::remove_file(&tmp);
+                    let to = tmp.to_str().ok_or_else(|| {
+                        StoreError::Invalid(format!("{} is not valid UTF-8", tmp.display()))
                     })?;
                     sqlx::query("VACUUM INTO ?")
                         .bind(to)
@@ -261,6 +279,12 @@ impl Store {
                                 "could not back the database up before migrating it: {e}"
                             ))
                         })?;
+                    std::fs::rename(&tmp, &backup).map_err(|e| {
+                        StoreError::Invalid(format!(
+                            "could not finish the database backup at {}: {e}",
+                            backup.display()
+                        ))
+                    })?;
                 }
             }
         }
