@@ -10,7 +10,7 @@ ariadne events -f --goal <goal-id>     # one goal's; also --task, --session, --k
 ariadne events -f --format json        # one JSON object per line, for a pipe
 
 ariadne session logs <session-id> -f   # an agent's event transcript, until it ends
-ariadne task logs <task-id> -f         # the same, found by task (--seat reviewer)
+ariadne task logs <task-id> -f         # the same, found by task
 ariadne session logs <id> --tail 20    # only the last twenty transcript blocks
 ariadne task logs <id> --since 10m --kind agent_message
 ariadne daemon logs -f                 # the daemon's own log, over the API
@@ -18,7 +18,7 @@ ariadne daemon logs -f                 # the daemon's own log, over the API
 ariadne attention --watch              # redrawn whenever something needs you
 ariadne task ls --watch --goal <id>    # redrawn whenever a task moves
 ariadne goal ls --watch                # redrawn whenever a goal moves
-ariadne session ls --watch --seat reviewer  # redrawn whenever a session moves
+ariadne session ls --watch --seat agent  # redrawn whenever a session moves
 ```
 
 `ariadne events` opens on the most recent recorded events — the last 200 of

@@ -11,9 +11,9 @@ attach` opens either one.
 ariadne session ls
 ```
 
-lists Ariadne's own sessions — an orchestrator's, an author's, a reviewer's —
-next to outside sessions: conversations an ACP agent holds that Ariadne never
-started. Rows come newest activity first. The columns are `id`, `title`,
+lists Ariadne's own sessions — an orchestrator's, a column agent's, a
+reviewer's — next to outside sessions: conversations an ACP agent holds that
+Ariadne never started. Rows come newest activity first. The columns are `id`, `title`,
 `status`, `goal`, `task`, `agent`, `age` and `tokens`; add `directory` with
 `--columns`. An outside session has no status, goal or task of its own yet,
 so those columns are empty for it.
@@ -43,7 +43,7 @@ ariadne session ls --kind outside --agent codex-acp --dir ~/projects/api \
 
 `--kind` limits the table to Ariadne's own sessions or to outside ones,
 `--agent` to one registry agent, `--status` to a session status, `--seat` to
-`orchestrator`, `author` or `reviewer`, and `--goal` or `--task` to one
+`orchestrator`, `agent` or `reviewer`, and `--goal` or `--task` to one
 goal's or task's sessions. `--attention` keeps only sessions waiting for a
 person. `--dir` matches a working directory and everything under it, and
 `--search` matches part of the title or first prompt, without case
@@ -89,10 +89,11 @@ leave whenever you want. The agent keeps working after you do.
 ## What a resumed session is
 
 A resumed outside session has no goal, no task and no seat: nobody plans it,
-authors it, or reviews it. It has no worktree either, and no landing — the
-agent keeps working in the directory the original conversation already used,
-against your checkout as it stands, and nothing it does is merged, opened as
-a pull request, or otherwise landed on your behalf. Resuming does not copy
+works it, or reviews it. It has no worktree either, and no workflow column —
+the agent keeps working in the directory the original conversation already
+used, against your checkout as it stands, and nothing it does is merged,
+opened as a pull request, or otherwise placed on your behalf. Resuming does
+not copy
 the conversation or change what the agent already knows; it is the same
 session, reached through Ariadne instead of whatever you used to reach it
 before.

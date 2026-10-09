@@ -92,9 +92,9 @@ ariadne stats work --format json
 ## Time
 
 Time shows how long finished tasks took from creation to their ending. It
-shows the median, p90 and mean lead time, then breaks time down by task status:
-pending, ready, in progress, under review, changes requested and approved.
-Each status has its total, median and share of all recorded status time.
+shows the median, p90 and mean lead time, then breaks time down by task
+status: pending, ready and in progress. Each status has its total, median
+and share of all recorded status time.
 
 It also shows how long work waited for a person to answer a permission prompt.
 Only console decisions count there; automated, learned and AI decisions do
@@ -122,54 +122,26 @@ Compare models within the same seat to choose who should do the next job.
 
 ```sh
 ariadne stats models
-ariadne stats models --seat author --since 7d
+ariadne stats models --seat agent --since 7d
 ariadne stats models --format json
 ```
 
-The command shows all seats by default.
-Use `--seat author`, `--seat reviewer`, or `--seat orchestrator` to show one table.
-JSON always returns every seat, even with `--seat`.
-The desktop shows Authors, Reviewers, and Orchestrators, with the largest task, verdict, or session count first.
-Seats without rows have no table.
-When no author, reviewer, or orchestrator rows exist, the desktop shows its empty state.
-This includes responses with only seatless rows.
+The command shows every seat by default. Use `--seat agent` or `--seat
+orchestrator` to show one table. JSON always returns every seat, even with
+`--seat`. The desktop shows Agents and Orchestrators, with the largest task
+or goal count first. A seat with no rows has no table.
 
-Authors show task endings, finish rate, first-pass rate, average review rounds, contest win rate, and tokens per finished task.
-TASKS includes finished, failed, and cancelled endings; retries can contribute more than one ending.
-Finish rate is finished endings divided by finished, failed, and cancelled endings combined.
-First-pass rate is reviewed tasks with a round-one approval divided by all reviewed tasks for that author model.
-Any reviewer's round-one approval qualifies, and each task counts once.
-ROUNDS averages review requests across task endings.
-Win rate is contests won divided by contests entered, counting a model only once per contest.
-TOKENS/TASK averages author-session input plus output across distinct finished tasks attributed to that model.
-It includes zero tokens for finished tasks without matching sessions.
+Agents show the model's tasks, tokens, time, messages and finished tasks.
+TASKS counts the distinct tasks a model ran a session on as a column's
+agent; FINISHED counts the ones that column ended `finished`. Orchestrators
+show the same figures by goal instead of by task, with no FINISHED column.
+TOKENS is input and output tokens together, cached tokens counted once
+within input. TIME is the sum of that model's session lifetimes in that
+seat, and MESSAGES the count of messages it sent there.
 
-Reviewers show verdict count, approval share, and average time from the review request to the verdict.
-Approve share is approval verdicts divided by all verdicts.
-Orchestrators show session count, input plus output tokens, and average session lifetime.
-Every table shows failed sessions and switches caused by exhaustion under FAILED and EXHAUSTED.
-
-Every table also shows how often a person stepped in for the model, and how long its sessions ran.
-INTERVENTIONS counts three things:
-
-- permissions that you answered at the console (an AI or learned answer does not count),
-- questions, where the agent waited for your input,
-- stalls, where the agent stalled or failed with an error.
-
-A session that waits on a permission counts once, as the permission.
-In the desktop, hover over or focus the INTERVENTIONS figure to see the three counts and the person time.
-Person time is how long those prompts and questions waited on you.
-TOTAL_TIME is the sum of the session lifetimes.
-Authors also show INTERVENTIONS/TASK, the interventions per finished task, and `-` without a finished task.
-The CLI also prints PERSON_TIME for every seat, and LEAD_TIME, the median lead time of finished tasks, for authors.
-
-The API and JSON also include all three token counts, stalled sessions, cached share, and session lifetime for every seat.
-They carry the intervention breakdown under `interventions` and the median lead time of an author under `author.median_lead_time_secs`.
-Cached share is cached input tokens divided by input tokens; cached tokens are already included in input.
-Rates and averages without observations are zero.
-Both filters apply to every contributing record, including records matched by task.
-A short span can exclude an earlier session or ending and change the averages.
-Seatless sessions appear under NONE in the CLI and in JSON.
+A session with no seat groups under its own table too, headed NONE in the
+CLI; the desktop does not show it. The API and JSON keep every row, seatless
+rows included.
 
 ## Attention
 

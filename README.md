@@ -25,8 +25,8 @@
 
 <p align="center">
   You describe a goal. A daemon (<code>ariadned</code>) breaks it into tasks with an <b>orchestrator</b> agent,<br>
-  hands each task to an <b>author</b> agent that owns it until it lands,<br>
-  and gates that landing behind one or more <b>reviewer</b> agents.
+  and steps each task through a <b>workflow</b>: a kanban of columns, one agent per column,<br>
+  that builds, reviews and finishes the change in order.
 </p>
 
 <p align="center">
@@ -64,16 +64,15 @@ until the plan is finalized, and <code>ariadne task update</code> is yours until
 </tr>
 <tr>
 <td width="50%" valign="top">
-<h4>✅ Review gates every landing</h4>
-Reviewers read the diff in detached read-only worktrees and approve or request changes. A change
-request resumes the author with the feedback.
+<h4>✅ A workflow for every goal</h4>
+A task steps through its workflow's columns in order — build, review, finish — one agent per
+column, failing a step back for changes rather than passing broken work on.
 </td>
 <td width="50%" valign="top">
-<h4>🚢 Four ways a goal can land</h4>
-<code>none</code> lands nothing, <code>merge</code> squashes onto the base branch,
-<code>pull_request</code> opens a request through the forge and ends there, and
-<code>feature_branch</code> lands every task on a goal branch, then opens one pull
-request per repository.
+<h4>🚢 Two shipped workflows, and your own</h4>
+<code>develop-review-merge</code> squashes and fast-forwards onto the base branch;
+<code>develop-review-pr</code> opens a request through the forge and keeps it until a human
+merges it. Write your own in a plain-text document, column by column.
 </td>
 </tr>
 <tr>
@@ -113,9 +112,10 @@ automatically.
 <td width="50%" valign="top">
 <h4>🔀 GitHub and GitLab, hands off</h4>
 Enable a registered repository's forge and Ariadne reads <code>gh</code> or <code>glab</code> for
-you: the author of a task keeps the request it opened with <code>pr-babysit</code>, answering every
-comment and clearing every check until you merge it, a <code>pr-reviewer</code> session posts findings
-by priority on the ones you are asked to review, and none ever approves or merges in your name.
+you: the agent of a task's <code>pr</code> column keeps the request it opened with
+<code>pr-babysit</code>, answering every comment and clearing every check until you merge it, a
+<code>pr-reviewer</code> session posts findings by priority on the ones you are asked to review,
+and none ever approves or merges in your name.
 </td>
 </tr>
 </table>
@@ -170,13 +170,13 @@ The [manual](docs/README.md) has the rest.
 └─────────┘                              └──────┬───────────────────────┘
      ▲                                          │ spawns (ACP agents, worktree per task)
      │ MCP (stdio)                              ▼
-     │        ┌──────────────┐   ┌────────┐   ┌──────────┐
-     └─────── │ orchestrator │   │ author │   │ reviewer │  · ACP events report progress
-              └──────────────┘   └────────┘   └──────────┘  · tools via `ariadne mcp serve`
+     │        ┌──────────────┐   ┌───────────────────────────┐
+     └─────── │ orchestrator │   │ one agent per workflow step │  · ACP events report progress
+              └──────────────┘   └───────────────────────────┘  · tools via `ariadne mcp serve`
 ```
 
 [How Ariadne works](docs/how-it-works.md) follows one goal from the question
-the orchestrator asks to the commit on the base branch.
+the orchestrator asks to the last column of its workflow.
 
 <details>
 <summary><b>The top-level tree</b></summary>
@@ -202,11 +202,12 @@ ui/              Ariadne Desktop (Tauri 2 + React): a REST/SSE client of the dae
 | [Installing Ariadne](docs/install.md) | the installer, ACP agents, the release assets, the desktop app, and the daemon service |
 | [Shell completion](docs/shell-completion.md) | dynamic completions for bash, zsh and fish, and the static fallback |
 | [Using the CLI](docs/cli.md) | the command tour, the reference, and how tables and colour are printed |
+| [Workflows](docs/workflows.md) | the document syntax, the two shipped workflows, every gate, and a repository's default and a goal's override |
 | [Following what happens](docs/following-events.md) | events, the log streams and the `--watch` tables |
 | [Configuration](docs/configuration.md) | every key of `~/.ariadne/config.toml`, and the environment that addresses a daemon |
 | [Permission modes](docs/permissions.md) | automatic, prompted, and remembered ACP permission answers |
 | [Resuming a session](docs/resuming-sessions.md) | listing every session and continuing one, live, ended, or started outside Ariadne |
-| [How Ariadne works](docs/how-it-works.md) | planning, authoring, review, landing, and ACP sessions |
+| [How Ariadne works](docs/how-it-works.md) | planning, a task's workflow columns, and ACP sessions |
 | [The forge integration](docs/forge.md) | enabling GitHub or GitLab, the pull request and review sessions, webhooks and the tunnel, issues |
 | [Ariadne Desktop](ui/README.md) | running the desktop app |
 

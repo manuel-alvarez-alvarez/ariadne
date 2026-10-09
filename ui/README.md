@@ -1,7 +1,9 @@
 # Ariadne Desktop
 
 Desktop client for `ariadned`. A [Tauri 2](https://v2.tauri.app) window around a
-Vite + React + TypeScript app.
+Vite + React + TypeScript app. The goals board draws a stepped task in its
+workflow's column, and the Workflows screen edits the catalog — shipped and
+your own, each with a document editor and a live kanban preview.
 
 The UI is a **pure REST/SSE client of the daemon's TCP listener** — exactly what
 the CLI is, over HTTP instead of a unix socket. It never links against the

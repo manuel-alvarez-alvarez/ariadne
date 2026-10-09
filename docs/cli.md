@@ -55,9 +55,9 @@ allowing option. Repeat `--location` for each path the call touches.
 
 ## List every session
 
-`ariadne session ls` lists Ariadne's own sessions — an orchestrator's, an
-author's, a reviewer's — next to outside sessions: conversations an ACP agent
-holds that Ariadne never started. Rows come newest activity first.
+`ariadne session ls` lists Ariadne's own sessions — an orchestrator's, a
+column agent's, a reviewer's — next to outside sessions: conversations an ACP
+agent holds that Ariadne never started. Rows come newest activity first.
 
 ```sh
 ariadne session ls
@@ -101,8 +101,8 @@ above.
 
 ```sh
 ariadne attach <goal-id>                 # the orchestrator
-ariadne attach <task-id>                 # the task's author
-ariadne attach <task-id> --seat reviewer # that task's reviewer
+ariadne attach <task-id>                 # the agent of the task's current column
+ariadne task attach <task-id> --step review   # one column's agent instead
 ariadne attach <session-id>              # one specific session, live or ended
 ariadne attach <internal-id> --agent codex-acp  # an outside session
 ```
@@ -133,7 +133,7 @@ your shell prompt comes back right under the last block, so the transcript
 stays in your scrollback, each line once.
 
 ```
- author · claude:opus · running   ⠹ thinking 12s
+ agent · claude:opus · running   ⠹ thinking 12s
 ────────────────────────────────────────────────────────
 ❯ the input box
 ────────────────────────────────────────────────────────
@@ -341,7 +341,7 @@ The task form finds the session for you:
 ```sh
 ariadne session logs <session-id> --tail 20
 ariadne session logs <session-id> --since 10m --kind agent_message
-ariadne task logs <task-id> --seat reviewer --follow
+ariadne task logs <task-id> --follow
 ```
 
 `--tail N` keeps the last N blocks. `--since` accepts RFC 3339 or a duration
@@ -502,9 +502,9 @@ the forge a repository's remote is on, once `gh` or `glab` is signed in to
 its host. `--review-model` and `--review-effort` pin the session that
 reviews a request asking for your review; a model is `AGENT:MODEL`, or `""`
 to clear the pin, and an effort is any effort or `default`. No `--forge`
-flag sends no change to it. A request a task opens needs no pin: the task's
-author keeps it. See [The forge integration](forge.md) for what each
-session does.
+flag sends no change to it. A request a task opens needs no pin: the agent
+of the task's `pr` column keeps it. See [The forge integration](forge.md)
+for what each session does.
 
 ```sh
 ariadne pr ls --repo <repo-id>
@@ -555,11 +555,12 @@ and the webhook keys.
 
 ## Custom workflows
 
-A workflow is a linear kanban of columns a goal's tasks step through in
-place of the fixed author, reviewer and landing pipeline. Ariadne ships two;
-`ariadne workflow` manages them the way `ariadne skill` manages skills — a
-shipped one is reset rather than deleted, one of your own is deleted rather
-than reset.
+A workflow is a linear kanban of columns a goal's tasks step through, one
+agent per column. Ariadne ships two, `develop-review-merge` and
+`develop-review-pr`; `ariadne workflow` manages the catalog the way `ariadne
+skill` manages skills — a shipped one is reset rather than deleted, one of
+your own is deleted rather than reset. See [Workflows](workflows.md) for the
+document syntax and what each gate checks.
 
 ```sh
 ariadne workflow ls
@@ -568,6 +569,7 @@ ariadne workflow check --file draft.md
 ariadne workflow create my-workflow --file draft.md
 ariadne workflow update my-workflow --file draft.md
 ariadne workflow reset develop-review-merge
+ariadne workflow rm my-workflow
 ```
 
 `create` and `update` read the document from `--file`, or from stdin where
@@ -577,12 +579,10 @@ the document whole, through `$PAGER`; `--format json` prints the DTO.
 
 ### Running a goal through a workflow
 
-`goal create --workflow <name>` runs every task of the goal through that
-workflow's columns instead of the fixed author, reviewer and landing
-pipeline; it is refused beside `--landing`, since a workflow's own gates say
-how each task ends. `repo add --workflow <name>` and `repo update --workflow
-<name>` set a repository's own default, which a goal that names none falls
-back to:
+Every goal runs through a workflow. `goal create --workflow <name>` picks
+it; left out, the goal takes its first repository's default workflow.
+`repo add --workflow <name>` and `repo update --workflow <name>` set that
+default:
 
 ```sh
 ariadne goal create --title "Add rate limiting" --repo ~/projects/api \
@@ -590,9 +590,8 @@ ariadne goal create --title "Add rate limiting" --repo ~/projects/api \
 ariadne repo update <repo-id> --workflow develop-review-merge
 ```
 
-A stepped task is staffed one agent per column with `--agent
-STEP[:SKILLS]=MODEL[@EFFORT]`, repeatable — in place of `--author`,
-`--reviewer` and `--no-reviewer`, which a stepped goal refuses:
+A task is staffed one agent per column with `--agent
+STEP[:SKILLS]=MODEL[@EFFORT]`, repeatable:
 
 ```sh
 ariadne task create <goal-id> --title "Add the rate limiter" \
@@ -603,8 +602,7 @@ ariadne task update <task-id> --agent develop=codex-acp:<other-model-id>
 ```
 
 Leaving the `:SKILLS` half out stages the column's own skills. `task update
---agent` replaces the whole staffing, the way `--reviewer` replaces the whole
-reviewer list.
+--agent` replaces the whole staffing.
 
 `task ls` shows each task's current column in a `step` column, and `--step
 <id>` narrows the list to it. `task inspect` prints the workflow, the current

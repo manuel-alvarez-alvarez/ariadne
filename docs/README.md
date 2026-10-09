@@ -9,12 +9,13 @@ reads.
 | [Installing Ariadne](install.md) | `scripts/install.sh`, ACP agents, the release assets, the desktop app, and the daemon service |
 | [Shell completion](shell-completion.md) | dynamic completions for bash, zsh and fish, and the static fallback |
 | [Using the CLI](cli.md) | the command tour, the reference, `ariadne doctor`, and how tables and colour are printed |
+| [Workflows](workflows.md) | the document syntax, the two shipped workflows, every gate, and a repository's default and a goal's override |
 | [Following what happens](following-events.md) | `ariadne events`, the log streams and the `--watch` tables |
 | [Configuration](configuration.md) | every key of `~/.ariadne/config.toml`, and the environment that addresses a daemon |
 | [Permission modes](permissions.md) | automatic, prompted, and remembered ACP permission answers |
 | [Stats](stats.md) | what the work did, in six questions: the filters, `ariadne stats` and the Stats screen |
 | [Resuming a session](resuming-sessions.md) | listing every session and continuing one, live, ended, or started outside Ariadne |
-| [How Ariadne works](how-it-works.md) | a goal from planning to landing, task lifecycle, and ACP sessions |
+| [How Ariadne works](how-it-works.md) | a goal from planning through its workflow's columns, task lifecycle, and ACP sessions |
 | [The forge integration](forge.md) | enabling GitHub or GitLab, the pull request and review sessions, webhooks and the tunnel, issues |
 
 Ariadne Desktop has its own page: [`ui/README.md`](../ui/README.md).
