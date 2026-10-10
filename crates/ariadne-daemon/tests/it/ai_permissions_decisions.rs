@@ -660,11 +660,24 @@ async fn a_test_request_with_locations_derives_what_the_live_request_does() {
 /// argument says, reports the device its environment chose, and then allows
 /// every request with the calibrated danger 0.05.
 const SLOW_SERVER: &str = r#"#!/usr/bin/env python3
-import http.server, json, os, socketserver, sys, time
-with open(sys.argv[1], 'w') as f:
+import http.server, json, os, socketserver, subprocess, sys, threading, time
+parent = int(sys.argv[1])
+def parent_alive():
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(parent)],
+                           capture_output=True, text=True).stdout.strip()
+    return bool(state) and not state.startswith("Z")
+def orphaned():
+    # Ends with the test process, however that one ends.
+    while parent_alive():
+        time.sleep(0.2)
+    os._exit(0)
+threading.Thread(target=orphaned, daemon=True).start()
+if not parent_alive():
+    os._exit(0)
+with open(sys.argv[2], 'w') as f:
     f.write(str(os.getpid()) + '\n')
-time.sleep(float(sys.argv[2]))
-args = sys.argv[3:]
+time.sleep(float(sys.argv[3]))
+args = sys.argv[4:]
 host = args[args.index('--host') + 1]
 port = int(args[args.index('--port') + 1])
 ANSWER = json.dumps({"model": "kev-latest",
@@ -700,6 +713,7 @@ async fn a_request_made_while_the_server_loads_waits_for_it() {
     let record = tempfile::NamedTempFile::new().unwrap();
     let command = vec![
         shared_script(SLOW_SERVER).display().to_string(),
+        std::process::id().to_string(),
         record.path().display().to_string(),
         "3".to_string(),
     ];
