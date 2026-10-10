@@ -239,7 +239,10 @@ same binary also serves (013).
     <duration|date>] [--repo <id>]` prints one stat family off
     `GET /v1/stats/<family>` (023). `ariadne stats` alone prints `work`.
     Each of the five is a listing: it takes the table flags, and
-    `--format json` prints the family's DTO whole.
+    `--format json` prints the family's DTO whole. The five print one way:
+    the figures as one aligned key-value block, then each table, one blank
+    line before each. `stats models` titles the group of sessions with no
+    seat `LOOSE SESSIONS`.
 36. `ariadne workflow` manages the workflow catalog (030) the way `ariadne
     skill` manages skills: `ls` lists every workflow, shipped and written,
     its `name` column marked `builtin` with the shared `yes_no` wording and

@@ -108,7 +108,7 @@ fn render(stats: &ModelStatsDto, seat: Option<ModelSeat>, view: &View) -> Result
             .collect();
         groups.push(format!(
             "{}\n{}",
-            heading(seat.unwrap_or("none"), view.color),
+            heading(seat.unwrap_or("loose sessions"), view.color),
             render_table(&columns, &rows, view)?
         ));
     }
@@ -215,11 +215,25 @@ mod tests {
         let text = render(&stats(), None, &View::plain()).unwrap();
         let headings: Vec<_> = text
             .lines()
-            .filter(|l| ["ORCHESTRATOR", "AGENT", "NONE"].contains(&l.trim()))
+            .filter(|l| ["ORCHESTRATOR", "AGENT", "LOOSE SESSIONS"].contains(&l.trim()))
             .collect();
-        assert_eq!(headings, ["ORCHESTRATOR", "AGENT", "NONE"], "{text}");
+        assert_eq!(
+            headings,
+            ["ORCHESTRATOR", "AGENT", "LOOSE SESSIONS"],
+            "{text}"
+        );
         let empty = render(&ModelStatsDto::default(), None, &View::plain()).unwrap();
         assert_eq!(empty, "No model ran in that span.");
+    }
+
+    /// The no-seat group titles itself `LOOSE SESSIONS`, not the seat's
+    /// internal `None`: a session with no seat is a loose session, and the
+    /// heading says so plainly.
+    #[test]
+    fn the_no_seat_group_titles_itself_loose_sessions() {
+        let text = render(&stats(), None, &View::plain()).unwrap();
+        assert!(text.contains("LOOSE SESSIONS"), "{text}");
+        assert!(!text.contains("NONE"), "{text}");
     }
 
     #[test]

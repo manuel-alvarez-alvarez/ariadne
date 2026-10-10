@@ -1,7 +1,7 @@
 ---
 id: stats
 status: current
-updated: 2026-10-06
+updated: 2026-10-10
 areas: [api, store, daemon, cli, ui]
 commits: []
 tests:
@@ -362,11 +362,12 @@ nothing here converts one.
     `share` — `input_tokens + output_tokens` over the same total of every
     model — the heaviest model first. A fact naming no model answers no row.
 43. `GET /v1/stats/spend` answers `SpendStatsDto`, the aggregate's own shape.
-44. `ariadne stats spend` prints the totals and the per-task figures as
-    `label: value` lines, then a table of `by_model` (`MODEL`, `TOKENS` — the
-    usage cell every table prints — `SHARE`), then a table of `buckets`
-    (`FROM` — the hour too where the bucket is an hour — `INPUT`, `CACHED`,
-    `OUTPUT`). `--format json` prints the DTO whole.
+44. `ariadne stats spend` prints the totals and the per-task figures as the
+    aligned key-value block every family uses (014, rule 35), then a table of
+    `by_model` (`MODEL`, `TOKENS` — the usage cell every table prints —
+    `SHARE`), then a table of `buckets` (`FROM` — the hour too where the
+    bucket is an hour — `INPUT`, `CACHED`, `OUTPUT`), one blank line before
+    each table. `--format json` prints the DTO whole.
 45. `SpendSection` draws four tiles with `StatTiles`: input tokens, cache
     share, output tokens, and tokens per finished task (`input_tokens +
     output_tokens` of `per_finished_task`, hinted with the task count). Under
@@ -402,7 +403,7 @@ whose last column this model's agent ended.
 The CLI prints one comparison table per seat, headed by the seat.
 `--seat orchestrator|agent` belongs only to `stats models` and limits table output.
 JSON output always contains the complete DTO, regardless of `--seat`.
-A seatless row uses the TASKS columns under `NONE` in the CLI and remains available in JSON.
+A seatless row uses the TASKS columns under `LOOSE SESSIONS` in the CLI and remains available in JSON.
 The desktop section draws the seat tables through `StatTable`, omitting empty seats.
 Responses without rows for the displayed seats use the shared empty state, including responses with only seatless rows.
 Each desktop table sorts by its first count descending, then by model.
@@ -641,10 +642,10 @@ alongside the family's other totals, and the Stats screen's key figures (rule
 - `GET /v1/stats/spend` answers the totals, the buckets and the models for an
   ended session
   (`stats_spend.rs::the_spend_stat_answers_the_totals_the_buckets_and_the_models_for_an_ended_session`).
-- The table prints the totals and the per-task figures as `label: value`
-  lines
-  (`commands/stats/spend.rs::tests::the_totals_and_the_per_task_figures_print_as_label_value_lines`),
-  then a model row and a bucket row
+- The table prints the totals and the per-task figures as the shared
+  key-value block every family uses (014, rule 35)
+  (`commands/stats/spend.rs::tests::the_totals_render_as_the_shared_kv_block`),
+  then a model row and a bucket row, one blank line between each block
   (`commands/stats/spend.rs::tests::the_table_prints_a_model_row_and_a_bucket_row`),
   an hour bucket's date carrying its time of day too
   (`commands/stats/spend.rs::tests::bucket_date_carries_the_time_of_day_for_an_hour_bucket`),
