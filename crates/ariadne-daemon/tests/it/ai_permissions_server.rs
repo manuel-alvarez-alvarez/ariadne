@@ -16,9 +16,22 @@ use crate::common::{Harness, TIMEOUT, eventually, harness, post, put_json, share
 /// `/v1/models` reports, `device/backend`, or `-` to report the ones its
 /// environment chose, as Kev would.
 const SERVER: &str = r#"#!/usr/bin/env python3
-import http.server, json, os, socketserver, sys
-record, report = sys.argv[1], sys.argv[2]
-args = sys.argv[3:]
+import http.server, json, os, socketserver, subprocess, sys, threading, time
+parent = int(sys.argv[1])
+def parent_alive():
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(parent)],
+                           capture_output=True, text=True).stdout.strip()
+    return bool(state) and not state.startswith("Z")
+def orphaned():
+    # Ends with the test process, however that one ends.
+    while parent_alive():
+        time.sleep(0.2)
+    os._exit(0)
+threading.Thread(target=orphaned, daemon=True).start()
+if not parent_alive():
+    os._exit(0)
+record, report = sys.argv[2], sys.argv[3]
+args = sys.argv[4:]
 host = args[args.index('--host') + 1]
 port = int(args[args.index('--port') + 1])
 names = ['HF_HOME', 'HF_HUB_OFFLINE', 'KEV_TEMPERATURE', 'KEV_BACKEND', 'KEV_DTYPE', 'CUDA_VISIBLE_DEVICES']
@@ -115,6 +128,7 @@ async fn serving(
         .ai_permissions_installer(installer)
         .ai_permissions_serve_command(vec![
             shared_script(SERVER).display().to_string(),
+            std::process::id().to_string(),
             record.display().to_string(),
             report.to_string(),
         ])
@@ -473,6 +487,7 @@ async fn a_switch_as_the_install_ends_is_still_installed_and_served() {
         ])
         .ai_permissions_serve_command(vec![
             shared_script(SERVER).display().to_string(),
+            std::process::id().to_string(),
             record.display().to_string(),
             "-".to_string(),
         ])

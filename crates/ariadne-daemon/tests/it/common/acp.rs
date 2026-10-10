@@ -49,6 +49,10 @@ pub(crate) struct StubAcpAgent {
 }
 
 impl StubAcpAgent {
+    pub(crate) fn set_parent_pid(&self, pid: u32) {
+        let dir = Path::new(&self.bin).parent().unwrap();
+        std::fs::write(dir.join("acp-parent-pid"), pid.to_string()).unwrap();
+    }
     /// Every JSON-RPC message the daemon sent, in the order it arrived.
     pub(crate) fn messages(&self) -> Vec<Value> {
         std::fs::read_to_string(&self.log)
@@ -318,6 +322,7 @@ pub(crate) fn stub_acp_agent(dir: &Path, script: Value) -> StubAcpAgent {
     let pid_file = dir.join("acp-agent.pid");
     let script_file = dir.join("acp-script.json");
     write_script_file(&script_file, script, &log, &launches, &pid_file);
+    std::fs::write(dir.join("acp-parent-pid"), std::process::id().to_string()).unwrap();
 
     std::fs::write(dir.join("acp-stub.py"), STUB).unwrap();
     // The launcher is one shared file (see `shared_script`), linked into
@@ -354,18 +359,32 @@ fn write_script_file(
 /// the launcher was started by. `$0` is that link, not the shared file.
 const LAUNCHER: &str = "#!/bin/sh\n\
 dir=$(dirname \"$0\")\n\
-exec python3 \"$dir/acp-stub.py\" \"$dir/acp-script.json\" \"$@\"\n";
+exec python3 \"$dir/acp-stub.py\" \"$(cat \"$dir/acp-parent-pid\")\" \"$dir/acp-script.json\" \"$@\"\n";
 
 /// The stub itself: single-threaded, line-oriented, and honest about order —
 /// it answers exactly what the script says, logs every incoming message, and
 /// exits on stdin closing, the way an ACP agent ends with its client.
 const STUB: &str = r#"#!/usr/bin/env python3
-import json, os, select, subprocess, sys, time
+import json, os, select, subprocess, sys, threading, time
 
-script = json.load(open(sys.argv[1]))
-if sys.argv[2:4] == ["session", "delete"]:
+parent = int(sys.argv[1])
+script = json.load(open(sys.argv[2]))
+def parent_alive():
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(parent)],
+                           capture_output=True, text=True).stdout.strip()
+    return bool(state) and not state.startswith("Z")
+def orphaned():
+    # Ends with the test process, however that one ends.
+    while parent_alive():
+        time.sleep(0.2)
+    os._exit(0)
+threading.Thread(target=orphaned, daemon=True).start()
+
+if not parent_alive():
+    os._exit(0)
+if sys.argv[3:5] == ["session", "delete"]:
     with open(script["log"], "a") as f:
-        f.write(json.dumps({"method": "cli/session/delete", "args": sys.argv[2:]}) + "\n")
+        f.write(json.dumps({"method": "cli/session/delete", "args": sys.argv[3:]}) + "\n")
     sys.exit(script.get("delete_exit", 0))
 # An agent slow to come up: nothing is said, and nothing read, until
 # `start_delay` seconds have passed — the window in which the daemon has
@@ -379,7 +398,7 @@ with open(script["pid_file"], "w") as f:
 with open(script["launches"], "a") as f:
     f.write(json.dumps({"ariadne_session": os.environ.get("ARIADNE_SESSION_ID"),
                         "codex_mode": os.environ.get("INITIAL_AGENT_MODE"),
-                        "argv": sys.argv[2:]}) + "\n")
+                        "argv": sys.argv[3:]}) + "\n")
 
 # The process that writes the conversation, as codex-acp's `codex
 # app-server` does: a child of the agent that ends once the agent is gone —

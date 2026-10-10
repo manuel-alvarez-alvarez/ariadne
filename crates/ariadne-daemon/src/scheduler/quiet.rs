@@ -124,8 +124,13 @@ impl super::Scheduler {
             return Ok(());
         }
         // A running agent is inside a turn and is left alone — the relaunch
-        // threshold answers for a turn that never ends.
-        if session.status() == SessionStatus::Running {
+        // threshold answers for a turn that never ends. The row says running
+        // from the agent's `session_start` on, so the runtime driving it is
+        // asked too: an agent that came up and was never prompted is between
+        // turns, and left alone it would sit there until the relaunch.
+        if session.status() == SessionStatus::Running
+            && self.launcher.acp.in_turn(&session.id).await != Some(false)
+        {
             return Ok(());
         }
         info!(session = %session.id, seat = ?session.seat, quiet_secs, "nudging idle agent");

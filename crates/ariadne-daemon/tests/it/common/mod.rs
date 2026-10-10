@@ -1704,6 +1704,36 @@ impl Harness {
             .launched_at
     }
 
+    /// Write the entry of the move from column `from` to `to` without moving
+    /// the task row: what a pass sees when a column completes between its
+    /// read of the task and its read of the transitions. The newest entry is
+    /// `to`'s, and the task still stands on `from`.
+    pub(crate) async fn entry_ahead_of_its_task(&self, task: &Task, from: &str, to: &str) {
+        sqlx::query(
+            "INSERT INTO task_transitions (id, task_id, from_status, to_status, actor, reason, created_at, from_step, to_step) \
+             VALUES (?, ?, 'in_progress', 'in_progress', 'agent', 'The column is done.', ?, ?, ?)",
+        )
+        .bind(ariadne_core::id::new_id())
+        .bind(&task.id)
+        .bind(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+        .bind(from)
+        .bind(to)
+        .execute(&self.db)
+        .await
+        .unwrap();
+    }
+
+    /// Move the task row onto `step`: the rest of the move
+    /// [`Self::entry_ahead_of_its_task`] wrote the entry of.
+    pub(crate) async fn task_row_on(&self, task: &Task, step: &str) {
+        sqlx::query("UPDATE tasks SET step = ? WHERE id = ?")
+            .bind(step)
+            .bind(&task.id)
+            .execute(&self.db)
+            .await
+            .unwrap();
+    }
+
     /// Write an attention flag straight into the database, the way a daemon
     /// that did not know better left one behind. It has to go around the
     /// store, which now refuses to raise a prompt on a session that has

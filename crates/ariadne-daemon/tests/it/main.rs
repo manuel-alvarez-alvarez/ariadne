@@ -55,6 +55,7 @@ mod stats_time;
 mod stats_work;
 mod stored_conversations;
 mod stored_conversations_opencode;
+mod stub_lifetime;
 mod switch;
 mod switch_stats;
 mod task_branches;

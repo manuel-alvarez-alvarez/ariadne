@@ -7,7 +7,7 @@ use ariadne_core::{AttentionReason, PermissionMode, TaskStatus};
 use serde_json::json;
 
 use common::acp::{discovery_settled, registry_home, script, stub_acp_agent};
-use common::{TIMEOUT, eventually, harness, post_json};
+use common::{TIMEOUT, eventually, harness, post_json, test_pin};
 
 /// `GET /v1/stats/attention` answers 200 with the family's DTO, and the route is
 /// in the API document under the `stats` tag.
@@ -45,21 +45,27 @@ async fn the_attention_stat_counts_a_console_reply_and_a_cleared_flag() {
         .await;
     discovery_settled(&h, &stub).await;
     h.git_repo("repo");
-    let cast = h.cast().await;
-    h.set_permission_mode(&cast.repo, PermissionMode::Ask).await;
-    h.activate(&cast.goal).await;
-    h.advance(&cast.task, TaskStatus::InProgress).await;
-    h.notify(&cast.task.id);
+    // The repository asks before the goal exists: the scheduler starts the
+    // goal's orchestrator on the same stub as soon as the goal is created,
+    // and one launched in `auto` answers the script's permission itself,
+    // with a second fact.
+    let repo = h.repository(&h.at("repo")).await;
+    h.set_permission_mode(&repo, PermissionMode::Ask).await;
+    let goal = h.goal_running(&repo, test_pin(), None).await;
+    let task = h.task_on(&goal, &repo, "task", test_pin()).await;
+    h.activate(&goal).await;
+    h.advance(&task, TaskStatus::InProgress).await;
+    h.notify(&task.id);
     // The column's agent runs on the registry stub, whose prompts the
     // harness does not read: the session is waited for by its row.
     eventually(TIMEOUT, "the column agent to start", || async {
-        h.running_session(&cast.task.id, ariadne_core::Seat::Agent)
+        h.running_session(&task.id, ariadne_core::Seat::Agent)
             .await
             .is_some()
     })
     .await;
     let session = h
-        .running_session(&cast.task.id, ariadne_core::Seat::Agent)
+        .running_session(&task.id, ariadne_core::Seat::Agent)
         .await
         .unwrap();
     eventually(TIMEOUT, "the permission request", || async {

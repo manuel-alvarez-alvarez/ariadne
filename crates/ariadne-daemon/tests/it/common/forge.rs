@@ -24,6 +24,7 @@ pub(crate) struct StubForgeCli {
     script_file: PathBuf,
     log: PathBuf,
     finished: PathBuf,
+    pid_file: PathBuf,
     _dir: tempfile::TempDir,
 }
 
@@ -37,6 +38,9 @@ pub(crate) struct Invocation {
 }
 
 impl StubForgeCli {
+    pub(crate) fn set_parent_pid(&self, pid: u32) {
+        std::fs::write(self._dir.path().join("forge-parent-pid"), pid.to_string()).unwrap();
+    }
     /// Every invocation, in the order they ran.
     pub(crate) fn invocations(&self) -> Vec<Invocation> {
         let Ok(log) = std::fs::read_to_string(&self.log) else {
@@ -65,6 +69,15 @@ impl StubForgeCli {
     pub(crate) fn reprogram(&self, script: Value) {
         write_script(&self.script_file, &script);
     }
+
+    /// The pid of the most recent stub process, once it has started.
+    pub(crate) fn pid(&self) -> Option<u32> {
+        std::fs::read_to_string(&self.pid_file)
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
+    }
 }
 
 /// One entry of the script: what `args` starts with, and the answer.
@@ -89,6 +102,11 @@ pub(crate) fn stub_forge_cli(script: Value) -> StubForgeCli {
     let dir = tempfile::tempdir().unwrap();
     let script_file = dir.path().join("forge-script.json");
     write_script(&script_file, &script);
+    std::fs::write(
+        dir.path().join("forge-parent-pid"),
+        std::process::id().to_string(),
+    )
+    .unwrap();
     std::fs::write(dir.path().join("forge-stub.py"), STUB).unwrap();
     let launcher = super::shared_script(LAUNCHER);
     let link = |name: &str| {
@@ -101,6 +119,7 @@ pub(crate) fn stub_forge_cli(script: Value) -> StubForgeCli {
         glab: link("glab"),
         log: dir.path().join("forge-calls.jsonl"),
         finished: dir.path().join("forge-finished.jsonl"),
+        pid_file: dir.path().join("forge-pid"),
         script_file,
         _dir: dir,
     }
@@ -115,12 +134,28 @@ fn write_script(path: &Path, script: &Value) {
 /// run under. `$0` is the link, not the shared file.
 const LAUNCHER: &str = "#!/bin/sh\n\
 dir=$(dirname \"$0\")\n\
-exec python3 \"$dir/forge-stub.py\" \"$dir\" \"$(basename \"$0\")\" \"$@\"\n";
+exec python3 \"$dir/forge-stub.py\" \"$(cat \"$dir/forge-parent-pid\")\" \"$dir\" \"$(basename \"$0\")\" \"$@\"\n";
 
 const STUB: &str = r#"#!/usr/bin/env python3
-import json, os, sys, time
+import json, os, subprocess, sys, threading, time
 
-dir, program, args = sys.argv[1], sys.argv[2], sys.argv[3:]
+parent = int(sys.argv[1])
+def parent_alive():
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(parent)],
+                           capture_output=True, text=True).stdout.strip()
+    return bool(state) and not state.startswith("Z")
+def orphaned():
+    # Ends with the test process, however that one ends.
+    while parent_alive():
+        time.sleep(0.2)
+    os._exit(0)
+threading.Thread(target=orphaned, daemon=True).start()
+
+if not parent_alive():
+    os._exit(0)
+dir, program, args = sys.argv[2], sys.argv[3], sys.argv[4:]
+with open(os.path.join(dir, "forge-pid"), "w") as f:
+    f.write(str(os.getpid()))
 call = {"program": program, "args": args}
 if "--input" in args and args[args.index("--input") + 1:args.index("--input") + 2] == ["-"]:
     call["input"] = sys.stdin.read()

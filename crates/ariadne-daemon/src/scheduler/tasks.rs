@@ -150,6 +150,18 @@ impl super::Scheduler {
         if task.pr_url.is_some() && Box::pin(self.merge_ended(&task)).await? {
             return Ok(());
         }
+        // The task was read before its transitions, and an agent completing
+        // its column in between moves the task on: the newest entry is then
+        // the next column's, and briefing the column read above on it would
+        // spend the next column's briefing on the agent that just left it.
+        // The move wakes a pass of its own, which reads both afresh.
+        let transitions = self.store.list_task_transitions(&task.id).await?;
+        let entry = transitions
+            .last()
+            .ok_or_else(|| anyhow::anyhow!("step has no entry transition"))?;
+        if entry.to_status != "in_progress" || entry.to_step.as_ref() != Some(&step.id) {
+            return Ok(());
+        }
         let agents = self.store.list_task_agents(&task.id).await?;
         let agent = agents
             .iter()
@@ -222,10 +234,6 @@ impl super::Scheduler {
                 }
             }
         };
-        let transitions = self.store.list_task_transitions(&task.id).await?;
-        let entry = transitions
-            .last()
-            .ok_or_else(|| anyhow::anyhow!("step has no entry transition"))?;
         if !self.store.step_briefed(&entry.id).await? {
             let seen = transitions[..transitions.len() - 1]
                 .iter()

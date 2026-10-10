@@ -86,7 +86,10 @@ the ACP runtime that takes a prompt (021).
     build fails if the three thresholds fall out of that order.
 11. Only an idle agent is nudged. An agent inside a turn is left to the
     thresholds behind the nudge, since a nudge would only queue behind the
-    turn it is in.
+    turn it is in. The row reads `running` from the agent's `session_start`
+    on, so the runtime driving the agent says whether a turn is in flight:
+    an agent that came up and was never prompted is between turns, and is
+    nudged like any idle agent.
 12. An agent is nudged once for the situation it went quiet in, not once per
     pass. A new task status or a new column entry is a new situation. The
     entry's briefing is delivered before this quiet clock watches it.
@@ -216,6 +219,14 @@ the ACP runtime that takes a prompt (021).
     (030). The news of a request is handed as any other prompt is (rules 4
     and 6): once, and queued behind a running turn. Its messages are agent
     messages (018).
+42. An agent that ends by itself wakes the scheduler once more, after the
+    runtime has let it go. The wake names its launch, so an old event cannot
+    retire a session a new launch already resumed. The wakes its last events send can each be
+    answered by a pass that still finds the agent registered and leaves the
+    seat alone. This last wake is reconciled at once, outside the session's
+    window (rule 32), so its session is retired and the seat is filled, or the
+    death counted, without a tick or a window end. An agent that a kill or a
+    relaunch took down sends no such wake: the daemon did that itself.
 
 ## Acceptance criteria
 
@@ -229,6 +240,8 @@ the ACP runtime that takes a prompt (021).
   situation a failed hand-off could not deliver is told on the next pass
   that can hear it, not lost with the attempt that failed
   (`::a_situation_survives_a_failed_hand_off_and_is_told_on_the_next_pass`).
+  The test restores the same agent's prompt channel after the refusal,
+  so a concurrent relaunch cannot replace the agent under observation.
 - A nudge to an idle agent arrives as a `session/prompt`
   (`acp_runtime.rs::a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt`).
 - A pass with three agents to nudge hands all three their prompt at once
@@ -250,7 +263,8 @@ the ACP runtime that takes a prompt (021).
 - An idle agent is nudged once for the situation it went quiet in
   (`::an_idle_agent_is_nudged_once_for_the_situation_it_went_quiet_in`), and
   an agent mid-turn is not nudged
-  (`::an_agent_in_the_middle_of_a_turn_is_not_nudged`).
+  (`::an_agent_in_the_middle_of_a_turn_is_not_nudged`), while one up and
+  never prompted is (`::an_agent_up_and_never_prompted_is_nudged`).
 - An agent that reports nothing is flagged and then relaunched
   (`::an_agent_that_reports_nothing_is_flagged_and_then_relaunched`), one
   that keeps reporting is left alone
@@ -308,6 +322,10 @@ the ACP runtime that takes a prompt (021).
   (`::an_orchestrator_that_dies_the_moment_it_starts_is_given_up_on`), and a
   task whose agent does fails with the reason on it
   (`::a_task_whose_agent_dies_the_moment_it_starts_fails_with_the_reason_on_it`).
+  The task test runs with neither a tick nor a window end in reach, so
+  each death after the first is noticed by the end wake of rule 42 alone, and
+  each ended session is retired without a tick. An end event from an old
+  launch leaves a live successor running.
 - A column agent heard from once that cannot be started again fails its task
   rather than being tried for ever
   (`::a_step_agent_heard_from_once_that_cannot_be_started_again_fails_its_task`).
