@@ -70,20 +70,28 @@ Out: the daemon endpoints themselves (012).
    listing, each shown in its console — skills, repositories, the agents of
    the daemon's ACP registry with their launch flags and the models each may
    be staffed on, Workflows — shipped and user workflows grouped separately,
-   with a document editor and parsed kanban preview — Permissions — the AI
-   permission model's settings behind the `ai` permission mode (022) — Stats
-   (rule 37), and a daemon-logs drawer. `workflows-page.test.tsx`,
-   `workflow-editor.test.tsx`, and `workflow-preview.test.tsx` prove the
-   workflow screen rules. The editor and preview share the screen in equal
-   columns, the preview stacks its columns, and a parser refusal marks its
-   source line in the editor (`workflow-editor.test.tsx::puts the editor and
-   preview in equal columns`, `workflow-preview.test.tsx::renders each parsed
-   column with its skill, rank and gate`, `workflow-editor.test.tsx::parses
-   each draft once for the editor and preview`,
-   `workflow-editor.test.tsx::marks the line the parser refuses in the
-   editor`, `workflow-preview.test.tsx::shows a parser refusal at its line`,
-   and `workflow-language.test.ts::classifies workflow names, columns,
-   metadata, and descriptions`).
+   with a document editor and a parsed preview drawn as a numbered pipeline
+   — Permissions — the AI permission model's settings behind the `ai`
+   permission mode (022) — Stats (rule 37), and a daemon-logs drawer.
+   `workflows-page.test.tsx`, `workflow-editor.test.tsx`, and
+   `workflow-preview.test.tsx` prove the workflow screen rules. The editor
+   and preview share the screen in equal columns, and a parser refusal marks
+   its source line in the editor
+   (`workflow-editor.test.tsx::puts the editor and preview in equal
+   columns`, `workflow-editor.test.tsx::parses each draft once for the
+   editor and preview`, `workflow-editor.test.tsx::marks the line the parser
+   refuses in the editor`, and `workflow-language.test.ts::classifies
+   workflow names, columns, metadata, and descriptions`). The preview draws
+   each column as a numbered step on a vertical rail, a card holding its
+   title, id, description, skills and rank in that order, and ends the rail
+   with a marker for the end of the task; a step's gate shows as a labelled
+   chip on the connector below it, and a step with no gate leaves that
+   connector bare (`workflow-preview.test.tsx::draws the steps as a numbered
+   pipeline, in order, ending with a marker`,
+   `::shows a card's title, id, description, skills and rank, in that
+   order`, `::shows a step's gate as a chip on its connector, and none
+   where a step has no gate`, and `::shows a parser refusal at its line,
+   and dims the last good preview`).
 4. Types are generated from the daemon's OpenAPI document, so a DTO change
    that is not reflected here fails the typecheck rather than the app.
 5. One SSE connection serves the whole app, with a dispatcher and reconnect
