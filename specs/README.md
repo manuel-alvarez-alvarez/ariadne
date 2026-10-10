@@ -8,9 +8,8 @@ at.
 They are written to be referenced: an orchestrator names the spec a task works
 from, and an author reads it in its own worktree. So each one is short, states
 its rules as numbered sentences, and ties every acceptance criterion to the
-test that proves it. A spec that a later one replaced whole is marked
-`status: superseded` and names the spec that holds the account now; its
-number and file stay.
+test that proves it. Conventions for writing and changing one are in
+[`AGENTS.md`](AGENTS.md).
 
 | # | Spec | What it settles |
 | --- | --- | --- |
@@ -42,17 +41,3 @@ number and file stay.
 | 028 | [Issues and goals](028-issues-and-goals.md) | live forge issues and goals created from them |
 | 029 | [Reviewing a request](029-reviewing-a-request.md) | the reviewer session on a request that asks for the user's review, its detached worktree, its news, one review by priority, and no approval |
 | 030 | [Workflows](030-workflows.md) | the workflow every goal runs on: the document, the catalog, the routes, one agent per column, step moves and gates, and the `pr` column |
-
-## Writing one
-
-- One file per subsystem, `NNN-kebab-slug.md`, numbered in the order they were
-  written. A number is never reused: a subsystem that goes away leaves its
-  number behind, so a reference in the git history still points where it did.
-- YAML frontmatter: `id`, `status`, `updated`, `areas`, `commits`, `tests`.
-- Sections: **Scope** (in and out), **Behavior** (numbered rules), **Acceptance
-  criteria** (each citing the test that proves it), **Sources**. Add **Known
-  gap** where something is deliberately unbuilt.
-- A rule belongs to exactly one spec. Where another needs it, reference the
-  number rather than restating it.
-- Update the spec in the same change as the code. A spec that disagrees with
-  its tests is a bug in one of the two.

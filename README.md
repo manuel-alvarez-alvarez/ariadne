@@ -182,12 +182,16 @@ the orchestrator asks to the last column of its workflow.
 <summary><b>The top-level tree</b></summary>
 
 ```
+.github/         CI, release-please and the release-assets workflows — see
+                 .github/AGENTS.md and .github/RELEASING.md
+assets/          branding and the two demo GIFs — see assets/AGENTS.md
 bench/           reproducible experiments that select production defaults — see
                  bench/README.md
 crates/          the Rust workspace: ariadned, the ariadne CLI and the libraries
                  they share — crate by crate in crates/AGENTS.md
 docs/            the manual: install, the CLI, events, configuration
 scripts/         install.sh / uninstall.sh + lib.sh, their shared step output
+specs/           what each subsystem does, as it stands — see specs/README.md
 ui/              Ariadne Desktop (Tauri 2 + React): a REST/SSE client of the daemon's
                  TCP listener, outside the cargo workspace — see ui/AGENTS.md and
                  ui/README.md
@@ -199,15 +203,16 @@ ui/              Ariadne Desktop (Tauri 2 + React): a REST/SSE client of the dae
 
 | Page | What it covers |
 | --- | --- |
-| [Installing Ariadne](docs/install.md) | the installer, ACP agents, the release assets, the desktop app, and the daemon service |
+| [Installing Ariadne](docs/install.md) | `scripts/install.sh`, ACP agents, the release assets, the desktop app, and the daemon service |
 | [Shell completion](docs/shell-completion.md) | dynamic completions for bash, zsh and fish, and the static fallback |
-| [Using the CLI](docs/cli.md) | the command tour, the reference, and how tables and colour are printed |
+| [Using the CLI](docs/cli.md) | the command tour, the reference, `ariadne doctor`, and how tables and colour are printed |
 | [Workflows](docs/workflows.md) | the document syntax, the two shipped workflows, every gate, and a repository's default and a goal's override |
-| [Following what happens](docs/following-events.md) | events, the log streams and the `--watch` tables |
+| [Following what happens](docs/following-events.md) | `ariadne events`, the log streams and the `--watch` tables |
 | [Configuration](docs/configuration.md) | every key of `~/.ariadne/config.toml`, and the environment that addresses a daemon |
 | [Permission modes](docs/permissions.md) | automatic, prompted, and remembered ACP permission answers |
+| [Stats](docs/stats.md) | what the work did, in five questions: the filters, `ariadne stats` and the Stats screen |
 | [Resuming a session](docs/resuming-sessions.md) | listing every session and continuing one, live, ended, or started outside Ariadne |
-| [How Ariadne works](docs/how-it-works.md) | planning, a task's workflow columns, and ACP sessions |
+| [How Ariadne works](docs/how-it-works.md) | a goal from planning through its workflow's columns, task lifecycle, and ACP sessions |
 | [The forge integration](docs/forge.md) | enabling GitHub or GitLab, the pull request and review sessions, webhooks and the tunnel, issues |
 | [Ariadne Desktop](ui/README.md) | running the desktop app |
 
