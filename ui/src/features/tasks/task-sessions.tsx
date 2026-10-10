@@ -28,6 +28,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 
+import type { SessionDto, TaskDto, WorkflowStepDto } from "@/api"
 import { ErrorState } from "@/components/error-state"
 import { PanelHeader } from "@/components/panel-header"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -41,16 +42,46 @@ import { shortId } from "@/lib/format"
 import { usePanelSessionTo } from "@/routes/paths"
 
 export function TaskSessions({
-  taskId,
+  task,
+  steps,
   onSelect,
 }: {
-  taskId: string
+  task: TaskDto
+  /** The goal's workflow columns, which name a session's step by title. */
+  steps: WorkflowStepDto[]
   /** Selects a session, which opens it over the whole panel. */
   onSelect: (sessionId: string) => void
 }) {
   // The selected row marks itself: `SessionsList` reads the same `?session=`
   // this panel drives, so nothing has to be threaded through the panel.
-  return <SessionsList filters={{ task: taskId }} onSelect={(session) => onSelect(session.id)} />
+  return (
+    <SessionsList
+      filters={{ task: task.id }}
+      sessionStep={(session) => sessionStepTitle(task, steps, session)}
+      onSelect={(session) => onSelect(session.id)}
+    />
+  )
+}
+
+/**
+ * The title of the workflow step a session's agent works, found through the
+ * task's own `agents` rather than a daemon call: a session names the agent
+ * it runs by id (`task_agent_id`), an agent names its column by id (`step`),
+ * and the goal's workflow names that column's title.
+ *
+ * A session with no staffed agent — an orchestrator, or a loose session —
+ * has no `task_agent_id`, and so no step. A step id the workflow no longer
+ * carries (an edited workflow, or a stale agent) falls back to the id itself
+ * rather than showing nothing for a session that plainly has a step.
+ */
+function sessionStepTitle(
+  task: TaskDto,
+  steps: WorkflowStepDto[],
+  session: SessionDto,
+): string | undefined {
+  const agent = task.agents.find((candidate) => candidate.id === session.task_agent_id)
+  if (!agent) return undefined
+  return steps.find((step) => step.id === agent.step)?.title ?? agent.step
 }
 
 /**

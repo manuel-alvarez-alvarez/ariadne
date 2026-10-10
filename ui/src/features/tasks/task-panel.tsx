@@ -152,7 +152,7 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
                 <TaskDiff taskId={taskId} />
               </TabsContent>
               <TabsContent value="sessions" className="pt-3">
-                <TaskSessions taskId={task.data.id} onSelect={selectSession} />
+                <TaskSessions task={task.data} steps={steps} onSelect={selectSession} />
               </TabsContent>
             </Tabs>
           </PaneBody>

@@ -83,8 +83,18 @@ Out: the daemon endpoints themselves (012).
    it runs on any other navigation away from a dirty draft. Neither screen
    shows a list panel at any width. `workflows-page.test.tsx`,
    `workflow-editor.test.tsx`, and `workflow-preview.test.tsx` prove the
-   workflow screen rules; `skills-page.test.tsx` proves the combobox rules
-   the skills screen shares with it.
+   workflow screen rules. The editor and preview share the screen in equal
+   columns, the preview stacks its columns, and a parser refusal marks its
+   source line in the editor (`workflow-editor.test.tsx::puts the editor and
+   preview in equal columns`, `workflow-preview.test.tsx::renders each parsed
+   column with its skill, rank and gate`, `workflow-editor.test.tsx::parses
+   each draft once for the editor and preview`,
+    `workflow-editor.test.tsx::marks the line the parser refuses in the
+    editor`, `workflow-preview.test.tsx::shows a parser refusal at its line`,
+    and `workflow-language.test.ts::classifies workflow names, columns,
+    metadata, and descriptions`).
+   `skills-page.test.tsx` proves the combobox rules the skills screen shares
+   with it.
 4. Types are generated from the daemon's OpenAPI document, so a DTO change
    that is not reflected here fails the typecheck rather than the app.
 5. One SSE connection serves the whole app, with a dispatcher and reconnect
@@ -582,6 +592,13 @@ Out: the daemon endpoints themselves (012).
 43. A session of seat `agent` is named by the column its agent staffs: its
     badge on the sessions screen, the attention list and the palette. The
     sessions screen's role filter offers the seat.
+44. The task panel's sessions table names each row by the title of its
+    agent's workflow step, found through the task's own `agents` and the
+    goal's own `steps` rather than a daemon call: the staffed agent of
+    `task_agent_id`, its `step`, and that step's `title` — the id itself
+    where the workflow no longer names one. A row with no staffed agent
+    shows no step. The goal panel's sessions table and the Sessions screen
+    are unchanged.
 
 - Goal details float over the board without a modal dialog, and a click on
   the scrim closes them
@@ -780,6 +797,9 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/repositories/repository-form-dialog.test.tsx::sends the permission mode picked for it`,
   `::starts from the stored permission mode, and sends a new one`,
   `ui/src/features/repositories/repositories-page.test.tsx::lists what the daemon holds, and says so where a description is missing`).
+- The repositories screen shows each repository's default workflow and opens
+  that workflow when its name is selected
+  (`ui/src/features/repositories/repositories-page.test.tsx::shows each repository workflow and opens its workflow`).
 - The attention strip holds a placeholder while its lists load and survives a
   partial failure (`ui/src/features/goals/attention-strip.test.tsx`).
 - An attention toast opens the blocked session and finishes dismissal before
@@ -1152,6 +1172,16 @@ Out: the daemon endpoints themselves (012).
   mark alone in the rail, next to the status dot`,
   `ui/src/components/connection-status.test.tsx::shows the dot alone in the
   rail, named by a tooltip instead of a label`).
+- The task panel's sessions table names a row by its agent's workflow step
+  title, falls back to the step id where the workflow no longer names one,
+  and names nothing for a row with no staffed agent
+  (`ui/src/features/tasks/task-sessions.test.tsx::names a session row by the
+  title of its agent's workflow step`, `::names no step for a session with
+  no staffed agent`, `::falls back to the step id where the workflow no
+  longer names its title`,
+  `ui/src/features/sessions/sessions-list.test.tsx::names a row by its
+  workflow step where the caller gives one, and names none where it gives
+  none`).
 
 ## Sources
 
