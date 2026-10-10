@@ -148,7 +148,8 @@ pub(super) struct FailStepReq {
 pub(super) struct OpenPullRequestReq {
     /// Titled by the repository's own commit conventions.
     pub title: String,
-    /// Filled from the repository's own request template.
+    /// Filled from the repository's own template, or, with none, three
+    /// sections: Why, What changed, How to test.
     pub body: String,
     /// Opens the request as a draft.
     #[serde(default)]

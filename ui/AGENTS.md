@@ -32,6 +32,16 @@ and what it drew is read back off its rows. Do not put a mock of that weight in
 `src/test/setup.ts`: a mock there slows every file, and the dialog tests then
 time out.
 
+## Review UI tests
+
+- Fail `setTimeout`, real timers, or sleeps; use fake timers only for timers under test and advance them by hand.
+- Keep Testing Library and `userEvent` timers real.
+- Fail an added or raised `waitFor` or `findBy*` timeout without a comment that names what is slow and why.
+- Fail a test that passes only on a second run; repeat `npx vitest run <file>` under the root bounded busy loop.
+- Fail a changed test above one second or a changed file above ten seconds; make it faster.
+- Fail a mock in `src/test/setup.ts` or a global stub a test leaves behind; use local mocks and `vi.stubGlobal`.
+- Fail a test that depends on another test's render or state; render and reset its own state.
+
 ## Layout
 
 ```

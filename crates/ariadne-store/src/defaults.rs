@@ -1076,10 +1076,11 @@ mod tests {
     /// names none of the ways an agent would feed itself: no forge CLI, no
     /// timer, no poll. A human closes a thread and a human merges, so it
     /// names neither the call that resolves one nor a forge merge command.
-    /// The agent opens the request, pushes each tested fix, completes its
-    /// step on the merge and fails the task on the close. And the turn ends
-    /// when the news is handled, which is what lets the next news start a
-    /// turn of its own.
+    /// The agent opens the request, filling the repository's own template
+    /// or, with none, Why, What changed and How to test, pushes each tested
+    /// fix, completes its step on the merge and fails the task on the
+    /// close. And the turn ends when the news is handled, which is what
+    /// lets the next news start a turn of its own.
     #[test]
     fn the_pr_babysit_skill_opens_the_request_and_ends_the_step_on_the_merge() {
         let doc = default_skill_document(PR_BABYSIT_SKILL).expect("the pr-babysit skill");
@@ -1108,7 +1109,7 @@ mod tests {
             "`git merge --no-edit <remote>/<base>`",
             "Push the task branch plainly. Call `open_pull_request`.",
             "repository's commit conventions",
-            "body from its request template",
+            "Fill the repository's pull request template if it has one, else write the body with three sections: Why, What changed, How to test.",
             "Run the tests and lint of what",
             "Never amend, rebase, or force a push.",
             "`report_pull_request` with `ready: true`",
