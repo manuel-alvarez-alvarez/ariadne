@@ -729,6 +729,7 @@ fn attention_label(reason: Option<AttentionReason>) -> String {
 fn inspect_pairs(s: &SessionDto) -> Vec<(&'static str, Kv)> {
     let mut pairs = vec![
         ("id", Kv::id(s.id.clone())),
+        ("title", Kv::title(dash(s.title.as_deref()))),
         ("goal", Kv::id(dash(s.goal_id.as_deref()))),
         ("task", Kv::id(dash(s.task_id.as_deref()))),
         ("pull request", Kv::id(dash(s.pull_request_id.as_deref()))),
@@ -755,6 +756,7 @@ fn inspect_pairs(s: &SessionDto) -> Vec<(&'static str, Kv)> {
         ),
         ("worktree", dash(s.worktree_path.as_deref()).into()),
         ("internal id", dash(s.internal_session_id.as_deref()).into()),
+        ("continues", Kv::id(dash(s.switched_from.as_deref()))),
         ("tokens", usage_block(&s.usage, &[], INDENT).into()),
     ];
     if let Some((used, size)) = s.context_used.zip(s.context_size) {
@@ -1295,6 +1297,42 @@ mod tests {
         };
         let block = kv_block(&inspect_pairs(&loose), &View::plain());
         for field in ["goal", "task", "seat"] {
+            let line = block.lines().find(|line| line.starts_with(field)).unwrap();
+            assert_eq!(line.split_whitespace().collect::<Vec<_>>(), [field, "-"]);
+        }
+    }
+
+    #[test]
+    fn a_switched_session_shows_its_title_and_what_it_continues() {
+        let s = SessionDto {
+            title: Some("Fix widgets".into()),
+            switched_from: Some("01h00000000000000000000001".into()),
+            ..session("01SESS", "01GOAL", Some("01TASK"))
+        };
+        let block = kv_block(&inspect_pairs(&s), &View::plain());
+        let title = block
+            .lines()
+            .find(|line| line.starts_with("title"))
+            .unwrap();
+        assert_eq!(
+            title.split_whitespace().collect::<Vec<_>>(),
+            ["title", "Fix", "widgets"]
+        );
+        let continues = block
+            .lines()
+            .find(|line| line.starts_with("continues"))
+            .unwrap();
+        assert_eq!(
+            continues.split_whitespace().collect::<Vec<_>>(),
+            ["continues", "01h00000000000000000000001"]
+        );
+    }
+
+    #[test]
+    fn a_session_with_neither_shows_a_dash_for_title_and_continues() {
+        let s = session("01SESS", "01GOAL", Some("01TASK"));
+        let block = kv_block(&inspect_pairs(&s), &View::plain());
+        for field in ["title", "continues"] {
             let line = block.lines().find(|line| line.starts_with(field)).unwrap();
             assert_eq!(line.split_whitespace().collect::<Vec<_>>(), [field, "-"]);
         }

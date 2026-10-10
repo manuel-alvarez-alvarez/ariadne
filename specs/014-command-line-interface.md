@@ -180,6 +180,9 @@ same binary also serves (013).
 30. `session inspect` shows a reported context window as `<used> / <size>`
     with the compact token spelling. It shows no context line when the agent
     has not reported one, and it never shows a cost.
+30a. `session inspect` prints `title` after `id`, and `continues` after
+    `internal id`. `continues` is the id of the session a `session switch`
+    replaced on its seat. Each prints a dash where the DTO carries none.
 31. `session new --model AGENT:MODEL [--effort E] [--dir PATH] [--attach]`
     starts a loose session (020): a new conversation with no goal or task,
     in `--dir` or the current directory, sent to the daemon as an absolute
@@ -526,6 +529,10 @@ same binary also serves (013).
   and omits an unreported one
   (`session.rs::the_inspect_block_shows_the_reported_context_window`,
   `::the_inspect_block_hides_an_unreported_context_window`).
+- `session inspect` prints `title` and `continues`, dashed where the DTO
+  carries neither
+  (`session.rs::a_switched_session_shows_its_title_and_what_it_continues`,
+  `::a_session_with_neither_shows_a_dash_for_title_and_continues`).
 - `agent update` takes flags, a clear or a reset but only one, and keeps a
   flag that looks like a flag as it is
   (`cli/tests.rs::updating_an_agent_takes_flags_or_clear_or_reset_but_only_one`,
