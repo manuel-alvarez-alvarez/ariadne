@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useForm } from "react-hook-form"
 import { toast } from "sonner"
 
@@ -11,10 +11,12 @@ import {
 } from "@/components/form-dialog"
 import { Field, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
 import { describeError } from "@/lib/format"
 
 import { useCreateWorkflow } from "./queries"
+import { useWorkflowEditing } from "./use-workflow-editing"
+import { WorkflowCodeEditor } from "./workflow-code-editor"
+import { WorkflowPreview } from "./workflow-preview"
 
 const TEMPLATE = `workflow develop-review-merge
   develop[Develop]
@@ -32,7 +34,11 @@ const TEMPLATE = `workflow develop-review-merge
     skills: merge
     rank: fast
     gate: merged`
-const EMPTY = { name: "", document: "" }
+const EMPTY = { name: "" }
+
+function template(name: string): string {
+  return TEMPLATE.replace("develop-review-merge", name.trim() || "my-workflow")
+}
 
 export function CreateWorkflowDialog({
   open,
@@ -45,21 +51,30 @@ export function CreateWorkflowDialog({
 }) {
   const create = useCreateWorkflow()
   const form = useForm({ defaultValues: EMPTY })
-  const { formState, handleSubmit, register, setError, setValue, watch } = form
+  const { formState, handleSubmit, register, setError, watch } = form
   useResetOnOpen(open, form, EMPTY, create)
+  const lastTemplate = useRef(template(""))
+  const [document, setDocument] = useState(lastTemplate.current)
   const [touched, setTouched] = useState(false)
   const name = watch("name")
   useEffect(() => {
-    if (!touched)
-      setValue("document", TEMPLATE.replace("develop-review-merge", name.trim() || "my-workflow"))
-  }, [name, setValue, touched])
+    if (touched) return
+    lastTemplate.current = template(name)
+    setDocument(lastTemplate.current)
+  }, [name, touched])
   useEffect(() => {
-    if (open) setTouched(false)
+    if (open) {
+      setTouched(false)
+      lastTemplate.current = template("")
+      setDocument(lastTemplate.current)
+    }
   }, [open])
+  const { parsed, error, extensions } = useWorkflowEditing(document)
+
   async function submit(values: typeof EMPTY) {
     const name = values.name.trim()
     try {
-      const workflow = await create.mutateAsync({ name, document: values.document })
+      const workflow = await create.mutateAsync({ name, document })
       toast.success("Workflow created", { description: workflow.name })
       onOpenChange(false)
       onCreated?.(workflow)
@@ -71,13 +86,14 @@ export function CreateWorkflowDialog({
     }
   }
   return (
-    <FormDialog open={open} onOpenChange={onOpenChange} dirty={formState.isDirty}>
+    <FormDialog open={open} onOpenChange={onOpenChange} dirty={formState.isDirty || touched}>
       <FormDialogContent
         title="New workflow"
         description="A sequence of columns that stages work through a task."
         onSubmit={handleSubmit(submit)}
         submitLabel="Create workflow"
         pending={create.isPending}
+        className="sm:max-w-4xl"
         error={
           formState.errors.root
             ? {
@@ -89,25 +105,38 @@ export function CreateWorkflowDialog({
         }
       >
         <FormDialogBody>
-          <Field data-invalid={formState.errors.name ? true : undefined}>
-            <FieldLabel htmlFor="new-workflow-name">Name</FieldLabel>
-            <Input
-              id="new-workflow-name"
-              autoComplete="off"
-              {...register("name", { required: "A workflow needs a name." })}
-            />
-            {formState.errors.name ? <FieldError errors={[formState.errors.name]} /> : null}
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="new-workflow-document">Document</FieldLabel>
-            <Textarea
-              id="new-workflow-document"
-              rows={14}
-              spellCheck={false}
-              className="resize-none font-mono text-xs"
-              {...register("document", { onChange: () => setTouched(true) })}
-            />
-          </Field>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <section aria-label="Workflow editor" className="flex min-h-0 flex-col gap-4">
+              <Field data-invalid={formState.errors.name ? true : undefined}>
+                <FieldLabel htmlFor="new-workflow-name">Name</FieldLabel>
+                <Input
+                  id="new-workflow-name"
+                  autoComplete="off"
+                  {...register("name", { required: "A workflow needs a name." })}
+                />
+                {formState.errors.name ? <FieldError errors={[formState.errors.name]} /> : null}
+              </Field>
+              <Field className="flex min-h-0 flex-1 flex-col">
+                <FieldLabel id="new-workflow-document-label" htmlFor="new-workflow-document">
+                  Document
+                </FieldLabel>
+                <div className="flex h-72 flex-col">
+                  <WorkflowCodeEditor
+                    id="new-workflow-document"
+                    labelId="new-workflow-document-label"
+                    value={document}
+                    onChange={(value) => {
+                      setDocument(value)
+                      if (value !== lastTemplate.current) setTouched(true)
+                    }}
+                    error={error}
+                    extensions={extensions}
+                  />
+                </div>
+              </Field>
+            </section>
+            <WorkflowPreview parsed={parsed} />
+          </div>
         </FormDialogBody>
       </FormDialogContent>
     </FormDialog>

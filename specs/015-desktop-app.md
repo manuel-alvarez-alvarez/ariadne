@@ -135,7 +135,24 @@ Out: the daemon endpoints themselves (012).
    order`, `::shows a step's gate as a chip on its connector, and none
    where a step has no gate`, and `::shows a parser refusal at its line,
    and dims the last good preview`). `skills-page.test.tsx` proves the
-   combobox rules the skills screen shares with it.
+   combobox rules the skills screen shares with it. The New workflow dialog
+   gives its document the same editor and a live preview beside it, two
+   columns wide: a parser refusal marks its line in the editor the same way,
+   and the editor offers the same skill autocomplete and hover help. Its
+   document opens on the template named after the name field and keeps
+   following it there until the document itself is edited, after which the
+   name no longer rewrites it; the dialog's own dirty-close guard answers to
+   either field (`create-workflow-dialog.test.tsx::puts the editor and the
+   preview in two columns`, `::sends the live document to the parser, and
+   redraws the preview from its answer`, `::marks a parse error on its line
+   in the editor, and shows it in the preview`, `::completes a skill name
+   from the catalog after skills: in the dialog editor`, `::explains a
+   skill named on a skills: line, through the dialog editor's hover help`,
+   `::opens on the template named after the placeholder`, `::follows the
+   name until the document is touched, so nobody types it twice`, `::stops
+   following the name once the document itself is edited`, and `::asks
+   before dropping a document edited by
+   hand`).
 4. Types are generated from the daemon's OpenAPI document, so a DTO change
    that is not reflected here fails the typecheck rather than the app.
 5. One SSE connection serves the whole app, with a dispatcher and reconnect

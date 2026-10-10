@@ -1,7 +1,7 @@
 ---
 id: workflows
 status: current
-updated: 2026-10-09
+updated: 2026-10-10
 areas: [core, store, api, daemon, prompts]
 commits: []
 tests:
@@ -140,7 +140,10 @@ every other wire enum (011).
    shipped one. Every write publishes a fat domain event —
    `workflow_created`, `workflow_updated`, `workflow_deleted` — on
    `/v1/events/stream`, carrying the whole `WorkflowDto` the way a skill
-   event does.
+   event does. The desktop's workflow editor and its New workflow dialog
+   alike write a draft against this same `parse` route for their live
+   preview and their editor's error marks; the UI rules for both are in
+   015, not here.
 
 ## Running a goal
 
