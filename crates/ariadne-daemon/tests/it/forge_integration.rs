@@ -143,7 +143,19 @@ async fn enabling_needs_the_cli_signed_in_and_stores_its_login() {
     let read: RepositoryDto = h.get(&format!("/v1/repositories/{}", repo.id)).await;
     assert!(!read.forge.unwrap().enabled, "a refusal writes nothing");
 
-    cli.reprogram(signed_in());
+    // Enabling starts a fetch. Let it succeed so its error status cannot
+    // add a repository update to the enable event this test counts.
+    let mut script = signed_in();
+    script.as_array_mut().unwrap().extend([
+        answer(&["pr", "list"], 0, "[]"),
+        answer(
+            &["api", "repos/acme/widgets/issues?state=open&per_page=100"],
+            0,
+            "[]",
+        ),
+    ]);
+    cli.reprogram(script);
+    let mut fetched = h.bus.subscribe();
     let mut rx = h.bus.subscribe();
     let enabled: RepositoryDto = h
         .json(
@@ -154,6 +166,16 @@ async fn enabling_needs_the_cli_signed_in_and_stores_its_login() {
     let forge = enabled.forge.unwrap();
     assert!(forge.enabled);
     assert_eq!(forge.login.as_deref(), Some("octocat"));
+
+    // The first issues notification proves the initial fetch reached its
+    // last forge call before the marker. Use a separate subscription to
+    // retain every repository update for the assertion below.
+    next_event(
+        &mut fetched,
+        |e| matches!(&e.event, DomainEvent::IssuesChanged(dto) if dto.repository_id == repo.id),
+    )
+    .await;
+
     assert!(
         cli.invocations().contains(&Invocation {
             program: "gh".into(),
