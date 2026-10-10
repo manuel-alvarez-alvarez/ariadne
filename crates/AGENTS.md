@@ -7,13 +7,13 @@ editing anything here; commit-message and history rules live in the root
 ## The crates
 
 ```
-ariadne-core     domain types, task state machine, the shared binary/path probe
-ariadne-api      REST DTOs / error shape (single source of truth for OpenAPI)
-ariadne-store    SQLite persistence (sqlx, one embedded init migration)
-ariadne-client   REST client (unix socket / TCP), used by CLI + MCP
-ariadne-console  the session console: transcript model, markdown, the inline pane and its loop
-ariadne-daemon   ariadned: axum API, scheduler, ACP runtime, agent registry, git managers
-ariadne-cli      ariadne: CLI, MCP server (`mcp serve`), `ariadne attach` over ariadne-console
+ariadne-core     id, models, state_machine, workflow, ACP and the binary/path probe
+ariadne-api      REST DTOs and errors for agents, goals, tasks, sessions, skills and workflows
+ariadne-store    SQLite repositories, migrations, and defaults that seed shipped skills and workflows
+ariadne-client   REST and SSE client plus home, socket and TCP endpoint resolution for CLI and daemon
+ariadne-console  terminal console: ANSI, markdown, transcript, theme and inline TUI; daemon hosts its terminal WebSocket
+ariadne-daemon   ariadned: HTTP API, scheduler, ACP, agents, git, forge, webhooks, tunnel, AI permissions, stats and failure diagnosis
+ariadne-cli      ariadne commands, output, completion, MCP server, attach console and store-backed doctor
 ```
 
 The desktop app under `ui/` is not part of this workspace; it has its own
@@ -21,15 +21,20 @@ The desktop app under `ui/` is not part of this workspace; it has its own
 
 ## Checks
 
-The test runner is [cargo-nextest](https://nexte.st), which is what CI runs:
-`cargo install cargo-nextest --locked`, or `cargo binstall cargo-nextest`.
+The test runner is [cargo-nextest](https://nexte.st), which CI runs with the
+`ci` profile in [`../.config/nextest.toml`](../.config/nextest.toml). It caps
+the daemon integration test group at two threads and writes JUnit output.
+Install it with `cargo install cargo-nextest --locked` or
+`cargo binstall cargo-nextest`. [`../.cargo/config.toml`](../.cargo/config.toml)
+sets the Git environment for every Cargo process.
 
 On a task branch, run the checks of the crates you changed, and only those:
 
 ```sh
 cargo nextest run -p <crate>              # the crate
-cargo nextest run -p <crate> -E 'test(/^<module>::/)' # one test file of it
-cargo clippy -p <crate> --all-targets
+cargo nextest run -p ariadne-daemon -E 'test(/^<module>::/)' # one `it` module
+cargo nextest run -p <crate> -E 'binary(<name>)' # one crate test binary
+cargo clippy -p <crate> --all-targets -- -D warnings
 cargo fmt
 scripts/check-unused-rust                 # a library pub item no other file names
 ```
@@ -43,9 +48,8 @@ signature reaches goes in the script's `IGNORED`, with its reason.
 
 The daemon's integration tests are one test binary, `it`: every file under
 `crates/ariadne-daemon/tests/it/` is a module that `tests/it/main.rs`
-declares, and a new file runs only once it is declared there. Keep it one
-binary. A binary per file compiles `common` again and links the whole daemon
-again, and a change to the daemon then rebuilds all of them.
+declares, and a new file runs only once it is declared there. Keep one binary
+to avoid rebuilding `common` and relinking the daemon for every file.
 
 A daemon test does not wait on a clock. Wait for the thing itself:
 
@@ -57,11 +61,10 @@ A daemon test does not wait on a clock. Wait for the thing itself:
   `harness().timeouts(Timeouts { …: RUNS_OUT, ..Timeouts::default() })`.
   Put every such timeout in `ariadne_daemon::timeouts::Timeouts`, never in a
   constant.
-- For a stub that must hold still, make it wait for a file that the test
-  writes (`wait_for`, `updates_when`), not for a number of seconds.
-- Do not create a new executable for each test. On macOS each new executable
-  is checked before it first starts, one at a time, so the tests wait for each
-  other. Share one file and link it, as the stub launcher does.
+- For a stub that must hold still, use the `wait_for` and `updates_when` keys
+  in its JSON turn script in `tests/it/common/acp.rs`.
+- Do not create a new executable for each test: macOS checks each executable
+  before it starts, so share one file and link it, as the stub launcher does.
 
 nextest marks a test `SLOW` if it runs past the `slow-timeout` of 10 seconds.
 A test in that marker waits on a clock or a scheduler tick. Find the wait and
@@ -72,11 +75,15 @@ the rules above.
 Before a commit on `main`, run the whole workspace:
 
 ```sh
-cargo nextest run
-cargo clippy --all-targets
+cargo machete .
+cargo build --workspace --all-targets
+cargo nextest run --workspace --profile ci
+cargo test --doc --workspace
+cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 scripts/check-unused-rust
-cargo machete .
+(cd ui/src-tauri && cargo fmt --all -- --check)
+(cd ui/src-tauri && cargo check)
 ```
 
 `cargo machete` is [cargo-machete](https://github.com/bnjbvr/cargo-machete)
@@ -92,16 +99,8 @@ requires anyway, and a stub ACP agent that `tests/it/common/acp.rs` writes in
 that stub, so the suite needs no coding-agent CLI installed. A machine missing
 `git` or `python3` gets failures rather than a quiet pass.
 
-The dev profile carries line tables rather than full debug info, and none
-for dependencies (`[profile.dev]` in the root `Cargo.toml`). A panic still
-names its file and line and a backtrace still reads; what goes is stepping
-through a dependency in a debugger. It is there because linking is what the
-edit-test loop waits on and it is single-threaded per binary: rebuilding the
-daemon's tests after one edit went from 7.3s to 2.4s. Switching it back
-rebuilds the world once, so do that in a branch of its own.
+`[profile.dev]` in the root `Cargo.toml` keeps line tables for workspace code
+and no debug information for dependencies; change it only in a separate branch.
 
-`cargo test` still works and does not need nextest installed, but it runs the test
-binaries one at a time where nextest pools tests across all of them, so a full
-run takes around three times as long. It is also the only way to run doctests,
-which nextest does not support; there are none today, and CI keeps it that way
-with `cargo test --doc --workspace`.
+Use `cargo test` only for doctests, because nextest runs normal test binaries
+faster; CI runs `cargo test --doc --workspace`.
