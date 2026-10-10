@@ -1,7 +1,7 @@
 ---
 id: pull-requests
 status: current
-updated: 2026-10-09
+updated: 2026-10-10
 areas: [store, api, daemon, cli, ui]
 commits: []
 tests:
@@ -98,7 +98,14 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
 9. A row with role `author` and an origin task is kept by the agent of the task's current column (030): the `pr` column of `develop-review-pr`.
    It gets no session of its own: that agent's own session is told its news.
 10. The `pr` column stages the `pr-babysit` skill (030).
-    It is how the agent keeps the request: open it once, answer comments, fix checks, keep the branch current, and push tested fixes as new commits.
+    The agent opens the request once and keeps the branch current.
+    It replies once only in an existing thread that asks for a change.
+    It names the new commit after it makes a requested change.
+    It gives a reason when it does not make the change.
+    It posts no reply to comments that ask for no change.
+    It posts no thanks, praise, acknowledgement, new thread, or top-level comment.
+    It commits only requested changes and failed-check fixes.
+    It pushes tested fixes as new commits.
 11. An agent whose session went away while its request is open is resumed by the task's own pass, as any column's agent is (009 rule 23): it reads the request again and waits for its news.
     A restart that resumes the agent while its open request still reads ready raises `waiting_user` again.
 12. The scheduler reconciles requests on every full pass, on every request change, and on every event of a request's session (`scheduler/pull_requests.rs`).
@@ -301,6 +308,8 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `::an_agent_with_no_request_is_told_to_open_one`.
 - The skill is within its caps, names no forge CLI, timer, poll or resolve, opens the request once, and ends the step on the merge:
   `defaults.rs::tests::the_pr_babysit_skill_opens_the_request_and_ends_the_step_on_the_merge`, `::skill_size_caps_hold`.
+- The skill replies only to requested changes, names a fix commit, gives a reason for no fix, and posts no unrelated reply:
+  `defaults.rs::tests::the_pr_babysit_skill_replies_only_to_requested_changes`.
 - `session ls` titles a request session with its title and URL:
   `session.rs::tests::a_pull_request_session_shows_the_request_title_and_url`.
 - `ariadne attention` lists a request ready to merge by its title:
