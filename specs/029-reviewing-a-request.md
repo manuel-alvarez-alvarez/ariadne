@@ -221,9 +221,9 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     review as it stands, in three parts, with no file, no line and nothing
     of what it did:
     - a header, one line per commit the round reviewed, each a short sha
-      and its subject, read with `git log` in the worktree over the base
-      to head range, or `since` to head on a later round, and the full
-      base-to-head range on its own line;
+      and its subject, read with `git log <base>..HEAD` in the worktree on
+      the first round, or `git log <reviewed_sha>..HEAD` later, and the
+      full base-to-head range on its own line;
     - a prose summary, not bullets, of what the change does and what the
       open findings mean for it, naming each open finding's priority and
       title;

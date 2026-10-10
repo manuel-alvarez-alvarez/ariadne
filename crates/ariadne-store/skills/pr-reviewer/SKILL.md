@@ -37,8 +37,9 @@ answer in a thread you opened. Do one round, then end your turn.
    one summary comment and puts this text in it, so write all three parts:
    - Header: one line per commit the round reviewed, read with `git log`
      in your worktree. Give each commit its short sha and subject. Use
-     the base to head range on the first round, and `since` to head on
-     a later one. Keep the full base-to-head range on its own line too.
+     `git log <base>..HEAD` on the first round, and `git log
+     <reviewed_sha>..HEAD` later. Keep the full base-to-head range on its
+     own line too.
    - Summary: one short paragraph of prose, not bullets. Say what the
      change does, where its risk sits, and how serious it is. Name each
      open finding's priority and title in the prose.

@@ -1244,8 +1244,8 @@ mod tests {
             "read with `git log`",
             "short sha",
             "subject",
-            "base to head range on the first round",
-            "`since` to head on a later one",
+            "`git log <base>..HEAD` on the first round",
+            "`git log <reviewed_sha>..HEAD` later",
             "Keep the full base-to-head range on its own line too",
         ] {
             assert!(header.contains(phrase), "the header lacks {phrase}");
