@@ -69,7 +69,8 @@ Out: the daemon endpoints themselves (012).
    selection. Each lane header shows a progress bar, done/total and tokens.
    Its title hint carries the created stamp. The bar and a collapsed lane
    retain the lane summary. The task
-   panel (facts, diff, messages, history), sessions — Ariadne's own and every
+   panel (facts, messages listed oldest first with both agents named by skills,
+   diff, history), sessions — Ariadne's own and every
    outside conversation an ACP agent stored on its own, merged into one
    listing, each shown in its console — skills, repositories, the agents of
    the daemon's ACP registry with their launch flags and the models each may
@@ -766,8 +767,8 @@ Out: the daemon endpoints themselves (012).
   `ui/src/routes/router.test.tsx::leads nowhere from a screen the app no longer has`).
 - The palette opens `#/repositories` on a picked repository
   (`ui/src/features/command-palette/command-palette.test.tsx::opens the repositories screen on a repository from the palette`).
-- The task's channel reads as one list, every kind is told apart, and both
-  ends of a message are named by the skills they work with
+- The task's Messages tab reads one oldest-first list, names both agents by
+  their skills, shows its empty state, and refetches after `message_sent`
   (`ui/src/features/tasks/task-messages.test.tsx`).
 - Every judgement the orchestrator makes about a task can be made here too:
   how a task ends

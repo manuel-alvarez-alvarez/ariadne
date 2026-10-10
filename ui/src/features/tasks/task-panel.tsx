@@ -39,7 +39,7 @@ import { useFocusReturn } from "@/hooks/use-focus-return"
 import { taskCopyEntries } from "@/lib/clipboard"
 import { paths, usePanelSessionNavigation } from "@/routes/paths"
 
-import { taskQueryOptions } from "./queries"
+import { taskMessagesQueryOptions, taskQueryOptions } from "./queries"
 import { StalledBadge } from "./stalled"
 import { TASK_STATUS_META } from "./status"
 import { StepStrip } from "./step-strip"
@@ -47,11 +47,12 @@ import { TaskActions } from "./task-actions"
 import { TaskDiff } from "./task-diff"
 import { TaskFacts } from "./task-facts"
 import { TaskHistory } from "./task-history"
+import { TaskMessages } from "./task-messages"
 import { TaskSessions, TaskSessionView } from "./task-sessions"
 
 // Description leads the strip and is where the panel opens: it is what the
 // task *is*, and the first thing to read on a task just landed on.
-const TABS = ["description", "history", "diff", "sessions"] as const
+const TABS = ["description", "history", "messages", "diff", "sessions"] as const
 type Tab = (typeof TABS)[number]
 
 export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => void }) {
@@ -70,6 +71,7 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
   // one `TaskSessions` itself passes, or the tab's count and the tab's list
   // would be two cache entries and two requests.
   const sessions = useQuery(sessionsQueryOptions({ task: taskId }))
+  const messages = useQuery(taskMessagesQueryOptions(taskId))
   // The goal's workflow columns, which a stepped task is drawn and named by:
   // the same detail entry the header's breadcrumb reads.
   const goal = useQuery({
@@ -132,6 +134,10 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
               <TabsList>
                 <TabsTrigger value="description">Description</TabsTrigger>
                 <TabsTrigger value="history">History</TabsTrigger>
+                <TabsTrigger value="messages">
+                  Messages
+                  <TabCount count={messages.data?.length} noun="message" />
+                </TabsTrigger>
                 <TabsTrigger value="diff">Diff</TabsTrigger>
                 <TabsTrigger value="sessions">
                   Sessions
@@ -147,6 +153,9 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
               </TabsContent>
               <TabsContent value="history" className="pt-3">
                 <TaskHistory taskId={taskId} steps={steps} />
+              </TabsContent>
+              <TabsContent value="messages" className="pt-3">
+                <TaskMessages task={task.data} />
               </TabsContent>
               <TabsContent value="diff" className="pt-3">
                 <TaskDiff taskId={taskId} />

@@ -30,6 +30,7 @@ export type AgentAssignment = Schemas["AgentAssignment"]
 export type TaskUsage = Schemas["TaskUsageDto"]
 export type TaskStatus = Schemas["TaskStatus"]
 export type TaskTransitionDto = Schemas["TaskTransitionDto"]
+export type MessageDto = Schemas["MessageDto"]
 export type CreateTaskRequest = Schemas["CreateTaskRequest"]
 export type UpdateTaskRequest = Schemas["UpdateTaskRequest"]
 
