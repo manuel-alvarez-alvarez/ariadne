@@ -188,6 +188,15 @@ impl StandIn {
             .count()
     }
 
+    /// Hold each new-tunnel answer until [`StandIn::release`].
+    fn hold(&self) {
+        std::fs::write(self.dir.join("hold"), "").unwrap();
+    }
+
+    fn release(&self) {
+        std::fs::remove_file(self.dir.join("hold")).unwrap();
+    }
+
     fn host(&self) -> String {
         format!("http://127.0.0.1:{}", self.api)
     }
@@ -197,11 +206,75 @@ impl StandIn {
     }
 }
 
-fn script(list: &[Value]) -> Value {
+/// The last call of each fetch: it reads the open issues.
+const ISSUES: [&str; 2] = ["api", "repos/acme/widgets/issues?state=open&per_page=100"];
+
+/// Two gates each fetch passes: one in front of its lists of requests,
+/// one in front of its read of issues. A call that meets a shut gate stands
+/// there until the gate opens.
+///
+/// The stub logs a call before it reads its gate, so a gate shut while a
+/// call may be passing it leaves the test unsure where that call stands.
+/// The test therefore shuts a gate only while the fetch stands at the
+/// other gate, or while no fetch can start a call, and always knows where
+/// the fetch stands.
+struct Gates {
+    lists: PathBuf,
+    issues: PathBuf,
+    _dir: tempfile::TempDir,
+}
+
+impl Gates {
+    fn new(open: bool) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let gates = Self {
+            lists: dir.path().join("lists"),
+            issues: dir.path().join("issues"),
+            _dir: dir,
+        };
+        if open {
+            gates.open();
+        }
+        gates
+    }
+
+    /// Both gates open: every fetch runs through.
+    fn opened() -> Self {
+        Self::new(true)
+    }
+
+    /// Both gates shut: the first fetch stands at its first list.
+    fn shut() -> Self {
+        Self::new(false)
+    }
+
+    fn open(&self) {
+        std::fs::write(&self.lists, "").unwrap();
+        std::fs::write(&self.issues, "").unwrap();
+    }
+
+    /// Shut both gates while no fetch can start a call: the hook is live,
+    /// so only a wake starts one, and every call has its answer. Answers
+    /// the calls so far.
+    fn close(&self, stub: &StubForgeCli) -> usize {
+        let calls = stub.invocations().len();
+        assert_eq!(stub.completed(), calls, "no call under way");
+        std::fs::remove_file(&self.lists).unwrap();
+        std::fs::remove_file(&self.issues).unwrap();
+        calls
+    }
+}
+
+fn script(list: &[Value], gates: &Gates) -> Value {
+    let mut lists = answer(&["pr", "list"], 0, &serde_json::to_string(list).unwrap());
+    lists["wait_for"] = json!(gates.lists);
+    let mut issues = answer(&ISSUES, 0, "[]");
+    issues["wait_for"] = json!(gates.issues);
     json!([
         answer(&["auth", "status"], 0, ""),
         answer(&["api", "user"], 0, "me"),
-        answer(&["pr", "list"], 0, &serde_json::to_string(list).unwrap()),
+        lists,
+        issues,
         answer(&["api"], 0, r#"{"id":17}"#),
     ])
 }
@@ -319,35 +392,91 @@ async fn tunnel(h: &Harness) -> ForgeTunnelDto {
     h.get("/v1/forge/tunnel").await
 }
 
+/// Whether a call is a fetch's last: the read of the open issues.
+fn is_issues_call(call: &Invocation) -> bool {
+    call.args.starts_with(&ISSUES.map(String::from))
+}
+
+/// Whether a call is a fetch's: a list of requests, or the read of issues.
+fn is_fetch_call(call: &Invocation) -> bool {
+    is_list_call(call) || is_issues_call(call)
+}
+
+/// Whether a call is a list of requests.
+fn is_list_call(call: &Invocation) -> bool {
+    call.args.starts_with(&["pr".into(), "list".into()])
+}
+
+/// Wait for a call that `matches` after the first `since` calls.
+async fn call_after(
+    stub: &StubForgeCli,
+    since: usize,
+    what: &str,
+    matches: fn(&Invocation) -> bool,
+) {
+    eventually(TIMEOUT, what, async || {
+        stub.invocations().iter().skip(since).any(matches)
+    })
+    .await;
+}
+
+/// Let the fetch that stands at the lists gate run to the issues gate, then
+/// on, and wait for the next fetch to stand at the lists gate. Nothing
+/// woke the worker, so the timer started that fetch.
+async fn timer_fetch(stub: &StubForgeCli, gates: &Gates) {
+    let since = stub.invocations().len();
+    std::fs::write(&gates.lists, "").unwrap();
+    // The issues gate is shut: the fetch stands there.
+    call_after(stub, since, "the fetch at the issues gate", is_issues_call).await;
+    std::fs::remove_file(&gates.lists).unwrap();
+    let since = stub.invocations().len();
+    std::fs::write(&gates.issues, "").unwrap();
+    // The lists gate is shut: the next fetch stands there.
+    call_after(stub, since, "the timer's fetch", is_list_call).await;
+    std::fs::remove_file(&gates.issues).unwrap();
+}
+
 /// Wait for the hook to go live at `url`, and for the one fetch after it.
-async fn live_at(h: &Harness, stub: &StubForgeCli, id: &str, url: &str) -> usize {
+///
+/// A fetch stands at the shut lists gate from before the hook can go live.
+/// The catch-up wake therefore finds it running, and coalesces into exactly
+/// one fetch after it (026). Answers the fetches so far.
+async fn live_at(h: &Harness, stub: &StubForgeCli, gates: &Gates, id: &str, url: &str) -> usize {
     let hook = format!("{url}/webhooks/github/{id}");
     eventually(TIMEOUT, "the hook to go live at the tunnel", async || {
         let row = h.store.forge_integration(id).await.unwrap().unwrap();
         row.webhook_state == "live" && row.webhook_url.as_deref() == Some(hook.as_str())
     })
     .await;
-    eventually(TIMEOUT, "the catch-up fetch", async || {
-        fetches_after_the_last_hook_call(stub) >= 1
-    })
-    .await;
-    // A fetch that was running when the hook went live coalesces the
-    // catch-up wake into one more fetch (026): wait for the two to settle.
-    let mut count = fetches(stub);
-    eventually(TIMEOUT, "the fetches to settle", async || {
-        tokio::time::sleep(QUIET).await;
-        let settled = fetches(stub) == count;
-        count = fetches(stub);
-        settled
-    })
-    .await;
-    quiet(stub, count).await;
-    let after = fetches_after_the_last_hook_call(stub);
+    let calls = stub.invocations();
     assert!(
-        (1..=2).contains(&after),
-        "one catch-up fetch, or a running one and the wake it coalesced: {after}"
+        calls.iter().rposition(is_fetch_call).is_some_and(|last| {
+            is_list_call(&calls[last]) && stub.completed() == calls.len() - 1
+        }),
+        "a fetch stands at the lists gate while the hook goes live"
     );
-    count
+    let done = fetches(stub);
+    gates.open();
+    eventually(
+        TIMEOUT,
+        "the held fetch and the catch-up fetch",
+        async || {
+            let calls = stub.invocations();
+            fetches(stub) == done + 2
+                && calls.iter().filter(|c| is_issues_call(c)).count() == done + 2
+                && stub.completed() == calls.len()
+        },
+    )
+    .await;
+    // `WakeOnly` runs no timer fetch, and nothing the test waits for later
+    // would show one: listen for it.
+    quiet(stub, done + 2).await;
+    assert_eq!(
+        fetches_after_the_last_hook_call(stub),
+        2,
+        "the held fetch, and one catch-up fetch"
+    );
+    done + 2
 }
 
 /// Post a signed delivery to `url`, as the forge would.
@@ -406,11 +535,15 @@ async fn a_tunnel_to_the_listener_registers_the_hook_and_a_delivery_through_it_f
     let dir = tempfile::tempdir().unwrap();
     let server = StandIn::start(dir.path(), 0).await;
     let home = home(&format!("tunnel_host = \"{}\"\n", server.host()));
-    let stub = stub_forge_cli(script(&[]));
+    let gates = Gates::shut();
+    let stub = stub_forge_cli(script(&[], &gates));
     let (h, listener) = daemon(home.path(), &stub, Timeouts::default()).await;
+    server.hold();
     let id = enable(&h).await;
+    call_after(&stub, 0, "the first fetch at the lists gate", is_list_call).await;
+    server.release();
     let sub = subdomain(&h).await;
-    let count = live_at(&h, &stub, &id, &server.url(&sub)).await;
+    let count = live_at(&h, &stub, &gates, &id, &server.url(&sub)).await;
     assert_eq!(server.requests(), std::slice::from_ref(&sub));
     let create = stub
         .invocations()
@@ -455,7 +588,8 @@ async fn a_server_that_goes_away_restores_the_timer_and_one_that_returns_goes_li
     let dir = tempfile::tempdir().unwrap();
     let server = StandIn::start(dir.path(), 0).await;
     let home = home(&format!("tunnel_host = \"{}\"\n", server.host()));
-    let stub = stub_forge_cli(script(&[]));
+    let gates = Gates::shut();
+    let stub = stub_forge_cli(script(&[], &gates));
     let timeouts = Timeouts {
         forge_poll: RUNS_OUT,
         tunnel_connect: RUNS_OUT,
@@ -463,11 +597,15 @@ async fn a_server_that_goes_away_restores_the_timer_and_one_that_returns_goes_li
         ..Timeouts::default()
     };
     let (h, _listener) = daemon(home.path(), &stub, timeouts).await;
+    server.hold();
     let id = enable(&h).await;
+    call_after(&stub, 0, "the first fetch at the lists gate", is_list_call).await;
+    server.release();
     let sub = subdomain(&h).await;
-    live_at(&h, &stub, &id, &server.url(&sub)).await;
+    live_at(&h, &stub, &gates, &id, &server.url(&sub)).await;
     let other = other_repository(&h).await;
 
+    let since = gates.close(&stub);
     let api = server.api;
     server.stop().await;
     // Another repository changes faster than the outage grace: the outage
@@ -494,14 +632,11 @@ async fn a_server_that_goes_away_restores_the_timer_and_one_that_returns_goes_li
     })
     .await;
     assert_eq!(tunnel(&h).await.state, TunnelState::Down);
-    let polling = fetches(&stub);
-    eventually(TIMEOUT, "the timer to fetch", async || {
-        fetches(&stub) >= polling + 2
-    })
-    .await;
+    call_after(&stub, since, "the outage's fetch", is_list_call).await;
+    timer_fetch(&stub, &gates).await;
 
     let server = StandIn::start(dir.path(), api).await;
-    live_at(&h, &stub, &id, &server.url(&sub)).await;
+    live_at(&h, &stub, &gates, &id, &server.url(&sub)).await;
     let row = h.store.forge_integration(&id).await.unwrap().unwrap();
     assert_eq!(row.webhook_error, None);
     assert_eq!(row.webhook_id, Some(17));
@@ -514,17 +649,22 @@ async fn the_switch_moves_the_fetch_without_touching_the_hooks_and_survives_a_re
     let dir = tempfile::tempdir().unwrap();
     let server = StandIn::start(dir.path(), 0).await;
     let home = home(&format!("tunnel_host = \"{}\"\n", server.host()));
-    let stub = stub_forge_cli(script(&[]));
+    let gates = Gates::shut();
+    let stub = stub_forge_cli(script(&[], &gates));
     let timeouts = Timeouts {
         forge_poll: RUNS_OUT,
         ..Timeouts::default()
     };
     let (h, _listener) = daemon(home.path(), &stub, timeouts).await;
+    server.hold();
     let id = enable(&h).await;
+    call_after(&stub, 0, "the first fetch at the lists gate", is_list_call).await;
+    server.release();
     let sub = subdomain(&h).await;
-    live_at(&h, &stub, &id, &server.url(&sub)).await;
+    live_at(&h, &stub, &gates, &id, &server.url(&sub)).await;
     let hooks = hook_calls(&stub);
 
+    let since = gates.close(&stub);
     let mut events = h.bus.subscribe();
     let off: ForgeTunnelDto = h
         .json(
@@ -543,11 +683,8 @@ async fn the_switch_moves_the_fetch_without_touching_the_hooks_and_survives_a_re
     })
     .await;
     assert_eq!(tunnel(&h).await.state, TunnelState::Off);
-    let polling = fetches(&stub);
-    eventually(TIMEOUT, "the timer to fetch", async || {
-        fetches(&stub) >= polling + 2
-    })
-    .await;
+    call_after(&stub, since, "the switch's fetch", is_list_call).await;
+    timer_fetch(&stub, &gates).await;
     assert_eq!(hook_calls(&stub), hooks, "a switch makes no hook call");
 
     let on: ForgeTunnelDto = h
@@ -557,7 +694,7 @@ async fn the_switch_moves_the_fetch_without_touching_the_hooks_and_survives_a_re
         )
         .await;
     assert!(on.enabled);
-    live_at(&h, &stub, &id, &server.url(&sub)).await;
+    live_at(&h, &stub, &gates, &id, &server.url(&sub)).await;
     assert_eq!(tunnel(&h).await.state, TunnelState::Up);
 
     // Off, and the daemon restarts on the same store.
@@ -587,6 +724,8 @@ async fn the_switch_moves_the_fetch_without_touching_the_hooks_and_survives_a_re
     restarted.start(&listener);
     let status = restarted.status().await.unwrap();
     assert!(!status.enabled);
+    // A tunnel that opened anyway would ask the stand-in, and a switch that
+    // stays off publishes no event that would show it.
     tokio::time::sleep(QUIET).await;
     assert_eq!(restarted.status().await.unwrap().state, TunnelState::Off);
     assert_eq!(
@@ -605,10 +744,14 @@ async fn the_configured_subdomain_is_asked_for_and_the_stored_one_again_after_a_
         "tunnel_host = \"{}\"\ntunnel_subdomain = \"widgets-hooks\"\n",
         server.host()
     ));
-    let stub = stub_forge_cli(script(&[]));
+    let gates = Gates::shut();
+    let stub = stub_forge_cli(script(&[], &gates));
     let (h, _listener) = daemon(configured.path(), &stub, Timeouts::default()).await;
+    server.hold();
     let id = enable(&h).await;
-    live_at(&h, &stub, &id, &server.url("widgets-hooks")).await;
+    call_after(&stub, 0, "the first fetch at the lists gate", is_list_call).await;
+    server.release();
+    live_at(&h, &stub, &gates, &id, &server.url("widgets-hooks")).await;
     assert_eq!(server.requests(), ["widgets-hooks"]);
     assert_eq!(
         h.store.forge_settings().await.unwrap().tunnel_subdomain,
@@ -619,10 +762,14 @@ async fn the_configured_subdomain_is_asked_for_and_the_stored_one_again_after_a_
 
     let dir = tempfile::tempdir().unwrap();
     let server = StandIn::start(dir.path(), 0).await;
+    let gates = Gates::shut();
     let stored = home(&format!("tunnel_host = \"{}\"\n", server.host()));
-    let stub = stub_forge_cli(script(&[]));
+    let stub = stub_forge_cli(script(&[], &gates));
     let (h, _listener) = daemon(stored.path(), &stub, Timeouts::default()).await;
+    server.hold();
     let id = enable(&h).await;
+    call_after(&stub, 0, "the first fetch at the lists gate", is_list_call).await;
+    server.release();
     let sub = subdomain(&h).await;
     let word = sub.split_once('-');
     assert!(
@@ -632,7 +779,7 @@ async fn the_configured_subdomain_is_asked_for_and_the_stored_one_again_after_a_
             && digits.bytes().all(|b| b.is_ascii_digit())),
         "{sub}"
     );
-    live_at(&h, &stub, &id, &server.url(&sub)).await;
+    live_at(&h, &stub, &gates, &id, &server.url(&sub)).await;
     h.state.tunnel.shutdown().await;
 
     let restarted = Tunnel::new(
@@ -664,15 +811,31 @@ async fn a_public_url_or_no_enabled_integration_opens_no_tunnel() {
         "tunnel_host = \"{}\"\nwebhook_public_url = \"https://hooks.example\"\n",
         server.host()
     ));
-    let stub = stub_forge_cli(script(&[]));
+    let gates = Gates::opened();
+    let stub = stub_forge_cli(script(&[], &gates));
     let (h, _listener) = daemon(public.path(), &stub, Timeouts::default()).await;
     let id = enable(&h).await;
-    live_at(&h, &stub, &id, "https://hooks.example").await;
+    // The hook goes live before the fetch worker starts, so its first fetch
+    // is the only one.
+    let row = h.store.forge_integration(&id).await.unwrap().unwrap();
+    assert_eq!(row.webhook_state, "live");
+    assert_eq!(
+        row.webhook_url,
+        Some(format!("https://hooks.example/webhooks/github/{id}"))
+    );
+    eventually(TIMEOUT, "the first fetch", async || {
+        let calls = stub.invocations();
+        fetches(&stub) == 1 && calls.iter().any(is_issues_call) && stub.completed() == calls.len()
+    })
+    .await;
+    // `WakeOnly` runs no timer fetch, and nothing later would show one.
+    quiet(&stub, 1).await;
+    assert_eq!(fetches_after_the_last_hook_call(&stub), 1);
     assert_eq!(tunnel(&h).await.state, TunnelState::Off);
     assert!(server.requests().is_empty());
 
     let none = home(&format!("tunnel_host = \"{}\"\n", server.host()));
-    let stub = stub_forge_cli(script(&[]));
+    let stub = stub_forge_cli(script(&[], &gates));
     let (h, _listener) = daemon(none.path(), &stub, Timeouts::default()).await;
     let path = h.git_repo("plain");
     let _: Value = h
@@ -681,6 +844,8 @@ async fn a_public_url_or_no_enabled_integration_opens_no_tunnel() {
             StatusCode::CREATED,
         )
         .await;
+    // A tunnel that opened anyway would ask the stand-in, and no event the
+    // daemon publishes after a repository without a forge would show it.
     tokio::time::sleep(QUIET).await;
     assert_eq!(tunnel(&h).await.state, TunnelState::Off);
     assert!(server.requests().is_empty());
@@ -714,12 +879,16 @@ async fn a_delivery_and_a_timer_fetch_record_the_same_pull_request_rows() {
     let dir = tempfile::tempdir().unwrap();
     let server = StandIn::start(dir.path(), 0).await;
     let tunnelled = home(&format!("tunnel_host = \"{}\"\n", server.host()));
-    let stub = stub_forge_cli(script(&before));
+    let gates = Gates::shut();
+    let stub = stub_forge_cli(script(&before, &gates));
     let (h, _listener) = daemon(tunnelled.path(), &stub, Timeouts::default()).await;
+    server.hold();
     let id = enable(&h).await;
+    call_after(&stub, 0, "the first fetch at the lists gate", is_list_call).await;
+    server.release();
     let sub = subdomain(&h).await;
-    let count = live_at(&h, &stub, &id, &server.url(&sub)).await;
-    stub.reprogram(script(&after));
+    let count = live_at(&h, &stub, &gates, &id, &server.url(&sub)).await;
+    stub.reprogram(script(&after, &gates));
     let url = format!("http://127.0.0.1:{}/webhooks/github/{id}", server.public);
     assert_eq!(deliver(&h, &id, &url).await, StatusCode::ACCEPTED);
     eventually(TIMEOUT, "the delivery's fetch", async || {
@@ -738,7 +907,7 @@ async fn a_delivery_and_a_timer_fetch_record_the_same_pull_request_rows() {
     // The tunnel is off, and the timer brings the fetch.
     // No server answers here: the switch is off before anything asks.
     let timed = home("tunnel_host = \"http://127.0.0.1:9\"\n");
-    let stub = stub_forge_cli(script(&before));
+    let stub = stub_forge_cli(script(&before, &gates));
     let (h, _listener) = daemon(
         timed.path(),
         &stub,
@@ -754,7 +923,7 @@ async fn a_delivery_and_a_timer_fetch_record_the_same_pull_request_rows() {
         !rows(&h).await.is_empty()
     })
     .await;
-    stub.reprogram(script(&after));
+    stub.reprogram(script(&after, &gates));
     eventually(TIMEOUT, "the timer's row", async || {
         rows(&h)
             .await
@@ -770,10 +939,10 @@ async fn a_switch_off_during_registration_cancels_it_and_publishes_no_url() {
     let dir = tempfile::tempdir().unwrap();
     let server = StandIn::start(dir.path(), 0).await;
     let home = home(&format!("tunnel_host = \"{}\"\n", server.host()));
-    let stub = stub_forge_cli(script(&[]));
+    let gates = Gates::opened();
+    let stub = stub_forge_cli(script(&[], &gates));
     let (h, _listener) = daemon(home.path(), &stub, Timeouts::default()).await;
-    let hold = dir.path().join("hold");
-    std::fs::write(&hold, "").unwrap();
+    server.hold();
     let id = enable(&h).await;
     eventually(TIMEOUT, "the registration to be held", async || {
         server.requests().len() == 1
@@ -791,7 +960,9 @@ async fn a_switch_off_during_registration_cancels_it_and_publishes_no_url() {
         row.webhook_error.as_deref() == Some("tunnel off")
     })
     .await;
-    std::fs::remove_file(&hold).unwrap();
+    server.release();
+    // The released answer goes to an attempt the switch already dropped,
+    // so no event follows it to show a URL or a hook it should not bring.
     tokio::time::sleep(QUIET).await;
 
     let row = h.store.forge_integration(&id).await.unwrap().unwrap();
@@ -851,7 +1022,8 @@ impl Drop for Daemon {
 async fn shutdown_closes_the_tunnel_and_the_listener_while_an_event_stream_holds_the_drain() {
     let dir = tempfile::tempdir().unwrap();
     let server = StandIn::start(&dir.path().join("stand-in"), 0).await;
-    let stub = stub_forge_cli(script(&[]));
+    let gates = Gates::opened();
+    let stub = stub_forge_cli(script(&[], &gates));
     let repo = dir.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
     sh(
