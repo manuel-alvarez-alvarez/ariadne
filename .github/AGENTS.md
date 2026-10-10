@@ -18,7 +18,8 @@ history rules live in the root [`AGENTS.md`](../AGENTS.md).
   from the commits since the last tag.
 - [`workflows/release.yml`](workflows/release.yml) — runs on `release:
   published` (and by hand, against a tag, for a rerun); builds `ariadne`,
-  `ariadned` and Ariadne Desktop for each released target, attests their
+  `ariadned` and Ariadne Desktop for each released target, imports the macOS
+  signing certificate, signs and verifies the macOS assets, attests their
   provenance and uploads them to the release.
 
 [`RELEASING.md`](RELEASING.md) is the human explanation of the loop these two

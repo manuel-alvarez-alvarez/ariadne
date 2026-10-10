@@ -53,8 +53,9 @@ Out: what the daemon does once running (009, 012).
    `--build-from-source`. A local build is taken from the directory cargo
    wrote it to, `CARGO_TARGET_DIR` included: a checkout that builds elsewhere
    would otherwise install whatever stale binaries `target/release` still
-   holds. Release assets are unsigned but carry a build
-   provenance attestation, so every downloaded file is checked with
+   holds. macOS release assets are signed with the self-signed `Ariadne Code
+   Signing` certificate and all release assets carry a build provenance
+   attestation, so every downloaded file is checked with
    `gh attestation verify` before anything is installed — which makes the
    GitHub CLI a hard requirement of the default flow — and the macOS quarantine
    attribute is cleared from what is installed.
@@ -65,7 +66,10 @@ Out: what the daemon does once running (009, 012).
    `chore(main): release X.Y.Z` pull request holding the version bump and the
    changelog entry, and merging it tags the version and publishes the release.
    The asset workflow runs on the **tag**, which is what makes the provenance
-   attestation name the tag as the origin of the assets.
+   attestation name the tag as the origin of the assets. On macOS, it imports
+   the release signing certificate into a temporary keychain, signs and
+   verifies the desktop app and both command-line binaries, then deletes that
+   keychain whether the job succeeds or fails.
 6. Only conventional commits are seen by release-please; anything else is
    silently ignored, neither moving the version nor appearing in the notes.
    The allowed types live in `AGENTS.md` and nowhere else.

@@ -18,9 +18,10 @@
 #   ariadne-desktop-<target>.tar.gz      Ariadne Desktop binary + icon (Linux)
 #   checksums-<target>.txt               sha256 of the assets above
 #
-# Nothing here is signed or notarized: the artifacts ship unsigned and the
-# installer clears the macOS quarantine attribute itself. What the assets do
-# carry is a build provenance attestation, verifiable with
+# macOS artifacts are signed with the project's self-signed certificate, but
+# are not notarized, so the installer clears the macOS quarantine attribute
+# itself. What the assets carry is also a build provenance attestation,
+# verifiable with
 # `gh attestation verify <asset> --repo <owner>/<repo>`.
 name: Release assets
 
@@ -79,6 +80,7 @@ jobs:
             platform: linux
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      SIGNING_AVAILABLE: false
     steps:
       # The checkout below pins the sources to the tag whatever ref the run was
       # started on, but the attestation can only record `github.ref`. Say so
@@ -151,6 +153,33 @@ jobs:
       - name: Build ariadne and ariadned
         run: cargo build --release --locked --package ariadne-cli --package ariadne-daemon
 
+      - name: Import the macOS signing certificate
+        if: matrix.platform == 'macos'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$APPLE_CERTIFICATE" ] || [ -z "$APPLE_CERTIFICATE_PASSWORD" ] || [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+            echo "::warning::macOS signing secrets are unavailable; releasing unsigned macOS assets"
+            exit 0
+          fi
+
+          certificate="$RUNNER_TEMP/ariadne-signing-cert.p12"
+          keychain="$RUNNER_TEMP/ariadne-signing.keychain-db"
+          echo "SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          keychain_password=$(openssl rand -hex 32)
+          printf '%s' "$APPLE_CERTIFICATE" | base64 -D > "$certificate"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain" "$HOME/Library/Keychains/login.keychain-db"
+          security import "$certificate" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain"
+          echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_ENV"
+          echo "SIGNING_AVAILABLE=true" >> "$GITHUB_ENV"
+
       - name: Install the desktop app's dependencies
         working-directory: ui
         run: npm ci
@@ -159,6 +188,9 @@ jobs:
       - name: Build Ariadne Desktop (.app)
         if: matrix.platform == 'macos'
         working-directory: ui
+        # The import step exports the identity only after it succeeds. Tauri
+        # finds it in that keychain; passing the p12 values would make Tauri
+        # create and remove a second keychain the CLI signing cannot use.
         run: npm run tauri build -- --bundles app
 
       # A bundled Linux package carries the runner's own glib and Mesa, and
@@ -168,6 +200,23 @@ jobs:
         if: matrix.platform == 'linux'
         working-directory: ui
         run: npm run tauri build -- --no-bundle
+
+      - name: Sign the macOS command-line binaries
+        if: matrix.platform == 'macos' && env.SIGNING_AVAILABLE == 'true'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          codesign --force --options runtime -s "$APPLE_SIGNING_IDENTITY" target/release/ariadne
+          codesign --force --options runtime -s "$APPLE_SIGNING_IDENTITY" target/release/ariadned
+
+      - name: Verify the signed macOS assets
+        if: matrix.platform == 'macos' && env.SIGNING_AVAILABLE == 'true'
+        run: |
+          set -euo pipefail
+          codesign --verify --deep --strict "ui/src-tauri/target/release/bundle/macos/Ariadne Desktop.app"
+          codesign --verify --deep --strict target/release/ariadne
+          codesign --verify --deep --strict target/release/ariadned
 
       - name: Stage the release assets
         env:
@@ -226,3 +275,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: gh release upload "$TAG" dist/* --clobber
+
+      - name: Delete the temporary macOS signing keychain
+        if: always() && matrix.platform == 'macos'
+        run: |
+          set -euo pipefail
+          if [ -n "${SIGNING_KEYCHAIN:-}" ] && [ -e "$SIGNING_KEYCHAIN" ]; then
+            security delete-keychain "$SIGNING_KEYCHAIN"
+          fi
+          rm -f "$RUNNER_TEMP/ariadne-signing-cert.p12"

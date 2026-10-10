@@ -67,6 +67,28 @@ release-please's source of truth and is updated by the release PR too.
 
 `CHANGELOG.md` is created by the first release PR — it is not hand-written.
 
+## The signing certificate
+
+macOS privacy grants follow an app's code signature. Release builds sign the
+desktop app and both command-line binaries with a self-signed certificate so
+an update keeps the identity the operating system recognizes. The assets are
+not notarized; the installer still clears their quarantine attribute.
+
+The release repository needs these three secrets:
+
+| Secret | Value |
+| --- | --- |
+| `APPLE_CERTIFICATE` | Base64-encoded `.p12` certificate |
+| `APPLE_CERTIFICATE_PASSWORD` | Password for that `.p12` file |
+| `APPLE_SIGNING_IDENTITY` | Certificate common name, `Ariadne Code Signing` |
+
+Run `scripts/make-signing-cert.sh` to create the certificate and its secret
+values. Keep the `.p12` file and password safe: if either is lost, create a
+replacement with that script, update all three repository secrets, and expect
+macOS to treat the replacement certificate as a new signing identity. Rotate a
+certificate the same way, retaining the old certificate until releases signed
+with it no longer need to preserve their existing grants.
+
 ## The release token
 
 release-please acts as `RELEASE_PLEASE_TOKEN`, a fine-grained personal access
