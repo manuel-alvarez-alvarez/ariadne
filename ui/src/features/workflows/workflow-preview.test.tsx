@@ -34,9 +34,9 @@ describe("the workflow preview", () => {
 
     const [first, second, end] = screen.getAllByRole("listitem")
     if (!first || !second || !end) throw new Error("expected three pipeline rows")
-    expect(first.textContent).toContain("1")
+    expect(within(first).getByText("1")).toBeDefined()
     expect(within(first).getByRole("heading", { name: "Develop" })).toBeDefined()
-    expect(second.textContent).toContain("2")
+    expect(within(second).getByText("2")).toBeDefined()
     expect(within(second).getByRole("heading", { name: "Review" })).toBeDefined()
     expect(end.textContent).toContain("End of task")
   })
@@ -61,7 +61,11 @@ describe("the workflow preview", () => {
     renderScreen(<Preview document={workflow.document} />)
 
     await screen.findByRole("heading", { name: "Review" })
-    expect(screen.getByText("Gate: committed")).toBeDefined()
+    const [first] = screen.getAllByRole("listitem")
+    if (!first) throw new Error("expected the first step's row")
+    const chip = within(first).getByText("Gate: committed")
+    const card = within(first).getByRole("article")
+    expect(card.contains(chip)).toBe(false)
     expect(screen.queryAllByText(/^Gate:/)).toHaveLength(1)
   })
 

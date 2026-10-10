@@ -52,18 +52,14 @@ function StepMarker({ index }: { index: number }) {
 }
 
 function Connector({ gate }: { gate: string | null }) {
-  if (!gate) {
-    return (
-      <div className="flex w-7 flex-none justify-center">
-        <span className="h-8 w-px bg-border" aria-hidden />
-      </div>
-    )
-  }
   return (
-    <div className="flex w-7 flex-none flex-col items-center gap-1.5 py-1.5">
-      <span className="h-3 w-px bg-border" aria-hidden />
-      <StepBadge kind="gate" value={gate} />
-      <span className="h-3 w-px bg-border" aria-hidden />
+    <div className="flex min-h-8 gap-3">
+      <div className="flex w-7 flex-none flex-col items-center">
+        <span className="w-px flex-1 bg-border" aria-hidden />
+      </div>
+      <div className="flex flex-1 items-center">
+        {gate ? <StepBadge kind="gate" value={gate} /> : null}
+      </div>
     </div>
   )
 }
