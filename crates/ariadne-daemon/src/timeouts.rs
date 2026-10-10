@@ -11,12 +11,6 @@ use std::time::Duration;
 pub struct Timeouts {
     /// Fallback interval for repositories without a working webhook.
     pub forge_poll: Duration,
-    /// How long the news of a request a review session reviews must stand
-    /// still before it is handed over (029). A reviewer of a human's request
-    /// sees a burst of pushes and replies in a few minutes; each new one
-    /// starts the wait again, and the session is told of them all in one
-    /// prompt once none came for this long.
-    pub review_news_settle: Duration,
     /// How long one tunnel connection attempt may take, and how long an up
     /// tunnel may hold no open connection before it counts as down (027).
     pub tunnel_connect: Duration,
@@ -103,7 +97,6 @@ impl Default for Timeouts {
             session_wake: Duration::from_millis(250),
             full_reconcile: Duration::from_secs(5),
             forge_poll: Duration::from_secs(300),
-            review_news_settle: Duration::from_secs(300),
             tunnel_connect: Duration::from_secs(15),
             tunnel_retry: Duration::from_secs(1),
             forge_details: Duration::from_secs(30),

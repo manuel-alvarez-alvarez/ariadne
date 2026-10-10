@@ -457,21 +457,13 @@ async fn a_push_moves_the_worktree_and_is_told_once_with_the_last_reviewed_sha()
     );
 }
 
-/// News for a review settles before it is told (029): two pushes in quick
-/// succession reach the agent as one prompt on the last head, once no new
-/// activity came for `review_news_settle`, and each push restarts that wait.
+/// A push reaches an idle review session on the very next reconcile, with
+/// no wait for the news to settle (029): back-to-back pushes each hand
+/// the agent their own prompt, rather than being folded into one.
 #[tokio::test]
-async fn a_burst_of_pushes_is_told_once_after_it_settles() {
-    const SETTLE: std::time::Duration = std::time::Duration::from_secs(3);
+async fn a_push_reaches_an_idle_session_without_a_wait() {
     let stub = stub_forge_cli(json!([]));
-    let h = harness()
-        .scheduler()
-        .forge_cli(&stub)
-        .timeouts(ariadne_daemon::timeouts::Timeouts {
-            review_news_settle: SETTLE,
-            ..ariadne_daemon::timeouts::Timeouts::default()
-        })
-        .await;
+    let h = harness().scheduler().forge_cli(&stub).await;
     let (path, first) = checkout(&h);
     stub.reprogram(script(&Shown::open(&first)));
     let repo = repository(&h, &path, Some(PIN)).await;
@@ -497,35 +489,21 @@ async fn a_burst_of_pushes_is_told_once_after_it_settles() {
     fetch_again(&h, &stub, &repo).await;
     assert_eq!(
         h.prompts_to(&session).len(),
-        briefed,
-        "a push waits for the activity to settle"
+        briefed + 1,
+        "the push reaches the idle session at once, with no settle wait"
     );
+    assert_eq!(sh(&worktree, "git rev-parse HEAD"), second);
+
+    let idle = idle_session(&h, &id).await;
     let third = commit("third.txt");
     stub.reprogram(script(&Shown::open(&third)));
     fetch_again(&h, &stub, &repo).await;
     assert_eq!(
-        h.prompts_to(&session).len(),
-        briefed,
-        "a new push waits again"
-    );
-
-    eventually(TIMEOUT, "the settled news to reach the agent", async || {
-        h.prompts_to(&session).len() > briefed
-    })
-    .await;
-    let news = h.prompts_to(&session).pop().unwrap();
-    assert!(
-        news.contains(&format!("the head moved to {third}")),
-        "{news}"
+        h.prompts_to(&idle).len(),
+        briefed + 2,
+        "the next push reaches it too, at once"
     );
     assert_eq!(sh(&worktree, "git rev-parse HEAD"), third);
-    tokio::time::sleep(SETTLE + QUIET).await;
-    h.flush_scheduler().await;
-    assert_eq!(
-        h.prompts_to(&session).len(),
-        briefed + 1,
-        "the burst is one prompt"
-    );
 }
 
 /// `get_diff` reads the change of the worktree against its base, and

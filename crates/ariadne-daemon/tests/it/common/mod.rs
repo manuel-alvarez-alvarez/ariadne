@@ -175,12 +175,7 @@ pub(crate) fn harness() -> HarnessBuilder {
         logs: None,
         discover_agents: false,
         second_agent: false,
-        // A review's news settles for minutes in a daemon; a test about
-        // that wait shortens it, and every other is told at once.
-        timeouts: Timeouts {
-            review_news_settle: std::time::Duration::ZERO,
-            ..Timeouts::default()
-        },
+        timeouts: Timeouts::default(),
         path: std::ffi::OsString::new(),
         index: ariadne_daemon::acp_discovery::SHIPPED_INDEX.to_string(),
         ai_permissions_installer: None,

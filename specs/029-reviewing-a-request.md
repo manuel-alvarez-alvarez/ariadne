@@ -90,17 +90,13 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
    no news to a reviewer. On a request of the user's own a push alone is
    news: its comments are the news of the task's author that keeps it (026),
    and each is told once.
-8. A review's news settles first: the daemon keeps what it holds — the
-   head and the untold comments — and hands it over only once it has stood
-   still for `review_news_settle` (`Timeouts`, five minutes). A push or a
-   reply that comes meanwhile changes what it holds and starts the wait
-   again, so a burst of activity is one prompt. The full reconcile tick
-   looks again each time, and the wait is kept until the news is told: a
-   settled news the session could not take mid-turn goes out on the next
-   pass with no new wait. A daemon that restarts waits once more.
-   A push waits for the session to be idle too. Then the daemon moves the
+8. A review's news is told at once: the next reconcile after a push or a
+   reply hands it over, with no wait for activity to settle. A push also
+   waits for the session to be idle: once it is, the daemon moves the
    worktree to the new head (`checkout_detached`) and hands the news in one
-   prompt. A fetch with the same head hands nothing.
+   prompt. A fetch with the same head hands nothing. A reply alone needs no
+   idle session, since it moves no worktree:
+   `pull_request_reviews.rs::a_push_reaches_an_idle_session_without_a_wait`.
 9. A row that turns `merged` or `closed`, goes back to draft, or loses the
    user's review request has its sessions killed and its worktree removed. No
    branch is touched. Then Ariadne stops working on it and its row goes,
@@ -267,9 +263,9 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   `pull_request_reviews.rs::a_detail_read_before_any_fetch_keeps_a_review_request_asking`.
   A review stopped and asked again edits its summary, found by its mark:
   `pull_request_reviews.rs::a_request_of_mine_is_reviewed_once_asked_and_its_review_is_a_comment`.
-- Two pushes in quick succession are told once, on the last head, after
-  the news settled:
-  `pull_request_reviews.rs::a_burst_of_pushes_is_told_once_after_it_settles`.
+- Back-to-back pushes each reach an idle review session on the next
+  reconcile, with no wait for the news to settle:
+  `pull_request_reviews.rs::a_push_reaches_an_idle_session_without_a_wait`.
 - On GitLab a finding on a renamed file names its old path:
   `pull_request_reviews.rs::a_gitlab_finding_on_a_renamed_file_names_its_old_path`.
 - An Ariadne review of a request a task's author keeps reaches that author,
