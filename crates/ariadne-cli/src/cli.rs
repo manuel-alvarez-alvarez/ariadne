@@ -599,6 +599,7 @@ const QUIET_OUTPUT: &[&str] = &[
     "models disable",
     "models enable",
     "models ls",
+    "pr review",
     "repo add",
     "repo ls",
     "repo rm",

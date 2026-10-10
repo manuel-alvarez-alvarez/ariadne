@@ -77,6 +77,10 @@ Examples:
   ariadne session ls --cursor <token>
 ";
 
+// `Ls` carries every filter `session ls` takes and so is far larger than a
+// one-id variant like `Kill`: that is the shape of a clap arg enum, not a
+// struct worth boxing fields out of.
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 pub(crate) enum SessionCommand {
     /// List Ariadne and outside agent sessions
@@ -94,6 +98,9 @@ pub(crate) enum SessionCommand {
         /// Filter by goal id
         #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
         goal: Option<String>,
+        /// Filter by pull request id
+        #[arg(long)]
+        pull_request: Option<String>,
         /// Filter by status: names the statuses to list instead of the
         /// live/finished split --all makes, and so replaces it — a status is
         /// listed whether or not it is a live one. Repeatable and
@@ -238,6 +245,7 @@ pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) ->
             agent,
             task,
             goal,
+            pull_request,
             statuses,
             seat,
             attention,
@@ -258,6 +266,7 @@ pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) ->
                     agent,
                     task,
                     goal,
+                    pull_request,
                     statuses,
                     seat,
                     attention,
@@ -432,6 +441,7 @@ struct ListOptions {
     agent: Option<String>,
     task: Option<String>,
     goal: Option<String>,
+    pull_request: Option<String>,
     statuses: Vec<SessionStatus>,
     seat: Option<Seat>,
     attention: bool,
@@ -486,7 +496,7 @@ fn sessions_path(options: &ListOptions, cursor: Option<&str>) -> Result<String> 
             agent: options.agent.clone(),
             goal: options.goal.clone(),
             task: options.task.clone(),
-            pull_request: None,
+            pull_request: options.pull_request.clone(),
             status: one_of(&options.statuses),
             seat: options.seat,
             attention: options.attention.then_some(true),
@@ -548,6 +558,7 @@ fn next_session_command(options: &ListOptions, cursor: &str) -> String {
     push_option(&mut args, "--agent", options.agent.as_deref());
     push_option(&mut args, "--goal", options.goal.as_deref());
     push_option(&mut args, "--task", options.task.as_deref());
+    push_option(&mut args, "--pull-request", options.pull_request.as_deref());
     if let Some(status) = one_of(&options.statuses) {
         push_option(&mut args, "--status", Some(status.as_str()));
     }
@@ -823,6 +834,7 @@ mod tests {
             agent: None,
             task: None,
             goal: None,
+            pull_request: None,
             statuses: Vec::new(),
             seat: None,
             attention: false,
@@ -890,6 +902,7 @@ mod tests {
             agent: Some("codex-acp".into()),
             goal: Some("01GOAL".into()),
             task: Some("01TASK".into()),
+            pull_request: Some("01PR".into()),
             statuses: vec![SessionStatus::Idle],
             seat: Some(Seat::Agent),
             attention: true,
@@ -904,7 +917,21 @@ mod tests {
         };
         assert_eq!(
             sessions_path(&options, None).unwrap(),
-            "/v1/sessions?kind=outside&agent=codex-acp&goal=01GOAL&task=01TASK&status=idle&seat=agent&attention=true&dir=%2Fwork%2Fapi&since=2026-09-01T00%3A00%3A00Z&until=2026-09-12T12%3A30%3A00%2B02%3A00&q=rate+limit&limit=25&cursor=next%2Fpage&refresh=true"
+            "/v1/sessions?kind=outside&agent=codex-acp&goal=01GOAL&task=01TASK&pull_request=01PR&status=idle&seat=agent&attention=true&dir=%2Fwork%2Fapi&since=2026-09-01T00%3A00%3A00Z&until=2026-09-12T12%3A30%3A00%2B02%3A00&q=rate+limit&limit=25&cursor=next%2Fpage&refresh=true"
+        );
+    }
+
+    /// `--pull-request` reaches the daemon under `SessionPageQuery`'s own
+    /// parameter name, on its own, with nothing else from `--all`.
+    #[test]
+    fn pull_request_reaches_its_own_query_parameter() {
+        let options = ListOptions {
+            pull_request: Some("01PR".into()),
+            ..options()
+        };
+        assert_eq!(
+            sessions_path(&options, None).unwrap(),
+            "/v1/sessions?pull_request=01PR"
         );
     }
 

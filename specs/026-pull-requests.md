@@ -200,10 +200,11 @@ There is no route that adds or removes a request.
 
 The command and screen follow [014](014-command-line-interface.md) and [015](015-desktop-app.md).
 
-- `pr ls [--repo <id|path>] [--mine | --review-requests] [--watch]` lists every open request live, the user's own with `--mine` (`role=author`), or the ones that ask for their review with `--review-requests` (`role=reviewer&requested=true`); the two do not combine. Its author column reads "you" on a request of the user's, and its `ariadne` column says whether Ariadne keeps it for a task, reviews it, or does nothing with it.
-- `pr inspect <repo> <number>` prints every field of one request, read off the forge now.
+- `pr ls [--repo <id|path>] [--mine | --review-requests] [--watch]` lists every open request live, the user's own with `--mine` (`role=author`), or the ones that ask for their review with `--review-requests` (`role=reviewer&requested=true`); the two do not combine. Its author column reads "you" on a request of the user's, its `ariadne` column says whether Ariadne keeps it for a task, reviews it, or does nothing with it, its `branches` column reads `head → base`, and its `session` column links the request's newest session.
+- `pr inspect <repo> <number>` prints every field of one request, read off the forge now, as a hand-written key-value block in a fixed reading order, the body last after a `---` line (014).
 - `pr search --repo <id|path> <query>` searches the forge.
 - `pr refresh [--repo <id|path>]` requests a fetch.
+- `pr review <repo> <number> --model AGENT:MODEL [--effort E] [--skill S]... [--attach]` calls `PUT .../ariadne-review` with `{asked: true, model, effort, skills}` (029): `--model` left out and the repository carrying its own `review_model` sends that pin and its `review_effort`; with neither, a usage error names `--model`. `--attach` waits for the review session to start and opens its console, as `session new --attach` does. `pr review <repo> <number> --stop` sends `{asked: false}` alone, and conflicts with `--model`, `--effort`, `--skill` and `--attach`.
 
 The sidebar's Forge entry opens the Forge screen, titled "Forge", whose two tabs are Pull requests (`#/forge/pull-requests`, where `#/forge` lands) and Issues (028).
 Pull requests lists the open requests, read live. A three-way choice narrows them: All (every open request), Mine (`role=author`), and Review requests (`role=reviewer&requested=true`).
@@ -257,6 +258,19 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 - CLI actions use the live routes and preserve search text, `pr ls` asks every open request, mine, or the review requests, and no command adds or removes one:
   `pr.rs::tests::pr_commands_use_the_live_routes_and_preserve_search_text`;
   `--mine` and `--review-requests` do not combine: `::mine_and_review_requests_do_not_combine`.
+  `pr ls` carries the branches and the session, and `pr inspect` prints a
+  fixed reading order with the body last: `::pr_ls_shows_the_branches_and_session_columns`,
+  `::pr_inspect_prints_readable_keys_in_order_with_the_body_last`.
+- `pr review` sends the asking pin whole and the stop body alone, falls back
+  to the repository's own review pin with no `--model`, is refused naming
+  `--model` where the repository has none, and `--stop` conflicts with every
+  asking flag:
+  `pr.rs::tests::pr_review_sends_the_ask_body_with_its_pin_and_the_stop_body_alone`,
+  `::pr_review_with_no_model_uses_the_repositorys_own_review_pin`,
+  `::pr_review_with_no_model_and_no_repository_pin_is_refused`,
+  `::pr_review_refuses_stop_combined_with_an_asking_flag_and_a_bare_default_model`.
+- `session ls --pull-request` reaches the daemon under `SessionPageQuery`'s
+  own parameter: `session.rs::tests::pull_request_reaches_its_own_query_parameter`.
 - The screen renders rows, reads again on `pull_requests_changed`, and opens the pane by repository and number
   (`pull-requests-page.test.tsx::renders rows, updates from an event, and opens the floating panel`),
   lists every open request by default and narrows to mine or to review requests, adding none by hand

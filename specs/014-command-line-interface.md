@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-10-09
+updated: 2026-10-10
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 7fe184e9]
 tests:
@@ -31,6 +31,7 @@ tests:
   - crates/ariadne-cli/src/commands/goal.rs
   - crates/ariadne-cli/src/commands/repo.rs
   - crates/ariadne-cli/src/commands/attach.rs
+  - crates/ariadne-cli/src/commands/pr.rs
 ---
 
 # Command-line interface
@@ -139,7 +140,8 @@ same binary also serves (013).
 24. Human mutation output is one styled line. Quiet mutation output is only
     the affected id. Inspect keys use lowercase space-separated words.
     `ariadne goal inspect` shows its workflow and its columns (rule 40), and
-    no landing and no goal branch.
+    no landing and no goal branch. `pr inspect` prints a fixed reading order
+    of its own, the body last after a `---` line (rule 42).
     Missing session goals, tasks and seats print a dash.
     A row's subject column is `title`, except that the agent listing keeps `agent`.
     Boolean columns use the shared `yes_no` wording. Every empty listing states
@@ -157,8 +159,9 @@ same binary also serves (013).
     `--columns`. An outside row leaves status, goal and task empty. It sends
     `--kind`, `--agent`, `--status`, `--seat`, `--goal`, `--task`, `--attention`,
     `--dir`, `--since`, `--until`, `--search`, `--limit`, `--cursor`,
-    `--refresh` and `--all` to the daemon; `--search` becomes `q`, and agent
-    flags complete registry agent ids. A date activity bound is the start of
+    `--refresh`, `--all` and `--pull-request` to the daemon, the last as
+    `SessionPageQuery`'s own `pull_request` (026); `--search` becomes `q`,
+    and agent flags complete registry agent ids. A date activity bound is the start of
     its UTC day for `--since` and the end for `--until`. The table ends with
     `<shown> of <total> sessions` and a reusable next-page command when the
     daemon returns a cursor. `--all` follows every cursor into one table and
@@ -292,6 +295,17 @@ same binary also serves (013).
     `agent` or `reviewer` wherever a seat is, and `session ls --seat agent`
     lists every column session. A status filter takes the six statuses of
     001 and no other word.
+42. `pr review <repo> <number> --model AGENT:MODEL [--effort E] [--skill
+    S]... [--attach]` asks Ariadne to review a request of your own (029);
+    `--model` takes the spelling every other `--model` takes and refuses
+    `default`, a review pinning a model of its own. Left out, the
+    repository's own `review_model` and `review_effort` supply the pin;
+    with neither, it is a usage error naming `--model`. `--attach` waits for
+    the review session to start and opens its console, as `session new
+    --attach` does. `pr review <repo> <number> --stop` sends `{asked:
+    false}` alone and conflicts with `--model`, `--effort`, `--skill` and
+    `--attach`. It prints one styled mutation line, the request id with
+    `-q`, and the DTO with `--format json`.
 
 ## Acceptance criteria
 
@@ -560,6 +574,7 @@ same binary also serves (013).
   `::an_outside_row_without_model_or_usage_keeps_both_cells_empty`,
   `::an_ariadne_row_keeps_its_agent_model_and_token_columns`,
   `::columns_select_the_model_by_header_name`,
+  `::pull_request_reaches_its_own_query_parameter`,
   `cli/tests.rs::session_ls_takes_filters_pages_refresh_and_all`,
   `::session_ls_all_and_cursor_are_exclusive`). Outside ids resume through
   the resume endpoint and a shared id requires `--agent`
@@ -581,6 +596,18 @@ same binary also serves (013).
   `session logs` reads the snapshot and follows the console stream
   (`commands/console.rs::a_transcript_log_uses_its_snapshot_for_table_and_json_output`,
   `::a_followed_log_uses_the_console_event_stream`).
+- `pr review` sends the asking pin whole and the stop body alone
+  (`commands/pr.rs::pr_review_sends_the_ask_body_with_its_pin_and_the_stop_body_alone`),
+  falls back to the repository's own review pin with no `--model`
+  (`::pr_review_with_no_model_uses_the_repositorys_own_review_pin`), and is
+  refused, naming `--model`, where the repository has none
+  (`::pr_review_with_no_model_and_no_repository_pin_is_refused`). `--stop`
+  conflicts with every asking flag, and `--model default` is refused
+  (`::pr_review_refuses_stop_combined_with_an_asking_flag_and_a_bare_default_model`).
+  `pr inspect` prints a fixed reading order of lowercase keys, the body last
+  (`::pr_inspect_prints_readable_keys_in_order_with_the_body_last`), and
+  `pr ls` carries the branches and the session
+  (`::pr_ls_shows_the_branches_and_session_columns`).
 
 ## Sources
 

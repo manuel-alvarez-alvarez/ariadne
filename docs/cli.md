@@ -513,6 +513,9 @@ ariadne pr ls --review-requests --watch
 ariadne pr search --repo <repo-id> "rate limit"
 ariadne pr inspect <repo-id> 42
 ariadne pr refresh --repo <repo-id>
+ariadne pr review <repo-id> 42 --model claude-acp:<model-id>
+ariadne pr review <repo-id> 42 --model claude-acp:<model-id> --skill security-review --attach
+ariadne pr review <repo-id> 42 --stop
 ```
 
 `ariadne pr ls` lists every open request of your enabled repositories, read
@@ -521,13 +524,27 @@ your own, and `--review-requests` to the ones that ask for your review; the
 two do not combine. `--repo` narrows it to one repository, and `--watch`
 redraws it as requests move. The author column reads "you" on a request of
 yours, and the `ariadne` column says whether Ariadne keeps it for a task,
-reviews it, or does nothing with it.
+reviews it, or does nothing with it; `branches` reads `head → base`, and
+`session` links the request's newest session.
 `ariadne pr inspect <repo> <number>` prints every field of one request,
-read off the forge now. `ariadne pr search` searches an enabled
+read off the forge now, as a key-value block in a fixed reading order, the
+body last after a `---` line. `ariadne pr search` searches an enabled
 repository's open requests live, by number, title or author, your own left
 out. `ariadne pr refresh` wakes one repository's fetch, or every enabled
-one. Nothing adds or removes a request: Ariadne starts and stops working on
-one on its own (see [The forge integration](forge.md)).
+one.
+
+`ariadne pr review <repo> <number> --model AGENT:MODEL [--effort E] [--skill
+S]... [--attach]` asks Ariadne to review a request of your own (029):
+`--model` is required unless the repository already carries its own
+`review_model` (`repo update --review-model`), which then supplies the pin
+and its effort. `--skill` loads another skill beside `pr-reviewer`, which
+every review loads anyway; repeat it for more than one. `--attach` waits for
+the review session to start and opens its console, the way `session new
+--attach` does. `ariadne pr review <repo> <number> --stop` stops Ariadne's
+review and cannot be combined with `--model`, `--effort`, `--skill` or
+`--attach`. Beside this one way to ask for or stop a review, nothing here
+adds or removes a request: Ariadne starts and stops its other work on one
+on its own (see [The forge integration](forge.md)).
 
 ```sh
 ariadne issue ls --repo <repo-id>

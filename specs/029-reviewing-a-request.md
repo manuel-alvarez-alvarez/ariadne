@@ -14,6 +14,7 @@ tests:
   - crates/ariadne-cli/src/commands/mcp.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-cli/src/commands/attention.rs
+  - crates/ariadne-cli/src/commands/pr.rs
   - ui/src/features/goals/attention.test.tsx
   - ui/src/features/pull-requests/pull-requests-page.test.tsx
 ---
@@ -120,6 +121,11 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     repository's pin.
     Asking on an ended request is refused with 409. `asked: false` clears
     the pin and the skills and takes the session down.
+10a. `pr review <repo> <number> --model AGENT:MODEL [--effort E] [--skill
+    S]... [--attach]` and `pr review <repo> <number> --stop` call this route
+    from the CLI (014): `--model` left out takes the repository's own
+    `review_model` and `review_effort` where it has one, and `--attach`
+    waits for the review session this starts and opens its console.
 
 ## Tools and routes
 
@@ -346,6 +352,13 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   user's:
   `attention.rs::tests::a_session_is_reported_for_the_reason_the_ui_would_give`,
   `attention.test.tsx::carries a reviewer pull request session's waiting_user as review posted`.
+- `ariadne pr review` sends the pin it is given or the repository's own, is
+  refused with no pin at all, and `--stop` sends `asked: false` alone and
+  conflicts with every asking flag:
+  `pr.rs::tests::pr_review_sends_the_ask_body_with_its_pin_and_the_stop_body_alone`,
+  `::pr_review_with_no_model_uses_the_repositorys_own_review_pin`,
+  `::pr_review_with_no_model_and_no_repository_pin_is_refused`,
+  `::pr_review_refuses_stop_combined_with_an_asking_flag_and_a_bare_default_model`.
 
 ## Sources
 
@@ -358,4 +371,5 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 `crates/ariadne-daemon/src/forge/gitlab/reviews.rs`,
 `crates/ariadne-daemon/src/http/pull_requests.rs`,
 `crates/ariadne-daemon/src/launcher.rs`,
-`crates/ariadne-cli/src/commands/mcp.rs`, `crates/ariadne-cli/src/commands/mcp/tools.rs`.
+`crates/ariadne-cli/src/commands/mcp.rs`, `crates/ariadne-cli/src/commands/mcp/tools.rs`,
+`crates/ariadne-cli/src/commands/pr.rs`.
