@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-10-09
+updated: 2026-10-10
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, ced9f4f8, c11241f3]
 tests:
@@ -83,7 +83,24 @@ Out: the daemon endpoints themselves (012).
    `workflow-editor.test.tsx::marks the line the parser refuses in the
    editor`, `workflow-preview.test.tsx::shows a parser refusal at its line`,
    and `workflow-language.test.ts::classifies workflow names, columns,
-   metadata, and descriptions`).
+   metadata, and descriptions`). The editor also completes and explains the
+   document as it is typed: at the start of a column's body line it offers
+   `skills:`, `rank:` and `gate:`; after `rank:` it offers `fast`, `balanced`,
+   `frontier` and `local`; after `gate:` it offers `committed`, `pushed`,
+   `merged` and `request-merged`; and after `skills:`, or after a comma in
+   its list, it offers the skill catalog's names with each one's summary as
+   the detail, leaving out `orchestration`, `pr-reviewer` and a skill the
+   line already names. Hovering a key, or a rank or gate value, shows one
+   sentence on what it means; hovering a skill name shows its summary, or
+   that the catalog has none by that name
+   (`workflow-help.test.ts::offers the body keys at the start of a body
+   line`, `::offers the rank words after rank:`, `::offers the gate words
+   after gate:`, `::offers skill names after skills:, with each summary as
+   the detail`, `::never offers orchestration or pr-reviewer`, `::offers
+   skill names after a comma, excluding the one the line already names`,
+   `::explains the rank key`, `::explains the gate key`, `::explains a rank
+   value`, `::explains a gate value`, `::shows a known skill's summary`,
+   `::says when the catalog has no such skill`).
 4. Types are generated from the daemon's OpenAPI document, so a DTO change
    that is not reflected here fails the typecheck rather than the app.
 5. One SSE connection serves the whole app, with a dispatcher and reconnect

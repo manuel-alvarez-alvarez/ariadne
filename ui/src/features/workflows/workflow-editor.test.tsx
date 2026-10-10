@@ -81,7 +81,8 @@ describe("the workflow editor", () => {
     renderScreen(<WorkflowEditor workflow={workflow} onDeleted={vi.fn()} />)
 
     await screen.findByRole("heading", { name: "Develop" })
-    expect(daemonFetch).toHaveBeenCalledTimes(1)
+    // One parse call, plus the skill catalog the completions and hover help read.
+    expect(daemonFetch).toHaveBeenCalledTimes(2)
   })
 
   it("marks the line the parser refuses in the editor", async () => {
