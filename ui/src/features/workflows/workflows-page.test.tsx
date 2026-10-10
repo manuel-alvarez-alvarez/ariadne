@@ -1,41 +1,270 @@
 // @vitest-environment jsdom
 
-import { screen, within } from "@testing-library/react"
-import { createBrowserRouter, RouterProvider } from "react-router-dom"
-import { describe, expect, it } from "vitest"
-import { paths } from "@/routes/paths"
+/**
+ * The workflows screen as a combobox beside an editor, against a stubbed
+ * daemon. The catalog sits behind the trigger rather than down the side, so
+ * what is checked here is the picker's own behaviour: it groups by where a
+ * workflow came from, it is filtered by name and by its step titles, and a
+ * pick lands in the URL as `?workflow=`.
+ */
+
+import { screen, waitFor, within } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
+import { createBrowserRouter, RouterProvider, useLocation, useNavigate } from "react-router-dom"
+import { beforeEach, describe, expect, it } from "vitest"
+
+import type { WorkflowDto } from "@/api"
+import { paths, WORKFLOW_PARAM } from "@/routes/paths"
 import { aWorkflow } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen, startAt } from "@/test/harness"
 import { WorkflowsPage } from "./workflows-page"
 
-describe("the workflow list", () => {
-  it("groups shipped workflows apart from user workflows and shows their columns", async () => {
-    const shipped = aWorkflow()
-    const mine = aWorkflow({
-      name: "release",
-      builtin: false,
-      steps: [
-        {
-          id: "release",
-          title: "Release",
-          description: "Release the work.",
-          skills: [],
-          rank: null,
-          gate: null,
-        },
-      ],
-    })
-    daemonFetch.mockImplementation(async () => jsonResponse([shipped, mine]))
-    startAt(paths.workflows())
-    const router = createBrowserRouter([{ path: paths.workflows(), element: <WorkflowsPage /> }])
-    renderScreen(<RouterProvider router={router} />, { route: null })
+const SHIPPED: WorkflowDto = aWorkflow()
 
-    const shippedGroup = await screen.findByRole("region", { name: "Shipped with Ariadne" })
+const MINE: WorkflowDto = aWorkflow({
+  name: "release",
+  builtin: false,
+  steps: [
+    {
+      id: "release",
+      title: "Release",
+      description: "Release the work.",
+      skills: [],
+      rank: null,
+      gate: null,
+    },
+  ],
+})
+
+let requests: { method: string; path: string }[] = []
+
+function stubDaemon(initial: WorkflowDto[]) {
+  const workflows = [...initial]
+  daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(String(input), init)
+    const { pathname } = new URL(request.url)
+    requests.push({ method: request.method, path: pathname })
+    if (pathname === "/v1/workflows" && request.method === "GET") return jsonResponse(workflows)
+    return new Response("not stubbed", { status: 404 })
+  })
+}
+
+function renderPage(entry: string = paths.workflows()) {
+  function Harness() {
+    const navigate = useNavigate()
+    const location = useLocation()
+    return (
+      <>
+        <button type="button" onClick={() => void navigate(paths.workflow(MINE.name))}>
+          pick release
+        </button>
+        <button type="button" onClick={() => void navigate(-1)}>
+          go back
+        </button>
+        <button type="button" onClick={() => void navigate(paths.agents())}>
+          go to agents
+        </button>
+        <output data-testid="search">{location.search}</output>
+      </>
+    )
+  }
+  startAt(entry)
+  const router = createBrowserRouter([
+    {
+      path: paths.workflows(),
+      element: (
+        <>
+          <Harness />
+          <WorkflowsPage />
+        </>
+      ),
+    },
+    { path: paths.agents(), element: <p>Agents screen</p> },
+  ])
+  return renderScreen(<RouterProvider router={router} />, { route: null })
+}
+
+function selectedInUrl(): string | null {
+  return new URLSearchParams(screen.getByTestId("search").textContent ?? "").get(WORKFLOW_PARAM)
+}
+
+/** The combobox trigger, which also reads back as the whole choice. */
+function trigger(): HTMLElement {
+  return screen.getByRole("button", { name: "Workflow" })
+}
+
+async function openCombobox(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole("button", { name: "Workflow" }))
+  await screen.findByRole("listbox", { name: "Workflow" })
+}
+
+/** The group of one title, found by its own accessible name. */
+function group(title: string): HTMLElement {
+  return screen.getByRole("group", { name: title })
+}
+
+async function editorFor(name: string): Promise<HTMLElement> {
+  return await screen.findByRole("heading", { level: 2, name })
+}
+
+beforeEach(() => {
+  requests = []
+  stubDaemon([SHIPPED, MINE])
+})
+
+describe("the combobox", () => {
+  it("shows no left list panel", async () => {
+    renderPage()
+    await screen.findByRole("button", { name: "Workflow" })
+
+    expect(screen.queryByRole("navigation")).toBeNull()
+  })
+
+  it("groups shipped workflows apart from user workflows and shows their columns", async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await openCombobox(user)
+
     expect(
-      within(shippedGroup).getByRole("link", { name: /develop-review-merge/ }).textContent,
+      within(group("Shipped with Ariadne")).getByRole("option", { name: /develop-review-merge/ })
+        .textContent,
     ).toContain("Develop")
-    expect(
-      within(screen.getByRole("region", { name: "Yours" })).getByRole("link", { name: /release/ }),
-    ).toBeDefined()
+    expect(within(group("Yours")).getByRole("option", { name: /release/ }).textContent).toContain(
+      "Release",
+    )
+  })
+
+  it("narrows by name or by a step's title, and says so when nothing is left", async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await openCombobox(user)
+
+    const filter = screen.getByRole("combobox", { name: "Workflow" })
+    await user.type(filter, "Release")
+
+    expect(screen.getByRole("option", { name: /^release/ })).toBeDefined()
+    expect(screen.queryByRole("option", { name: /^develop-review-merge/ })).toBeNull()
+    expect(screen.queryByRole("group", { name: "Shipped with Ariadne" })).toBeNull()
+
+    await user.clear(filter)
+    await user.type(filter, "nothing matches this")
+    expect(screen.getByText(/No workflow matches/)).toBeDefined()
+  })
+
+  it("reads as a placeholder until a workflow is picked", async () => {
+    renderPage()
+
+    expect((await screen.findByRole("button", { name: "Workflow" })).textContent).toContain(
+      "Select a workflow",
+    )
+  })
+})
+
+describe("the selection", () => {
+  it("is nothing until a workflow is picked, and says so", async () => {
+    renderPage()
+    await screen.findByRole("button", { name: "Workflow" })
+
+    expect(screen.getByText("Select a workflow, or write one.")).toBeDefined()
+    expect(selectedInUrl()).toBeNull()
+  })
+
+  it("puts a picked workflow in the URL and opens its editor below the combobox", async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await openCombobox(user)
+
+    await user.click(screen.getByRole("option", { name: /^develop-review-merge/ }))
+
+    expect(await editorFor("develop-review-merge")).toBeDefined()
+    expect(selectedInUrl()).toBe("develop-review-merge")
+    expect(trigger().textContent).toContain("develop-review-merge")
+  })
+
+  it("picks with the keyboard: open, arrow, enter", async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await openCombobox(user)
+
+    await user.keyboard("{ArrowDown}")
+    await user.keyboard("{Enter}")
+
+    expect(await editorFor("release")).toBeDefined()
+    expect(selectedInUrl()).toBe("release")
+  })
+
+  it("closes on Escape, leaving the selection as it was", async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await openCombobox(user)
+
+    await user.keyboard("{Escape}")
+
+    await waitFor(() => {
+      expect(screen.queryByRole("listbox", { name: "Workflow" })).toBeNull()
+    })
+    expect(selectedInUrl()).toBeNull()
+  })
+
+  it("comes back up on the workflow the URL names, on a reload", async () => {
+    renderPage(paths.workflow(MINE.name))
+
+    expect(await editorFor("release")).toBeDefined()
+  })
+
+  it("says so when the URL names a workflow the daemon does not have", async () => {
+    const user = userEvent.setup()
+    renderPage(paths.workflow("gone-since"))
+    await screen.findByRole("button", { name: "Workflow" })
+
+    expect(screen.getByText("No workflow by that name.")).toBeDefined()
+    expect(screen.queryByRole("heading", { level: 2 })).toBeNull()
+
+    await user.click(screen.getByRole("button", { name: "Clear selection" }))
+    expect(await screen.findByText("Select a workflow, or write one.")).toBeDefined()
+    expect(selectedInUrl()).toBeNull()
+  })
+})
+
+describe("leaving a dirty workflow", () => {
+  it("asks before switching to a different workflow from the combobox", async () => {
+    const user = userEvent.setup()
+    renderPage(paths.workflow(SHIPPED.name))
+    await editorFor(SHIPPED.name)
+
+    await user.type(screen.getByRole("textbox", { name: "Document" }), "x")
+    await user.click(screen.getByRole("button", { name: "pick release" }))
+
+    expect(await screen.findByRole("dialog", { name: "Discard changes?" })).toBeDefined()
+    expect(selectedInUrl()).toBe(SHIPPED.name)
+  })
+
+  it("discards the draft and switches, on Discard", async () => {
+    const user = userEvent.setup()
+    renderPage(paths.workflow(SHIPPED.name))
+    await editorFor(SHIPPED.name)
+
+    await user.type(screen.getByRole("textbox", { name: "Document" }), "x")
+    await user.click(screen.getByRole("button", { name: "pick release" }))
+
+    const dialog = await screen.findByRole("dialog", { name: "Discard changes?" })
+    await user.click(within(dialog).getByRole("button", { name: "Discard" }))
+
+    expect(await editorFor("release")).toBeDefined()
+    expect(selectedInUrl()).toBe("release")
+  })
+
+  it("asks before a route to another screen leaves a dirty workflow, too", async () => {
+    const user = userEvent.setup()
+    renderPage(paths.workflow(SHIPPED.name))
+    await editorFor(SHIPPED.name)
+
+    await user.type(screen.getByRole("textbox", { name: "Document" }), "x")
+    await user.click(screen.getByRole("button", { name: "go to agents" }))
+
+    const dialog = await screen.findByRole("dialog", { name: "Discard changes?" })
+    await user.click(within(dialog).getByRole("button", { name: "Discard" }))
+
+    expect(await screen.findByText("Agents screen")).toBeDefined()
   })
 })

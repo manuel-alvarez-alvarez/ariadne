@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-10-09
+updated: 2026-10-10
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, ced9f4f8, c11241f3]
 tests:
@@ -72,9 +72,19 @@ Out: the daemon endpoints themselves (012).
    be staffed on, Workflows — shipped and user workflows grouped separately,
    with a document editor and parsed kanban preview — Permissions — the AI
    permission model's settings behind the `ai` permission mode (022) — Stats
-   (rule 37), and a daemon-logs drawer. `workflows-page.test.tsx`,
+   (rule 37), and a daemon-logs drawer. The Skills and Workflows screens each
+   put a filterable combobox at the top rather than a left-hand list: its
+   trigger reads as the selected row or a placeholder, its popup groups
+   "Shipped with Ariadne" apart from "Yours", a row shows its name and (a
+   workflow's step titles joined by " · ", or a skill's summary line) under
+   it, and typing narrows by either. Picking a row, with the keyboard or the
+   pointer alike, puts its name in the URL and opens its editor below the
+   combobox, full width; the unsaved-changes guard runs on a pick exactly as
+   it runs on any other navigation away from a dirty draft. Neither screen
+   shows a list panel at any width. `workflows-page.test.tsx`,
    `workflow-editor.test.tsx`, and `workflow-preview.test.tsx` prove the
-   workflow screen rules.
+   workflow screen rules; `skills-page.test.tsx` proves the combobox rules
+   the skills screen shares with it.
 4. Types are generated from the daemon's OpenAPI document, so a DTO change
    that is not reflected here fails the typecheck rather than the app.
 5. One SSE connection serves the whole app, with a dispatcher and reconnect
@@ -723,11 +733,14 @@ Out: the daemon endpoints themselves (012).
   `::sends null to clear a rank back to unranked`,
   `::refreshes the catalog through the models query key after a change`,
   `::says why, where the daemon refuses to rank a model`).
-- The skills screen groups the shipped skills apart from the user's own
-  (`ui/src/features/skills/skills-page.test.tsx`), and offers reset for the
-  first and delete for the second and never the other way round
-  (`ui/src/features/skills/skill-editor.test.tsx`) — the rule of 017 read from
-  the client side.
+- The skills screen's combobox groups the shipped skills apart from the
+  user's own, and marks a shipped skill somebody has rewritten with an
+  "edited" badge nothing else earns
+  (`ui/src/features/skills/skills-page.test.tsx::groups the shipped skills
+  apart from the ones you wrote`, `::badges only a shipped skill somebody has
+  rewritten`), and offers reset for the first and delete for the second and
+  never the other way round (`ui/src/features/skills/skill-editor.test.tsx`)
+  — the rule of 017 read from the client side.
 - The orchestrator's own playbook is marked beside the built-in mark
   (`ui/src/features/skills/skill-editor.test.tsx::marks the orchestrator's own
   playbook as not a task staffing choice`) and left out of the task form's
@@ -746,15 +759,15 @@ Out: the daemon endpoints themselves (012).
   newer version is waiting, with a way to load it in the draft's place
   (`ui/src/features/skills/skill-editor.test.tsx::loads the new version on
   request, replacing the draft`).
-- The skills screen asks before a dirty draft is left — by switching to
-  another skill, by Back, or by a route to another screen entirely, such as a
-  sidebar link — and only then: Keep editing cancels the move and keeps the
-  draft, Discard carries it out, and a clean draft never asks at all
+- The skills screen asks before a dirty draft is left — by picking another
+  skill from the combobox, by Back, or by a route to another screen entirely,
+  such as a sidebar link — and only then: Keep editing cancels the move and
+  keeps the draft, Discard carries it out, and a clean draft never asks at all
   (`ui/src/features/skills/skills-page.test.tsx::asks before switching to a
-  different skill`, `::keeps the draft and stays, on Keep editing`,
-  `::discards the draft and switches, on Discard`, `::asks before Back leaves
-  a dirty skill, too`, `::asks before a route to another screen leaves a
-  dirty skill, too`, `::leaves a clean skill with no prompt`).
+  different skill from the combobox`, `::keeps the draft and stays, on Keep
+  editing`, `::discards the draft and switches, on Discard`, `::asks before
+  Back leaves a dirty skill, too`, `::asks before a route to another screen
+  leaves a dirty skill, too`, `::leaves a clean skill with no prompt`).
 - The repository dialog is a path, a base branch, a description, a
   permission mode and a default workflow — not the default landing,
   merge-strategy or landing-briefing fields that used to sit there

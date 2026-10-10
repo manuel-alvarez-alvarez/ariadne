@@ -1,35 +1,27 @@
 /**
- * The skills screen: every skill on the left, the selected one's document on
- * the right.
+ * The skills screen: a combobox over every skill, the selected one's document
+ * below it.
  *
- * A skill is a document, so the screen is a list beside an editor rather than
- * a page per skill — the same shape the profiles screen had, and for the same
- * reason: what you come here to do is read one text and change it, with the
- * others in reach.
- *
- * They are grouped by where the document came from, because that is what says
- * what can be done to it: the ones Ariadne ships are reset, and the ones you
- * wrote are deleted.
- *
- * Below `md` there is no room for both columns: the list is the screen, and a
- * selection replaces it until it is cleared.
+ * A skill is a document, so the screen is a picker beside an editor rather
+ * than a page per skill. The catalog is searched rather than scrolled — a
+ * filter box narrows it by name or by what the skill says it is for — and the
+ * two groups say what can be done to a row: the ones Ariadne ships are reset,
+ * and the ones written here are deleted.
  */
 
 import { useQuery } from "@tanstack/react-query"
 import { PlusIcon } from "lucide-react"
 import { useState } from "react"
-import { Link, useBlocker, useSearchParams } from "react-router-dom"
+import { useBlocker, useSearchParams } from "react-router-dom"
 
-import type { SkillDto } from "@/api"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { EmptyState } from "@/components/empty-state"
+import { EntityCombobox } from "@/components/entity-combobox"
 import { ErrorState } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
-import { cn } from "@/lib/format"
 import { SKILL_PARAM } from "@/routes/paths"
 
 import { CreateSkillDialog } from "./create-skill-dialog"
@@ -45,8 +37,8 @@ export function SkillsPage() {
   const selected = skills.data?.find((skill) => skill.name === selectedName)
 
   // The editor reports its own dirtiness; what happens with that is the
-  // screen's call, since leaving — to another skill, to the list, or off the
-  // screen entirely — is a navigation the screen is the one to see coming.
+  // screen's call, since leaving — to another skill or off the screen
+  // entirely — is a navigation the screen is the one to see coming.
   const [dirty, setDirty] = useState(false)
   const blocker = useBlocker(dirty)
 
@@ -62,9 +54,9 @@ export function SkillsPage() {
   }
 
   /**
-   * Clears the selection in place. This is the way back to the list where the
-   * list is not beside the editor, and where the selected skill is gone; in
-   * neither case is the user going somewhere, so nothing is pushed.
+   * Clears the selection in place. This is the way back to nothing selected,
+   * where the selected skill is gone; the user is not going anywhere, so
+   * nothing is pushed.
    */
   function clearSelection() {
     const next = new URLSearchParams(search)
@@ -74,8 +66,8 @@ export function SkillsPage() {
 
   return (
     // A fixed-height column against the shell's `<main>`, the way the board
-    // is: the two columns below scroll on their own, so the screen must not
-    // grow with them.
+    // is: the editor below scrolls on its own, so the screen must not grow
+    // with it.
     <div className="flex h-full min-h-0 flex-col gap-4">
       <PageHeader
         title="Skills"
@@ -98,20 +90,30 @@ export function SkillsPage() {
           showIcon
         />
       ) : (
-        <div className="flex min-h-0 flex-1 gap-6">
-          <SkillList
-            skills={skills.data}
+        <div className="flex min-h-0 flex-1 flex-col gap-4">
+          <EntityCombobox
+            id="skill-combobox"
+            label="Skill"
+            entityLabel="skill"
+            placeholder="Select a skill…"
             selectedName={selectedName}
-            search={search}
-            className={cn(selectedName ? "hidden md:flex" : "flex")}
+            onSelect={select}
+            entities={skills.data.map((skill) => ({
+              name: skill.name,
+              details: skill.summary,
+              builtin: skill.builtin,
+              // Only worth a badge where it is not the default: a shipped
+              // skill somebody has rewritten is the one thing here that
+              // behaves unexpectedly.
+              badge:
+                skill.builtin && !skill.document_is_default ? (
+                  <Badge variant="outline" className="shrink-0">
+                    edited
+                  </Badge>
+                ) : undefined,
+            }))}
           />
-          <section
-            aria-label="Selected skill"
-            className={cn(
-              "min-h-0 min-w-0 flex-1 flex-col",
-              selectedName ? "flex" : "hidden md:flex",
-            )}
-          >
+          <section aria-label="Selected skill" className="flex min-h-0 min-w-0 flex-1 flex-col">
             {selected ? (
               // Not keyed by the skill: a selection staying the same instance
               // is what lets a dirty draft survive a switch that gets asked
@@ -119,7 +121,7 @@ export function SkillsPage() {
               // the box clean on the spot.
               <SkillEditor skill={selected} onDeleted={clearSelection} onDirtyChange={setDirty} />
             ) : selectedName ? (
-              // A link to a skill that is gone — deleted since, or never this
+              // A pick of a skill that is gone — deleted since, or never this
               // daemon's — lands here rather than on nothing at all.
               <EmptyState
                 emphasis="quiet"
@@ -128,7 +130,7 @@ export function SkillsPage() {
                 description="It may have been deleted since the link was made."
                 action={
                   <Button variant="outline" size="sm" onClick={clearSelection}>
-                    Back to the list
+                    Clear selection
                   </Button>
                 }
               />
@@ -167,113 +169,12 @@ export function SkillsPage() {
   )
 }
 
-/**
- * The list: the shipped skills and yours under their own headings, the
- * selected one marked, and a box above them to narrow by name or by what the
- * skill says it is for.
- */
-function SkillList({
-  skills,
-  selectedName,
-  search,
-  className,
-}: {
-  skills: SkillDto[]
-  selectedName: string | null
-  /** The screen's params, kept on every selection link. */
-  search: URLSearchParams
-  className?: string
-}) {
-  const [filter, setFilter] = useState("")
-  const needle = filter.trim().toLowerCase()
-  const shown = needle
-    ? skills.filter(
-        (skill) =>
-          skill.name.toLowerCase().includes(needle) || skill.summary.toLowerCase().includes(needle),
-      )
-    : skills
-
-  const groups = [
-    { key: "shipped", title: "Shipped with Ariadne", skills: shown.filter((s) => s.builtin) },
-    { key: "yours", title: "Yours", skills: shown.filter((s) => !s.builtin) },
-  ].filter((group) => group.skills.length > 0)
-
-  function href(name: string): string {
-    const next = new URLSearchParams(search)
-    next.set(SKILL_PARAM, name)
-    return `?${next.toString()}`
-  }
-
-  return (
-    <nav aria-label="Skills" className={cn("w-full min-w-0 flex-col gap-3 md:w-72", className)}>
-      <Input
-        value={filter}
-        placeholder="Filter skills"
-        aria-label="Filter skills"
-        autoComplete="off"
-        onChange={(event) => setFilter(event.target.value)}
-      />
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {groups.length === 0 ? (
-          <p className="px-1 py-6 text-muted-foreground text-sm">No skill matches “{filter}”.</p>
-        ) : (
-          groups.map((group) => (
-            // Named by its own heading, so the group a row belongs to — and
-            // so what can be done to that row — reaches a screen reader too.
-            <section key={group.key} aria-labelledby={`skills-${group.key}`} className="mb-4">
-              <h3
-                id={`skills-${group.key}`}
-                className="border-b px-1 pb-2 text-sm font-medium text-muted-foreground"
-              >
-                {group.title}
-              </h3>
-              <ul className="flex flex-col gap-0.5">
-                {group.skills.map((skill) => (
-                  <li key={skill.name}>
-                    <Link
-                      to={href(skill.name)}
-                      aria-current={skill.name === selectedName ? "true" : undefined}
-                      className={cn(
-                        "flex flex-col gap-0.5 rounded-md px-2 py-1.5 text-sm hover:bg-accent",
-                        skill.name === selectedName && "bg-accent",
-                      )}
-                    >
-                      <span className="flex items-baseline gap-2">
-                        <span className="min-w-0 truncate font-medium">{skill.name}</span>
-                        {/* Only worth a badge where it is not the default: a
-                            shipped skill somebody has rewritten is the one
-                            thing in this list that behaves unexpectedly. */}
-                        {skill.builtin && !skill.document_is_default ? (
-                          <Badge variant="outline" className="shrink-0">
-                            edited
-                          </Badge>
-                        ) : null}
-                      </span>
-                      <span className="truncate text-muted-foreground text-xs">
-                        {skill.summary}
-                      </span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))
-        )}
-      </div>
-    </nav>
-  )
-}
-
-/** Both columns, before the list has arrived. */
+/** Both the combobox and the editor, before the catalog has arrived. */
 function LoadingSkills() {
   return (
-    <div className="flex min-h-0 flex-1 gap-6">
-      <div className="flex w-full flex-col gap-2 md:w-72">
-        {["a", "b", "c", "d", "e", "f", "g", "h"].map((row) => (
-          <Skeleton key={row} className="h-10 w-full" />
-        ))}
-      </div>
-      <Skeleton className="hidden min-h-0 flex-1 md:block" />
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
+      <Skeleton className="h-8 w-full sm:w-96" />
+      <Skeleton className="min-h-0 flex-1" />
     </div>
   )
 }
