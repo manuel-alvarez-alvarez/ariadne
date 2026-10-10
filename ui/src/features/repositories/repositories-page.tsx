@@ -22,6 +22,7 @@ import { DataTable, RowAction } from "@/components/data-table"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { TableCell, TableRow } from "@/components/ui/table"
+import { paths } from "@/routes/paths"
 
 import { DeleteRepositoryDialog } from "./delete-repository-dialog"
 import { forgeKindLabel, forgeRepositoryLabel } from "./forge"
@@ -34,6 +35,7 @@ import { WebhookPill } from "./webhook-pill"
 const COLUMNS = [
   { header: "Path" },
   { header: "Base branch" },
+  { header: "Workflow" },
   { header: "Permissions" },
   { header: "Forge" },
   { header: "Webhook", className: "w-28" },
@@ -136,6 +138,14 @@ function RepositoryRow({
       </TableCell>
       <TableCell className="max-w-24 text-xs lg:max-w-56">
         <CopyableId value={repository.base_branch} label="base branch" truncate="middle" />
+      </TableCell>
+      <TableCell className="max-w-24 text-xs lg:max-w-56">
+        <CopyableId
+          value={repository.default_workflow}
+          label="workflow"
+          truncate="middle"
+          to={paths.workflow(repository.default_workflow)}
+        />
       </TableCell>
       <TableCell className="text-xs">{permissionModeLabel(repository.permission_mode)}</TableCell>
       <TableCell className="text-xs">
