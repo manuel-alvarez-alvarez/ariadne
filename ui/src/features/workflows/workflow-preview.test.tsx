@@ -1,51 +1,99 @@
 // @vitest-environment jsdom
 
-import { screen, waitFor } from "@testing-library/react"
+import { screen, waitFor, within } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
 
 import { aWorkflow } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
+import { useWorkflowParse } from "./use-workflow-parse"
 import { WorkflowPreview } from "./workflow-preview"
 
-describe("the workflow preview", () => {
-  it("renders each parsed column with its skill, rank and gate", async () => {
-    const workflow = aWorkflow()
-    const review = {
-      ...workflow.steps[0],
-      id: "review",
-      title: "Review",
-      skills: ["code-review"],
-      rank: "frontier" as const,
-      gate: null,
-    }
-    daemonFetch.mockImplementation(async () =>
-      jsonResponse({ name: workflow.name, steps: [workflow.steps[0], review] }),
-    )
-    renderScreen(<WorkflowPreview document={workflow.document} />)
+function Preview({ document }: { document: string }) {
+  return <WorkflowPreview parsed={useWorkflowParse(document)} />
+}
 
-    expect(await screen.findByRole("heading", { name: "Develop" })).toBeDefined()
-    expect(screen.getByText("coding")).toBeDefined()
-    expect(screen.getByText("balanced")).toBeDefined()
-    expect(screen.getByText("committed")).toBeDefined()
-    expect(screen.getByRole("heading", { name: "Review" })).toBeDefined()
+function twoSteps() {
+  const workflow = aWorkflow()
+  const review = {
+    ...workflow.steps[0],
+    id: "review",
+    title: "Review",
+    skills: ["code-review"],
+    rank: "frontier" as const,
+    gate: null,
+  }
+  return { workflow, steps: [workflow.steps[0], review] }
+}
+
+describe("the workflow preview", () => {
+  it("draws the steps as a numbered pipeline, in order, ending with a marker", async () => {
+    const { workflow, steps } = twoSteps()
+    daemonFetch.mockImplementation(async () => jsonResponse({ name: workflow.name, steps }))
+    renderScreen(<Preview document={workflow.document} />)
+    await screen.findByRole("heading", { name: "Develop" })
+
+    const [first, second, end] = screen.getAllByRole("listitem")
+    if (!first || !second || !end) throw new Error("expected three pipeline rows")
+    expect(within(first).getByText("1")).toBeDefined()
+    expect(within(first).getByRole("heading", { name: "Develop" })).toBeDefined()
+    expect(within(second).getByText("2")).toBeDefined()
+    expect(within(second).getByRole("heading", { name: "Review" })).toBeDefined()
+    expect(end.textContent).toContain("End of task")
   })
 
-  it("shows a parser refusal at its line", async () => {
+  it("shows a card's title, id, description, skills and rank, in that order", async () => {
+    const { workflow, steps } = twoSteps()
+    daemonFetch.mockImplementation(async () => jsonResponse({ name: workflow.name, steps }))
+    renderScreen(<Preview document={workflow.document} />)
+
+    const heading = await screen.findByRole("heading", { name: "Develop" })
+    const card = heading.closest("article")
+    if (!card) throw new Error("expected the step to render as a card")
+    expect(card.textContent).toMatch(
+      /Develop[\s\S]*develop[\s\S]*Build the task\.[\s\S]*coding[\s\S]*balanced/,
+    )
+    expect(within(card).queryByText(/Gate:/)).toBeNull()
+  })
+
+  it("shows a step's gate as a chip on its connector, and none where a step has no gate", async () => {
+    const { workflow, steps } = twoSteps()
+    daemonFetch.mockImplementation(async () => jsonResponse({ name: workflow.name, steps }))
+    renderScreen(<Preview document={workflow.document} />)
+
+    await screen.findByRole("heading", { name: "Review" })
+    const [first] = screen.getAllByRole("listitem")
+    if (!first) throw new Error("expected the first step's row")
+    const chip = within(first).getByText("Gate: committed")
+    const card = within(first).getByRole("article")
+    expect(card.contains(chip)).toBe(false)
+    expect(screen.queryAllByText(/^Gate:/)).toHaveLength(1)
+  })
+
+  it("shows a parser refusal at its line, and dims the last good preview", async () => {
+    const workflow = aWorkflow()
+    daemonFetch.mockImplementation(async () =>
+      jsonResponse({ name: workflow.name, steps: workflow.steps }),
+    )
+    const { rerender } = renderScreen(<Preview document={workflow.document} />)
+    await screen.findByRole("heading", { name: "Develop" })
+
     daemonFetch.mockImplementation(
       async () =>
         new Response(
           JSON.stringify({
             error: { code: "workflow_invalid", message: "Unknown rank", details: { line: 4 } },
           }),
-          {
-            status: 400,
-            headers: { "content-type": "application/json" },
-          },
+          { status: 400, headers: { "content-type": "application/json" } },
         ),
     )
-    renderScreen(<WorkflowPreview document="broken" />)
+    rerender(<Preview document="broken" />)
+
     await waitFor(() =>
       expect(screen.getByRole("alert").textContent).toContain("Line 4: Unknown rank"),
+    )
+    expect(screen.getByRole("heading", { name: "Develop" })).toBeDefined()
+    expect(screen.getByRole("heading", { name: "Develop" }).closest("ol")?.className).toContain(
+      "opacity-50",
     )
   })
 })

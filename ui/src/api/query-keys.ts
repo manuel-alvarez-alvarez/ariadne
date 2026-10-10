@@ -127,6 +127,7 @@ export const qk = {
     list: () => ["workflows", "list", {}] as const,
     details: () => ["workflows", "detail"] as const,
     detail: (name: string) => ["workflows", "detail", name] as const,
+    parse: (document: string) => ["workflows", "parse", document] as const,
   },
   /**
    * The registered checkouts goals are created against

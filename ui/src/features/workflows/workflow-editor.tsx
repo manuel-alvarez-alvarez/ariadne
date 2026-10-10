@@ -8,10 +8,11 @@ import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/u
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Field, FieldLabel } from "@/components/ui/field"
-import { Textarea } from "@/components/ui/textarea"
 import { cn, describeError } from "@/lib/format"
 
 import { useDeleteWorkflow, useResetWorkflow, useUpdateWorkflow } from "./queries"
+import { useWorkflowParse } from "./use-workflow-parse"
+import { WorkflowCodeEditor } from "./workflow-code-editor"
 import { WorkflowPreview } from "./workflow-preview"
 
 export function WorkflowEditor({
@@ -35,6 +36,10 @@ export function WorkflowEditor({
   const update = useUpdateWorkflow()
   const reset = useResetWorkflow()
   const remove = useDeleteWorkflow()
+  const parsed = useWorkflowParse(document)
+  const error = parsed.errorLine
+    ? { line: parsed.errorLine, message: describeError(parsed.error) }
+    : null
 
   useEffect(() => {
     if (workflow.name !== name.current) {
@@ -69,8 +74,8 @@ export function WorkflowEditor({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 xl:flex-row">
-      <section aria-label="Workflow editor" className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
+    <div className="grid min-h-0 flex-1 grid-cols-2 gap-4">
+      <section aria-label="Workflow editor" className="flex min-h-0 min-w-0 flex-col gap-4">
         <header className="flex flex-wrap items-baseline gap-2">
           <h2 className="font-medium text-lg">{workflow.name}</h2>
           <Badge variant={workflow.builtin ? "secondary" : "outline"}>
@@ -92,13 +97,15 @@ export function WorkflowEditor({
           </Alert>
         ) : null}
         <Field className="flex min-h-0 flex-1 flex-col">
-          <FieldLabel htmlFor="workflow-document">Document</FieldLabel>
-          <Textarea
+          <FieldLabel id="workflow-document-label" htmlFor="workflow-document">
+            Document
+          </FieldLabel>
+          <WorkflowCodeEditor
             id="workflow-document"
+            labelId="workflow-document-label"
             value={document}
-            spellCheck={false}
-            onChange={(event) => setDocument(event.target.value)}
-            className="min-h-48 flex-1 resize-none font-mono text-xs"
+            onChange={setDocument}
+            error={error}
           />
         </Field>
         {update.error ? (
@@ -149,7 +156,7 @@ export function WorkflowEditor({
           )}
         </footer>
       </section>
-      <WorkflowPreview document={document} />
+      <WorkflowPreview parsed={parsed} />
       <ConfirmDialog
         open={confirmReset}
         onClose={() => setConfirmReset(false)}

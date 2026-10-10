@@ -1105,7 +1105,6 @@ mod tests {
         for step in [
             "`get_pull_request`",
             "`list_comments` with `unanswered_only`",
-            "`reply_comment` once",
             "`git merge --no-edit <remote>/<base>`",
             "Push the task branch plainly. Call `open_pull_request`.",
             "repository's commit conventions",
@@ -1122,6 +1121,28 @@ mod tests {
             assert!(doc.contains(step), "the pr-babysit skill has no {step}");
         }
         assert_eq!(SkillSeat::of(PR_BABYSIT_SKILL), SkillSeat::PullRequest);
+    }
+
+    /// The keeping agent replies only where a thread asks for a change. Its
+    /// reply explains either the new commit or why the agent kept the code.
+    /// It adds no reply to comments that ask for no change, and no unrelated
+    /// forge discussion or code change.
+    #[test]
+    fn the_pr_babysit_skill_replies_only_to_requested_changes() {
+        let doc = unwrapped(default_skill_document(PR_BABYSIT_SKILL).unwrap());
+        for rule in [
+            "Reply only in an existing thread that asks for a change.",
+            "State the change and the commit.",
+            "State why you did not make the change.",
+            "Do not reply to a comment that asks for no change.",
+            "Post no thanks, praise, or acknowledgement.",
+            "Open no new thread.",
+            "Post no top-level comment.",
+            "Commit only the changes that a comment or a failed check asks for.",
+            "Add no other change.",
+        ] {
+            assert!(doc.contains(rule), "the pr-babysit skill has no {rule}");
+        }
     }
 
     /// The reviewer session is fed by the daemon too (029), and the user
