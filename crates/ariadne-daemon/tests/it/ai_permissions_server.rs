@@ -487,6 +487,7 @@ async fn a_switch_as_the_install_ends_is_still_installed_and_served() {
         ])
         .ai_permissions_serve_command(vec![
             shared_script(SERVER).display().to_string(),
+            std::process::id().to_string(),
             record.display().to_string(),
             "-".to_string(),
         ])
