@@ -89,6 +89,9 @@ async fn stepped(h: &Harness) -> Task {
         .set_goal_status(&goal.id, GoalStatus::Active)
         .await
         .unwrap();
+    if h.sched.is_some() {
+        h.notify(&task.id);
+    }
     task
 }
 

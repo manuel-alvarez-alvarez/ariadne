@@ -53,7 +53,7 @@ use ariadne_daemon::transcript::TranscriptHomes;
 use ariadne_store::{
     AgentPin, AgentSession, Goal, NewAgentEvent, NewGoal, NewRepository, NewSession, NewTask,
     NewTaskAgent, Repository, RepositoryUpdate, SessionFilter, SetForgeIntegration, Store, Task,
-    TaskAgent,
+    TaskAgent, TaskFilter,
 };
 
 /// How long a test waits for something the daemon does off the request path —
@@ -1053,11 +1053,30 @@ impl Harness {
         cast
     }
 
+    /// Wakes a harness built with [`HarnessBuilder::scheduler`] about every
+    /// task of the goal, the way `finalize`'s HTTP handler does: a goal's
+    /// own reconciliation keeps its orchestrator, but starts none of its
+    /// tasks, so the wake that matters here is per task, not per goal.
     pub(crate) async fn activate(&self, goal: &Goal) -> Goal {
-        self.store
+        let goal = self
+            .store
             .set_goal_status(&goal.id, GoalStatus::Active)
             .await
-            .unwrap()
+            .unwrap();
+        if self.sched.is_some() {
+            let tasks = self
+                .store
+                .list_tasks(TaskFilter {
+                    goal_id: Some(goal.id.clone()),
+                    status: None,
+                })
+                .await
+                .unwrap();
+            for task in tasks {
+                self.notify(&task.id);
+            }
+        }
+        goal
     }
 
     /// A session of `seat`, as the launcher would have created it — a row,
@@ -1270,7 +1289,16 @@ impl Harness {
     /// Put a task in the named column: in progress, and moved forward one
     /// column at a time by the daemon until it stands there. What a test
     /// that watches a later column starts from.
+    ///
+    /// Flushes a harness with a scheduler first: a wake already queued for
+    /// this task — the one activation sends now — reconciles its starting
+    /// column against the transition this writes directly, and whichever
+    /// finishes last wins the next entry's briefing. Draining the queue
+    /// before writing keeps the two from landing in the same window.
     pub(crate) async fn advance_to(&self, task: &Task, step: &str) {
+        if self.sched.is_some() {
+            self.flush_scheduler().await;
+        }
         self.advance(task, TaskStatus::InProgress).await;
         let steps = self.store.goal_steps(&task.goal_id).await.unwrap();
         let wanted = steps

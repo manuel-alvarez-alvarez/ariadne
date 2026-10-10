@@ -156,6 +156,7 @@ async fn request_column(hold_news: bool, deploy_after: bool) -> RequestColumn {
         .set_goal_status(&goal.id, GoalStatus::Active)
         .await
         .unwrap();
+    h.notify(&task.id);
     let develop = session_at(&h, &task, "develop").await;
     let worktree = std::path::Path::new(develop.worktree_path.as_deref().unwrap());
     sh(
