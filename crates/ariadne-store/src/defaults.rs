@@ -1201,6 +1201,83 @@ mod tests {
         assert_eq!(SkillSeat::of(PR_REVIEWER_SKILL), SkillSeat::PullRequest);
     }
 
+    /// The three parts of the summary (029 rule 17) stand in order, and
+    /// `get_pull_request` and `get_diff` answer no commit list: the header
+    /// names its own source, local history, so a request of several commits
+    /// still gets one line per commit.
+    #[test]
+    fn the_pr_reviewer_skill_writes_its_summary_as_a_header_then_prose_then_a_recommendation() {
+        let doc =
+            unwrapped(default_skill_document(PR_REVIEWER_SKILL).expect("the pr-reviewer skill"));
+        let header_at = doc.find("Header:").expect("the skill has no Header:");
+        let summary_at = doc.find("Summary:").expect("the skill has no Summary:");
+        let recommendation_at = doc
+            .find("Recommendation:")
+            .expect("the skill has no Recommendation:");
+        assert!(
+            header_at < summary_at && summary_at < recommendation_at,
+            "the parts are not Header, then Summary, then Recommendation"
+        );
+        let header = &doc[header_at..summary_at];
+        for phrase in [
+            "read with `git log`",
+            "short sha",
+            "subject",
+            "base to head range on the first round",
+            "`since` to head on a later one",
+            "Keep the full base-to-head range on its own line too",
+        ] {
+            assert!(header.contains(phrase), "the header lacks {phrase}");
+        }
+    }
+
+    /// The prose summary names what the change does, where its risk sits
+    /// and how serious it is, and names every open finding in that prose
+    /// rather than as a bullet (029 rule 17).
+    #[test]
+    fn the_pr_reviewer_skill_summarizes_the_change_and_its_risk_in_prose() {
+        let doc =
+            unwrapped(default_skill_document(PR_REVIEWER_SKILL).expect("the pr-reviewer skill"));
+        let summary_at = doc.find("Summary:").expect("the skill has no Summary:");
+        let recommendation_at = doc
+            .find("Recommendation:")
+            .expect("the skill has no Recommendation:");
+        let summary = &doc[summary_at..recommendation_at];
+        for phrase in [
+            "one short paragraph of prose, not bullets",
+            "where its risk sits",
+            "how serious it is",
+            "Name each",
+            "priority and title in the prose",
+        ] {
+            assert!(summary.contains(phrase), "the summary lacks {phrase}");
+        }
+    }
+
+    /// Each recommendation line is tied to the priority that earns it (029
+    /// rule 17): a P0 blocks the request, a P1 or P2 with no P0 open asks
+    /// for a fix before it lands, and nothing open asks for no more than a
+    /// human's approval.
+    #[test]
+    fn the_pr_reviewer_skill_recommends_by_the_open_findings_priority() {
+        let doc =
+            unwrapped(default_skill_document(PR_REVIEWER_SKILL).expect("the pr-reviewer skill"));
+        let recommendation_at = doc
+            .find("Recommendation:")
+            .expect("the skill has no Recommendation:");
+        let recommendation = &doc[recommendation_at..];
+        for phrase in [
+            "A P0 is open: say \"Request changes\", and name the P0 findings that block it",
+            "A P1 or P2 is open, with no P0: say \"Changes recommended\", and name what to fix before it lands",
+            "Nothing is open: say \"No findings: ready for a human to approve\"",
+        ] {
+            assert!(
+                recommendation.contains(phrase),
+                "the recommendation lacks {phrase}"
+            );
+        }
+    }
+
     /// Every rule an agent is briefed with is written down once.
     ///
     /// The briefings are one prompt system — a nudge, a resume and a wake

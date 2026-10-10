@@ -221,7 +221,9 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     review as it stands, in three parts, with no file, no line and nothing
     of what it did:
     - a header, one line per commit the round reviewed, each a short sha
-      and its subject, and the full base-to-head range on its own line;
+      and its subject, read with `git log` in the worktree over the base
+      to head range, or `since` to head on a later round, and the full
+      base-to-head range on its own line;
     - a prose summary, not bullets, of what the change does and what the
       open findings mean for it, naming each open finding's priority and
       title;
@@ -309,12 +311,19 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   `mcp.rs::tests::the_pull_request_reviewer_seat_lists_its_tools_and_no_task_or_message_tool`,
   `tools.rs::tests::the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request`.
 - The skill is within its caps, names the three priorities, names
-  `request_changes` only beside P0, writes the summary as a header, a prose
-  summary and a recommendation, names each recommendation's line, resolves a
-  thread a push fixed, and approves on its own no more than it names merge,
-  sleep, poll, `gh` or `glab`:
+  `request_changes` only beside P0, resolves a thread a push fixed, and
+  approves on its own no more than it names merge, sleep, poll, `gh` or
+  `glab`:
   `defaults.rs::tests::the_pr_reviewer_skill_ranks_its_findings_and_never_approves`,
   `::skill_size_caps_hold`.
+- The summary is a header read from local history, then a prose paragraph,
+  then a recommendation, in that order:
+  `defaults.rs::tests::the_pr_reviewer_skill_writes_its_summary_as_a_header_then_prose_then_a_recommendation`.
+  The prose names what the change does and where and how serious its risk
+  is, and names every open finding in it, not as a bullet:
+  `defaults.rs::tests::the_pr_reviewer_skill_summarizes_the_change_and_its_risk_in_prose`.
+  Each recommendation line is tied to the priority that earns it:
+  `defaults.rs::tests::the_pr_reviewer_skill_recommends_by_the_open_findings_priority`.
 - A request of mine is no work and gets no review until the user asks; the
   ask starts the work, and the review runs on the pin and with the skills
   they picked, detached at its head, and is a comment; stopping the asking

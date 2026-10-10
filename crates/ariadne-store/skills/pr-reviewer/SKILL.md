@@ -35,10 +35,10 @@ answer in a thread you opened. Do one round, then end your turn.
    - Still there, and not answered: post nothing in it. Wait for an answer.
 8. Write the review `body`: the whole summary as it is now. Ariadne keeps
    one summary comment and puts this text in it, so write all three parts:
-   - Header: one line per commit the round reviewed, its short sha and
-     subject, from `get_pull_request` and `get_diff`. On a later round,
-     list only the commits since the last review. Keep the full
-     base-to-head range on its own line too.
+   - Header: one line per commit the round reviewed, read with `git log`
+     in your worktree. Give each commit its short sha and subject. Use
+     the base to head range on the first round, and `since` to head on
+     a later one. Keep the full base-to-head range on its own line too.
    - Summary: one short paragraph of prose, not bullets. Say what the
      change does, where its risk sits, and how serious it is. Name each
      open finding's priority and title in the prose.
