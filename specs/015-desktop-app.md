@@ -90,7 +90,36 @@ Out: the daemon endpoints themselves (012).
    columns`, `workflow-editor.test.tsx::parses each draft once for the
    editor and preview`, `workflow-editor.test.tsx::marks the line the parser
    refuses in the editor`, and `workflow-language.test.ts::classifies
-   workflow names, columns, metadata, and descriptions`). The preview draws
+   workflow names, columns, metadata, and descriptions`). The editor also
+   completes and explains the document as it is typed: at the start of a
+   column's body line it offers
+   `skills:`, `rank:` and `gate:`; after `rank:` it offers `fast`, `balanced`,
+   `frontier` and `local`; after `gate:` it offers `committed`, `pushed`,
+   `merged` and `request-merged`; and after `skills:`, or after a comma in
+   its list, it offers the skill catalog's names with each one's summary as
+   the detail, leaving out `orchestration`, `pr-reviewer` and a skill named
+   anywhere else on the same line, on either side of the cursor. Hovering a
+   key, or a rank or gate value, shows one sentence on what it means, right
+   up to the character before the value starts even with no space after the
+   colon; hovering a skill name shows its summary, or that the catalog has
+   none by that name
+   (`workflow-help.test.ts::offers the body keys at the start of a body
+   line`, `::offers the rank words after rank:`, `::offers the gate words
+   after gate:`, `::offers skill names after skills:, with each summary as
+   the detail`, `::never offers orchestration or pr-reviewer`, `::offers
+   skill names after a comma, excluding the one the line already names`,
+   `::excludes a skill already named later on the line, inserting before
+   it`, `::excludes skills named on both sides, inserting between them`,
+   `::explains the skills key`, `::explains the rank key`, `::explains the
+   gate key`, `::explains the rank value frontier`, `::explains the rank
+   value balanced`, `::explains the rank value fast`, `::explains the rank
+   value local`, `::explains the gate value committed`, `::explains the
+   gate value pushed`, `::explains the gate value merged`, `::explains the
+   gate value request-merged`, `::explains a rank value directly after the
+   colon, with no space`, `::explains a gate value directly after the
+   colon, with no space`, `::explains a skill name directly after the
+   colon, with no space`, `::shows a known skill's summary`, `::says when
+   the catalog has no such skill`). The preview draws
    each column as a numbered step on a vertical rail, a card holding its
    title, id, description, skills and rank in that order, and ends the rail
    with a marker for the end of the task; a step's gate shows as a labelled

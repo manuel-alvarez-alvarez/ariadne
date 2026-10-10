@@ -1,5 +1,6 @@
+import { useQuery } from "@tanstack/react-query"
 import { RefreshCwIcon, Trash2Icon, Undo2Icon } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 
 import type { WorkflowDto } from "@/api"
@@ -8,11 +9,13 @@ import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/u
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Field, FieldLabel } from "@/components/ui/field"
+import { skillsQueryOptions } from "@/features/skills/queries"
 import { cn, describeError } from "@/lib/format"
 
 import { useDeleteWorkflow, useResetWorkflow, useUpdateWorkflow } from "./queries"
 import { useWorkflowParse } from "./use-workflow-parse"
 import { WorkflowCodeEditor } from "./workflow-code-editor"
+import { workflowAutocomplete, workflowHover } from "./workflow-help-extensions"
 import { WorkflowPreview } from "./workflow-preview"
 
 export function WorkflowEditor({
@@ -40,6 +43,8 @@ export function WorkflowEditor({
   const error = parsed.errorLine
     ? { line: parsed.errorLine, message: describeError(parsed.error) }
     : null
+  const skills = useQuery(skillsQueryOptions()).data ?? []
+  const extensions = useMemo(() => [workflowAutocomplete(skills), workflowHover(skills)], [skills])
 
   useEffect(() => {
     if (workflow.name !== name.current) {
@@ -106,6 +111,7 @@ export function WorkflowEditor({
             value={document}
             onChange={setDocument}
             error={error}
+            extensions={extensions}
           />
         </Field>
         {update.error ? (
