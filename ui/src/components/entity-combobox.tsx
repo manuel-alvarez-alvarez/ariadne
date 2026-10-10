@@ -5,12 +5,12 @@
  *
  * Both screens put every row down a left-hand list beside the editor, the
  * shape the profiles screen once had. The catalog outgrew what a scroll box
- * reads well, so both move to the pattern `PinPicker` and
- * `RepositoryCombobox` already carry for theirs: a Base UI popover over a
- * cmdk list, searched rather than scrolled.
+ * reads well, so both move to a popup list searched rather than scrolled: the
+ * shadcn `Popover` (`components/ui/popover.tsx`) over a `Command` (cmdk)
+ * list, the same two primitives `PinPicker` and `RepositoryCombobox` compose
+ * by hand for theirs.
  */
 
-import { Popover } from "@base-ui/react/popover"
 import { ChevronsUpDownIcon } from "lucide-react"
 import type { ReactNode } from "react"
 import { useRef, useState } from "react"
@@ -24,6 +24,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/format"
 
 interface ComboboxEntity {
@@ -67,7 +68,7 @@ export function EntityCombobox({
   ]
 
   return (
-    <Popover.Root
+    <Popover
       open={open}
       onOpenChange={(next) => {
         setOpen(next)
@@ -76,7 +77,7 @@ export function EntityCombobox({
       }}
       modal={false}
     >
-      <Popover.Trigger
+      <PopoverTrigger
         id={id}
         render={
           <Button
@@ -98,64 +99,61 @@ export function EntityCombobox({
           )}
         </span>
         <ChevronsUpDownIcon className="shrink-0 opacity-50" />
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Positioner side="bottom" align="start" sideOffset={4} className="isolate z-50">
-          <Popover.Popup
-            initialFocus={searchRef}
-            aria-label={label}
-            className="flex w-(--anchor-width) min-w-80 flex-col rounded-lg bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0"
+      </PopoverTrigger>
+      <PopoverContent
+        initialFocus={searchRef}
+        align="start"
+        aria-label={label}
+        className="w-(--anchor-width) min-w-80 flex-col gap-0 p-0"
+      >
+        <Command label={label}>
+          <CommandInput
+            ref={searchRef}
+            value={search}
+            onValueChange={setSearch}
+            placeholder={`Filter ${entityLabel}s…`}
+          />
+          <CommandList
+            label={label}
+            className="max-h-80"
+            // A pick must not take focus off the search box, or the next
+            // one would have to reach for it again.
+            onMouseDown={(event) => event.preventDefault()}
           >
-            <Command label={label}>
-              <CommandInput
-                ref={searchRef}
-                value={search}
-                onValueChange={setSearch}
-                placeholder={`Filter ${entityLabel}s…`}
-              />
-              <CommandList
-                label={label}
-                className="max-h-80"
-                // A pick must not take focus off the search box, or the next
-                // one would have to reach for it again.
-                onMouseDown={(event) => event.preventDefault()}
-              >
-                <CommandEmpty>
-                  No {entityLabel} matches “{search}”.
-                </CommandEmpty>
-                {groups.map((group) =>
-                  group.entities.length > 0 ? (
-                    <CommandGroup key={group.key} heading={group.title}>
-                      {group.entities.map((entity) => (
-                        <CommandItem
-                          key={entity.name}
-                          value={entity.name}
-                          keywords={[entity.details]}
-                          data-checked={entity.name === selectedName ? "true" : "false"}
-                          onSelect={() => {
-                            onSelect(entity.name)
-                            setOpen(false)
-                          }}
-                        >
-                          <div className="flex min-w-0 flex-1 flex-col">
-                            <span className="flex items-baseline gap-2">
-                              <span className="min-w-0 truncate font-medium">{entity.name}</span>
-                              {entity.badge}
-                            </span>
-                            <span className="truncate text-xs text-muted-foreground">
-                              {entity.details}
-                            </span>
-                          </div>
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  ) : null,
-                )}
-              </CommandList>
-            </Command>
-          </Popover.Popup>
-        </Popover.Positioner>
-      </Popover.Portal>
-    </Popover.Root>
+            <CommandEmpty>
+              No {entityLabel} matches “{search}”.
+            </CommandEmpty>
+            {groups.map((group) =>
+              group.entities.length > 0 ? (
+                <CommandGroup key={group.key} heading={group.title}>
+                  {group.entities.map((entity) => (
+                    <CommandItem
+                      key={entity.name}
+                      value={entity.name}
+                      keywords={[entity.details]}
+                      data-checked={entity.name === selectedName ? "true" : "false"}
+                      onSelect={() => {
+                        onSelect(entity.name)
+                        setOpen(false)
+                      }}
+                    >
+                      <div className="flex min-w-0 flex-1 flex-col">
+                        <span className="flex items-baseline gap-2">
+                          <span className="min-w-0 truncate font-medium">{entity.name}</span>
+                          {entity.badge}
+                        </span>
+                        <span className="truncate text-xs text-muted-foreground">
+                          {entity.details}
+                        </span>
+                      </div>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              ) : null,
+            )}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   )
 }

@@ -144,6 +144,13 @@ async function openCombobox(user: ReturnType<typeof userEvent.setup>) {
   await screen.findByRole("listbox", { name: "Skill" })
 }
 
+/** Opens the trigger by focusing it and pressing Enter, never a click. */
+async function openComboboxWithKeyboard(user: ReturnType<typeof userEvent.setup>) {
+  ;(await screen.findByRole("button", { name: "Skill" })).focus()
+  await user.keyboard("{Enter}")
+  await screen.findByRole("listbox", { name: "Skill" })
+}
+
 /** The group of one title, found by its own accessible name. */
 function group(title: string): HTMLElement {
   return screen.getByRole("group", { name: title })
@@ -264,7 +271,7 @@ describe("the selection", () => {
   it("picks with the keyboard: open, filter, enter", async () => {
     const user = userEvent.setup()
     renderPage()
-    await openCombobox(user)
+    await openComboboxWithKeyboard(user)
 
     await user.keyboard("api-design")
     await user.keyboard("{Enter}")
@@ -273,10 +280,24 @@ describe("the selection", () => {
     expect(selectedInUrl()).toBe("api-design")
   })
 
+  it("picks with the keyboard: open, arrow, enter", async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await openComboboxWithKeyboard(user)
+
+    // No filter typed: "Yours" renders after "Shipped with Ariadne", so one
+    // arrow down from the first shipped row lands on the second.
+    await user.keyboard("{ArrowDown}")
+    await user.keyboard("{Enter}")
+
+    expect(await editorFor("code-review")).toBeDefined()
+    expect(selectedInUrl()).toBe("code-review")
+  })
+
   it("closes on Escape, leaving the selection as it was", async () => {
     const user = userEvent.setup()
     renderPage()
-    await openCombobox(user)
+    await openComboboxWithKeyboard(user)
 
     await user.keyboard("{Escape}")
 
