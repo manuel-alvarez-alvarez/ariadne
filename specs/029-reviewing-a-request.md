@@ -1,7 +1,7 @@
 ---
 id: reviewing-a-request
 status: current
-updated: 2026-10-08
+updated: 2026-10-10
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -218,15 +218,22 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     otherwise. P0 breaks behavior, data or security and must change before
     the request lands; P1 is a defect or a missing proof that will bite; P2
     is worth fixing. It writes the review body as the whole summary of the
-    review as it stands: the commit range it reviewed, the state —
-    "Changes requested" while a P0 is open, "Changes recommended" while a
-    P1 or P2 is, else "No findings" — and each open finding's priority and
-    title, with no file, no line and nothing of what it did. Each new
-    finding is one inline comment with a title, the failure and a fix. On a
-    later round it posts nothing more in a thread nobody answered since its
-    last entry: it waits for the answer. A thread a commit fixed gets one
-    reply and is resolved; an answered thread whose defect is still there
-    gets one reply that says so and why.
+    review as it stands, in three parts, with no file, no line and nothing
+    of what it did:
+    - a header, one line per commit the round reviewed, each a short sha
+      and its subject, and the full base-to-head range on its own line;
+    - a prose summary, not bullets, of what the change does and what the
+      open findings mean for it, naming each open finding's priority and
+      title;
+    - a recommendation of one line: "Request changes" and the blocking P0
+      findings while one is open; "Changes recommended" and what to fix
+      before it lands while a P1 or P2 is open and no P0 is; else "No
+      findings: ready for a human to approve".
+    Each new finding is one inline comment with a title, the failure and a
+    fix. On a later round it posts nothing more in a thread nobody answered
+    since its last entry: it waits for the answer. A thread a commit fixed
+    gets one reply and is resolved; an answered thread whose defect is
+    still there gets one reply that says so and why.
 18. `waiting_user` on a reviewer PR session reads "review posted, approve
     yourself" in `ariadne attention` and "Review posted, approve yourself" in
     the desktop app. The approval and the merge stay the user's.
@@ -302,8 +309,10 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   `mcp.rs::tests::the_pull_request_reviewer_seat_lists_its_tools_and_no_task_or_message_tool`,
   `tools.rs::tests::the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request`.
 - The skill is within its caps, names the three priorities, names
-  `request_changes` only beside P0, resolves a thread a push fixed, and
-  names no approve, merge, sleep, poll, `gh` or `glab`:
+  `request_changes` only beside P0, writes the summary as a header, a prose
+  summary and a recommendation, names each recommendation's line, resolves a
+  thread a push fixed, and approves on its own no more than it names merge,
+  sleep, poll, `gh` or `glab`:
   `defaults.rs::tests::the_pr_reviewer_skill_ranks_its_findings_and_never_approves`,
   `::skill_size_caps_hold`.
 - A request of mine is no work and gets no review until the user asks; the

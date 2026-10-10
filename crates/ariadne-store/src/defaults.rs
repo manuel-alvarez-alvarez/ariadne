@@ -1125,10 +1125,10 @@ mod tests {
     }
 
     /// The reviewer session is fed by the daemon too (029), and the user
-    /// gives every approval and lands every request: the skill names no
-    /// approve, merge, sleep, poll or forge CLI. It names the three
-    /// priorities, asks for changes only where a P0 stands, and resolves a
-    /// thread of its own once a push fixed it.
+    /// gives every approval and lands every request: the skill never
+    /// approves on its own, and names no merge, sleep, poll or forge CLI.
+    /// It names the three priorities, asks for changes only where a P0
+    /// stands, and resolves a thread of its own once a push fixed it.
     #[test]
     fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
         let doc = default_skill_document(PR_REVIEWER_SKILL).expect("the pr-reviewer skill");
@@ -1136,12 +1136,18 @@ mod tests {
             .split(|c: char| !c.is_ascii_alphanumeric())
             .map(str::to_lowercase)
             .collect();
-        for gone in ["approve", "merge", "sleep", "poll", "polling", "gh", "glab"] {
+        for gone in ["merge", "sleep", "poll", "polling", "gh", "glab"] {
             assert!(
                 !words.iter().any(|word| word == gone),
                 "the pr-reviewer skill names {gone}"
             );
         }
+        // The only "approve" names a human's approval, never the agent's own.
+        assert_eq!(
+            words.iter().filter(|word| *word == "approve").count(),
+            1,
+            "the pr-reviewer skill approves on its own, or names it more than once"
+        );
         let doc = unwrapped(doc);
         for priority in ["P0: ", "P1: ", "P2: "] {
             assert!(
@@ -1166,15 +1172,18 @@ mod tests {
             "`report_pull_request` with `reviewed_sha`",
             "`reply_comment` once",
             "in the foreground",
-            // The summary is one comment, rewritten whole every round with
-            // the range and the state; it is a verdict on the findings, not
-            // an account of the work, and each finding sits on its own line
-            // of code.
+            // The summary is one comment, rewritten whole every round as a
+            // header of the reviewed commits, a prose verdict on the change
+            // and its risk, and a recommendation; it is nothing of the work,
+            // and each finding sits on its own line of code.
             "Ariadne keeps one summary comment",
-            "The commit range you reviewed",
-            "\"Changes requested\" while a P0 is open",
+            "Header: one line per commit the round reviewed",
+            "Summary: one short paragraph of prose, not bullets",
+            "Recommendation: one line",
+            "\"Request changes\"",
             "\"Changes recommended\"",
-            "nothing of what you did",
+            "\"No findings: ready for a human to approve\"",
+            "Name no file or line, and nothing of what you did",
             "only the new comments",
             // A thread nobody answered waits; an answered one is replied to
             // once, and resolved where it is fixed.
@@ -1754,10 +1763,10 @@ mod tests {
             PR_BABYSIT_SKILL => 2700,
             // Eleven steps: the read, the checks, the hunt, the three
             // priorities, one inline comment per finding with its title and
-            // its fix, the summary with no line in it, the one review, the
-            // report and the later round, which resolves each thread a push
-            // fixed.
-            PR_REVIEWER_SKILL => 3800,
+            // its fix, the summary of three parts with no line in any of
+            // them, the one review, the report and the later round, which
+            // resolves each thread a push fixed.
+            PR_REVIEWER_SKILL => 4500,
             _ => 2400,
         };
 
