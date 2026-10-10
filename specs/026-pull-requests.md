@@ -155,6 +155,7 @@ and its idle handling under [030](030-workflows.md), rule 10.
 20. With the integration disabled, nothing reads the forge for its requests: each review session ends and its worktree goes, and Ariadne stops working on every request but a task's. Nobody merged or closed anything, so nothing is told.
     A task's row stays, and the next fetch with the integration on reads it again.
 21. Nothing adds or removes a request by hand, from the desktop or the CLI: Ariadne starts and stops working on requests on its own.
+22. `open_pull_request`'s body fills the repository's own pull request template where the repository has one. Where it has none, the body carries three sections, Why, What changed and How to test, each written from the task and its diff rather than one line. The title still follows the repository's commit conventions (030 rule 10).
 
 ## HTTP
 
@@ -300,7 +301,7 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 - Its request tools find the request its task opened, then call its routes, and say to open one where there is none:
   `tools.rs::tests::the_agents_request_tools_call_the_routes_of_the_request_its_task_opened`,
   `::an_agent_with_no_request_is_told_to_open_one`.
-- The skill is within its caps, names no forge CLI, timer, poll or resolve, opens the request once, and ends the step on the merge:
+- The skill is within its caps, names no forge CLI, timer, poll or resolve, opens the request once filling the repository's template or its three sections, and ends the step on the merge:
   `defaults.rs::tests::the_pr_babysit_skill_opens_the_request_and_ends_the_step_on_the_merge`, `::skill_size_caps_hold`.
 - The skill replies only to requested changes, names a fix commit, gives a reason for no fix, and posts no unrelated reply:
   `defaults.rs::tests::the_pr_babysit_skill_replies_only_to_requested_changes`.
@@ -329,4 +330,5 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 `crates/ariadne-daemon/src/forge/`, `crates/ariadne-daemon/src/forge/live.rs`,
 `crates/ariadne-daemon/src/http/pull_requests.rs`,
 `crates/ariadne-daemon/src/http/channel.rs`, `crates/ariadne-daemon/src/bus.rs`,
-`crates/ariadne-cli/src/commands/pr.rs`, `ui/src/features/pull-requests/`.
+`crates/ariadne-cli/src/commands/pr.rs`, `ui/src/features/pull-requests/`,
+`.github/pull_request_template.md`.

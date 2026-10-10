@@ -11,8 +11,10 @@ request and sends you its news. Handle the news, then end your turn.
 ## Steps
 
 1. Push the task branch plainly. Call `open_pull_request`. Write the title
-   from the repository's commit conventions and the body from its request
-   template.
+   from the repository's commit conventions. Fill the repository's pull
+   request template if it has one, else write the body with three
+   sections: Why, What changed, How to test. Write each section from the
+   task and its diff, not one line each.
 2. Call `get_pull_request` for the branches and checks. Call `list_comments`
    with `unanswered_only`.
 3. Handle each existing thread that asks for a change.
