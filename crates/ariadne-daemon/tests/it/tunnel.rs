@@ -24,8 +24,8 @@ use serde_json::{Value, json};
 const STAND_IN_TIMEOUT: Duration = Duration::from_secs(90);
 
 const STAND_IN: &str = r#"
-import json, os, queue, socket, sys, threading, time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json, os, queue, socket, socketserver, sys, threading, time
+from http.server import BaseHTTPRequestHandler
 
 state, api_port = sys.argv[1], int(sys.argv[2])
 parent = os.getppid()
@@ -119,8 +119,13 @@ class Api(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
-ThreadingHTTPServer.allow_reuse_address = True
-api = ThreadingHTTPServer(("127.0.0.1", api_port), Api)
+class Server(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    # Not `http.server.HTTPServer`: it looks up the name of its host as it
+    # binds, and that lookup takes 35 s on a GitHub macOS runner.
+    daemon_threads = True
+    allow_reuse_address = True
+
+api = Server(("127.0.0.1", api_port), Api)
 for target in (orphaned, hold, serve):
     threading.Thread(target=target, daemon=True).start()
 ports = os.path.join(state, "ports.json")

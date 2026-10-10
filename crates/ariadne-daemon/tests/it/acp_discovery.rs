@@ -993,13 +993,16 @@ async fn a_timed_out_probe_keeps_the_models_the_store_kept() {
     let mut setup = script();
     setup["agent_info"] = json!({"name": "stub", "version": "1.0"});
     let agent = stub_acp_agent(dir.path(), setup.clone());
+    // An index server of its own, so the refresh below never reaches the
+    // real network registry: this test is about the probe timeout alone.
+    let server = IndexServer::new(r#"{"agents":[]}"#.into()).await;
+    let home = home_with_agent("busy", &agent.bin);
+    server.configure(&home);
     let h = settled(
-        harness()
-            .home(home_with_agent("busy", &agent.bin))
-            .timeouts(Timeouts {
-                probe: Duration::from_secs(2),
-                ..Timeouts::default()
-            }),
+        harness().home(home).timeouts(Timeouts {
+            probe: common::RUNS_OUT,
+            ..Timeouts::default()
+        }),
         "busy",
     )
     .await;
@@ -1013,12 +1016,11 @@ async fn a_timed_out_probe_keeps_the_models_the_store_kept() {
     // time to spare for it.
     setup["silent_methods"] = json!(["initialize"]);
     agent.reprogram(setup);
-    let _: Vec<Value> = h.json(post("/v1/acp-agents/refresh"), StatusCode::OK).await;
-
-    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    let agents: Vec<Value> = h.json(post("/v1/acp-agents/refresh"), StatusCode::OK).await;
     let busy = agents.iter().find(|a| a["id"] == "busy").unwrap();
     assert_eq!(busy["status"], "rejected", "{busy:#?}");
     assert_eq!(busy["rejection_reason"], json!("discovery timed out"));
+
     let models: Vec<Value> = h.get("/v1/models").await;
     let model = models
         .iter()

@@ -226,6 +226,15 @@ impl super::Scheduler {
         let entry = transitions
             .last()
             .ok_or_else(|| anyhow::anyhow!("step has no entry transition"))?;
+        // `task` was read at the top of this pass; a step call between then
+        // and here moves the task again, and its own event is already
+        // queued behind this one. Briefing this column's agent on a
+        // transition that does not lead here would claim another column's
+        // entry and brief the wrong agent with it — left for the pass that
+        // event wakes, which reads the task fresh.
+        if entry.to_step.as_deref() != Some(step.id.as_str()) {
+            return Ok(());
+        }
         if !self.store.step_briefed(&entry.id).await? {
             let seen = transitions[..transitions.len() - 1]
                 .iter()

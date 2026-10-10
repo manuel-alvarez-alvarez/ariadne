@@ -13,6 +13,7 @@ tests:
   - crates/ariadne-daemon/tests/it/workflows.rs
   - crates/ariadne-daemon/tests/it/workflow_steps.rs
   - crates/ariadne-daemon/tests/it/workflow_pull_request.rs
+  - crates/ariadne-daemon/tests/it/prompts.rs
   - crates/ariadne-daemon/tests/it/plan_finalize.rs
   - crates/ariadne-daemon/tests/it/repositories.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
@@ -214,7 +215,12 @@ every other wire enum (011).
    before it writes the prompt and releases an unwritten claim, so a queued
    prompt counts only once written and repeated scheduler passes queue it
    once (009 rule 6, 018 rule 8). A stale entry is skipped if another column
-   already owns the task.
+   already owns the task: a reconciliation pass reads the task's column and
+   agent once at its start, and a step call racing that pass moves the task
+   again before the pass reaches the entry, so the pass compares the entry's
+   own target column against the one it read and skips rather than brief the
+   column it read with an entry addressed to the one that outran it; the step
+   call's own event reconciles the task again, consistently.
 7. Any step agent can fail the task with `fail_task` (001 rule 6). A retry
    puts the task back on the first column and reuses its agent's
    conversation where one exists on the pin the agent still has; an agent
@@ -338,6 +344,10 @@ every other wire enum (011).
   on one worktree. Each move records both columns and its reason, and
   finishing stops every agent
   (`workflow_steps.rs::a_task_walks_develop_review_merge_with_one_agent_per_column`).
+- A return to a column is briefed on the agent that return addresses, even
+  where a step call moves the task again while the reconciliation pass that
+  reads it is still running
+  (`prompts.rs::a_return_and_a_nudge_assemble_word_for_word`).
 - A first-column failure records the reason, and a retry reuses the first
   agent with a retry briefing; a retry after an edit of the agent's pin runs
   a new session on that pin and keeps the old one
