@@ -38,6 +38,9 @@ pub(crate) struct Invocation {
 }
 
 impl StubForgeCli {
+    pub(crate) fn set_parent_pid(&self, pid: u32) {
+        std::fs::write(self._dir.path().join("forge-parent-pid"), pid.to_string()).unwrap();
+    }
     /// Every invocation, in the order they ran.
     pub(crate) fn invocations(&self) -> Vec<Invocation> {
         let Ok(log) = std::fs::read_to_string(&self.log) else {
@@ -99,6 +102,11 @@ pub(crate) fn stub_forge_cli(script: Value) -> StubForgeCli {
     let dir = tempfile::tempdir().unwrap();
     let script_file = dir.path().join("forge-script.json");
     write_script(&script_file, &script);
+    std::fs::write(
+        dir.path().join("forge-parent-pid"),
+        std::process::id().to_string(),
+    )
+    .unwrap();
     std::fs::write(dir.path().join("forge-stub.py"), STUB).unwrap();
     let launcher = super::shared_script(LAUNCHER);
     let link = |name: &str| {
@@ -126,8 +134,7 @@ fn write_script(path: &Path, script: &Value) {
 /// run under. `$0` is the link, not the shared file.
 const LAUNCHER: &str = "#!/bin/sh\n\
 dir=$(dirname \"$0\")\n\
-parent=$PPID\n\
-exec python3 \"$dir/forge-stub.py\" \"$parent\" \"$dir\" \"$(basename \"$0\")\" \"$@\"\n";
+exec python3 \"$dir/forge-stub.py\" \"$(cat \"$dir/forge-parent-pid\")\" \"$dir\" \"$(basename \"$0\")\" \"$@\"\n";
 
 const STUB: &str = r#"#!/usr/bin/env python3
 import json, os, subprocess, sys, threading, time

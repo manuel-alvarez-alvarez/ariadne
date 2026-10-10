@@ -49,6 +49,10 @@ pub(crate) struct StubAcpAgent {
 }
 
 impl StubAcpAgent {
+    pub(crate) fn set_parent_pid(&self, pid: u32) {
+        let dir = Path::new(&self.bin).parent().unwrap();
+        std::fs::write(dir.join("acp-parent-pid"), pid.to_string()).unwrap();
+    }
     /// Every JSON-RPC message the daemon sent, in the order it arrived.
     pub(crate) fn messages(&self) -> Vec<Value> {
         std::fs::read_to_string(&self.log)
@@ -318,6 +322,7 @@ pub(crate) fn stub_acp_agent(dir: &Path, script: Value) -> StubAcpAgent {
     let pid_file = dir.join("acp-agent.pid");
     let script_file = dir.join("acp-script.json");
     write_script_file(&script_file, script, &log, &launches, &pid_file);
+    std::fs::write(dir.join("acp-parent-pid"), std::process::id().to_string()).unwrap();
 
     std::fs::write(dir.join("acp-stub.py"), STUB).unwrap();
     // The launcher is one shared file (see `shared_script`), linked into
@@ -354,8 +359,7 @@ fn write_script_file(
 /// the launcher was started by. `$0` is that link, not the shared file.
 const LAUNCHER: &str = "#!/bin/sh\n\
 dir=$(dirname \"$0\")\n\
-parent=$PPID\n\
-exec python3 \"$dir/acp-stub.py\" \"$parent\" \"$dir/acp-script.json\" \"$@\"\n";
+exec python3 \"$dir/acp-stub.py\" \"$(cat \"$dir/acp-parent-pid\")\" \"$dir/acp-script.json\" \"$@\"\n";
 
 /// The stub itself: single-threaded, line-oriented, and honest about order —
 /// it answers exactly what the script says, logs every incoming message, and

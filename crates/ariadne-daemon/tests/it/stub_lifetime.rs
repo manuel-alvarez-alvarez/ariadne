@@ -1,5 +1,6 @@
 //! Every Python test stub ends when its direct parent ends.
 
+use std::io::Write;
 use std::process::{Child, ChildStdin, Command, Stdio};
 
 use serde_json::json;
@@ -16,6 +17,7 @@ use crate::common::{TIMEOUT, eventually};
 /// anything else, and that other rule must not be what this test catches.
 const PARENT: &str = r#"
 import subprocess, sys, time
+sys.stdin.buffer.read(1)
 subprocess.Popen(sys.argv[1:])
 time.sleep(30)
 "#;
@@ -33,6 +35,10 @@ fn parent(program: &str, args: &[&str]) -> (Child, ChildStdin) {
     (process, stdin)
 }
 
+fn launch(stdin: &mut ChildStdin) {
+    stdin.write_all(b"x").unwrap();
+}
+
 async fn wait_for_exit(pid: u32) {
     eventually(TIMEOUT, "the orphaned stub to exit", || async {
         !pid_is_alive(pid)
@@ -47,7 +53,9 @@ async fn a_forge_stub_exits_when_its_parent_is_killed() {
     let forge = stub_forge_cli(json!([{
         "args": ["api"], "wait_for": gate.display().to_string()
     }]));
-    let (mut process, _stdin) = parent(&forge.gh, &["api"]);
+    let (mut process, mut stdin) = parent(&forge.gh, &["api"]);
+    forge.set_parent_pid(process.id());
+    launch(&mut stdin);
     eventually(TIMEOUT, "the forge stub to start", || async {
         forge.pid().is_some()
     })
@@ -65,7 +73,9 @@ async fn an_acp_stub_exits_when_its_parent_is_killed() {
     // Held open for the whole test: were it closed, the stub would exit on
     // reading the end of its input, the rule it already had, and the kill
     // below would prove nothing about the parent check this test is for.
-    let (mut process, _stdin) = parent(&stub.bin, &[]);
+    let (mut process, mut stdin) = parent(&stub.bin, &[]);
+    stub.set_parent_pid(process.id());
+    launch(&mut stdin);
     eventually(TIMEOUT, "the ACP stub to start", || async {
         stub.pid().is_some()
     })
