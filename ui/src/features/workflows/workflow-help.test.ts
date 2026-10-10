@@ -10,33 +10,38 @@ const skills = [
   { name: "pr-reviewer", summary: "What a reviewer pull request session loads." },
 ]
 
+/** Cursor sits right after `before`; `after` is whatever follows it on the line. */
+function completionsAt(before: string, after = "", firstLine = false) {
+  return workflowCompletionsAt(before + after, before.length, firstLine, skills)
+}
+
 describe("workflowCompletionsAt", () => {
   it("offers the body keys at the start of a body line", () => {
-    const match = workflowCompletionsAt("    ", false, skills)
+    const match = completionsAt("    ")
     expect(match?.options.map((o) => o.label)).toEqual(["skills:", "rank:", "gate:"])
   })
 
   it("filters the body keys by what is already typed", () => {
-    const match = workflowCompletionsAt("    ra", false, skills)
+    const match = completionsAt("    ra")
     expect(match?.options.map((o) => o.label)).toEqual(["rank:"])
   })
 
   it("offers nothing on the workflow line", () => {
-    expect(workflowCompletionsAt("", true, skills)).toBeNull()
+    expect(completionsAt("", "", true)).toBeNull()
   })
 
   it("offers the rank words after rank:", () => {
-    const match = workflowCompletionsAt("    rank: ", false, skills)
+    const match = completionsAt("    rank: ")
     expect(match?.options.map((o) => o.label)).toEqual(["fast", "balanced", "frontier", "local"])
   })
 
   it("filters rank words by what is already typed", () => {
-    const match = workflowCompletionsAt("    rank: fa", false, skills)
+    const match = completionsAt("    rank: fa")
     expect(match?.options.map((o) => o.label)).toEqual(["fast"])
   })
 
   it("offers the gate words after gate:", () => {
-    const match = workflowCompletionsAt("    gate: ", false, skills)
+    const match = completionsAt("    gate: ")
     expect(match?.options.map((o) => o.label)).toEqual([
       "committed",
       "pushed",
@@ -46,7 +51,7 @@ describe("workflowCompletionsAt", () => {
   })
 
   it("offers skill names after skills:, with each summary as the detail", () => {
-    const match = workflowCompletionsAt("    skills: ", false, skills)
+    const match = completionsAt("    skills: ")
     expect(match?.options).toEqual([
       { label: "coding", detail: skills[0]?.summary },
       { label: "code-review", detail: skills[1]?.summary },
@@ -55,26 +60,41 @@ describe("workflowCompletionsAt", () => {
   })
 
   it("never offers orchestration or pr-reviewer", () => {
-    const match = workflowCompletionsAt("    skills: ", false, skills)
+    const match = completionsAt("    skills: ")
     const labels = match?.options.map((o) => o.label) ?? []
     expect(labels).not.toContain("orchestration")
     expect(labels).not.toContain("pr-reviewer")
   })
 
   it("offers skill names after a comma, excluding the one the line already names", () => {
-    const match = workflowCompletionsAt("    skills: coding, ", false, skills)
+    const match = completionsAt("    skills: coding, ")
     const labels = match?.options.map((o) => o.label) ?? []
     expect(labels).not.toContain("coding")
     expect(labels).toContain("code-review")
   })
 
   it("filters skill names by the partial word after the comma", () => {
-    const match = workflowCompletionsAt("    skills: coding, cod", false, skills)
+    const match = completionsAt("    skills: coding, cod")
     expect(match?.options.map((o) => o.label)).toEqual(["code-review"])
   })
 
+  it("excludes a skill already named later on the line, inserting before it", () => {
+    const match = completionsAt("    skills: ", ", coding")
+    const labels = match?.options.map((o) => o.label) ?? []
+    expect(labels).not.toContain("coding")
+    expect(labels).toContain("code-review")
+  })
+
+  it("excludes skills named on both sides, inserting between them", () => {
+    const match = completionsAt("    skills: coding, ", ", merge")
+    const labels = match?.options.map((o) => o.label) ?? []
+    expect(labels).not.toContain("coding")
+    expect(labels).not.toContain("merge")
+    expect(labels).toContain("code-review")
+  })
+
   it("offers nothing past a description line", () => {
-    expect(workflowCompletionsAt("    Build the task", false, skills)).toBeNull()
+    expect(completionsAt("    Build the task")).toBeNull()
   })
 })
 
@@ -82,7 +102,9 @@ describe("workflowHoverAt", () => {
   it("explains the skills key", () => {
     const line = "    skills: coding"
     const match = workflowHoverAt(line, line.indexOf("skills"), false, skills)
-    expect(match?.text).toContain("skills")
+    expect(match?.text).toBe(
+      "Names the skills this column's agent loads, comma-separated, from the skill catalog.",
+    )
   })
 
   it("explains the rank key", () => {
@@ -97,18 +119,49 @@ describe("workflowHoverAt", () => {
     expect(match?.text).toContain("committed, pushed, merged or request-merged")
   })
 
-  it("explains a rank value", () => {
-    const line = "    rank: frontier"
-    const match = workflowHoverAt(line, line.indexOf("frontier"), false, skills)
-    expect(match?.text).toBe("Frontier means the strongest model, when a task earns it.")
+  it.each([
+    ["frontier", "Frontier means the strongest model, when a task earns it."],
+    ["balanced", "Balanced means the default for most tasks."],
+    ["fast", "Fast means the cheapest model that still earns a task."],
+    ["local", "Local means off the ladder, staffed only where a task names it."],
+  ])("explains the rank value %s", (value, text) => {
+    const line = `    rank: ${value}`
+    const match = workflowHoverAt(line, line.indexOf(value), false, skills)
+    expect(match?.text).toBe(text)
   })
 
-  it("explains a gate value", () => {
-    const line = "    gate: request-merged"
-    const match = workflowHoverAt(line, line.indexOf("request-merged"), false, skills)
+  it.each([
+    ["committed", "Committed means at least one commit past the base, with a clean worktree."],
+    ["pushed", "Pushed means the remote holds the branch tip."],
+    [
+      "merged",
+      "Merged means the supplied merge commit and the task branch are ancestors of the base branch.",
+    ],
+    ["request-merged", "Request-merged means a fresh forge read says the task's request merged."],
+  ])("explains the gate value %s", (value, text) => {
+    const line = `    gate: ${value}`
+    const match = workflowHoverAt(line, line.indexOf(value), false, skills)
+    expect(match?.text).toBe(text)
+  })
+
+  it("explains a rank value directly after the colon, with no space", () => {
+    const line = "    rank:fast"
+    const match = workflowHoverAt(line, line.indexOf("fast"), false, skills)
+    expect(match?.text).toBe("Fast means the cheapest model that still earns a task.")
+  })
+
+  it("explains a gate value directly after the colon, with no space", () => {
+    const line = "    gate:merged"
+    const match = workflowHoverAt(line, line.indexOf("merged"), false, skills)
     expect(match?.text).toBe(
-      "Request-merged means a fresh forge read says the task's request merged.",
+      "Merged means the supplied merge commit and the task branch are ancestors of the base branch.",
     )
+  })
+
+  it("explains a skill name directly after the colon, with no space", () => {
+    const line = "    skills:coding"
+    const match = workflowHoverAt(line, line.indexOf("coding"), false, skills)
+    expect(match?.text).toBe(skills[0]?.summary)
   })
 
   it("shows a known skill's summary", () => {

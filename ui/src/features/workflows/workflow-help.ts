@@ -67,23 +67,42 @@ function trailingWord(text: string): string {
   return /[a-z0-9-]*$/i.exec(text)?.[0] ?? ""
 }
 
-function skillsAlreadyNamed(listText: string): Set<string> {
-  const segments = listText.split(",")
-  segments.pop()
-  return new Set(segments.map((segment) => segment.trim()).filter(Boolean))
+/**
+ * Every skill named on a `skills:` line's value text, except the one in the
+ * segment the cursor sits in — that segment is being typed, not finished,
+ * so it is a candidate rather than something already claimed.
+ */
+function skillsNamedElsewhere(value: string, cursor: number): Set<string> {
+  const names = new Set<string>()
+  let start = 0
+  for (let i = 0; i <= value.length; i++) {
+    if (i === value.length || value[i] === ",") {
+      if (!(start <= cursor && cursor <= i)) {
+        const name = value.slice(start, i).trim()
+        if (name) names.add(name)
+      }
+      start = i + 1
+    }
+  }
+  return names
 }
 
 /**
- * The completions the workflow editor offers at the cursor, given the line's
- * text up to the cursor (`before`) and whether that line is the document's
- * first line (the `workflow <name>` line, where none of this applies).
+ * The completions the workflow editor offers at the cursor, given the whole
+ * line's text, the cursor's offset into it, and whether the line is the
+ * document's first line (the `workflow <name>` line, where none of this
+ * applies). The line's text past the cursor matters too: a skill named later
+ * on the same line, as when a new entry is inserted before or between
+ * existing ones, must not be offered again.
  */
 export function workflowCompletionsAt(
-  before: string,
+  lineText: string,
+  cursor: number,
   firstLine: boolean,
   skills: SkillOption[],
 ): WorkflowCompletionMatch | null {
   if (firstLine) return null
+  const before = lineText.slice(0, cursor)
   const partial = trailingWord(before).toLowerCase()
   const from = before.length - partial.length
   const prefix = before.slice(0, from)
@@ -111,7 +130,8 @@ export function workflowCompletionsAt(
 
   const skillsList = /^\s*skills:\s*((?:[a-z][a-z0-9-]*\s*,\s*)*)$/i.exec(prefix)
   if (skillsList) {
-    const already = skillsAlreadyNamed(skillsList[1] ?? "")
+    const valueStart = /^\s*skills:\s*/i.exec(lineText)?.[0].length ?? 0
+    const already = skillsNamedElsewhere(lineText.slice(valueStart), cursor - valueStart)
     const options = skills
       .filter((skill) => !FORBIDDEN_SKILLS.has(skill.name))
       .filter((skill) => !already.has(skill.name))
@@ -141,7 +161,7 @@ export function workflowHoverAt(
     const key = (keyMatch[2] ?? "") as (typeof KEYS)[number]
     const from = indent.length
     const to = from + key.length + 1
-    if (ch >= from && ch <= to) {
+    if (ch >= from && ch < to) {
       return { from, to, text: KEY_HELP[key] }
     }
   }

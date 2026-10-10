@@ -11,8 +11,8 @@ import { type SkillOption, workflowCompletionsAt, workflowHoverAt } from "./work
 function completionSource(skills: SkillOption[]) {
   return (context: CompletionContext): CompletionResult | null => {
     const line = context.state.doc.lineAt(context.pos)
-    const before = line.text.slice(0, context.pos - line.from)
-    const match = workflowCompletionsAt(before, line.number === 1, skills)
+    const cursor = context.pos - line.from
+    const match = workflowCompletionsAt(line.text, cursor, line.number === 1, skills)
     if (!match) return null
     return {
       from: line.from + match.from,

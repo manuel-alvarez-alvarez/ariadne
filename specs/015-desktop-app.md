@@ -89,18 +89,29 @@ Out: the daemon endpoints themselves (012).
    `frontier` and `local`; after `gate:` it offers `committed`, `pushed`,
    `merged` and `request-merged`; and after `skills:`, or after a comma in
    its list, it offers the skill catalog's names with each one's summary as
-   the detail, leaving out `orchestration`, `pr-reviewer` and a skill the
-   line already names. Hovering a key, or a rank or gate value, shows one
-   sentence on what it means; hovering a skill name shows its summary, or
-   that the catalog has none by that name
+   the detail, leaving out `orchestration`, `pr-reviewer` and a skill named
+   anywhere else on the same line, on either side of the cursor. Hovering a
+   key, or a rank or gate value, shows one sentence on what it means, right
+   up to the character before the value starts even with no space after the
+   colon; hovering a skill name shows its summary, or that the catalog has
+   none by that name
    (`workflow-help.test.ts::offers the body keys at the start of a body
    line`, `::offers the rank words after rank:`, `::offers the gate words
    after gate:`, `::offers skill names after skills:, with each summary as
    the detail`, `::never offers orchestration or pr-reviewer`, `::offers
    skill names after a comma, excluding the one the line already names`,
-   `::explains the rank key`, `::explains the gate key`, `::explains a rank
-   value`, `::explains a gate value`, `::shows a known skill's summary`,
-   `::says when the catalog has no such skill`).
+   `::excludes a skill already named later on the line, inserting before
+   it`, `::excludes skills named on both sides, inserting between them`,
+   `::explains the skills key`, `::explains the rank key`, `::explains the
+   gate key`, `::explains the rank value frontier`, `::explains the rank
+   value balanced`, `::explains the rank value fast`, `::explains the rank
+   value local`, `::explains the gate value committed`, `::explains the
+   gate value pushed`, `::explains the gate value merged`, `::explains the
+   gate value request-merged`, `::explains a rank value directly after the
+   colon, with no space`, `::explains a gate value directly after the
+   colon, with no space`, `::explains a skill name directly after the
+   colon, with no space`, `::shows a known skill's summary`, `::says when
+   the catalog has no such skill`).
 4. Types are generated from the daemon's OpenAPI document, so a DTO change
    that is not reflected here fails the typecheck rather than the app.
 5. One SSE connection serves the whole app, with a dispatcher and reconnect
