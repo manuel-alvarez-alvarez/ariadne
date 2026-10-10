@@ -41,7 +41,6 @@ The CLI and desktop conventions are in 014 and 015.
 - The live route reads every page of an enterprise host's issues through `gh api --hostname`, leaves out a pull request, passes the login for `me`, and refuses an integration that is off (`issues.rs::open_issues_are_live_on_every_page_of_the_integrations_host`).
 - GitLab issue reads go through `glab api` on every page, with the group path and login (`issues.rs::gitlab_issues_read_every_page_through_glab_api_and_the_group_path`).
 - A goal stores and returns `issue_url`, and its orchestrator briefing names the issue and `Closes` line (`prompts.rs::an_issue_goal_keeps_its_url_and_briefs_the_orchestrator_to_close_it`).
-- The nullable migration retains existing goals (`store.rs::the_issue_url_migration_keeps_existing_goals`).
 - The CLI creates a goal using the issue title and body (`goal.rs::create_from_issue_reads_its_title_and_body_through_the_route`).
 - The CLI issue list selects the repository and assignment filter (`issue.rs::issue_ls_uses_the_repository_and_assignment_filter`).
 - The CLI accepts issue creation and issue listing flags (`cli/tests.rs::an_issue_can_supply_the_goal_title_and_repository`).
@@ -54,6 +53,6 @@ The CLI and desktop conventions are in 014 and 015.
 ## Sources
 
 `crates/ariadne-daemon/src/forge/`, `crates/ariadne-daemon/src/http/issues.rs`,
-`crates/ariadne-api/src/issues.rs`, `crates/ariadne-store/migrations/0005_goal_issue_url.sql`,
+`crates/ariadne-api/src/issues.rs`, `crates/ariadne-store/migrations/0001_init.sql`,
 `crates/ariadne-cli/src/commands/issue.rs`, `crates/ariadne-daemon/src/forge/poll.rs`,
 `ui/src/features/issues/issues-page.tsx`, `ui/src/events/dispatch.ts`.

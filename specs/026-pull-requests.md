@@ -61,8 +61,7 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
    GitLab accepts `/merge_requests/<number>` and `/-/merge_requests/<number>`, including subgroup paths.
    A different repository or host does not match.
 2. Nothing the forge holds is stored: a stored title, check or comment goes stale the moment somebody pushes.
-   A `pull_requests` row (`PullRequestRow`) is Ariadne's bookkeeping of a request it works on: `id`, `repository_id`, `number`, `url`, `role`, `origin_task_id`, `ready`, the told marks (rule 18), `reviewed_sha`, `review_asked` and its pin and skills, and `summary_comment_id` (029).
-   Migration `0020` dropped every other column, and the comments table.
+   A `pull_requests` row (`PullRequestRow`) is Ariadne's bookkeeping of a request it works on: `id`, `repository_id`, `number`, `url`, `role`, `origin_task_id`, `ready`, the told marks (rule 18), `reviewed_sha`, `review_asked` and its pin and skills, and `summary_comment_id` (029). The row holds no other column, and there is no comments table.
    `role` is `author` when the request's author is the integration login, ignoring case, else `reviewer`.
    An upsert keeps the existing id and creation time, and the first origin task.
 3. A row exists while Ariadne works on the request, and only then:
@@ -124,7 +123,7 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
     `kind` is `review_comment`, `issue_comment` or `review`. A review with no body is no comment.
     Comments on the conversation and review bodies share one thread, `conversation`.
     `answered` holds where a later comment in the thread is the integration login's own side's.
-    What the database keeps of one is a mark (`pull_request_comment_marks`, migration `0020`): `told_at`, once its session was told of it, and `from_review`, once an Ariadne review posted it (029). The marks go with their row.
+    What the database keeps of one is a mark (`pull_request_comment_marks`): `told_at`, once its session was told of it, and `from_review`, once an Ariadne review posted it (029). The marks go with their row.
     What Ariadne posts itself is held beside the last read until the next fetch reads it back.
 15. The DTO joins the forge's read and the row.
     It includes the request's fields, `failed_checks`, `behind_base`, `id`, `origin_task_id`, `ready`, review ask, and `session_id`.
@@ -230,8 +229,6 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `store.rs::a_pull_request_row_keeps_its_identity_and_origin_and_its_sessions_outlive_it`.
 - Comment marks are claimed once, released whole, keep the review's mark, and go with their row:
   `store.rs::comment_marks_are_claimed_once_released_whole_and_keep_the_review_mark`.
-- The migration that drops the forge's content keeps the rows of work and their marks, drops every other row and column, and lets the sessions of a dropped row go:
-  `store.rs::the_migration_that_drops_forge_content_keeps_the_rows_of_work_and_their_marks`.
 - The list is read live, a request nobody works on has no row, and nothing adds or removes one:
   `pull_requests.rs::the_list_is_read_live_and_nothing_is_stored_for_a_request_nobody_works_on`.
 - A review request on a repository with a review pin has a row while it is reviewed and none once it merged:
@@ -313,8 +310,6 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `news.rs::tests::each_change_is_told_once`, `::a_quiet_request_is_no_news`.
 - A ready report moves once:
   `store.rs::a_pull_request_reports_ready_once`.
-- The session migration keeps every old session:
-  `store.rs::pull_request_session_migration_preserves_sessions_and_requests`.
 - The agent seat lists the request's tools beside its task tools:
   `mcp.rs::tests::the_agent_seat_lists_its_step_tools_and_nothing_of_a_review`.
 - Its request tools find the request its task opened, then call its routes, and say to open one where there is none:
@@ -349,10 +344,7 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 
 ## Sources
 
-`crates/ariadne-store/migrations/0007_pull_requests.sql`,
-`crates/ariadne-store/migrations/0010_pull_request_sessions.sql`,
-`crates/ariadne-store/migrations/0012_authors_keep_their_requests.sql`,
-`crates/ariadne-store/migrations/0020_pull_requests_hold_no_forge_content.sql`,
+`crates/ariadne-store/migrations/0001_init.sql`,
 `crates/ariadne-store/src/pull_requests.rs`, `crates/ariadne-store/src/pull_request_comments.rs`,
 `crates/ariadne-store/skills/pr-babysit/SKILL.md`, `crates/ariadne-api/src/pull_requests.rs`,
 `crates/ariadne-daemon/src/launcher.rs`, `crates/ariadne-daemon/src/scheduler/pull_requests.rs`,

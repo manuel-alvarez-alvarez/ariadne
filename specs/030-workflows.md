@@ -26,14 +26,15 @@ walks the columns on one branch in one worktree until the last column's gate
 lets it finish. This spec is the whole account of that engine: the document
 that defines a workflow, the catalog Ariadne ships, the routes over it, the
 staffing, the step moves, the gates, the prompts, the pull request column, and
-the migration that put every older goal on a workflow.
+the schema that replaced the fixed author/reviewer/landing pipeline.
 
 ## Scope
 
 In: the workflow document's syntax, the catalog rules it follows (017 rules 5
 to 9), the `merge` skill, the daemon routes over the catalog, goal snapshots,
 column staffing, step moves and their gates, the shared worktree, prompt
-delivery, retries, the `pr` column, and migration `0023`.
+delivery, retries, the `pr` column, and the schema that replaced the fixed
+pipeline.
 
 Out: the transition table the step moves sit inside (001), the orchestrator
 that writes and staffs the tasks (003), the channel the agents talk on
@@ -164,9 +165,9 @@ every other wire enum (011).
    runnable the moment it is written, so a create or an edit that leaves a
    column unstaffed is refused by name, and a retry of such a task is
    refused the same way (rule 7). A task the scheduler finds runnable with a
-   column unstaffed all the same — one a database from before workflows
-   carried (rule 9) — fails before it starts, naming the column, and spends
-   no launch. `update_task.agents` replaces the complete staffing while the
+   column unstaffed all the same — one written while the goal was still
+   planned, left that way when the goal went active — fails before it
+   starts, naming the column, and spends no launch. `update_task.agents` replaces the complete staffing while the
    task is `pending`, `ready` or `failed`: an agent already on its column
    keeps its row, and with it the sessions, messages and usage that name it;
    a column staffed for the first time gets a new row; two rows on one
@@ -227,35 +228,19 @@ every other wire enum (011).
    agent's column; `GoalUsageDto { total, orchestrator, agents }` splits the
    goal's. Session facts carry seat `agent` and `data.step`, and the
    `task_ended` fact carries `step` (023).
-9. Migration `0023_workflows_only.sql` puts every older goal on a workflow
-   and drops the pipeline it replaces:
-   - a goal's `landing` becomes its `workflow`: `merge`, `feature_branch`
-     and `none` → `develop-review-merge`, `pull_request` →
-     `develop-review-pr`; a goal with no `goal_steps` gets the shipped
-     columns of that workflow; `goals.workflow` is `NOT NULL`;
-   - `repositories.default_landing` becomes `default_workflow NOT NULL
-     DEFAULT 'develop-review-merge'`, mapped the same way;
-   - a task in `ready`, `in_progress`, `under_review`, `changes_requested`
-     or `approved` that no column agent staffs becomes `failed`, with one
-     `daemon` transition whose reason is "replaced by workflows, retry it";
-     `pending` stays; a task that already ran on columns keeps its status;
-   - an `author` agent becomes the agent of `develop`, a `reviewer` the
-     agent of `review`, each reviewer on its own ordinal; a task of a
-     `pull_request` goal gets no `pr` agent, so its retry is refused naming
-     the column until the orchestrator staffs it;
-   - an author session, and a reviewer session with a task, become seat
-     `agent`; a reviewer session with a `pull_request_id` and no task stays
-     `reviewer`;
-   - a `review_request`, `approve` or `request_changes` message becomes
-     kind `message` with `[review_request]`, `[approve]` or
-     `[request_changes]` at the head of its body; actors `author` and
-     `reviewer` become `agent`;
-   - `task_picks`, `tasks.picked_agent_id`, `goal_repositories.goal_branch`
-     and the old status words in every `CHECK` go. The two shipped workflows
-     are inserted where the database lacks them, since seeding runs after
-     the migration's foreign key check.
-   The migration runs with foreign keys off and checks them before the
-   store accepts writes, and a backup of the old file is kept beside it.
+9. The schema holds no pipeline for this spec to replace: `goals.workflow`
+   is `NOT NULL REFERENCES workflows (name)`, and
+   `repositories.default_workflow` is `NOT NULL DEFAULT
+   'develop-review-merge'`. `task_agents` keys an agent by `step`, not by a
+   seat; `agent_sessions.seat` is `orchestrator`, `agent` or `reviewer`;
+   `messages.kind` is `message` alone; `task_transitions.actor` is
+   `orchestrator`, `agent`, `daemon` or `user`. There is no `task_picks`
+   table, no `tasks.picked_agent_id` and no `goal_repositories.goal_branch`.
+   A database on a schema this release does not ship — the fixed
+   author/reviewer/landing pipeline this spec replaced included — is
+   refused at open with the pre-squash message, naming the file to delete:
+   Ariadne is pre-1.0, so such a database is recreated rather than migrated
+   (016 rule 9).
 10. The `pr` column of `develop-review-pr` stages `pr-babysit`. Its agent
     pushes the branch and opens the request through `open_pull_request`
     once; a repeat returns the same URL. The request's news goes to that
@@ -390,15 +375,6 @@ every other wire enum (011).
 - The orchestrator briefing names the workflow and one line per column
   (`prompts.rs::the_orchestrator_is_briefed_with_the_workflow_and_its_columns`,
   `defaults.rs::the_orchestrator_briefing_names_the_workflow_and_its_columns`).
-- Migration `0023` maps every old row as agreed: landings to workflows,
-  columns for a goal without them, the repository default, the failed
-  statuses with their `daemon` transition, authors and reviewers to their
-  columns, the unstaffed `pr` column and the refused retry until it is
-  staffed, a re-staffing that keeps the migrated task's sessions, messages
-  and usage and folds a second reviewer into the review column, session
-  seats, message kinds and bodies, actors, the dropped tables and columns,
-  and a backup that opens
-  (`store.rs::the_workflows_only_migration_maps_every_old_row_as_agreed`).
 - Step moves accept adjacent columns only, and an agent finishes or fails
   its task (`state_machine.rs::step_moves_only_reach_adjacent_columns`,
   `::an_agent_finishes_work_or_fails_an_unfinished_task`).
@@ -429,5 +405,4 @@ every other wire enum (011).
 `crates/ariadne-daemon/src/scheduler/pull_requests.rs`,
 `crates/ariadne-daemon/src/launcher.rs`,
 `crates/ariadne-daemon/src/agents/prompts.rs`,
-`crates/ariadne-store/migrations/0022_stepped_goals.sql`,
-`crates/ariadne-store/migrations/0023_workflows_only.sql`.
+`crates/ariadne-store/migrations/0001_init.sql`.

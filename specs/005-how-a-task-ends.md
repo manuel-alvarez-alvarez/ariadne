@@ -29,12 +29,12 @@ last column:
 - `pull_request` is the `develop-review-pr` workflow. Its `pr` column stages
   `pr-babysit`, opens the request once with `open_pull_request` and keeps it;
   its gate `request_merged` reads the forge at the call (030 rule 10, 026).
-- `none` and `feature_branch` map onto `develop-review-merge` (030 rule 9).
+- `none` and `feature_branch` map onto `develop-review-merge`.
   There is no goal branch and no final task: a workflow of the user's own
   can gate a column on `pushed` and stop there.
 - `finish_task` is gone: `complete_step` on the last column finishes the
   task, and the gate is the verification (001 rule 5).
 
 A repository's `default_landing` is now its `default_workflow`, and a goal's
-`landing` is its `workflow`. Migration `0023_workflows_only.sql` maps every
-old row (030 rule 9).
+`landing` is its `workflow`. A migration mapped every old row when
+workflows shipped.

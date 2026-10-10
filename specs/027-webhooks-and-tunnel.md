@@ -64,9 +64,8 @@ The session task's tests prove that rule for a prompt.
    This keeps one fetch shape for both forges.
    A missed delivery costs nothing more than the next one.
    Concurrent wakes follow the coalescing rule in 026.
-5. The additive migration adds `webhook_id`, `webhook_secret`, `webhook_url`, `webhook_state`,
-   `webhook_error`, and `webhook_last_delivery_at` to `forge_integrations`.
-   Existing rows default to `polling`, with nullable metadata.
+5. `forge_integrations` holds `webhook_id`, `webhook_secret`, `webhook_url`, `webhook_state`,
+   `webhook_error`, and `webhook_last_delivery_at`. `webhook_state` defaults to `polling`; the rest are nullable.
    Each integration receives 32 cryptographically random bytes, encoded as 64 hexadecimal characters.
    The secret is stored before creation because the forge can immediately send a ping.
    Public DTOs exclude it, and hook errors redact it.
@@ -120,7 +119,7 @@ A disabled integration has no worker, regardless of its retained hook status.
 ### The tunnel
 
 11. The one `forge_settings` row holds `tunnel_enabled` (0 or 1, default 1) and `tunnel_subdomain` (NULL until first use).
-    The additive migration `0009_forge_settings.sql` seeds it.
+    The schema seeds it.
     `config.toml` adds `tunnel_host` (default `https://localtunnel.me`) and `tunnel_subdomain`.
     The configured subdomain wins over the stored one.
 12. The tunnel runs when `tunnel_enabled` holds, at least one integration is enabled, and `webhook_public_url` is unset.
@@ -201,8 +200,6 @@ A disabled integration has no worker, regardless of its retained hook status.
   `webhooks.rs::a_changed_remote_deletes_the_old_hook_without_reusing_its_secret_or_id`.
 - Replacing and enabling a remote in one edit creates its own hook:
   `webhooks.rs::replacing_and_enabling_a_remote_in_one_edit_creates_its_own_hook`.
-- Migration preserves existing integrations and a restorable backup:
-  `store.rs::webhook_migration_preserves_existing_integrations_and_a_recoverable_backup`.
 - CLI inspection includes the webhook block:
   `repo.rs::tests::repo_inspect_prints_the_forge_block_with_the_login`.
 - The table shows `localtunnel` green with the URL, and red with the error:
@@ -237,8 +234,6 @@ A disabled integration has no worker, regardless of its retained hook status.
   `tunnel.rs::a_delivery_and_a_timer_fetch_record_the_same_pull_request_rows`.
 - Configuration reads the tunnel keys and their defaults:
   `config.rs::tests::webhook_configuration_uses_a_random_port_unless_an_address_is_given`.
-- The migration seeds the switch on, keeps the first subdomain, and keeps existing rows:
-  `store.rs::forge_settings_migration_turns_the_tunnel_on_and_keeps_the_first_subdomain`.
 - `ariadne forge tunnel` prints the state and the bound address, and `on` and `off` set the switch:
   `forge.rs::tests::the_tunnel_prints_its_state_url_and_bound_address`,
   `forge.rs::tests::forge_tunnel_on_and_off_set_the_switch`.
@@ -254,9 +249,8 @@ A disabled integration has no worker, regardless of its retained hook status.
 
 `crates/ariadne-daemon/src/webhooks.rs`, `crates/ariadne-daemon/src/forge/hooks.rs`,
 `crates/ariadne-daemon/src/forge/github/hooks.rs`, `crates/ariadne-daemon/src/forge/gitlab/hooks.rs`,
-`crates/ariadne-store/migrations/0008_webhooks.sql`, `crates/ariadne-store/src/webhooks.rs`,
-`crates/ariadne-daemon/src/forge/tunnel.rs`, `crates/ariadne-daemon/src/http/forge.rs`,
-`crates/ariadne-store/migrations/0009_forge_settings.sql`.
+`crates/ariadne-store/migrations/0001_init.sql`, `crates/ariadne-store/src/webhooks.rs`,
+`crates/ariadne-daemon/src/forge/tunnel.rs`, `crates/ariadne-daemon/src/http/forge.rs`.
 
 The tunnel protocol follows `localtunnel-client` 0.1.8 (<https://github.com/kaichaosun/rlt>, MIT):
 one HTTPS request answers an id, a URL, a port and a connection count,

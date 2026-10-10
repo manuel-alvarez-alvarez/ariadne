@@ -242,9 +242,7 @@ hardware facts in the card, with no Details popover`).
     the benchmark selected, -0.0499 / 0.9220, has an allow threshold under
     zero, so it allows no case (rule 33). The benchmark did
     not measure `0.8b` or `27b`; they take the `4b` pair. The schema seeds
-    the row with 0.0201 / 0.6321 and `thresholds_hand_set = 0`. The
-    migration that adds `thresholds_hand_set` (`0003`) marks an existing row
-    not hand-set where its pair is 0.0201 / 0.6321, and hand-set otherwise.
+    the row with 0.0201 / 0.6321 and `thresholds_hand_set = 0`.
 
 ## Decisions
 
@@ -794,10 +792,6 @@ hardware facts in the card, with no Details popover`).
   (`ai_permissions.rs::default_thresholds_returns_a_hand_set_pair_to_the_flavour_default`),
   and a decision then holds the flavour default
   (`ai_permissions.rs::the_endpoint_is_the_configured_one_and_live_needs_the_model_on`).
-- The `0003` migration marks a row at 0.0201 / 0.6321 not hand-set, so on
-  `9b` it reports the `9b` pair, and marks any other pair hand-set and keeps it
-  (`store.rs::an_upgrade_marks_the_seeded_threshold_pair_as_the_default`,
-  `store.rs::an_upgrade_marks_any_other_threshold_pair_as_hand_set`).
 - A test request sends the shared normalized state for its workspace and returns
   its label, danger, thresholds and four decision facts without an event; an off model refuses it and an enabled model
   with no live endpoint reports `unavailable`

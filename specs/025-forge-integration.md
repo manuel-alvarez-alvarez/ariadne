@@ -38,7 +38,7 @@ the desktop app as a whole (015).
    `forge_integrations`, keyed by `repository_id`. The row holds `kind`
    (`github` or `gitlab`), `host`, `owner`, `name`, `remote`, `enabled`,
    `login`, `review_model`, `review_effort`, `detected_at` and `updated_at`.
-   The babysit pin is gone (migration `0012`): a request of the user's is
+   There is no babysit pin: a request of the user's is
    kept by the author of the task that opened it, on that author's own pin
    (005, 026). `host`, `owner` and
    `name` are stored lower-cased. A repository with no usable remote has no
@@ -191,8 +191,7 @@ the desktop app as a whole (015).
 
 ## Sources
 
-`crates/ariadne-store/migrations/0004_forge_integrations.sql`,
-`crates/ariadne-store/migrations/0012_authors_keep_their_requests.sql`,
+`crates/ariadne-store/migrations/0001_init.sql`,
 `crates/ariadne-store/src/forge.rs`, `crates/ariadne-daemon/src/forge/`,
 `crates/ariadne-daemon/src/http/repositories.rs`,
 `crates/ariadne-daemon/tests/it/common/forge.rs`,

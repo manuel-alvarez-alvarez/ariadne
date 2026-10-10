@@ -34,5 +34,5 @@ workflow's columns:
 - The statuses `under_review`, `changes_requested` and `approved` are gone:
   a task is `in_progress` from its first column to its last (001 rule 4).
 
-Migration `0023_workflows_only.sql` maps the rows this spec wrote onto the
-workflow vocabulary (030 rule 9).
+A migration mapped the rows this spec wrote onto the workflow vocabulary
+when workflows shipped.

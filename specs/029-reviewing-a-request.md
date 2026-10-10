@@ -111,8 +111,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     takes `{asked, model, effort, skills}`. Asking starts Ariadne's work on
     the request, its row written with role `author`, and writes
     `pull_requests.review_asked`, the pin
-    `review_model` and `review_effort`, and `review_skills` (migrations
-    `0014` and `0016`). `model` is required to ask and is checked against the
+    `review_model` and `review_effort`, and `review_skills`. `model` is required to ask and is checked against the
     catalog as any pin is; a missing or unknown one answers 400. Each skill
     must be one a task agent is staffed on (017), else 400; `pr-reviewer` is
     loaded anyway and is not stored. It answers the request, and wakes the
@@ -145,8 +144,8 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     defect, posted as `**[P0] Title**`, a blank line, then its body: what
     goes wrong and how to fix it. `body` is required: the review's whole
     summary as it stands, tied to no line. The review keeps one summary
-    comment on the request (`pull_requests.summary_comment_id`, migration
-    `0019`): the first round posts it, and every later round replaces its
+    comment on the request (`pull_requests.summary_comment_id`):
+    the first round posts it, and every later round replaces its
     text, so the request carries one summary however many rounds ran. A
     summary the forge answers 404 for is posted again; any other failed
     edit is the error, and posts no second summary. Every comment a review
@@ -362,8 +361,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 
 ## Sources
 
-`crates/ariadne-store/migrations/0011_pull_request_reviews.sql`,
-`crates/ariadne-store/migrations/0014_ariadne_review_of_my_requests.sql`,
+`crates/ariadne-store/migrations/0001_init.sql`,
 `crates/ariadne-store/skills/pr-reviewer/SKILL.md`,
 `crates/ariadne-daemon/src/scheduler/pull_requests.rs`,
 `crates/ariadne-daemon/src/forge/news.rs`, `crates/ariadne-daemon/src/forge/poll.rs`,
