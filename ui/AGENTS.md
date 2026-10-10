@@ -105,6 +105,11 @@ around it — every feature test mounts its screen on its own — it renders
 the repository's `Cargo.toml`), so `cargo build --workspace` never builds the
 desktop shell and the UI's dependency tree stays out of `Cargo.lock`.
 
+Write an external link as a plain `<a href>`. The app-root handler
+(`src/hooks/use-open-external-links.ts`) opens it through the opener plugin.
+Do not use `window.open` or rely on `target="_blank"` alone: the Tauri
+webview ignores it.
+
 ### Calling the daemon
 
 ```ts

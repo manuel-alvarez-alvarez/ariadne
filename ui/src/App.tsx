@@ -16,10 +16,12 @@ import { ThemeProvider } from "@/components/theme-provider"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { EventStreamProvider } from "@/events/provider"
+import { useOpenExternalLinks } from "@/hooks/use-open-external-links"
 import { router } from "@/routes/router"
 
 export default function App() {
   const [queryClient] = useState(createQueryClient)
+  useOpenExternalLinks()
 
   return (
     <ThemeProvider>
