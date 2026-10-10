@@ -92,7 +92,7 @@ it("raises a row for an exhausted session only once a quota item names it", asyn
     {
       id: "recovery:quota:claude-sonnet-5",
       producer: "recovery",
-      cause: "quota",
+      reason: "quota",
       summary: "claude-sonnet-5 hit a usage limit.",
       required_action: "Raise the quota, or switch models.",
       since: "2026-01-01T00:00:00Z",
@@ -110,7 +110,7 @@ it("counts a resource or configuration item that names no goal or session", asyn
     {
       id: "recovery:resource:descriptor-limit",
       producer: "recovery",
-      cause: "resource",
+      reason: "resource",
       summary: "The daemon ran out of file descriptors.",
       required_action: "Free file descriptors, then retry the task.",
       since: "2026-01-01T00:00:00Z",
@@ -129,7 +129,7 @@ it("does not also count a task's own row once a recovery item already names it",
     {
       id: "recovery:resource:descriptor-limit",
       producer: "recovery",
-      cause: "resource",
+      reason: "resource",
       summary: "The daemon ran out of file descriptors.",
       required_action: "Free file descriptors, then retry the task.",
       since: "2026-01-01T00:00:00Z",
@@ -157,6 +157,43 @@ it("does not also count a task's own row once a recovery item already names it",
   // One row — the recovery item's — not two: `failed`'s own generic row
   // would otherwise also count this same task.
   await waitFor(() => expect(document.title).toBe("(1) Ariadne"))
+})
+
+it("raises no row for a task-tied stalled or disconnected session", async () => {
+  sessions = [
+    aSession({
+      id: "01STALLED",
+      task_id: TASK.id,
+      attention_reason: "stalled",
+      attention_since: "2026-01-01",
+    }),
+    aSession({
+      id: "01DEAD",
+      task_id: TASK.id,
+      attention_reason: "disconnected",
+    }),
+  ]
+  const { queryClient } = renderAlerts()
+  await settled(queryClient)
+
+  // Automatic recovery (a nudge, then a relaunch) is still trying both —
+  // only once the task itself fails is either this list's business.
+  expect(document.title).toBe("Ariadne Desktop")
+})
+
+it("raises a row for a stalled or disconnected session with no task", async () => {
+  sessions = [
+    aSession({
+      id: "01ORCH",
+      task_id: null,
+      seat: "orchestrator",
+      attention_reason: "disconnected",
+    }),
+  ]
+  const { queryClient } = renderAlerts()
+  await settled(queryClient)
+
+  expect(document.title).toBe("(1) Ariadne")
 })
 
 it("never reads an incomplete recovery read as nothing needing attention", async () => {

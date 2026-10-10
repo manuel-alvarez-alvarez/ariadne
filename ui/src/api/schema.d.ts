@@ -1896,7 +1896,6 @@ export interface components {
              *     item per entity.
              */
             affected: components["schemas"]["AttentionSubjectDto"][];
-            cause: components["schemas"]["AttentionCause"];
             /**
              * @description Stable across a restart and across the same cause recurring: derived
              *     from the cause and what it shares rather than issued fresh, so the
@@ -1904,6 +1903,11 @@ export interface components {
              */
             id: string;
             producer: components["schemas"]["AttentionProducer"];
+            /**
+             * @description The shared contract's `reason`: why this blocker exists, in the one
+             *     vocabulary every producer draws from (`AttentionCause`).
+             */
+            reason: components["schemas"]["AttentionCause"];
             /** @description The one action that clears this item. */
             required_action: string;
             /** @description When this blocker was first observed, RFC 3339. */

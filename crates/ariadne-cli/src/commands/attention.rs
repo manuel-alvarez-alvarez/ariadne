@@ -75,20 +75,21 @@ impl Reason {
     }
 }
 
-/// Whether this task wants the user, and what for. Kept identical to
-/// `taskAttentionReason` in the UI.
-///
-/// A task sent back to an earlier column is deliberately not one of them: the
-/// review column has spoken and the daemon briefs the develop agent itself,
-/// so that task waits on an agent. A resume that does not happen shows up as the session's own
-/// `disconnected` or `stalled` flag. And `stalled` is checked last because it
-/// is a flag on top of a status — the task's column mirrors any of its
-/// sessions carrying `stalled` and comes down when that session's does — so a
-/// task that also failed reads as failed.
+/// Whether this task wants the user on the strength of its bare status
+/// alone, kept only as the fallback a recovery read that could not be
+/// read in full leaves standing: `failed` is terminal, and once
+/// `GET /v1/attention` can see it, its own recovery item — named and
+/// actionable — is what this board shows for it instead
+/// (`recovery_affected_task_ids`). `stalled` is never reported here at
+/// all: it is a flag *on top of* a status, raised while automatic
+/// recovery (a nudge, then a relaunch) is still working the agent, and
+/// showing it immediately would be exactly the "automatic recovery still
+/// trying" row 009's attention contract asks never to raise. If the
+/// relaunch also fails, the task fails, and that is this board's business
+/// again, the same way any other failure is.
 fn task_reason(task: &TaskDto) -> Option<Reason> {
     match task.status {
         TaskStatus::Failed => Some(Reason::Failed),
-        _ if task.stalled => Some(Reason::Stalled),
         _ => None,
     }
 }
@@ -174,7 +175,7 @@ fn recovery_items_section(
             .join(", ");
         lines.push(format!(
             "- [{}] {} ({} old)",
-            cause_label(item.cause),
+            cause_label(item.reason),
             item.summary,
             age(&item.since, now)
         ));
@@ -380,6 +381,17 @@ async fn render(client: &Client, format: Format) -> Result<()> {
             if !rows.is_empty() {
                 println!("{}", quiet_lines(&rows));
             }
+            // A bare identifier stream has no field to carry `complete` in,
+            // so an incomplete read says so the only way it can: failing
+            // the command rather than succeeding silently on whatever ids
+            // it did get, which a script piping them could not tell apart
+            // from a read that saw everything.
+            if incomplete {
+                anyhow::bail!(
+                    "some of what needs attention could not be read; the ids above are not the \
+                     whole list"
+                );
+            }
         }
         Format::Table if attention.goals.is_empty() && recovery_section.is_none() => {
             if incomplete {
@@ -488,7 +500,11 @@ pub(crate) mod tests {
         let reason = |status, stalled| task_reason(&task("01T", "01G", status, stalled));
         assert_eq!(reason(TaskStatus::Failed, false), Some(Reason::Failed));
         assert_eq!(reason(TaskStatus::Failed, true), Some(Reason::Failed));
-        assert_eq!(reason(TaskStatus::InProgress, true), Some(Reason::Stalled));
+        // `stalled` is never reported here: it is a flag raised while
+        // automatic recovery (a nudge, then a relaunch) is still trying,
+        // and showing it immediately would be the "still trying" row this
+        // list never raises.
+        assert_eq!(reason(TaskStatus::InProgress, true), None);
         assert_eq!(reason(TaskStatus::InProgress, false), None);
         assert_eq!(reason(TaskStatus::Finished, false), None);
 
@@ -582,14 +598,14 @@ pub(crate) mod tests {
     }
 
     fn attention_item(
-        cause: AttentionCause,
+        reason: AttentionCause,
         affected: Vec<(AttentionSubjectKind, &str)>,
     ) -> ariadne_api::attention::AttentionItemDto {
         use ariadne_api::attention::{AttentionProducer, AttentionSubjectDto, AttentionTarget};
         ariadne_api::attention::AttentionItemDto {
             id: "01I".into(),
             producer: AttentionProducer::Recovery,
-            cause,
+            reason,
             summary: "a blocker".into(),
             required_action: "clear it".into(),
             since: NOW.into(),
@@ -773,10 +789,16 @@ pub(crate) mod tests {
         ];
         let titles = task_titles(&tasks);
         let now = chrono::Utc::now();
+        // `agent_error`, not `disconnected`: a task-tied disconnection is
+        // this board's business only once the task itself fails.
+        let session = SessionEntryDto {
+            attention_reason: Some(AttentionReason::AgentError),
+            ..dead("01S1", "01GA", Some("01T1"))
+        };
         let attention = group(
             vec![goal("01GA", "Older goal"), goal("01GB", "Newer goal")],
             tasks,
-            vec![dead("01S1", "01GA", Some("01T1"))],
+            vec![session],
             &HashSet::new(),
         );
         let all: Vec<Vec<String>> = attention
@@ -847,6 +869,58 @@ pub(crate) mod tests {
         server.abort();
 
         rendered.expect("a page object decodes, where a bare array once failed");
+    }
+
+    /// `-q` under an incomplete recovery read fails the command: a bare
+    /// identifier stream has no field to carry `complete` in, so a script
+    /// piping those ids has to be told some other way that they are not
+    /// the whole list.
+    #[tokio::test]
+    async fn quiet_mode_fails_on_an_incomplete_recovery_read() {
+        use axum::Router;
+        use axum::routing::get;
+
+        crate::output::init(crate::output::View {
+            quiet: true,
+            ..crate::output::View::plain()
+        });
+
+        async fn goals() -> axum::Json<Vec<GoalDto>> {
+            axum::Json(Vec::new())
+        }
+        async fn tasks() -> axum::Json<Vec<TaskDto>> {
+            axum::Json(Vec::new())
+        }
+        async fn sessions() -> axum::Json<SessionPageDto> {
+            axum::Json(SessionPageDto {
+                sessions: Vec::new(),
+                next_cursor: None,
+                total: 0,
+                snapshot_at: NOW.into(),
+            })
+        }
+        async fn attention() -> axum::Json<AttentionListDto> {
+            axum::Json(AttentionListDto {
+                items: Vec::new(),
+                complete: false,
+            })
+        }
+
+        let app = Router::new()
+            .route("/v1/goals", get(goals))
+            .route("/v1/tasks", get(tasks))
+            .route("/v1/sessions", get(sessions))
+            .route("/v1/attention", get(attention));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let client = Client::tcp(format!("http://{address}"));
+        let rendered = render(&client, Format::Table).await;
+        server.abort();
+
+        let error = rendered.expect_err("an incomplete read under -q must fail the command");
+        assert!(error.to_string().contains("could not be read"), "{error}");
     }
 
     /// A board with more sessions than fit in one page still sees every one

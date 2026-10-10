@@ -13,7 +13,7 @@ pub(crate) mod recovery;
 
 use ariadne_api::attention::AttentionListDto;
 use ariadne_core::{GoalStatus, Seat, TaskStatus};
-use ariadne_store::{AgentSession, Store, Task};
+use ariadne_store::{AgentSession, Result, Store, Task};
 
 use crate::launcher::Launcher;
 
@@ -102,4 +102,47 @@ pub async fn work_is_active(store: &Store, session: &AgentSession) -> bool {
 async fn task_of(store: &Store, session: &AgentSession) -> Option<Task> {
     let task_id = session.task_id.as_deref()?;
     store.get_task(task_id).await.ok()
+}
+
+/// [`work_is_active`]'s own question, propagating a store error rather
+/// than collapsing it to "not active": the scheduler's sweeps are right to
+/// read a failed lookup as "nothing owed, try again next tick" (009 rule
+/// 26), but a producer answering an HTTP read must tell a session that is
+/// genuinely not worth a human's time from one its own evidence could not
+/// be read for — the first costs nothing to miss, the second must cost
+/// the list its `complete` flag instead.
+pub(crate) async fn work_is_active_checked(store: &Store, session: &AgentSession) -> Result<bool> {
+    Ok(match session.seat() {
+        None => session.status().is_live(),
+        Some(Seat::Agent) => {
+            let Some(task_id) = session.task_id.as_deref() else {
+                return Ok(false);
+            };
+            let task = store.get_task(task_id).await?;
+            let Some(id) = &session.task_agent_id else {
+                return Ok(false);
+            };
+            let agent = store.get_task_agent(id).await?;
+            task.status() == TaskStatus::InProgress
+                && Some(agent.step.as_str()) == task.step.as_deref()
+        }
+        Some(Seat::Orchestrator) => {
+            let goal_id = session.goal_id.as_deref().unwrap_or_default();
+            matches!(
+                store.get_goal(goal_id).await?.status(),
+                GoalStatus::Planning | GoalStatus::Active
+            )
+        }
+        Some(Seat::Reviewer) => match &session.pull_request_id {
+            // A gone request is this seat's own legitimate "not active"
+            // (the request merged or closed); any other error is the
+            // store's to answer for, and propagates.
+            Some(pull_request_id) => match store.get_pull_request(pull_request_id).await {
+                Ok(_) => true,
+                Err(ariadne_store::StoreError::NotFound { .. }) => false,
+                Err(error) => return Err(error),
+            },
+            None => false,
+        },
+    })
 }

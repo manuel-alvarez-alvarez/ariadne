@@ -71,22 +71,17 @@ function recoveryAffectedTaskIds(recovery: AttentionListDto | undefined): Set<st
 export type AttentionReason = "failed" | "stalled"
 
 /**
- * Whether this task wants the user, and what for.
- *
- * A task in `changes_requested` is deliberately not one of them: the reviewer
- * has spoken and the daemon resumes the author itself, so what that task
- * waits on is an agent, not a person. A resume that does not happen shows up
- * as the session's own `disconnected` or `stalled` flag, which is where the
- * daemon decides a human is wanted.
- *
- * `stalled` is checked last because it is a flag *on top of* a status: the
- * task's column mirrors any of its sessions carrying the daemon's `stalled`
- * flag, and comes down when that session's does, so a task that also failed is
- * reported as failed.
+ * Whether this task wants the user on the strength of its bare status
+ * alone — `failed` only, kept as the fallback a recovery read that could
+ * not be read in full leaves standing. `stalled` is never reported here:
+ * it is a flag raised while automatic recovery (a nudge, then a relaunch)
+ * is still working the agent, and reporting it immediately would be
+ * exactly the "automatic recovery still trying" row 009's attention
+ * contract asks never to raise. If the relaunch also fails, the task
+ * fails, and `failed` covers it the same as any other failure.
  */
 export function taskAttentionReason(task: TaskDto): AttentionReason | null {
-  if (task.status === "failed") return "failed"
-  return task.stalled ? "stalled" : null
+  return task.status === "failed" ? "failed" : null
 }
 
 /**
@@ -274,6 +269,12 @@ function collectAttention(
     // still worth a person's time is the recovery producer's own `quota`
     // item to say, read below with every other cause.
     if (reason === "exhausted") continue
+    // A task-tied session's stall or disconnection is this list's business
+    // only once its task actually fails: while the agent is still being
+    // nudged or relaunched, automatic recovery is still trying it, and the
+    // task's own recovery item — once raised — says the same thing with
+    // the cause and the action a bare flag cannot.
+    if (session.task_id && (reason === "stalled" || reason === "disconnected")) continue
     const at = sessionAttentionAt(session)
     const taskId = session.task_id ?? null
     const key = taskId ?? session.id

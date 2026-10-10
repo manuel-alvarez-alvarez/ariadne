@@ -42,7 +42,7 @@ async fn a_descriptor_limit_failure_is_a_resource_item() {
     let list: AttentionListDto = h.get("/v1/attention").await;
     assert_eq!(list.items.len(), 1);
     let item = &list.items[0];
-    assert_eq!(item.cause, AttentionCause::Resource);
+    assert_eq!(item.reason, AttentionCause::Resource);
     assert_eq!(
         item.summary,
         ariadne_daemon::scheduler::DESCRIPTOR_LIMIT_REASON
@@ -87,11 +87,12 @@ async fn two_tasks_sharing_a_descriptor_limit_failure_are_one_grouped_item() {
     assert!(affected.contains(&second.id.as_str()));
 }
 
-/// A task failed for an unrelated reason raises no resource item: the
-/// words have to be the daemon's own descriptor-limit ones, not any
-/// failure.
+/// A task failed for an unrelated reason is not dropped: `failed` is
+/// terminal, so the daemon will never retry it on its own, and it is its
+/// own `unknown` item naming that one task, carrying the reason it
+/// actually ended with.
 #[tokio::test]
-async fn a_task_failed_for_another_reason_raises_no_resource_item() {
+async fn a_task_failed_for_another_reason_is_its_own_unknown_item() {
     let h = harness().await;
     let cast = h.cast().await;
     h.store
@@ -106,12 +107,59 @@ async fn a_task_failed_for_another_reason_raises_no_resource_item() {
         .unwrap();
 
     let list: AttentionListDto = h.get("/v1/attention").await;
-    assert_eq!(list.items, Vec::new());
+    assert_eq!(list.items.len(), 1);
+    let item = &list.items[0];
+    assert_eq!(item.reason, AttentionCause::Unknown);
+    assert_eq!(item.summary, "the agent could not be started");
+    assert_eq!(item.affected.len(), 1);
+    assert_eq!(item.affected[0].id, cast.task.id);
+}
+
+/// Two tasks failed for different, unrelated reasons stay two separate
+/// `unknown` items: there is no reliable evidence they share a cause, so
+/// they are never guessed into one group (009, "unknown causes remain
+/// separate").
+#[tokio::test]
+async fn two_tasks_failed_for_different_reasons_stay_separate_unknown_items() {
+    let h = harness().await;
+    let first = h.cast().await;
+    let second = h
+        .task_on(&first.goal, &first.repo, "second", test_pin())
+        .await;
+    h.store
+        .transition_task(
+            &first.task.id,
+            TaskStatus::Failed,
+            Actor::Daemon,
+            Some("the agent could not be started"),
+            None,
+        )
+        .await
+        .unwrap();
+    h.store
+        .transition_task(
+            &second.id,
+            TaskStatus::Failed,
+            Actor::Daemon,
+            Some("the tests did not pass"),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 2, "{:?}", list.items);
+    assert!(
+        list.items
+            .iter()
+            .all(|item| item.reason == AttentionCause::Unknown)
+    );
 }
 
 /// An exhausted session on a model the catalog does not rank has no
 /// automatic switch to try, so it is a `quota` item naming that session —
-/// and the session's console is where it is answered.
+/// and the session's console is where it is answered. Its summary names
+/// how many switches it already spent and why the next one did not run.
 #[tokio::test]
 async fn an_exhausted_session_on_an_unranked_model_is_a_quota_item() {
     let h = harness().await;
@@ -143,16 +191,60 @@ async fn an_exhausted_session_on_an_unranked_model_is_a_quota_item() {
     assert_eq!(list.items.len(), 1);
     let item = &list.items[0];
     assert_eq!(item.producer, AttentionProducer::Recovery);
-    assert_eq!(item.cause, AttentionCause::Quota);
+    assert_eq!(item.reason, AttentionCause::Quota);
+    assert!(
+        item.summary.contains("no other model is available"),
+        "{}",
+        item.summary
+    );
     assert_eq!(item.affected.len(), 1);
     assert_eq!(item.affected[0].kind, AttentionSubjectKind::Session);
     assert_eq!(item.affected[0].id, session.id);
+    // A task-less session's affected label names its seat, not the model —
+    // the model is already the grouping key.
+    assert_eq!(item.affected[0].label, "orchestrator");
     assert_eq!(
         item.target,
         ariadne_api::attention::AttentionTarget::Console {
             session_id: session.id.clone()
         }
     );
+}
+
+/// An exhausted session's own task names the affected entry, not a second
+/// copy of the model, so a user can tell two sessions on the same model
+/// apart by the work each was running.
+#[tokio::test]
+async fn a_quota_items_affected_entry_names_the_sessions_task() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    let session = h
+        .store
+        .create_session(NewSession {
+            goal_id: Some(cast.goal.id.clone()),
+            task_id: Some(cast.task.id.clone()),
+            seat: Some(Seat::Agent),
+            task_agent_id: Some(cast.agents[0].id.clone()),
+            model: "stub:no-such-model".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: None,
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_session_status_if_live(&session.id, SessionStatus::Exited, None)
+        .await
+        .unwrap();
+    h.store
+        .set_session_attention(&session.id, AttentionReason::Exhausted)
+        .await
+        .unwrap();
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 1);
+    assert_eq!(list.items[0].affected[0].label, cast.task.id);
 }
 
 /// A session nobody is waiting on — one whose task moved past the column it
@@ -209,11 +301,29 @@ async fn a_missing_forge_cli_is_a_configuration_item() {
     let list: AttentionListDto = h.get("/v1/attention").await;
     assert_eq!(list.items.len(), 1);
     let item = &list.items[0];
-    assert_eq!(item.cause, AttentionCause::Configuration);
+    assert_eq!(item.reason, AttentionCause::Configuration);
     assert_eq!(item.summary, error);
     assert_eq!(item.affected.len(), 1);
     assert_eq!(item.affected[0].kind, AttentionSubjectKind::Repository);
     assert_eq!(item.affected[0].id, repo.id);
+}
+
+/// A forge fetch error that does not name a missing CLI raises nothing:
+/// `forge/poll.rs` keeps retrying it forever with no budget to spend, so
+/// there is no evidence here that recovery has given up — only that it is
+/// still trying, which this list never raises for (009).
+#[tokio::test]
+async fn a_forge_fetch_error_that_names_no_missing_cli_raises_nothing() {
+    let h = harness().await;
+    let repo = h.repository(&h.git_repo("repo")).await;
+    with_forge(&h, &repo).await;
+    h.store
+        .set_forge_fetch_error(&repo.id, Some("gh: rate limit exceeded, try again later"))
+        .await
+        .unwrap();
+
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items, Vec::new());
 }
 
 /// A disabled integration's fetch error is nobody's business: a user who
@@ -237,7 +347,10 @@ async fn a_disabled_forge_integrations_fetch_error_raises_nothing() {
 
 /// The same recovery item answers the same id across two reads: a client
 /// polling, or reconnecting after a restart, sees one row rather than a
-/// fresh one each time.
+/// fresh one each time. The id is derived purely from the shared cause
+/// (the model, the fixed descriptor-limit reason, the forge CLI name) and
+/// never from a counter or a timestamp, so it does not depend on anything
+/// a daemon restart would lose.
 #[tokio::test]
 async fn a_recovery_items_id_is_stable_across_two_reads() {
     let h = harness().await;
@@ -257,6 +370,7 @@ async fn a_recovery_items_id_is_stable_across_two_reads() {
     let second: AttentionListDto = h.get("/v1/attention").await;
     assert_eq!(first.items.len(), 1);
     assert_eq!(first.items[0].id, second.items[0].id);
+    assert_eq!(first.items[0].id, "recovery:resource:descriptor-limit");
 }
 
 /// An exhausted session already switched to a successor raises no quota
@@ -307,76 +421,4 @@ async fn an_exhausted_session_already_switched_raises_no_quota_item() {
 
     let list: AttentionListDto = h.get("/v1/attention").await;
     assert_eq!(list.items, Vec::new());
-}
-
-/// An enabled forge integration's fetch error that does not name a missing
-/// CLI is not dropped for want of a pattern to match: it is its own
-/// `unknown` item, naming the repository, kept apart from every other item
-/// (009, "unknown causes remain separate").
-#[tokio::test]
-async fn an_unmatched_forge_fetch_error_is_its_own_unknown_item() {
-    let h = harness().await;
-    let repo = h.repository(&h.git_repo("repo")).await;
-    with_forge(&h, &repo).await;
-    let error = "gh: rate limit exceeded, try again later";
-    h.store
-        .set_forge_fetch_error(&repo.id, Some(error))
-        .await
-        .unwrap();
-
-    let list: AttentionListDto = h.get("/v1/attention").await;
-    assert_eq!(list.items.len(), 1);
-    let item = &list.items[0];
-    assert_eq!(item.producer, AttentionProducer::Recovery);
-    assert_eq!(item.cause, AttentionCause::Unknown);
-    assert_eq!(item.summary, error);
-    assert_eq!(item.affected.len(), 1);
-    assert_eq!(item.affected[0].id, repo.id);
-}
-
-/// Two repositories whose forge CLI fetch fails on the same unmatched words
-/// stay two separate `unknown` items: unlike `configuration`, an unknown
-/// cause is never grouped, since there is no reliable evidence the two
-/// share one.
-#[tokio::test]
-async fn two_unmatched_forge_errors_stay_separate_unknown_items() {
-    use ariadne_core::ForgeKind;
-    use ariadne_store::SetForgeIntegration;
-
-    let h = harness().await;
-    let first = h.repository(&h.git_repo("repo1")).await;
-    let second = h.repository(&h.git_repo("repo2")).await;
-    with_forge(&h, &first).await;
-    h.store
-        .set_forge_integration(SetForgeIntegration {
-            repository_id: second.id.clone(),
-            kind: ForgeKind::Github,
-            host: "github.com".into(),
-            owner: "acme".into(),
-            name: "gizmos".into(),
-            remote: "origin".into(),
-            enabled: true,
-            login: Some("me".into()),
-            review_model: None,
-            review_effort: None,
-        })
-        .await
-        .unwrap();
-    let error = "gh: rate limit exceeded, try again later";
-    h.store
-        .set_forge_fetch_error(&first.id, Some(error))
-        .await
-        .unwrap();
-    h.store
-        .set_forge_fetch_error(&second.id, Some(error))
-        .await
-        .unwrap();
-
-    let list: AttentionListDto = h.get("/v1/attention").await;
-    assert_eq!(list.items.len(), 2, "{:?}", list.items);
-    assert!(
-        list.items
-            .iter()
-            .all(|item| item.cause == AttentionCause::Unknown)
-    );
 }

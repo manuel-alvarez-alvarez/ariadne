@@ -10,37 +10,57 @@ use crate::launcher::Launcher;
 
 use super::SPAWN_RETRY_BUDGET;
 
-/// Whether an exhausted session has no automatic recovery left to try: the
-/// same conditions [`Scheduler::auto_switch_exhausted`] gives up on, read as
-/// a standing fact rather than acted on. What the "Needs attention" recovery
-/// producer asks before raising a quota item — a session already switched,
-/// or one still mid-switch, is not its business, only one automatic
-/// recovery has spent its whole budget on.
+/// Why an exhausted session has no automatic recovery left to try, and how
+/// many switches it already spent getting there — the detail the "Needs
+/// attention" recovery producer's `quota` item summary names, read as a
+/// standing fact rather than acted on. `None` where a session already
+/// switched, or one still mid-switch, is not this producer's business:
+/// only one automatic recovery has spent its whole budget on reaches here,
+/// the same conditions [`Scheduler::auto_switch_exhausted`] gives up on.
 ///
 /// Unlike the sweep, this propagates a store error rather than quietly
 /// skipping: a producer that cannot tell a genuine exhaustion from a store
 /// that would not answer must say so, not guess "no recovery left" from a
 /// read that simply failed.
-pub(crate) async fn recovery_exhausted(
+pub(crate) async fn recovery_block(
     store: &Store,
     launcher: &Launcher,
     session: &AgentSession,
-) -> Result<bool> {
+) -> Result<Option<QuotaBlock>> {
     if store.switched_successor(&session.id).await?.is_some() {
         // A successor is already running this session's work: recovery
         // already acted, and the old row is not the one left to answer.
-        return Ok(false);
+        return Ok(None);
     }
     if !launcher.cfg.auto_switch {
-        return Ok(true);
+        return Ok(Some(QuotaBlock {
+            switches: 0,
+            reason: "automatic model switching is disabled",
+        }));
     }
     let (used, switches) = switch_chain(store, session).await?;
     if switches >= SPAWN_RETRY_BUDGET {
-        return Ok(true);
+        return Ok(Some(QuotaBlock {
+            switches,
+            reason: "spent its automatic switch budget",
+        }));
     }
-    Ok(switch_target(store, launcher, session, &used)
-        .await?
-        .is_none())
+    Ok(
+        match switch_target(store, launcher, session, &used).await? {
+            Some(_) => None,
+            None => Some(QuotaBlock {
+                switches,
+                reason: "no other model is available to switch to",
+            }),
+        },
+    )
+}
+
+/// Why a session's model is still exhausted, and how many automatic
+/// switches it already spent: [`recovery_block`]'s answer, not acted on.
+pub(crate) struct QuotaBlock {
+    pub switches: u32,
+    pub reason: &'static str,
 }
 
 #[derive(Clone)]
@@ -172,10 +192,10 @@ impl super::Scheduler {
 /// `session.switched`/`session.auto_switch` events rather than kept apart,
 /// so nothing here can drift from what a switch actually recorded.
 ///
-/// A store error on the chain's own events propagates; the walk up
-/// `switched_from` stops early on one instead, the same as a chain that
-/// simply ended, since a broken link here is not this function's to
-/// diagnose.
+/// A store error anywhere on the walk — the chain's own events, or a
+/// predecessor `switched_from` names — propagates rather than reading as
+/// the chain simply having ended: a link this function could not read is
+/// not a link it can say was never there.
 async fn switch_chain(store: &Store, session: &AgentSession) -> Result<(HashSet<String>, u32)> {
     let mut used = HashSet::new();
     let mut switches = 0;
@@ -209,7 +229,7 @@ async fn switch_chain(store: &Store, session: &AgentSession) -> Result<(HashSet<
             })
             .count() as u32;
         current = match row.switched_from.as_deref() {
-            Some(id) => store.get_session(id).await.ok(),
+            Some(id) => Some(store.get_session(id).await?),
             None => None,
         };
     }

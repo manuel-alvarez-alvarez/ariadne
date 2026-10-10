@@ -96,7 +96,9 @@ pub struct AttentionItemDto {
     /// same blocker is the same row for as long as it stands.
     pub id: String,
     pub producer: AttentionProducer,
-    pub cause: AttentionCause,
+    /// The shared contract's `reason`: why this blocker exists, in the one
+    /// vocabulary every producer draws from (`AttentionCause`).
+    pub reason: AttentionCause,
     /// What is blocked and why, in one line.
     pub summary: String,
     /// The one action that clears this item.

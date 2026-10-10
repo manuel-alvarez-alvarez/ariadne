@@ -4653,7 +4653,7 @@
         "required": [
           "id",
           "producer",
-          "cause",
+          "reason",
           "summary",
           "required_action",
           "since",
@@ -4668,15 +4668,16 @@
             },
             "description": "Every entity this blocker's affected work names. A grouped item\n(009, \"A shared access or resource failure produces one grouped\nitem\") lists every one of them here rather than splitting into an\nitem per entity."
           },
-          "cause": {
-            "$ref": "#/components/schemas/AttentionCause"
-          },
           "id": {
             "type": "string",
             "description": "Stable across a restart and across the same cause recurring: derived\nfrom the cause and what it shares rather than issued fresh, so the\nsame blocker is the same row for as long as it stands."
           },
           "producer": {
             "$ref": "#/components/schemas/AttentionProducer"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/AttentionCause",
+            "description": "The shared contract's `reason`: why this blocker exists, in the one\nvocabulary every producer draws from (`AttentionCause`)."
           },
           "required_action": {
             "type": "string",
