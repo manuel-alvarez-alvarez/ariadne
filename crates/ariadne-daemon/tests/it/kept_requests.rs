@@ -223,7 +223,6 @@ async fn fetch_again(h: &Harness, stub: &StubForgeCli, repo: &str) {
         detail_fetches(stub) > before
     })
     .await;
-    tokio::time::sleep(QUIET).await;
     h.flush_scheduler().await;
 }
 
@@ -264,7 +263,12 @@ async fn the_news_of_its_request_reaches_the_pr_agent_once() {
     let comments = [review_comment(101, "alice", None, "2026-10-02T00:00:00Z")];
     stub.reprogram(script("OPEN", &comments, json!([])));
     fetch_again(&h, &stub, &repo).await;
-    let stored: Vec<Value> = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+    let mut stored: Vec<Value> = Vec::new();
+    eventually(TIMEOUT, "the comment to be stored", async || {
+        stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+        stored.len() == 1
+    })
+    .await;
     assert_eq!(stored.len(), 1);
     assert_eq!(stored[0]["thread_id"], "T1");
     assert_eq!(stored[0]["author_login"], "alice");
@@ -284,6 +288,8 @@ async fn the_news_of_its_request_reaches_the_pr_agent_once() {
     assert!(news.contains("alice"), "{news}");
 
     fetch_again(&h, &stub, &repo).await;
+    // Prove that the completed fetch hands no later duplicate news.
+    tokio::time::sleep(QUIET).await;
     assert_eq!(
         h.prompts_to(&agent).len(),
         briefed + 1,
@@ -746,6 +752,7 @@ async fn a_check_that_recovers_and_fails_again_is_told_again() {
         h,
         stub,
         agent,
+        id,
         repo,
         ..
     } = kept_request(quiet_script()).await;
@@ -764,6 +771,11 @@ async fn a_check_that_recovers_and_fails_again_is_told_again() {
 
     stub.reprogram(quiet_script());
     fetch_again(&h, &stub, &repo).await;
+    eventually(TIMEOUT, "the recovered check to be stored", async || {
+        let dto: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
+        dto["failed_checks"].as_array().is_some_and(Vec::is_empty)
+    })
+    .await;
     let after_recovery = h.prompts_to(&agent).len();
 
     stub.reprogram(script("OPEN", &[], failed));

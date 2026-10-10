@@ -251,7 +251,6 @@ async fn fetch_again(h: &Harness, stub: &StubForgeCli, repo: &str) {
         detail_fetches(stub) > before
     })
     .await;
-    tokio::time::sleep(QUIET).await;
     h.flush_scheduler().await;
 }
 
@@ -379,6 +378,7 @@ async fn a_draft_starts_no_review_until_it_leaves_draft() {
     let repo = repository(&h, &path, Some(PIN)).await;
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     h.state.forge_poll.wake(&repo);
+    // Prove that the draft creates no review row.
     tokio::time::sleep(QUIET).await;
     h.flush_scheduler().await;
     assert!(no_rows(&h).await, "a draft is no work yet");
@@ -400,6 +400,7 @@ async fn a_repository_with_no_review_model_starts_no_review() {
     let repo = repository(&h, &path, None).await;
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     h.state.forge_poll.wake(&repo);
+    // Prove that the missing review model creates no review row.
     tokio::time::sleep(QUIET).await;
     h.flush_scheduler().await;
     assert!(no_rows(&h).await, "nothing reviews it, so it is no work");
@@ -450,6 +451,8 @@ async fn a_push_moves_the_worktree_and_is_told_once_with_the_last_reviewed_sha()
     assert_eq!(sh(&worktree, "git rev-parse HEAD"), second);
 
     fetch_again(&h, &stub, &repo).await;
+    // Prove that the completed fetch sends no duplicate news for this head.
+    tokio::time::sleep(QUIET).await;
     assert_eq!(
         h.prompts_to(&session).len(),
         briefed + 1,
@@ -487,6 +490,12 @@ async fn a_push_reaches_an_idle_session_without_a_wait() {
     let second = commit("second.txt");
     stub.reprogram(script(&Shown::open(&second)));
     fetch_again(&h, &stub, &repo).await;
+    eventually(
+        TIMEOUT,
+        "the first push to reach the idle session",
+        async || h.prompts_to(&session).len() == briefed + 1,
+    )
+    .await;
     assert_eq!(
         h.prompts_to(&session).len(),
         briefed + 1,
@@ -498,6 +507,12 @@ async fn a_push_reaches_an_idle_session_without_a_wait() {
     let third = commit("third.txt");
     stub.reprogram(script(&Shown::open(&third)));
     fetch_again(&h, &stub, &repo).await;
+    eventually(
+        TIMEOUT,
+        "the next push to reach the idle session",
+        async || h.prompts_to(&idle).len() == briefed + 2,
+    )
+    .await;
     assert_eq!(
         h.prompts_to(&idle).len(),
         briefed + 2,

@@ -227,21 +227,16 @@ async fn timer_wake_only_and_disable_control_repository_fetches() {
     eventually(TIMEOUT, "enable and timer fetch", async || lists() >= 4).await;
     h.state.forge_poll.set_mode(&id, Mode::WakeOnly);
     let idle = || stub.completed() == stub.invocations().len();
-    eventually(TIMEOUT, "the fetches to settle", async || {
-        let before = lists();
-        tokio::time::sleep(QUIET).await;
-        idle() && lists() == before
-    })
-    .await;
+    eventually(TIMEOUT, "the fetches to settle", async || idle()).await;
     let count = lists();
+    // Prove that WakeOnly starts no timer fetch.
     tokio::time::sleep(QUIET + RUNS_OUT).await;
     assert_eq!(lists(), count, "WakeOnly must not use the timer");
     h.state.forge_poll.wake(&id);
     eventually(TIMEOUT, "the wake's fetch", async || {
-        lists() >= count + 2 && idle()
+        lists() == count + 2 && idle()
     })
     .await;
-    tokio::time::sleep(QUIET).await;
     assert_eq!(
         lists(),
         count + 2,
@@ -258,6 +253,7 @@ async fn timer_wake_only_and_disable_control_repository_fetches() {
         .await;
     let count = lists();
     h.state.forge_poll.wake(&id);
+    // Prove that the disabled repository makes no timer or wake fetch.
     tokio::time::sleep(QUIET + RUNS_OUT).await;
     assert_eq!(lists(), count);
     // Nothing reads the forge for it now: its requests are not listed.
@@ -291,10 +287,12 @@ async fn wakes_during_a_fetch_coalesce_into_one_following_fetch() {
     for _ in 0..5 {
         h.state.forge_poll.wake(&id);
     }
+    // Prove that no second fetch starts before the gate opens.
     tokio::time::sleep(QUIET).await;
     assert_eq!(lists(), 2, "a second fetch must wait for the first");
     std::fs::write(gate, "").unwrap();
     eventually(TIMEOUT, "the one following fetch", async || lists() == 4).await;
+    // Prove that the coalesced wakes start no later fetch.
     tokio::time::sleep(QUIET).await;
     assert_eq!(lists(), 4, "the five wakes must coalesce");
 }
@@ -552,6 +550,7 @@ async fn disabling_during_a_fetch_cancels_it_without_starting_work() {
         .await;
     std::fs::write(gate, "").unwrap();
     h.state.forge_poll.wake(&repo);
+    // Prove that the canceled fetch creates no pull request row or new fetch.
     tokio::time::sleep(QUIET).await;
     assert!(
         h.store
