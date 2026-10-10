@@ -287,19 +287,24 @@ impl Store {
         Ok(())
     }
 
-    /// Mark that `scheduler::goals::orchestrator_could_not_start` has given
-    /// up on this goal's orchestrator: the spawn-retry budget ran out, not
-    /// merely a crash the liveness sweep is about to retry. A goal already
-    /// marked keeps its first `since` — this fires again on every later
-    /// pass that still finds the orchestrator unable to start, and a mark
-    /// moving its own age forward every time would hide how long the user
-    /// has actually been waiting on it.
-    pub async fn set_goal_orchestrator_given_up(&self, id: &str) -> Result<()> {
+    /// Mark that this goal's orchestrator has been given up on: either
+    /// `scheduler::goals::orchestrator_could_not_start`'s spawn-retry
+    /// budget running out (`wedged: false`, one that never got off the
+    /// ground), or `scheduler::quiet::relaunch_wedged`'s own
+    /// exhausted-relaunch decision (`wedged: true`, one that started and
+    /// then stopped answering) — neither merely a crash the liveness
+    /// sweep is about to retry. A goal already marked keeps its first
+    /// `since` *and* its first `wedged` — this fires again on every later
+    /// pass that still finds the orchestrator given up, and a mark moving
+    /// its own age or cause forward every time would hide how long, and
+    /// why, the user has actually been waiting on it.
+    pub async fn set_goal_orchestrator_given_up(&self, id: &str, wedged: bool) -> Result<()> {
         let n = sqlx::query(
-            "UPDATE goals SET orchestrator_given_up_at = ?
+            "UPDATE goals SET orchestrator_given_up_at = ?, orchestrator_given_up_wedged = ?
              WHERE id = ? AND orchestrator_given_up_at IS NULL",
         )
         .bind(now())
+        .bind(wedged)
         .bind(id)
         .execute(self.w())
         .await?

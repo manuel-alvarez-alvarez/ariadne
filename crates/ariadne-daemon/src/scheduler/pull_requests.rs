@@ -416,7 +416,7 @@ impl super::Scheduler {
             // coming for this request any more.
             let _ = self
                 .store
-                .set_pull_request_reviewer_given_up(&pull.id)
+                .set_pull_request_reviewer_given_up(&pull.id, false)
                 .await;
             return Ok(());
         }

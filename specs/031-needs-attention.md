@@ -172,12 +172,27 @@ producers (registered already, empty — rule 10) their eligibility rules.
      having exhausted its options, while a later reader sees a younger
      blocker that may have been removed and re-announced as the same item.
      `give_up_summary` also tells the two ways a taskless session gives up
-     apart in its wording, from the same evidence `keep_orchestrator`
-     reads: a session that still carries the watchdog's own `stalled` flag
-     — left standing by `relaunch_wedged`'s give-up — "stopped answering
-     after N relaunches", never "would not start", which is reserved for
-     the spawn-failure path's own `disconnected` flag
-     (`scheduler::goals::orchestrator_could_not_start`). This is deliberately not the `disconnected` flag the liveness
+     apart in its wording — "stopped answering after N relaunches" for
+     `relaunch_wedged`'s own exhausted-relaunch decision, "would not start
+     after N attempts" for `orchestrator_could_not_start`'s/
+     `start_pull_request_session`'s own spawn-retry exhaustion — read from
+     a `wedged` flag persisted *beside* the give-up mark itself
+     (`Goal::orchestrator_given_up_wedged`,
+     `PullRequestRow::reviewer_given_up_wedged`, written once with the
+     mark and kept with its `since`), never inferred from the alarm
+     session's own `stalled` flag: `scheduler::quiet::check_session_quiet`
+     checks its relaunch threshold before its flag one, so a pass that
+     first observes a session already past the relaunch threshold gives
+     up without ever having raised the flag at all, and a `stalled`-flag
+     read would then wrongly call a session that started and went quiet
+     one that "would not start". The two counts differ too:
+     `orchestrator_could_not_start` counts a failed spawn attempt before
+     checking its budget, so its give-up call is itself the
+     `SPAWN_RETRY_BUDGET`th attempt, but `relaunch_wedged` gives up *in
+     place of* relaunching on the call where its own count reaches the
+     budget, so only `SPAWN_RETRY_BUDGET - 1` relaunches were actually
+     performed by then — the summary reports that, not the budget itself.
+     This is deliberately not the `disconnected` flag the liveness
      sweep's `retire_disconnected` also raises on every ordinary crash,
      well before any budget is spent and while a relaunch may still be
      coming — reading that flag as a give-up was exactly the false
@@ -187,7 +202,13 @@ producers (registered already, empty — rule 10) their eligibility rules.
      not one item per task it happened to fail. Every other one is its
      own `unknown` item, naming that task alone and carrying its own
      ended reason as the summary, rather than guessed into a group with
-     no reliable evidence it shares a cause with another.
+     no reliable evidence it shares a cause with another. Both items'
+     `since` — the grouped item's own oldest one, and the unknown item's
+     — reads the failing transition's own `created_at`
+     (`Store::latest_transition_to_with_time`), never `Task::updated_at`:
+     an edit to a still-failed task's description or staffing moves the
+     latter, which would otherwise reset the item's reported waiting time
+     for a reason that has nothing to do with the failure itself.
    - every goal still `planning` or `active` whose orchestrator has been
      given up on (`Goal::orchestrator_given_up_at`) — one cancelled or
      completed no longer needs the recovery its mark names, whatever that
@@ -243,17 +264,22 @@ producers (registered already, empty — rule 10) their eligibility rules.
      not `auth status`'s own composite of config and SSO checks that can
      fail before ever reaching the forge) and answers `true` only once
      both `Refusal::ran()` — the CLI actually reached an exit code,
-     however it answered — and `Refusal::is_unauthorized()` — the forge's
-     own answer carried `HTTP 401` or `HTTP 403` and did not name a rate
-     limit — hold. GitHub answers the same `HTTP 403` for primary and
-     secondary rate limiting as it does for a rejected credential, with
-     otherwise valid credentials (GitHub's own REST rate-limit
-     documentation), and names it every time in words that outlive any
-     one error's exact phrasing ("rate limit", case-insensitive); a 403
-     naming it is retryable, not a confirmed sign-out, so
-     `is_unauthorized` excludes it rather than raising a false sign-in
-     action over a fetch that a rate limit alone, not a bad credential,
-     made fail. A missing binary, a spawn or write failure, or a timeout
+     however it answered — and `Refusal::is_unauthorized()` — positive
+     evidence of exactly a credential rejection, not merely a forbidden
+     response — hold: the forge's own answer carried `HTTP 401` (the API
+     never answers it for anything else) or the fixed words `Bad
+     credentials` (GitHub's own phrase for a rejected or revoked token).
+     A bare `HTTP 403` is deliberately *not* read as one: GitHub answers
+     the same `HTTP 403` for primary and secondary rate limiting as it
+     does for a rejected credential, with otherwise valid credentials
+     (GitHub's own REST rate-limit documentation), and for a restriction
+     an already-authenticated, already-valid token can still be caught
+     by — an IP allow list, SAML enforcement (GitHub's own network access
+     restriction documentation) — neither of which a sign-in answers for.
+     A 403 naming either is read as inconclusive, never as a confirmed
+     sign-out, so `is_unauthorized` requires `HTTP 401` or `Bad
+     credentials` by name rather than inferring anything from a 403's
+     status alone. A missing binary, a spawn or write failure, or a timeout
      never ran at all; a network failure or a server error of the forge's
      own ran, but named no credential rejection: both answer `false`, and
      the marker is never written, leaving `configuration`'s own cause, or
@@ -475,10 +501,16 @@ producers (registered already, empty — rule 10) their eligibility rules.
   (`scheduler_attention.rs::an_orchestrator_that_wedges_after_every_relaunch_is_given_up_on_without_a_task_to_fail`),
   and for a pull request's reviewer session the same way
   (`scheduler_attention.rs::a_reviewer_session_that_wedges_after_every_relaunch_is_given_up_on_without_a_task_to_fail`).
-  Both tests extend through later reconciliation passes over the same,
-  still-wedged session: the give-up mark, its `since`, and the item's
-  presentation all stay exactly as they were, with no flap, since no
-  genuine recovery happened in between (same two tests).
+  Both tests back their session straight into the relaunch threshold,
+  skipping the flag one entirely, so the alarm session never actually
+  carries `AttentionReason::Stalled` — proving the summary still reads
+  "stopped answering after 2 relaunches" (`SPAWN_RETRY_BUDGET - 1`, the
+  count actually performed) from the persisted `wedged` evidence rather
+  than that flag (same two tests). Both also extend through later
+  reconciliation passes over the same, still-wedged session: the give-up
+  mark, its `since`, and the item's presentation all stay exactly as
+  they were, with no flap, since no genuine recovery happened in between
+  (same two tests).
 - A forge integration whose fetch failed on the daemon's own "CLI not
   installed" words is a `configuration` item naming the repository
   (`attention.rs::a_missing_forge_cli_is_a_configuration_item`); one whose
@@ -500,13 +532,18 @@ producers (registered already, empty — rule 10) their eligibility rules.
   and `::a_cli_that_reads_no_input_is_stopped_by_the_deadline` for a real
   timeout's own `Refusal::ran()` reading `false`). A rate-limited `HTTP
   403` on that same check — GitHub's own answer for primary and
-  secondary rate limiting, with otherwise valid credentials — is read as
-  retryable, never as a confirmed sign-out, held open until the
-  configured deadline by a shared stub script rather than `/bin/sleep`
-  mis-parsing the check's own arguments
+  secondary rate limiting, with otherwise valid credentials — and a
+  generic forbidden `HTTP 403` naming no credential problem at all — an
+  IP allow list or SAML enforcement restriction, which an already-valid
+  token can still be caught by — are both read as inconclusive, never as
+  a confirmed sign-out: `is_unauthorized` requires positive evidence of
+  a rejected credential, not merely a forbidden status
   (`forge/mod.rs::confirmed_signed_out_is_false_on_a_rate_limited_403`,
-  and `::confirmed_signed_out_is_false_on_a_timeout` for the deadline
-  itself).
+  `::confirmed_signed_out_is_false_on_a_generic_forbidden_403`). The
+  timeout test itself is held open until the configured deadline by a
+  shared stub script rather than `/bin/sleep` mis-parsing the check's
+  own arguments
+  (`forge/mod.rs::confirmed_signed_out_is_false_on_a_timeout`).
 - The same recovery item answers the same id across two reads, and that id
   is derived from the shared cause alone
   (`attention.rs::a_recovery_items_id_is_stable_across_two_reads`), including

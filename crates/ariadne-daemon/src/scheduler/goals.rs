@@ -180,7 +180,10 @@ impl super::Scheduler {
         // own. This mark is the budget actually running out — the
         // attention producer's own evidence that nothing automatic is
         // coming for this goal any more.
-        let _ = self.store.set_goal_orchestrator_given_up(&goal.id).await;
+        let _ = self
+            .store
+            .set_goal_orchestrator_given_up(&goal.id, false)
+            .await;
     }
 
     /// Leave one row of this goal saying anything about an orchestrator that

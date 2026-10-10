@@ -413,16 +413,22 @@ pub struct Goal {
     pub effort: Option<String>,
     pub created_at: String,
     pub updated_at: String,
-    /// The goal's failed and stalled task ids, each with the
-    /// `updated_at` its failure carried when the orchestrator's own
-    /// `session/prompt` turn confirmed it (a JSON array of `[id,
-    /// updated_at]` pairs). See
+    /// The goal's failed and stalled task ids, each with the id of the
+    /// `task_transitions` row that moved it to `failed` when the
+    /// orchestrator's own `session/prompt` turn confirmed it (a JSON
+    /// array of `[id, transition id]` pairs). See
     /// [`crate::Store::confirm_goal_orchestrator_answered`].
     pub orchestrator_answered_failed_task_ids: Option<String>,
     /// When `scheduler::goals::orchestrator_could_not_start` gave up on
     /// this goal's orchestrator, distinct from the `disconnected` flag a
     /// mere crash raises. `None` while automatic recovery still owns it.
     pub orchestrator_given_up_at: Option<String>,
+    /// Whether that give-up was the watchdog's own exhausted-relaunch
+    /// decision (`scheduler::quiet::relaunch_wedged`, a session that
+    /// started and then stopped answering) rather than
+    /// `orchestrator_could_not_start`'s (one that never got off the
+    /// ground). Meaningless while `orchestrator_given_up_at` is `None`.
+    pub orchestrator_given_up_wedged: bool,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -698,6 +704,12 @@ pub struct PullRequestRow {
     /// distinct from a crash the liveness sweep is about to retry. `None`
     /// while automatic recovery still owns it.
     pub reviewer_given_up_at: Option<String>,
+    /// Whether that give-up was the watchdog's own exhausted-relaunch
+    /// decision rather than `start_pull_request_session`'s own
+    /// spawn-retry exhaustion — the same distinction, for the same
+    /// reason, as `Goal::orchestrator_given_up_wedged`. Meaningless while
+    /// `reviewer_given_up_at` is `None`.
+    pub reviewer_given_up_wedged: bool,
 }
 
 /// What the forge says of a request, as the last read found it: held in
@@ -779,6 +791,7 @@ pub struct PullRequest {
     pub review_effort: Option<String>,
     pub review_skills_json: String,
     pub reviewer_given_up_at: Option<String>,
+    pub reviewer_given_up_wedged: bool,
 }
 
 impl PullRequest {
@@ -826,6 +839,7 @@ impl PullRequest {
             review_effort: row.review_effort,
             review_skills_json: row.review_skills_json,
             reviewer_given_up_at: row.reviewer_given_up_at,
+            reviewer_given_up_wedged: row.reviewer_given_up_wedged,
         }
     }
 

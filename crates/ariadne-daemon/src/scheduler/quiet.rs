@@ -212,12 +212,15 @@ impl super::Scheduler {
                 // on.
                 match (session.seat(), &session.goal_id, &session.pull_request_id) {
                     (Some(Seat::Orchestrator), Some(goal_id), _) => {
-                        let _ = self.store.set_goal_orchestrator_given_up(goal_id).await;
+                        let _ = self
+                            .store
+                            .set_goal_orchestrator_given_up(goal_id, true)
+                            .await;
                     }
                     (Some(Seat::Reviewer), _, Some(pull_request_id)) => {
                         let _ = self
                             .store
-                            .set_pull_request_reviewer_given_up(pull_request_id)
+                            .set_pull_request_reviewer_given_up(pull_request_id, true)
                             .await;
                     }
                     _ => {}

@@ -914,8 +914,23 @@ impl Store {
         task_id: &str,
         status: TaskStatus,
     ) -> Result<Option<String>> {
-        Ok(sqlx::query_scalar(
-            "SELECT id FROM task_transitions
+        Ok(self
+            .latest_transition_to_with_time(task_id, status)
+            .await?
+            .map(|(id, _)| id))
+    }
+
+    /// [`Self::latest_transition_to`], with the transition's own
+    /// `created_at` beside its id: the moment this occurrence of the
+    /// status actually happened, unlike `Task::updated_at`, which a later
+    /// metadata edit moves for a reason that has nothing to do with it.
+    pub async fn latest_transition_to_with_time(
+        &self,
+        task_id: &str,
+        status: TaskStatus,
+    ) -> Result<Option<(String, String)>> {
+        Ok(sqlx::query_as(
+            "SELECT id, created_at FROM task_transitions
               WHERE task_id = ? AND to_status = ?
               ORDER BY id DESC LIMIT 1",
         )

@@ -338,6 +338,7 @@ mod tests {
             updated_at: "2026-01-01T00:00:00Z".into(),
             orchestrator_answered_failed_task_ids: None,
             orchestrator_given_up_at: None,
+            orchestrator_given_up_wedged: false,
         }
     }
 
@@ -564,6 +565,7 @@ mod tests {
             merge_sha: None,
             summary_comment_id: None,
             reviewer_given_up_at: None,
+            reviewer_given_up_wedged: false,
         };
         for template in [pull_request_briefing_prompt(), pull_request_news_prompt()] {
             let mut rest = template;

@@ -264,6 +264,7 @@ mod tests {
             merge_sha: None,
             summary_comment_id: None,
             reviewer_given_up_at: None,
+            reviewer_given_up_wedged: false,
         }
     }
 

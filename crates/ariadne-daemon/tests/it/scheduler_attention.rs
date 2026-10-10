@@ -49,7 +49,7 @@ use ariadne_store::{AgentSession, Goal, NewTaskAgent, SessionFilter, Task};
 
 #[cfg(unix)]
 use common::sh;
-use common::{Harness, QUIET, eventually, harness, test_pin};
+use common::{Harness, eventually, harness, test_pin};
 
 /// The budget the goal's orchestrator spends: how many attempts starting one is
 /// worth, as the scheduler has it.
@@ -892,11 +892,26 @@ async fn an_orchestrator_that_wedges_after_every_relaunch_is_given_up_on_without
         ariadne_api::attention::AttentionCause::Unknown
     );
     assert_eq!(list.items[0].affected[0].id, goal.id);
-    let given_up_at = h
-        .store
-        .get_goal(&goal.id)
-        .await
-        .unwrap()
+    let goal_row = h.store.get_goal(&goal.id).await.unwrap();
+    assert!(
+        goal_row.orchestrator_given_up_wedged,
+        "the budget ran out on a relaunch, not a spawn that never started"
+    );
+    // The jump straight from the first pass to the relaunch threshold
+    // (`h.launched_ago(&session, RELAUNCH_SECS + 60)`) skips the flag
+    // threshold entirely, so the alarm session never actually carries
+    // `AttentionReason::Stalled` — the summary's cause must still read
+    // right, read from the persisted mark rather than inferred from that
+    // flag. Only two relaunches actually ran: the third call gave up in
+    // place of relaunching, per `SPAWN_RETRY_BUDGET - 1`.
+    assert!(
+        list.items[0]
+            .summary
+            .contains("stopped answering after 2 relaunches"),
+        "{}",
+        list.items[0].summary
+    );
+    let given_up_at = goal_row
         .orchestrator_given_up_at
         .expect("already given up on");
 
@@ -904,9 +919,13 @@ async fn an_orchestrator_that_wedges_after_every_relaunch_is_given_up_on_without
     // A later pass finding that same, still-live session must not clear
     // the give-up mark, re-set it with a new `since`, or otherwise change
     // the item a client already has: no genuine recovery happened.
+    // Flushed, not merely slept past: this waits for the two passes just
+    // sent to have actually been reconciled to completion before the
+    // assertion below reads their effect.
     sched.goal(&goal);
+    sched.flush().await;
     sched.goal(&goal);
-    tokio::time::sleep(QUIET).await;
+    sched.flush().await;
 
     assert_eq!(
         h.store
@@ -2323,6 +2342,10 @@ async fn editing_a_failed_tasks_description_does_not_lose_its_recovery_item() {
     assert_eq!(after.items[0].id, before.items[0].id);
     assert_eq!(after.items[0].reason, before.items[0].reason);
     assert_eq!(after.items[0].affected, before.items[0].affected);
+    assert_eq!(
+        after.items[0].since, before.items[0].since,
+        "the edit must not reset the item's reported waiting time either"
+    );
 }
 
 /// A task retried and failed again before the scheduler ever reconciled the
@@ -2764,21 +2787,35 @@ async fn a_reviewer_session_that_wedges_after_every_relaunch_is_given_up_on_with
             pull_request_id: pull_request_id.clone()
         }
     );
-    let given_up_at = h
-        .store
-        .get_pull_request(&pull_request_id)
-        .await
-        .unwrap()
-        .reviewer_given_up_at
-        .expect("already given up on");
+    let pull_row = h.store.get_pull_request(&pull_request_id).await.unwrap();
+    assert!(
+        pull_row.reviewer_given_up_wedged,
+        "the budget ran out on a relaunch, not a spawn that never started"
+    );
+    // The jump straight from the first wake to the relaunch threshold
+    // skips the flag threshold entirely, so the session never actually
+    // carries `AttentionReason::Stalled` — the summary's cause must
+    // still read right, read from the persisted mark rather than
+    // inferred from that flag. Only two relaunches actually ran.
+    assert!(
+        list.items[0]
+            .summary
+            .contains("stopped answering after 2 relaunches"),
+        "{}",
+        list.items[0].summary
+    );
+    let given_up_at = pull_row.reviewer_given_up_at.expect("already given up on");
 
     // The exhausted relaunch left the wedged reviewer session alive, still
     // silent. A later wake finding that same, still-live session must not
     // clear the give-up mark or change the item a client already has: no
-    // genuine recovery happened.
+    // genuine recovery happened. Flushed, not merely slept past: this
+    // waits for the two wakes just sent to have actually been reconciled
+    // before the assertion below reads their effect.
     wake(&sched);
+    ariadne_daemon::scheduler::flush_for_test(&sched).await;
     wake(&sched);
-    tokio::time::sleep(QUIET).await;
+    ariadne_daemon::scheduler::flush_for_test(&sched).await;
 
     assert_eq!(
         h.store

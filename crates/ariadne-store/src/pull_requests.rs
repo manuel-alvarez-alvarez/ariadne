@@ -183,21 +183,24 @@ impl Store {
         Ok(())
     }
 
-    /// Mark that `scheduler::pull_requests::start_pull_request_session` has
-    /// given up on this request's reviewer session: its spawn-retry
-    /// budget ran out, not merely a crash the liveness sweep is about to
-    /// retry. A request already marked keeps its first `since` — this
-    /// fires again on every later pass that still finds the reviewer
-    /// session unable to start, and a mark moving its own age forward
-    /// every time would hide how long the user has actually been waiting
-    /// on it.
-    pub async fn set_pull_request_reviewer_given_up(&self, id: &str) -> Result<()> {
+    /// Mark that this request's reviewer session has been given up on:
+    /// either `scheduler::pull_requests::start_pull_request_session`'s
+    /// spawn-retry budget running out (`wedged: false`), or
+    /// `scheduler::quiet::relaunch_wedged`'s own exhausted-relaunch
+    /// decision (`wedged: true`) — neither merely a crash the liveness
+    /// sweep is about to retry. A request already marked keeps its first
+    /// `since` *and* its first `wedged` — this fires again on every later
+    /// pass that still finds the reviewer session given up, and a mark
+    /// moving its own age or cause forward every time would hide how
+    /// long, and why, the user has actually been waiting on it.
+    pub async fn set_pull_request_reviewer_given_up(&self, id: &str, wedged: bool) -> Result<()> {
         let row: Option<(String,)> = sqlx::query_as(
-            "UPDATE pull_requests SET reviewer_given_up_at = ?
+            "UPDATE pull_requests SET reviewer_given_up_at = ?, reviewer_given_up_wedged = ?
              WHERE id = ? AND reviewer_given_up_at IS NULL
              RETURNING repository_id",
         )
         .bind(now())
+        .bind(wedged)
         .bind(id)
         .fetch_optional(self.w())
         .await?;

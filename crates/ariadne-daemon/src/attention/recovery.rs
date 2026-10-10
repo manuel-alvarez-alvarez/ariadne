@@ -73,15 +73,30 @@ async fn last_session_error(store: &Store, session_id: &str) -> Result<Option<St
 /// `scheduler::pull_requests::start_pull_request_session`) is not the
 /// same thing as one that started, ran, and then stopped answering
 /// through every relaunch the watchdog gave it
-/// (`scheduler::quiet::relaunch_wedged`) — told apart here by whether the
-/// alarm session still carries the watchdog's own `stalled` flag, which
-/// `relaunch_wedged`'s own give-up leaves standing. `budget` is
-/// `SPAWN_RETRY_BUDGET`, read once rather than written at each call site.
+/// (`scheduler::quiet::relaunch_wedged`) — told apart here by the
+/// persisted `wedged` evidence
+/// (`Goal::orchestrator_given_up_wedged`/`PullRequestRow::reviewer_given_up_wedged`),
+/// never by the alarm session's own `stalled` flag: `check_session_quiet`
+/// checks its relaunch threshold before its flag one, so a pass that
+/// first observes a session already past the relaunch threshold can give
+/// up without ever having raised the flag at all.
+///
+/// The two counts differ too, and are not `SPAWN_RETRY_BUDGET` alike:
+/// `orchestrator_could_not_start` counts a failed spawn *attempt* before
+/// checking the budget, so the budget-reaching call is itself the
+/// `SPAWN_RETRY_BUDGET`th attempt — "would not start after
+/// `SPAWN_RETRY_BUDGET` attempts" names exactly what happened.
+/// `relaunch_wedged` counts a relaunch the same way, but gives up *in
+/// place of* relaunching on the call where the count reaches the budget,
+/// so only `SPAWN_RETRY_BUDGET - 1` relaunches were actually performed by
+/// the time it gives up.
 fn give_up_summary(subject: &str, wedged: bool, error: Option<&str>) -> String {
-    let budget = SPAWN_RETRY_BUDGET;
     let what = match wedged {
-        true => format!("{subject} stopped answering after {budget} relaunches"),
-        false => format!("{subject} would not start after {budget} attempts"),
+        true => format!(
+            "{subject} stopped answering after {} relaunches",
+            SPAWN_RETRY_BUDGET - 1
+        ),
+        false => format!("{subject} would not start after {SPAWN_RETRY_BUDGET} attempts"),
     };
     match error {
         Some(error) => format!("{what}: {error}"),
@@ -131,7 +146,7 @@ async fn orchestrator_given_up_items(store: &Store) -> Result<Vec<AttentionItemD
         let error = last_session_error(store, &alarm.id).await?;
         let summary = give_up_summary(
             "The goal's orchestrator",
-            alarm.attention_reason() == Some(AttentionReason::Stalled),
+            goal.orchestrator_given_up_wedged,
             error.as_deref(),
         );
         items.push(AttentionItemDto {
@@ -184,10 +199,11 @@ async fn reviewer_given_up_items(store: &Store) -> Result<Vec<AttentionItemDto>>
             Some(session) => last_session_error(store, &session.id).await?,
             None => None,
         };
-        let wedged = reviewer
-            .as_ref()
-            .is_some_and(|s| s.attention_reason() == Some(AttentionReason::Stalled));
-        let summary = give_up_summary("The request's reviewer session", wedged, error.as_deref());
+        let summary = give_up_summary(
+            "The request's reviewer session",
+            pull.reviewer_given_up_wedged,
+            error.as_deref(),
+        );
         items.push(AttentionItemDto {
             id: format!("recovery:unknown:pull_request:{}", pull.id),
             producer: AttentionProducer::Recovery,
@@ -329,8 +345,14 @@ async fn failed_task_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
     let mut descriptor_affected = Vec::new();
     let mut unknown = Vec::new();
     for task in tasks {
-        let Some(transition_id) = store
-            .latest_transition_to(&task.id, TaskStatus::Failed)
+        // The transition's own `created_at`, not `Task::updated_at`: an
+        // edit to a still-failed task's description or staffing moves the
+        // latter (`Store::update_task` permits one), which would reset
+        // this item's reported waiting time — and, for the grouped
+        // descriptor-limit item below, the whole group's oldest `since` —
+        // for a reason that has nothing to do with the failure itself.
+        let Some((transition_id, failed_at)) = store
+            .latest_transition_to_with_time(&task.id, TaskStatus::Failed)
             .await?
         else {
             // No recorded transition to `failed` at all — cannot happen in
@@ -348,10 +370,9 @@ async fn failed_task_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
             label: task.title.clone(),
         };
         if reason.as_deref() == Some(DESCRIPTOR_LIMIT_REASON) {
-            let at = task.updated_at.clone();
             descriptor_since = Some(match descriptor_since {
-                Some(previous) if previous <= at => previous,
-                _ => at,
+                Some(previous) if previous <= failed_at => previous,
+                _ => failed_at,
             });
             descriptor_affected.push(affected);
         } else {
@@ -362,7 +383,7 @@ async fn failed_task_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
                 summary: reason.unwrap_or_else(|| "the task failed".to_string()),
                 required_action: "Read why it failed, then retry the task or take over its work."
                     .into(),
-                since: task.updated_at.clone(),
+                since: failed_at,
                 affected: vec![affected],
                 target: AttentionTarget::Task { task_id: task.id },
             });

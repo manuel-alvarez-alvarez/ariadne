@@ -720,26 +720,29 @@ impl Refusal {
     }
 
     /// Whether the forge itself answered that the credentials are no
-    /// good: `gh` and `glab` both carry the API's own `HTTP 401` or
-    /// `HTTP 403` in what they said, the same deterministic convention
-    /// [`Self::is_missing`] reads for a 404. A network failure, a
-    /// timeout, or a server error of its own is none of these, and is no
-    /// proof the credentials themselves are the problem.
+    /// good — positive evidence of exactly that, not merely a forbidden
+    /// response: `HTTP 401` is unambiguous (the API never answers it for
+    /// anything else), and `Bad credentials` is the forge's own fixed
+    /// words for a rejected or revoked token, the same deterministic
+    /// convention [`Self::is_missing`] reads for a 404. A network
+    /// failure, a timeout, or a server error of its own is neither, and
+    /// proves nothing about the credentials themselves.
     ///
-    /// Nor is a 403: GitHub answers the same `HTTP 403` for primary and
-    /// secondary rate limiting, with otherwise valid credentials (GitHub's
-    /// own REST rate-limit documentation), and names it every time in
-    /// words that outlive any one error's exact phrasing — "API rate limit
-    /// exceeded" or "You have exceeded a secondary rate limit" both say
-    /// "rate limit" where credential rejection never does. A 403 naming it
-    /// is read as retryable rate limiting, never as a confirmed sign-out.
+    /// A bare `HTTP 403` is deliberately *not* read as a sign-out: GitHub
+    /// answers the same `HTTP 403` for primary and secondary rate
+    /// limiting, with otherwise valid credentials (GitHub's own REST
+    /// rate-limit documentation), and for restrictions an authenticated
+    /// user can still be caught by — an IP allow list, SAML enforcement
+    /// (GitHub's own network access restriction documentation) — neither
+    /// of which a sign-in answers for. `is_missing`'s own 404 is a single,
+    /// unambiguous case the forge means one thing by; `403` is not, so it
+    /// takes no action here on its own, leaving a 403 with no positive
+    /// credential evidence to raise nothing at all (`configuration`'s own
+    /// cause, or silence, rather than a guessed one).
     pub(crate) fn is_unauthorized(&self) -> bool {
-        self.said.as_deref().is_some_and(|said| {
-            !said.to_lowercase().contains("rate limit")
-                && (said.contains("HTTP 401")
-                    || said.contains("HTTP 403")
-                    || said.contains("Bad credentials"))
-        })
+        self.said
+            .as_deref()
+            .is_some_and(|said| said.contains("HTTP 401") || said.contains("Bad credentials"))
     }
 
     /// The forge's own answer as JSON, where it gave one.
@@ -811,14 +814,33 @@ mod tests {
     /// integration binary), so reimplemented locally rather than imported.
     fn shared_gh_script() -> std::path::PathBuf {
         use std::os::unix::fs::PermissionsExt;
+        // `exec` on the hold branch replaces this shell with `sleep`
+        // itself, rather than running it as a child the shell would then
+        // wait on: `Cli::run`'s timeout kills only the one process it
+        // spawned (`kill_on_drop`), and a `sleep` left as that process's
+        // own *child* would simply be orphaned onto init rather than
+        // killed with it. With `exec`, the process the daemon spawned and
+        // the one that is sleeping are the same pid, so killing it ends
+        // the hold too.
         const SCRIPT: &str = "#!/bin/sh\n\
 dir=$(dirname \"$0\")\n\
-if [ -f \"$dir/hold\" ]; then sleep 3600; fi\n\
+if [ -f \"$dir/hold\" ]; then exec sleep 3600; fi\n\
 if [ -f \"$dir/stderr\" ]; then cat \"$dir/stderr\" 1>&2; fi\n\
 exit \"$(cat \"$dir/exit\")\"\n";
+        // Named for the script's own content, as
+        // `tests/it/common/mod.rs::shared_script` names its shared files:
+        // a script edited since a previous run of this binary gets a
+        // fresh path rather than silently reusing a stale file left on
+        // disk from before the edit — the exact way the pre-`exec`
+        // version of this script once lingered under a fixed name and
+        // kept orphaning `sleep` well after the fix landed.
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        SCRIPT.hash(&mut hasher);
+        let name = format!("gh-stub-{:016x}", hasher.finish());
         let dir = std::env::temp_dir().join("ariadne-forge-mod-test-scripts");
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("gh-stub");
+        let path = dir.join(name);
         if !path.exists() {
             // Tests run in processes of their own: write aside and rename,
             // so no test ever launches a file another test is still
@@ -885,6 +907,25 @@ exit \"$(cat \"$dir/exit\")\"\n";
         let client = github_client(&fake_gh(
             dir.path(),
             "gh: API rate limit exceeded for user ID 1. (HTTP 403)",
+            1,
+        ));
+        assert!(!client.confirmed_signed_out("github.com").await);
+    }
+
+    /// A 403 naming no credential problem at all — GitHub's own wording
+    /// for an IP allow list or SAML enforcement restriction, which an
+    /// already-signed-in, already-valid token can still be caught by — is
+    /// no more a confirmed sign-out than the rate-limited one above: a
+    /// 403 is read for positive evidence of a credential rejection, never
+    /// inferred from the status alone.
+    #[tokio::test]
+    async fn confirmed_signed_out_is_false_on_a_generic_forbidden_403() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = github_client(&fake_gh(
+            dir.path(),
+            "gh: Although you appear to have the correct authorization credentials, \
+             the acme organization has an IP allow list enabled, and your IP address \
+             is not permitted to access this resource. (HTTP 403)",
             1,
         ));
         assert!(!client.confirmed_signed_out("github.com").await);

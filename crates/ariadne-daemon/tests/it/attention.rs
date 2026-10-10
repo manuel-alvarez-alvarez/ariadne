@@ -8,7 +8,7 @@ use ariadne_core::{Actor, AttentionReason, Seat, SessionStatus, TaskStatus};
 use ariadne_store::NewSession;
 
 use crate::common::test_pin;
-use crate::common::{Harness, QUIET, TIMEOUT, eventually, harness, with_forge};
+use crate::common::{Harness, TIMEOUT, eventually, harness, with_forge};
 
 /// Confirm, directly through the store's own persisted evidence, that this
 /// goal's orchestrator has had a turn on exactly this task's current
@@ -658,16 +658,30 @@ async fn a_failed_tasks_item_stays_suppressed_while_its_orchestrators_turn_on_it
     .await;
 }
 
-/// A delivery that never reaches the agent's stdin — the exact race
-/// `close_prompt_channel_for_test` reproduces, between a connection ending
-/// and the registry entry being torn down behind it — must not be lost for
-/// good. End to end, through the real scheduler: the automatic resume that
-/// follows retries the hand-off on its own, and once the replacement's own
-/// turn actually ends, the failure is confirmed and its item appears —
+/// A delivery accepted into the queue — its own turn actually starts,
+/// unlike a write the channel itself refused — but interrupted before
+/// that turn could ever return and confirm it, the same as a crash
+/// mid-turn, must not be lost for good: `goal_told`'s cache alone would
+/// believe it already told this situation, but the persisted confirmed
+/// list never got it. End to end, through the real scheduler and a real
+/// automatic resume, not a hand-written poke: the replacement's own turn
+/// actually ends and confirms the same failure, and its item appears —
 /// proving the delivery was retried, not merely that the attempt was made.
 #[tokio::test]
 async fn a_lost_delivery_is_retried_after_resume_and_confirmed_once_its_replacement_answers() {
     let h = harness().scheduler().await;
+    let gate = h.dir.path().join("goal-attention-turn");
+    let mut script = crate::common::acp::script();
+    script["prompts"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "updates": [],
+            "wait_for": gate.display().to_string(),
+            "stop_reason": "end_turn",
+        }));
+    h.agent.reprogram(script);
+
     let cast = h.cast().await;
     h.store
         .set_goal_status(&cast.goal.id, ariadne_core::GoalStatus::Active)
@@ -691,10 +705,6 @@ async fn a_lost_delivery_is_retried_after_resume_and_confirmed_once_its_replacem
     .await;
     let session = orchestrator().await.unwrap();
 
-    // Live per the registry, but its prompt channel is already closed: the
-    // hand-off the scheduler is about to attempt cannot reach it.
-    h.launcher.acp.close_prompt_channel_for_test(&session.id);
-
     h.store
         .transition_task(
             &cast.task.id,
@@ -706,8 +716,24 @@ async fn a_lost_delivery_is_retried_after_resume_and_confirmed_once_its_replacem
         .await
         .unwrap();
 
-    // Nothing to wait on but its absence: a lost delivery confirms nothing.
-    tokio::time::sleep(QUIET).await;
+    // Accepted into the queue, and its own turn actually starts: this is
+    // the delivery being accepted, not refused at the channel.
+    eventually(
+        TIMEOUT,
+        "the orchestrator's turn on the failure to start",
+        || async {
+            orchestrator()
+                .await
+                .is_some_and(|s| s.status() == SessionStatus::Running)
+        },
+    )
+    .await;
+
+    // Interrupted before that turn could ever return: the connection ends
+    // mid-turn, the same as a crash. The confirmation hook in
+    // `acp::serve_with_input` runs only once `prompt_once` returns `Ok`,
+    // which this kill prevents — the held turn never gets there.
+    h.launcher.kill_session(&session.id).await.unwrap();
     assert!(
         h.store
             .get_goal(&cast.goal.id)
@@ -715,15 +741,15 @@ async fn a_lost_delivery_is_retried_after_resume_and_confirmed_once_its_replacem
             .unwrap()
             .orchestrator_answered_failed_task_ids
             .is_none(),
-        "a delivery that never reached the agent cannot have been confirmed"
+        "a turn that never returned cannot have confirmed anything"
     );
 
-    // The agent comes back — a fresh, working registration under the same
-    // session, the automatic resume rather than a hand-written poke — and
-    // the scheduler's next pass over the still-unconfirmed goal retries the
-    // hand-off on its own.
-    h.agent_runs(&session).await;
+    // Nothing in this test means to hold the replacement's own turn open
+    // too: its script starts fresh, with no gate to wait on.
+    h.agent.reprogram(crate::common::acp::script());
 
+    // The scheduler's own liveness handling resumes the dead orchestrator
+    // automatically; its replacement turn actually ends and confirms.
     eventually(
         TIMEOUT,
         "the replacement's own turn to actually confirm the failure",
@@ -1066,7 +1092,7 @@ async fn a_failed_task_raises_its_item_once_its_orchestrator_is_given_up_on() {
         .await
         .unwrap();
     h.store
-        .set_goal_orchestrator_given_up(&cast.goal.id)
+        .set_goal_orchestrator_given_up(&cast.goal.id, false)
         .await
         .unwrap();
     h.store
@@ -1121,7 +1147,7 @@ async fn a_cancelled_goals_orchestrator_give_up_raises_nothing() {
         .await
         .unwrap();
     h.store
-        .set_goal_orchestrator_given_up(&cast.goal.id)
+        .set_goal_orchestrator_given_up(&cast.goal.id, false)
         .await
         .unwrap();
     h.store
@@ -1184,7 +1210,7 @@ async fn a_request_whose_review_pin_is_gone_clears_its_reviewers_give_up() {
         .await
         .unwrap();
     h.store
-        .set_pull_request_reviewer_given_up(&pull.id)
+        .set_pull_request_reviewer_given_up(&pull.id, false)
         .await
         .unwrap();
     // Still open, still asking — but the repository's review pin is gone,
