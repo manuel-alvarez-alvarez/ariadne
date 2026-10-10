@@ -24,6 +24,7 @@ pub(crate) struct StubForgeCli {
     script_file: PathBuf,
     log: PathBuf,
     finished: PathBuf,
+    pid_file: PathBuf,
     _dir: tempfile::TempDir,
 }
 
@@ -65,6 +66,15 @@ impl StubForgeCli {
     pub(crate) fn reprogram(&self, script: Value) {
         write_script(&self.script_file, &script);
     }
+
+    /// The pid of the most recent stub process, once it has started.
+    pub(crate) fn pid(&self) -> Option<u32> {
+        std::fs::read_to_string(&self.pid_file)
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
+    }
 }
 
 /// One entry of the script: what `args` starts with, and the answer.
@@ -101,6 +111,7 @@ pub(crate) fn stub_forge_cli(script: Value) -> StubForgeCli {
         glab: link("glab"),
         log: dir.path().join("forge-calls.jsonl"),
         finished: dir.path().join("forge-finished.jsonl"),
+        pid_file: dir.path().join("forge-pid"),
         script_file,
         _dir: dir,
     }
@@ -118,9 +129,19 @@ dir=$(dirname \"$0\")\n\
 exec python3 \"$dir/forge-stub.py\" \"$dir\" \"$(basename \"$0\")\" \"$@\"\n";
 
 const STUB: &str = r#"#!/usr/bin/env python3
-import json, os, sys, time
+import json, os, sys, threading, time
+
+parent = os.getppid()
+def orphaned():
+    # Ends with the test process, however that one ends.
+    while os.getppid() == parent:
+        time.sleep(0.2)
+    os._exit(0)
+threading.Thread(target=orphaned, daemon=True).start()
 
 dir, program, args = sys.argv[1], sys.argv[2], sys.argv[3:]
+with open(os.path.join(dir, "forge-pid"), "w") as f:
+    f.write(str(os.getpid()))
 call = {"program": program, "args": args}
 if "--input" in args and args[args.index("--input") + 1:args.index("--input") + 2] == ["-"]:
     call["input"] = sys.stdin.read()

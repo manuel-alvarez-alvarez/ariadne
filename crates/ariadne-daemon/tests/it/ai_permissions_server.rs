@@ -16,7 +16,14 @@ use crate::common::{Harness, TIMEOUT, eventually, harness, post, put_json, share
 /// `/v1/models` reports, `device/backend`, or `-` to report the ones its
 /// environment chose, as Kev would.
 const SERVER: &str = r#"#!/usr/bin/env python3
-import http.server, json, os, socketserver, sys
+import http.server, json, os, socketserver, sys, threading, time
+parent = os.getppid()
+def orphaned():
+    # Ends with the test process, however that one ends.
+    while os.getppid() == parent:
+        time.sleep(0.2)
+    os._exit(0)
+threading.Thread(target=orphaned, daemon=True).start()
 record, report = sys.argv[1], sys.argv[2]
 args = sys.argv[3:]
 host = args[args.index('--host') + 1]

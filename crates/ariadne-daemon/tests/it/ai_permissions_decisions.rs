@@ -660,7 +660,14 @@ async fn a_test_request_with_locations_derives_what_the_live_request_does() {
 /// argument says, reports the device its environment chose, and then allows
 /// every request with the calibrated danger 0.05.
 const SLOW_SERVER: &str = r#"#!/usr/bin/env python3
-import http.server, json, os, socketserver, sys, time
+import http.server, json, os, socketserver, sys, threading, time
+parent = os.getppid()
+def orphaned():
+    # Ends with the test process, however that one ends.
+    while os.getppid() == parent:
+        time.sleep(0.2)
+    os._exit(0)
+threading.Thread(target=orphaned, daemon=True).start()
 with open(sys.argv[1], 'w') as f:
     f.write(str(os.getpid()) + '\n')
 time.sleep(float(sys.argv[2]))

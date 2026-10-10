@@ -360,7 +360,15 @@ exec python3 \"$dir/acp-stub.py\" \"$dir/acp-script.json\" \"$@\"\n";
 /// it answers exactly what the script says, logs every incoming message, and
 /// exits on stdin closing, the way an ACP agent ends with its client.
 const STUB: &str = r#"#!/usr/bin/env python3
-import json, os, select, subprocess, sys, time
+import json, os, select, subprocess, sys, threading, time
+
+parent = os.getppid()
+def orphaned():
+    # Ends with the test process, however that one ends.
+    while os.getppid() == parent:
+        time.sleep(0.2)
+    os._exit(0)
+threading.Thread(target=orphaned, daemon=True).start()
 
 script = json.load(open(sys.argv[1]))
 if sys.argv[2:4] == ["session", "delete"]:
