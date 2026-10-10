@@ -28,7 +28,7 @@ pub struct SeatUsage {
 
 /// The three counters as SQLite holds them: a sum that no row contributed to
 /// is `NULL`, and a reader wants a zero.
-const SUMS: &str = "COALESCE(SUM(input_tokens), 0), \
+pub(crate) const SUMS: &str = "COALESCE(SUM(input_tokens), 0), \
                     COALESCE(SUM(cached_input_tokens), 0), \
                     COALESCE(SUM(output_tokens), 0)";
 
@@ -126,30 +126,6 @@ impl Store {
             .into_iter()
             .map(|(agent_id, input, cached, output)| AgentUsage {
                 agent_id,
-                usage: usage_of((input, cached, output)),
-            })
-            .collect())
-    }
-
-    /// What a goal has spent, one entry per seat that has a session on it —
-    /// its orchestrator, and the agents of every column of its tasks.
-    /// Outer-joined like [`Store::task_usage`], and for the same reason.
-    pub async fn goal_usage(&self, goal_id: &str) -> Result<Vec<SeatUsage>> {
-        let rows: Vec<(String, i64, i64, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "SELECT s.seat, {SUMS}
-               FROM agent_sessions s
-          LEFT JOIN session_usage u ON u.session_id = s.id
-              WHERE s.goal_id = ?
-           GROUP BY s.seat
-           ORDER BY s.seat"
-        )))
-        .bind(goal_id)
-        .fetch_all(self.r())
-        .await?;
-        Ok(rows
-            .into_iter()
-            .map(|(seat, input, cached, output)| SeatUsage {
-                seat: seat.parse().expect("valid seat in db"),
                 usage: usage_of((input, cached, output)),
             })
             .collect())

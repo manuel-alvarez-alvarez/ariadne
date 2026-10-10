@@ -3363,7 +3363,12 @@ async fn a_goals_usage_is_grouped_by_seat_and_counts_its_orchestrator() {
             .unwrap();
     }
 
-    let grouped = w.store.goal_usage(&w.goal.id).await.unwrap();
+    let mut parts = w
+        .store
+        .goal_parts(std::slice::from_ref(&w.goal.id))
+        .await
+        .unwrap();
+    let grouped = parts.seats.remove(&w.goal.id).unwrap();
     assert_eq!(
         grouped,
         vec![
@@ -3381,6 +3386,107 @@ async fn a_goals_usage_is_grouped_by_seat_and_counts_its_orchestrator() {
         grouped.iter().map(|r| r.usage).sum::<TokenUsage>(),
         usage(160, 120, 22),
         "the goal's total is every session under it, the orchestrator included"
+    );
+}
+
+/// Many goals are read in one go, and what each one gets is what reading it
+/// alone gets: its repositories, its columns, and each task's agents with
+/// their skills and what they spent. Nothing of one goal leaks into another,
+/// and a goal with no task reads as one with none.
+#[tokio::test]
+async fn the_parts_of_many_goals_are_what_each_goal_reads_alone() {
+    let w = World::new().await;
+    let (other, other_repo) = seed_goal(&w.store).await;
+    let other_task = seed_task(&w.store, &other, &other_repo, vec![]).await;
+    let (empty, _) = seed_goal(&w.store).await;
+    let developer = w.agent_session().await;
+    w.store
+        .upsert_session_usage(&developer.id, "/x.jsonl", usage(100, 80, 10))
+        .await
+        .unwrap();
+    let reviewer = agent_of(&w.store, &other_task, "review").await;
+    let other_session = w
+        .store
+        .create_session(NewSession {
+            goal_id: Some(other.id.clone()),
+            task_id: Some(other_task.id.clone()),
+            seat: Some(Seat::Agent),
+            task_agent_id: Some(reviewer.id.clone()),
+            model: "stub:test-model".into(),
+            effort: None,
+            worktree_path: Some("/tmp/wt".into()),
+            pull_request_id: None,
+        })
+        .await
+        .unwrap();
+    w.store
+        .upsert_session_usage(&other_session.id, "/x.jsonl", usage(7, 0, 3))
+        .await
+        .unwrap();
+
+    let column_ids = |steps: Vec<GoalStep>| steps.into_iter().map(|s| s.id).collect::<Vec<_>>();
+    let ids = [w.goal.id.clone(), other.id.clone(), empty.id.clone()];
+    let mut parts = w.store.goal_parts(&ids).await.unwrap();
+    for goal_id in &ids {
+        let repositories: Vec<String> = w
+            .store
+            .list_goal_repositories(goal_id)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(parts.repository_ids.remove(goal_id).unwrap(), repositories);
+
+        let steps = column_ids(w.store.goal_steps(goal_id).await.unwrap());
+        assert_eq!(column_ids(parts.steps.remove(goal_id).unwrap()), steps);
+
+        let tasks = w
+            .store
+            .list_tasks(TaskFilter {
+                goal_id: Some(goal_id.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let read = parts.tasks.remove(goal_id).unwrap_or_default();
+        assert_eq!(
+            read.iter().map(|t| t.task_id.clone()).collect::<Vec<_>>(),
+            tasks.iter().map(|t| t.id.clone()).collect::<Vec<_>>()
+        );
+        for (task, read) in tasks.iter().zip(read) {
+            let mut agents = Vec::new();
+            for agent in w.store.list_task_agents(&task.id).await.unwrap() {
+                let skills: Vec<String> = w
+                    .store
+                    .agent_skills(&agent.id)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .map(|s| s.name)
+                    .collect();
+                agents.push((agent.id, skills));
+            }
+            let read_agents: Vec<(String, Vec<String>)> = read
+                .agents
+                .into_iter()
+                .map(|(agent, skills)| (agent.id, skills))
+                .collect();
+            assert_eq!(read_agents, agents);
+            assert_eq!(read.usage, w.store.task_usage(&task.id).await.unwrap());
+            assert!(read.unstaffed_skills.is_empty());
+        }
+    }
+    assert!(
+        parts.seats.remove(&empty.id).is_none(),
+        "a goal with no session spent nothing"
+    );
+    assert_eq!(
+        parts.seats.remove(&other.id).unwrap(),
+        vec![SeatUsage {
+            seat: Seat::Agent,
+            usage: usage(7, 0, 3),
+        }]
     );
 }
 

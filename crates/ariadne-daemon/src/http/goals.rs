@@ -12,7 +12,7 @@ use ariadne_store::{Goal, MessageFilter, NewGoal, SessionFilter, TaskFilter};
 
 use super::AppState;
 use super::caller::call_ctx;
-use super::convert::{goal_dto_of, message_dto};
+use super::convert::{goal_dto_of, goal_dtos_of, message_dto};
 use super::error::{ApiError, ApiResult, Json};
 use super::{channel, pins};
 
@@ -107,11 +107,7 @@ pub(super) async fn list(
     Query(q): Query<GoalListQuery>,
 ) -> ApiResult<Json<Vec<GoalDto>>> {
     let goals = state.store.list_goals(&q.statuses()?).await?;
-    let mut out = Vec::with_capacity(goals.len());
-    for goal in goals {
-        out.push(goal_dto_of(&state.store, goal).await?);
-    }
-    Ok(Json(out))
+    Ok(Json(goal_dtos_of(&state.store, goals).await?))
 }
 
 /// Inspect a goal.

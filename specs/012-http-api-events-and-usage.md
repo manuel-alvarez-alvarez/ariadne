@@ -1,7 +1,7 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-10-03
+updated: 2026-10-10
 areas: [api, daemon]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
@@ -158,7 +158,11 @@ and the ACP runtime that reports the agent events (021).
     has reported nothing reads as zeros; and usage goes when its session
     does. A session also carries its latest context-window `used` and `size`
     pair from an ACP `usage_update`; both stay null when no update arrived,
-    and a reported `cost` is neither stored nor exposed.
+    and a reported `cost` is neither stored nor exposed. A goal's DTO, alone
+    or in `GET /v1/goals`, is built from one batched read of every goal it
+    answers (`Store::goal_parts`): its repositories, columns, seat usage and
+    each task's agents, skills and usage, in a fixed number of queries
+    whatever the number of goals, tasks and agents.
 16. The ACP runtime takes a launch's usage from the transcript its agent
     writes, found by the session's ACP session id
     (`internal_session_id`), and names the running launch as the source:
@@ -424,7 +428,9 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
 - Usage rolls up to the task and the goal
   (`events.rs::reported_usage_rolls_up_to_the_task_and_the_goal`,
   `store.rs::a_tasks_usage_groups_every_session_of_an_agent_together`,
-  `::a_goals_usage_is_grouped_by_seat_and_counts_its_orchestrator`), a source
+  `::a_goals_usage_is_grouped_by_seat_and_counts_its_orchestrator`), many
+  goals read in one batch read what each reads alone
+  (`store.rs::the_parts_of_many_goals_are_what_each_goal_reads_alone`), a source
   replaces its own totals
   (`store.rs::a_source_replaces_its_own_totals_and_sources_add_up`), a
   session that reported nothing reads as zeros

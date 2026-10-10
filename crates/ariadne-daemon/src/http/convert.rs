@@ -5,6 +5,8 @@
 //! enum, a derived flag, a name the caller loaded. Only the second kind is
 //! worth reading, so [`dto!`] is what writes the first.
 
+use std::collections::HashMap;
+
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::goals::{GoalDto, GoalUsageDto};
 use ariadne_api::messages::MessageDto;
@@ -350,41 +352,71 @@ pub(crate) fn outside_entry(outside: &OutsideSessionDto) -> SessionEntryDto {
 /// [`goal_dto`] with everything it needs loaded: the repositories the goal
 /// references, and what every session under it has spent.
 pub(crate) async fn goal_dto_of(store: &Store, goal: store::Goal) -> Result<GoalDto, StoreError> {
-    let repos = store
-        .list_goal_repositories(&goal.id)
-        .await?
+    let mut dtos = goal_dtos_of(store, vec![goal]).await?;
+    Ok(dtos.pop().expect("one goal in, one goal out"))
+}
+
+/// [`goal_dto_of`] for many goals, in the order given. The store reads what
+/// they all need at once ([`Store::goal_parts`]), so the number of queries
+/// stays the same whatever the number of goals, tasks and agents.
+pub(crate) async fn goal_dtos_of(
+    store: &Store,
+    goals: Vec<store::Goal>,
+) -> Result<Vec<GoalDto>, StoreError> {
+    if goals.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids: Vec<String> = goals.iter().map(|g| g.id.clone()).collect();
+    let mut parts = store.goal_parts(&ids).await?;
+    let repositories = store.list_repositories().await?;
+    goals
         .into_iter()
-        .map(repository_dto)
-        .collect();
-    let usage = goal_usage(store, &goal.id).await?;
-    let steps = store
-        .goal_steps(&goal.id)
-        .await?
-        .into_iter()
-        .map(|s| {
-            let invalid =
-                |field| StoreError::Invalid(format!("column {} has invalid {field}", s.id));
-            Ok(WorkflowStepDto {
-                skills: serde_json::from_str(&s.skills).map_err(|_| invalid("skills"))?,
-                rank: s
-                    .rank
-                    .as_deref()
-                    .map(str::parse)
-                    .transpose()
-                    .map_err(|_| invalid("rank"))?,
-                gate: s
-                    .gate
-                    .as_deref()
-                    .map(str::parse)
-                    .transpose()
-                    .map_err(|_| invalid("gate"))?,
-                id: s.id,
-                title: s.title,
-                description: s.description,
-            })
+        .map(|goal| {
+            let repos = parts
+                .repository_ids
+                .remove(&goal.id)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|id| repositories.iter().find(|r| &r.id == id).cloned())
+                .map(repository_dto)
+                .collect();
+            let usage = goal_usage(
+                parts.seats.remove(&goal.id).unwrap_or_default(),
+                parts.tasks.remove(&goal.id).unwrap_or_default(),
+            );
+            let steps = parts
+                .steps
+                .remove(&goal.id)
+                .unwrap_or_default()
+                .into_iter()
+                .map(step_dto)
+                .collect::<Result<Vec<_>, StoreError>>()?;
+            Ok(goal_dto(goal, repos, usage, steps))
         })
-        .collect::<Result<Vec<_>, StoreError>>()?;
-    Ok(goal_dto(goal, repos, usage, steps))
+        .collect()
+}
+
+/// A column a goal snapshotted, as the API answers it.
+fn step_dto(s: store::GoalStep) -> Result<WorkflowStepDto, StoreError> {
+    let invalid = |field| StoreError::Invalid(format!("column {} has invalid {field}", s.id));
+    Ok(WorkflowStepDto {
+        skills: serde_json::from_str(&s.skills).map_err(|_| invalid("skills"))?,
+        rank: s
+            .rank
+            .as_deref()
+            .map(str::parse)
+            .transpose()
+            .map_err(|_| invalid("rank"))?,
+        gate: s
+            .gate
+            .as_deref()
+            .map(str::parse)
+            .transpose()
+            .map_err(|_| invalid("gate"))?,
+        id: s.id,
+        title: s.title,
+        description: s.description,
+    })
 }
 
 /// What a task has spent, arranged the way it is read: one entry per agent
@@ -401,8 +433,24 @@ async fn task_usage(
     agents: &[(store::TaskAgent, Vec<String>)],
 ) -> Result<TaskUsageDto, StoreError> {
     let spent = store.task_usage(task_id).await?;
+    let mut unstaffed = HashMap::new();
+    for p in &spent {
+        if agents.iter().all(|(agent, _)| agent.id != p.agent_id) {
+            unstaffed.insert(p.agent_id.clone(), agent_skills(store, &p.agent_id).await);
+        }
+    }
+    Ok(arranged_usage(spent, agents, &unstaffed))
+}
+
+/// [`task_usage`] with everything loaded: `unstaffed` holds the skills of
+/// each agent in `spent` that is not in `agents`.
+fn arranged_usage(
+    spent: Vec<AgentUsage>,
+    agents: &[(store::TaskAgent, Vec<String>)],
+    unstaffed: &HashMap<String, Vec<String>>,
+) -> TaskUsageDto {
     let total: TokenUsage = spent.iter().map(|p| p.usage).sum();
-    let mut left: Vec<&AgentUsage> = spent.iter().collect();
+    let mut left = spent;
 
     let mut listed = Vec::new();
     for (agent, skills) in agents {
@@ -410,7 +458,7 @@ async fn task_usage(
             let spent = left.remove(at);
             listed.push(AgentUsageDto {
                 step: Some(agent.step.clone()),
-                agent_id: spent.agent_id.clone(),
+                agent_id: spent.agent_id,
                 skills: skills.clone(),
                 usage: spent.usage.into(),
             });
@@ -419,49 +467,37 @@ async fn task_usage(
     for spent in left {
         listed.push(AgentUsageDto {
             step: None,
-            agent_id: spent.agent_id.clone(),
-            skills: agent_skills(store, &spent.agent_id).await,
+            skills: unstaffed.get(&spent.agent_id).cloned().unwrap_or_default(),
+            agent_id: spent.agent_id,
             usage: spent.usage.into(),
         });
     }
-    Ok(TaskUsageDto {
+    TaskUsageDto {
         total: total.into(),
         agents: listed,
-    })
+    }
 }
 
 /// What a goal has spent: its orchestrator, the agents of every column of
 /// every task, and the total of every session under it.
-async fn goal_usage(store: &Store, goal_id: &str) -> Result<GoalUsageDto, StoreError> {
-    let spent = store.goal_usage(goal_id).await?;
+fn goal_usage(seats: Vec<store::SeatUsage>, tasks: Vec<store::TaskParts>) -> GoalUsageDto {
     let of = |seat: Seat| -> TokenUsageDto {
-        spent
+        seats
             .iter()
             .filter(|r| r.seat == seat)
             .map(|r| r.usage)
             .sum::<TokenUsage>()
             .into()
     };
-    let mut agents = Vec::new();
-    for task in store
-        .list_tasks(store::TaskFilter {
-            goal_id: Some(goal_id.into()),
-            ..Default::default()
-        })
-        .await?
-    {
-        let mut staffed = Vec::new();
-        for agent in store.list_task_agents(&task.id).await? {
-            let skills = agent_skills(store, &agent.id).await;
-            staffed.push((agent, skills));
-        }
-        agents.extend(task_usage(store, &task.id, &staffed).await?.agents);
-    }
-    Ok(GoalUsageDto {
-        total: spent.iter().map(|r| r.usage).sum::<TokenUsage>().into(),
+    let agents = tasks
+        .into_iter()
+        .flat_map(|task| arranged_usage(task.usage, &task.agents, &task.unstaffed_skills).agents)
+        .collect();
+    GoalUsageDto {
+        total: seats.iter().map(|r| r.usage).sum::<TokenUsage>().into(),
         orchestrator: of(Seat::Orchestrator),
         agents,
-    })
+    }
 }
 
 /// The complete ledger row, shared by REST and events.
