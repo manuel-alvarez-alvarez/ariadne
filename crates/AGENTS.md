@@ -76,13 +76,22 @@ the rules above.
 
 A reviewer fails a Rust change for any of these:
 
-- A `sleep` outside a `QUIET` listen. Ask for `eventually(TIMEOUT, …)` or a `QUIET` listen instead.
-- A `Duration` constant in a test, not a `Timeouts` field. Ask for the timeout in `ariadne_daemon::timeouts::Timeouts`.
-- A test nextest marks `SLOW` in the reviewer's run. Ask the author to poll the thing itself, per the `SLOW` rule above.
-- A test that passed only on a second run. Ask the author to prove it: run 100 times under the bounded busy loop in the root [`AGENTS.md`](../AGENTS.md).
-- A wall clock read into an assertion, in any crate. Ask the author to wait for the thing itself, never the clock.
-- A stub or child process that outlives its test. Ask the author to end it when the test ends, even on failure, per [Processes you leave behind](../AGENTS.md#processes-you-leave-behind).
-- A test that depends on another test, or on thread order. Ask for a test that holds under the `ci` profile's two-thread cap.
+- A `sleep` outside a `QUIET` listen. Ask for `eventually(TIMEOUT, …)` or a
+  `QUIET` listen instead.
+- A `Duration` constant in a test, not a `Timeouts` field. Ask for the
+  timeout in `ariadne_daemon::timeouts::Timeouts`.
+- A test nextest marks `SLOW` in the reviewer's run. Ask the author to poll
+  the thing itself, per the `SLOW` rule above.
+- A test that passed only on a second run. Ask the author to prove it under
+  the bounded busy loop in the root [`AGENTS.md`](../AGENTS.md), until it
+  holds.
+- A wall clock read into an assertion, in any crate. Ask the author to wait
+  for the thing itself, never the clock.
+- A stub or child process that outlives its test. Ask the author to end it
+  when the test ends, even on failure, per
+  [Processes you leave behind](../AGENTS.md#processes-you-leave-behind).
+- A test that depends on another test, or on thread order. Ask for a test
+  that holds under the `ci` profile's two-thread cap.
 
 Before a commit on `main`, run the whole workspace:
 
