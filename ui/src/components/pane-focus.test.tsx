@@ -108,6 +108,27 @@ it.each([
   await expectPaneFocus()
 })
 
+it("keeps focus in the pane across an expand and a collapse", async () => {
+  mount("/goals?task=t1")
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole("button", { name: "Expand the panel" }))
+  await expectPaneFocus()
+  await user.click(screen.getByRole("button", { name: "Collapse the panel" }))
+  await expectPaneFocus()
+})
+
+it("returns focus to the board opener after closing an expanded pane", async () => {
+  mount("/goals")
+  const user = userEvent.setup()
+  const opener = screen.getByRole("link", { name: goal.title })
+  await user.click(opener)
+  await screen.findByRole("region", { name: goal.title })
+  await user.click(screen.getByRole("button", { name: "Expand the panel" }))
+  await user.keyboard("{Escape}")
+  await waitFor(() => expect(document.querySelector('[data-slot="docked-pane"]')).toBeNull())
+  await waitFor(() => expect(document.activeElement).toBe(opener))
+})
+
 it.each(["task", "goal breadcrumb"])(
   "returns focus to the board opener after closing the replacement %s",
   async (replacement) => {

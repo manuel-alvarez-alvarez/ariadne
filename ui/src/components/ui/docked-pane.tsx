@@ -2,10 +2,13 @@
  * The inspector's frame: it floats over the screen at the window's right edge,
  * above a scrim, so the screen keeps its full width and layout behind it. A
  * click on the scrim closes it, and Tab stays inside it while it is open.
- * Below `md` it covers the window at full width.
+ * Below `md` it covers the window at full width. A toggle beside the close
+ * button expands it to near-fullscreen, centered like a dialog, and a second
+ * press collapses it back to its docked width; the resize handle hides while
+ * it is expanded, and the choice is forgotten the next time the pane opens.
  */
 
-import { XIcon } from "lucide-react"
+import { Maximize2Icon, Minimize2Icon, XIcon } from "lucide-react"
 import {
   type ComponentProps,
   type CSSProperties,
@@ -19,6 +22,7 @@ import {
 } from "react"
 
 import { Button } from "@/components/ui/button"
+import { SCRIM } from "@/components/ui/dialog"
 import { cn } from "@/lib/format"
 import { useSettingsStore } from "@/stores/settings"
 
@@ -55,6 +59,7 @@ export function DockedPane({
   ...props
 }: ComponentProps<"div"> & { onClose: () => void }) {
   const titleId = useId()
+  const [expanded, setExpanded] = useState(false)
   const focused = useRef<{ pane: HTMLDivElement; control: Element } | null>(null)
 
   useEffect(() => {
@@ -116,7 +121,7 @@ export function DockedPane({
       <div
         data-slot="docked-pane-scrim"
         aria-hidden="true"
-        className="fixed inset-0 z-40 bg-black/20 duration-150 animate-in fade-in-0"
+        className={cn("fixed inset-0 z-40 duration-150 animate-in fade-in-0", SCRIM)}
         onClick={onClose}
       />
       <div
@@ -124,7 +129,12 @@ export function DockedPane({
         role="region"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="fixed inset-y-0 right-0 z-40 flex min-h-0 w-full flex-col gap-4 border-l bg-background p-4 text-sm shadow-lg outline-none duration-200 animate-in slide-in-from-right md:w-[var(--pane-width)]"
+        className={cn(
+          "fixed z-40 flex min-h-0 w-full flex-col gap-4 border-l bg-background p-4 text-sm shadow-lg outline-none duration-200 animate-in",
+          expanded
+            ? "inset-0 m-auto h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] fade-in-0"
+            : "inset-y-0 right-0 slide-in-from-right md:w-[var(--pane-width)]",
+        )}
         style={{ "--pane-width": `${width}px` } as CSSProperties}
         onKeyDown={(event) => {
           trapTab(event)
@@ -136,7 +146,7 @@ export function DockedPane({
           onFocusCapture?.(event)
         }}
       >
-        <div className="-mb-2 flex shrink-0 justify-end">
+        <div className="-mb-2 flex shrink-0 justify-end gap-1">
           <Button
             data-slot="pane-close"
             variant="ghost"
@@ -146,49 +156,60 @@ export function DockedPane({
           >
             <XIcon />
           </Button>
+          <Button
+            data-slot="pane-expand"
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => setExpanded((value) => !value)}
+            aria-label={expanded ? "Collapse the panel" : "Expand the panel"}
+          >
+            {expanded ? <Minimize2Icon /> : <Maximize2Icon />}
+          </Button>
         </div>
         {children}
-        <div
-          role="separator"
-          aria-label="Resize details"
-          aria-orientation="vertical"
-          aria-valuemin={minimum}
-          aria-valuemax={maximum}
-          aria-valuenow={width}
-          tabIndex={0}
-          className="absolute inset-y-0 -left-1 z-10 hidden w-2 cursor-col-resize touch-none hover:bg-primary/20 focus-visible:bg-primary/20 focus-visible:outline-none md:block"
-          onPointerDown={(event) => {
-            if (event.button !== 0) return
-            event.preventDefault()
-            event.currentTarget.setPointerCapture?.(event.pointerId)
-            drag.current = { pointer: event.pointerId, x: event.clientX, from: width, to: null }
-          }}
-          onPointerMove={(event) => {
-            // One pointer drags; a second finger on the handle moves nothing.
-            const current = drag.current
-            if (current?.pointer !== event.pointerId) return
-            current.to = clamp(current.from + current.x - event.clientX)
-            setDragWidth(current.to)
-          }}
-          onPointerUp={(event) => {
-            if (drag.current?.pointer === event.pointerId) endDrag()
-          }}
-          onPointerCancel={(event) => {
-            if (drag.current?.pointer === event.pointerId) endDrag()
-          }}
-          onDoubleClick={() => setWidth(clamp(36 * rem))}
-          onKeyDown={(event) => {
-            const next = {
-              ArrowLeft: width + 16,
-              ArrowRight: width - 16,
-              Home: minimum,
-              End: maximum,
-            }[event.key]
-            if (next === undefined) return
-            event.preventDefault()
-            setWidth(clamp(next))
-          }}
-        />
+        {expanded ? null : (
+          <div
+            role="separator"
+            aria-label="Resize details"
+            aria-orientation="vertical"
+            aria-valuemin={minimum}
+            aria-valuemax={maximum}
+            aria-valuenow={width}
+            tabIndex={0}
+            className="absolute inset-y-0 -left-1 z-10 hidden w-2 cursor-col-resize touch-none hover:bg-primary/20 focus-visible:bg-primary/20 focus-visible:outline-none md:block"
+            onPointerDown={(event) => {
+              if (event.button !== 0) return
+              event.preventDefault()
+              event.currentTarget.setPointerCapture?.(event.pointerId)
+              drag.current = { pointer: event.pointerId, x: event.clientX, from: width, to: null }
+            }}
+            onPointerMove={(event) => {
+              // One pointer drags; a second finger on the handle moves nothing.
+              const current = drag.current
+              if (current?.pointer !== event.pointerId) return
+              current.to = clamp(current.from + current.x - event.clientX)
+              setDragWidth(current.to)
+            }}
+            onPointerUp={(event) => {
+              if (drag.current?.pointer === event.pointerId) endDrag()
+            }}
+            onPointerCancel={(event) => {
+              if (drag.current?.pointer === event.pointerId) endDrag()
+            }}
+            onDoubleClick={() => setWidth(clamp(36 * rem))}
+            onKeyDown={(event) => {
+              const next = {
+                ArrowLeft: width + 16,
+                ArrowRight: width - 16,
+                Home: minimum,
+                End: maximum,
+              }[event.key]
+              if (next === undefined) return
+              event.preventDefault()
+              setWidth(clamp(next))
+            }}
+          />
+        )}
       </div>
     </PaneTitleId.Provider>
   )

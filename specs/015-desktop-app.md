@@ -36,14 +36,18 @@ Out: the daemon endpoints themselves (012).
    screen's own actions at the header's end. Goal, task, session, and pull request (026) details
    occupy one pane that floats over the screen at its right edge. The URL
    selects its contents. The screen keeps its full width and layout behind
-   the pane, under a scrim. A click on the scrim closes the pane, the same
-   as the close button, and Tab stays inside the pane while it is open. The
-   pane slides in from the right and the scrim fades in, unless the system
-   asks for reduced motion. The close button sits in the pane's header, as
-   its first tab stop. The left handle resizes the pane by pointer or
-   keyboard between 24rem and 60% of the window. A drag saves the width
-   once, on release, and a double-click resets it to the 36rem default;
-   settings preserve the choice.
+   the pane, under a scrim that uses the dialog's own `SCRIM` token. A click
+   on the scrim closes the pane, the same as the close button, and Tab stays
+   inside the pane while it is open. The pane slides in from the right and
+   the scrim fades in, unless the system asks for reduced motion. The close
+   button sits in the pane's header, as its first tab stop. A toggle beside
+   it expands the pane to near-fullscreen, centered, the same size as the
+   console's own expanded modal; a second press collapses it back to its
+   docked width, and the resize handle hides while it is expanded. Each open
+   starts docked — nothing remembers the expanded choice. The left handle
+   resizes the docked pane by pointer or keyboard between 24rem and 60% of
+   the window. A drag saves the width once, on release, and a double-click
+   resets it to the 36rem default; settings preserve the choice.
    Below `md`, the pane covers the screen at full width. The pane holds one
    panel at a time: a task opened from a goal replaces the goal's panel
    rather than stacking on it, carrying a breadcrumb back that reopens the
@@ -704,6 +708,20 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/components/panel-sheet.test.tsx::keeps the dragged width when the pane closes in mid-drag`).
 - A double-click of the handle resets the pane to 36rem
   (`ui/src/components/panel-sheet.test.tsx::resets the pane to 36rem on a double-click of the handle`).
+- The pane's scrim carries the dialog's own `SCRIM` token, not a scrim of its
+  own
+  (`ui/src/components/panel-sheet.test.tsx::darkens the screen with the dialog's own SCRIM token`).
+- The toggle expands the docked pane to near-fullscreen, hides the resize
+  handle, and a second press collapses it back to the stored docked width
+  (`ui/src/components/panel-sheet.test.tsx::expands the pane to near-fullscreen and back on a second press`).
+- The scrim click and Escape still close an expanded pane
+  (`ui/src/components/panel-sheet.test.tsx::still closes the expanded pane from its scrim and from Escape`).
+- Tab stays inside an expanded pane, over the close and toggle buttons, with
+  no resize handle to land on
+  (`ui/src/components/panel-sheet.test.tsx::keeps Tab inside the expanded pane, past the close and toggle, with no resize handle to land on`).
+- Closing an expanded pane returns focus to the board opener, the same as a
+  docked one
+  (`ui/src/components/pane-focus.test.tsx::returns focus to the board opener after closing an expanded pane`).
 - The console fills the remaining pane height in a standalone session and a goal drill-down
   (`ui/src/features/sessions/session-panel.test.tsx::keeps the console inside the remaining pane height`,
   `ui/src/features/goals/goal-panel.test.tsx::drills into a session with a breadcrumb back to the goal, and no Back button`).

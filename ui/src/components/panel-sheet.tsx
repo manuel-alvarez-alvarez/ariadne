@@ -36,7 +36,7 @@ export function PanelSheet({
     // The close button leads the tab order, but a panel opens on its own
     // first control: the close is one Shift+Tab or Escape away.
     const first = panel.current?.querySelector<HTMLElement>(
-      'button:not(:disabled):not([data-slot="pane-close"]), a[href], [role="tab"]',
+      'button:not(:disabled):not([data-slot="pane-close"]):not([data-slot="pane-expand"]), a[href], [role="tab"]',
     )
     ;(first ?? panel.current)?.focus()
   }, [panel])
