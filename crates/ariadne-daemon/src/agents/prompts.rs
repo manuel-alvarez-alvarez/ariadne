@@ -563,6 +563,7 @@ mod tests {
             review_skills_json: "[]".into(),
             merge_sha: None,
             summary_comment_id: None,
+            reviewer_given_up_at: None,
         };
         for template in [pull_request_briefing_prompt(), pull_request_news_prompt()] {
             let mut rest = template;

@@ -67,6 +67,28 @@ async fn last_session_error(store: &Store, session_id: &str) -> Result<Option<St
         }))
 }
 
+/// The two ways automatic recovery gives up on a taskless session, said
+/// plainly rather than with one generic word for both: a launch that
+/// never got off the ground (`scheduler::goals::orchestrator_could_not_start`,
+/// `scheduler::pull_requests::start_pull_request_session`) is not the
+/// same thing as one that started, ran, and then stopped answering
+/// through every relaunch the watchdog gave it
+/// (`scheduler::quiet::relaunch_wedged`) — told apart here by whether the
+/// alarm session still carries the watchdog's own `stalled` flag, which
+/// `relaunch_wedged`'s own give-up leaves standing. `budget` is
+/// `SPAWN_RETRY_BUDGET`, read once rather than written at each call site.
+fn give_up_summary(subject: &str, wedged: bool, error: Option<&str>) -> String {
+    let budget = SPAWN_RETRY_BUDGET;
+    let what = match wedged {
+        true => format!("{subject} stopped answering after {budget} relaunches"),
+        false => format!("{subject} would not start after {budget} attempts"),
+    };
+    match error {
+        Some(error) => format!("{what}: {error}"),
+        None => format!("{what}."),
+    }
+}
+
 /// Every goal whose orchestrator `scheduler::goals::orchestrator_could_not_start`
 /// has given up on (`Goal::orchestrator_given_up_at`), narrowed to goals
 /// still `planning` or `active` — one cancelled or completed no longer
@@ -107,14 +129,11 @@ async fn orchestrator_given_up_items(store: &Store) -> Result<Vec<AttentionItemD
             continue;
         };
         let error = last_session_error(store, &alarm.id).await?;
-        let summary = match &error {
-            Some(error) => format!(
-                "The goal's orchestrator would not start after {SPAWN_RETRY_BUDGET} attempts: {error}"
-            ),
-            None => format!(
-                "The goal's orchestrator would not start after {SPAWN_RETRY_BUDGET} attempts."
-            ),
-        };
+        let summary = give_up_summary(
+            "The goal's orchestrator",
+            alarm.attention_reason() == Some(AttentionReason::Stalled),
+            error.as_deref(),
+        );
         items.push(AttentionItemDto {
             id: format!("recovery:unknown:orchestrator:{}", goal.id),
             producer: AttentionProducer::Recovery,
@@ -165,14 +184,10 @@ async fn reviewer_given_up_items(store: &Store) -> Result<Vec<AttentionItemDto>>
             Some(session) => last_session_error(store, &session.id).await?,
             None => None,
         };
-        let summary = match &error {
-            Some(error) => format!(
-                "The request's reviewer session would not start after {SPAWN_RETRY_BUDGET} attempts: {error}"
-            ),
-            None => format!(
-                "The request's reviewer session would not start after {SPAWN_RETRY_BUDGET} attempts."
-            ),
-        };
+        let wedged = reviewer
+            .as_ref()
+            .is_some_and(|s| s.attention_reason() == Some(AttentionReason::Stalled));
+        let summary = give_up_summary("The request's reviewer session", wedged, error.as_deref());
         items.push(AttentionItemDto {
             id: format!("recovery:unknown:pull_request:{}", pull.id),
             producer: AttentionProducer::Recovery,
@@ -314,7 +329,16 @@ async fn failed_task_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
     let mut descriptor_affected = Vec::new();
     let mut unknown = Vec::new();
     for task in tasks {
-        if !orchestrator_has_answered_for(store, &task.goal_id, &task.id, &task.updated_at).await? {
+        let Some(transition_id) = store
+            .latest_transition_to(&task.id, TaskStatus::Failed)
+            .await?
+        else {
+            // No recorded transition to `failed` at all — cannot happen in
+            // practice (the status came from one), but with no stable
+            // evidence to match against there is nothing to confirm.
+            continue;
+        };
+        if !orchestrator_has_answered_for(store, &task.goal_id, &task.id, &transition_id).await? {
             continue;
         }
         let reason = store.ended_reason(&task).await?;
@@ -376,8 +400,9 @@ async fn failed_task_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
 /// kept whether or not an orchestrator session exists this instant: an
 /// orchestrated goal with none yet is one `keep_orchestrator` has not
 /// finished its first launch of, not one with nothing coming), or this
-/// exact task — its id *and* the `updated_at` its failure carries right
-/// now — is in `Goal::orchestrator_answered_failed_task_ids`.
+/// exact task — its id *and* the id of the `task_transitions` row that
+/// most recently moved it to `failed` (`Store::latest_transition_to`) —
+/// is in `Goal::orchestrator_answered_failed_task_ids`.
 ///
 /// That list is written only once, by the ACP driver itself, the moment
 /// the one `session/prompt` turn that actually carried this task's
@@ -385,15 +410,18 @@ async fn failed_task_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
 /// `Delivery::GoalAttention` it was handed) — never by an ambient session
 /// status, which an unrelated turn landing on the same session first
 /// could satisfy without ever having carried this task's news. Matching
-/// on `updated_at` as well as the id is what keeps an old confirmation
-/// from answering for a new failure of the same task: a retry stamps a
-/// new `updated_at`, which a stale confirmation already written does not
-/// carry.
+/// on the transition id as well as the task id is what keeps an old
+/// confirmation from answering for a new failure of the same task: a
+/// retry stamps a fresh transition row, which a stale confirmation
+/// already written does not carry. `Task::updated_at` cannot serve this
+/// purpose — it moves on an ordinary metadata edit to a failed task
+/// (`Store::update_task`), which has nothing to do with the failure
+/// itself.
 async fn orchestrator_has_answered_for(
     store: &Store,
     goal_id: &str,
     task_id: &str,
-    failed_at: &str,
+    transition_id: &str,
 ) -> Result<bool> {
     let goal = match store.get_goal(goal_id).await {
         Ok(goal) => goal,
@@ -415,7 +443,7 @@ async fn orchestrator_has_answered_for(
         .unwrap_or_default();
     Ok(answered
         .iter()
-        .any(|(id, at)| id == task_id && at == failed_at))
+        .any(|(id, at)| id == task_id && at == transition_id))
 }
 
 /// An enabled forge integration whose last fetch failed on the daemon's

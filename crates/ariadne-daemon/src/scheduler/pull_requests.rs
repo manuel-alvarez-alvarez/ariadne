@@ -526,9 +526,21 @@ impl super::Scheduler {
             .iter()
             .find(|s| s.seat() == Some(Seat::Reviewer) && self.launcher.acp.is_running(&s.id))
             .cloned();
-        if running.is_some() {
-            // Automatic recovery plainly owns this request's reviewer
-            // session again: any earlier give-up no longer holds.
+        // A live process is not by itself genuine recovery: the watchdog's
+        // own exhausted-relaunch give-up (`quiet::relaunch_wedged`) leaves
+        // a wedged session's process running, silent, exactly as it was —
+        // and that same still-live, still-silent session must not clear
+        // its own give-up mark on every later pass that merely finds it
+        // still there. Only a session that has reported *something* since
+        // the mark was set — its own `last_activity_at` moved past
+        // `reviewer_given_up_at` — is the genuine progress that answers
+        // for it.
+        if let (Some(session), Some(given_up)) = (&running, pull.reviewer_given_up_at.as_deref())
+            && session
+                .last_activity_at
+                .as_deref()
+                .is_some_and(|at| at > given_up)
+        {
             let _ = self
                 .store
                 .clear_pull_request_reviewer_given_up(&pull.id)

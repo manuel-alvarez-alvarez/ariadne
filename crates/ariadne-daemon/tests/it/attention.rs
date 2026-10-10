@@ -8,7 +8,7 @@ use ariadne_core::{Actor, AttentionReason, Seat, SessionStatus, TaskStatus};
 use ariadne_store::NewSession;
 
 use crate::common::test_pin;
-use crate::common::{Harness, TIMEOUT, eventually, harness, with_forge};
+use crate::common::{Harness, QUIET, TIMEOUT, eventually, harness, with_forge};
 
 /// Confirm, directly through the store's own persisted evidence, that this
 /// goal's orchestrator has had a turn on exactly this task's current
@@ -18,8 +18,14 @@ use crate::common::{Harness, TIMEOUT, eventually, harness, with_forge};
 /// below (`a_failed_tasks_item_waits_for_its_orchestrator_to_actually_have_a_turn_on_it`
 /// and its siblings).
 async fn confirm_told(h: &Harness, goal_id: &str, task: &ariadne_store::Task) {
+    let transition_id = h
+        .store
+        .latest_transition_to(&task.id, TaskStatus::Failed)
+        .await
+        .unwrap()
+        .expect("a task reported failed has a transition to failed on record");
     h.store
-        .confirm_goal_orchestrator_answered(goal_id, &[(task.id.clone(), task.updated_at.clone())])
+        .confirm_goal_orchestrator_answered(goal_id, &[(task.id.clone(), transition_id)])
         .await
         .unwrap();
 }
@@ -91,7 +97,13 @@ async fn two_tasks_sharing_a_descriptor_limit_failure_are_one_grouped_item() {
             )
             .await
             .unwrap();
-        failed_tasks.push((failed.id, failed.updated_at));
+        let transition_id = h
+            .store
+            .latest_transition_to(&failed.id, TaskStatus::Failed)
+            .await
+            .unwrap()
+            .expect("a task reported failed has a transition to failed on record");
+        failed_tasks.push((failed.id, transition_id));
     }
     h.store
         .confirm_goal_orchestrator_answered(&first.goal.id, &failed_tasks)
@@ -173,12 +185,24 @@ async fn two_tasks_failed_for_different_reasons_stay_separate_unknown_items() {
         )
         .await
         .unwrap();
+    let transition_first = h
+        .store
+        .latest_transition_to(&failed_first.id, TaskStatus::Failed)
+        .await
+        .unwrap()
+        .expect("a task reported failed has a transition to failed on record");
+    let transition_second = h
+        .store
+        .latest_transition_to(&failed_second.id, TaskStatus::Failed)
+        .await
+        .unwrap()
+        .expect("a task reported failed has a transition to failed on record");
     h.store
         .confirm_goal_orchestrator_answered(
             &first.goal.id,
             &[
-                (failed_first.id, failed_first.updated_at),
-                (failed_second.id, failed_second.updated_at),
+                (failed_first.id, transition_first),
+                (failed_second.id, transition_second),
             ],
         )
         .await
@@ -626,6 +650,96 @@ async fn a_failed_tasks_item_stays_suppressed_while_its_orchestrators_turn_on_it
     eventually(
         TIMEOUT,
         "the item to appear once the turn actually ends",
+        || async {
+            let list: AttentionListDto = h.get("/v1/attention").await;
+            list.items.len() == 1
+        },
+    )
+    .await;
+}
+
+/// A delivery that never reaches the agent's stdin — the exact race
+/// `close_prompt_channel_for_test` reproduces, between a connection ending
+/// and the registry entry being torn down behind it — must not be lost for
+/// good. End to end, through the real scheduler: the automatic resume that
+/// follows retries the hand-off on its own, and once the replacement's own
+/// turn actually ends, the failure is confirmed and its item appears —
+/// proving the delivery was retried, not merely that the attempt was made.
+#[tokio::test]
+async fn a_lost_delivery_is_retried_after_resume_and_confirmed_once_its_replacement_answers() {
+    let h = harness().scheduler().await;
+    let cast = h.cast().await;
+    h.store
+        .set_goal_status(&cast.goal.id, ariadne_core::GoalStatus::Active)
+        .await
+        .unwrap();
+    let orchestrator = async || {
+        h.sessions_of_goal(&cast.goal.id)
+            .await
+            .into_iter()
+            .find(|s| s.seat() == Some(Seat::Orchestrator))
+    };
+    eventually(TIMEOUT, "the orchestrator to be launched", || async {
+        orchestrator().await.is_some()
+    })
+    .await;
+    eventually(TIMEOUT, "the orchestrator's first turn to end", || async {
+        orchestrator()
+            .await
+            .is_some_and(|s| s.status() == SessionStatus::Idle)
+    })
+    .await;
+    let session = orchestrator().await.unwrap();
+
+    // Live per the registry, but its prompt channel is already closed: the
+    // hand-off the scheduler is about to attempt cannot reach it.
+    h.launcher.acp.close_prompt_channel_for_test(&session.id);
+
+    h.store
+        .transition_task(
+            &cast.task.id,
+            TaskStatus::Failed,
+            Actor::Daemon,
+            Some("the tests did not pass"),
+            None,
+        )
+        .await
+        .unwrap();
+
+    // Nothing to wait on but its absence: a lost delivery confirms nothing.
+    tokio::time::sleep(QUIET).await;
+    assert!(
+        h.store
+            .get_goal(&cast.goal.id)
+            .await
+            .unwrap()
+            .orchestrator_answered_failed_task_ids
+            .is_none(),
+        "a delivery that never reached the agent cannot have been confirmed"
+    );
+
+    // The agent comes back — a fresh, working registration under the same
+    // session, the automatic resume rather than a hand-written poke — and
+    // the scheduler's next pass over the still-unconfirmed goal retries the
+    // hand-off on its own.
+    h.agent_runs(&session).await;
+
+    eventually(
+        TIMEOUT,
+        "the replacement's own turn to actually confirm the failure",
+        || async {
+            h.store
+                .get_goal(&cast.goal.id)
+                .await
+                .unwrap()
+                .orchestrator_answered_failed_task_ids
+                .is_some()
+        },
+    )
+    .await;
+    eventually(
+        TIMEOUT,
+        "the item to appear once the replacement's turn actually ends",
         || async {
             let list: AttentionListDto = h.get("/v1/attention").await;
             list.items.len() == 1

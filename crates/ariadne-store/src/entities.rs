@@ -778,6 +778,7 @@ pub struct PullRequest {
     pub review_model: Option<String>,
     pub review_effort: Option<String>,
     pub review_skills_json: String,
+    pub reviewer_given_up_at: Option<String>,
 }
 
 impl PullRequest {
@@ -824,6 +825,7 @@ impl PullRequest {
             review_model: row.review_model,
             review_effort: row.review_effort,
             review_skills_json: row.review_skills_json,
+            reviewer_given_up_at: row.reviewer_given_up_at,
         }
     }
 

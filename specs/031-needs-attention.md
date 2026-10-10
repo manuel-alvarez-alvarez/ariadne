@@ -110,34 +110,74 @@ producers (registered already, empty — rule 10) their eligibility rules.
      moves the task off `failed`, and so off this list, before a human
      ever needs to. `orchestrator_has_answered_for` reads whether that has
      already happened from evidence tied to exactly *this* occurrence of
-     this task's failure — its id *and* the `updated_at` the failure
-     stamped — never from a timestamp read on its own or a session's
-     ambient activity: `tell_orchestrator` tags the queued prompt with the
-     `(id, updated_at)` pair of every task it names
-     (`acp::Delivery::GoalAttention`), and the ACP driver writes that exact
-     pair into `Goal::orchestrator_answered_failed_task_ids` only once that
-     one prompt's own `session/prompt` call returns — the turn that
-     actually carried it, confirmed from the delivery that completed, not
-     inferred from any session reaching `stop`
+     this task's failure — its id *and* the id of the `task_transitions`
+     row that most recently moved it to `failed`
+     (`Store::latest_transition_to`) — never from `Task::updated_at`,
+     which is mutable metadata: `Store::update_task` moves it when a
+     failed task's title, description or staffing is merely edited, a
+     change that has nothing to do with the failure itself, and a
+     confirmation keyed on it would vanish — taking its recovery item down
+     with it — the moment anyone edited the task. `tell_orchestrator` tags
+     the queued prompt with the `(id, transition id)` pair of every task
+     it names (`acp::Delivery::GoalAttention`), and the ACP driver writes
+     that exact pair into `Goal::orchestrator_answered_failed_task_ids`
+     only once that one prompt's own `session/prompt` call returns — the
+     turn that actually carried it, confirmed from the delivery that
+     completed, not inferred from any session reaching `stop`
      (`acp::serve_with_input`). An unrelated turn landing on the same
      session first, whatever it carried, writes nothing here, since only
      a completed `GoalAttention` delivery ever does; and a task retried
-     off `failed` and failed again carries a new `updated_at` its old
-     confirmation does not, so that confirmation does not answer for the
-     new occurrence. The gate answers `true` once this exact pair is in
-     the confirmed list. A goal not `orchestrated`, or not `planning` or
+     off `failed` and failed again stamps a fresh transition row its old
+     confirmation does not carry, so that confirmation does not answer for
+     the new occurrence. The gate answers `true` once this exact pair is in
+     the confirmed list.
+
+     The scheduler's own in-memory `goal_told` cache — keyed on the
+     rendered situation text alone, which names only a task's title, id
+     and `failed` status — is never trusted by itself to skip a resend:
+     two failures of the same task in a row render the identical text, and
+     a delivery whose write failed or whose turn never finished before its
+     connection ended (the "unwritten"/release branch in
+     `acp::serve_with_input`, which has nothing of its own to release for
+     a `GoalAttention` delivery — nothing was claimed ahead of the write)
+     leaves the cache believing a failure was told that never actually
+     confirmed. `tell_orchestrator` only skips a resend where the cache
+     *and* the persisted confirmed list agree — every currently failed
+     task's `(id, transition id)` pair is already in
+     `Goal::orchestrator_answered_failed_task_ids` — so an unconfirmed or
+     abandoned delivery is retried on every later pass, through the
+     session's next automatic resume, until a turn actually completes and
+     confirms it. A goal not `orchestrated`, or not `planning` or
      `active` any more, answers `true` outright — nothing automatic is
      ever coming either way. Otherwise the goal's own give-up mark is
      read: `Goal::orchestrator_given_up_at`, stamped by
      `scheduler::goals::orchestrator_could_not_start` once the spawn-retry
      budget actually runs out, *or* by the watchdog's own exhausted-
      relaunch decision for a taskless session (`scheduler::quiet::relaunch_wedged`,
-     which has no task of its own to fail onto instead) — and cleared the
-     moment `keep_orchestrator` has a live orchestrator again or a
-     resume/spawn succeeds, answers `true` on its own, whether or not an
-     orchestrator session exists this instant: an orchestrated goal still
-     waiting on its first launch is not one with nothing coming either.
-     This is deliberately not the `disconnected` flag the liveness
+     which has no task of its own to fail onto instead, and deliberately
+     leaves the wedged process alive rather than killing it) — answers
+     `true` on its own, whether or not an orchestrator session exists this
+     instant: an orchestrated goal still waiting on its first launch is not
+     one with nothing coming either. The mark is cleared only on genuine
+     recovery, never merely because a session is live: `keep_orchestrator`
+     clears it where a resume or spawn succeeds, or where a live session's
+     own `last_activity_at` has moved past the moment the mark was set —
+     evidence the session actually reported something since, which a
+     session `relaunch_wedged` left standing exhausted, by construction,
+     cannot produce on its own. Clearing it merely because the session is
+     found "live" would flap the mark — and the item with it — every pass
+     that finds the same still-wedged, still-silent session: `relaunch_wedged`
+     sets it again with a fresh `since`, both writes publish invalidations,
+     and a reader caught between them sees no blocker despite recovery
+     having exhausted its options, while a later reader sees a younger
+     blocker that may have been removed and re-announced as the same item.
+     `give_up_summary` also tells the two ways a taskless session gives up
+     apart in its wording, from the same evidence `keep_orchestrator`
+     reads: a session that still carries the watchdog's own `stalled` flag
+     — left standing by `relaunch_wedged`'s give-up — "stopped answering
+     after N relaunches", never "would not start", which is reserved for
+     the spawn-failure path's own `disconnected` flag
+     (`scheduler::goals::orchestrator_could_not_start`). This is deliberately not the `disconnected` flag the liveness
      sweep's `retire_disconnected` also raises on every ordinary crash,
      well before any budget is spent and while a relaunch may still be
      coming — reading that flag as a give-up was exactly the false
@@ -167,8 +207,10 @@ producers (registered already, empty — rule 10) their eligibility rules.
      (`PullRequestRow::reviewer_given_up_at`, the same kind of mark,
      stamped by `scheduler::pull_requests::start_pull_request_session`
      once *its* spawn-retry budget runs out, or by the same watchdog
-     exhaustion the orchestrator's own mark reads, and cleared the moment
-     a resume or spawn of that session next succeeds, *or* the moment the
+     exhaustion the orchestrator's own mark reads, and cleared the same
+     way — on a resume/spawn that succeeds, or on a live session's own
+     `last_activity_at` moving past the mark, in `review_pass`, never
+     merely because the session is found live — *or* the moment the
      request no longer wants a reviewer session at all —
      `scheduler::pull_requests::end_review`, reached once `wants_session`
      answers `false` for any reason: closed, no longer asking, back to
@@ -202,13 +244,21 @@ producers (registered already, empty — rule 10) their eligibility rules.
      fail before ever reaching the forge) and answers `true` only once
      both `Refusal::ran()` — the CLI actually reached an exit code,
      however it answered — and `Refusal::is_unauthorized()` — the forge's
-     own answer carried `HTTP 401` or `HTTP 403` — hold. A missing
-     binary, a spawn or write failure, or a timeout never ran at all; a
-     network failure or a server error of the forge's own ran, but named
-     no credential rejection: both answer `false`, and the marker is
-     never written, leaving `configuration`'s own cause, or nothing, to
-     say why the fetch failed instead. `access` is reserved for the forge
-     itself having conclusively said no. Checking an existing account
+     own answer carried `HTTP 401` or `HTTP 403` and did not name a rate
+     limit — hold. GitHub answers the same `HTTP 403` for primary and
+     secondary rate limiting as it does for a rejected credential, with
+     otherwise valid credentials (GitHub's own REST rate-limit
+     documentation), and names it every time in words that outlive any
+     one error's exact phrasing ("rate limit", case-insensitive); a 403
+     naming it is retryable, not a confirmed sign-out, so
+     `is_unauthorized` excludes it rather than raising a false sign-in
+     action over a fetch that a rate limit alone, not a bad credential,
+     made fail. A missing binary, a spawn or write failure, or a timeout
+     never ran at all; a network failure or a server error of the forge's
+     own ran, but named no credential rejection: both answer `false`, and
+     the marker is never written, leaving `configuration`'s own cause, or
+     nothing, to say why the fetch failed instead. `access` is reserved
+     for the forge itself having conclusively said no. Checking an existing account
      call after a failure that already happened is not a new watch over
      the forge — it is one answer, read once, to the one question "did
      the forge reject these credentials" — so it stays inside the "no new
@@ -366,9 +416,28 @@ producers (registered already, empty — rule 10) their eligibility rules.
   failure does not answer for this one
   (`attention.rs::a_failed_tasks_item_still_waits_while_only_a_different_failure_was_confirmed`),
   and a confirmation does not survive its own task's retry: a second
-  failure of the same task stamps a new `updated_at` the old
+  failure of the same task stamps a fresh transition id the old
   confirmation does not carry
   (`attention.rs::an_old_confirmation_does_not_answer_for_a_tasks_second_failure`).
+  Editing a confirmed, still-failed task's description — metadata
+  `Store::update_task` allows editing on a `failed` task — does not move
+  the transition id the confirmation is keyed on, so the item survives
+  the edit
+  (`scheduler_attention.rs::editing_a_failed_tasks_description_does_not_lose_its_recovery_item`).
+  A second failure of the same task, missed by the scheduler before any
+  reconciliation pass ran in between, renders the identical
+  `goal_attention` situation text as the first — title, id and `failed`
+  status, nothing else — so the in-memory `goal_told` cache alone cannot
+  tell them apart; the orchestrator is told of it anyway, since the
+  persisted, transition-id-keyed confirmation can
+  (`scheduler_attention.rs::a_second_failure_missed_between_reconciles_is_still_told`).
+  A delivery lost before its own turn could confirm it — the write never
+  reaching the agent's stdin, the same race a connection ending in that
+  exact window leaves behind — is retried on the next pass regardless of
+  what `goal_told` still says, through the session's automatic resume,
+  and confirmed once the replacement's own turn actually ends, proven end
+  to end through the real scheduler rather than a hand-written store poke
+  (`attention.rs::a_lost_delivery_is_retried_after_resume_and_confirmed_once_its_replacement_answers`).
   An orchestrated goal with no orchestrator session yet — awaiting its
   first launch — raises nothing either, the same grace a dead one
   gets
@@ -406,6 +475,10 @@ producers (registered already, empty — rule 10) their eligibility rules.
   (`scheduler_attention.rs::an_orchestrator_that_wedges_after_every_relaunch_is_given_up_on_without_a_task_to_fail`),
   and for a pull request's reviewer session the same way
   (`scheduler_attention.rs::a_reviewer_session_that_wedges_after_every_relaunch_is_given_up_on_without_a_task_to_fail`).
+  Both tests extend through later reconciliation passes over the same,
+  still-wedged session: the give-up mark, its `since`, and the item's
+  presentation all stay exactly as they were, with no flap, since no
+  genuine recovery happened in between (same two tests).
 - A forge integration whose fetch failed on the daemon's own "CLI not
   installed" words is a `configuration` item naming the repository
   (`attention.rs::a_missing_forge_cli_is_a_configuration_item`); one whose
@@ -418,14 +491,22 @@ producers (registered already, empty — rule 10) their eligibility rules.
   reactive sign-in confirmation is an `access` item naming the host
   (`attention.rs::a_signed_out_forge_cli_is_an_access_item`), produced
   end to end through the real forge poll worker and a scripted CLI that
-  fails both `pr list` and `auth status`
+  fails both `pr list` and `api user`
   (`attention.rs::a_forge_cli_signed_out_mid_fetch_is_confirmed_reactively_and_reaches_the_list`).
   The marker is read from whether the CLI actually ran that check, not
   merely whether it returned an error, so a missing binary or a timeout
   on the check itself never gets misread as a confirmed rejection
   (`forge/mod.rs::a_refusal_has_run_only_where_the_cli_reached_an_exit_code`,
   and `::a_cli_that_reads_no_input_is_stopped_by_the_deadline` for a real
-  timeout's own `Refusal::ran()` reading `false`).
+  timeout's own `Refusal::ran()` reading `false`). A rate-limited `HTTP
+  403` on that same check — GitHub's own answer for primary and
+  secondary rate limiting, with otherwise valid credentials — is read as
+  retryable, never as a confirmed sign-out, held open until the
+  configured deadline by a shared stub script rather than `/bin/sleep`
+  mis-parsing the check's own arguments
+  (`forge/mod.rs::confirmed_signed_out_is_false_on_a_rate_limited_403`,
+  and `::confirmed_signed_out_is_false_on_a_timeout` for the deadline
+  itself).
 - The same recovery item answers the same id across two reads, and that id
   is derived from the shared cause alone
   (`attention.rs::a_recovery_items_id_is_stable_across_two_reads`), including

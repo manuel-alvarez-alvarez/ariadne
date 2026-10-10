@@ -903,6 +903,28 @@ impl Store {
         .flatten())
     }
 
+    /// The id of the transition that most recently moved `task_id` to
+    /// `status`: a stable identifier for *that occurrence* of the status,
+    /// unlike `Task::updated_at`, which a metadata edit — `update_task`
+    /// allows one on a `failed` task — moves for a reason that has nothing
+    /// to do with the failure itself. `None` where the task never made
+    /// that transition.
+    pub async fn latest_transition_to(
+        &self,
+        task_id: &str,
+        status: TaskStatus,
+    ) -> Result<Option<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT id FROM task_transitions
+              WHERE task_id = ? AND to_status = ?
+              ORDER BY id DESC LIMIT 1",
+        )
+        .bind(task_id)
+        .bind(status.as_str())
+        .fetch_optional(self.r())
+        .await?)
+    }
+
     pub async fn list_task_dependencies(&self, task_id: &str) -> Result<Vec<String>> {
         Ok(sqlx::query_scalar(
             "SELECT depends_on_task_id FROM task_dependencies WHERE task_id = ? ORDER BY depends_on_task_id",

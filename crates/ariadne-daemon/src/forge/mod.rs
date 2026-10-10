@@ -725,11 +725,20 @@ impl Refusal {
     /// [`Self::is_missing`] reads for a 404. A network failure, a
     /// timeout, or a server error of its own is none of these, and is no
     /// proof the credentials themselves are the problem.
+    ///
+    /// Nor is a 403: GitHub answers the same `HTTP 403` for primary and
+    /// secondary rate limiting, with otherwise valid credentials (GitHub's
+    /// own REST rate-limit documentation), and names it every time in
+    /// words that outlive any one error's exact phrasing — "API rate limit
+    /// exceeded" or "You have exceeded a secondary rate limit" both say
+    /// "rate limit" where credential rejection never does. A 403 naming it
+    /// is read as retryable rate limiting, never as a confirmed sign-out.
     pub(crate) fn is_unauthorized(&self) -> bool {
         self.said.as_deref().is_some_and(|said| {
-            said.contains("HTTP 401")
-                || said.contains("HTTP 403")
-                || said.contains("Bad credentials")
+            !said.to_lowercase().contains("rate limit")
+                && (said.contains("HTTP 401")
+                    || said.contains("HTTP 403")
+                    || said.contains("Bad credentials"))
         })
     }
 
@@ -786,19 +795,63 @@ mod tests {
         assert!(!refused.ran(), "a deadline is not the CLI having answered");
     }
 
-    /// A shell script standing in for `gh`: whatever it is given to print
-    /// to stderr and exit with, so [`ForgeClient::confirmed_signed_out`]
-    /// can be driven through a real process without a real forge.
+    /// One shell script, written once for the whole run of this test
+    /// binary and shared by every test below, rather than a fresh
+    /// executable per call: macOS checks each executable before it starts,
+    /// so a test that wrote its own would pay that cost per test
+    /// (crates/AGENTS.md). Each test instead gets its own directory of
+    /// *data* — `stderr`, `exit`, and an optional `hold` that makes the
+    /// script sleep well past any call's deadline — and a `gh` link
+    /// pointing at this one script, which reads `$(dirname "$0")`: its own
+    /// link's directory, not the shared script's, exactly as
+    /// `tests/it/common/acp.rs::stub_acp_agent` and
+    /// `tests/it/common/forge.rs::stub_forge_cli` already share theirs.
+    /// Unreachable from here, in a different compilation unit (this is a
+    /// `src/`-level unit test, not part of the separate `tests/it`
+    /// integration binary), so reimplemented locally rather than imported.
+    fn shared_gh_script() -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        const SCRIPT: &str = "#!/bin/sh\n\
+dir=$(dirname \"$0\")\n\
+if [ -f \"$dir/hold\" ]; then sleep 3600; fi\n\
+if [ -f \"$dir/stderr\" ]; then cat \"$dir/stderr\" 1>&2; fi\n\
+exit \"$(cat \"$dir/exit\")\"\n";
+        let dir = std::env::temp_dir().join("ariadne-forge-mod-test-scripts");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("gh-stub");
+        if !path.exists() {
+            // Tests run in processes of their own: write aside and rename,
+            // so no test ever launches a file another test is still
+            // writing.
+            let partial = dir.join(format!("gh-stub.{}", std::process::id()));
+            std::fs::write(&partial, SCRIPT).unwrap();
+            std::fs::set_permissions(&partial, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::fs::rename(&partial, &path).unwrap();
+        }
+        path
+    }
+
+    /// A `gh` link to the one shared script, reading `stderr` and `exit`
+    /// from the per-test directory it was given, so
+    /// [`ForgeClient::confirmed_signed_out`] can be driven through a real
+    /// process without a real forge.
     fn fake_gh(dir: &std::path::Path, stderr: &str, exit: i32) -> String {
-        let path = dir.join("gh");
-        std::fs::write(
-            &path,
-            format!("#!/bin/sh\nprintf '%s' {stderr:?} 1>&2\nexit {exit}\n"),
-        )
-        .unwrap();
-        std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755))
-            .unwrap();
-        path.display().to_string()
+        std::fs::write(dir.join("stderr"), stderr).unwrap();
+        std::fs::write(dir.join("exit"), exit.to_string()).unwrap();
+        let link = dir.join("gh");
+        std::os::unix::fs::symlink(shared_gh_script(), &link).unwrap();
+        link.display().to_string()
+    }
+
+    /// A `gh` link to the shared script that holds every call open well
+    /// past any deadline a test gives it, so a real timeout is actually
+    /// exercised rather than a `/bin/sleep` that errors out immediately on
+    /// `api user`'s own arguments.
+    fn fake_gh_held(dir: &std::path::Path) -> String {
+        std::fs::write(dir.join("hold"), "").unwrap();
+        let link = dir.join("gh");
+        std::os::unix::fs::symlink(shared_gh_script(), &link).unwrap();
+        link.display().to_string()
     }
 
     fn github_client(binary: &str) -> ForgeClient {
@@ -820,6 +873,21 @@ mod tests {
             1,
         ));
         assert!(client.confirmed_signed_out("github.com").await);
+    }
+
+    /// GitHub answers `HTTP 403` for primary and secondary rate limiting
+    /// too, with otherwise valid credentials — a rate-limited `api user`
+    /// read is no proof of sign-out, and raising `access` for it would be
+    /// a false sign-in action over a retryable condition.
+    #[tokio::test]
+    async fn confirmed_signed_out_is_false_on_a_rate_limited_403() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = github_client(&fake_gh(
+            dir.path(),
+            "gh: API rate limit exceeded for user ID 1. (HTTP 403)",
+            1,
+        ));
+        assert!(!client.confirmed_signed_out("github.com").await);
     }
 
     /// A server error of the forge's own, with no `401`/`403` in it, is
@@ -852,11 +920,15 @@ mod tests {
 
     /// A timeout is the check never actually running at all —
     /// [`Refusal::ran`] reads `false` — which answers nothing about the
-    /// credentials either way.
+    /// credentials either way. Held open by the shared stub's own `hold`
+    /// file until the deadline, rather than `/bin/sleep` given `api user
+    /// --hostname <host>`, which exits immediately on its own usage error
+    /// and so never actually exercises the deadline at all.
     #[tokio::test]
     async fn confirmed_signed_out_is_false_on_a_timeout() {
+        let dir = tempfile::tempdir().unwrap();
         let client = ForgeClient::Github(github::Github::new(Cli {
-            configured: Some("/bin/sleep".into()),
+            configured: Some(fake_gh_held(dir.path())),
             program: "gh",
             timeout: Duration::from_millis(200),
         }));
