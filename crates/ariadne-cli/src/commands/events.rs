@@ -15,9 +15,10 @@
 
 use anyhow::Result;
 use serde::Serialize;
+use std::collections::HashMap;
 
 use ariadne_api::Page;
-use ariadne_api::events::{AgentEventSummaryDto, EventListQuery, EventOrder};
+use ariadne_api::events::{AgentEventDto, AgentEventSummaryDto, EventListQuery, EventOrder};
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::stream::{
     DeletedDto, DomainEvent, EventStreamQuery, TaskBranchDto, TaskUpdatedDto,
@@ -263,19 +264,29 @@ fn snapshot_path(filters: &Filters) -> Result<String> {
 /// A descending page as the lines it is printed as: turned back into the
 /// order time runs in, since the tail that follows it runs that way too and
 /// the two halves are one list.
-fn snapshot_lines(events: &[AgentEventSummaryDto], filters: &Filters) -> Vec<Line> {
+fn snapshot_lines(events: &[AgentEventDto], filters: &Filters) -> Vec<Line> {
+    let mut open = HashMap::new();
     events
         .iter()
         .rev()
-        .map(agent_line)
+        .map(|event| {
+            let opener = (event.kind == "post_tool_use")
+                .then(|| open.remove(&call_id(event)))
+                .flatten();
+            let line = agent_line(event, opener);
+            if event.kind == "pre_tool_use" {
+                open.insert(call_id(event), event);
+            }
+            line
+        })
         .filter(|line| filters.keeps(line))
         .collect()
 }
 
 /// The recorded events, filtered as asked. The listing answers each with its
-/// payload, which is read past here: a line has no use for it.
+/// payload, which supplies a tool call's detail and pairs its result to it.
 async fn snapshot(client: &Client, filters: &Filters) -> Result<Vec<Line>> {
-    let events: Vec<AgentEventSummaryDto> = client.get_json(&snapshot_path(filters)?).await?;
+    let events: Vec<AgentEventDto> = client.get_json(&snapshot_path(filters)?).await?;
     Ok(snapshot_lines(&events, filters))
 }
 
@@ -311,9 +322,26 @@ fn domain_event(frame: &SseEvent) -> Option<DomainEvent> {
     serde_json::from_value(serde_json::json!({"event": frame.event, "data": data})).ok()
 }
 
-/// One recorded agent event as a line: its own kind, the session that
-/// reported it, and the daemon's own gist of its payload beside it.
-fn agent_line(e: &AgentEventSummaryDto) -> Line {
+/// One recorded agent event as a line, with the opener of a completed tool
+/// call where that opener is on the page.
+fn agent_line(e: &AgentEventDto, opener: Option<&AgentEventDto>) -> Line {
+    Line {
+        at: e.created_at.clone(),
+        kind: e.kind.clone(),
+        subject: e
+            .session_id
+            .clone()
+            .or_else(|| e.task_id.clone())
+            .unwrap_or_else(|| "-".into()),
+        detail: agent_detail(e, opener),
+        session: e.session_id.clone(),
+        status: None,
+    }
+}
+
+/// An agent event in the domain stream omits its payload, so its daemon
+/// summary remains its only detail.
+fn agent_summary_line(e: &AgentEventSummaryDto) -> Line {
     Line {
         at: e.created_at.clone(),
         kind: e.kind.clone(),
@@ -326,6 +354,108 @@ fn agent_line(e: &AgentEventSummaryDto) -> Line {
         session: e.session_id.clone(),
         status: None,
     }
+}
+
+/// The tool call tells a reader more than an empty summary can. A result gets
+/// its input from the opener, since the daemon removes it from the result.
+fn agent_detail(event: &AgentEventDto, opener: Option<&AgentEventDto>) -> String {
+    if event.kind == "post_tool_use" {
+        return opener
+            .and_then(|opener| tool_detail(&opener.payload))
+            .or_else(|| tool_detail(&event.payload))
+            .unwrap_or_else(|| {
+                let call_id = call_id(event);
+                if event.summary != call_id {
+                    event.summary.clone()
+                } else {
+                    String::new()
+                }
+            });
+    }
+
+    if event.summary.is_empty() || event.summary == "…" {
+        return tool_detail(&event.payload).unwrap_or_else(|| event.summary.clone());
+    }
+    event.summary.clone()
+}
+
+/// The same tool name and first-argument order as the desktop activity feed.
+fn tool_detail(payload: &serde_json::Value) -> Option<String> {
+    let record = payload.as_object()?;
+    let call_id = tool_call_id(payload);
+    let acp = record.get("acp").and_then(serde_json::Value::as_object);
+    let tool = string_field(record, "tool_name")
+        .or_else(|| string_field(record, "command"))
+        .filter(|name| Some(*name) != call_id)
+        .or_else(|| {
+            acp.and_then(|acp| {
+                acp.get("_meta")
+                    .and_then(serde_json::Value::as_object)
+                    .and_then(|meta| meta.get("claudeCode"))
+                    .and_then(serde_json::Value::as_object)
+                    .and_then(|claude| string_field(claude, "toolName"))
+            })
+        })
+        .or_else(|| acp.and_then(|acp| string_field(acp, "title")))
+        .or_else(|| acp.and_then(|acp| string_field(acp, "kind")))
+        .filter(|name| Some(*name) != call_id)?;
+    let argument = first_argument(record).or_else(|| {
+        acp.and_then(|acp| acp.get("rawInput"))
+            .and_then(first_argument_value)
+    });
+    Some(match argument {
+        Some(argument) => format!("{tool} {argument}"),
+        None => tool.to_owned(),
+    })
+}
+
+/// The stable identity of an ACP call, with the tool name for older events
+/// that do not carry one.
+fn call_id(event: &AgentEventDto) -> String {
+    tool_call_id(&event.payload)
+        .or_else(|| {
+            event
+                .payload
+                .get("tool_name")
+                .and_then(serde_json::Value::as_str)
+        })
+        .unwrap_or_default()
+        .to_owned()
+}
+
+fn tool_call_id(payload: &serde_json::Value) -> Option<&str> {
+    payload
+        .pointer("/acp/toolCallId")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            payload
+                .get("tool_call_id")
+                .and_then(serde_json::Value::as_str)
+        })
+}
+
+fn string_field<'a>(
+    record: &'a serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Option<&'a str> {
+    record.get(key).and_then(serde_json::Value::as_str)
+}
+
+fn first_argument(record: &serde_json::Map<String, serde_json::Value>) -> Option<&str> {
+    ["file_path", "path", "pattern"]
+        .into_iter()
+        .find_map(|key| string_field(record, key))
+        .or_else(|| record.get("tool_input").and_then(first_argument_value))
+}
+
+fn first_argument_value(value: &serde_json::Value) -> Option<&str> {
+    value.as_str().or_else(|| {
+        let record = value.as_object()?;
+        ["file_path", "path", "pattern"]
+            .into_iter()
+            .find_map(|key| string_field(record, key))
+            .or_else(|| record.values().find_map(serde_json::Value::as_str))
+    })
 }
 
 /// One domain event as a line.
@@ -384,7 +514,7 @@ fn domain_line(event: &DomainEvent) -> Line {
             status: None,
         },
         DomainEvent::SessionCreated(s) | DomainEvent::SessionUpdated(s) => session_line(kind, s),
-        DomainEvent::AgentEvent(e) => agent_line(e),
+        DomainEvent::AgentEvent(e) => agent_summary_line(e),
         DomainEvent::SkillCreated(k) | DomainEvent::SkillUpdated(k) => Line {
             at: now(),
             kind,
@@ -768,7 +898,7 @@ mod tests {
             "kind": "stop", "payload": {"cwd": "/tmp/wt"},
             "summary": "ran cargo nextest run", "created_at": "2026-08-18T11:00:00Z"
         }]"#;
-        let listed: Vec<AgentEventSummaryDto> = serde_json::from_str(listed).unwrap();
+        let listed: Vec<AgentEventDto> = serde_json::from_str(listed).unwrap();
         let none = Filters {
             goal: None,
             task: None,
@@ -792,6 +922,87 @@ mod tests {
             [expected]
         );
         assert_eq!(live.iter().map(rendered).collect::<Vec<_>>(), [expected]);
+    }
+
+    #[test]
+    fn a_tool_call_without_a_summary_names_its_first_argument() {
+        let event: AgentEventDto = serde_json::from_value(serde_json::json!({
+            "id": "01EV", "session_id": "01SESS", "task_id": "01TASK",
+            "kind": "pre_tool_use", "summary": "", "created_at": AT,
+            "payload": {"tool_name": "Read", "tool_input": {"path": "/tmp/x.png"}},
+        }))
+        .unwrap();
+
+        assert_eq!(
+            rendered(&agent_line(&event, None)),
+            "<time> · pre_tool_use · 01SESS · Read /tmp/x.png"
+        );
+    }
+
+    #[test]
+    fn a_tool_result_uses_its_openers_name_and_first_argument() {
+        let events: Vec<AgentEventDto> = serde_json::from_value(serde_json::json!([
+            {
+                "id": "01POST", "session_id": "01SESS", "task_id": "01TASK",
+                "kind": "post_tool_use", "summary": "toolu_01Tyb", "created_at": AT,
+                "payload": {"tool_name": "toolu_01Tyb",
+                    "acp": {"toolCallId": "toolu_01Tyb", "status": "completed"}},
+            },
+            {
+                "id": "01PRE", "session_id": "01SESS", "task_id": "01TASK",
+                "kind": "pre_tool_use", "summary": "…", "created_at": AT,
+                "payload": {"tool_name": "Bash", "tool_input": {"command": "git status"},
+                    "acp": {"toolCallId": "toolu_01Tyb", "status": "pending"}},
+            },
+        ]))
+        .unwrap();
+        let filters = Filters {
+            goal: None,
+            task: None,
+            session: None,
+            kinds: vec![],
+        };
+
+        assert_eq!(
+            snapshot_lines(&events, &filters)
+                .iter()
+                .map(rendered)
+                .collect::<Vec<_>>(),
+            [
+                "<time> · pre_tool_use · 01SESS · Bash git status",
+                "<time> · post_tool_use · 01SESS · Bash git status",
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unpaired_tool_result_never_prints_its_call_id() {
+        let event: AgentEventDto = serde_json::from_value(serde_json::json!({
+            "id": "01POST", "session_id": "01SESS", "task_id": "01TASK",
+            "kind": "post_tool_use", "summary": "call_01Tyb", "created_at": AT,
+            "payload": {"tool_name": "call_01Tyb",
+                "acp": {"toolCallId": "call_01Tyb", "kind": "execute", "status": "completed"}},
+        }))
+        .unwrap();
+
+        let line = rendered(&agent_line(&event, None));
+        assert_eq!(line, "<time> · post_tool_use · 01SESS · execute");
+        assert!(!line.contains("call_01Tyb"), "{line}");
+    }
+
+    #[test]
+    fn an_agent_event_keeps_its_summary() {
+        let event: AgentEventDto = serde_json::from_value(serde_json::json!({
+            "id": "01EV", "session_id": "01SESS", "task_id": "01TASK",
+            "kind": "pre_tool_use", "summary": "read the image", "created_at": AT,
+            "payload": {"tool_name": "Read", "tool_input": {"path": "/tmp/x.png"}},
+        }))
+        .unwrap();
+
+        assert_eq!(
+            rendered(&agent_line(&event, None)),
+            "<time> · pre_tool_use · 01SESS · read the image"
+        );
     }
 
     /// A paragraph pasted into a description is still one line, cut in
@@ -873,12 +1084,13 @@ mod tests {
     }
 
     /// One recorded event, dated as the daemon dates it.
-    fn recorded(id: &str, at: &str) -> AgentEventSummaryDto {
-        AgentEventSummaryDto {
+    fn recorded(id: &str, at: &str) -> AgentEventDto {
+        AgentEventDto {
             id: id.into(),
             session_id: Some("01SESS".into()),
             task_id: Some("01TASK".into()),
             kind: "stop".into(),
+            payload: serde_json::json!({"cwd": "/tmp/wt"}),
             summary: "ran cargo nextest run".into(),
             created_at: at.into(),
         }

@@ -89,12 +89,15 @@ same binary also serves (013).
 11. `task history` is a table too: each row is one transition, `from` and
     `to` painted with the same status glyphs every other status cell carries.
 12. `ariadne events` prints one line per event, `time · kind · subject ·
-    detail`. An agent event's detail is the `summary` the daemon builds onto
-    its DTO (012), and a recorded event reads the same as a live one. The
+    detail`. An agent event's detail is the daemon's non-empty `summary`; a
+    recorded tool call with no summary names its tool and first argument, and
+    a recorded tool result reads its tool and argument from its matching
+    opener instead of its tool-use id. The
     snapshot it opens with is the 200 most recent recorded events, asked for
     newest first and printed oldest first, so `-f` goes on in the same
     direction. `--goal` narrows that snapshot at the daemon (012), like
     `--task` and `--session`.
+
 13. A failure prints `error: <sentence>` and nothing else: no `Caused by:`
    block, no transport detail, no repeated envelope. Attach failures keep
    recovery commands in the rendered hint on that same line. `--format json`
@@ -309,6 +312,11 @@ same binary also serves (013).
     `--attach`. It prints one styled mutation line, the request id with
     `-q`, and the DTO with `--format json`.
 
+## Known gap
+
+Live agent events contain no payload. `ariadne events -f` therefore cannot
+derive a tool detail when their summary is empty.
+
 ## Acceptance criteria
 
 - Each `ariadne stats <family> --format json` reads its route with the
@@ -381,11 +389,14 @@ same binary also serves (013).
   and the plain line protocol is unchanged behind it
   (`console.rs::a_console_renders_a_stub_agent_transcript_and_delivers_an_input_line`,
   `::a_permission_question_renders_and_delivers_the_selected_answer`).
-- `ariadne events` prints the daemon's summary in an agent event's detail and
-  spells the AI permission subject `ai permissions`
-  (`commands/events.rs::an_event_reads_as_time_kind_subject_and_detail`,
-  `::an_agent_event_reads_the_same_recorded_as_it_does_live`,
-  `::an_ai_permissions_event_names_its_subject`), and its
+- `ariadne events` derives a recorded tool call's detail from its tool and
+  first argument when the summary is empty, derives a tool result from its
+  opener, and preserves a non-empty summary
+  (`commands/events.rs::a_tool_call_without_a_summary_names_its_first_argument`,
+  `::a_tool_result_uses_its_openers_name_and_first_argument`,
+  `::an_unpaired_tool_result_never_prints_its_call_id`,
+  `::an_agent_event_keeps_its_summary`). It spells the AI permission subject
+  `ai permissions` (`::an_ai_permissions_event_names_its_subject`), and its
   snapshot is the newest page of the listing, printed oldest first
   (`::the_snapshot_asks_for_the_newest_page_and_prints_it_oldest_first`).
 - `task history` paints `from` and `to`, and a row carries a dash for a
