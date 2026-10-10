@@ -581,6 +581,13 @@ Out: the daemon endpoints themselves (012).
 43. A session of seat `agent` is named by the column its agent staffs: its
     badge on the sessions screen, the attention list and the palette. The
     sessions screen's role filter offers the seat.
+44. The task panel's sessions table names each row by the title of its
+    agent's workflow step, found through the task's own `agents` and the
+    goal's own `steps` rather than a daemon call: the staffed agent of
+    `task_agent_id`, its `step`, and that step's `title` — the id itself
+    where the workflow no longer names one. A row with no staffed agent
+    shows no step. The goal panel's sessions table and the Sessions screen
+    are unchanged.
 
 - Goal details float over the board without a modal dialog, and a click on
   the scrim closes them
@@ -1151,6 +1158,16 @@ Out: the daemon endpoints themselves (012).
   mark alone in the rail, next to the status dot`,
   `ui/src/components/connection-status.test.tsx::shows the dot alone in the
   rail, named by a tooltip instead of a label`).
+- The task panel's sessions table names a row by its agent's workflow step
+  title, falls back to the step id where the workflow no longer names one,
+  and names nothing for a row with no staffed agent
+  (`ui/src/features/tasks/task-sessions.test.tsx::names a session row by the
+  title of its agent's workflow step`, `::names no step for a session with
+  no staffed agent`, `::falls back to the step id where the workflow no
+  longer names its title`,
+  `ui/src/features/sessions/sessions-list.test.tsx::names a row by its
+  workflow step where the caller gives one, and names none where it gives
+  none`).
 
 ## Sources
 
