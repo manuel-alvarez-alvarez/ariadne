@@ -126,20 +126,27 @@ fn write_script(path: &Path, script: &Value) {
 /// run under. `$0` is the link, not the shared file.
 const LAUNCHER: &str = "#!/bin/sh\n\
 dir=$(dirname \"$0\")\n\
-exec python3 \"$dir/forge-stub.py\" \"$dir\" \"$(basename \"$0\")\" \"$@\"\n";
+parent=$PPID\n\
+exec python3 \"$dir/forge-stub.py\" \"$parent\" \"$dir\" \"$(basename \"$0\")\" \"$@\"\n";
 
 const STUB: &str = r#"#!/usr/bin/env python3
-import json, os, sys, threading, time
+import json, os, subprocess, sys, threading, time
 
-parent = os.getppid()
+parent = int(sys.argv[1])
+def parent_alive():
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(parent)],
+                           capture_output=True, text=True).stdout.strip()
+    return bool(state) and not state.startswith("Z")
 def orphaned():
     # Ends with the test process, however that one ends.
-    while os.getppid() == parent:
+    while parent_alive():
         time.sleep(0.2)
     os._exit(0)
 threading.Thread(target=orphaned, daemon=True).start()
 
-dir, program, args = sys.argv[1], sys.argv[2], sys.argv[3:]
+if not parent_alive():
+    os._exit(0)
+dir, program, args = sys.argv[2], sys.argv[3], sys.argv[4:]
 with open(os.path.join(dir, "forge-pid"), "w") as f:
     f.write(str(os.getpid()))
 call = {"program": program, "args": args}
