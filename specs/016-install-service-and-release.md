@@ -1,9 +1,9 @@
 ---
 id: install-service-and-release
 status: current
-updated: 2026-10-03
+updated: 2026-10-10
 areas: [daemon, install, scripts, store]
-commits: [affda30b, 7ac6b2e3, 60905e41, b0ab8333, 1bbd6251, 03f9c8b7]
+commits: [affda30b, 7ac6b2e3, 60905e41, b0ab8333, 1bbd6251, d5d971a5, 03f9c8b7]
 tests:
   - crates/ariadne-daemon/src/resource.rs
   - crates/ariadne-store/tests/store.rs
@@ -104,13 +104,10 @@ Out: what the daemon does once running (009, 012).
   `::a_reopen_reseeds_no_row_the_database_already_holds`). No agent flags
   are seeded: an agent nobody set flags for is listed and launched with none
   (007, `agents.rs::every_registry_agent_is_listed_with_its_flags_and_its_defaults`).
-- The installer fails late and unprompted on an unsupported OS, showing the log
-  tail (`scripts/install.sh`, covered by
-  `fix(scripts): keep --purge unprompted and fail late on an unsupported OS`,
-  `fix(scripts): show the log tail when an unsupported OS fails the service step`).
 - A source build installs the binaries cargo wrote, under `CARGO_TARGET_DIR`
-  as much as under `target/` (`scripts/install.sh`, covered by
-  `fix(install): install the binaries cargo actually built`).
+  as much as under `target/`
+  (`scripts/tests/install-linux.sh`: `source`, which exports
+  `CARGO_TARGET_DIR` and has its fake `cargo` write there).
 - Daemon startup raises a low soft open-file limit
   (`resource.rs::daemon_start_raises_its_soft_open_file_limit`), and both
   installed service definitions set the same limit
@@ -123,6 +120,12 @@ built-in advice is to delete it. That is cheap for a fresh install and
 expensive for a machine holding real goal history. The alternatives — adding a
 successor migration rather than editing `0001`, or teaching `doctor` to repair
 the checksum in place — are not implemented.
+
+The installer fails late and unprompted on an unsupported OS, showing the log
+tail. No script test covers that path; it is proven only by the commits that
+fixed it (`fix(scripts): keep --purge unprompted and fail late on an
+unsupported OS`, `fix(scripts): show the log tail when an unsupported OS
+fails the service step`).
 
 ## Sources
 

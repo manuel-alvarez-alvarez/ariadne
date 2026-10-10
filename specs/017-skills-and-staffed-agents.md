@@ -1,14 +1,14 @@
 ---
 id: skills-and-staffed-agents
 status: current
-updated: 2026-10-09
+updated: 2026-10-10
 areas: [store, api, cli, ui, daemon, prompts]
 commits: [03f9c8b7, 29e6d84e]
 tests:
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-store/src/defaults.rs
   - crates/ariadne-daemon/tests/it/skill_documents.rs
-  - crates/ariadne-daemon/tests/it/adapters.rs
+  - crates/ariadne-daemon/tests/it/workflow_steps.rs
   - crates/ariadne-daemon/tests/it/prompts.rs
   - crates/ariadne-daemon/tests/it/workflow_pull_request.rs
   - crates/ariadne-daemon/tests/it/pull_request_reviews.rs

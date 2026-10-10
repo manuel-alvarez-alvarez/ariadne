@@ -1,9 +1,9 @@
 ---
 id: acp-runtime
 status: current
-updated: 2026-10-09
+updated: 2026-10-10
 areas: [daemon]
-commits: []
+commits: [8163676d, e078d730, c47870a8, b8cfd6bb, 21a4d426, 90f6a584, 354c0aaa, 04dd0fed, 47b8acdf, efb3e62a, 7b19d49a, b2c18f4f, 87db0081]
 tests:
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
   - crates/ariadne-daemon/tests/it/acp_console.rs
@@ -11,6 +11,10 @@ tests:
   - crates/ariadne-daemon/src/acp.rs
   - crates/ariadne-daemon/tests/it/transcript_usage.rs
   - crates/ariadne-daemon/tests/it/auto_switch.rs
+  - crates/ariadne-daemon/tests/it/ai_permissions_decisions.rs
+  - crates/ariadne-daemon/tests/it/switch.rs
+  - crates/ariadne-daemon/src/learned_key.rs
+  - crates/ariadne-store/tests/store.rs
 ---
 
 # ACP runtime
@@ -445,7 +449,7 @@ not reject the agent or discard its catalog.
   console
   (`ai_permissions_decisions.rs::a_confident_allow_runs_at_once_and_reports_ai`,
   `::an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval`,
-  `::a_review_answer_waits_for_the_console`), and the model reads the raw
+  `::a_deny_without_a_rejecting_option_waits_for_the_console`), and the model reads the raw
   input (`::the_model_receives_the_raw_input_and_not_the_learned_key`).
 - Console input reaches the agent and queues behind a running turn
   (`acp_console.rs::posted_input_reaches_the_agent_and_queues_behind_a_running_turn`).
@@ -468,7 +472,7 @@ not reject the agent or discard its catalog.
   and an agent that dies mid-turn keeps the run it was writing
   (`acp_runtime.rs::an_agent_that_dies_mid_turn_keeps_the_text_it_was_writing`);
   neither `GET /v1/events` nor `/v1/events/stream` carries a chunk
-  (`::the_events_listing_and_the_domain_stream_carry_no_chunk`).
+  (`acp_console.rs::the_events_listing_and_the_domain_stream_carry_no_chunk`).
 - `post_tool_use` stores its output once, keeps the opening input on
   `pre_tool_use`, and is smaller than its uncompact form
   (`acp_console.rs::post_tool_use_stores_text_once_and_keeps_the_opening_input`).

@@ -3,7 +3,7 @@ id: desktop-app
 status: current
 updated: 2026-10-10
 areas: [ui]
-commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, ced9f4f8, c11241f3]
+commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
   - ui/src/features/**/*.test.tsx
   - ui/src/features/**/*.test.ts
@@ -182,10 +182,10 @@ Out: the daemon endpoints themselves (012).
     verified there, not only in a browser.
 12. The app is checked by `npm test`, `npm run typecheck`, `npm run lint` and
     `npm run check:unused` before a commit.
-13. A goal, task author and task reviewer each name a concrete
-    `<agent>:<model>` before their form can submit, where `<agent>` is a
-    registry agent id (011). An empty effort stays valid and uses that
-    model's default effort.
+13. A goal, and on a task of a goal a workflow runs each column's staffing
+    row, each name a concrete `<agent>:<model>` before their form can submit,
+    where `<agent>` is a registry agent id (011), and an empty effort stays
+    valid and uses that model's default effort.
 14. The model picker lists concrete catalog entries only, under one heading
     per registry agent, in the order the catalog first names each agent. No
     screen shows an automatic or default model; `auto` is an effort choice
@@ -198,8 +198,8 @@ Out: the daemon endpoints themselves (012).
     model the catalog does not list takes a free-text effort, as the daemon
     takes any effort that is not blank for such a model (011).
 17. The task form's skill boxes suggest only skills that can staff a task
-    agent; the orchestrator's own playbook is not among them, for the author
-    or a reviewer. The skills screen marks that playbook beside its built-in
+    agent; the orchestrator's own playbook is not among them, for any
+    column's agent. The skills screen marks that playbook beside its built-in
     mark, staying editable and resettable like any other shipped skill.
 18. The agent activity feed shows each event by its kind in plain words: Tool
     call, Tool result, Permission asked, Permission answered, Agent said, and
@@ -300,12 +300,7 @@ Out: the daemon endpoints themselves (012).
     lost panel. The goal, task and session panels open on a dense fact list
     above their tabs — `text-xs`, three columns at `sm` and four at `lg`, no
     card frame — rather than the framed grid further down an entity's own
-    screen. On a task staffed with several authors (004) the task panel shows
-    every one of them — its skills, its model, its own branch, and its status
-    in the pick: the votes it has so far, or "Picked" once it is the one that
-    won — and the reviewer pick itself: which author each reviewer chose. A
-    task with one author shows the singular Author fact and no pick,
-    unchanged.
+    screen; a stepped task's own Agents fact and step strip are rule 40's.
 21. Every session is shown in its console, as the CLI draws it: a terminal
     emulator (xterm.js) on the daemon's terminal socket
     (`GET /v1/sessions/{id}/console/terminal`, 008), in which the daemon
@@ -393,8 +388,7 @@ Out: the daemon endpoints themselves (012).
     `POST /v1/sessions/{id}/switch`. A refusal shows the daemon's message; a
     successor id replaces the open session while a same id leaves it selected.
     A switched session links to the session it continues
-    (`ui/src/features/sessions/session-actions.test.tsx`,
-    `ui/src/features/sessions/session-detail-view.test.tsx`).
+    (`ui/src/features/sessions/session-actions.test.tsx`).
 33. Beside each model's switch, a picker shows its `rank` from `GET
     /v1/models`: `frontier`, `balanced`, `fast`, `local`, or unranked where it
     is `null`. Picking one of the four, or Unranked to clear it, sends `PUT
@@ -468,10 +462,7 @@ Out: the daemon endpoints themselves (012).
     card that read installing reads ready`). The repository dialog's
     `PERMISSION_MODES` gains `ai`, and an `ai_disabled` refusal on it lands on
     the permission-mode field, naming the Permissions screen rather than the
-    daemon's own CLI-flavoured words
-    (`ui/src/features/repositories/repository-form-dialog.test.tsx::puts an
-    ai_disabled refusal on the permission mode field, pointing at the
-    Permissions screen`).
+    daemon's own CLI-flavoured words.
 35. The Permissions screen's Learned tab lists every learned approval
     (`GET /v1/permissions/learned`, filtered by `?repository=` when the URL
     carries one), its actions column pinned to the trailing edge the way
@@ -526,8 +517,8 @@ Out: the daemon endpoints themselves (012).
     one line`, `::shows every field, with the tool call, the options and a
     null output as JSON`, `::sends only scope when widening a row to all
     repositories`, `::toasts a scope refusal and restores the saved value`,
-    `::shows the output's label, both probabilities, danger, both thresholds
-    and the tags where the model was called`,
+    `::shows the output's label, both probabilities, danger, both thresholds,
+    the cap and the tags where the model was called`,
     `ui/src/events/dispatch.test.ts::patches created and updated details and
     refetches lists`).
 36. The AI tab's card carries a "Test a request" button in its header button
@@ -638,16 +629,16 @@ Out: the daemon endpoints themselves (012).
     fact lists one row per column — the column, the skills, the pin and a
     link to its live session — and no author or reviewer fact. The history
     names a step move by its `from_step` and `to_step` columns.
-41. The task form on a stepped goal shows one row per column, prefilled with
-    the column's skills, with the column's preferred rank beside the pin
-    picker. It sends `agents`, seat `agent` and the column's `step` each, on
-    create and on edit, where an edit replaces the whole list. A goal with no
-    steps keeps the author and reviewer rows.
+41. The task form shows one row per column of the goal's workflow, prefilled
+    with the column's skills, with the column's preferred rank beside the pin
+    picker, and sends `agents`, seat `agent` and the column's `step` each, on
+    create and on edit, where an edit replaces the whole list; a goal with no
+    steps gets no staffing row at all.
 42. The goal dialog has a workflow picker over the catalog, defaulted to the
     first picked repository's `default_workflow`, and sends `workflow` in
-    place of a landing; it has no landing select. The repository dialog has a
-    default workflow picker and sends `default_workflow` — an empty string
-    clears it on edit — and has no default landing select.
+    place of a landing, or nothing where none is picked; it has no landing
+    select. The repository dialog requires a default workflow — refusing to
+    register or save without one picked — and has no default landing select.
 43. A session of seat `agent` is named by the column its agent staffs: its
     badge on the sessions screen, the attention list and the palette. The
     sessions screen's role filter offers the seat.
@@ -659,12 +650,13 @@ Out: the daemon endpoints themselves (012).
     shows no step. The goal panel's sessions table and the Sessions screen
     are unchanged.
 
-- Goal details float over the board without a modal dialog, and a click on
-  the scrim closes them
+## Acceptance criteria
+
+- Goal details float over the board without a modal dialog, a click on the
+  scrim closes them, and another `?goal=` swaps the open goal for that goal
+  in the one pane
   (`ui/src/components/detail-panels.test.tsx::floats a goal over the board, and a click on its scrim closes the goal`,
-  `ui/src/features/goals/goal-panel.test.tsx::renders a goal without a modal dialog`).
-- Another `?goal=` swaps the open goal for that goal in the one pane
-  (`ui/src/components/detail-panels.test.tsx::swaps the open goal for another goal the URL names`).
+  `::swaps the open goal for another goal the URL names`).
 - An open goal leaves `<main>` alone in the shell's row, at its full width
   (`ui/src/components/app-shell.test.tsx::keeps the screen at full width behind an open goal`).
 - A click on the scrim closes the pane through the same close as the close
@@ -674,40 +666,16 @@ Out: the daemon endpoints themselves (012).
   stays in the pane
   (`ui/src/components/panel-sheet.test.tsx::puts the close button first in the pane's tab order`,
   `::keeps Tab inside the pane while it is open`).
-- A task opened from a goal replaces it, mounting only the task's panel, and
-  closes outright on Escape rather than falling back to the goal — even from
-  a URL that names both
-  (`ui/src/features/tasks/task-panel.test.tsx::replaces the goal with the task it opens, mounting only the one panel`,
-  `::closes the pane outright on Escape, rather than falling back to the goal`,
-  `ui/src/components/detail-panels.test.tsx::unmounts the goal outright once a task replaces it, and focuses the task`).
-- The task panel's breadcrumb opens its goal in the pane's place
-  (`ui/src/features/tasks/task-panel.test.tsx::opens the goal from the task's breadcrumb, replacing the task in the pane`,
-  `ui/src/components/detail-panels.test.tsx::gives the task panel's breadcrumb the app's own focus ring, once the task names its goal`).
-- The goal, the task and the session panel each open on the shared header's
-  rows in order, with a title that truncates rather than wraps and carries
-  the full text as its `title` attribute
-  (`ui/src/features/goals/goal-panel.test.tsx::opens on the shared header: a truncating title, then status, id and stamps`,
-  `ui/src/features/tasks/task-panel.test.tsx::opens on the shared header: a breadcrumb, a truncating title, then status, id and stamps`,
-  `ui/src/features/sessions/session-panel.test.tsx::opens on the shared header: a truncating title, then status, id and stamps`).
-- A session drilled into from a goal's or a task's own panel shows a
-  breadcrumb back to it, and no "Back to …" button
-  (`ui/src/features/goals/goal-panel.test.tsx::drills into a session with a breadcrumb back to the goal, and no Back button`,
-  `ui/src/features/tasks/task-panel.test.tsx::drills into a session with a breadcrumb back to the task, and no Back button`).
-- The session view renders no `h1` of its own, the shared header above it
-  carrying the heading instead
-  (`ui/src/features/sessions/session-detail-view.test.tsx::renders no h1 of its own, since the shared header above it carries the heading`).
-- A goal panel with cached data and a failed refetch keeps showing that goal,
-  under one title, with one inline notice above it
-  (`ui/src/features/goals/goal-panel.test.tsx::keeps the cached goal on a failed refetch, with one title and one notice`).
-- The goal panel's and the task panel's loading and error states render
-  inside the pane's scrolling body
-  (`ui/src/features/goals/goal-panel.test.tsx::renders the loading state inside the pane's scrolling body`,
-  `::renders the goal's load failure inside the pane's scrolling body`,
-  `ui/src/features/tasks/task-panel.test.tsx::renders the loading state inside the pane's scrolling body`,
-  `::renders the task's load failure inside the pane's scrolling body`).
-- Closing a task opened straight from the board returns focus to the card
-  that opened it, same as any other panel
-  (`ui/src/features/tasks/task-panel.test.tsx::closes to an empty pane and returns focus to the board card that opened it`).
+- A task opened from a goal replaces the goal's own session view entirely,
+  mounting only the task's panel, and Escape empties the pane rather than
+  falling back to the goal it replaced
+  (`ui/src/components/detail-panels.test.tsx::replaces a goal's own session view with the task it names, and Escape empties the pane rather than returning to it`,
+  `::unmounts the goal outright once a task replaces it, and focuses the task`).
+- The task panel's breadcrumb to its goal wears the app's own focus ring and
+  is the pane's first focused control once the task names its goal
+  (`ui/src/components/detail-panels.test.tsx::gives the task panel's breadcrumb the app's own focus ring, once the task names its goal`).
+- Closing a panel returns focus to the board link or card that opened it
+  (`ui/src/components/panel-sheet.test.tsx::leaves Escape on the board alone and returns focus when the pane closes`).
 - Opening a goal from the board and then its task keeps focus inside the new pane
   (`ui/src/components/pane-focus.test.tsx::keeps focus in the task pane after opening a goal from the board`).
 - Closing a replacement task or returning through its goal breadcrumb preserves the first board opener
@@ -741,45 +709,36 @@ Out: the daemon endpoints themselves (012).
 - Closing an expanded pane returns focus to the board opener, the same as a
   docked one
   (`ui/src/components/pane-focus.test.tsx::returns focus to the board opener after closing an expanded pane`).
-- The console fills the remaining pane height in a standalone session and a goal drill-down
-  (`ui/src/features/sessions/session-panel.test.tsx::keeps the console inside the remaining pane height`,
-  `ui/src/features/goals/goal-panel.test.tsx::drills into a session with a breadcrumb back to the goal, and no Back button`).
-- A console modal handles Escape without closing the surrounding pane
-  (`ui/src/features/sessions/session-panel.test.tsx::keeps modal Escape separate from the pane close`).
 - The Stats screen renders its five sections in order, and asks every family
   with the filters in its URL under the key `qk` names
   (`ui/src/routes/stats.test.tsx::renders the five sections in order, under
   one heading style`, `::asks every family with the filters in its URL,
   under the key qk names`); it leads with the key figures and lays the
   sections out as a card grid (`::leads with the key figures, read off the
-  work, spend and models answers`, `::lays Models across the full width, and
+  work, spend and attention answers`, `::lays Models across the full width, and
   the other four out as a two-column card grid`); a
-  task or a session update invalidates the stats
-  (`ui/src/events/dispatch.test.ts::refetches every stat when a task or a
-  session moves, since either may be a fact`); Stats is the last entry of the
+  task, a session or a goal update invalidates the stats
+  (`ui/src/events/dispatch.test.ts::refetches every stat when a task, a
+  session or a goal moves, since any may be a fact`); Stats is the last entry of the
   sidebar (`ui/src/components/app-shell.test.tsx::ends the navigation with
-  stats, right after repositories and permissions`).
-- Every figure on the Stats screen explains itself on hover and on keyboard
-  focus, as its accessible description (023)
+  stats, and lists Forge beside the other screens`).
+- Every key figure on the Stats screen, and every tile and chart series of its
+  own Work, Time, Spend and Attention sections, explains itself on hover and
+  on keyboard focus, as its accessible description (023)
   (`ui/src/components/stats/stat-explain.test.tsx`,
-  `ui/src/routes/stats.test.tsx::explains every key figure, on hover`, and
-  each section's own `::explains every tile and every chart series, on
-  hover` / `::explains every column of every seat table, on hover`).
-- 70 test files cover the features, the API layer and the event stream; each
-  screen's behaviour is asserted in its own `*.test.tsx` beside it.
-- A task staffed with several authors shows each one's branch and its own
-  vote count, marks the one the reviewers picked, and lists what each
-  reviewer chose; a one-author task renders as before
-  (`ui/src/features/tasks/task-panel.test.tsx::shows every author's own
-  branch, marking only the one the reviewers picked`,
-  `::shows an author's own vote count before the pick settles`,
-  `::lists what each reviewer picked, oldest first`,
-  `::keeps the singular Author fact and shows no pick on a one-author task`)
-  — parity with `ariadne task inspect`'s own author and picks lines (004).
+  `ui/src/routes/stats.test.tsx::explains every key figure, on hover`,
+  `ui/src/components/stats/work-section.test.tsx::explains every tile and
+  every chart series, on hover`, and the same title in
+  `time-section.test.tsx`, `spend-section.test.tsx` and
+  `attention-section.test.tsx`).
+- 95 test files cover the features, the API layer and the event stream;
+  most screens are asserted in their own `*.test.tsx` beside them, though a
+  few (noted under Known gap) are exercised only through the panels and
+  boards that mount them.
 - The sidebar lists Repositories after Permissions and before Stats, and
   `#/repositories` mounts the repositories screen, while a screen the app
   dropped leads nowhere
-  (`ui/src/components/app-shell.test.tsx::ends the navigation with stats, right after repositories and permissions`,
+  (`ui/src/components/app-shell.test.tsx::ends the navigation with stats, and lists Forge beside the other screens`,
   `ui/src/routes/router.test.tsx::mounts the repositories screen at #/repositories`,
   `ui/src/routes/router.test.tsx::leads nowhere from a screen the app no longer has`).
 - The palette opens `#/repositories` on a picked repository
@@ -787,13 +746,6 @@ Out: the daemon endpoints themselves (012).
 - The task's Messages tab reads one oldest-first list, names both agents by
   their skills, shows its empty state, and refetches after `message_sent`
   (`ui/src/features/tasks/task-messages.test.tsx`).
-- Every judgement the orchestrator makes about a task can be made here too:
-  how a task ends
-  (`ui/src/features/tasks/task-form-dialog.test.tsx::sends the selected landing choice`),
-  who reviews it
-  (`ui/src/features/tasks/task-form-values.test.ts::replaces the whole reviewer list, each with its skills and its pin`),
-  and whether the goal is over
-  (`ui/src/features/goals/goal-actions.test.tsx::completing a goal`).
 - The agents screen gives every registry agent a tab, puts each model in the
   tab of the agent that runs it, counts each agent's catalog on its tab, and
   sends a flag edit to that agent's endpoint
@@ -833,10 +785,7 @@ Out: the daemon endpoints themselves (012).
   — the rule of 017 read from the client side.
 - The orchestrator's own playbook is marked beside the built-in mark
   (`ui/src/features/skills/skill-editor.test.tsx::marks the orchestrator's own
-  playbook as not a task staffing choice`) and left out of the task form's
-  skill suggestions, for the author and every reviewer
-  (`ui/src/features/tasks/task-form-dialog.test.tsx::suggests no
-  orchestrator-only skill for the author or a reviewer`).
+  playbook as not a task staffing choice`).
 - The skill editor's draft is never overwritten out from under a typing user:
   it follows the selected skill's document only while the draft still reads
   exactly what it was last set from, and holds its ground once it does not —
@@ -858,35 +807,33 @@ Out: the daemon endpoints themselves (012).
   editing`, `::discards the draft and switches, on Discard`, `::asks before
   Back leaves a dirty skill, too`, `::asks before a route to another screen
   leaves a dirty skill, too`, `::leaves a clean skill with no prompt`).
-- The repository dialog is a path, a base branch, a description, a
-  permission mode and a default workflow — not the default landing,
-  merge-strategy or landing-briefing fields that used to sit there
-  (`ui/src/features/repositories/repository-form-dialog.test.tsx::takes a
-  path, a base branch, a description, a permission mode and a default
-  workflow`).
-- The repository dialog sends the permission mode picked for a new
-  repository, starts an edit from the stored one, and the repositories
-  screen shows each one's
-  (`ui/src/features/repositories/repository-form-dialog.test.tsx::sends the permission mode picked for it`,
-  `::starts from the stored permission mode, and sends a new one`,
-  `ui/src/features/repositories/repositories-page.test.tsx::lists what the daemon holds, and says so where a description is missing`).
-- The repositories screen shows each repository's default workflow and opens
-  that workflow when its name is selected
-  (`ui/src/features/repositories/repositories-page.test.tsx::shows each repository workflow and opens its workflow`).
-- The attention strip holds a placeholder while its lists load and survives a
-  partial failure (`ui/src/features/goals/attention-strip.test.tsx`).
+- The repository dialog requires a default workflow, refusing to register
+  without one picked, and has no default landing, merge-strategy or
+  landing-briefing field
+  (`ui/src/features/repositories/repository-form-dialog.test.tsx::refuses to register without a workflow picked`).
+- The repositories screen lists what the daemon holds and says so where a
+  description is missing, and shows each repository's default workflow,
+  opening that workflow when its name is selected
+  (`ui/src/features/repositories/repositories-page.test.tsx::lists what the daemon holds, and says so where a description is missing`,
+  `::shows each repository workflow and opens its workflow`).
 - An attention toast opens the blocked session and finishes dismissal before
   the test removes its browser environment
   (`ui/src/features/goals/attention-alerts.test.tsx::raises one toast for an agent that gets stuck on another screen`).
 - Unused declared dependencies, exports only tests import, and orphan source files fail `npm run check:unused`.
-- The goal dialog and task dialog refuse a missing model and a pin that is
-  one half only
-  (`ui/src/features/goals/create-goal-dialog.test.tsx::refuses a model that names no agent, before the daemon is asked`,
-  `ui/src/features/tasks/task-form-dialog.test.tsx::disables create until the author and every reviewer have models`,
-  `::refuses a bare agent before it sends the task`).
+- The goal dialog offers a workflow picker and no landing select
+  (`ui/src/features/goals/create-goal-dialog.test.tsx::offers a workflow and no landing`),
+  and the task form renders one staffing row per workflow column, with none
+  for a goal with no workflow
+  (`ui/src/features/tasks/task-form-dialog.test.tsx::renders one staffing row for each workflow column`).
+- A model reference is refused unless it has text on both sides of exactly
+  one colon, which is what the goal dialog's and the task form's own model
+  fields both reuse
+  (`ui/src/features/models/model-ref.test.ts::refuses an empty model`,
+  `::refuses one half on its own by showing where the other goes`,
+  `::refuses a leading colon, which names no agent`,
+  `::refuses a trailing colon, which names no model`).
 - The picker lists only concrete model ids, grouped by agent
-  (`ui/src/features/models/pin-picker.test.tsx::offers only concrete catalog models, grouped by agent`,
-  `ui/src/features/goals/create-goal-dialog.test.tsx::offers the catalog whole, grouped by the agent each model runs on`).
+  (`ui/src/features/models/pin-picker.test.tsx::offers only concrete catalog models, grouped by agent`).
 - A pin is checked by its shape alone and split at its first `:`
   (`ui/src/features/models/model-ref.test.ts::takes any agent and any model, one colon apart`,
   `::refuses one half on its own by showing where the other goes`,
@@ -910,74 +857,13 @@ Out: the daemon endpoints themselves (012).
 - The agent activity feed shows the daemon's summary and opens and closes the
   raw payload under its row
   (`ui/src/features/sessions/session-activity.test.tsx`).
-- A session panel shows its reported context window with compact token
-  figures beside a meter of how much is used, and hides an unreported one
-  (`ui/src/features/sessions/session-detail-view.test.tsx::shows the reported context window with compact token figures`,
-  `::shows the context window behind a 4rem meter sized to how much of it is used`,
-  `::hides context when the agent has not reported a window`).
-- One table lists Ariadne sessions and outside sessions together, newest
-  activity first, and an outside row's empty status, goal and task, naming
-  its agent and its directory instead
-  (`ui/src/features/sessions/sessions-page.test.tsx::lists Ariadne sessions and outside sessions together, newest activity first`,
-  `::shows an outside row's empty status, goal and task, and names its agent and directory`).
-- The window control opens on the last 7 days asking the daemon for nothing
-  extra, sends a `since` 30 days back when that window is picked, and sends
-  `all=true` for all of it; an outside row shows its model and its tokens
-  once the daemon reports them, and neither, with no zero, until then
-  (`ui/src/features/sessions/sessions-page.test.tsx::opens the window picker on the last 7 days, asking the daemon for nothing extra`,
-  `::asks the daemon with a since bound 30 days back when that window is picked`,
-  `::asks the daemon for every outside conversation when All time is picked`,
-  `::shows an outside row's model and tokens once the daemon reports them`,
-  `::shows neither a model nor a token figure, and no zero, on an outside row without them`).
-- Every filter — kind, agent, status, seat, a day's activity window and a
-  search over the titles — reaches the daemon under its own name, on the
-  endpoint that takes it, and a day is sent as the moments that bound it, in
-  UTC
-  (`ui/src/features/sessions/sessions-page.test.tsx::sends each filter to the daemon under the name that filter has, on the endpoint that takes it`,
-  `::sends a day's activity window as the moments that bound it, in UTC`).
-- A preset activity window is sent as the day it starts on and named on its
-  trigger; Clear filters drops every filter of the bar at once, the search
-  field and the remembered status included, and keeps the scope
-  (`ui/src/features/sessions/sessions-page.test.tsx::sends a preset activity window as the day it starts on, and names it on the trigger`,
-  `::clears every filter of the bar at once, the search field included, and keeps the scope`).
-- A preset activity window is sent as the day it starts on and named on its
-  trigger; Clear filters drops every filter of the bar at once, the search
-  field and the remembered status included, and keeps the scope
-  (`ui/src/features/sessions/sessions-page.test.tsx::sends a preset activity window as the day it starts on, and names it on the trigger`,
-  `::clears every filter of the bar at once, the search field included, and keeps the scope`).
-- The outside half pages through `next_cursor`, keeping the Ariadne rows
-  already shown, and counts both halves together out of the total; Refresh
-  asks every outside agent again
-  (`ui/src/features/sessions/sessions-page.test.tsx::pages the outside half through next_cursor, keeping the Ariadne rows, and counts the total`,
-  `::asks every outside agent again when Refresh is pressed`).
-- Picking an Ariadne row opens its panel directly, asking the resume endpoint
-  for nothing; picking an outside row resumes it once, then opens the console
-  of the session the daemon answers
-  (`ui/src/features/sessions/sessions-page.test.tsx::opens an Ariadne row's own panel directly, asking the resume endpoint for nothing`,
-  `::resumes an outside row once, then opens the console of the session it answers`).
-- A keyboard user reaches an outside conversation row with Tab and opens it
-  with Enter or Space, showing a focus ring
-  (`ui/src/features/sessions/sessions-page.test.tsx::reaches an outside conversation row with Tab and opens it with Enter`,
-  `::reaches an outside conversation row with Tab and opens it with Space`).
-- Every row shows where its agent runs under its title, and a resumed outside
-  conversation is listed once, as the session that holds it, with its
-  directory; a created session refetches the outside half, an updated one
-  does not
-  (`ui/src/features/sessions/sessions-page.test.tsx::shows where a task's agent runs under its title, as it does for every row`,
-  `::shows the seat, the goal and the task of an Ariadne row together, in one Work column`,
-  `::narrows the table to a goal picked in the Work column, opening no panel`,
-  `::shows a resumed outside row once, as the session that holds it, with its directory`,
-  `ui/src/events/dispatch.test.ts::refetches the outside lists when a session is created, since it may hold one of their rows`,
+- `qk.outsideSessions` refetches on `session_created`, since a resume may
+  move one of its rows into the Ariadne half, and leaves it alone on
+  `session_updated`
+  (`ui/src/events/dispatch.test.ts::refetches the outside lists when a session is created, since it may hold one of their rows`,
   `::leaves the outside lists alone when a session only moves on`).
-- A goal chip narrows the screen and the daemon's own list alike, skips the
-  outside half, clears from the chip, and the status and seat filters are
-  what the screen is opened with next
-  (`ui/src/features/sessions/sessions-page.test.tsx::narrows to one goal from a scope chip, skipping the outside half, and clears it`,
-  `::comes back to the status and seat filters the screen was left with`).
 - The outside-sessions page, its route and the adoption dialog are gone
   (`ui/src/routes/router.test.tsx::leads nowhere from the outside-sessions screen the merge dropped`).
-- An unorchestrated goal names no orchestrator in its panel
-  (`ui/src/features/goals/goal-panel.test.tsx::says an unorchestrated goal has no orchestrator`).
 - The terminal pane sends its size before anything else, and nothing typed
   before the socket is open
   (`ui/src/features/sessions/session-terminal.test.tsx::sends its size before anything else`).
@@ -991,13 +877,10 @@ Out: the daemon endpoints themselves (012).
   `::collapses the modal console into the panel on a fresh socket`,
   `::keeps the modal open when focused Escape belongs to the console`,
   `::closes the modal when Escape occurs outside the console`,
-  `ui/src/features/sessions/session-panel.test.tsx::sends focused Escape to its console and keeps the panel open`,
   `ui/src/components/panel-sheet.test.tsx::leaves Escape on the board alone and returns focus when the pane closes`).
-- ⌘Escape leaves a focused console for the Close button around it in the
-  panel, or the Collapse button in the modal, sending nothing to the agent
-  and closing neither by itself
-  (`ui/src/features/sessions/session-panel.test.tsx::moves focus to the panel's close button on ⌘Escape, and sends nothing to the console`,
-  `ui/src/features/sessions/session-terminal.test.tsx::moves focus to Collapse on ⌘Escape, and sends nothing to the console`).
+- ⌘Escape leaves a focused console for the Collapse button in the modal,
+  sending nothing to the agent and closing neither by itself
+  (`ui/src/features/sessions/session-terminal.test.tsx::moves focus to Collapse on ⌘Escape, and sends nothing to the console`).
 - The bytes of a binary frame appear in the terminal
   (`ui/src/features/sessions/session-terminal.test.tsx::writes the bytes of a binary frame into the terminal`).
 - A key press is sent as a `key` message with its code and modifiers — a
@@ -1010,16 +893,6 @@ Out: the daemon endpoints themselves (012).
 - A close the daemon meant ends the console rather than retrying, says the
   session ended when the last status frame said so, and Reopen dials again
   (`ui/src/features/sessions/session-terminal.test.tsx::ends the console on a close the daemon meant, and a button opens another`).
-- A session's view opens on the console, keeps its tab in the URL, falls back
-  to the console for a foreign tab value, and opens a new socket on each
-  return to the console
-  (`ui/src/features/sessions/session-detail-view.test.tsx::opens on the console, with the activity feed a tab away`,
-  `::takes its tab from the URL, and puts a switch back into it`,
-  `::falls back to the console for a tab that is not one of its own`).
-- A session shows its pin whole
-  (`ui/src/features/sessions/session-detail-view.test.tsx::shows the model the session was launched with, once`).
-- A blocked agent's row opens its console focused
-  (`ui/src/features/goals/attention-strip.test.tsx::sends a blocked agent to its console, focused`).
 - The blocked banner says where to answer, says to resume an agent that is
   gone, and shows for no other reason
   (`ui/src/features/sessions/session-blocked-banner.test.tsx::says what a permission prompt is waiting for, and where to answer it`,
@@ -1037,18 +910,6 @@ Out: the daemon endpoints themselves (012).
   `::does nothing on ⌘K while a dialog is up`).
 - The cheat sheet lists ⌘Escape
   (`ui/src/components/keyboard-shortcuts-dialog.test.tsx::lists every chord, screen by screen`).
-- An agent's skills wrap onto as many lines as they need, clipping none of
-  them, with the model it runs on below them in muted text and no middot
-  before it; each skill still links to its skill and still shows its summary
-  on hover
-  (`ui/src/features/tasks/task-panel.test.tsx::shows the author's pin as it was staffed`,
-  `::shows each reviewer slot's own pin, in review order`,
-  `::wraps three skills, clipping none, even one with no hyphen to break on`,
-  `ui/src/features/sessions/session-detail-view.test.tsx::shows the model the session was launched with, once`).
-- A several-author task draws one block per author, with its skills, its
-  model, its own branch and its own pick status each on its own line, and a
-  clear gap between one author's block and the next
-  (`ui/src/features/tasks/task-panel.test.tsx::shows every author's own branch, marking only the one the reviewers picked`).
 - The Permissions screen's card renders the enabled switch, the model
   pickers, the two thresholds, Refresh and the status facts, and nothing about
   checkpoints or prompts
@@ -1162,65 +1023,18 @@ Out: the daemon endpoints themselves (012).
   that read `installing` reads `ready`
   (`ui/src/events/dispatch.test.ts::ai permissions events > replaces the
   cached status whole, so a card that read installing reads ready`).
-- The repository dialog offers `AI` among the permission modes and sends it
-  as `ai`, and an `ai_disabled` refusal lands on that field naming the
-  Permissions screen
-  (`ui/src/features/repositories/repository-form-dialog.test.tsx::offers AI
-  among the permission modes, and sends it as ai`,
-  `::puts an ai_disabled refusal on the permission mode field, pointing at
-  the Permissions screen`).
-- The repository dialog sends the default workflow picked for a new
-  repository, starts an edit from the stored one, and clears it with the
-  empty string
-  (`ui/src/features/repositories/repository-form-dialog.test.tsx::sends the
-  default workflow picked for it`,
-  `::starts from the stored default workflow, and sends a new one`,
-  `::clears the default workflow with the empty string the daemon spells it as`).
-- The goal dialog has no landing select; its workflow starts at the first
-  repository's own default, a pick by hand replaces it, and the workflow is
-  sent in place of a landing, or nothing where none is picked
-  (`ui/src/features/goals/create-goal-dialog.test.tsx::has no landing select`,
-  `::preselects the first picked repository's own default workflow`,
-  `::sends the preselected workflow and no landing`,
-  `::sends a workflow picked by hand instead of the repository's default`,
-  `::sends no workflow where none is picked`).
 - A lane of a stepped goal draws Pending, its columns and Done, and puts each
-  card in its step's column; a lane without steps draws the five columns
-  (`ui/src/features/goals/goal-swimlanes.test.tsx::draws each goal's own columns`,
-  `::draws the five columns for a goal from a daemon that sends no steps`).
-- A card whose status shows names the column of a stepped task in progress
-  (`ui/src/features/tasks/task-card.test.tsx::names the workflow column a stepped task is in where its status would say in progress`).
-- The task panel of a stepped task shows the step strip with the current
-  column highlighted and each column's description as its hint, one agent
-  per column with its session link, no author or reviewer, and step moves in
-  the history
-  (`ui/src/features/tasks/task-panel.test.tsx::shows a stepped task's columns as a strip, the current one highlighted`,
-  `::gives each segment of the strip its column's description as the hint`,
-  `::lists one agent per column, with its skills, its pin and a link to its session`,
-  `::says nothing of an author or a reviewer on a stepped task`,
-  `::draws no strip for a task with no workflow`,
-  `ui/src/features/tasks/task-history.test.tsx::names a step move by the columns it went between`).
-- The task form sends one agent per column with seat `agent`, prefilled with
-  the column's skills and showing its preferred rank, and an edit replaces
-  the whole list
-  (`ui/src/features/tasks/task-form-dialog.test.tsx::staffing a task on a goal a workflow runs`,
-  `ui/src/features/tasks/task-form-values.test.ts::a task on a goal a workflow runs`).
-- A session of seat `agent` is named by its column on the sessions screen, in
-  the attention list and in the palette, and the role filter offers the seat
-  (`ui/src/features/sessions/sessions-page.test.tsx::names a step agent's seat by the workflow column it staffs`,
-  `::offers the step agent's seat among the role filters`,
-  `ui/src/features/goals/attention.test.tsx::names a waiting step agent by the workflow column it staffs`,
-  `ui/src/features/command-palette/entries.test.ts::names a step agent's session after the workflow column it staffs`).
-- The goal panel's facts show the goal's landing, and name each repository by
-  its folder with its base branch bracketed after it and a feature-branch
-  goal's own branch after that once the plan has cut one — the full path
-  stays in a tooltip and stays copyable
-  (`ui/src/features/goals/goal-panel.test.tsx::shows the goal's landing
-  among its facts`,
-  `::names each repository by its folder, with its base branch bracketed and
-  its goal branch after`,
-  `::holds the full path of each repository in its tooltip, and keeps it
-  copyable`).
+  card in its step's column; a lane without steps draws Pending, In progress
+  and Done, with a task under way in the middle one
+  (`ui/src/features/goals/goal-swimlanes.test.tsx::draws each goal workflow columns`,
+  `::draws an in-progress task of a stepless goal in its own column`).
+- The task panel of a stepped task lists one agent per column
+  (`ui/src/features/tasks/task-panel.test.tsx::shows workflow agents by column`).
+- The task form maps one agent to every workflow column, prefilled with the
+  column's skills, and sends the complete staffing on create and on update
+  (`ui/src/features/tasks/task-form-values.test.ts::maps one workflow agent for every column`,
+  `::sends the complete workflow staffing on create and update`,
+  `ui/src/features/tasks/task-form-dialog.test.tsx::renders one staffing row for each workflow column`).
 - A screen's name appears once, as the header's only `h1`, with that screen's
   own actions at the header's end, and the shell renders no footer of its
   own — the sidebar's last child is the daemon connection status, whose click
@@ -1255,6 +1069,19 @@ Out: the daemon endpoints themselves (012).
   `ui/src/features/sessions/sessions-list.test.tsx::names a row by its
   workflow step where the caller gives one, and names none where it gives
   none`).
+
+## Known gap
+
+The goal panel, the session panel, the session detail view, the sessions
+screen, the task card, the task history list, the goal actions and the
+attention list (`goal-panel.tsx`, `session-panel.tsx`,
+`session-detail-view.tsx`, `sessions-page.tsx`, `task-card.tsx`,
+`task-history.tsx`, `goal-actions.tsx`, `attention.ts`) have no `*.test.tsx`
+or `*.test.ts` of their own: what they draw is exercised only incidentally,
+through `detail-panels.test.tsx`, `pane-focus.test.tsx` and
+`goal-swimlanes.test.tsx` mounting the screens that hold them. Rule 19's
+account of the sessions screen in particular rests on reading
+`sessions-page.tsx` rather than on a test asserting it.
 
 ## Sources
 

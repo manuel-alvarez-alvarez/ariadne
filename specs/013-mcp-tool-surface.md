@@ -1,7 +1,7 @@
 ---
 id: mcp-tool-surface
 status: current
-updated: 2026-10-09
+updated: 2026-10-10
 areas: [mcp, cli]
 commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -173,6 +173,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   and ask only where the task cannot go on without the answer
   (`::only_the_orchestrator_is_told_to_ask`), and no session is told of a
   conversation (`::no_session_is_told_of_a_conversation`).
+- Every session is told to load a deferred tool before it calls it
+  (`mcp.rs::every_session_is_told_to_load_a_deferred_tool_before_it_calls_it`).
 - The shared rules stay small (`mcp.rs::the_shared_rules_stay_small`).
 - Every text the server hands an agent — instructions and tool descriptions —
   is Simplified Technical English
@@ -204,11 +206,10 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   `::a_message_to_nobody_is_refused_with_the_addresses_that_would_work`).
 - A message body written as `message` is taken
   (`tools.rs::a_message_body_is_taken_as_message_too`).
-- Diff parsing ignores added source lines that resemble headers and keeps
-  quoted non-ASCII paths
-  (`index.rs::changed_lines_reads_plus_source_lines_and_non_ascii_paths`).
-- Path answers name hubs with more than 200 neighbors whose walk stopped
-  (`tools.rs::path_answers_one_line_per_hop_and_says_when_none`).
+- `send_message`'s description tells the sender to end its turn after a
+  question, not to poll `read_messages`, and that Ariadne delivers the
+  answer as a new turn
+  (`tools.rs::send_message_tells_agents_to_end_the_turn_after_a_question`).
 
 ## Sources
 

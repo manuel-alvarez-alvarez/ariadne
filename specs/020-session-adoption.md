@@ -1,9 +1,9 @@
 ---
 id: outside-session-resume
 status: current
-updated: 2026-10-02
+updated: 2026-10-10
 areas: [api, daemon, store]
-commits: []
+commits: [101f2918, 263b92bb, e224efc0, 7f235a40, 457bedf9, 4da841a9, 7ef3d01d, c2b2316a, 73b17e2b, 726a456e, 996b094c, c525ecd8]
 tests:
   - crates/ariadne-daemon/tests/it/acp_session_resume.rs
   - crates/ariadne-daemon/tests/it/session_list.rs

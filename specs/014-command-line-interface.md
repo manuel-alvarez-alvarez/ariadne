@@ -3,7 +3,7 @@ id: command-line-interface
 status: current
 updated: 2026-10-10
 areas: [cli]
-commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 7fe184e9]
+commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 2a65c9cb]
 tests:
   - crates/ariadne-cli/src/commands/workflow.rs
   - crates/ariadne-cli/src/cli/tests.rs
@@ -51,12 +51,24 @@ same binary also serves (013).
 ## Behavior
 
 1. Every user-facing action exists both here and in the desktop app.
-2. The tree is one verb per action, grouped by entity — `daemon`, `agent`,
-   `models`, `skill`, `repo`, `pr` (026), `permissions`, `goal`, `task`, `session`,
-   `events`, `attention`, `attach`, `stats`, `doctor`, `completions`,
-   plus the one hidden command the agents use (`mcp serve`). Nothing in the tree launches
+2. The tree is one verb per action, grouped by entity — `version`, `doctor`,
+   `completions`, `daemon`, `agent`, `models`, `stats`, `skill`, `workflow`
+   (030), `pr` (026), `repo`, `forge` (027), `issue` (028), `permissions`,
+   `goal`, `task`, `session`, `events`, `attention`, `attach`, plus the one
+   hidden command the agents use (`mcp serve`). Nothing in the tree launches
    an agent or reports on one's behalf: the daemon's ACP runtime does both
    (021).
+2a. `ariadne daemon start` launches `ariadned` where it is not already
+    answering; `ariadne daemon stop` waits for its socket to go; `ariadne
+    daemon restart` runs the service manager's own restart where one manages
+    this home, and a stop followed by a start where none does; `ariadne
+    daemon status` reads its health and, on this machine, the pid and the
+    service that manages it; `ariadne daemon logs [-f]` reads its ring
+    buffer over the API, falling back to the log file when the daemon does
+    not answer.
+2b. `ariadne forge tunnel [on|off]` shows the webhook tunnel or switches it;
+    the tunnel itself, what it carries and what stays registered without it,
+    are 027's own.
 3. The root and every group share one help-screen shape, and no help screen
    leaks the endpoint of the shell it runs in.
 4. Display flags (`--format`, and the listing flags) parse on either side of
@@ -74,6 +86,12 @@ same binary also serves (013).
    agent slot missing a half are usage errors, refused before anything is
    sent. Which agents exist is the daemon's registry: an agent id is sent as
    typed, and the daemon refuses one it does not hold (011).
+7a. `ariadne models ls` lists what every agent can be pinned to, narrowed to
+    one agent on request; `ariadne models show` shows one model and the
+    efforts it takes; `ariadne models enable` and `ariadne models disable`
+    let agents be staffed on a model again or stop them; `ariadne models
+    rank` sets or clears the user's rank of a model, the staffing ladder's
+    own (011).
 8. The empty list is a flag of its own wherever a repeatable flag names one,
    since a repeatable flag cannot be given zero times on purpose:
    `--clear-depends-on` for a task with nothing to wait for.
@@ -81,7 +99,8 @@ same binary also serves (013).
    workflow its tasks run through (`goal create --workflow`, fixed once the
    goal is created, and the first repository's default where it is not
    given: 030), how each task is staffed (`--agent`, rule 38), and whether
-   the goal is over (`goal complete`).
+   the goal is over (`goal complete`) or cancelled outright, with every task
+   under it (`goal cancel`), behind the usual confirmation.
 10. What the agents said to each other is readable from here: `task messages`
     lists the whole channel of a task, oldest first (018); `--full` prints
     each one whole, through `$PAGER`, since the table cuts a body to its
@@ -107,7 +126,8 @@ same binary also serves (013).
    its own; it is documented in `ariadne --help`.
 15. Completions are generated for bash and zsh and complete against live data:
     candidates newest first, live sessions before ended ones when attaching,
-    the efforts an entry lists and no others.
+    the efforts an entry lists and no others. `completions install <shell>`
+    writes the registration into that shell's own startup file.
 16. `ariadne doctor` answers why the daemon will not start — including a
     database written by a release whose migrations this one no longer ships,
     which it names along with the file to delete (016).
@@ -116,7 +136,10 @@ same binary also serves (013).
     cannot start a task in a repository with no commits (002), which is a
     warning naming that one case, on this PATH and on the daemon's alike.
 18. `skill ls` marks an orchestrator-only skill while leaving it available to
-    inspect, edit and reset.
+    inspect, edit and reset; `skill inspect` shows one skill's summary, scope
+    and source beside its whole document, and `skill get` prints that
+    document alone, raw, ready to pipe to a file a `skill set --file` can
+    read back.
 19. `doctor` reports every ACP registry entry from the daemon's cached probe.
     It shows measured capabilities, every degraded feature, and the rejection
     reason when the agent cannot satisfy the required contract. One ready
@@ -200,6 +223,10 @@ same binary also serves (013).
     seat. It refuses `--model default` locally; `--effort default` leaves
     effort unpinned. It prints the new session id and pin, or the full DTO
     with `--format json`; daemon refusals print whole.
+31b. `session resume <id>` revives an ended session on a fresh agent
+    process, the same conversation, and says whether a relaunch was needed;
+    `session kill <id>` kills its agent process and retires the row, behind
+    the usual confirmation.
 32. `ariadne permissions ai` manages the AI permission model behind the `ai`
     permission mode (022); `ariadne permissions` prints the group help and
     accepts no flat command. `show` is a key-value block of the whole status,
@@ -231,7 +258,7 @@ same binary also serves (013).
     warning naming the version that is too old or that none was found;
     `ai permissions` is `ok` for `disabled`, `installing` and `ready <release>`, and a
     warning for `failed: <last_error>`.
-34. `ariadne permissions learned` lists, shows, removes and widens or narrows
+34a. `ariadne permissions learned` lists, shows, removes and widens or narrows
     learned permissions. `list` shows the columns id, repository, tool, level,
     family, key, scope, target, selected, ai, created and updated; it has no
     source column. The AI column shows the label and danger to four decimal
@@ -272,7 +299,8 @@ same binary also serves (013).
     `repo add --workflow <name>` and `repo update --workflow <name>` set a
     repository's own default, which `repo ls` and `repo inspect` show. Both
     complete the name against `GET /v1/workflows`. There is no `--landing`:
-    a workflow's own gates decide how a task ends (030).
+    a workflow's own gates decide how a task ends (030). `repo rm` deletes a
+    registered repository, behind the usual confirmation.
 38. A task is staffed with `--agent STEP[:SKILLS]=MODEL[@EFFORT]`,
     repeatable, one per column, sent as `agents`. `SKILLS` is optional and
     comma-separated; left out, the column stages its own. `task update
@@ -288,6 +316,10 @@ same binary also serves (013).
     session, a column nobody has staffed yet included. `task history`
     paints the column a move left and the one it entered beside the from and
     to statuses.
+39a. `task cancel` cancels a task, behind the usual confirmation; `task retry`
+    retries a failed one; `task diff` shows the task branch's diff against
+    its base, coloured and paged on a terminal, the daemon's bytes alone in
+    a pipe.
 40. `goal ls` prints each goal's non-cancelled task progress after its status,
     with failed and stalled task counts. `goal inspect` prints the lane task
     summary, the goal's workflow and, one line per column, its rank and gate.
@@ -311,6 +343,10 @@ same binary also serves (013).
     false}` alone and conflicts with `--model`, `--effort`, `--skill` and
     `--attach`. It prints one styled mutation line, the request id with
     `-q`, and the DTO with `--format json`.
+42a. `pr search --repo <repo> <query>` searches the open requests of that
+    enabled repository that are not yours; `pr refresh [--repo <repo>]`
+    fetches that repository's requests, or every enabled repository's where
+    none is named.
 
 ## Known gap
 
@@ -555,15 +591,13 @@ derive a tool detail when their summary is empty.
 - Inspect keys contain no underscores
   (`task.rs::the_inspect_block_types_its_id_title_and_status`).
 - Session and model subject columns use `title`, and model booleans use
-  `yes` or `no` (`session.rs::the_session_subject_column_is_title`,
+  `yes` or `no` (`session.rs::the_session_table_has_the_unified_columns_and_empty_outside_fields`,
   `models.rs::the_description_drops_before_the_efforts_do`,
   `::a_row_stars_the_default_effort_and_dashes_what_is_unsaid`).
 - A loose session prints dashes for absent goal, task and seat fields
   (`session.rs::a_loose_session_prints_dashes_for_missing_fields`).
 - `session inspect` shows a reported context window with compact token counts
-  and omits an unreported one
-  (`session.rs::the_inspect_block_shows_the_reported_context_window`,
-  `::the_inspect_block_hides_an_unreported_context_window`).
+  (`session.rs::the_inspect_block_shows_the_reported_context_window`).
 - `session inspect` prints `title` and `continues`, dashed where the DTO
   carries neither
   (`session.rs::a_switched_session_shows_its_title_and_what_it_continues`,
