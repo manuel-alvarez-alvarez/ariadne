@@ -127,7 +127,8 @@ same binary also serves (013).
     over a short settle window so one change is one redraw, until Ctrl-C.
     Every filter the command takes still narrows what a redraw shows, the
     redraw escapes only reach a real terminal, and `--watch` is advertised
-    only on these four commands.
+    only on these four commands. `goal ls` redraws after task creation and
+    task updates, because its task progress column changes with them.
 22. A screen of several tables is fitted once, across every group of rows:
     `ariadne attention` prints a section per goal, and a column is the same
     width under every heading — on a `--watch` redraw too. A `--columns`
@@ -284,8 +285,9 @@ same binary also serves (013).
     session, a column nobody has staffed yet included. `task history`
     paints the column a move left and the one it entered beside the from and
     to statuses.
-40. `goal inspect` prints the goal's workflow and, one line per column, its
-    rank and its gate.
+40. `goal ls` prints each goal's non-cancelled task progress after its status,
+    with failed and stalled task counts. `goal inspect` prints the lane task
+    summary, the goal's workflow and, one line per column, its rank and gate.
 41. `task attach --step <id>` opens the console of that column's agent,
     live or revived, whether or not it is the task's current column; left
     out, `task attach`, `ariadne attach` and `task logs` resolve the task's
@@ -498,8 +500,10 @@ same binary also serves (013).
   (`commands/task.rs::step_narrows_the_list_to_the_named_column`,
   `::a_task_lists_its_workflow_and_every_columns_agent`,
   `::a_history_row_paints_the_columns_a_move_crossed`).
-- `goal inspect` prints the workflow and, one line per column, its rank and
-  its gate (`commands/goal.rs::workflow_columns_reads_the_rank_and_the_gate`).
+- `goal ls` prints non-cancelled task progress and failed and stalled marks;
+  `goal inspect` prints the lane task summary and aligns continuation lines
+  under its value column (`commands/goal.rs::a_mixed_goals_task_counts_match_its_lane`,
+  `::goal_inspect_continuations_align_under_the_longest_key`).
 - `task attach --step` resolves the named column's session whether or not it
   is the task's current one; without it, attach, logs and the revive pick
   the current column's session with the sessions of two columns live and
@@ -510,7 +514,8 @@ same binary also serves (013).
   `cli/tests.rs::a_filter_takes_only_the_values_the_daemon_knows`).
 - `--watch` is advertised on exactly `task ls`, `goal ls`, `session ls` and
   `attention`, and nowhere else
-  (`cli/tests.rs::the_watch_flag_is_advertised_exactly_where_it_is_honored`).
+  (`cli/tests.rs::the_watch_flag_is_advertised_exactly_where_it_is_honored`,
+  `commands/goal.rs::goal_watch_responds_when_a_task_changes`).
 - Several row groups are fitted together, and drop and cut the same columns
   (`table.rs::columns_are_fitted_once_across_every_group`,
   `::every_group_drops_and_cuts_the_same_columns`), which is what aligns the

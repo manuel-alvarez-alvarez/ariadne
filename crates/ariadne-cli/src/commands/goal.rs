@@ -34,15 +34,44 @@ const LS: &[Column] = &[
     col("id", UNCAPPED).id(),
     col("title", 48).title(),
     col("status", UNCAPPED).status(),
+    col("tasks", UNCAPPED).rank(3),
     col("age", UNCAPPED).rank(2),
     col("tokens", UNCAPPED).rank(1),
     col("repos", 40).rank(0),
 ];
 
-/// Where a continuation line of `goal inspect` starts: [`print_kv`] pads its
-/// keys to the longest one — `description` — and then two spaces, and a block
-/// that spills over several lines lines them all up under the first.
-const INDENT: &str = "\n             ";
+/// A field of the `goal inspect` block, in its printed order.
+#[derive(Clone, Copy)]
+enum InspectField {
+    Id,
+    Title,
+    Issue,
+    Status,
+    Tasks,
+    Workflow,
+    Columns,
+    Orchestrator,
+    Repos,
+    Tokens,
+    Created,
+    Description,
+}
+
+/// The fields `goal inspect` prints, in the same order as its block.
+const INSPECT_FIELDS: &[InspectField] = &[
+    InspectField::Id,
+    InspectField::Title,
+    InspectField::Issue,
+    InspectField::Status,
+    InspectField::Tasks,
+    InspectField::Workflow,
+    InspectField::Columns,
+    InspectField::Orchestrator,
+    InspectField::Repos,
+    InspectField::Tokens,
+    InspectField::Created,
+    InspectField::Description,
+];
 
 /// What `goal create --help` ends with: a first goal, then the two things
 /// most often said on the same line.
@@ -225,35 +254,16 @@ pub(crate) async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Re
         GoalCommand::Inspect { id } => {
             let id = resolve::id(client, Kind::Goal, &id).await?;
             let g: GoalDto = client.get_json(&goal_path(&id)).await?;
-            print(format, &g, || {
-                print_kv(&[
-                    ("id", Kv::id(g.id.clone())),
-                    ("title", Kv::title(g.title.clone())),
-                    (
-                        "issue",
-                        g.issue_url.clone().unwrap_or_else(|| "-".into()).into(),
-                    ),
-                    ("status", Kv::status(g.status.as_str())),
-                    ("workflow", g.workflow.clone().into()),
-                    ("columns", workflow_columns(&g.steps).into()),
-                    (
-                        "orchestrator",
-                        pin_label(&g.model, g.effort.as_deref()).into(),
-                    ),
-                    (
-                        "repos",
-                        g.repos
-                            .iter()
-                            .map(goal_repo_label)
-                            .collect::<Vec<_>>()
-                            .join(INDENT)
-                            .into(),
-                    ),
-                    ("tokens", usage_lines(&g).into()),
-                    ("created", Kv::meta(moment(&g.created_at))),
-                    ("description", format!("\n---\n{}", g.description).into()),
-                ])
-            })?;
+            let tasks: Vec<TaskDto> = client
+                .get_json(&query_path(
+                    "/v1/tasks",
+                    &TaskListQuery {
+                        goal: Some(id.clone()),
+                        status: None,
+                    },
+                )?)
+                .await?;
+            print(format, &g, || print_kv(&inspect_pairs(&g, &tasks)))?;
         }
         GoalCommand::Complete { id } => {
             let id = resolve::id(client, Kind::Goal, &id).await?;
@@ -366,7 +376,7 @@ fn usage_lines(g: &GoalDto) -> String {
         ("orchestrator".to_string(), g.usage.orchestrator),
         ("agents".to_string(), agents),
     ];
-    usage_block(&g.usage.total, &seats, INDENT)
+    usage_block(&g.usage.total, &seats, &inspect_indent())
 }
 
 /// Which of the goals the daemon answered with `goal ls` shows: the ones
@@ -398,7 +408,7 @@ fn goal_path(id: &str) -> String {
 fn relevant(frame: &SseEvent) -> bool {
     matches!(
         frame.event.as_str(),
-        "goal_created" | "goal_updated" | "goal_deleted"
+        "goal_created" | "goal_updated" | "goal_deleted" | "task_created" | "task_updated"
     )
 }
 
@@ -424,6 +434,7 @@ async fn ls(
 async fn render(client: &Client, statuses: &[GoalStatus], all: bool, format: Format) -> Result<()> {
     let goals: Vec<GoalDto> = client.get_json(&goals_path(statuses)?).await?;
     let goals = visible(goals, all, statuses);
+    let tasks: Vec<TaskDto> = client.get_json("/v1/tasks?all=true").await?;
     let now = chrono::Utc::now();
     print_list(
         format,
@@ -434,6 +445,9 @@ async fn render(client: &Client, statuses: &[GoalStatus], all: bool, format: For
                 g.id.clone(),
                 g.title.clone(),
                 g.status.as_str().into(),
+                task_cell(task_counts(
+                    tasks.iter().filter(|task| task.goal_id == g.id),
+                )),
                 age(&g.created_at, now),
                 usage_cell(&g.usage.total),
                 g.repos
@@ -601,7 +615,7 @@ fn goal_repo_label(repo: &RepositoryDto) -> String {
 /// title, then the rank and the gate the document named it — a dash for
 /// either where the column left it to the default. A goal whose columns the
 /// daemon did not send reads as a dash rather than an empty line.
-fn workflow_columns(steps: &[ariadne_api::workflows::WorkflowStepDto]) -> String {
+fn workflow_columns(steps: &[ariadne_api::workflows::WorkflowStepDto], indent: &str) -> String {
     if steps.is_empty() {
         return "-".to_string();
     }
@@ -617,7 +631,148 @@ fn workflow_columns(steps: &[ariadne_api::workflows::WorkflowStepDto]) -> String
             )
         })
         .collect::<Vec<_>>()
-        .join(INDENT)
+        .join(indent)
+}
+
+/// The task progress that the goals lane shows, with cancelled tasks kept
+/// outside the pipeline total.
+#[derive(Clone, Copy, Default)]
+struct TaskCounts {
+    total: usize,
+    finished: usize,
+    failed: usize,
+    stalled: usize,
+    waiting: usize,
+    cancelled: usize,
+}
+
+/// Count tasks with the same rules as the goals lane.
+fn task_counts<'a>(tasks: impl IntoIterator<Item = &'a TaskDto>) -> TaskCounts {
+    tasks
+        .into_iter()
+        .fold(TaskCounts::default(), |mut counts, task| {
+            if task.status == ariadne_core::TaskStatus::Cancelled {
+                counts.cancelled += 1;
+                return counts;
+            }
+            counts.total += 1;
+            match task.status {
+                ariadne_core::TaskStatus::Finished => counts.finished += 1,
+                ariadne_core::TaskStatus::Failed => counts.failed += 1,
+                _ if task.stalled => counts.stalled += 1,
+                ariadne_core::TaskStatus::Pending | ariadne_core::TaskStatus::Ready => {
+                    counts.waiting += 1
+                }
+                _ => {}
+            }
+            counts
+        })
+}
+
+/// Render the compact task progress cell for `goal ls`.
+fn task_cell(counts: TaskCounts) -> String {
+    let mut cell = format!("{}/{}", counts.finished, counts.total);
+    if counts.failed > 0 {
+        cell.push_str(&format!(" ✗{}", counts.failed));
+    }
+    if counts.stalled > 0 {
+        cell.push_str(&format!(" !{}", counts.stalled));
+    }
+    cell
+}
+
+/// Render the full task progress sentence for `goal inspect`.
+fn task_summary(counts: TaskCounts) -> String {
+    if counts.total == 0 && counts.cancelled == 0 {
+        return "No tasks".into();
+    }
+    let mut parts = Vec::new();
+    if counts.total > 0 {
+        parts.push(if counts.finished == counts.total {
+            match counts.total {
+                1 => "1 task finished".into(),
+                total => format!("{total} tasks finished"),
+            }
+        } else {
+            format!("{}/{} finished", counts.finished, counts.total)
+        });
+    }
+    if counts.failed > 0 {
+        parts.push(format!("{} failed", counts.failed));
+    }
+    if counts.stalled > 0 {
+        parts.push(format!("{} stalled", counts.stalled));
+    }
+    if counts.waiting > 0 {
+        parts.push(format!("{} waiting", counts.waiting));
+    }
+    if counts.cancelled > 0 {
+        parts.push(format!("{} cancelled", counts.cancelled));
+    }
+    parts.join(" · ")
+}
+
+impl InspectField {
+    /// The inspect block key for this field.
+    fn key(self) -> &'static str {
+        match self {
+            Self::Id => "id",
+            Self::Title => "title",
+            Self::Issue => "issue",
+            Self::Status => "status",
+            Self::Tasks => "tasks",
+            Self::Workflow => "workflow",
+            Self::Columns => "columns",
+            Self::Orchestrator => "orchestrator",
+            Self::Repos => "repos",
+            Self::Tokens => "tokens",
+            Self::Created => "created",
+            Self::Description => "description",
+        }
+    }
+
+    /// The inspect block value for this field.
+    fn value(self, g: &GoalDto, tasks: &[TaskDto], indent: &str) -> Kv {
+        match self {
+            Self::Id => Kv::id(g.id.clone()),
+            Self::Title => Kv::title(g.title.clone()),
+            Self::Issue => g.issue_url.clone().unwrap_or_else(|| "-".into()).into(),
+            Self::Status => Kv::status(g.status.as_str()),
+            Self::Tasks => task_summary(task_counts(tasks.iter())).into(),
+            Self::Workflow => g.workflow.clone().into(),
+            Self::Columns => workflow_columns(&g.steps, indent).into(),
+            Self::Orchestrator => pin_label(&g.model, g.effort.as_deref()).into(),
+            Self::Repos => g
+                .repos
+                .iter()
+                .map(goal_repo_label)
+                .collect::<Vec<_>>()
+                .join(indent)
+                .into(),
+            Self::Tokens => usage_lines(g).into(),
+            Self::Created => Kv::meta(moment(&g.created_at)),
+            Self::Description => format!("\n---\n{}", g.description).into(),
+        }
+    }
+}
+
+/// Start continuations in the same value column that `print_kv` uses.
+fn inspect_indent() -> String {
+    let width = INSPECT_FIELDS
+        .iter()
+        .map(|field| field.key().len())
+        .max()
+        .unwrap_or(0);
+    format!("\n{}", " ".repeat(width + 2))
+}
+
+/// Build the fields `goal inspect` prints from its goal and task snapshot.
+fn inspect_pairs(g: &GoalDto, tasks: &[TaskDto]) -> Vec<(&'static str, Kv)> {
+    let indent = inspect_indent();
+    INSPECT_FIELDS
+        .iter()
+        .map(|field| (field.key(), field.value(g, tasks, &indent)))
+        .collect()
 }
 
 #[cfg(test)]
@@ -626,8 +781,10 @@ mod tests {
 
     use ariadne_api::goals::GoalUsageDto;
     use ariadne_api::tasks::AgentUsageDto;
+    use ariadne_core::TaskStatus;
 
-    use crate::commands::fixtures::{goal, repository};
+    use crate::commands::fixtures::{goal, repository, task};
+    use crate::output::{View, kv_block};
 
     #[tokio::test]
     async fn create_from_issue_reads_its_title_and_body_through_the_route() {
@@ -761,9 +918,9 @@ mod tests {
             usage_lines(&g),
             [
                 "input    12M  89.1%",
-                "             output  456k",
-                "             orchestrator  ↑345k ↓6k",
-                "             agents        ↑12M ↓450k",
+                "              output  456k",
+                "              orchestrator  ↑345k ↓6k",
+                "              agents        ↑12M ↓450k",
             ]
             .join("\n")
         );
@@ -778,9 +935,9 @@ mod tests {
             usage_lines(&g),
             [
                 "input   0  0.0%",
-                "             output  0",
-                "             orchestrator  ↑0 ↓0",
-                "             agents        ↑0 ↓0",
+                "              output  0",
+                "              orchestrator  ↑0 ↓0",
+                "              agents        ↑0 ↓0",
             ]
             .join("\n")
         );
@@ -805,7 +962,7 @@ mod tests {
         use ariadne_core::models::ModelRank;
         use ariadne_core::workflow::StepGate;
 
-        assert_eq!(workflow_columns(&[]), "-");
+        assert_eq!(workflow_columns(&[], "\n  "), "-");
         let steps = vec![
             WorkflowStepDto {
                 id: "develop".into(),
@@ -824,12 +981,116 @@ mod tests {
                 gate: None,
             },
         ];
-        let lines = workflow_columns(&steps);
+        let lines = workflow_columns(&steps, "\n  ");
         assert!(
             lines.contains("develop [Develop] rank=balanced gate=committed"),
             "{lines}"
         );
         assert!(lines.contains("review [Review] rank=- gate=-"), "{lines}");
+    }
+
+    #[test]
+    fn a_mixed_goals_task_counts_match_its_lane() {
+        let tasks = [
+            TaskDto {
+                status: TaskStatus::Finished,
+                ..task("01DONE", "01GOAL")
+            },
+            TaskDto {
+                status: TaskStatus::Failed,
+                ..task("01FAILED", "01GOAL")
+            },
+            TaskDto {
+                stalled: true,
+                ..task("01STALLED", "01GOAL")
+            },
+            TaskDto {
+                status: TaskStatus::Pending,
+                ..task("01PENDING", "01GOAL")
+            },
+            TaskDto {
+                status: TaskStatus::Ready,
+                ..task("01READY", "01GOAL")
+            },
+            TaskDto {
+                status: TaskStatus::Cancelled,
+                ..task("01CANCELLED", "01GOAL")
+            },
+            TaskDto {
+                status: TaskStatus::Finished,
+                ..task("01OTHER", "01OTHER")
+            },
+        ];
+
+        let counts = task_counts(tasks.iter().filter(|task| task.goal_id == "01GOAL"));
+        assert_eq!(counts.finished, 1);
+        assert_eq!(counts.total, 5);
+        assert_eq!(counts.failed, 1);
+        assert_eq!(counts.stalled, 1);
+        assert_eq!(counts.waiting, 2);
+        assert_eq!(
+            task_summary(counts),
+            "1/5 finished · 1 failed · 1 stalled · 2 waiting · 1 cancelled"
+        );
+    }
+
+    #[test]
+    fn a_goal_with_no_tasks_says_so() {
+        assert_eq!(task_summary(task_counts(std::iter::empty())), "No tasks");
+    }
+
+    #[test]
+    fn a_task_cell_marks_failed_and_stalled_tasks() {
+        let tasks = [
+            TaskDto {
+                status: TaskStatus::Finished,
+                ..task("01DONE", "01GOAL")
+            },
+            TaskDto {
+                status: TaskStatus::Failed,
+                ..task("01FAILED", "01GOAL")
+            },
+            TaskDto {
+                stalled: true,
+                ..task("01STALLED", "01GOAL")
+            },
+        ];
+
+        assert_eq!(task_cell(task_counts(tasks.iter())), "1/3 ✗1 !1");
+    }
+
+    #[test]
+    fn goal_watch_responds_when_a_task_changes() {
+        for event in ["task_created", "task_updated"] {
+            assert!(relevant(&SseEvent {
+                event: event.into(),
+                ..SseEvent::default()
+            }));
+        }
+    }
+
+    #[test]
+    fn goal_inspect_continuations_align_under_the_longest_key() {
+        let g = GoalDto {
+            repos: vec![
+                repository("01REPOA", "/home/me/api", "main"),
+                repository("01REPOB", "/home/me/ui", "main"),
+            ],
+            ..goal("01GOAL", "Ship the board")
+        };
+        let block = kv_block(&inspect_pairs(&g, &[]), &View::default());
+
+        let width = inspect_pairs(&g, &[])
+            .iter()
+            .map(|(key, _)| key.len())
+            .max()
+            .unwrap();
+        let continuation = format!(
+            "\n{}{}",
+            " ".repeat(width + 2),
+            "/home/me/ui [main] (01REPOB)"
+        );
+        assert!(block.contains(&continuation), "{block}");
     }
 
     #[test]
