@@ -1493,6 +1493,19 @@ async fn a_task_whose_agent_dies_the_moment_it_starts_fails_with_the_reason_on_i
     )
     .await;
 
+    eventually(TIMEOUT, "the ended sessions to be retired", async || {
+        h.store
+            .list_sessions(SessionFilter {
+                task_id: Some(cast.task.id.clone()),
+                live_only: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .is_empty()
+    })
+    .await;
+
     let ended: Vec<_> = h
         .store
         .list_task_transitions(&cast.task.id)

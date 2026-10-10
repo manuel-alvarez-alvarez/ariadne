@@ -15,6 +15,19 @@ use crate::attention;
 use super::START_GRACE_SECS;
 
 impl super::Scheduler {
+    /// Mark a session exited after its own runtime reported that it ended.
+    ///
+    /// The end is certain, unlike a liveness sweep that discovers a missing
+    /// process. Do not raise disconnected attention for a session that told
+    /// the runtime it ended.
+    pub(super) async fn retire_ended(&self, session_id: &str) {
+        let _ = self
+            .store
+            .set_session_status(session_id, SessionStatus::Exited)
+            .await;
+        crate::stats::record_session_end(&self.store, session_id).await;
+    }
+
     /// Mark sessions whose agent process died as exited.
     ///
     /// The runtime that owns each child process answers

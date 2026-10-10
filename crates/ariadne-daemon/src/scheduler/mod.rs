@@ -230,6 +230,7 @@ pub fn start(
                         }
                     }
                     Some(SchedEvent::SessionEnded(id)) => {
+                        scheduler.retire_ended(&id).await;
                         scheduler.reconcile_session(&id).await;
                         wakes.reconciled(&id, tokio::time::Instant::now());
                     }
