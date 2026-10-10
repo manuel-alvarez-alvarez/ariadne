@@ -112,14 +112,19 @@ impl Gitlab {
     }
 
     pub(crate) async fn details(&self, repo: &str, number: i64) -> Result<ForgeDetails, String> {
-        let pull = self.pull_request(repo, number).await?;
         let (host, owner, name) = split_slug(repo)?;
         let base = format!("projects/{}/merge_requests/{number}", project(owner, name));
+        let discussions = format!("{base}/discussions");
+        let diverged = format!("{base}?include_diverged_commits_count=true");
+        // Reads that wait on the forge, not on each other.
+        let (pull, discussions, failed_checks, diverged) = tokio::try_join!(
+            self.pull_request(repo, number),
+            self.pages::<Discussion>(host, &discussions),
+            self.failed_checks(host, owner, name, &base),
+            self.object::<Diverged>(host, &diverged),
+        )?;
         let mut comments = Vec::new();
-        for discussion in self
-            .pages::<Discussion>(host, &format!("{base}/discussions"))
-            .await?
-        {
+        for discussion in discussions {
             let notes: Vec<Note> = discussion.notes.into_iter().filter(|n| !n.system).collect();
             let first = notes.first().map(|n| note_id(n.id));
             let resolved = notes.iter().any(|n| n.resolved);
@@ -149,37 +154,44 @@ impl Gitlab {
                 });
             }
         }
-        let pipelines: Vec<Pipeline> = self.object(host, &format!("{base}/pipelines")).await?;
-        let mut failed_checks = Vec::new();
-        if let Some(latest) = pipelines.first() {
-            let jobs: Vec<Job> = self
-                .pages(
-                    host,
-                    &format!(
-                        "projects/{}/pipelines/{}/jobs",
-                        project(owner, name),
-                        latest.id
-                    ),
-                )
-                .await?;
-            failed_checks = jobs
-                .into_iter()
-                .filter(|job| job.status == "failed" && !job.allow_failure)
-                .map(|job| FailedCheck {
-                    name: job.name,
-                    url: job.web_url.unwrap_or_default(),
-                    conclusion: job.status,
-                })
-                .collect();
-        }
-        let diverged: Diverged = self
-            .object(host, &format!("{base}?include_diverged_commits_count=true"))
-            .await?;
         Ok(ForgeDetails {
             pull,
             comments,
             failed_checks,
             behind_base: diverged.diverged_commits_count > 0,
         })
+    }
+
+    /// The jobs that failed in the request's latest pipeline, and must not.
+    async fn failed_checks(
+        &self,
+        host: &str,
+        owner: &str,
+        name: &str,
+        base: &str,
+    ) -> Result<Vec<FailedCheck>, String> {
+        let pipelines: Vec<Pipeline> = self.object(host, &format!("{base}/pipelines")).await?;
+        let Some(latest) = pipelines.first() else {
+            return Ok(Vec::new());
+        };
+        let jobs: Vec<Job> = self
+            .pages(
+                host,
+                &format!(
+                    "projects/{}/pipelines/{}/jobs",
+                    project(owner, name),
+                    latest.id
+                ),
+            )
+            .await?;
+        Ok(jobs
+            .into_iter()
+            .filter(|job| job.status == "failed" && !job.allow_failure)
+            .map(|job| FailedCheck {
+                name: job.name,
+                url: job.web_url.unwrap_or_default(),
+                conclusion: job.status,
+            })
+            .collect())
     }
 }

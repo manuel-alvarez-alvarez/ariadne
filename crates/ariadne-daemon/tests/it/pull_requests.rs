@@ -162,6 +162,50 @@ async fn the_list_is_read_live_and_nothing_is_stored_for_a_request_nobody_works_
     }
 }
 
+/// A detail read asks the forge for its parts together: with the reviews
+/// held open, the comments, the review threads, and the check runs and
+/// compare that wait on the request's own read are all asked already.
+#[tokio::test]
+async fn a_detail_read_asks_the_forge_for_its_parts_together() {
+    use crate::common::{TIMEOUT, eventually};
+    let stub = stub_forge_cli(script(vec![], github_pull(2, "other")));
+    let h = harness().forge_cli(&stub).await;
+    let id = enabled_repository(&h, None).await;
+    let gate = h.dir.path().join("release-reviews");
+    let mut blocked = script(vec![], github_pull(2, "other"));
+    for entry in blocked.as_array_mut().unwrap() {
+        if entry["args"][1] == "repos/acme/widgets/pulls/2/reviews" {
+            entry["wait_for"] = json!(gate);
+        }
+    }
+    stub.reprogram(blocked);
+    let others = [
+        "graphql",
+        "repos/acme/widgets/pulls/2/comments",
+        "repos/acme/widgets/issues/2/comments",
+        "repos/acme/widgets/commits/abc/check-runs",
+        "repos/acme/widgets/compare/main...abc",
+    ];
+
+    let uri = format!("/v1/repositories/{id}/pull-requests/2");
+    let read = h.get::<Value>(&uri);
+    let release = async {
+        eventually(TIMEOUT, "the other parts asked meanwhile", async || {
+            let calls = stub.invocations();
+            others.iter().all(|path| {
+                calls
+                    .iter()
+                    .any(|i| i.args.get(1).is_some_and(|a| a == path))
+            })
+        })
+        .await;
+        std::fs::write(&gate, "").unwrap();
+    };
+    let (one, ()) = tokio::join!(read, release);
+    assert_eq!(one["number"], 2);
+    assert_eq!(one["behind_base"], false);
+}
+
 /// A request that asks for my review on a repository with a review pin is
 /// one Ariadne reviews (029): the fetch that finds it gives it a row, which
 /// lists with its id. Once it merged its review is taken down and the row

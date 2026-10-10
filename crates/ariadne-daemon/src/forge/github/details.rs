@@ -155,15 +155,32 @@ impl Github {
     }
 
     pub(crate) async fn details(&self, repo: &str, number: i64) -> Result<ForgeDetails, String> {
-        let pull = self.pull_request(repo, number).await?;
         let (host, owner, name) = split_slug(repo)?;
         let base = format!("repos/{owner}/{name}");
-        let threads = self.threads(host, owner, name, number).await?;
+        let review_comments = format!("{base}/pulls/{number}/comments");
+        let issue_comments = format!("{base}/issues/{number}/comments");
+        let reviews = format!("{base}/pulls/{number}/reviews");
+        // The checks and the comparison name the head and the base, so they
+        // wait on the request's own read; the rest wait on the forge alone.
+        let head = async {
+            let pull = self.pull_request(repo, number).await?;
+            let checks = format!("{base}/commits/{}/check-runs", pull.head_sha);
+            let compare = format!("{base}/compare/{}...{}", pull.base_branch, pull.head_sha);
+            let (checks, compare) = tokio::try_join!(
+                self.object_pages::<CheckRuns>(host, &checks),
+                self.object::<Compare>(host, &compare),
+            )?;
+            Ok::<_, String>((pull, checks, compare))
+        };
+        let ((pull, checks, compare), threads, review_comments, issue_comments, reviews) = tokio::try_join!(
+            head,
+            self.threads(host, owner, name, number),
+            self.pages::<ReviewComment>(host, &review_comments),
+            self.pages::<IssueComment>(host, &issue_comments),
+            self.pages::<Review>(host, &reviews),
+        )?;
         let mut comments = Vec::new();
-        for c in self
-            .pages::<ReviewComment>(host, &format!("{base}/pulls/{number}/comments"))
-            .await?
-        {
+        for c in review_comments {
             let root = c.in_reply_to_id.unwrap_or(c.id);
             let (thread_id, resolved) = threads
                 .get(&c.id)
@@ -185,10 +202,7 @@ impl Github {
                 from_review: false,
             });
         }
-        for c in self
-            .pages::<IssueComment>(host, &format!("{base}/issues/{number}/comments"))
-            .await?
-        {
+        for c in issue_comments {
             comments.push(NewPullRequestComment {
                 forge_id: issue_comment_id(c.id),
                 thread_id: CONVERSATION.into(),
@@ -204,10 +218,7 @@ impl Github {
                 from_review: false,
             });
         }
-        for r in self
-            .pages::<Review>(host, &format!("{base}/pulls/{number}/reviews"))
-            .await?
-        {
+        for r in reviews {
             // An approval with nothing written asks nothing.
             let (Some(at), false) = (r.submitted_at, r.body.trim().is_empty()) else {
                 continue;
@@ -227,12 +238,7 @@ impl Github {
                 from_review: false,
             });
         }
-        let failed_checks = self
-            .object_pages::<CheckRuns>(
-                host,
-                &format!("{base}/commits/{}/check-runs", pull.head_sha),
-            )
-            .await?
+        let failed_checks = checks
             .into_iter()
             .flat_map(|page| page.check_runs)
             .filter_map(|run| {
@@ -244,12 +250,6 @@ impl Github {
                 })
             })
             .collect();
-        let compare: Compare = self
-            .object(
-                host,
-                &format!("{base}/compare/{}...{}", pull.base_branch, pull.head_sha),
-            )
-            .await?;
         Ok(ForgeDetails {
             pull,
             comments,

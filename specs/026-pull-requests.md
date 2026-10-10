@@ -100,6 +100,7 @@ and its idle handling under [030](030-workflows.md), rule 10.
     GitHub reads `gh api` review comments, issue comments and reviews, thread ids and resolution through `gh api graphql`, check runs of the head, and a base compare.
     Every list is read with `--paginate`, the review threads and the check runs included.
     GitLab reads `glab api` discussions, the jobs of the latest pipeline, and the diverged commit count.
+    The reads go to the forge together; only GitHub's check runs and compare wait, on the request's own read, for its head and base.
     One detail read is bounded by `Timeouts::forge_details`, 30 seconds by default. One that fails keeps the details the last read found.
 10. A comment is the forge's, and its id is the forge's: `rc-<n>`, `ic-<n>`, `rv-<n>` or `note-<n>`.
     `kind` is `review_comment`, `issue_comment` or `review`. A review with no body is no comment.
@@ -213,6 +214,8 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `store.rs::comment_marks_are_claimed_once_released_whole_and_keep_the_review_mark`.
 - The list is read live, a request nobody works on has no row, and nothing adds or removes one:
   `pull_requests.rs::the_list_is_read_live_and_nothing_is_stored_for_a_request_nobody_works_on`.
+- A detail read asks the forge for its parts together:
+  `pull_requests.rs::a_detail_read_asks_the_forge_for_its_parts_together`.
 - A review request on a repository with a review pin has a row while it is reviewed and none once it merged:
   `pull_requests.rs::a_review_request_has_a_row_while_it_is_reviewed_and_none_once_it_merged`.
 - A request of mine has a row once a task opened it, and not before:
