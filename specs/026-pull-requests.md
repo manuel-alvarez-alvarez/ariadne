@@ -71,7 +71,7 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
    A request nobody works on has no row, whatever the lists hold.
 4. What the forge says of a request Ariadne works on is read on every fetch and held in memory alone (`forge::live::LivePulls`, by row id): the request's own read, whether it asks for the user's review, and, while it is open, its details.
    The scheduler and the routes join the row to that read (`PullRequest`, the view). A daemon that restarts holds nothing until its first fetch, which runs at once; until a request has been read, the scheduler does nothing for it.
-5. A repository fetch lists every open request of the repository, and the ones that ask for the login's review.
+5. A repository fetch lists every open request of the repository, and the ones that ask for the login's review; the two lists are read from the forge at the same time.
    It starts the work on each review request rule 3 names, then reads each row of the repository: the list's read where the list holds it, else a read of its own — a merged or closed request, or one the list misses.
    A row that asks for review keeps asking while the list of review requests holds it; one it no longer holds, and that asked on the last read, is asked of the forge's timeline (029 rule 3).
 6. `ForgePoll::wake(repository_id)` schedules one fetch immediately.

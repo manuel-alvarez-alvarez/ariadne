@@ -285,13 +285,14 @@ async fn wakes_during_a_fetch_coalesce_into_one_following_fetch() {
             .filter(|i| i.args.starts_with(&["pr".into(), "list".into()]))
             .count()
     };
-    eventually(TIMEOUT, "blocked first fetch", async || lists() == 1).await;
+    // A fetch reads its open list and its review requests together.
+    eventually(TIMEOUT, "blocked first fetch", async || lists() == 2).await;
     h.state.forge_poll.set_mode(&id, Mode::WakeOnly);
     for _ in 0..5 {
         h.state.forge_poll.wake(&id);
     }
     tokio::time::sleep(QUIET).await;
-    assert_eq!(lists(), 1, "a second fetch must wait for the first");
+    assert_eq!(lists(), 2, "a second fetch must wait for the first");
     std::fs::write(gate, "").unwrap();
     eventually(TIMEOUT, "the one following fetch", async || lists() == 4).await;
     tokio::time::sleep(QUIET).await;
@@ -538,7 +539,8 @@ async fn disabling_during_a_fetch_cancels_it_without_starting_work() {
     blocked[2]["wait_for"] = json!(gate);
     stub.reprogram(blocked);
     h.state.forge_poll.wake(&repo);
-    eventually(TIMEOUT, "blocked fetch", async || lists() == 3).await;
+    // A fetch reads its open list and its review requests together.
+    eventually(TIMEOUT, "blocked fetch", async || lists() == 4).await;
     let _: Value = h
         .json(
             put_json(
@@ -558,7 +560,7 @@ async fn disabling_during_a_fetch_cancels_it_without_starting_work() {
             .unwrap()
             .is_empty()
     );
-    assert_eq!(lists(), 3);
+    assert_eq!(lists(), 4);
 }
 
 /// Each fetch reads the repository's open issues too, and publishes

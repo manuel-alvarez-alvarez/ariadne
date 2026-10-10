@@ -136,8 +136,10 @@ impl Gitlab {
         repo: &str,
         login: &str,
     ) -> Result<crate::forge::pulls::Listed, String> {
-        let mut open = self.pulls(repo, &[]).await?;
-        let requested = self.pulls(repo, &["--reviewer", login]).await?;
+        // Two reads that wait on the forge, not on each other.
+        let filter = ["--reviewer", login];
+        let (mut open, requested) =
+            tokio::try_join!(self.pulls(repo, &[]), self.pulls(repo, &filter))?;
         let numbers = requested.iter().map(|p| p.number).collect();
         open.extend(requested);
         open.sort_by_key(|p| p.number);

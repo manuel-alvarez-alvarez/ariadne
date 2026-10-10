@@ -145,10 +145,11 @@ impl Github {
         repo: &str,
         login: &str,
     ) -> Result<crate::forge::pulls::Listed, String> {
-        let mut open = self.pulls(repo, &[]).await?;
-        let requested = self
-            .pulls(repo, &["--search", &format!("review-requested:{login}")])
-            .await?;
+        // Two reads that wait on the forge, not on each other.
+        let search = format!("review-requested:{login}");
+        let filter = ["--search", search.as_str()];
+        let (mut open, requested) =
+            tokio::try_join!(self.pulls(repo, &[]), self.pulls(repo, &filter))?;
         let numbers = requested.iter().map(|p| p.number).collect();
         // A request the open list missed while it paged is still open.
         open.extend(requested);
