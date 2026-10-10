@@ -397,11 +397,6 @@ fn is_issues_call(call: &Invocation) -> bool {
     call.args.starts_with(&ISSUES.map(String::from))
 }
 
-/// Whether a call is a fetch's: a list of requests, or the read of issues.
-fn is_fetch_call(call: &Invocation) -> bool {
-    is_list_call(call) || is_issues_call(call)
-}
-
 /// Whether a call is a list of requests.
 fn is_list_call(call: &Invocation) -> bool {
     call.args.starts_with(&["pr".into(), "list".into()])
@@ -438,7 +433,8 @@ async fn timer_fetch(stub: &StubForgeCli, gates: &Gates) {
 
 /// Wait for the hook to go live at `url`, and for the one fetch after it.
 ///
-/// A fetch stands at the shut lists gate from before the hook can go live.
+/// A fetch stands at the shut lists gate from before the hook can go live,
+/// with both of its lists (open and review-requested) under way at once.
 /// The catch-up wake therefore finds it running, and coalesces into exactly
 /// one fetch after it (026). Answers the fetches so far.
 async fn live_at(h: &Harness, stub: &StubForgeCli, gates: &Gates, id: &str, url: &str) -> usize {
@@ -449,34 +445,48 @@ async fn live_at(h: &Harness, stub: &StubForgeCli, gates: &Gates, id: &str, url:
     })
     .await;
     let calls = stub.invocations();
+    let since_issues = calls.iter().rposition(is_issues_call).map_or(0, |i| i + 1);
     assert!(
-        calls.iter().rposition(is_fetch_call).is_some_and(|last| {
-            is_list_call(&calls[last]) && stub.completed() == calls.len() - 1
-        }),
+        calls[since_issues..]
+            .iter()
+            .filter(|c| is_list_call(c))
+            .count()
+            == 2
+            && stub.completed() == calls.len() - 2,
         "a fetch stands at the lists gate while the hook goes live"
     );
+    // The held fetch has listed its review requests, so it counts already.
     let done = fetches(stub);
+    let answered = calls.iter().filter(|c| is_issues_call(c)).count();
     gates.open();
     eventually(
         TIMEOUT,
         "the held fetch and the catch-up fetch",
         async || {
             let calls = stub.invocations();
-            fetches(stub) == done + 2
-                && calls.iter().filter(|c| is_issues_call(c)).count() == done + 2
+            fetches(stub) == done + 1
+                && calls.iter().filter(|c| is_issues_call(c)).count() == answered + 2
                 && stub.completed() == calls.len()
         },
     )
     .await;
     // `WakeOnly` runs no timer fetch, and nothing the test waits for later
     // would show one: listen for it.
-    quiet(stub, done + 2).await;
+    quiet(stub, done + 1).await;
+    let calls = stub.invocations();
+    let last_hook = calls
+        .iter()
+        .rposition(is_hook_call)
+        .expect("a hook request");
     assert_eq!(
-        fetches_after_the_last_hook_call(stub),
+        calls[last_hook..]
+            .iter()
+            .filter(|c| is_issues_call(c))
+            .count(),
         2,
         "the held fetch, and one catch-up fetch"
     );
-    done + 2
+    done + 1
 }
 
 /// Post a signed delivery to `url`, as the forge would.
