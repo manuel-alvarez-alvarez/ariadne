@@ -4,7 +4,8 @@
  * Every status change the store accepted, in order, with who asked for it —
  * and for a stepped task every move between workflow columns, by column. It
  * is the answer to "why is this task where it is", so the reason the daemon
- * recorded is shown in full rather than truncated.
+ * recorded is shown in full rather than truncated, and as the Markdown the
+ * agents write it in.
  */
 
 import { useQuery } from "@tanstack/react-query"
@@ -13,6 +14,7 @@ import { ArrowRightIcon } from "lucide-react"
 import type { TaskStatus, TaskTransitionDto, WorkflowStepDto } from "@/api"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
+import { Markdown } from "@/components/markdown"
 import { StatusBadge } from "@/components/status-badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { When } from "@/components/when"
@@ -91,7 +93,7 @@ function TransitionRow({
         <When at={transition.created_at} className="ml-auto text-xs text-muted-foreground" />
       </div>
       {transition.reason && (
-        <p className="mt-0.5 text-xs text-muted-foreground">{transition.reason}</p>
+        <Markdown className="mt-0.5 text-xs text-muted-foreground">{transition.reason}</Markdown>
       )}
     </li>
   )

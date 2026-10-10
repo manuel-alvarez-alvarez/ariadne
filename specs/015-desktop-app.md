@@ -649,6 +649,10 @@ Out: the daemon endpoints themselves (012).
     where the workflow no longer names one. A row with no staffed agent
     shows no step. The goal panel's sessions table and the Sessions screen
     are unchanged.
+45. The task panel's History tab renders each transition's reason as
+    Markdown, through the same renderer as descriptions and messages, so a
+    reason an agent wrote with lists, code or links reads as it does
+    everywhere else.
 
 ## Acceptance criteria
 
@@ -1069,14 +1073,18 @@ Out: the daemon endpoints themselves (012).
   `ui/src/features/sessions/sessions-list.test.tsx::names a row by its
   workflow step where the caller gives one, and names none where it gives
   none`).
+- The History tab renders a transition's reason as Markdown: lists, inline
+  code and links, a link opening outside the app
+  (`ui/src/features/tasks/task-history.test.tsx::renders a transition's
+  reason as Markdown`).
 
 ## Known gap
 
 The goal panel, the session panel, the session detail view, the sessions
-screen, the task card, the task history list, the goal actions and the
-attention list (`goal-panel.tsx`, `session-panel.tsx`,
-`session-detail-view.tsx`, `sessions-page.tsx`, `task-card.tsx`,
-`task-history.tsx`, `goal-actions.tsx`, `attention.ts`) have no `*.test.tsx`
+screen, the task card, the goal actions and the attention list
+(`goal-panel.tsx`, `session-panel.tsx`, `session-detail-view.tsx`,
+`sessions-page.tsx`, `task-card.tsx`, `goal-actions.tsx`, `attention.ts`)
+have no `*.test.tsx`
 or `*.test.ts` of their own: what they draw is exercised only incidentally,
 through `detail-panels.test.tsx`, `pane-focus.test.tsx` and
 `goal-swimlanes.test.tsx` mounting the screens that hold them. Rule 19's
