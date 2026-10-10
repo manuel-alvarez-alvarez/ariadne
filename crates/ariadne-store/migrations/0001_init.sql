@@ -189,21 +189,16 @@ CREATE TABLE goals (
     -- The workflow every task of the goal runs on. Chosen once, when the goal
     -- is created; its columns are snapshotted into `goal_steps`.
     workflow     TEXT NOT NULL REFERENCES workflows (name),
-    -- The failed task ids named in the last prompt `tell_orchestrator`
-    -- handed the orchestrator (a JSON array), pending confirmation that a
-    -- turn actually answered it. Promoted into
-    -- `orchestrator_answered_failed_task_ids` and cleared once the
-    -- orchestrator's session next reports `stop` (`promote_goal_orchestrator_told`,
-    -- called from the agent-event ingest on that transition) — queuing a
-    -- prompt is not the same as the orchestrator having had a turn on it.
-    orchestrator_told_failed_task_ids TEXT,
-    -- The failed task ids the orchestrator has actually had a turn on
-    -- since being told, confirmed the moment above. The attention
-    -- producer reads this, never a session's own `last_activity_at`, to
-    -- tell a failed task's orchestrator has already answered for exactly
-    -- that task — an unrelated turn ending proves nothing about a
-    -- different failure, and this list only ever grows from a turn that
-    -- ran after a prompt naming it.
+    -- The goal's failed and stalled task ids, each with the `updated_at`
+    -- its failure carried at the moment the orchestrator's own
+    -- `session/prompt` turn naming them actually returned (a JSON array
+    -- of `[id, updated_at]` pairs) — written only by that turn's own
+    -- completion (`acp::serve_with_input`, `Delivery::GoalAttention`),
+    -- never by an ambient session status: an unrelated turn landing on
+    -- the same session must not confirm a failure it never carried. The
+    -- attention producer matches a task by both its id and this stamp, so
+    -- a later retry of the same task — which stamps a new `updated_at` on
+    -- its next failure — finds no confirmation already waiting for it.
     orchestrator_answered_failed_task_ids TEXT,
     -- When `scheduler::goals::orchestrator_could_not_start` gave up on this
     -- goal's orchestrator: the spawn-retry budget ran out, not merely a

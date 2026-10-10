@@ -17,6 +17,7 @@ use ariadne_store::{Result, SessionFilter, Store, TaskFilter};
 
 use crate::launcher::Launcher;
 use crate::scheduler::DESCRIPTOR_LIMIT_REASON;
+use crate::scheduler::SPAWN_RETRY_BUDGET;
 use crate::scheduler::auto_switch::recovery_block;
 
 use super::work_is_active_checked;
@@ -40,32 +41,55 @@ pub(crate) async fn items(store: &Store, launcher: &Launcher) -> Result<Vec<Atte
     Ok(items)
 }
 
+/// The most recent `session.error` this session reported, read the same
+/// way `http::classify::agent_text` reads one off the live event stream —
+/// the one piece of failure evidence a launch that could not be started
+/// is likely to have left behind. `None` where it reported nothing at
+/// all, which a launch that never got as far as the agent is free to do.
+async fn last_session_error(store: &Store, session_id: &str) -> Result<Option<String>> {
+    let events = store
+        .list_events(ariadne_store::EventFilter {
+            session_id: Some(session_id.to_string()),
+            order: ariadne_store::EventOrder::Desc,
+            limit: 50,
+            ..Default::default()
+        })
+        .await?;
+    Ok(events
+        .iter()
+        .find(|event| event.kind == "session.error")
+        .and_then(|event| serde_json::from_str::<serde_json::Value>(&event.payload).ok())
+        .and_then(|payload| {
+            payload
+                .pointer("/error/data/message")
+                .and_then(|m| m.as_str())
+                .map(str::to_string)
+        }))
+}
+
 /// Every goal whose orchestrator `scheduler::goals::orchestrator_could_not_start`
-/// has given up on (`Goal::orchestrator_given_up_at`), and which has no
-/// failed task of its own to be named by: a taskless orchestrator — one
-/// planning a goal with no task yet to fail — has no other route onto
-/// this list, since `failed_task_items` only ever walks failed tasks. A
-/// goal that also has a failed task is left to that producer instead, so
-/// the same give-up is not said twice. Each item names the goal's own
-/// alarm session, the one row the give-up itself is raised on, or the
-/// last orchestrator session the goal ever had where none carries the
-/// alarm any more.
+/// has given up on (`Goal::orchestrator_given_up_at`), narrowed to goals
+/// still `planning` or `active` — one cancelled or completed no longer
+/// needs the recovery it names, whatever its last attempt left behind.
+/// Raised beside a failed task's own item rather than instead of it: a
+/// task that failed for its own reason (a test, a review) and an
+/// orchestrator that will not start are two different problems with two
+/// different actions, and suppressing this one on the strength of the
+/// other existing would drop the one action — resume the orchestrator —
+/// nothing else names. Each item names the goal's own alarm session, the
+/// one row the give-up itself is raised on, or the last orchestrator
+/// session the goal ever had where none carries the alarm any more, and
+/// its summary carries the budget spent and the last error that session
+/// itself reported, where it reported one.
 async fn orchestrator_given_up_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
     let mut items = Vec::new();
-    for goal in store.list_goals(&[]).await? {
+    for goal in store
+        .list_goals(&[GoalStatus::Planning, GoalStatus::Active])
+        .await?
+    {
         let Some(since) = goal.orchestrator_given_up_at.clone() else {
             continue;
         };
-        let has_failed_task = !store
-            .list_tasks(TaskFilter {
-                goal_id: Some(goal.id.clone()),
-                status: Some(TaskStatus::Failed),
-            })
-            .await?
-            .is_empty();
-        if has_failed_task {
-            continue;
-        }
         let orchestrators = store
             .list_sessions(SessionFilter {
                 goal_id: Some(goal.id.clone()),
@@ -82,11 +106,20 @@ async fn orchestrator_given_up_items(store: &Store) -> Result<Vec<AttentionItemD
         let Some(alarm) = alarm else {
             continue;
         };
+        let error = last_session_error(store, &alarm.id).await?;
+        let summary = match &error {
+            Some(error) => format!(
+                "The goal's orchestrator would not start after {SPAWN_RETRY_BUDGET} attempts: {error}"
+            ),
+            None => format!(
+                "The goal's orchestrator would not start after {SPAWN_RETRY_BUDGET} attempts."
+            ),
+        };
         items.push(AttentionItemDto {
             id: format!("recovery:unknown:orchestrator:{}", goal.id),
             producer: AttentionProducer::Recovery,
             reason: AttentionCause::Unknown,
-            summary: "The goal's orchestrator will not start.".into(),
+            summary,
             required_action: "Read why it will not start, then resume it yourself.".into(),
             since,
             affected: vec![AttentionSubjectDto {
@@ -107,7 +140,10 @@ async fn orchestrator_given_up_items(store: &Store) -> Result<Vec<AttentionItemD
 /// (`PullRequestRow::reviewer_given_up_at`): the same "automatic recovery
 /// has given up" evidence as the orchestrator's own, read from the
 /// scheduler's actual decision rather than the generic `disconnected`
-/// flag a mere crash also raises.
+/// flag a mere crash also raises, cleared the moment the request itself
+/// no longer wants a reviewer session (`scheduler::pull_requests::end_review`)
+/// so a request back in draft, or whose repository lost its review pin,
+/// does not carry a stale blocker for work nothing is trying any more.
 async fn reviewer_given_up_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
     let mut items = Vec::new();
     for pull in store
@@ -117,11 +153,31 @@ async fn reviewer_given_up_items(store: &Store) -> Result<Vec<AttentionItemDto>>
         let Some(since) = pull.reviewer_given_up_at.clone() else {
             continue;
         };
+        let reviewer = store
+            .list_sessions(SessionFilter {
+                pull_request_id: Some(pull.id.clone()),
+                ..Default::default()
+            })
+            .await?
+            .into_iter()
+            .rfind(|s| s.seat() == Some(Seat::Reviewer));
+        let error = match &reviewer {
+            Some(session) => last_session_error(store, &session.id).await?,
+            None => None,
+        };
+        let summary = match &error {
+            Some(error) => format!(
+                "The request's reviewer session would not start after {SPAWN_RETRY_BUDGET} attempts: {error}"
+            ),
+            None => format!(
+                "The request's reviewer session would not start after {SPAWN_RETRY_BUDGET} attempts."
+            ),
+        };
         items.push(AttentionItemDto {
             id: format!("recovery:unknown:pull_request:{}", pull.id),
             producer: AttentionProducer::Recovery,
             reason: AttentionCause::Unknown,
-            summary: "The request's reviewer session will not start.".into(),
+            summary,
             required_action: "Read why it will not start, then resume it yourself.".into(),
             since,
             affected: vec![AttentionSubjectDto {
@@ -258,7 +314,7 @@ async fn failed_task_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
     let mut descriptor_affected = Vec::new();
     let mut unknown = Vec::new();
     for task in tasks {
-        if !orchestrator_has_answered_for(store, &task.goal_id, &task.id).await? {
+        if !orchestrator_has_answered_for(store, &task.goal_id, &task.id, &task.updated_at).await? {
             continue;
         }
         let reason = store.ended_reason(&task).await?;
@@ -310,31 +366,34 @@ async fn failed_task_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
 }
 
 /// Whether a failed task's goal has nothing left to automatically answer
-/// it: either nothing automatic is ever coming (the goal carries no
-/// orchestrator at all, is not even `planning` or `active` any more, or
-/// has never once had an orchestrator session to its name), its
+/// it: either nothing automatic is ever coming (the goal is not
+/// `orchestrated`, or not `planning` or `active` any more), its
 /// orchestrator has already been given up on
 /// (`Goal::orchestrator_given_up_at`, stamped by
 /// `scheduler::goals::orchestrator_could_not_start` once the spawn budget
 /// actually runs out — distinct from the `disconnected` flag a mere crash
-/// also raises, which the liveness sweep may still resolve on its own),
-/// or this exact task's id is in `Goal::orchestrator_answered_failed_task_ids`
-/// — the failed task ids the orchestrator has actually had a turn on
-/// since being told of them.
+/// also raises, which the liveness sweep may still resolve on its own, and
+/// kept whether or not an orchestrator session exists this instant: an
+/// orchestrated goal with none yet is one `keep_orchestrator` has not
+/// finished its first launch of, not one with nothing coming), or this
+/// exact task — its id *and* the `updated_at` its failure carries right
+/// now — is in `Goal::orchestrator_answered_failed_task_ids`.
 ///
-/// That list, not a session's own `last_activity_at` or even the queued
-/// `orchestrator_told_failed_task_ids`, is what is read: queuing a prompt
-/// naming a failure is not the same as the orchestrator having had a turn
-/// on it, and an unrelated turn ending proves nothing about this task
-/// either. The list is only ever grown by `promote_goal_orchestrator_told`,
-/// called from the agent-event ingest the moment the orchestrator's
-/// session next reports `stop` — the turn that actually carried whichever
-/// failures `tell_orchestrator` last queued, naming exactly those task
-/// ids and no other failure that happened to exist later.
+/// That list is written only once, by the ACP driver itself, the moment
+/// the one `session/prompt` turn that actually carried this task's
+/// failure returns (`acp::serve_with_input`, confirming exactly the
+/// `Delivery::GoalAttention` it was handed) — never by an ambient session
+/// status, which an unrelated turn landing on the same session first
+/// could satisfy without ever having carried this task's news. Matching
+/// on `updated_at` as well as the id is what keeps an old confirmation
+/// from answering for a new failure of the same task: a retry stamps a
+/// new `updated_at`, which a stale confirmation already written does not
+/// carry.
 async fn orchestrator_has_answered_for(
     store: &Store,
     goal_id: &str,
     task_id: &str,
+    failed_at: &str,
 ) -> Result<bool> {
     let goal = match store.get_goal(goal_id).await {
         Ok(goal) => goal,
@@ -346,29 +405,17 @@ async fn orchestrator_has_answered_for(
     if !goal.orchestrated || !matches!(goal.status(), GoalStatus::Planning | GoalStatus::Active) {
         return Ok(true);
     }
-    let orchestrators: Vec<_> = store
-        .list_sessions(SessionFilter {
-            goal_id: Some(goal_id.to_string()),
-            ..Default::default()
-        })
-        .await?
-        .into_iter()
-        .filter(|s| s.seat() == Some(Seat::Orchestrator))
-        .collect();
-    // Never had one at all: nothing automatic has ever touched this goal,
-    // which is as good as nothing coming.
-    if orchestrators.is_empty() {
-        return Ok(true);
-    }
     if goal.orchestrator_given_up_at.is_some() {
         return Ok(true);
     }
-    let answered: Vec<String> = goal
+    let answered: Vec<(String, String)> = goal
         .orchestrator_answered_failed_task_ids
         .as_deref()
         .and_then(|json| serde_json::from_str(json).ok())
         .unwrap_or_default();
-    Ok(answered.iter().any(|id| id == task_id))
+    Ok(answered
+        .iter()
+        .any(|(id, at)| id == task_id && at == failed_at))
 }
 
 /// An enabled forge integration whose last fetch failed on the daemon's

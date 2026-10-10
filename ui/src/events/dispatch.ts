@@ -33,6 +33,9 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       // Requests are read live off the forge and carried by no event: every
       // list and panel over them reads again.
       void queryClient.invalidateQueries({ queryKey: qk.pullRequests.all() })
+      // A reviewer session's own give-up, set or cleared, is a recovery
+      // item's own evidence (`PullRequestRow::reviewer_given_up_at`).
+      void queryClient.invalidateQueries({ queryKey: qk.attention.lists() })
       break
     }
     case "goal_created": {
@@ -46,6 +49,11 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       // A goal that moves to completed or cancelled wrote a fact the stats
       // read.
       void queryClient.invalidateQueries({ queryKey: qk.stats.all() })
+      // The orchestrator's own confirmed-turn and give-up evidence rides on
+      // this same event (`Goal::orchestrator_answered_failed_task_ids`,
+      // `Goal::orchestrator_given_up_at`) — both a failed task's own item
+      // and the taskless orchestrator's own item can turn on it.
+      void queryClient.invalidateQueries({ queryKey: qk.attention.lists() })
       break
     }
     case "goal_deleted": {

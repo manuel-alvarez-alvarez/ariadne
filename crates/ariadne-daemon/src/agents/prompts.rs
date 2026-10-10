@@ -336,7 +336,6 @@ mod tests {
             effort: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
-            orchestrator_told_failed_task_ids: None,
             orchestrator_answered_failed_task_ids: None,
             orchestrator_given_up_at: None,
         }

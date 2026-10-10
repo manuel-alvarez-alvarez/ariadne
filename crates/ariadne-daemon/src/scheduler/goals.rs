@@ -347,30 +347,22 @@ impl super::Scheduler {
         };
         let template = prompts::template_for(PromptKind::GoalAttention);
         let text = prompts::goal_attention_briefing(template, goal, &situation);
-        // Counted as told only once the prompt has actually gone out: the
-        // orchestrator's runtime entry can be gone in the moment between the
-        // liveness check above and this hand-off. Marked at the attempt
-        // regardless, this situation would never be said again.
-        if !self.hand_prompt(orchestrator, text) {
+        // Tagged with exactly the failed tasks this prompt names, each
+        // with its own `updated_at` as it stands right now: the delivery
+        // carries its own confirmation evidence, written only once this
+        // exact prompt's own turn ends (`acp::serve_with_input`), so an
+        // unrelated turn landing on the same session first can never
+        // confirm a failure it never carried.
+        let failed_tasks: Vec<(String, String)> = tasks
+            .iter()
+            .filter(|t| t.status() == TaskStatus::Failed)
+            .map(|t| (t.id.clone(), t.updated_at.clone()))
+            .collect();
+        if !self.hand_goal_attention(orchestrator, text, &goal.id, failed_tasks) {
             return Ok(());
         }
         info!(goal = %goal.id, session = %orchestrator.id, "the goal's tasks need the orchestrator");
         self.goal_told.insert(goal.id.clone(), situation.clone());
-        // Persisted, pending the turn that actually carries this prompt
-        // (`http::events::ingest_event` promotes it on that session's next
-        // `stop`), so the attention producer can tell a failed task its
-        // orchestrator has already had a go at it from one it has not —
-        // `goal_told` alone is in-memory and gone on restart, and queuing
-        // the prompt is not the same as the orchestrator having read it.
-        let failed_task_ids: Vec<String> = tasks
-            .iter()
-            .filter(|t| t.status() == TaskStatus::Failed)
-            .map(|t| t.id.clone())
-            .collect();
-        let _ = self
-            .store
-            .set_goal_orchestrator_told(&goal.id, &failed_task_ids)
-            .await;
         Ok(())
     }
 

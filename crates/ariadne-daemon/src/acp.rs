@@ -238,6 +238,18 @@ pub(crate) enum Delivery {
     /// The news of a pull request (026). Boxed: it carries two marks and a
     /// list, where a message carries an id.
     PullRequestNews(Box<NewsDelivery>),
+    /// A goal's failed and stalled tasks (031), named by id with the
+    /// `updated_at` each failure carried at the moment this was queued —
+    /// a later retry of the same task stamps a new one, so an old
+    /// confirmation never answers for a new failure of it. Confirmed only
+    /// once this exact prompt's own turn ends (`serve_with_input`), never
+    /// by an unrelated turn landing on the same session: nothing here is
+    /// written to the store until this delivery's own `session/prompt`
+    /// call returns.
+    GoalAttention {
+        goal_id: String,
+        failed_tasks: Vec<(String, String)>,
+    },
 }
 
 /// One pull request's news, as its prompt delivers it: the comments it
@@ -259,6 +271,13 @@ impl Delivery {
             Delivery::Step(id) => format!("step:{id}"),
             Delivery::Message(id) => format!("message:{id}"),
             Delivery::PullRequestNews(news) => format!("news:{}", news.pull_request_id),
+            // Signed by its own content, not only the goal: a situation
+            // that changes while the previous one is still queued is a
+            // different delivery, queued beside it rather than dropped.
+            Delivery::GoalAttention {
+                goal_id,
+                failed_tasks,
+            } => format!("goal_attention:{goal_id}:{failed_tasks:?}"),
         }
     }
 }
@@ -625,6 +644,26 @@ impl AcpRuntime {
 
     pub fn send_prompt(&self, session_id: &str, text: String) -> Result<()> {
         self.queue_daemon_prompt(session_id, text, None)
+    }
+
+    /// Hand the running orchestrator a prompt naming its goal's failed and
+    /// stalled tasks (031), tagged with exactly the failures named so the
+    /// turn that answers it can confirm exactly those, and no other.
+    pub(crate) fn send_goal_attention(
+        &self,
+        session_id: &str,
+        text: String,
+        goal_id: String,
+        failed_tasks: Vec<(String, String)>,
+    ) -> Result<()> {
+        self.queue_daemon_prompt(
+            session_id,
+            text,
+            Some(Delivery::GoalAttention {
+                goal_id,
+                failed_tasks,
+            }),
+        )
     }
 
     /// Hand the running agent a pull request's news as a prompt (026). The
@@ -1236,6 +1275,10 @@ impl AcpRuntime {
                         )
                         .await
                 }
+                // Nothing was claimed ahead of the write (`claim_message`),
+                // so there is nothing to release: the next pass over the
+                // goal queues it again on its own.
+                Delivery::GoalAttention { .. } => Ok(()),
             };
             if let Err(error) = released {
                 tracing::warn!(session = %launch.session_id, delivery = %delivery.key(), error = %format!("{error:#}"), "releasing the delivery failed");
@@ -2380,6 +2423,25 @@ async fn serve_with_input(
                         // gives it back where the prompt was never written.
                         prompt_once(rpc, session_id, system_prompt, &prompt).await?;
                         rpc.in_flight.settle();
+                        // This exact delivery's own turn just ended — not
+                        // merely some turn on this session, which could be
+                        // an unrelated one that landed first. Confirmed
+                        // here, directly from what this prompt carried,
+                        // rather than from any side record a later pass
+                        // could race against.
+                        if let Some(Delivery::GoalAttention {
+                            goal_id,
+                            failed_tasks,
+                        }) = &prompt.delivery
+                        {
+                            let _ = rpc
+                                .sink
+                                .runtime
+                                .inner
+                                .store
+                                .confirm_goal_orchestrator_answered(goal_id, failed_tasks)
+                                .await;
+                        }
                     }
                     None => console_open = false,
                 }
@@ -2415,6 +2477,11 @@ async fn claim_message(rpc: &Rpc, prompt: &Prompt) -> bool {
                 )
                 .await
         }
+        // Nothing to claim ahead of the send: `tell_orchestrator`'s own
+        // `goal_told` map already keeps this situation from being queued
+        // twice, and what this delivery confirms is written only once its
+        // own turn ends (`serve_with_input`), never before.
+        Delivery::GoalAttention { .. } => Ok(true),
     };
     match claimed {
         Ok(true) => {

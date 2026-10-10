@@ -186,23 +186,41 @@ impl Store {
     /// Mark that `scheduler::pull_requests::start_pull_request_session` has
     /// given up on this request's reviewer session: its spawn-retry
     /// budget ran out, not merely a crash the liveness sweep is about to
-    /// retry.
+    /// retry. A request already marked keeps its first `since` — this
+    /// fires again on every later pass that still finds the reviewer
+    /// session unable to start, and a mark moving its own age forward
+    /// every time would hide how long the user has actually been waiting
+    /// on it.
     pub async fn set_pull_request_reviewer_given_up(&self, id: &str) -> Result<()> {
-        sqlx::query("UPDATE pull_requests SET reviewer_given_up_at = ? WHERE id = ?")
-            .bind(now())
-            .bind(id)
-            .execute(self.w())
-            .await?;
+        let row: Option<(String,)> = sqlx::query_as(
+            "UPDATE pull_requests SET reviewer_given_up_at = ?
+             WHERE id = ? AND reviewer_given_up_at IS NULL
+             RETURNING repository_id",
+        )
+        .bind(now())
+        .bind(id)
+        .fetch_optional(self.w())
+        .await?;
+        if let Some((repository_id,)) = row {
+            self.publish(Change::PullRequestsChanged(repository_id));
+        }
         Ok(())
     }
 
     /// Take the give-up mark down: recovery has taken ownership of this
     /// request's reviewer session again, a resume or spawn succeeded.
     pub async fn clear_pull_request_reviewer_given_up(&self, id: &str) -> Result<()> {
-        sqlx::query("UPDATE pull_requests SET reviewer_given_up_at = NULL WHERE id = ?")
-            .bind(id)
-            .execute(self.w())
-            .await?;
+        let row: Option<(String,)> = sqlx::query_as(
+            "UPDATE pull_requests SET reviewer_given_up_at = NULL
+             WHERE id = ? AND reviewer_given_up_at IS NOT NULL
+             RETURNING repository_id",
+        )
+        .bind(id)
+        .fetch_optional(self.w())
+        .await?;
+        if let Some((repository_id,)) = row {
+            self.publish(Change::PullRequestsChanged(repository_id));
+        }
         Ok(())
     }
 

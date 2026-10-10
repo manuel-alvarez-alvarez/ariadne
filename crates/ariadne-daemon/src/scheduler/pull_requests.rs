@@ -593,6 +593,16 @@ impl super::Scheduler {
         pull: &PullRequest,
         live: &[AgentSession],
     ) -> anyhow::Result<()> {
+        // Reached only once `review_pass` has already found the request no
+        // longer wants a reviewer session, for any reason — closed, no
+        // longer asking, back to draft, or the integration's own review
+        // pin gone. Whatever earlier give-up this request's reviewer seat
+        // carries is no longer this recovery's to answer for: the work it
+        // was given up on does not exist any more either way.
+        let _ = self
+            .store
+            .clear_pull_request_reviewer_given_up(&pull.id)
+            .await;
         let done = pull.role == "reviewer" && (pull.state != "open" || !pull.review_requested);
         if live.is_empty() && !self.launcher.pull_request_worktree_exists(&pull.id) && !done {
             return Ok(());

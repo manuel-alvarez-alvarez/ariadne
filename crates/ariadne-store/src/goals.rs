@@ -259,51 +259,54 @@ impl Store {
         Ok(goal)
     }
 
-    /// Record the failed task ids named in the prompt `tell_orchestrator`
-    /// just handed the orchestrator, pending confirmation that a turn
-    /// actually answered it (`promote_goal_orchestrator_told`). Queuing a
-    /// prompt is not the same as the orchestrator having had a turn on it,
-    /// so this alone does not yet answer for any of them.
-    pub async fn set_goal_orchestrator_told(
+    /// Confirm the failed task ids this goal's orchestrator has actually
+    /// had a turn on: called only from the ACP driver, once the exact
+    /// `session/prompt` call carrying them has itself returned
+    /// (`acp::serve_with_input`), never from an ambient session status —
+    /// an unrelated turn landing on the same session first must not
+    /// confirm a failure it never carried. `at` is each task's own
+    /// `updated_at` as it stood at the moment the prompt was queued, so a
+    /// later retry of the same task — which stamps a new `updated_at` on
+    /// its next failure — finds no confirmation already waiting for it.
+    /// Overwrites the previous snapshot whole, which is always safe: the
+    /// situation a prompt carries is always every currently failed and
+    /// stalled task, so a superseding prompt's own confirmation is a
+    /// superset by construction.
+    pub async fn confirm_goal_orchestrator_answered(
         &self,
         id: &str,
-        failed_task_ids: &[String],
+        failed_tasks: &[(String, String)],
     ) -> Result<()> {
-        let json = serde_json::to_string(failed_task_ids).expect("ids serialize");
-        sqlx::query("UPDATE goals SET orchestrator_told_failed_task_ids = ? WHERE id = ?")
+        let json = serde_json::to_string(failed_tasks).expect("ids serialize");
+        sqlx::query("UPDATE goals SET orchestrator_answered_failed_task_ids = ? WHERE id = ?")
             .bind(&json)
             .bind(id)
             .execute(self.w())
             .await?;
-        Ok(())
-    }
-
-    /// Confirm whatever failed task ids are pending on this goal: called
-    /// from the agent-event ingest the moment an orchestrator session next
-    /// reports `stop`, which is the turn that actually carried the prompt
-    /// `tell_orchestrator` queued. A no-op where nothing is pending.
-    pub async fn promote_goal_orchestrator_told(&self, id: &str) -> Result<()> {
-        sqlx::query(
-            "UPDATE goals SET
-                 orchestrator_answered_failed_task_ids = orchestrator_told_failed_task_ids,
-                 orchestrator_told_failed_task_ids = NULL
-             WHERE id = ? AND orchestrator_told_failed_task_ids IS NOT NULL",
-        )
-        .bind(id)
-        .execute(self.w())
-        .await?;
+        self.publish_goal_update(id).await?;
         Ok(())
     }
 
     /// Mark that `scheduler::goals::orchestrator_could_not_start` has given
     /// up on this goal's orchestrator: the spawn-retry budget ran out, not
-    /// merely a crash the liveness sweep is about to retry.
+    /// merely a crash the liveness sweep is about to retry. A goal already
+    /// marked keeps its first `since` — this fires again on every later
+    /// pass that still finds the orchestrator unable to start, and a mark
+    /// moving its own age forward every time would hide how long the user
+    /// has actually been waiting on it.
     pub async fn set_goal_orchestrator_given_up(&self, id: &str) -> Result<()> {
-        sqlx::query("UPDATE goals SET orchestrator_given_up_at = ? WHERE id = ?")
-            .bind(now())
-            .bind(id)
-            .execute(self.w())
-            .await?;
+        let n = sqlx::query(
+            "UPDATE goals SET orchestrator_given_up_at = ?
+             WHERE id = ? AND orchestrator_given_up_at IS NULL",
+        )
+        .bind(now())
+        .bind(id)
+        .execute(self.w())
+        .await?
+        .rows_affected();
+        if n > 0 {
+            self.publish_goal_update(id).await?;
+        }
         Ok(())
     }
 
@@ -311,10 +314,17 @@ impl Store {
     /// goal's orchestrator again, a live one found or a resume/spawn
     /// succeeded.
     pub async fn clear_goal_orchestrator_given_up(&self, id: &str) -> Result<()> {
-        sqlx::query("UPDATE goals SET orchestrator_given_up_at = NULL WHERE id = ?")
-            .bind(id)
-            .execute(self.w())
-            .await?;
+        let n = sqlx::query(
+            "UPDATE goals SET orchestrator_given_up_at = NULL
+             WHERE id = ? AND orchestrator_given_up_at IS NOT NULL",
+        )
+        .bind(id)
+        .execute(self.w())
+        .await?
+        .rows_affected();
+        if n > 0 {
+            self.publish_goal_update(id).await?;
+        }
         Ok(())
     }
 

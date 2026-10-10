@@ -413,14 +413,11 @@ pub struct Goal {
     pub effort: Option<String>,
     pub created_at: String,
     pub updated_at: String,
-    /// The failed task ids named in the last prompt `tell_orchestrator`
-    /// handed the orchestrator (a JSON array), pending confirmation that a
-    /// turn actually answered it. See
-    /// [`crate::Store::promote_goal_orchestrator_told`].
-    pub orchestrator_told_failed_task_ids: Option<String>,
-    /// The failed task ids the orchestrator has actually had a turn on
-    /// since being told. Read by the attention producer in place of a
-    /// session's own `last_activity_at`.
+    /// The goal's failed and stalled task ids, each with the
+    /// `updated_at` its failure carried when the orchestrator's own
+    /// `session/prompt` turn confirmed it (a JSON array of `[id,
+    /// updated_at]` pairs). See
+    /// [`crate::Store::confirm_goal_orchestrator_answered`].
     pub orchestrator_answered_failed_task_ids: Option<String>,
     /// When `scheduler::goals::orchestrator_could_not_start` gave up on
     /// this goal's orchestrator, distinct from the `disconnected` flag a

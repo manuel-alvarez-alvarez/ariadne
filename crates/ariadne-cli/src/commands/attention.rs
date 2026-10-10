@@ -229,6 +229,10 @@ fn relevant(frame: &SseEvent) -> bool {
             // takes a stale one down (`GET /v1/attention`).
             | "repository_updated"
             | "repository_deleted"
+            // A reviewer session's own give-up, set or cleared, is a
+            // recovery item's own evidence
+            // (`PullRequestRow::reviewer_given_up_at`).
+            | "pull_requests_changed"
     )
 }
 
@@ -411,6 +415,26 @@ pub(crate) mod tests {
 
     use crate::commands::fixtures::{self, NOW};
     use crate::output::style;
+
+    fn frame(event: &str) -> SseEvent {
+        SseEvent {
+            event: event.into(),
+            data: String::new(),
+            id: None,
+        }
+    }
+
+    /// `--watch` redraws on a reviewer session's own give-up evidence
+    /// (`PullRequestRow::reviewer_given_up_at`), which rides on
+    /// `pull_requests_changed`, the same as it already does on a goal's
+    /// own confirmed-turn and give-up evidence, which rides on
+    /// `goal_updated`.
+    #[test]
+    fn watch_redraws_on_a_goals_or_a_pull_requests_own_recovery_evidence() {
+        assert!(relevant(&frame("goal_updated")));
+        assert!(relevant(&frame("pull_requests_changed")));
+        assert!(!relevant(&frame("ai_permissions_updated")));
+    }
 
     /// A failed session the daemon raised nothing for — which is nobody's
     /// business. `flagged` and `dead` are the ones that are on the list.

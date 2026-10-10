@@ -824,6 +824,76 @@ async fn an_orchestrator_whose_agent_went_away_is_resumed_in_its_own_row() {
     assert_eq!(h.attention(&session).await, None, "and the alarm is down");
 }
 
+/// A taskless orchestrator that goes quiet again after every relaunch has
+/// no task to fail instead — unlike a column's agent, whose task carries
+/// why it ended. This exhausted-relaunch decision is its own give-up,
+/// recorded the same way the spawn-retry path's own give-up already is
+/// (`Goal::orchestrator_given_up_at`), so `GET /v1/attention` still
+/// raises one item for it rather than leaving only the bare `stalled`
+/// flag the watchdog itself has stopped acting on.
+#[tokio::test]
+async fn an_orchestrator_that_wedges_after_every_relaunch_is_given_up_on_without_a_task_to_fail() {
+    let h = harness().await;
+    let goal = h.planning_goal().await;
+    std::fs::create_dir_all(h.dir.path().join("repo")).unwrap();
+    let session = h.orchestrator_session(&goal).await;
+    h.agent_runs(&session).await;
+
+    let sched = Sched(scheduler::start(
+        h.store.clone(),
+        h.launcher.clone(),
+        false,
+        h.timeouts,
+    ));
+    sched.goal(&goal);
+
+    // Two relaunches out of the budget of three, each one wedging again.
+    for relaunch in 1..=2 {
+        h.launched_ago(&session, RELAUNCH_SECS + 60).await;
+        let launched = h.launched_at(&session).await;
+        sched.goal(&goal);
+        eventually(TIMEOUT, &format!("relaunch {relaunch}"), async || {
+            h.relaunched(&session, &launched).await
+        })
+        .await;
+    }
+    assert!(
+        h.store
+            .get_goal(&goal.id)
+            .await
+            .unwrap()
+            .orchestrator_given_up_at
+            .is_none(),
+        "not given up on while a relaunch is still being tried"
+    );
+
+    // And it wedges once more: the budget runs out.
+    h.launched_ago(&session, RELAUNCH_SECS + 60).await;
+    sched.goal(&goal);
+
+    eventually(
+        TIMEOUT,
+        "the goal's orchestrator to be given up on",
+        async || {
+            h.store
+                .get_goal(&goal.id)
+                .await
+                .unwrap()
+                .orchestrator_given_up_at
+                .is_some()
+        },
+    )
+    .await;
+
+    let list: ariadne_api::attention::AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 1, "{:?}", list.items);
+    assert_eq!(
+        list.items[0].reason,
+        ariadne_api::attention::AttentionCause::Unknown
+    );
+    assert_eq!(list.items[0].affected[0].id, goal.id);
+}
+
 /// Resuming an agent is the recovery: whatever it needed the user for goes
 /// with the relaunch, so a session that came back drops off the attention
 /// list.
@@ -2436,6 +2506,78 @@ async fn pull_request_session(h: &Harness, number: i64) -> AgentSession {
     h.seed_conversation(&session.id, "uuid-1234").await;
     h.agent_runs(&session).await;
     session
+}
+
+/// A reviewer session that goes quiet again after every relaunch has no
+/// task to fail either — it sits on no task any more than an orchestrator
+/// does. The same give-up mark the orchestrator's own exhausted-relaunch
+/// path now leaves is recorded here too
+/// (`PullRequestRow::reviewer_given_up_at`), so `GET /v1/attention`
+/// raises an item naming the request rather than leaving only the bare
+/// `stalled` flag standing.
+#[tokio::test]
+async fn a_reviewer_session_that_wedges_after_every_relaunch_is_given_up_on_without_a_task_to_fail()
+{
+    let h = harness().await;
+    let session = pull_request_session(&h, 1).await;
+    let pull_request_id = session.pull_request_id.clone().unwrap();
+    let wake = |sched: &UnboundedSender<SchedEvent>| {
+        sched
+            .send(SchedEvent::PullRequestChanged(pull_request_id.clone()))
+            .unwrap();
+    };
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    wake(&sched);
+
+    for relaunch in 1..=2 {
+        h.launched_ago(&session, RELAUNCH_SECS + 60).await;
+        let launched = h.launched_at(&session).await;
+        wake(&sched);
+        eventually(TIMEOUT, &format!("relaunch {relaunch}"), async || {
+            h.relaunched(&session, &launched).await
+        })
+        .await;
+    }
+    assert!(
+        h.store
+            .get_pull_request(&pull_request_id)
+            .await
+            .unwrap()
+            .reviewer_given_up_at
+            .is_none(),
+        "not given up on while a relaunch is still being tried"
+    );
+
+    h.launched_ago(&session, RELAUNCH_SECS + 60).await;
+    wake(&sched);
+
+    eventually(
+        TIMEOUT,
+        "the request's reviewer session to be given up on",
+        async || {
+            h.store
+                .get_pull_request(&pull_request_id)
+                .await
+                .unwrap()
+                .reviewer_given_up_at
+                .is_some()
+        },
+    )
+    .await;
+
+    let list: ariadne_api::attention::AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 1, "{:?}", list.items);
+    assert_eq!(
+        list.items[0].reason,
+        ariadne_api::attention::AttentionCause::Unknown
+    );
+    assert_eq!(
+        list.items[0].target,
+        ariadne_api::attention::AttentionTarget::PullRequest {
+            pull_request_id: pull_request_id.clone()
+        }
+    );
 }
 
 /// An idle pull request session is waiting on the forge, as an idle

@@ -278,6 +278,26 @@ impl Scheduler {
         self.handed(session, handed)
     }
 
+    /// [`Self::hand_prompt`] for a goal's own attention briefing (031),
+    /// tagged with the failed tasks it names so the turn that answers it
+    /// can confirm exactly those once it ends, through the ACP driver —
+    /// never from an ambient session status.
+    fn hand_goal_attention(
+        &mut self,
+        session: &AgentSession,
+        text: String,
+        goal_id: &str,
+        failed_tasks: Vec<(String, String)>,
+    ) -> bool {
+        let handed = self.launcher.acp.send_goal_attention(
+            &session.id,
+            text,
+            goal_id.to_string(),
+            failed_tasks,
+        );
+        self.handed(session, handed)
+    }
+
     /// [`Self::hand_prompt`] for an agent message: the runtime stamps it
     /// when the prompt goes out, and queues it once however many passes
     /// hand it.

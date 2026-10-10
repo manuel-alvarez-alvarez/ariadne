@@ -8,7 +8,21 @@ use ariadne_core::{Actor, AttentionReason, Seat, SessionStatus, TaskStatus};
 use ariadne_store::NewSession;
 
 use crate::common::test_pin;
-use crate::common::{TIMEOUT, eventually, harness, with_forge};
+use crate::common::{Harness, TIMEOUT, eventually, harness, with_forge};
+
+/// Confirm, directly through the store's own persisted evidence, that this
+/// goal's orchestrator has had a turn on exactly this task's current
+/// failure — the same state `acp::serve_with_input` writes once a real
+/// `Delivery::GoalAttention` turn ends. Setup for tests about causes other
+/// than the orchestrator gate itself, which has its own dedicated tests
+/// below (`a_failed_tasks_item_waits_for_its_orchestrator_to_actually_have_a_turn_on_it`
+/// and its siblings).
+async fn confirm_told(h: &Harness, goal_id: &str, task: &ariadne_store::Task) {
+    h.store
+        .confirm_goal_orchestrator_answered(goal_id, &[(task.id.clone(), task.updated_at.clone())])
+        .await
+        .unwrap();
+}
 
 /// Nothing stuck answers an empty, `complete` list, and the route is in the
 /// API document under the `attention` tag.
@@ -28,7 +42,8 @@ async fn an_empty_daemon_answers_an_empty_complete_list() {
 async fn a_descriptor_limit_failure_is_a_resource_item() {
     let h = harness().await;
     let cast = h.cast().await;
-    h.store
+    let failed = h
+        .store
         .transition_task(
             &cast.task.id,
             TaskStatus::Failed,
@@ -38,6 +53,7 @@ async fn a_descriptor_limit_failure_is_a_resource_item() {
         )
         .await
         .unwrap();
+    confirm_told(&h, &cast.goal.id, &failed).await;
 
     let list: AttentionListDto = h.get("/v1/attention").await;
     assert_eq!(list.items.len(), 1);
@@ -62,8 +78,10 @@ async fn two_tasks_sharing_a_descriptor_limit_failure_are_one_grouped_item() {
     let second = h
         .task_on(&first.goal, &first.repo, "second", test_pin())
         .await;
+    let mut failed_tasks = Vec::new();
     for task_id in [&first.task.id, &second.id] {
-        h.store
+        let failed = h
+            .store
             .transition_task(
                 task_id,
                 TaskStatus::Failed,
@@ -73,7 +91,12 @@ async fn two_tasks_sharing_a_descriptor_limit_failure_are_one_grouped_item() {
             )
             .await
             .unwrap();
+        failed_tasks.push((failed.id, failed.updated_at));
     }
+    h.store
+        .confirm_goal_orchestrator_answered(&first.goal.id, &failed_tasks)
+        .await
+        .unwrap();
 
     let list: AttentionListDto = h.get("/v1/attention").await;
     assert_eq!(list.items.len(), 1, "{:?}", list.items);
@@ -95,7 +118,8 @@ async fn two_tasks_sharing_a_descriptor_limit_failure_are_one_grouped_item() {
 async fn a_task_failed_for_another_reason_is_its_own_unknown_item() {
     let h = harness().await;
     let cast = h.cast().await;
-    h.store
+    let failed = h
+        .store
         .transition_task(
             &cast.task.id,
             TaskStatus::Failed,
@@ -105,6 +129,7 @@ async fn a_task_failed_for_another_reason_is_its_own_unknown_item() {
         )
         .await
         .unwrap();
+    confirm_told(&h, &cast.goal.id, &failed).await;
 
     let list: AttentionListDto = h.get("/v1/attention").await;
     assert_eq!(list.items.len(), 1);
@@ -126,7 +151,8 @@ async fn two_tasks_failed_for_different_reasons_stay_separate_unknown_items() {
     let second = h
         .task_on(&first.goal, &first.repo, "second", test_pin())
         .await;
-    h.store
+    let failed_first = h
+        .store
         .transition_task(
             &first.task.id,
             TaskStatus::Failed,
@@ -136,13 +162,24 @@ async fn two_tasks_failed_for_different_reasons_stay_separate_unknown_items() {
         )
         .await
         .unwrap();
-    h.store
+    let failed_second = h
+        .store
         .transition_task(
             &second.id,
             TaskStatus::Failed,
             Actor::Daemon,
             Some("the tests did not pass"),
             None,
+        )
+        .await
+        .unwrap();
+    h.store
+        .confirm_goal_orchestrator_answered(
+            &first.goal.id,
+            &[
+                (failed_first.id, failed_first.updated_at),
+                (failed_second.id, failed_second.updated_at),
+            ],
         )
         .await
         .unwrap();
@@ -349,8 +386,12 @@ async fn a_forge_cli_signed_out_mid_fetch_is_confirmed_reactively_and_reaches_th
     use crate::common::forge::{answer, stub_forge_cli};
 
     let stub = stub_forge_cli(serde_json::json!([
-        answer(&["auth", "status"], 1, ""),
-        answer(&["pr", "list"], 1, "")
+        answer(&["pr", "list"], 1, ""),
+        {
+            "args": ["api", "user"],
+            "exit": 1,
+            "stderr": "gh: HTTP 401: Bad credentials (https://api.github.com/user)",
+        },
     ]));
     let h = harness().forge_cli(&stub).await;
     let repo = h.repository(&h.git_repo("repo")).await;
@@ -426,7 +467,8 @@ async fn a_disabled_forge_integrations_fetch_error_raises_nothing() {
 async fn a_recovery_items_id_is_stable_across_two_reads() {
     let h = harness().await;
     let cast = h.cast().await;
-    h.store
+    let failed = h
+        .store
         .transition_task(
             &cast.task.id,
             TaskStatus::Failed,
@@ -436,6 +478,7 @@ async fn a_recovery_items_id_is_stable_across_two_reads() {
         )
         .await
         .unwrap();
+    confirm_told(&h, &cast.goal.id, &failed).await;
 
     let first: AttentionListDto = h.get("/v1/attention").await;
     let second: AttentionListDto = h.get("/v1/attention").await;
@@ -496,15 +539,28 @@ async fn an_exhausted_session_already_switched_raises_no_quota_item() {
 
 /// End to end, through the real scheduler and a stub agent rather than a
 /// hand-written store poke: a failed task raises nothing while its
-/// orchestrator exists but has not yet had a turn on it, and raises its
-/// item the moment it has. Queuing the prompt is not enough on its own —
-/// `tell_orchestrator` hands it off well before the stub agent's turn
-/// actually ends — so a premature read here is exactly the bug a stamp
-/// taken at hand-off time, rather than at turn completion, would have
-/// let through.
+/// orchestrator's turn on it is still running, and raises its item only
+/// once that turn actually ends. The stub's own turn is held open on
+/// `wait_for` for exactly this window, so the read taken while it is still
+/// running proves suppression during the gap between delivery and
+/// completion — not merely before delivery and after completion, which a
+/// stamp taken at hand-off time would also have passed.
 #[tokio::test]
-async fn a_failed_tasks_item_waits_for_its_orchestrator_to_actually_have_a_turn_on_it() {
+async fn a_failed_tasks_item_stays_suppressed_while_its_orchestrators_turn_on_it_is_still_running()
+{
     let h = harness().scheduler().await;
+    let gate = h.dir.path().join("goal-attention-turn");
+    let mut script = crate::common::acp::script();
+    script["prompts"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "updates": [],
+            "wait_for": gate.display().to_string(),
+            "stop_reason": "end_turn",
+        }));
+    h.agent.reprogram(script);
+
     let cast = h.cast().await;
     // `tell_orchestrator` is only reached once the goal is active (009
     // rule 4) — planning only nudges a running orchestrator, it never
@@ -544,15 +600,95 @@ async fn a_failed_tasks_item_waits_for_its_orchestrator_to_actually_have_a_turn_
         .await
         .unwrap();
 
+    // The prompt was delivered — the turn it started is running — but has
+    // not ended: this is exactly the window a stamp taken at hand-off time
+    // would already have satisfied.
     eventually(
         TIMEOUT,
-        "the orchestrator to be told and have a turn on it",
+        "the orchestrator's turn on the failure to start",
+        || async {
+            orchestrator()
+                .await
+                .is_some_and(|s| s.status() == SessionStatus::Running)
+        },
+    )
+    .await;
+    let during: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(
+        during.items,
+        Vec::new(),
+        "mid-turn, so still trying: {:?}",
+        during.items
+    );
+
+    std::fs::write(&gate, "go").unwrap();
+
+    eventually(
+        TIMEOUT,
+        "the item to appear once the turn actually ends",
         || async {
             let list: AttentionListDto = h.get("/v1/attention").await;
             list.items.len() == 1
         },
     )
     .await;
+}
+
+/// An unrelated turn — one carrying no `Delivery::GoalAttention` at all —
+/// confirms nothing when it ends, end to end through the real scheduler
+/// and a real console turn: the confirmed-list column stays untouched by
+/// it. The loose "any stop on this session promotes whatever is pending"
+/// read this list once took would have confirmed a failure the turn never
+/// carried; this one cannot, because what is written comes from the
+/// delivery that completed, not from the session's ambient status.
+#[tokio::test]
+async fn an_unrelated_turn_confirms_nothing_it_never_carried() {
+    let h = harness().scheduler().await;
+    let cast = h.cast().await;
+    h.store
+        .set_goal_status(&cast.goal.id, ariadne_core::GoalStatus::Active)
+        .await
+        .unwrap();
+    let orchestrator = async || {
+        h.sessions_of_goal(&cast.goal.id)
+            .await
+            .into_iter()
+            .find(|s| s.seat() == Some(Seat::Orchestrator))
+    };
+    eventually(TIMEOUT, "the orchestrator to be launched", || async {
+        orchestrator().await.is_some()
+    })
+    .await;
+    eventually(TIMEOUT, "the orchestrator's first turn to end", || async {
+        orchestrator()
+            .await
+            .is_some_and(|s| s.status() == SessionStatus::Idle)
+    })
+    .await;
+    let session = orchestrator().await.unwrap();
+
+    // A console message, not a daemon delivery: its turn carries no
+    // `Delivery::GoalAttention`, whatever it ends with.
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &format!("/v1/sessions/{}/console/input", session.id),
+            serde_json::json!({"text": "hello"}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "the unrelated turn to end", || async {
+        orchestrator()
+            .await
+            .is_some_and(|s| s.status() == SessionStatus::Idle)
+    })
+    .await;
+
+    let goal = h.store.get_goal(&cast.goal.id).await.unwrap();
+    assert!(
+        goal.orchestrator_answered_failed_task_ids.is_none(),
+        "an unrelated turn confirmed something: {:?}",
+        goal.orchestrator_answered_failed_task_ids
+    );
 }
 
 /// Confirmation is read by this task's own id, never by whether the goal
@@ -582,11 +718,13 @@ async fn a_failed_tasks_item_still_waits_while_only_a_different_failure_was_conf
     // A different task's failure was told and confirmed — this task's
     // never was.
     h.store
-        .set_goal_orchestrator_told(&cast.goal.id, &["01OTHERTASKXXXXXXXXXXXXXXX".into()])
-        .await
-        .unwrap();
-    h.store
-        .promote_goal_orchestrator_told(&cast.goal.id)
+        .confirm_goal_orchestrator_answered(
+            &cast.goal.id,
+            &[(
+                "01OTHERTASKXXXXXXXXXXXXXXX".into(),
+                "2026-01-01T00:00:00Z".into(),
+            )],
+        )
         .await
         .unwrap();
     h.store
@@ -605,6 +743,90 @@ async fn a_failed_tasks_item_still_waits_while_only_a_different_failure_was_conf
         list.items,
         Vec::new(),
         "never named, so still trying: {:?}",
+        list.items
+    );
+}
+
+/// A confirmed task id does not survive its own task's retry: once told,
+/// confirmed and retried off `failed`, a *second* failure of the same
+/// task is a new occurrence — its `updated_at` moved — and the old
+/// confirmation, still naming the old one, does not answer for it.
+#[tokio::test]
+async fn an_old_confirmation_does_not_answer_for_a_tasks_second_failure() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    let first_failure = h
+        .store
+        .transition_task(
+            &cast.task.id,
+            TaskStatus::Failed,
+            Actor::Daemon,
+            Some("the tests did not pass"),
+            None,
+        )
+        .await
+        .unwrap();
+    confirm_told(&h, &cast.goal.id, &first_failure).await;
+    let confirmed: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(confirmed.items.len(), 1, "the first failure is confirmed");
+
+    // Retried off `failed` — the orchestrator's own answer to it — and
+    // failed again. The second failure stamps a new `updated_at`.
+    h.store
+        .transition_task(&cast.task.id, TaskStatus::Ready, Actor::User, None, None)
+        .await
+        .unwrap();
+    let second_failure = h
+        .store
+        .transition_task(
+            &cast.task.id,
+            TaskStatus::Failed,
+            Actor::Daemon,
+            Some("the tests did not pass again"),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_ne!(
+        first_failure.updated_at, second_failure.updated_at,
+        "the retry must have moved the stamp for this to prove anything"
+    );
+
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(
+        list.items,
+        Vec::new(),
+        "the old confirmation must not answer for the new failure: {:?}",
+        list.items
+    );
+}
+
+/// An orchestrated goal with no orchestrator session yet — the moment
+/// before `keep_orchestrator`'s first launch — still has automatic
+/// recovery coming: a failed task of that goal raises nothing. Absence of
+/// a session at all is not evidence of a give-up any more than absence of
+/// a *live* one is; only `Goal::orchestrator_given_up_at` is.
+#[tokio::test]
+async fn a_failed_task_raises_nothing_while_its_goal_awaits_its_orchestrators_first_launch() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    // No orchestrator session exists for this goal at all.
+    h.store
+        .transition_task(
+            &cast.task.id,
+            TaskStatus::Failed,
+            Actor::Daemon,
+            Some("the tests did not pass"),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(
+        list.items,
+        Vec::new(),
+        "the orchestrator's first launch may still be coming: {:?}",
         list.items
     );
 }
@@ -706,7 +928,12 @@ async fn a_failed_task_raises_nothing_while_its_orchestrator_merely_crashed_with
 
 /// Once `scheduler::goals::orchestrator_could_not_start` has actually
 /// given up — the spawn-retry budget spent, `Goal::orchestrator_given_up_at`
-/// stamped — a failed task of that goal raises its item.
+/// stamped — a failed task of that goal raises its own item, same as
+/// always, *and* the orchestrator's own give-up raises a second,
+/// independent item of its own: a task that failed for its own reason and
+/// an orchestrator that will not start are two different problems with
+/// two different actions, and the task's own item carries no "resume the
+/// orchestrator" action for the second one to be dropped in favour of.
 #[tokio::test]
 async fn a_failed_task_raises_its_item_once_its_orchestrator_is_given_up_on() {
     let h = harness().await;
@@ -740,7 +967,162 @@ async fn a_failed_task_raises_its_item_once_its_orchestrator_is_given_up_on() {
         .unwrap();
 
     let list: AttentionListDto = h.get("/v1/attention").await;
-    assert_eq!(list.items.len(), 1);
+    assert_eq!(list.items.len(), 2, "{:?}", list.items);
+    assert!(
+        list.items
+            .iter()
+            .any(|item| item.affected.iter().any(|a| a.id == cast.task.id)),
+        "the task's own item names it: {:?}",
+        list.items
+    );
+    assert!(
+        list.items
+            .iter()
+            .any(|item| item.required_action.contains("resume it")),
+        "the orchestrator's own item names its own action: {:?}",
+        list.items
+    );
+}
+
+/// A cancelled goal no longer needs the orchestrator its give-up item was
+/// about: the item excludes it, rather than carrying a "resume it"
+/// action for work the user has already called off. The mark itself is
+/// left as it stood — a later read of the goal's own history still finds
+/// it — only the active item is excluded.
+#[tokio::test]
+async fn a_cancelled_goals_orchestrator_give_up_raises_nothing() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    h.store
+        .create_session(NewSession {
+            goal_id: Some(cast.goal.id.clone()),
+            task_id: None,
+            seat: Some(Seat::Orchestrator),
+            task_agent_id: None,
+            model: test_pin().model,
+            effort: None,
+            worktree_path: None,
+            pull_request_id: None,
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_goal_orchestrator_given_up(&cast.goal.id)
+        .await
+        .unwrap();
+    h.store
+        .set_goal_status(&cast.goal.id, ariadne_core::GoalStatus::Cancelled)
+        .await
+        .unwrap();
+
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(
+        list.items,
+        Vec::new(),
+        "a cancelled goal needs no orchestrator any more: {:?}",
+        list.items
+    );
+    assert!(
+        h.store
+            .get_goal(&cast.goal.id)
+            .await
+            .unwrap()
+            .orchestrator_given_up_at
+            .is_some(),
+        "the mark itself is history, not deleted"
+    );
+}
+
+/// A request still open and still asking for review, but whose
+/// repository lost its configured review pin, no longer wants a reviewer
+/// session either — the same thing `scheduler::pull_requests::end_review`
+/// reads to take its session down — and its earlier give-up mark is
+/// cleared with it: nothing is trying to start that session any more, so
+/// there is nothing left to have given up on.
+#[tokio::test]
+async fn a_request_whose_review_pin_is_gone_clears_its_reviewers_give_up() {
+    let h = harness().scheduler().await;
+    let repo = h.repository(&h.at("widgets")).await;
+    h.store
+        .set_forge_integration(ariadne_store::SetForgeIntegration {
+            repository_id: repo.id.clone(),
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+            review_model: Some(test_pin().model),
+            review_effort: None,
+        })
+        .await
+        .unwrap();
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "reviewer".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_pull_request_reviewer_given_up(&pull.id)
+        .await
+        .unwrap();
+    // Still open, still asking — but the repository's review pin is gone,
+    // so nothing wants a reviewer session for it any more either.
+    crate::common::forge::seed_live(&h, &pull, "someone", "fix-1", "abc", true);
+    h.store
+        .set_forge_integration(ariadne_store::SetForgeIntegration {
+            repository_id: repo.id.clone(),
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+            review_model: None,
+            review_effort: None,
+        })
+        .await
+        .unwrap();
+
+    h.state.forge_poll.wake(&repo.id);
+    h.state
+        .sched_tx
+        .as_ref()
+        .unwrap()
+        .send(ariadne_daemon::scheduler::SchedEvent::PullRequestChanged(
+            pull.id.clone(),
+        ))
+        .unwrap();
+
+    eventually(
+        TIMEOUT,
+        "the reviewer's give-up mark to be cleared",
+        || async {
+            h.store
+                .get_pull_request(&pull.id)
+                .await
+                .unwrap()
+                .reviewer_given_up_at
+                .is_none()
+        },
+    )
+    .await;
+
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(
+        list.items,
+        Vec::new(),
+        "nothing is trying to start that session any more: {:?}",
+        list.items
+    );
 }
 
 /// A reviewer session's affected label names its seat, the same as an
@@ -880,7 +1262,8 @@ async fn two_sessions_on_the_same_model_blocked_for_different_reasons_stay_separ
 async fn retrying_a_failed_task_removes_its_item_without_losing_the_transition() {
     let h = harness().await;
     let cast = h.cast().await;
-    h.store
+    let failed = h
+        .store
         .transition_task(
             &cast.task.id,
             TaskStatus::Failed,
@@ -890,6 +1273,7 @@ async fn retrying_a_failed_task_removes_its_item_without_losing_the_transition()
         )
         .await
         .unwrap();
+    confirm_told(&h, &cast.goal.id, &failed).await;
     let before: AttentionListDto = h.get("/v1/attention").await;
     assert_eq!(before.items.len(), 1);
 
@@ -920,7 +1304,8 @@ async fn retrying_a_failed_task_removes_its_item_without_losing_the_transition()
 async fn a_recovery_items_id_is_stable_across_a_fresh_store_connection() {
     let h = harness().await;
     let cast = h.cast().await;
-    h.store
+    let failed = h
+        .store
         .transition_task(
             &cast.task.id,
             TaskStatus::Failed,
@@ -930,6 +1315,7 @@ async fn a_recovery_items_id_is_stable_across_a_fresh_store_connection() {
         )
         .await
         .unwrap();
+    confirm_told(&h, &cast.goal.id, &failed).await;
 
     let first = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
     let reopened = ariadne_store::Store::open(h.dir.path().join("test.db"))

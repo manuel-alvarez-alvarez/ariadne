@@ -213,16 +213,6 @@ pub async fn ingest_event(
         if !status.is_live() {
             crate::stats::record_session_end(store, &session.id).await;
         }
-        // The orchestrator's own `stop` is the turn that actually carried
-        // whatever `tell_orchestrator` last queued — queuing a prompt is
-        // not the same as the orchestrator having had a turn on it, so the
-        // attention producer's evidence is confirmed only here.
-        if status == ariadne_core::SessionStatus::Idle
-            && session.seat() == Some(ariadne_core::Seat::Orchestrator)
-            && let Some(goal_id) = &session.goal_id
-        {
-            store.promote_goal_orchestrator_told(goal_id).await?;
-        }
     }
     Ok(Some(event))
 }
