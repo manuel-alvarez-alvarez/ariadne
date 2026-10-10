@@ -215,12 +215,11 @@ every other wire enum (011).
    before it writes the prompt and releases an unwritten claim, so a queued
    prompt counts only once written and repeated scheduler passes queue it
    once (009 rule 6, 018 rule 8). A stale entry is skipped if another column
-   already owns the task: a reconciliation pass reads the task's column and
-   agent once at its start, and a step call racing that pass moves the task
-   again before the pass reaches the entry, so the pass compares the entry's
-   own target column against the one it read and skips rather than brief the
-   column it read with an entry addressed to the one that outran it; the step
-   call's own event reconciles the task again, consistently.
+   already owns the task. A pass hands an entry only to the column the entry
+   moved the task to: a pass that read the task before its column completed
+   finds the next column's entry newest, neither starts nor briefs an agent
+   for it, and leaves it to the pass the move wakes, which reads the task
+   afresh.
 7. Any step agent can fail the task with `fail_task` (001 rule 6). A retry
    puts the task back on the first column and reuses its agent's
    conversation where one exists on the pin the agent still has; an agent
@@ -359,6 +358,9 @@ every other wire enum (011).
   (`workflow_steps.rs::only_the_current_column_is_nudged_and_idle_columns_raise_no_attention`).
 - A failed prompt hand-off retains its delivery and retries once
   (`workflow_steps.rs::a_step_briefing_survives_a_closed_prompt_channel`).
+- A pass behind a completion leaves the next column's briefing to that
+  column's agent
+  (`workflow_steps.rs::a_pass_behind_a_completion_hands_the_next_entry_to_nobody`).
 - A push gate reads the remote tip, and a request gate reads the forge at
   each call
   (`workflow_steps.rs::the_push_gate_requires_the_current_tip_on_the_remote`,

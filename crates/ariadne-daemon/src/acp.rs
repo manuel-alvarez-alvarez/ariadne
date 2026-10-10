@@ -2421,6 +2421,13 @@ async fn claim_message(rpc: &Rpc, prompt: &Prompt) -> bool {
             rpc.in_flight.claim(delivery.clone());
             true
         }
+        // A message a read took first is routine. A column entry is not: it
+        // is briefed once, and the agent whose briefing went elsewhere has
+        // nothing else to start from.
+        Ok(false) if matches!(delivery, Delivery::Step(_)) => {
+            tracing::warn!(session = %sink.session_id, delivery = %delivery.key(), "the column entry was briefed first, or is no longer current; its briefing is skipped");
+            false
+        }
         Ok(false) => {
             tracing::debug!(session = %sink.session_id, delivery = %delivery.key(), "the delivery was taken first, or its news is stale; its prompt is skipped");
             false
