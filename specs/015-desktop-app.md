@@ -776,6 +776,9 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/repositories/repository-form-dialog.test.tsx::sends the permission mode picked for it`,
   `::starts from the stored permission mode, and sends a new one`,
   `ui/src/features/repositories/repositories-page.test.tsx::lists what the daemon holds, and says so where a description is missing`).
+- The repositories screen shows each repository's default workflow and opens
+  that workflow when its name is selected
+  (`ui/src/features/repositories/repositories-page.test.tsx::shows each repository workflow and opens its workflow`).
 - The attention strip holds a placeholder while its lists load and survives a
   partial failure (`ui/src/features/goals/attention-strip.test.tsx`).
 - An attention toast opens the blocked session and finishes dismissal before
