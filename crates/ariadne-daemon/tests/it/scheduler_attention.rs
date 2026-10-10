@@ -318,6 +318,16 @@ impl Sched {
             .unwrap();
     }
 
+    /// Report a launch ending after its successor has already started.
+    fn ended(&self, session: &AgentSession, launch_id: &str) {
+        self.0
+            .send(SchedEvent::SessionEnded {
+                session_id: session.id.clone(),
+                launch_id: launch_id.to_string(),
+            })
+            .unwrap();
+    }
+
     /// Block until every event sent so far has been reconciled to
     /// completion — see [`ariadne_daemon::scheduler::flush_for_test`].
     async fn flush(&self) {
@@ -1520,6 +1530,33 @@ async fn a_task_whose_agent_dies_the_moment_it_starts_fails_with_the_reason_on_i
         Some("its agent stopped as soon as it started"),
         "the task does not say what stopped it"
     );
+}
+
+/// An end event belongs to one launch, not to every later launch in the
+/// session's row. A replacement can start before the scheduler dequeues the
+/// old launch's end event.
+#[tokio::test]
+async fn an_ended_launch_does_not_retire_its_successor() {
+    let w = World::active().await;
+    w.advance(&w.task, TaskStatus::InProgress).await;
+    w.briefed(&w.task).await;
+    let develop = w.develop_of(&w.task).await;
+    let session = w
+        .session(&w.goal, Some(&w.task), Seat::Agent, &develop)
+        .await;
+    let ended_launch = "ended-launch".to_string();
+    w.agent_runs(&session).await;
+    let successor = w.launch_id(&session).await.unwrap();
+    assert_ne!(successor, ended_launch, "the successor has its own launch");
+
+    let sched = w.scheduler();
+    sched.ended(&session, &ended_launch);
+    sched.flush().await;
+
+    let row = w.store.get_session(&session.id).await.unwrap();
+    assert_eq!(row.status(), SessionStatus::Running);
+    assert_eq!(row.launch_id.as_deref(), Some(successor.as_str()));
+    assert!(w.launcher.acp.is_running(&session.id));
 }
 
 /// A goal the user cancelled takes its tasks with it, and every one of them

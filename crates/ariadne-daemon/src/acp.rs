@@ -1379,7 +1379,10 @@ impl AcpRuntime {
         if self.deregister(&launch.session_id, &launch.launch_id)
             && let Some(tx) = self.inner.scheduler.get()
         {
-            let _ = tx.send(SchedEvent::SessionEnded(launch.session_id.clone()));
+            let _ = tx.send(SchedEvent::SessionEnded {
+                session_id: launch.session_id.clone(),
+                launch_id: launch.launch_id.clone(),
+            });
         }
     }
 }

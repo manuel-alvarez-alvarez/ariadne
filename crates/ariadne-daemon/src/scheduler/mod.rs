@@ -52,7 +52,10 @@ pub enum SchedEvent {
     /// comes once per launch, and it is the first moment a pass can see the
     /// seat empty — every wake before it may have found the agent still
     /// registered.
-    SessionEnded(String),
+    SessionEnded {
+        session_id: String,
+        launch_id: String,
+    },
     /// A pull request of the ledger changed: a fetch read it, a session
     /// reported on it, or it was closed with its integration (026).
     PullRequestChanged(String),
@@ -229,10 +232,10 @@ pub fn start(
                             wakes.reconciled(&id, tokio::time::Instant::now());
                         }
                     }
-                    Some(SchedEvent::SessionEnded(id)) => {
-                        scheduler.retire_ended(&id).await;
-                        scheduler.reconcile_session(&id).await;
-                        wakes.reconciled(&id, tokio::time::Instant::now());
+                    Some(SchedEvent::SessionEnded { session_id, launch_id }) => {
+                        scheduler.retire_ended(&session_id, &launch_id).await;
+                        scheduler.reconcile_session(&session_id).await;
+                        wakes.reconciled(&session_id, tokio::time::Instant::now());
                     }
                     Some(SchedEvent::Flush(done)) => {
                         for id in wakes.take_all() {

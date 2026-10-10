@@ -217,7 +217,8 @@ the ACP runtime that takes a prompt (021).
     and 6): once, and queued behind a running turn. Its messages are agent
     messages (018).
 42. An agent that ends by itself wakes the scheduler once more, after the
-    runtime has let it go. The wakes its last events send can each be
+    runtime has let it go. The wake names its launch, so an old event cannot
+    retire a session a new launch already resumed. The wakes its last events send can each be
     answered by a pass that still finds the agent registered and leaves the
     seat alone. This last wake is reconciled at once, outside the session's
     window (rule 32), so its session is retired and the seat is filled, or the
@@ -319,7 +320,8 @@ the ACP runtime that takes a prompt (021).
   (`::a_task_whose_agent_dies_the_moment_it_starts_fails_with_the_reason_on_it`).
   The task test runs with neither a tick nor a window end in reach, so
   each death after the first is noticed by the end wake of rule 42 alone, and
-  each ended session is retired without a tick.
+  each ended session is retired without a tick. An end event from an old
+  launch leaves a live successor running.
 - A column agent heard from once that cannot be started again fails its task
   rather than being tried for ever
   (`::a_step_agent_heard_from_once_that_cannot_be_started_again_fails_its_task`).

@@ -20,7 +20,13 @@ impl super::Scheduler {
     /// The end is certain, unlike a liveness sweep that discovers a missing
     /// process. Do not raise disconnected attention for a session that told
     /// the runtime it ended.
-    pub(super) async fn retire_ended(&self, session_id: &str) {
+    pub(super) async fn retire_ended(&self, session_id: &str, launch_id: &str) {
+        let Ok(session) = self.store.get_session(session_id).await else {
+            return;
+        };
+        if session.launch_id.as_deref() != Some(launch_id) {
+            return;
+        }
         let _ = self
             .store
             .set_session_status(session_id, SessionStatus::Exited)
