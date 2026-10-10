@@ -74,7 +74,16 @@ Out: the daemon endpoints themselves (012).
    permission model's settings behind the `ai` permission mode (022) — Stats
    (rule 37), and a daemon-logs drawer. `workflows-page.test.tsx`,
    `workflow-editor.test.tsx`, and `workflow-preview.test.tsx` prove the
-   workflow screen rules.
+   workflow screen rules. The editor and preview share the screen in equal
+   columns, the preview stacks its columns, and a parser refusal marks its
+   source line in the editor (`workflow-editor.test.tsx::puts the editor and
+   preview in equal columns`, `workflow-preview.test.tsx::renders each parsed
+   column with its skill, rank and gate`, `workflow-editor.test.tsx::parses
+   each draft once for the editor and preview`,
+   `workflow-editor.test.tsx::marks the line the parser refuses in the
+   editor`, `workflow-preview.test.tsx::shows a parser refusal at its line`,
+   and `workflow-language.test.ts::classifies workflow names, columns,
+   metadata, and descriptions`).
 4. Types are generated from the daemon's OpenAPI document, so a DTO change
    that is not reflected here fails the typecheck rather than the app.
 5. One SSE connection serves the whole app, with a dispatcher and reconnect
