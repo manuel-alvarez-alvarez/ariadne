@@ -12,7 +12,7 @@
 //! reporting. What the scheduler says to an agent goes out through
 //! [`Scheduler::hand_prompt`].
 
-mod auto_switch;
+pub(crate) mod auto_switch;
 mod coalesce;
 mod goals;
 mod messages;
@@ -88,7 +88,7 @@ pub const SPAWN_RETRY_BUDGET: u32 = 3;
 /// wakes. Leave time for another task to end before spending another attempt.
 const DESCRIPTOR_RETRY: Duration = Duration::from_secs(30);
 const SPAWN_FAILURE_REASON: &str = "the agent could not be started";
-const DESCRIPTOR_LIMIT_REASON: &str =
+pub const DESCRIPTOR_LIMIT_REASON: &str =
     "the agent could not start because the daemon reached its open file descriptor limit";
 /// How long a session may report nothing before it is nudged: told to get on
 /// with the work in front of it.

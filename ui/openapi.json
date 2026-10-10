@@ -128,6 +128,27 @@
         }
       }
     },
+    "/v1/attention": {
+      "get": {
+        "tags": [
+          "attention"
+        ],
+        "summary": "Every item a human has something to do about right now: read off every\nregistered producer (`crate::attention`), not inferred here from a task\nor a session's bare status.",
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttentionListDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/doctor": {
       "get": {
         "tags": [
@@ -4556,6 +4577,17 @@
         },
         "additionalProperties": false
       },
+      "AttentionCause": {
+        "type": "string",
+        "description": "What kind of blocker an item is, in the one vocabulary every producer\nshares. `Unknown` is for a blocker a producer raises without reliable\nevidence of which of the other four it is — it is never grouped with\nanother item, unknown or not (009, \"Unknown causes remain separate\").",
+        "enum": [
+          "access",
+          "quota",
+          "configuration",
+          "resource",
+          "unknown"
+        ]
+      },
       "AttentionFlagDto": {
         "type": "object",
         "required": [
@@ -4612,6 +4644,70 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "AttentionItemDto": {
+        "type": "object",
+        "description": "One item on the Needs attention list.",
+        "required": [
+          "id",
+          "cause",
+          "summary",
+          "required_action",
+          "since",
+          "affected",
+          "target"
+        ],
+        "properties": {
+          "affected": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttentionSubjectDto"
+            },
+            "description": "Every entity this blocker's affected work names. A grouped item\n(009, \"A shared access or resource failure produces one grouped\nitem\") lists every one of them here rather than splitting into an\nitem per entity."
+          },
+          "cause": {
+            "$ref": "#/components/schemas/AttentionCause"
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable across a restart and across the same cause recurring: derived\nfrom the cause and what it shares rather than issued fresh, so the\nsame blocker is the same row for as long as it stands."
+          },
+          "required_action": {
+            "type": "string",
+            "description": "The one action that clears this item."
+          },
+          "since": {
+            "type": "string",
+            "description": "When this blocker was first observed, RFC 3339."
+          },
+          "summary": {
+            "type": "string",
+            "description": "What is blocked and why, in one line."
+          },
+          "target": {
+            "$ref": "#/components/schemas/AttentionTarget"
+          }
+        }
+      },
+      "AttentionListDto": {
+        "type": "object",
+        "description": "The whole list, as `GET /v1/attention` answers it.",
+        "required": [
+          "items",
+          "complete"
+        ],
+        "properties": {
+          "complete": {
+            "type": "boolean",
+            "description": "False where a producer's read failed, so a partial list is never\nread as an all-clear: it still answers with whatever the other\nproducers found."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttentionItemDto"
+            }
           }
         }
       },
@@ -4684,6 +4780,118 @@
             "minimum": 0
           }
         }
+      },
+      "AttentionSubjectDto": {
+        "type": "object",
+        "description": "One entity an item's blocker affects.",
+        "required": [
+          "kind",
+          "id",
+          "label"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AttentionSubjectKind"
+          },
+          "label": {
+            "type": "string",
+            "description": "What to call it where there is room for one word more than the id —\na task's title, a session's model."
+          }
+        }
+      },
+      "AttentionSubjectKind": {
+        "type": "string",
+        "description": "What an item is about: an entity whose work the blocker touches.",
+        "enum": [
+          "goal",
+          "task",
+          "session",
+          "repository"
+        ]
+      },
+      "AttentionTarget": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The console of the named session.",
+            "required": [
+              "session_id",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "console"
+                ]
+              },
+              "session_id": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The named task.",
+            "required": [
+              "task_id",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "task"
+                ]
+              },
+              "task_id": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The named pull request.",
+            "required": [
+              "pull_request_id",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "pull_request"
+                ]
+              },
+              "pull_request_id": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A settings section, named for the client's own routing.",
+            "required": [
+              "section",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "settings"
+                ]
+              },
+              "section": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "description": "Where opening an item takes a client. Opening a target never resolves\nthe item on its own — only the thing the item names doing so does."
       },
       "BinaryDto": {
         "type": "object",
@@ -8058,7 +8266,7 @@
       },
       "TaskBranchDto": {
         "type": "object",
-        "description": "Payload of `task_branch_updated`: where a task's branch points now.\n\nA commit in the author's worktree changes nothing in the store, so no\nother event says the task's diff is no longer the one a client fetched.",
+        "description": "Payload of `task_branch_updated`: where a task's branch points now.\n\nA commit in the task's worktree changes nothing in the store, so no\nother event says the task's diff is no longer the one a client fetched.",
         "required": [
           "task_id",
           "goal_id",
@@ -9044,6 +9252,10 @@
     {
       "name": "stats",
       "description": "How work performs, read off the stats ledger"
+    },
+    {
+      "name": "attention",
+      "description": "The authoritative list of what needs a human now"
     }
   ]
 }

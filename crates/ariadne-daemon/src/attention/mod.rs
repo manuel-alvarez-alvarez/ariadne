@@ -7,8 +7,35 @@
 //! column the task has moved past is an agent nobody is waiting on, whatever
 //! it asks.
 
+pub(crate) mod recovery;
+
+use ariadne_api::attention::AttentionListDto;
 use ariadne_core::{GoalStatus, Seat, TaskStatus};
 use ariadne_store::{AgentSession, Store, Task};
+
+use crate::launcher::Launcher;
+
+/// The whole "Needs attention" list `GET /v1/attention` answers: every item
+/// every registered producer currently finds.
+///
+/// Registering a producer is adding a call here and extending it, the one
+/// extension point this route gives a later task: [`recovery`] is the
+/// first, and an agent's own request and a pull request's next step are
+/// later ones (009). A producer whose read fails costs the list its
+/// `complete` flag rather than its other producers' items, so a partial
+/// read never answers as if nothing were wrong.
+pub async fn collect(store: &Store, launcher: &Launcher) -> AttentionListDto {
+    let mut items = Vec::new();
+    let mut complete = true;
+    match recovery::items(store, launcher).await {
+        Ok(found) => items.extend(found),
+        Err(error) => {
+            tracing::warn!(%error, "the recovery attention producer could not read its evidence");
+            complete = false;
+        }
+    }
+    AttentionListDto { items, complete }
+}
 
 /// Whether the work this session was started for is still going.
 ///

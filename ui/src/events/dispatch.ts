@@ -76,6 +76,8 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       }
       // A task that moves is a fact the stats count, or will.
       void queryClient.invalidateQueries({ queryKey: qk.stats.all() })
+      // A failed task is a machine-resource recovery item's own evidence.
+      void queryClient.invalidateQueries({ queryKey: qk.attention.lists() })
       break
     }
     case "task_branch_updated": {
@@ -106,6 +108,8 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       void queryClient.invalidateQueries({ queryKey: qk.sessions.lists() })
       // A session that ended wrote a fact the stats read.
       void queryClient.invalidateQueries({ queryKey: qk.stats.all() })
+      // An `exhausted` flag's own recovery state is a quota item's evidence.
+      void queryClient.invalidateQueries({ queryKey: qk.attention.lists() })
       invalidateWatchedPullRequest(queryClient, event.data.pull_request_id)
       break
     }
@@ -152,6 +156,8 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       // goal that works in it until the goals are read again. This is the one
       // case that reaches outside its own entity, and the reason it has to.
       void queryClient.invalidateQueries({ queryKey: qk.goals.all() })
+      // A forge fetch error is a configuration recovery item's own evidence.
+      void queryClient.invalidateQueries({ queryKey: qk.attention.lists() })
       break
     }
     case "repository_deleted": {

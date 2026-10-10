@@ -2,6 +2,7 @@
 
 pub use events::ingest_event;
 
+mod attention;
 mod caller;
 mod catalog;
 mod channel;
@@ -163,6 +164,7 @@ impl AppState {
         models::set_enabled,
         models::set_rank,
         logs::snapshot, logs::stream,
+        attention::list,
     ),
     components(schemas(
         ariadne_api::stream::DomainEvent, ariadne_api::stream::ResyncDto,
@@ -170,6 +172,9 @@ impl AppState {
         ariadne_api::events::AgentEventDto, ariadne_api::events::AgentEventSummaryDto,
         ariadne_api::events::EventOrder, ariadne_api::events::PermissionReplyDto,
         ariadne_api::logs::LogLineDto, ariadne_api::logs::LogSnapshotResponse,
+        ariadne_api::attention::AttentionListDto, ariadne_api::attention::AttentionItemDto,
+        ariadne_api::attention::AttentionCause, ariadne_api::attention::AttentionSubjectDto,
+        ariadne_api::attention::AttentionSubjectKind, ariadne_api::attention::AttentionTarget,
     )),
     tags(
         (name = "system", description = "Daemon health and metadata"),
@@ -188,6 +193,7 @@ impl AppState {
         (name = "models", description = "The model catalog discovery found each registry agent offering"),
         (name = "logs", description = "The daemon's own process log"),
         (name = "stats", description = "How work performs, read off the stats ledger"),
+        (name = "attention", description = "The authoritative list of what needs a human now"),
     )
 )]
 struct ApiDoc;
@@ -357,6 +363,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/logs", get(logs::snapshot))
         .route("/v1/logs/stream", get(logs::stream))
         .merge(stats::routes())
+        // attention
+        .route("/v1/attention", get(attention::list))
         // events
         .route("/v1/events", get(events::list))
         .route("/v1/events/stream", get(stream::stream))

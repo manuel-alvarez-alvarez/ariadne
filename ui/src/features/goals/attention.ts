@@ -15,10 +15,19 @@
  * strip exists to keep in sight.
  */
 
-import { useQuery } from "@tanstack/react-query"
+import { queryOptions, useQuery } from "@tanstack/react-query"
 import { useMemo } from "react"
 
-import type { GoalDto, SessionDto, TaskDto } from "@/api"
+import {
+  type AttentionItemDto,
+  type AttentionListDto,
+  api,
+  type GoalDto,
+  qk,
+  type SessionDto,
+  type TaskDto,
+  unwrap,
+} from "@/api"
 import { sessionsQueryOptions } from "@/features/sessions/queries"
 import {
   SESSION_ATTENTION_META,
@@ -29,9 +38,35 @@ import {
 import { STALLED_META, TASK_STATUS_META, taskListQueryOptions } from "@/features/tasks"
 import { sessionColumn } from "@/features/tasks/steps"
 import { shortId } from "@/lib/format"
-import { sessionPanelFrom, sessionTerminalFrom, taskPanelFrom } from "@/routes/paths"
+import { paths, sessionPanelFrom, sessionTerminalFrom, taskPanelFrom } from "@/routes/paths"
 
 import { goalsQueryOptions } from "./queries"
+
+/** `GET /v1/attention`: the daemon's own authoritative recovery list. */
+function attentionListQueryOptions() {
+  return queryOptions({
+    queryKey: qk.attention.list(),
+    queryFn: () => unwrap(api().GET("/v1/attention")),
+  })
+}
+
+/**
+ * Session ids a `quota` item names: a model exhausted with no automatic
+ * switch left to try. The bare `exhausted` flag on a session is not enough
+ * on its own — automatic switching may still clear it on the very next
+ * tick — so a row for it is raised only once the daemon's own producer has
+ * said recovery has nothing left (009's attention contract).
+ */
+function recoveryExhaustedSessions(recovery: AttentionListDto | undefined): Set<string> {
+  const ids = new Set<string>()
+  for (const item of recovery?.items ?? []) {
+    if (item.cause !== "quota") continue
+    for (const subject of item.affected) {
+      if (subject.kind === "session") ids.add(subject.id)
+    }
+  }
+  return ids
+}
 
 /** Why a task is on the list, strongest first. */
 export type AttentionReason = "failed" | "stalled"
@@ -92,6 +127,14 @@ export interface AttentionItem {
    */
   session: SessionDto | undefined
   sessionReason: SessionAttention | null
+  /**
+   * A recovery item with no goal or session of its own — a machine resource
+   * or a daemon configuration blocker — read straight off `GET /v1/attention`
+   * rather than derived here. Set only on a row no task or session fields
+   * above describe; `attentionSubject`/`attentionDetail`/`attentionTarget`
+   * check it first.
+   */
+  recovery?: AttentionItemDto
 }
 
 interface Attention {
@@ -124,23 +167,29 @@ export function useAttention(): Attention {
   // outside conversation — has no goal, task or seat, and every reader below
   // falls back accordingly.
   const sessions = useQuery(sessionsQueryOptions())
+  // The daemon's own recovery producer: gates `exhausted` (see
+  // `recoveryExhaustedSessions`) and supplies the rows — a machine resource
+  // or a daemon configuration blocker — that name no goal or session of
+  // their own.
+  const recovery = useQuery(attentionListQueryOptions())
 
   const items = useMemo(
-    () => collectAttention(goals.data, tasks.data, sessions.data),
-    [goals.data, tasks.data, sessions.data],
+    () => collectAttention(goals.data, tasks.data, sessions.data, recovery.data),
+    [goals.data, tasks.data, sessions.data, recovery.data],
   )
 
-  const error = goals.error ?? tasks.error ?? sessions.error
+  const error = goals.error ?? tasks.error ?? sessions.error ?? recovery.error
 
   return {
     items,
-    isPending: goals.isPending || tasks.isPending || sessions.isPending,
+    isPending: goals.isPending || tasks.isPending || sessions.isPending || recovery.isPending,
     error,
     partial: error !== null && items.length > 0,
     refetch: () => {
       void goals.refetch()
       void tasks.refetch()
       void sessions.refetch()
+      void recovery.refetch()
     },
   }
 }
@@ -167,9 +216,11 @@ function collectAttention(
   goals: GoalDto[] | undefined,
   tasks: TaskDto[] | undefined,
   sessions: SessionDto[] | undefined,
+  recovery: AttentionListDto | undefined,
 ): AttentionItem[] {
   const goalsById = new Map((goals ?? []).map((goal) => [goal.id, goal]))
   const tasksById = new Map((tasks ?? []).map((task) => [task.id, task]))
+  const recoveryExhausted = recoveryExhaustedSessions(recovery)
   /** Keyed by what identifies a row, which is what folds the two kinds. */
   const rows = new Map<string, AttentionItem>()
   /**
@@ -198,6 +249,10 @@ function collectAttention(
   for (const session of sessions ?? []) {
     const reason = sessionAttention(session)
     if (!reason) continue
+    // `exhausted` alone is not enough: automatic model switching may still
+    // clear it on the very next tick, so this row is raised only once the
+    // daemon's own recovery producer has said there is nothing left to try.
+    if (reason === "exhausted" && !recoveryExhausted.has(session.id)) continue
     const at = sessionAttentionAt(session)
     const taskId = session.task_id ?? null
     const key = taskId ?? session.id
@@ -221,6 +276,25 @@ function collectAttention(
       taskReason: row?.taskReason ?? null,
       session,
       sessionReason: reason,
+    })
+  }
+
+  // Every recovery item with no session row to land on — `quota` always has
+  // one, by construction of `recoveryExhausted` above; a machine resource or
+  // a daemon configuration blocker belongs to no goal and is its own row.
+  for (const item of recovery?.items ?? []) {
+    if (item.cause === "quota") continue
+    rows.set(item.id, {
+      id: item.id,
+      goalId: "",
+      goal: undefined,
+      at: item.since,
+      taskId: null,
+      task: undefined,
+      taskReason: null,
+      session: undefined,
+      sessionReason: null,
+      recovery: item,
     })
   }
 
@@ -331,6 +405,7 @@ export function attentionTarget(
   current: URLSearchParams,
   pathname: string,
 ): { pathname?: string; search: string; replace?: boolean } {
+  if (item.recovery) return recoveryTarget(item.recovery, current, pathname)
   const { session, sessionReason, taskId } = item
   if (session && (sessionReason === "waiting_permission" || sessionReason === "waiting_input")) {
     return sessionTerminalFrom(pathname, current, session.id)
@@ -339,6 +414,31 @@ export function attentionTarget(
   // on it; one that is only a session's opens that session.
   if (!item.taskReason && session) return sessionPanelFrom(pathname, current, session.id)
   return taskPanelFrom(pathname, current, taskId ?? item.id)
+}
+
+/**
+ * Where a recovery row's own target (`GET /v1/attention`) lands: the console
+ * of the session it names, the panel of the task it names, or the
+ * Repositories screen for a configuration blocker — the daemon names a
+ * section of it, but there is no per-section route to deep-link into yet.
+ */
+function recoveryTarget(
+  item: AttentionItemDto,
+  current: URLSearchParams,
+  pathname: string,
+): { pathname?: string; search: string; replace?: boolean } {
+  switch (item.target.kind) {
+    case "console":
+      return sessionTerminalFrom(pathname, current, item.target.session_id)
+    case "task":
+      return taskPanelFrom(pathname, current, item.target.task_id)
+    case "pull_request": {
+      const [path, search] = paths.pullRequest(item.target.pull_request_id, current).split("?")
+      return { pathname: path, search: `?${search}` }
+    }
+    case "settings":
+      return { pathname: paths.repositories(), search: "" }
+  }
 }
 
 /**
@@ -359,6 +459,7 @@ export function agentLabel(item: AttentionItem): string {
  * nobody can tell apart from the next one.
  */
 export function attentionSubject(item: AttentionItem): string {
+  if (item.recovery) return item.recovery.summary
   if (item.task) return item.task.title
   if (item.taskId) return `Task ${shortId(item.taskId)}`
   // A pull request's session works for no goal: the request is its subject.
@@ -381,6 +482,7 @@ export function attentionSubject(item: AttentionItem): string {
  * so instead; the badge beside it already names the status.
  */
 export function attentionDetail(item: AttentionItem): string {
+  if (item.recovery) return item.recovery.required_action
   if (item.session && item.sessionReason) {
     const hint = SESSION_ATTENTION_META[item.sessionReason].hint
     // A task-less session already says its seat in the subject.

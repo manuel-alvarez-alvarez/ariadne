@@ -56,7 +56,9 @@ function stubDaemon() {
         ? [GOAL]
         : url.pathname === "/v1/tasks"
           ? [TASK]
-          : aSessionPage(sessions)
+          : url.pathname === "/v1/attention"
+            ? { items: [], complete: true }
+            : aSessionPage(sessions)
     return Promise.resolve(jsonResponse(body))
   })
 }

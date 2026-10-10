@@ -150,6 +150,17 @@ export const qk = {
     lists: () => ["agents", "list"] as const,
     list: () => ["agents", "list", {}] as const,
   },
+  /**
+   * The authoritative "Needs attention" list (`GET /v1/attention`), one
+   * unfiltered list the daemon's own producers fill — `attention.ts` folds
+   * it into the task/session rows it derives itself rather than reading it
+   * blind.
+   */
+  attention: {
+    all: () => ["attention"] as const,
+    lists: () => ["attention", "list"] as const,
+    list: () => ["attention", "list", {}] as const,
+  },
   /** The model catalog (`GET /v1/models`), one unfiltered list for all agents. */
   models: {
     all: () => ["models"] as const,

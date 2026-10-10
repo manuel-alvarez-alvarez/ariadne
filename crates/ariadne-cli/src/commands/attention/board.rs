@@ -2,7 +2,7 @@
 //! tasks first and then its stuck sessions, in the order the UI's strip lists
 //! them.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 
@@ -67,6 +67,7 @@ pub(super) fn group(
     goals: Vec<GoalDto>,
     tasks: Vec<TaskDto>,
     sessions: Vec<SessionEntryDto>,
+    recovery_exhausted: &HashSet<String>,
 ) -> Attention {
     let mut goals = goals;
     goals.sort_by(|a, b| b.id.cmp(&a.id));
@@ -94,7 +95,7 @@ pub(super) fn group(
         }
     }
     for session in sessions {
-        if let Some(reason) = session_reason(&session) {
+        if let Some(reason) = session_reason(&session, recovery_exhausted) {
             // A pull request session works for no goal: its requests are
             // one section of their own.
             let goal_id = match (&session.goal_id, &session.pull_request_id) {
@@ -212,7 +213,7 @@ mod tests {
             title: Some("Fix widgets".into()),
             ..flagged("01PRS", "01GOAL", AttentionReason::WaitingUser)
         };
-        let attention = group(Vec::new(), Vec::new(), vec![session]);
+        let attention = group(Vec::new(), Vec::new(), vec![session], &HashSet::new());
         assert_eq!(heading(&attention.goals[0]), "Pull requests");
         let rows = rows(&attention.goals[0], &HashMap::new(), chrono::Utc::now());
         assert_eq!(rows[0][0], "01PRS");
@@ -228,7 +229,7 @@ mod tests {
             seat: None,
             ..dead("01LOOSE", "01GOAL", None)
         };
-        let attention = group(Vec::new(), Vec::new(), vec![session]);
+        let attention = group(Vec::new(), Vec::new(), vec![session], &HashSet::new());
         assert_eq!(attention.count, 1);
         assert_eq!(attention.goals[0].goal_id, "-");
         let rows = rows(&attention.goals[0], &HashMap::new(), chrono::Utc::now());
@@ -250,6 +251,7 @@ mod tests {
                 dead("01S1", "01GB", None),
                 session("01S2", "01GA", Some("01T4")),
             ],
+            &HashSet::new(),
         );
         let ids: Vec<&str> = attention.goals.iter().map(|g| g.goal_id.as_str()).collect();
         assert_eq!(ids, ["01GB", "01GA", "01GONE"]);
@@ -267,7 +269,12 @@ mod tests {
         );
         assert!(attention.goals[2].goal.is_none());
 
-        let quiet = group(vec![goal("01GA", "A")], Vec::new(), Vec::new());
+        let quiet = group(
+            vec![goal("01GA", "A")],
+            Vec::new(),
+            Vec::new(),
+            &HashSet::new(),
+        );
         assert_eq!(quiet.count, 0);
         assert!(quiet.goals.is_empty());
     }
@@ -282,7 +289,12 @@ mod tests {
         let titles = task_titles(&tasks);
         let now = chrono::Utc::now();
         let rows_of = |sessions| {
-            let attention = group(vec![goal("01GA", "A")], tasks.clone(), sessions);
+            let attention = group(
+                vec![goal("01GA", "A")],
+                tasks.clone(),
+                sessions,
+                &HashSet::new(),
+            );
             rows(&attention.goals[0], &titles, now)
         };
 
@@ -316,12 +328,27 @@ mod tests {
             (AttentionReason::Stalled, "stalled"),
             (AttentionReason::Exhausted, "exhausted"),
         ];
-        let sessions = flags
+        let sessions: Vec<_> = flags
             .iter()
             .enumerate()
             .map(|(i, (flag, _))| flagged(&format!("01S{i}"), "01GA", *flag))
             .collect();
-        let g = &group(vec![goal("01GA", "A")], Vec::new(), sessions).goals[0];
+        // `exhausted` needs `GET /v1/attention` to have named the session —
+        // the row count of every other flag does not, so this is the one row
+        // whose id is pre-confirmed rather than read off the bare flag.
+        let exhausted_id = sessions
+            .iter()
+            .find(|s| s.attention_reason == Some(AttentionReason::Exhausted))
+            .map(|s| s.id.clone())
+            .expect("one session is flagged exhausted");
+        let recovery_exhausted = HashSet::from([exhausted_id]);
+        let g = &group(
+            vec![goal("01GA", "A")],
+            Vec::new(),
+            sessions,
+            &recovery_exhausted,
+        )
+        .goals[0];
         let rows = rows(g, &HashMap::new(), chrono::Utc::now());
         let labels: Vec<&str> = rows.iter().map(|row| row[2].as_str()).collect();
         assert_eq!(labels, flags.map(|(_, label)| label));
@@ -353,6 +380,7 @@ mod tests {
             vec![goal("01GA", "A")],
             vec![task("01T1", "01GA", TaskStatus::InProgress, true)],
             vec![flagged("01S1", "01GA", AttentionReason::WaitingPermission)],
+            &HashSet::new(),
         );
         let doc = serde_json::to_value(&attention).expect("serialize");
         assert_eq!(doc["count"], 2);
