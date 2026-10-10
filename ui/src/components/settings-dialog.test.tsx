@@ -10,9 +10,11 @@
 
 import { screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { beforeEach, describe, expect, it } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import type { ForgeTunnelDto } from "@/api"
+import { DEFAULT_BASE_URL, type ForgeTunnelDto } from "@/api"
+import { Toaster } from "@/components/ui/sonner"
+import { useSettingsStore } from "@/stores/settings"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { SettingsDialog } from "./settings-dialog"
 
@@ -37,6 +39,7 @@ let tunnelWrites: unknown[] = []
 beforeEach(() => {
   tunnel = aTunnel()
   tunnelWrites = []
+  useSettingsStore.setState({ baseUrl: DEFAULT_BASE_URL })
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(String(input), init)
     if (request.method === "PUT") {
@@ -49,6 +52,54 @@ beforeEach(() => {
 })
 
 describe("SettingsDialog", () => {
+  it("saves the daemon URL from the button beside the field, and closes", async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+    renderScreen(
+      <>
+        <Toaster />
+        <SettingsDialog open onOpenChange={onOpenChange} />
+      </>,
+    )
+
+    const field = screen.getByLabelText("Daemon URL")
+    await user.clear(field)
+    await user.type(field, "http://localhost:9999")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(await screen.findByText("Daemon URL updated")).toBeDefined()
+    expect(screen.getByText("http://localhost:9999")).toBeDefined()
+    expect(useSettingsStore.getState().baseUrl).toBe("http://localhost:9999")
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it("shows the field error and saves nothing for an invalid URL", async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+    renderScreen(<SettingsDialog open onOpenChange={onOpenChange} />)
+
+    const field = screen.getByLabelText("Daemon URL")
+    await user.clear(field)
+    await user.type(field, "not a url")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(await screen.findByText("Not a valid URL, e.g. http://127.0.0.1:7676")).toBeDefined()
+    expect(useSettingsStore.getState().baseUrl).toBe(DEFAULT_BASE_URL)
+    expect(onOpenChange).not.toHaveBeenCalled()
+  })
+
+  it("keeps the footer to Reset to default and Close, with no Save button there", () => {
+    renderScreen(<SettingsDialog open onOpenChange={() => {}} />)
+
+    const footer = screen.getByRole("button", { name: "Reset to default" }).closest("div")
+    expect(footer).not.toBeNull()
+    expect(footer?.querySelector("button[type=submit]")).toBeNull()
+    expect(
+      footer && Array.from(footer.querySelectorAll("button")).map((b) => b.textContent),
+    ).toEqual(["Reset to default", "Close"])
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull()
+  })
+
   it("says what the tunnel is for, shows its state, and its switch turns it off and on", async () => {
     const user = userEvent.setup()
     renderScreen(<SettingsDialog open onOpenChange={() => {}} />)

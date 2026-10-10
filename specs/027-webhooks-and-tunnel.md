@@ -163,7 +163,8 @@ A disabled integration has no worker, regardless of its retained hook status.
 20. `ariadne forge tunnel` prints the tunnel, and `ariadne forge tunnel on` and `off` set the switch.
     `repo inspect` prints a `tunnel` line under the webhook block.
     The desktop settings dialog shows the switch, a description of what the tunnel does, and its state: up with the
-    URL, down with the error, or off. The switch is written when flipped, not on the dialog's Save.
+    URL, down with the error, or off. The switch is written when flipped, not on the daemon URL
+    field's Save.
 21. The shutdown signal closes the tunnel and the webhook listener at once.
     The HTTP drain, which an open event stream can hold, comes after.
 

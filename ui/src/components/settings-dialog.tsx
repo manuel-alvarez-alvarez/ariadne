@@ -72,18 +72,23 @@ export function SettingsDialog({
           <div className="flex flex-col gap-6 py-4">
             <Field data-invalid={error ? "" : undefined}>
               <FieldLabel htmlFor="daemon-base-url">Daemon URL</FieldLabel>
-              <Input
-                id="daemon-base-url"
-                value={draft}
-                onChange={(event) => {
-                  setDraft(event.target.value)
-                  setError(null)
-                }}
-                placeholder={DEFAULT_BASE_URL}
-                spellCheck={false}
-                autoComplete="off"
-                aria-invalid={error ? true : undefined}
-              />
+              <div className="flex gap-2">
+                <Input
+                  id="daemon-base-url"
+                  value={draft}
+                  onChange={(event) => {
+                    setDraft(event.target.value)
+                    setError(null)
+                  }}
+                  placeholder={DEFAULT_BASE_URL}
+                  spellCheck={false}
+                  autoComplete="off"
+                  aria-invalid={error ? true : undefined}
+                />
+                {/* No `pending`: this writes to the local store and nothing else.
+                    There is no request to wait for, so a spinner would be a lie. */}
+                <Button type="submit">Save</Button>
+              </div>
               {error ? (
                 <FieldError>{error}</FieldError>
               ) : (
@@ -109,10 +114,7 @@ export function SettingsDialog({
             >
               Reset to default
             </Button>
-            <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
-            {/* No `pending`: this writes to the local store and nothing else.
-                There is no request to wait for, so a spinner would be a lie. */}
-            <Button type="submit">Save</Button>
+            <DialogClose render={<Button type="button" variant="outline" />}>Close</DialogClose>
           </DialogFooter>
         </form>
       </DialogContent>
