@@ -35,18 +35,11 @@ its own git worktree.
    request through the daemon's own call to the forge — never a command
    the agent runs itself — and keeps the request until a human merges or
    closes it.
-6. The `pr` column's agent keeps its request with the `pr-babysit` skill:
-   the daemon reads the forge and prompts the agent with each new comment,
-   failed check or moved base, and the agent pushes each fix as a new
-   commit. Once a human merges the request, the agent brings the base
-   branch up to date and the task finishes; a close fails it. A request
-   asking for your review gets a `pr-reviewer` session, and so does a
-   request of yours you ask Ariadne to review. Neither approves or merges
-   anything. Publishing a request is not the same as it being ready to
-   merge: `ariadne attention` carries that agent as waiting on you only once
-   every required approval and check reads green, and a later change or a
-   failed check takes that back down until it reports ready again. See [The
-   forge integration](forge.md).
+6. The `pr` column's agent keeps its request open with the `pr-babysit`
+   skill until a human merges or closes it; a request asking for your
+   review gets a `pr-reviewer` session instead. See [The forge
+   integration](forge.md) for how each keeps up with the request, and what
+   `ariadne attention` shows while one waits on you.
 
 ## Sessions and attention
 

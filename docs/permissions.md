@@ -29,7 +29,7 @@ before that is refused, and the refusal says to enable the model first.
 
 Which repository applies:
 
-- A task's author and reviewers use the task's repository.
+- Every column's agent on a task uses the task's repository.
 - A goal's orchestrator uses the goal's first repository.
 - A resumed outside conversation uses the registered repository its directory
   is in. Outside every registered repository, it uses `auto`.
@@ -90,15 +90,15 @@ change from one call to the next taken out. Ariadne makes it in four steps:
    the end into `tail`, `head`, `wc`, `cat`, `sort` or `uniq`.
 3. It replaces the repository path with `<REPO>`, the worktree with
    `<WORKTREE>`, the session's branch with `<BRANCH>`, and your home
-   directory with `<HOME>`. The session's branch is the author's own
-   branch, or for a reviewer the branch it reviews now; another author's
-   branch stays as it is. It replaces a path under `/tmp` with `<TMP>`, a commit hash or another
+   directory with `<HOME>`. The session's branch is the task's own
+   branch, or for a pull-request reviewer the branch it reviews now;
+   another task's branch stays as it is. It replaces a path under `/tmp` with `<TMP>`, a commit hash or another
    hex string of 7 to 64 characters, in either case, with `<HASH>`, and an
    Ariadne id with `<ID>`. Numbers stay as they are.
 4. It writes the fields that are left as JSON, with sorted keys.
 
 So `git rebase main`, `git rebase main 2>&1` and `git rebase main 2>&1 |
-tail -40` share the key `{"command":"git rebase main"}`. A `finish_task`
+tail -40` share the key `{"command":"git rebase main"}`. A `complete_step`
 call keys as `{"merge_commit":"<HASH>"}` whatever commit it names. An edit
 keys on its file, whatever text it changes. An allowed `Bash` command still
 allows only that command, not another one. A later answer for the same key

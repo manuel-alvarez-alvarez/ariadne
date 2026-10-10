@@ -82,10 +82,11 @@ turned to failure or back to green, a base branch ahead of the head, a
 changed review decision, a merge, or a close — and leaves an idle agent
 alone in between.
 
-The agent **replies to every unanswered comment** — saying what it
-changed, or why the code stays — and **resolves no thread**: resolving a
-thread, once its reply satisfies you, is yours to do. A change a comment or
-a failed check asks for goes onto the branch as a new commit, with the
+The agent **replies once in every thread that asks for a change** — saying
+what it changed, or why the code stays — and posts nothing to a comment
+that asks for no change. It **resolves no thread**: resolving a thread,
+once its reply satisfies you, is yours to do. A change a comment or a
+failed check asks for goes onto the branch as a new commit, with the
 changed tests and lint run again, before it is pushed. A moved base branch
 is merged in rather than rebased onto, and the branch is never amended,
 rebased or force-pushed. It reports the request ready once every required
@@ -105,10 +106,10 @@ too, and nobody keeps it.
 A request that asks for your review, once it leaves draft, gets a session
 of its own, staffed on the review pin, in a worktree detached at the
 request's head rather than a branch of its own. The daemon wakes it with the
-request, then again with later pushes and replies in the threads it
-opened. Those wait until the request has been quiet for five minutes, and
-each new push or reply starts the wait again, so a burst of activity
-reaches the reviewer as one prompt rather than one each.
+request, then at the next reconcile after a later push or a reply in a
+thread it opened — told at once, with no wait for activity to settle. A push
+also waits for the session to go idle before the worktree moves to the new
+head; a reply alone moves no worktree, so it needs no idle session.
 
 You can ask for the same on a request of your own: open it in the desktop
 app's Pull requests tab and press **Start review** in its panel. The dialog
@@ -159,11 +160,11 @@ what needs fixing.
 ## Nothing approves or merges in your name
 
 No session can post an approval or merge a request — there is no tool for
-either. `pr-reviewer` posts at most a comment; the approving call, and the
-merge, are always yours. The one thread a session resolves is a review
-thread it opened itself: on a later round, once a push fixed that finding,
-it replies and resolves it. Every thread anyone else opened stays yours to
-resolve.
+either. `pr-reviewer` posts `request_changes` or `comment`, never an
+approval; the approving call, and the merge, are always yours. The one
+thread a session resolves is a review thread it opened itself: on a later
+round, once a push fixed that finding, it replies and resolves it. Every
+thread anyone else opened stays yours to resolve.
 
 ## Readiness and review flags on `ariadne attention`
 
@@ -184,10 +185,9 @@ random free loopback port) and separate from the REST API: it serves only
 documentation. Each delivery is checked against the integration's own
 secret, constant-time: GitHub's `X-Hub-Signature-256`, GitLab's
 `X-Gitlab-Token`. A missing or wrong one gets 401 and triggers nothing. An
-authenticated delivery gets 202 and wakes one fetch of the repository — it
-never applies the delivery's payload directly, so GitHub and GitLab wake the
-same way, and a delivery Ariadne missed costs nothing more than the next
-one.
+authenticated delivery gets 202; one that is not a connectivity-check `ping`
+wakes one fetch of the repository — it never applies the delivery's payload
+directly, so GitHub and GitLab wake the same way.
 
 Ariadne registers the hook itself, once it has a public URL to give the
 forge: `webhook_public_url` in `config.toml`, or the tunnel below.
@@ -202,8 +202,12 @@ Each enabled integration's webhook sits in one of three states:
 | `polling` | no live hook yet — nothing gives the forge a URL to register against (no `webhook_public_url`, and the tunnel down or switched off), or the forge refused the last registration | `Timer`: an immediate fetch, then one every 5 minutes |
 | `failed` | a hook that was `live` broke on a later update or deletion the forge refused, while its URL still reached it | `Timer`, same as `polling` |
 
-So a delivery that never arrives, a tunnel that is down, or a hook the forge
-refuses still leaves the request moving on its timer fallback, just slower.
+A hook that is `live` has no timer: a delivery that never arrives there
+waits on the next wake, whatever triggers it — another delivery, or
+`ariadne pr refresh` (the desktop app's own Refresh button is gone while
+every repository in view is live; see below). A tunnel that is down, or a
+hook the forge refuses, moves the integration to `polling` or `failed`, and
+there a missed delivery costs only the wait for the next timer fetch.
 `repo inspect` prints the hook's `state`, `url`, `error`, the time of the
 last delivery and the last fetch failure under the forge block; the
 repositories table shows them as one pill, below.

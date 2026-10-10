@@ -12,7 +12,7 @@ reads.
 | [Workflows](workflows.md) | the document syntax, the two shipped workflows, every gate, and a repository's default and a goal's override |
 | [Following what happens](following-events.md) | `ariadne events`, the log streams and the `--watch` tables |
 | [Configuration](configuration.md) | every key of `~/.ariadne/config.toml`, and the environment that addresses a daemon |
-| [Permission modes](permissions.md) | automatic, prompted, and remembered ACP permission answers |
+| [Permission modes](permissions.md) | automatic, prompted, remembered, and AI-judged ACP permission answers |
 | [Stats](stats.md) | what the work did, in five questions: the filters, `ariadne stats` and the Stats screen |
 | [Resuming a session](resuming-sessions.md) | listing every session and continuing one, live, ended, or started outside Ariadne |
 | [How Ariadne works](how-it-works.md) | a goal from planning through its workflow's columns, task lifecycle, and ACP sessions |

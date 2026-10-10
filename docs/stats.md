@@ -28,8 +28,11 @@ Every family takes the same two filters:
   `2026-09-01T00:00:00Z`. Without it, the stats count everything.
 - `repo`: only what happened in one repository.
 
-A chart over time draws one bar per day for a span of 31 days or less, and one
-bar per week (from Monday, UTC) for a longer span or for all time.
+A chart over time draws one bar per hour for a span of 2 days or less, one bar
+per day for a span of 31 days or less, and one bar per week (from Monday,
+UTC) for a longer span. Without `since`, the span runs from the earliest
+matching record to now, so an all-time chart follows the same rule — weekly
+bars only once that record is more than 31 days back.
 
 ## From the CLI
 

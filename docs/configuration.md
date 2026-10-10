@@ -3,14 +3,18 @@
 `~/.ariadne/config.toml` (all optional):
 
 ```toml
-socket_path = "/Users/me/.ariadne/ariadne.sock"
-db_path = "/Users/me/.ariadne/ariadne.db"
-worktree_root = "/Users/me/.ariadne/worktrees"
-run_dir = "/Users/me/.ariadne/run"
+socket_path = "/Users/me/.ariadne/ariadne.sock"   # (default: <home>/ariadne.sock)
+db_path = "/Users/me/.ariadne/ariadne.db"         # (default: <home>/ariadne.db)
+worktree_root = "/Users/me/.ariadne/worktrees"    # (default: <home>/worktrees)
+run_dir = "/Users/me/.ariadne/run"                # (default: <home>/run)
 tcp_listen = "127.0.0.1:7676"     # enables the TCP listener (for web/desktop UIs)
+                                   # (default: unix socket only, no TCP listener)
 log_filter = "info,ariadne_daemon=debug"
+                                   # the tracing filter the daemon logs at
+                                   # (default: "info"); RUST_LOG overrides it
 cli_bin = "/usr/local/bin/ariadne" # runs the Ariadne MCP server for ACP sessions
-                                   # (default: sibling of ariadned)
+                                   # (default: sibling of ariadned, else
+                                   # `ariadne` on the daemon's own PATH)
 delete_merged_worktrees = true     # remove task worktrees after merge (default);
                                    # false keeps them for inspecting finished work
 delete_merged_branches = true      # only applies when worktrees are deleted too:
@@ -31,10 +35,14 @@ nvidia_smi_bin = "/opt/bin/nvidia-smi"
 auto_switch = true                 # automatically switch to a different agent
                                    # or model when the current one is exhausted
                                    # (default); false keeps waiting for input
-exhausted_patterns = [             # patterns that match exhausted-model errors;
-  "^.*Your.*quota.*exceeded.*$",   # replaces the shipped list if set; each
-  "^.*rate.*limit.*exceeded.*$",   # pattern is a regex matched against the
-]                                  # error message returned by the model
+exhausted_patterns = [             # case-insensitive text that marks a model
+  "quota exceeded",                # exhausted; replaces the shipped list of
+  "rate limited",                  # eight if set. Each one is matched as
+]                                  # plain text, never a regex, against the
+                                   # error message (default: "hit your usage
+                                   # limit", "usage limit reached", "usage
+                                   # limit", "session limit", "weekly limit",
+                                   # "rate limit", "quota", "try again at")
 ai_failure_diagnosis = true        # ask the AI permission model's local Kev
                                     # service for an advisory opinion on a
                                     # failed session's error (default false).
@@ -58,22 +66,15 @@ tunnel_subdomain = "my-ariadne"    # the subdomain the tunnel asks for
                                    # random one kept on first use)
 
 [[acp_agents]]                     # an agent of your own, or one the registry
-id = "my-agent"                    # names under another command
+id = "my-agent"                    # names under another command (default: [])
 command = ["my-agent", "acp"]      # program followed by its arguments
 ```
 
-The agents of a daemon are the agents of the ACP registry whose command is on
-its `PATH`: Ariadne ships a snapshot of that index — `claude-acp`,
-`codex-acp`, `goose`, `opencode` and 37 more — and installs none of them. An
-`[[acp_agents]]` entry adds an agent the registry does not name, and one whose
-id the registry does name replaces it, command and all. The daemon probes
-every entry at startup. Where an agent is found under the name of its package
-rather than its own — `claude-acp` is installed as `claude-agent-acp` — the
-command has to be the file that package installed, and it has to answer as an
-ACP agent: a program that only shares the name, as Visual Studio Code's `code`
-shares MiniMax Code's, is not started and is not listed. See [Installing Ariadne](install.md) to add an agent,
-and [Permission modes](permissions.md) to choose, per repository, how it
-handles tool requests.
+An `[[acp_agents]]` entry adds an ACP agent the shipped registry snapshot
+does not name, or replaces one it does name, command and all, by reusing its
+id. See [Installing Ariadne](install.md) for how the daemon discovers and
+probes agents, and [Permission modes](permissions.md) to choose, per
+repository, how it handles tool requests.
 
 `POST /v1/acp-agents/refresh` downloads the index from `acp_registry_url`,
 then searches `PATH` again and probes every agent. The download has a
@@ -86,16 +87,13 @@ Startup downloads nothing. It uses the kept index only when its fetch time
 is after the snapshot date at midnight UTC. Otherwise, it uses the shipped
 snapshot. Changing the URL does not discard the last good copy.
 
-`python_bin` belongs to the AI permission model, the model the `ai` permission
-mode answers with. It is the interpreter the model's virtual environment is
-built from — set it where the
-first supported Python on the daemon's own `PATH` is not 3.12 or 3.13, or where
-you want the model on a different interpreter. Nothing is installed into that interpreter: the
-package and PyTorch go into `~/.ariadne/ai-permissions/venv`.
-`nvidia_smi_bin` is the `nvidia-smi` its hardware probe runs to find a GPU and
-its VRAM, when one is not on the daemon's own `PATH` under that name. Neither
-key turns the model on — [Permission modes](permissions.md) does that, and
-chooses its flavour and device.
+`python_bin` names the interpreter the AI permission model's install runs
+on — set it where the first supported Python on the daemon's own `PATH` is
+not 3.12 or 3.13, or where you want the model on a different interpreter.
+`nvidia_smi_bin` is the `nvidia-smi` its hardware probe runs to find a GPU
+and its VRAM, when one is not on the daemon's own `PATH` under that name.
+Neither key turns the model on, or says what the install puts where — see
+[Permission modes](permissions.md) for both.
 
 `ai_failure_diagnosis` reuses that same model, once it is on and ready, to
 read a failed session's error and suggest which of five categories it falls
@@ -118,13 +116,14 @@ of these keys is for.
 
 `ariadned --check-config` reads that file and exits: a key the daemon would
 refuse is named where it stands, without starting anything or touching the
-daemon that is already running. `ariadned --help` lists every key above and
-the two environment variables (`ARIADNE_HOME`, `RUST_LOG`) with a line each.
+daemon that is already running. `ariadned --help` lists every key above but
+`ai_failure_diagnosis`, and the two environment variables (`ARIADNE_HOME`,
+`RUST_LOG`) with a line each.
 
 ## The database of an earlier release
 
 `db_path` has to be deleted before this version is started for the first time:
-the schema's 29 migrations are squashed into one, so a database written by an
+the schema's 23 migrations are squashed into one, so a database written by an
 earlier release records migrations this one no longer ships and cannot be
 opened. There is no upgrade from it — Ariadne is pre-1.0, and a database is
 recreated rather than migrated. Delete it (with its `-wal` and `-shm` files)
@@ -149,3 +148,21 @@ overrides that with a socket path or `http://host:port`, and so does
 `ARIADNE_ENDPOINT` — read after the flag and before the home, with the older
 `ARIADNE_SOCKET`, which every agent session is still spawned with, honoured
 after it.
+
+`ARIADNE_COMPLETE_DEBUG`, set to anything, makes `ariadne`'s shell-completion
+code print diagnostics to stderr: a round that timed out, a failed daemon
+request, or a failure writing the model cache. It says nothing of a
+request that succeeded.
+
+## What a session's environment carries
+
+Most of these are never yours to set: the daemon writes them into the
+environment of the `ariadne mcp serve` process it launches for each
+session, so that session's tool calls scope themselves to the right task
+without asking. `ARIADNE_SESSION_ID` names the session. `ARIADNE_SEAT` is
+`orchestrator`, `agent`, or — beside a pull request session — `reviewer`.
+An orchestrator's session gets `ARIADNE_GOAL_ID` alone; a task's column
+agent gets `ARIADNE_GOAL_ID` and `ARIADNE_TASK_ID` both.
+`ARIADNE_PULL_REQUEST_ID` is set instead, on a session reviewing a pull
+request. `ARIADNE_STEP` is the odd one out: the MCP server reads it as the
+task's current column if it is set, but no launcher sets it today.
