@@ -5,11 +5,18 @@
 # GNOME on Linux.
 #
 # The binaries and the app come from a GitHub release by default, and from a
-# local build with --build-from-source. Release assets are unsigned; what they
-# carry is a build provenance attestation, so every downloaded file is checked
-# with `gh attestation verify` before anything is installed - which makes the
+# local build with --build-from-source. Release assets are signed with a
+# self-signed certificate, not notarized; what they carry is a build
+# provenance attestation, so every downloaded file is checked with
+# `gh attestation verify` before anything is installed - which makes the
 # GitHub CLI a hard requirement of the default flow - and the macOS quarantine
 # attribute is cleared from what we install.
+#
+# On macOS, a --build-from-source run also signs ariadne, ariadned and the
+# "Ariadne Desktop" app with the self-signed "Ariadne Code Signing" identity,
+# when scripts/make-signing-cert.sh has put one in the login keychain - the
+# same certificate the release workflow signs with, read from its own three
+# repository secrets. A checkout without that identity still builds, unsigned.
 #
 # Idempotent: safe to re-run after upgrades or config changes; every step
 # replaces what a previous run installed. What was installed where is
@@ -110,6 +117,17 @@ if [ "$WITH_SERVICE" = 1 ]; then
     SERVICE_DESC="$(ui_service_desc "unsupported on $OS")"
 fi
 
+# Only on Darwin, and only for a local build: a release asset is signed by
+# the other task's CI workflow, but a build fresh off this checkout has no
+# signature until this gives it one. Absent the identity, a contributor
+# still gets a complete, unsigned build - scripts/make-signing-cert.sh adds
+# it once, to every local build after.
+SIGNING_IDENTITY=""
+if [ "$OS" = Darwin ] && [ "$BUILD_FROM_SOURCE" = 1 ] \
+    && security find-identity -v -p codesigning 2>/dev/null | grep -q '"Ariadne Code Signing"'; then
+    SIGNING_IDENTITY="Ariadne Code Signing"
+fi
+
 # npm, run from ui/: the Tauri CLI resolves src-tauri/ relative to the cwd.
 app_npm() {
     ( cd "$APP_SRC_DIR" && run_logged npm "$@" )
@@ -156,9 +174,11 @@ resolve_release_repo() {
     RELEASE_REPO="$owner/$name"
 }
 
-# Release assets are unsigned and arrive over the network, so macOS parks a
-# com.apple.quarantine attribute on them and Gatekeeper then refuses to run
-# what we installed. Nothing to clear elsewhere, or when it is already absent.
+# Release assets are signed with a self-signed certificate, not notarized,
+# and arrive over the network, so macOS parks a com.apple.quarantine
+# attribute on them; Gatekeeper then refuses to run what we installed, since
+# a self-signed signature is not enough to clear it - only notarization is.
+# Nothing to clear elsewhere, or when it is already absent.
 clear_quarantine() {
     [ "$OS" = Darwin ] || return 0
     local path
@@ -343,7 +363,16 @@ if [ "$BUILD_FROM_SOURCE" = 1 ]; then
     step_begin
     run_logged cargo build --release --manifest-path "$REPO_DIR/Cargo.toml" \
         || ui_die "cargo build failed"
-    step_ok
+    if [ -n "$SIGNING_IDENTITY" ]; then
+        run_logged codesign --force --options runtime -s "$SIGNING_IDENTITY" \
+            "$BIN_SRC_DIR/ariadne" "$BIN_SRC_DIR/ariadned" \
+            || ui_die "codesign failed on the binaries"
+        step_ok "signed with $SIGNING_IDENTITY"
+    elif [ "$OS" = Darwin ]; then
+        step_ok "not signed - no \"Ariadne Code Signing\" identity; scripts/make-signing-cert.sh adds one"
+    else
+        step_ok
+    fi
 else
     step_begin
     require_gh
@@ -464,7 +493,15 @@ elif [ "$WITH_UI" = 1 ]; then
         # does: its Finder step leaves the image busy and the unmount fails
         # about half the time on macOS 26.
         case "$OS" in
-            Darwin) app_npm run tauri build -- --bundles app ;;
+            Darwin)
+                # Tauri signs the .app itself when it finds this identity in
+                # its environment; absent, it bundles unsigned as before.
+                if [ -n "$SIGNING_IDENTITY" ]; then
+                    APPLE_SIGNING_IDENTITY="$SIGNING_IDENTITY" app_npm run tauri build -- --bundles app
+                else
+                    app_npm run tauri build -- --bundles app
+                fi
+                ;;
             Linux) app_npm run tauri build -- --no-bundle ;;
             *) app_npm run tauri build ;;
         esac || ui_die "npm run tauri build failed (--no-ui skips the app)"

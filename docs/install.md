@@ -107,6 +107,16 @@ so it requires the [GitHub CLI](https://cli.github.com) and `gh auth login`.
 A failed verification changes nothing. `--build-from-source` compiles this
 checkout instead and needs neither `gh` nor a published release.
 
+On macOS, a `--build-from-source` run signs `ariadne`, `ariadned` and the
+desktop app with the self-signed "Ariadne Code Signing" identity, when
+`scripts/make-signing-cert.sh` has put one in the login keychain — the same
+certificate macOS then keys privacy grants (files, microphone, automation) to
+on every build, instead of an ad-hoc signature that changes on every one and
+asks again each time. A checkout without that identity still builds, unsigned.
+The certificate is self-signed, not notarized, so Gatekeeper still quarantines
+a release downloaded over the network; the installer clears that attribute
+after verification.
+
 ## The desktop app
 
 On Linux, install the WebKitGTK 4.1 runtime before running the installer:

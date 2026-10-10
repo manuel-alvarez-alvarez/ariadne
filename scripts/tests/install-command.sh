@@ -46,10 +46,37 @@ case "$tool" in
         mkdir -p "$CARGO_TARGET_DIR/release"
         cp "$TEST_ROOT/payload/ariadne" "$TEST_ROOT/payload/ariadned" "$CARGO_TARGET_DIR/release/"
         ;;
+    security)
+        case "$*" in
+            'find-identity -v -p codesigning')
+                if [ "${TEST_IDENTITY:-missing}" = present ]; then
+                    printf '  1) 0000000000000000000000000000000000000000 "Ariadne Code Signing"\n'
+                    printf '     1 valid identities found\n'
+                else
+                    printf '     0 valid identities found\n'
+                fi
+                ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    codesign) ;;
     npm)
         if [ "$1" = run ]; then
-            [ "$*" = 'run tauri build -- --no-bundle' ]
-            cp "$TEST_ROOT/payload/ariadne-desktop" "$CARGO_TARGET_DIR/release/ariadne-ui"
+            case "$*" in
+                'run tauri build -- --no-bundle')
+                    cp "$TEST_ROOT/payload/ariadne-desktop" "$CARGO_TARGET_DIR/release/ariadne-ui"
+                    ;;
+                'run tauri build -- --bundles app')
+                    # Real Tauri signs the real .app bundle and install.sh
+                    # then ditto's it to /Applications - a system path no
+                    # sandboxed test may touch. Recording what reached this
+                    # stub's own environment, then failing, proves the
+                    # wiring without going anywhere near that step.
+                    printf '%s' "${APPLE_SIGNING_IDENTITY:-}" > "$TEST_ROOT/apple-signing-identity"
+                    exit 1
+                    ;;
+                *) exit 1 ;;
+            esac
         fi
         ;;
     ariadne)

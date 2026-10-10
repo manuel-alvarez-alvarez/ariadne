@@ -10,6 +10,8 @@ tests:
   - crates/ariadne-daemon/tests/it/agents.rs
   - scripts/install.sh
   - scripts/tests/install-linux.sh
+  - scripts/tests/install-sign-macos.sh
+  - scripts/tests/make-signing-cert-scenarios.sh
   - .github/workflows/release-please.yml
 ---
 
@@ -92,6 +94,23 @@ Out: what the daemon does once running (009, 012).
     reports an unlimited hard limit. The installed launchd and systemd
     services set the same soft limit, so reinstalling also protects an older
     daemon binary.
+12. `scripts/make-signing-cert.sh` creates the self-signed "Ariadne Code
+    Signing" identity, Darwin only: a key and a code-signing certificate made
+    with `openssl`, imported into the login keychain with `security import`
+    and trusted for code signing with `security add-trusted-cert` - which
+    macOS gates behind its own one-time authentication prompt, approved by
+    hand. The key and certificate are also kept at
+    `~/.ariadne/signing-cert`. Idempotent: a second run, finding a valid
+    identity already there, exports it again rather than replacing it, so a
+    lost `.p12` or forgotten password is not a reason to change the
+    signature every build after carries; `--force` replaces it regardless,
+    and a certificate present but not a valid identity is replaced even
+    without `--force`. It prints the three `gh secret set` commands the
+    release workflow's secrets are read from, or runs them with
+    `--set-secrets`. On macOS, `install.sh --build-from-source` signs
+    `ariadne`, `ariadned` and the Ariadne Desktop app with that identity when
+    it is in the login keychain, and still produces a complete, unsigned
+    build when it is not.
 
 ## Acceptance criteria
 
@@ -116,6 +135,20 @@ Out: what the daemon does once running (009, 012).
   (`resource.rs::daemon_start_raises_its_soft_open_file_limit`), and both
   installed service definitions set the same limit
   (`resource.rs::installer_services_raise_the_open_file_limit`).
+- `scripts/make-signing-cert.sh` creates the self-signed "Ariadne Code
+  Signing" identity. A second run, finding a valid one, exports it again
+  rather than replacing it; `--force` replaces it regardless, and a
+  certificate present but not a valid identity is replaced even without
+  `--force`. It prints or, with `--set-secrets`, sets the three repository
+  secrets the release workflow reads the same certificate from
+  (`scripts/tests/make-signing-cert-scenarios.sh`: `create`, `idempotent`,
+  `replace`, `repair-invalid`, `export`, `secrets`). Proven for real on a
+  machine, not only against the stub: `security find-identity -v -p
+  codesigning` lists the identity after a run.
+- On Darwin, `install.sh --build-from-source` signs `ariadne` and `ariadned`
+  with that identity when it is in the login keychain, and skips with a step
+  note - never failing the install - when it is not
+  (`scripts/tests/install-sign-macos.sh`: `present`, `missing`).
 
 ## Known gap
 
@@ -134,6 +167,7 @@ fails the service step`).
 ## Sources
 
 `scripts/install.sh`, `scripts/lib.sh`, `scripts/uninstall.sh`,
-`.github/RELEASING.md`, `crates/ariadne-store/src/lib.rs`,
+`scripts/make-signing-cert.sh`, `.github/RELEASING.md`,
+`crates/ariadne-store/src/lib.rs`,
 `crates/ariadne-store/migrations/0001_init.sql`,
 `crates/ariadne-daemon/src/resource.rs`, `crates/ariadne-daemon/src/main.rs`.
