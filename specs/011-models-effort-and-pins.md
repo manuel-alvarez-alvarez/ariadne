@@ -1,7 +1,7 @@
 ---
 id: models-effort-and-pins
 status: current
-updated: 2026-10-03
+updated: 2026-10-10
 areas: [core, api, store, daemon, cli]
 commits: [090c5158, e94647fd, d94042f4, c42ebeee, 305ad2fb, a69b953f, 03f9c8b7]
 tests:
@@ -41,7 +41,7 @@ orchestrator decides (003).
 2. Both halves are required. A model is required wherever an agent is
    pinned, and no agent default stands in for one. A bare agent, a string
    with no `:`, an empty agent half, and an empty or whitespace-only model
-   half are each refused, and the refusal says a model is required.
+   half are each refused; a missing or blank model says a model is required.
 3. A request with no model, an empty or whitespace-only one, or the word
    `default` as a model is refused, and the refusal says a model is required.
 4. The agent half must name an agent the registry holds. Any other agent is
@@ -187,8 +187,8 @@ orchestrator decides (003).
 - A same-agent switch moves the running row's pin, including its effort
   (`switch.rs::a_same_agent_switch_keeps_the_row_and_conversation`,
   `::a_same_agent_switch_sets_effort_and_clears_the_old_pin`).
-- The registry lists its three built-ins and a configured agent
-  (`acp_discovery.rs::the_api_lists_the_three_known_agents_and_one_user_agent`),
+- The registry lists an installed index agent and a configured agent
+  (`acp_discovery.rs::the_api_lists_an_installed_index_agent_and_one_user_agent`),
   and refreshes its cache on demand (`::discovery_refreshes_on_demand`).
 - A registry id that spells a CLI's name is an agent like any other
   (`acp_discovery.rs::a_registry_id_that_spells_a_cli_name_is_an_agent_like_any_other`);

@@ -52,7 +52,7 @@ and the ACP runtime that reports the agent events (021).
    The separate forge webhook ingress follows [027](027-webhooks-and-tunnel.md).
 3. A refusal is an envelope with a machine-readable code and one sentence a
    person can act on — the state machine's own explanation where a transition
-   was refused (001). Every request DTO denies unknown fields, so a body that
+   was refused (001). Request DTOs that opt into unknown-field denial refuse a body that
    carries a field its DTO does not declare is refused in that same envelope,
    and the refusal names the field. A response DTO denies nothing.
    `CreateGoalRequest` takes the goal's `workflow` and `GoalDto` carries it
@@ -93,7 +93,8 @@ and the ACP runtime that reports the agent events (021).
    vocabulary. `session_start`, `user_prompt_submit`, `pre_tool_use`,
    `post_tool_use` and `permission.replied` mark the session running; `stop`
    marks it idle; `session_end` marks it exited. `permission_request` raises
-   `waiting_permission`, and `session.error` raises `agent_error`; neither
+   `waiting_permission`; an exhausted `session.error` raises `exhausted`, and
+   another `session.error` raises `agent_error`; neither
    reads as liveness. An event that matches nothing — `agent_thought`,
    `agent_message`, `plan` — is recorded and moves nothing. The live-only
    console events (021) — `agent_message_chunk`, `agent_thought_chunk`,
@@ -239,13 +240,14 @@ and the ACP runtime that reports the agent events (021).
     reporter sent. The row is written and read back by one statement, which
     is all the lock that orders the ids covers: every live console chunk of
     every session waits behind that lock.
-25. Three endpoints serve the AI permission model, the model the `ai`
+25. Four endpoints serve the AI permission model, the model the `ai`
     permission mode answers with (022): `GET /v1/permissions/ai` answers its
     settings, its prompts and the state of its install as an
     `AiPermissionsStatusDto`, `PUT /v1/permissions/ai` changes them, and
-    `POST /v1/permissions/ai/refresh` runs the install again and answers 202.
+    `POST /v1/permissions/ai/refresh` runs the install again and answers 202, and
+    `POST /v1/permissions/ai/test` tests one request.
     Every change of that status is the domain event `ai_permissions_updated`,
-    carrying the whole DTO. It is the one event the pump does not fatten from a store row: the status is a row, an interpreter the
+    carrying the whole DTO. It is one of several events the pump does not fatten from a store row: the status is a row, an interpreter the
     daemon has just probed and where its server answers, so only the daemon
     can build it, and an install publishes one as readily as a write does.
     The event belongs to no goal or task, so a filtered stream carries none.
@@ -276,9 +278,9 @@ and the ACP runtime that reports the agent events (021).
     (`learned_permissions.rs::learned_permission_routes_read_and_delete_and_publish_fat_events`),
     and an ACP family answer publishes their values
     (`acp_console.rs::family_choice_answers_later_rebase_calls_but_not_other_families`).
-27. `config.toml` accepts `auto_switch`, which defaults to `true`, and
-    `exhausted_patterns`. The shipped list is `hit your usage limit`, `usage
-    limit reached`, `usage limit`, `rate limit`, `quota`, and `try again at`.
+27. `config.toml` accepts `auto_switch` and `exhausted_patterns`.
+    `auto_switch` defaults to `true`. The shipped list is `hit your usage limit`, `session limit`,
+    `weekly limit`, `usage limit reached`, `usage limit`, `rate limit`, `quota`, and `try again at`.
     A configured list replaces it whole.
 28. Session attention also has `exhausted`, for active work whose current
     model accepts no more work.
@@ -364,8 +366,7 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
   (`ai_permissions.rs::the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document`,
   `::the_doctor_reports_the_interpreter_the_model_needs`), and a change of
   the status reaches the stream
-  (`::turning_the_model_on_starts_the_install_and_reports_it_ready`,
-  `::a_prompt_change_publishes_ai_permissions_updated`).
+  (`::turning_the_model_on_starts_the_install_and_reports_it_ready`).
 - The session listing's query and its page DTO are in the OpenAPI document,
   and the outside listing it replaced is not
   (`session_list.rs::the_query_and_the_page_are_in_the_openapi_document`).

@@ -1,7 +1,7 @@
 ---
 id: scheduler-attention-and-watchdogs
 status: current
-updated: 2026-10-09
+updated: 2026-10-10
 areas: [daemon]
 commits: [f68b8ec1, 506e9d76, 7add2a61, a69b953f, 29e6d84e]
 tests:
@@ -54,7 +54,7 @@ the ACP runtime that takes a prompt (021).
    named a conversation the agent never saved, so a resume passes over it
    to the older session of the seat that holds the work.
 4. The orchestrator is the agent the daemon tells when a task needs a
-   decision: a task that failed, or a goal with nothing left running. It is
+   decision: a task that failed, went quiet, or a goal with nothing left running. It is
    told once per situation. Running work is what it delegated, and it is not
    woken for that.
 5. A task wants the agent of its current column from `ready` to `finished`,
@@ -251,8 +251,6 @@ the ACP runtime that takes a prompt (021).
   (`::an_idle_agent_is_nudged_once_for_the_situation_it_went_quiet_in`), and
   an agent mid-turn is not nudged
   (`::an_agent_in_the_middle_of_a_turn_is_not_nudged`).
-- The three thresholds keep their order and the flag's floor, or the daemon
-  does not build (the `const` assertions in `scheduler/mod.rs`).
 - An agent that reports nothing is flagged and then relaunched
   (`::an_agent_that_reports_nothing_is_flagged_and_then_relaunched`), one
   that keeps reporting is left alone

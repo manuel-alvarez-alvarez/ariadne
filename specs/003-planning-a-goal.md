@@ -1,7 +1,7 @@
 ---
 id: planning-a-goal
 status: current
-updated: 2026-10-09
+updated: 2026-10-10
 areas: [prompts, daemon, mcp]
 commits: [d421e30b, fdd0c5b6, 09955c22, 305ad2fb, 7bcb30a0, 31bb7611, 29e6d84e, 1b09ac10, a4d7da95]
 tests:
@@ -35,7 +35,7 @@ Out: the columns and their gates (030), the model catalog the sizing reads
 1. A goal opens with one orchestrator session, started in the primary
    checkout of the goal's first repository and briefed with the goal, its
    workflow — the name, then one line per column with its id, title, skills,
-   rank and gate — and its repositories. The workflow is chosen when the
+   rank, and description — and its repositories. The workflow is chosen when the
    goal is created, or taken from the default of its first repository (030);
    the orchestrator reads it off the briefing and does not ask for it. No
    numbers: how many tasks the goal takes is what the conversation settles.
@@ -44,8 +44,7 @@ Out: the columns and their gates (030), the model catalog the sizing reads
 3. It asks the user about every unclear point, until nothing about the goal is
    open: one question in plain turn text, then it waits. The user answers in
    the session's terminal (`ariadne goal attach`). An orchestrator waiting on
-   an answer is not nudged and shows up wherever Ariadne lists what needs
-   attention.
+   an answer is not nudged and does not raise attention.
 4. It writes one task per unit of work: small, finishable alone, one
    repository. Each ticket carries context, what to do, what not to touch and
    acceptance criteria, in Simplified Technical English (006).
@@ -98,8 +97,7 @@ Out: the columns and their gates (030), the model catalog the sizing reads
     that.
 14. It is also open to the agents themselves. Any of them can write to it
     about anything it needs to know, and the message arrives as a turn
-    (018). It acts on what it is told — the plan is its to change — rather
-    than writing back.
+    (018). It acts on what it is told or sends a message back.
 15. It answers with `list_tasks`, and then with `retry_task`, `cancel_task`,
     `update_task`, `switch_session` (013) or nothing at all. Before it
     retries a failed task it staffs every column the task lacks with
@@ -109,7 +107,7 @@ Out: the columns and their gates (030), the model catalog the sizing reads
     to the user.
 16. `complete_goal` ends the goal. Whether the goal is *met* is a judgement
     about the work, so the daemon does not make it — but it refuses the call
-    while any task is still going, which is the part it can see. The user may
+    while any task is not terminal, which is the part it can see. The user may
     make the same call, so a goal whose orchestrator will not start is still
     one they can close.
 

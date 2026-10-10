@@ -1,7 +1,7 @@
 ---
 id: prompts-and-simplified-technical-english
 status: current
-updated: 2026-10-09
+updated: 2026-10-10
 areas: [prompts, store, core, mcp, daemon]
 commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
@@ -54,13 +54,11 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    (017), and its seat text keeps only what no skill edit may take away: the
    plan is made with the user, no code is written, a blocked point goes to
    the user. The `agent` seat text is the one text every column's agent runs
-   under: read the task and the column, do the column's work, run the checks
-   of what the step changed, and end the step with `complete_step` or
+   under: read the task and the column, do the column's work, and end the step with `complete_step` or
    `fail_step` (030). What a column does — build, review, merge, keep a
    request — is its skill's to say. The `reviewer` seat text is the pull
    request review session's (029).
-3. The division of the checks is one of those rules, and the `agent` seat
-   text is the one place it is stated: an agent runs the tests and the lint
+3. The skills that own a step state its checks: an agent runs the tests and the lint
    of the crates and packages its step changed once, before the commit. After
    the commit, it leaves `git status` empty and the repository's generate
    step unchanged. No run of the whole suite is the develop column's own: the
@@ -92,11 +90,12 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    defaults rather than at a save. The kinds are the orchestrator's briefing,
    resume and attention, `IncomingMessage`, `StepBriefing`, `StepReturn` and
    `AgentResume` (`ariadne_core::PromptKind`).
-8. Every agent-facing text is ASD-STE100 Simplified Technical English: one
+8. Default texts, shipped skills, and workflow documents use ASD-STE100 Simplified
+   Technical English with at most 25 words a sentence. MCP session rules use one
    instruction to a sentence, the imperative for an instruction, the active
-   voice, at most 25 words a sentence, one meaning per word, a list for a
+   voice, at most 20 words a sentence, one meaning per word, a list for a
    sequence of steps.
-9. Two of those rules are read off the text by test: sentence length, and a
+9. Tests read sentence length and a
    list of banned words (`utilise`, `prior to`, `in order to`, `ensure`,
    `should`, `may`).
 10. After a question, end your turn. Do not poll `read_messages`. Ariadne
@@ -133,8 +132,8 @@ they describe (003, 030) — what a skill is (017), and the switch itself
 15. Every entry is fenced in a character reserved to the fence alone, and
     stripped from the entry's own text first, so nothing a tool's output or
     a diff carries can forge the fence and close the block early.
-16. The text is kept under a budget of characters: the newest entries are
-    kept whole and the oldest dropped first, and an entry is never cut in
+16. The text is kept under a budget of characters by entry priority, then
+    recency for ties, and an entry is never cut in
     the middle. A line in the dropped entries' place counts how many there
     were. A budget that fits every entry writes no such line.
 

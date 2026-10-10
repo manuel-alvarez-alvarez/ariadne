@@ -1,7 +1,7 @@
 ---
 id: goal-and-task-lifecycle
 status: current
-updated: 2026-10-09
+updated: 2026-10-10
 areas: [core, store, daemon]
 commits: [e4816cf6, c98b83da, ad268ee0, 7bcb30a0, 94486b02, a69b953f, 29e6d84e, 1b09ac10]
 tests:
@@ -38,7 +38,7 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
    running. `finalize_plan` moves it to `active` and starts every task at
    once (003). Resuming an outside session creates no goal or task (020).
 3. A goal is `completed` when its orchestrator or the user says so
-   (`complete_goal`, 003) — refused while any task is still going — and
+   (`complete_goal`, 003) — refused while any task is not terminal — and
    `cancelled` when the user cancels it. Cancelling records the reason on
    every task it takes with it. Whether the goal is *met* is a judgement
    about the work, so the daemon never makes it on anybody's behalf.
@@ -63,8 +63,8 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
    - `failed → ready` (user, orchestrator), which is a retry
 6. Two blanket rules sit above that table: the **user** and the
    **orchestrator** cancel a task, and only the **daemon** or one of the
-   task's own **agents** fails one. Neither applies to a task that has
-   already ended. The orchestrator has both because the daemon wakes it when
+   task's own **agents** fails one. Cancellation is refused only after a task
+   is finished or cancelled. The orchestrator has both because the daemon wakes it when
    a task fails, and retrying or giving up is the answer it is woken for
    (003).
 7. A refused transition is answered with a sentence naming what would have
@@ -72,12 +72,8 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
 8. The store validates the transition and writes the audit row in one
    transaction: an illegal transition changes nothing and records nothing.
    No status moves to itself, so two writers that race to the same status
-   leave one of them refused. The refused writer reads the status again and
-   takes a status another writer reached as reached, rather than as an
-   error.
-9. A task ends carrying the reason its ending transition gave —
-   `fail_task`'s text, the last column's `complete_step` reason, or the
-   cancellation's — and that reason is what `ariadne task inspect` shows.
+   leave one of them refused.
+9. A failed or cancelled task carries its ending reason, which `ariadne task inspect` shows.
 10. Dependencies are declared per task and gate `pending → ready`. Cycles are
     refused. A dependency that ends unmerged is reported as blocking, and a
     dependency that failed or was cancelled fails the task waiting on it.
@@ -91,7 +87,7 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
     (030); the orchestrator staffs it with `update_task` first. A task the
     scheduler finds ready with a column nobody staffs fails before it
     starts, naming the column the same way.
-13. Only a finished goal can be deleted, and deleting it takes its tasks,
+13. A terminal goal can be deleted, and deleting it takes its tasks,
     sessions, events and usage rows with it.
 
 ## Acceptance criteria

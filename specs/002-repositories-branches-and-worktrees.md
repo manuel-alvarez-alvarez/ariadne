@@ -1,7 +1,7 @@
 ---
 id: repositories-branches-and-worktrees
 status: current
-updated: 2026-10-07
+updated: 2026-10-10
 areas: [store, daemon]
 commits: [b6c6b9d2, 2bca45a6, 305ee064, 481a405d, a69b953f, 87fa62cf, a4d7da95]
 tests:
@@ -66,8 +66,8 @@ and the integration with it (025).
    retries it.
 9. An orchestrator works in the repository's primary checkout, not a worktree
    of its own: it is the first repository of its goal.
-10. Worktrees are removed when the work that owned them ends; whether finished
-    and cancelled work keeps its worktree for inspection is configuration.
+10. Finished worktrees are removed when `delete_merged_worktrees` is set; failed
+    and cancelled worktrees remain for inspection.
 11. The daemon watches each task branch's head and announces a move on the
     event stream, so clients see a commit without polling. The watch is
     established for the worktrees found at startup and goes when the worktree
@@ -105,7 +105,7 @@ and the integration with it (025).
   is on
   (`ai_permissions.rs::a_repository_takes_the_ai_mode_only_once_the_model_is_on`,
   `store.rs::a_repository_takes_the_ai_permission_mode`).
-- A repository defaults new goals to `merge`, takes another default at
+- A repository defaults new goals to `develop-review-merge`, takes another default at
   registration or on an edit, and changes no existing goal
   (`repositories.rs::a_repository_defaults_new_goals_without_changing_existing_ones`,
   `store.rs::repository_crud_and_unique_path_branch`).

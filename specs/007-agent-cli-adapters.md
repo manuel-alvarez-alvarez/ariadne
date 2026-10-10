@@ -1,7 +1,7 @@
 ---
 id: agent-cli-adapters
 status: current
-updated: 2026-09-24
+updated: 2026-10-10
 areas: [daemon, core]
 commits: [ed1c40d3, 03fbf02d, 090c5158, e94647fd, a69b953f, 03f9c8b7]
 tests:
@@ -12,7 +12,7 @@ tests:
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
   - crates/ariadne-daemon/tests/it/resume.rs
   - crates/ariadne-daemon/tests/it/skill_documents.rs
-  - crates/ariadne-daemon/src/agents/acp.rs
+  - crates/ariadne-daemon/src/acp.rs
 ---
 
 # Agent launch
@@ -143,24 +143,26 @@ skill says (017).
 9. The pin is `<agent>:<model>` (011). The agent is told only the model half,
    and the effort only where the session pinned one. Both come off the
    session row, so no launch of a session moves either.
-10. Every launch carries the session context in its environment —
+10. A staffed launch carries the session context in its environment —
    `ARIADNE_SESSION_ID`, `ARIADNE_LAUNCH_ID`, `ARIADNE_GOAL_ID`,
    `ARIADNE_SEAT`, `ARIADNE_SOCKET`, and `ARIADNE_TASK_ID` for a task seat —
    and runs in the seat's worktree, or the repository for the orchestrator.
    Every `codex-acp` process also carries `INITIAL_AGENT_MODE` set to
    `agent-full-access`, so its sessions never hand an approval to Codex's
    guardian sub-agent. The setting applies to that process only and does not
-   edit the user's Codex configuration.
+   edit the user's Codex configuration. A loose session carries only `ARIADNE_SESSION_ID`
+   and `ARIADNE_LAUNCH_ID`, while a pull-request session carries `ARIADNE_PULL_REQUEST_ID`
+   and no goal id.
 11. The launch id is fresh for every process started under a session row,
     and the row is told it before the process starts. That is what tells the
     events of a replaced agent from those of the agent that replaces it.
-12. Every launch writes `acp.json` into the session's run directory: the
+12. A staffed launch writes `acp.json` into the session's run directory: the
     system prompt, the first prompt, the model, the effort, the session it
     resumes, and one MCP server, `ariadne` — the `ariadne` CLI with the
     arguments `mcp serve` and the session context as its environment. The
-    runtime sends the agent exactly what this file says.
-13. A spawn opens a new agent session and carries the briefing as the first
-    prompt. A resume names the agent session it continues and carries its
+    runtime sends the agent exactly what this file says. A loose launch writes no
+    `acp.json` and starts no MCP server.
+13. Orchestrator and loose spawns carry their briefing as the first prompt; a column-agent spawn has no initial prompt and receives its column prompt afterwards. A resume names the agent session it continues and carries its
     instruction once, as the next prompt; an empty instruction resumes an
     agent that is told nothing.
 14. A briefing has no size limit on its way to the agent: it travels in the
