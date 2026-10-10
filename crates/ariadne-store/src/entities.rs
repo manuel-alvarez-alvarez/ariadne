@@ -413,10 +413,19 @@ pub struct Goal {
     pub effort: Option<String>,
     pub created_at: String,
     pub updated_at: String,
-    /// When the orchestrator was last handed a prompt naming every task of
-    /// this goal that needed one, including a failure (`tell_orchestrator`).
-    /// `None` until the first one goes out.
-    pub orchestrator_told_at: Option<String>,
+    /// The failed task ids named in the last prompt `tell_orchestrator`
+    /// handed the orchestrator (a JSON array), pending confirmation that a
+    /// turn actually answered it. See
+    /// [`crate::Store::promote_goal_orchestrator_told`].
+    pub orchestrator_told_failed_task_ids: Option<String>,
+    /// The failed task ids the orchestrator has actually had a turn on
+    /// since being told. Read by the attention producer in place of a
+    /// session's own `last_activity_at`.
+    pub orchestrator_answered_failed_task_ids: Option<String>,
+    /// When `scheduler::goals::orchestrator_could_not_start` gave up on
+    /// this goal's orchestrator, distinct from the `disconnected` flag a
+    /// mere crash raises. `None` while automatic recovery still owns it.
+    pub orchestrator_given_up_at: Option<String>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -687,6 +696,11 @@ pub struct PullRequestRow {
     pub review_skills_json: String,
     pub created_at: String,
     pub updated_at: String,
+    /// When `scheduler::pull_requests::start_pull_request_session` gave up
+    /// on this request's reviewer session: its spawn-retry budget ran out,
+    /// distinct from a crash the liveness sweep is about to retry. `None`
+    /// while automatic recovery still owns it.
+    pub reviewer_given_up_at: Option<String>,
 }
 
 /// What the forge says of a request, as the last read found it: held in

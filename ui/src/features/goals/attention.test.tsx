@@ -211,7 +211,13 @@ it("raises no row for a task-tied stalled or disconnected session", async () => 
   expect(document.title).toBe("Ariadne Desktop")
 })
 
-it("raises a row for a stalled or disconnected session with no task", async () => {
+it("raises no row of its own for a taskless orchestrator's disconnected flag", async () => {
+  // A mere crash, not a give-up: `retire_disconnected` raises this flag
+  // well before the scheduler's own spawn-retry budget runs out, and a
+  // relaunch may still be coming. Only once recovery's own item says the
+  // budget is actually spent (`recovery:unknown:orchestrator:...`) is
+  // this list's business — read below with every other recovery cause,
+  // never derived from the bare flag here.
   sessions = [
     aSession({
       id: "01ORCH",
@@ -223,7 +229,33 @@ it("raises a row for a stalled or disconnected session with no task", async () =
   const { queryClient } = renderAlerts()
   await settled(queryClient)
 
-  expect(document.title).toBe("(1) Ariadne")
+  expect(document.title).toBe("Ariadne Desktop")
+})
+
+it("raises a row for a taskless orchestrator once recovery's own give-up item names its goal", async () => {
+  sessions = [
+    aSession({
+      id: "01ORCH",
+      task_id: null,
+      seat: "orchestrator",
+      attention_reason: "disconnected",
+    }),
+  ]
+  recoveryItems = [
+    {
+      id: "recovery:unknown:orchestrator:01GOAL",
+      producer: "recovery",
+      reason: "unknown",
+      summary: "The goal's orchestrator will not start.",
+      required_action: "Read why it will not start, then resume it yourself.",
+      since: "2026-01-01T00:00:00Z",
+      affected: [{ kind: "goal", id: GOAL.id, label: GOAL.title }],
+      target: { kind: "console", session_id: "01ORCH" },
+    },
+  ]
+  renderAlerts()
+
+  await waitFor(() => expect(document.title).toBe("(1) Ariadne"))
 })
 
 it("never reads an incomplete recovery read as nothing needing attention", async () => {

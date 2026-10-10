@@ -1445,6 +1445,19 @@ async fn an_orchestrator_that_dies_the_moment_it_starts_is_given_up_on() {
         1,
         "and the alarm the user answers stands: {after:?}"
     );
+
+    // A taskless orchestrator has no failed task to be named by: this is
+    // its only route onto `GET /v1/attention`, through the scheduler's own
+    // give-up decision (`Goal::orchestrator_given_up_at`) rather than the
+    // `disconnected` flag above, which a mere crash also raises and which
+    // the sweep could still resolve on its own.
+    let list: ariadne_api::attention::AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 1, "{:?}", list.items);
+    assert_eq!(
+        list.items[0].reason,
+        ariadne_api::attention::AttentionCause::Unknown
+    );
+    assert_eq!(list.items[0].affected[0].id, goal.id);
 }
 
 /// How many of these rows are asking for the user.

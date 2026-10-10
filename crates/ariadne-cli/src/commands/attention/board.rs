@@ -104,14 +104,15 @@ pub(super) fn group(
     }
     for session in sessions {
         if let Some(reason) = session_reason(&session) {
-            // A task-tied session's stall or disconnection is this board's
-            // business only once its task actually fails: while the agent
-            // is still being nudged or relaunched, automatic recovery is
-            // still trying it, and the task's own recovery item — once
-            // raised — says the same thing with the cause and the action
-            // this bare flag cannot.
-            if session.task_id.is_some() && matches!(reason, Reason::Stalled | Reason::Disconnected)
-            {
+            // A session's stall or disconnection is never this board's own
+            // business, task-tied or not: while the agent is still being
+            // nudged or relaunched, automatic recovery is still trying it,
+            // and whichever recovery item eventually covers it — the
+            // task's own, once it actually fails, or the taskless
+            // orchestrator's or reviewer's own give-up item — says the
+            // same thing with the cause and the action this bare flag
+            // cannot.
+            if matches!(reason, Reason::Stalled | Reason::Disconnected) {
                 continue;
             }
             // A pull request session works for no goal: its requests are
@@ -218,7 +219,7 @@ mod tests {
     use ariadne_core::{AttentionReason, Seat, TaskStatus};
 
     use crate::commands::attention::reason_label;
-    use crate::commands::attention::tests::{dead, flagged, goal, session, task};
+    use crate::commands::attention::tests::{flagged, goal, session, task};
 
     /// A pull request session ready to merge is listed under the pull
     /// requests, by the request's title.
@@ -245,7 +246,7 @@ mod tests {
             goal_id: None,
             task_id: None,
             seat: None,
-            ..dead("01LOOSE", "01GOAL", None)
+            ..flagged("01LOOSE", "01GOAL", AttentionReason::AgentError)
         };
         let attention = group(Vec::new(), Vec::new(), vec![session], false);
         assert_eq!(attention.count, 1);
@@ -266,7 +267,11 @@ mod tests {
                 task("01T4", "01GA", TaskStatus::Ready, false),
             ],
             vec![
-                dead("01S1", "01GB", None),
+                SessionEntryDto {
+                    task_id: None,
+                    seat: Some(Seat::Orchestrator),
+                    ..flagged("01S1", "01GB", AttentionReason::AgentError)
+                },
                 session("01S2", "01GA", Some("01T4")),
             ],
             false,
@@ -326,7 +331,11 @@ mod tests {
                 task_id: Some("01ARZ3NDEKTSV4RRFFQ69G5FAV".into()),
                 ..flagged("01S1", "01GA", AttentionReason::AgentError)
             },
-            dead("01S2", "01GA", None),
+            SessionEntryDto {
+                task_id: None,
+                seat: Some(Seat::Orchestrator),
+                ..flagged("01S2", "01GA", AttentionReason::AgentError)
+            },
         ]);
         assert_eq!(rows[1][3], "…Q69G5FAV");
         assert_eq!(rows[2][3], "-");
@@ -344,27 +353,11 @@ mod tests {
             (AttentionReason::WaitingInput, "waiting for input"),
             (AttentionReason::WaitingUser, "waiting for you"),
             (AttentionReason::AgentError, "agent error"),
-            // Task-less (an orchestrator's), since a task-tied `disconnected`
-            // or `stalled` is this board's business only once the task
-            // itself fails — see `an_exhausted_session_raises_no_row_of_its_own_on_this_board`'s
-            // sibling test for that rule.
-            (AttentionReason::Disconnected, "disconnected"),
-            (AttentionReason::Stalled, "stalled"),
         ];
         let sessions: Vec<_> = flags
             .iter()
             .enumerate()
-            .map(|(i, (flag, _))| {
-                let session = flagged(&format!("01S{i}"), "01GA", *flag);
-                match flag {
-                    AttentionReason::Disconnected | AttentionReason::Stalled => SessionEntryDto {
-                        task_id: None,
-                        seat: Some(Seat::Orchestrator),
-                        ..session
-                    },
-                    _ => session,
-                }
-            })
+            .map(|(i, (flag, _))| flagged(&format!("01S{i}"), "01GA", *flag))
             .collect();
         let g = &group(vec![goal("01GA", "A")], Vec::new(), sessions, false).goals[0];
         let rows = rows(g, &HashMap::new(), chrono::Utc::now());
@@ -373,7 +366,12 @@ mod tests {
         for (flag, label) in flags {
             assert_eq!(reason_label(flag), label);
         }
+        // `reason_label` still spells every reason correctly for
+        // `session ls`/`session inspect`, even the ones this board never
+        // raises a row of its own for.
         assert_eq!(reason_label(AttentionReason::Exhausted), "exhausted");
+        assert_eq!(reason_label(AttentionReason::Disconnected), "disconnected");
+        assert_eq!(reason_label(AttentionReason::Stalled), "stalled");
     }
 
     /// `exhausted` is never a row of its own on this board, however it is
@@ -384,6 +382,28 @@ mod tests {
     fn an_exhausted_session_raises_no_row_of_its_own_on_this_board() {
         let session = flagged("01S", "01GA", AttentionReason::Exhausted);
         let attention = group(vec![goal("01GA", "A")], Vec::new(), vec![session], false);
+        assert!(attention.goals.is_empty());
+    }
+
+    /// `disconnected` and `stalled` are never rows of their own either,
+    /// task-tied or not: a taskless orchestrator's or reviewer's own
+    /// give-up is `GET /v1/attention`'s own `unknown` item to raise, read
+    /// in `recovery_items_section`, never derived from the bare flag here.
+    #[test]
+    fn a_taskless_disconnected_or_stalled_session_raises_no_row_of_its_own_on_this_board() {
+        let sessions = vec![
+            SessionEntryDto {
+                task_id: None,
+                seat: Some(Seat::Orchestrator),
+                ..flagged("01S1", "01GA", AttentionReason::Disconnected)
+            },
+            SessionEntryDto {
+                task_id: None,
+                seat: Some(Seat::Orchestrator),
+                ..flagged("01S2", "01GA", AttentionReason::Stalled)
+            },
+        ];
+        let attention = group(vec![goal("01GA", "A")], Vec::new(), sessions, false);
         assert!(attention.goals.is_empty());
     }
 

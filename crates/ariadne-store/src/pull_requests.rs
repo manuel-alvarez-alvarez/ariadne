@@ -183,6 +183,29 @@ impl Store {
         Ok(())
     }
 
+    /// Mark that `scheduler::pull_requests::start_pull_request_session` has
+    /// given up on this request's reviewer session: its spawn-retry
+    /// budget ran out, not merely a crash the liveness sweep is about to
+    /// retry.
+    pub async fn set_pull_request_reviewer_given_up(&self, id: &str) -> Result<()> {
+        sqlx::query("UPDATE pull_requests SET reviewer_given_up_at = ? WHERE id = ?")
+            .bind(now())
+            .bind(id)
+            .execute(self.w())
+            .await?;
+        Ok(())
+    }
+
+    /// Take the give-up mark down: recovery has taken ownership of this
+    /// request's reviewer session again, a resume or spawn succeeded.
+    pub async fn clear_pull_request_reviewer_given_up(&self, id: &str) -> Result<()> {
+        sqlx::query("UPDATE pull_requests SET reviewer_given_up_at = NULL WHERE id = ?")
+            .bind(id)
+            .execute(self.w())
+            .await?;
+        Ok(())
+    }
+
     /// Record the summary comment an Ariadne review keeps on the request
     /// (029), once it first posts it.
     pub async fn set_pull_request_summary(&self, id: &str, forge_id: &str) -> Result<()> {

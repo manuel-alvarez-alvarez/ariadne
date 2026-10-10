@@ -189,14 +189,30 @@ CREATE TABLE goals (
     -- The workflow every task of the goal runs on. Chosen once, when the goal
     -- is created; its columns are snapshotted into `goal_steps`.
     workflow     TEXT NOT NULL REFERENCES workflows (name),
-    -- When the orchestrator was last handed a prompt naming every task of
-    -- this goal that needed it (`tell_orchestrator`), including a failure.
-    -- NULL until the first one goes out. The attention producer reads this,
-    -- not `last_activity_at`, to tell whether a failed task's orchestrator
-    -- has already been told of it: the stamp is only ever written at the
-    -- moment the prompt naming the failure is actually handed off, where
-    -- ambient activity could be an unrelated turn ending.
-    orchestrator_told_at TEXT
+    -- The failed task ids named in the last prompt `tell_orchestrator`
+    -- handed the orchestrator (a JSON array), pending confirmation that a
+    -- turn actually answered it. Promoted into
+    -- `orchestrator_answered_failed_task_ids` and cleared once the
+    -- orchestrator's session next reports `stop` (`promote_goal_orchestrator_told`,
+    -- called from the agent-event ingest on that transition) — queuing a
+    -- prompt is not the same as the orchestrator having had a turn on it.
+    orchestrator_told_failed_task_ids TEXT,
+    -- The failed task ids the orchestrator has actually had a turn on
+    -- since being told, confirmed the moment above. The attention
+    -- producer reads this, never a session's own `last_activity_at`, to
+    -- tell a failed task's orchestrator has already answered for exactly
+    -- that task — an unrelated turn ending proves nothing about a
+    -- different failure, and this list only ever grows from a turn that
+    -- ran after a prompt naming it.
+    orchestrator_answered_failed_task_ids TEXT,
+    -- When `scheduler::goals::orchestrator_could_not_start` gave up on this
+    -- goal's orchestrator: the spawn-retry budget ran out, not merely a
+    -- crash the liveness sweep is about to retry. Distinct from the
+    -- `disconnected` flag `retire_disconnected` raises on every crash,
+    -- which the scheduler may still resolve on its own; cleared the moment
+    -- `keep_orchestrator` has a live orchestrator or a resume/spawn
+    -- succeeds, so recovery taking ownership again takes this down with it.
+    orchestrator_given_up_at TEXT
 );
 
 -- Which repositories a goal works in, by reference.
@@ -293,6 +309,11 @@ CREATE TABLE pull_requests (
     -- forge id, written when the review first posts it, and edited in place
     -- on every later round. NULL until the first review of the request.
     summary_comment_id    TEXT,
+    -- When `scheduler::pull_requests::start_pull_request_session` gave up
+    -- on this request's reviewer session: its spawn-retry budget ran out,
+    -- not merely a crash the liveness sweep is about to retry. Cleared the
+    -- moment a resume or spawn of that session next succeeds.
+    reviewer_given_up_at  TEXT,
     UNIQUE (repository_id, number)
 );
 

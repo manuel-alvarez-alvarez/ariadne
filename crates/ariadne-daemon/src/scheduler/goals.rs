@@ -175,6 +175,12 @@ impl super::Scheduler {
             .store
             .set_session_attention(&alarm, AttentionReason::Disconnected)
             .await;
+        // Distinct from the flag above: that one is also what an ordinary
+        // crash raises, and the liveness sweep may still resolve it on its
+        // own. This mark is the budget actually running out — the
+        // attention producer's own evidence that nothing automatic is
+        // coming for this goal any more.
+        let _ = self.store.set_goal_orchestrator_given_up(&goal.id).await;
     }
 
     /// Leave one row of this goal saying anything about an orchestrator that
@@ -253,6 +259,9 @@ impl super::Scheduler {
             .await?;
         if let Some(orchestrator) = live.first() {
             self.spent_on_a_dead_launch(&goal.id, &goal.id, orchestrator);
+            // Automatic recovery plainly owns this goal's orchestrator
+            // again: any earlier give-up no longer holds.
+            let _ = self.store.clear_goal_orchestrator_given_up(&goal.id).await;
             return Ok(());
         }
         let last = self
@@ -299,6 +308,7 @@ impl super::Scheduler {
             self.orchestrator_could_not_start(goal).await;
             return Err(e);
         }
+        let _ = self.store.clear_goal_orchestrator_given_up(&goal.id).await;
         Ok(())
     }
 
@@ -346,10 +356,21 @@ impl super::Scheduler {
         }
         info!(goal = %goal.id, session = %orchestrator.id, "the goal's tasks need the orchestrator");
         self.goal_told.insert(goal.id.clone(), situation.clone());
-        // Persisted so the attention producer can tell a failed task its
-        // orchestrator has already been handed a prompt naming it from one
-        // it has not — `goal_told` alone is in-memory and gone on restart.
-        let _ = self.store.set_goal_orchestrator_told(&goal.id).await;
+        // Persisted, pending the turn that actually carries this prompt
+        // (`http::events::ingest_event` promotes it on that session's next
+        // `stop`), so the attention producer can tell a failed task its
+        // orchestrator has already had a go at it from one it has not —
+        // `goal_told` alone is in-memory and gone on restart, and queuing
+        // the prompt is not the same as the orchestrator having read it.
+        let failed_task_ids: Vec<String> = tasks
+            .iter()
+            .filter(|t| t.status() == TaskStatus::Failed)
+            .map(|t| t.id.clone())
+            .collect();
+        let _ = self
+            .store
+            .set_goal_orchestrator_told(&goal.id, &failed_task_ids)
+            .await;
         Ok(())
     }
 

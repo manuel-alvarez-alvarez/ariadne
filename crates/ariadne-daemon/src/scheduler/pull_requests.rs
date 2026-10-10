@@ -409,11 +409,24 @@ impl super::Scheduler {
             *self.spawn_failures.entry(pull.id.clone()).or_default() += 1;
         }
         if self.spawn_failures.get(&pull.id).copied().unwrap_or(0) >= SPAWN_RETRY_BUDGET {
+            // Distinct from `retire_disconnected`'s own flag, which a mere
+            // crash also raises and the liveness sweep may still retry:
+            // this mark is the budget actually running out — the
+            // attention producer's own evidence that nothing automatic is
+            // coming for this request any more.
+            let _ = self
+                .store
+                .set_pull_request_reviewer_given_up(&pull.id)
+                .await;
             return Ok(());
         }
         match self.launcher.resume_pull_request_session(pull, pin).await {
             Ok(session) => {
                 info!(pull_request = %pull.id, session = %session.id, "the request's session is up");
+                let _ = self
+                    .store
+                    .clear_pull_request_reviewer_given_up(&pull.id)
+                    .await;
                 Ok(())
             }
             Err(e) => {
@@ -513,6 +526,14 @@ impl super::Scheduler {
             .iter()
             .find(|s| s.seat() == Some(Seat::Reviewer) && self.launcher.acp.is_running(&s.id))
             .cloned();
+        if running.is_some() {
+            // Automatic recovery plainly owns this request's reviewer
+            // session again: any earlier give-up no longer holds.
+            let _ = self
+                .store
+                .clear_pull_request_reviewer_given_up(&pull.id)
+                .await;
+        }
         let Some(session) = running else {
             // A request of mine is reviewed on the pin the user picked when
             // asking (029); any other on the repository's review pin.

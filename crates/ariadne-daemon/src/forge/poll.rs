@@ -376,14 +376,16 @@ async fn fetch(store: &Store, cfg: &Config, handoff: &Handoff, id: &str) -> Resu
         // carried has already failed is not a new watch over it — only a
         // reactive answer to a failure that already happened, read the
         // same way a human asked to look into it would: is the CLI even
-        // signed in? A fetch error with this marker is the one this
-        // producer's `access` item can tell apart from a transient one
-        // with no such confirmation (009, "do not introduce speculative
-        // failure classification").
+        // signed in? The marker is written only where the CLI actually
+        // ran that check and said no (`confirmed_signed_out`) — a missing
+        // binary, a spawn or write failure, or a timeout proves nothing
+        // either way, and marking it regardless would tell the user to
+        // sign in when the real cause is, say, the CLI not being
+        // installed at all (which `configuration` already names).
         Err(error) => {
-            return Err(match client.auth_status(&integration.host).await {
-                Ok(()) => error,
-                Err(_) => format!("{FORGE_SIGNED_OUT}: {error}"),
+            return Err(match client.confirmed_signed_out(&integration.host).await {
+                true => format!("{FORGE_SIGNED_OUT}: {error}"),
+                false => error,
             });
         }
     };

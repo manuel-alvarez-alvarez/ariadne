@@ -35,6 +35,105 @@ pub(crate) async fn items(store: &Store, launcher: &Launcher) -> Result<Vec<Atte
     items.extend(failed_task_items(store).await?);
     items.extend(configuration_items(store).await?);
     items.extend(access_items(store).await?);
+    items.extend(orchestrator_given_up_items(store).await?);
+    items.extend(reviewer_given_up_items(store).await?);
+    Ok(items)
+}
+
+/// Every goal whose orchestrator `scheduler::goals::orchestrator_could_not_start`
+/// has given up on (`Goal::orchestrator_given_up_at`), and which has no
+/// failed task of its own to be named by: a taskless orchestrator — one
+/// planning a goal with no task yet to fail — has no other route onto
+/// this list, since `failed_task_items` only ever walks failed tasks. A
+/// goal that also has a failed task is left to that producer instead, so
+/// the same give-up is not said twice. Each item names the goal's own
+/// alarm session, the one row the give-up itself is raised on, or the
+/// last orchestrator session the goal ever had where none carries the
+/// alarm any more.
+async fn orchestrator_given_up_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
+    let mut items = Vec::new();
+    for goal in store.list_goals(&[]).await? {
+        let Some(since) = goal.orchestrator_given_up_at.clone() else {
+            continue;
+        };
+        let has_failed_task = !store
+            .list_tasks(TaskFilter {
+                goal_id: Some(goal.id.clone()),
+                status: Some(TaskStatus::Failed),
+            })
+            .await?
+            .is_empty();
+        if has_failed_task {
+            continue;
+        }
+        let orchestrators = store
+            .list_sessions(SessionFilter {
+                goal_id: Some(goal.id.clone()),
+                ..Default::default()
+            })
+            .await?
+            .into_iter()
+            .filter(|s| s.seat() == Some(Seat::Orchestrator))
+            .collect::<Vec<_>>();
+        let alarm = orchestrators
+            .iter()
+            .find(|s| s.attention_reason() == Some(AttentionReason::Disconnected))
+            .or_else(|| orchestrators.last());
+        let Some(alarm) = alarm else {
+            continue;
+        };
+        items.push(AttentionItemDto {
+            id: format!("recovery:unknown:orchestrator:{}", goal.id),
+            producer: AttentionProducer::Recovery,
+            reason: AttentionCause::Unknown,
+            summary: "The goal's orchestrator will not start.".into(),
+            required_action: "Read why it will not start, then resume it yourself.".into(),
+            since,
+            affected: vec![AttentionSubjectDto {
+                kind: AttentionSubjectKind::Goal,
+                id: goal.id.clone(),
+                label: goal.title.clone(),
+            }],
+            target: AttentionTarget::Console {
+                session_id: alarm.id.clone(),
+            },
+        });
+    }
+    Ok(items)
+}
+
+/// Every pull request whose reviewer session
+/// `scheduler::pull_requests::start_pull_request_session` has given up on
+/// (`PullRequestRow::reviewer_given_up_at`): the same "automatic recovery
+/// has given up" evidence as the orchestrator's own, read from the
+/// scheduler's actual decision rather than the generic `disconnected`
+/// flag a mere crash also raises.
+async fn reviewer_given_up_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
+    let mut items = Vec::new();
+    for pull in store
+        .list_pull_requests(ariadne_store::PullRequestFilter::default())
+        .await?
+    {
+        let Some(since) = pull.reviewer_given_up_at.clone() else {
+            continue;
+        };
+        items.push(AttentionItemDto {
+            id: format!("recovery:unknown:pull_request:{}", pull.id),
+            producer: AttentionProducer::Recovery,
+            reason: AttentionCause::Unknown,
+            summary: "The request's reviewer session will not start.".into(),
+            required_action: "Read why it will not start, then resume it yourself.".into(),
+            since,
+            affected: vec![AttentionSubjectDto {
+                kind: AttentionSubjectKind::Repository,
+                id: pull.repository_id.clone(),
+                label: format!("pull request #{}", pull.number),
+            }],
+            target: AttentionTarget::PullRequest {
+                pull_request_id: pull.id,
+            },
+        });
+    }
     Ok(items)
 }
 
@@ -159,7 +258,7 @@ async fn failed_task_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
     let mut descriptor_affected = Vec::new();
     let mut unknown = Vec::new();
     for task in tasks {
-        if !orchestrator_has_answered_for(store, &task.goal_id, &task.updated_at).await? {
+        if !orchestrator_has_answered_for(store, &task.goal_id, &task.id).await? {
             continue;
         }
         let reason = store.ended_reason(&task).await?;
@@ -213,35 +312,29 @@ async fn failed_task_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
 /// Whether a failed task's goal has nothing left to automatically answer
 /// it: either nothing automatic is ever coming (the goal carries no
 /// orchestrator at all, is not even `planning` or `active` any more, or
-/// has never once had an orchestrator session to its name), its last
-/// attempt at one has already been given up on
-/// (`AttentionReason::Disconnected`, the alarm
-/// `scheduler::goals::orchestrator_could_not_start` raises once the spawn
-/// budget runs out), or its orchestrator has actually been handed a
-/// prompt naming this failure — `Goal::orchestrator_told_at`, stamped by
-/// `tell_orchestrator` at the exact moment the prompt goes out, at or
-/// after the failure — and is not mid-turn on it right now.
+/// has never once had an orchestrator session to its name), its
+/// orchestrator has already been given up on
+/// (`Goal::orchestrator_given_up_at`, stamped by
+/// `scheduler::goals::orchestrator_could_not_start` once the spawn budget
+/// actually runs out — distinct from the `disconnected` flag a mere crash
+/// also raises, which the liveness sweep may still resolve on its own),
+/// or this exact task's id is in `Goal::orchestrator_answered_failed_task_ids`
+/// — the failed task ids the orchestrator has actually had a turn on
+/// since being told of them.
 ///
-/// The stamp, not a session's own `last_activity_at`, is what is read for
-/// "told": an orchestrator can go idle and run again for a reason that has
-/// nothing to do with this task — ending a turn already running when the
-/// task failed, say — and `last_activity_at` would move right along with
-/// it whether or not the orchestrator was ever told, where the stamp only
-/// ever moves at the one call that hands it a prompt naming the goal's
-/// current failures. Told is not yet answered, though: the orchestrator
-/// may retry the task on the very turn the prompt starts, so "answered" is
-/// held back until that turn is not still running — the same "automatic
-/// recovery still trying" grace mid-turn gets everywhere else here. And a
-/// goal with no *live* orchestrator this instant is not necessarily one
-/// with nothing coming: `keep_orchestrator` relaunches one across a
-/// restart or a crash on its own, within its own budget
-/// (`SPAWN_RETRY_BUDGET`), so every orchestrator session the goal has ever
-/// had is read here, not only the live ones, to tell a relaunch still in
-/// flight from one already given up on.
+/// That list, not a session's own `last_activity_at` or even the queued
+/// `orchestrator_told_failed_task_ids`, is what is read: queuing a prompt
+/// naming a failure is not the same as the orchestrator having had a turn
+/// on it, and an unrelated turn ending proves nothing about this task
+/// either. The list is only ever grown by `promote_goal_orchestrator_told`,
+/// called from the agent-event ingest the moment the orchestrator's
+/// session next reports `stop` — the turn that actually carried whichever
+/// failures `tell_orchestrator` last queued, naming exactly those task
+/// ids and no other failure that happened to exist later.
 async fn orchestrator_has_answered_for(
     store: &Store,
     goal_id: &str,
-    failed_at: &str,
+    task_id: &str,
 ) -> Result<bool> {
     let goal = match store.get_goal(goal_id).await {
         Ok(goal) => goal,
@@ -267,23 +360,15 @@ async fn orchestrator_has_answered_for(
     if orchestrators.is_empty() {
         return Ok(true);
     }
-    if orchestrators
-        .iter()
-        .any(|s| s.attention_reason() == Some(AttentionReason::Disconnected))
-    {
+    if goal.orchestrator_given_up_at.is_some() {
         return Ok(true);
     }
-    let told = goal
-        .orchestrator_told_at
+    let answered: Vec<String> = goal
+        .orchestrator_answered_failed_task_ids
         .as_deref()
-        .is_some_and(|at| at >= failed_at);
-    if !told {
-        return Ok(false);
-    }
-    let mid_turn = orchestrators
-        .iter()
-        .any(|s| s.status() == SessionStatus::Running);
-    Ok(!mid_turn)
+        .and_then(|json| serde_json::from_str(json).ok())
+        .unwrap_or_default();
+    Ok(answered.iter().any(|id| id == task_id))
 }
 
 /// An enabled forge integration whose last fetch failed on the daemon's

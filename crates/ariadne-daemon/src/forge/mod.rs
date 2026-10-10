@@ -503,6 +503,24 @@ impl ForgeClient {
         }
     }
 
+    /// Whether the CLI actually ran its own sign-in check and said no —
+    /// a confirmed credential rejection — as opposed to the check itself
+    /// never running at all (the binary missing, a spawn or write
+    /// failure, or a timeout), which says nothing about whether the CLI
+    /// is signed in. Read reactively, after a fetch has already failed
+    /// (`forge/poll.rs`), to tell the two apart before naming either as
+    /// the fetch's cause.
+    pub(crate) async fn confirmed_signed_out(&self, host: &str) -> bool {
+        let cli = match self {
+            ForgeClient::Github(cli) => &cli.cli,
+            ForgeClient::Gitlab(cli) => &cli.cli,
+        };
+        cli.call(&["auth", "status", "--hostname", host])
+            .await
+            .err()
+            .is_some_and(|refusal| refusal.ran())
+    }
+
     /// The account the CLI is signed in to `host` as.
     pub async fn whoami(&self, host: &str) -> Result<String, String> {
         match self {
@@ -635,6 +653,7 @@ impl Cli {
         let output = self.run(args, input).await.map_err(|message| Refusal {
             said: None,
             answer: None,
+            executed: false,
             message,
         })?;
         if output.status.success() {
@@ -658,6 +677,7 @@ impl Cli {
         Err(Refusal {
             answer: Some(stdout.trim().to_string()).filter(|answer| !answer.is_empty()),
             said: Some(said).filter(|said| !said.is_empty()),
+            executed: true,
             message,
         })
     }
@@ -674,6 +694,11 @@ pub(crate) struct Refusal {
     /// The forge's own answer alone, as the CLI printed it to standard
     /// output: `gh api`'s JSON, `{"message": ..., "errors": [...]}`.
     answer: Option<String>,
+    /// Whether the CLI process actually ran to an exit code, however it
+    /// answered — `false` only where [`Cli::run`] itself failed: the
+    /// binary is missing, could not be spawned, could not be written to,
+    /// or did not answer in time. Read by [`Self::ran`].
+    executed: bool,
     message: String,
 }
 
@@ -692,6 +717,14 @@ impl Refusal {
         self.answer
             .as_deref()
             .and_then(|answer| serde_json::from_str(answer).ok())
+    }
+
+    /// Whether the CLI actually ran to an exit code, however it answered —
+    /// as opposed to [`Cli::run`] itself having failed (a missing binary,
+    /// a spawn or write failure, or a timeout), which is no word from the
+    /// CLI about what was asked at all.
+    pub(crate) fn ran(&self) -> bool {
+        self.executed
     }
 }
 
@@ -729,6 +762,31 @@ mod tests {
             started.elapsed()
         );
         assert!(refused.to_string().contains("did not answer"), "{refused}");
+        assert!(!refused.ran(), "a deadline is not the CLI having answered");
+    }
+
+    /// `ran()` is what tells a confirmed refusal — the CLI reached an exit
+    /// code and said something — apart from [`Cli::run`] itself never
+    /// managing to ask: a missing binary, a spawn or write failure, or a
+    /// timeout, none of which is the CLI having answered the question at
+    /// all. [`Self::confirmed_signed_out`] reads exactly this to decide
+    /// whether a forge fetch's `auth status` failure is a real rejection.
+    #[test]
+    fn a_refusal_has_run_only_where_the_cli_reached_an_exit_code() {
+        let executed = Refusal {
+            said: Some("gh: not logged in to any hosts".into()),
+            answer: None,
+            executed: true,
+            message: "`gh auth status`: gh: not logged in to any hosts".into(),
+        };
+        let never_ran = Refusal {
+            said: None,
+            answer: None,
+            executed: false,
+            message: "cannot run `gh`: No such file or directory".into(),
+        };
+        assert!(executed.ran());
+        assert!(!never_ran.ran());
     }
 
     #[test]
@@ -738,6 +796,7 @@ mod tests {
         let refusal = |said: Option<&str>| Refusal {
             said: said.map(str::to_string),
             answer: None,
+            executed: said.is_some(),
             message: "`gh api -f body=P1: Handle HTTP 404 responses`".into(),
         };
         assert!(!refusal(Some("gh: Server Error (HTTP 502)")).is_missing());

@@ -257,12 +257,14 @@ function collectAttention(
     // still worth a person's time is the recovery producer's own `quota`
     // item to say, read below with every other cause.
     if (reason === "exhausted") continue
-    // A task-tied session's stall or disconnection is this list's business
-    // only once its task actually fails: while the agent is still being
-    // nudged or relaunched, automatic recovery is still trying it, and the
-    // task's own recovery item — once raised — says the same thing with
-    // the cause and the action a bare flag cannot.
-    if (session.task_id && (reason === "stalled" || reason === "disconnected")) continue
+    // A session's stall or disconnection is never this list's own business,
+    // task-tied or not: while the agent is still being nudged or
+    // relaunched, automatic recovery is still trying it, and whichever
+    // recovery item eventually covers it — the task's own, once it
+    // actually fails, or the taskless orchestrator's or reviewer's own
+    // give-up item — says the same thing with the cause and the action a
+    // bare flag cannot.
+    if (reason === "stalled" || reason === "disconnected") continue
     const at = sessionAttentionAt(session)
     const taskId = session.task_id ?? null
     const key = taskId ?? session.id

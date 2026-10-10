@@ -6,9 +6,14 @@ areas: [api, daemon, cli, ui]
 commits: []
 tests:
   - crates/ariadne-daemon/tests/it/attention.rs
+  - crates/ariadne-daemon/tests/it/scheduler_attention.rs
   - crates/ariadne-daemon/src/attention/recovery.rs
   - crates/ariadne-daemon/src/attention/mod.rs
   - crates/ariadne-daemon/src/scheduler/auto_switch.rs
+  - crates/ariadne-daemon/src/scheduler/goals.rs
+  - crates/ariadne-daemon/src/scheduler/pull_requests.rs
+  - crates/ariadne-daemon/src/forge/mod.rs
+  - crates/ariadne-daemon/src/forge/poll.rs
   - crates/ariadne-cli/src/commands/attention.rs
   - crates/ariadne-cli/src/commands/attention/board.rs
   - ui/src/features/goals/attention.test.tsx
@@ -101,34 +106,58 @@ producers (registered already, empty — rule 10) their eligibility rules.
      (009 rule 4) and may retry it itself (`http::tasks::retry`), which
      moves the task off `failed`, and so off this list, before a human
      ever needs to. `orchestrator_has_answered_for` reads whether that has
-     already happened from evidence persisted for exactly this question,
-     not from a session's ambient `last_activity_at`: `tell_orchestrator`
-     stamps `Goal::orchestrator_told_at` at the moment it actually hands
-     the orchestrator a prompt naming the goal's current failures, and the
-     gate answers `true` once that stamp is at or after the failure *and*
-     no orchestrator session of the goal is currently `running` — told,
-     and not mid-turn on it, is as settled as it is going to get without a
-     retry. A session's own activity is not read for this, because ending
-     a turn already running when the task failed would move it regardless
-     of whether that turn ever carried the news. A goal not `orchestrated`,
+     already happened from evidence persisted for exactly *this* task's
+     id, never from a timestamp or a session's ambient `last_activity_at`:
+     `tell_orchestrator` records the failed task ids named in the prompt
+     it queues (`Goal::orchestrator_told_failed_task_ids`), and the agent-
+     event ingest promotes them into `orchestrator_answered_failed_task_ids`
+     the moment that orchestrator's session next reports `stop` — the
+     turn that actually carried them, not merely the queuing of a prompt
+     that turn has not run yet. The gate answers `true` once this task's
+     id is in the confirmed list. A session's own activity is never read
+     for this: ending a turn already running when the task failed, or one
+     confirming an unrelated failure, would move a timestamp regardless of
+     whether that turn ever carried *this* task's news, and the confirmed
+     list's own membership is immune to both. A goal not `orchestrated`,
      or not `planning` or `active` any more, answers `true` outright —
      nothing automatic is ever coming either way — and so does a goal that
      has never once had an orchestrator session: nothing automatic has
      touched it yet. Otherwise, with at least one orchestrator session on
-     record but none told yet, the goal's last attempt is read for whether
-     it has been given up on: the alarm `scheduler::goals::orchestrator_could_not_start`
-     raises on the spawn-retry budget running out
-     (`AttentionReason::Disconnected`) answers `true` on its own; short of
-     that, a crashed orchestrator with no live session this instant is
-     still a relaunch `keep_orchestrator` may complete on a later pass
-     (`scheduler::goals`, untouched here), so the gate answers `false`
-     rather than reading "no live session" as "nothing is coming". One
-     task failed on the daemon's own descriptor-limit words is `resource`,
-     grouped into one item naming every such task — one machine out of
+     record, the goal's own give-up mark is read:
+     `Goal::orchestrator_given_up_at`, stamped by
+     `scheduler::goals::orchestrator_could_not_start` once the spawn-retry
+     budget actually runs out and cleared the moment `keep_orchestrator`
+     has a live orchestrator again or a resume/spawn succeeds, answers
+     `true` on its own. This is deliberately not the `disconnected` flag
+     the liveness sweep's `retire_disconnected` also raises on every
+     ordinary crash, well before the budget is spent and while a relaunch
+     may still be coming — reading that flag as a give-up was exactly the
+     false positive an earlier round of this list raised. One task failed
+     on the daemon's own descriptor-limit words is `resource`, grouped
+     into one item naming every such task — one machine out of
      descriptors, not one item per task it happened to fail. Every other
      one is its own `unknown` item, naming that task alone and carrying
      its own ended reason as the summary, rather than guessed into a group
      with no reliable evidence it shares a cause with another.
+   - every goal whose orchestrator has been given up on
+     (`Goal::orchestrator_given_up_at`) and which has no failed task of
+     its own: a taskless orchestrator — one still planning, with nothing
+     yet to fail — has no route onto the bullet above, since that one
+     only ever walks failed tasks, so `orchestrator_given_up_items` gives
+     it one of its own, naming the goal and targeting the alarm session
+     the give-up itself is raised on (or the goal's last orchestrator
+     session where none still carries it). A goal that also has a failed
+     task is left entirely to the bullet above, so the one give-up is not
+     said twice.
+   - every pull request whose reviewer session has been given up on
+     (`PullRequestRow::reviewer_given_up_at`, the same kind of mark,
+     stamped by `scheduler::pull_requests::start_pull_request_session`
+     once *its* spawn-retry budget runs out and cleared the moment a
+     resume or spawn of that session next succeeds): a reviewer session
+     sits on no task either, and carries the same `disconnected` false-
+     positive risk the orchestrator's own mark exists to avoid.
+     `reviewer_given_up_items` gives it its own item, targeting the
+     request itself.
    - `configuration`: every enabled forge integration whose `fetch_error`
      names the fixed words [`crate::forge::Cli::binary`] gives a CLI
      missing from the daemon's PATH, grouped by the CLI name the message
@@ -145,15 +174,21 @@ producers (registered already, empty — rule 10) their eligibility rules.
      `crate::forge::poll::FORGE_SIGNED_OUT`, grouped by host — the fix,
      signing back in, is the same wherever that host's repositories are.
      `forge/poll.rs` writes the marker reactively, only once a fetch has
-     already failed: it runs the forge CLI's own `auth_status` check (the
-     same one `ForgeClient::auth_status` already runs on repository
-     detection) and prefixes the stored error with the marker only when
-     that check also fails. Checking an existing status after a failure
-     that already happened is not a new watch over the forge — it is one
-     answer, read once, to the one question "is the fetch failing because
-     the CLI is signed out" — so it stays inside the "no new monitoring
-     service" line rule 4's `configuration` cause already holds for a
-     fetch error with no such confirmation.
+     already failed, and only on a *confirmed* rejection:
+     `ForgeClient::confirmed_signed_out` runs the forge CLI's own
+     `auth status` and reads `Refusal::ran()` — whether the CLI actually
+     reached an exit code, however it answered — rather than merely
+     whether the check returned an error. A missing binary, a spawn or
+     write failure, or a timeout never ran at all, so it answers `false`
+     and the marker is never written: `configuration`'s own cause, or
+     nothing, is left to say why the fetch failed instead, and `access`
+     is reserved for the CLI having actually run and said no. Checking an
+     existing status after a failure that already happened is not a new
+     watch over the forge — it is one answer, read once, to the one
+     question "is the fetch failing because the CLI is signed out" — so
+     it stays inside the "no new monitoring service" line rule 4's
+     `configuration` cause already holds for a fetch error with no such
+     confirmation.
 5. `access` is produced by the recovery path above the moment the daemon's
    own reactive sign-in check confirms it; naming one from a forge CLI's
    free-text error alone, or from the advisory failure classifier (024),
@@ -169,10 +204,9 @@ producers (registered already, empty — rule 10) their eligibility rules.
    its badge and its toasts) each still compose their own list from goals,
    tasks and sessions (009's existing contract) for every reason this
    route does not cover (`waiting_permission`, `waiting_input`,
-   `waiting_user`, `agent_error`, and — on a session with no task —
-   `disconnected`/`stalled`), with the following suppressed so the two
-   lists never say the same thing twice, or raise a row while automatic
-   recovery is still trying:
+   `waiting_user`, `agent_error`), with the following suppressed so the
+   two lists never say the same thing twice, or raise a row while
+   automatic recovery is still trying:
    - a session's bare `exhausted` flag never raises a row of its own on
      either client; only a `quota` item does, read with every other
      reason in the same pass rather than used to gate a locally-derived
@@ -199,13 +233,18 @@ producers (registered already, empty — rule 10) their eligibility rules.
      would be exactly the "automatic recovery still trying" row this
      contract asks never to raise. If the relaunch also fails, the task
      fails, and the point above covers it;
-   - a task-tied session's `disconnected` flag never raises a row either,
-     for the same reason: the scheduler resumes a disconnected column
-     agent automatically, and only a task that goes on to fail — which
-     the point above already covers — means that resume, too, ran out of
-     tries. A session with no task (an orchestrator's, a pull request's)
-     is unaffected: there is no task whose failure stands in for it, so
-     `disconnected` and `stalled` are still read locally for those.
+   - a session's `disconnected` flag never raises a row of its own
+     either, task-tied or not: the scheduler resumes a disconnected agent
+     automatically, whatever it runs, and the flag by itself is exactly
+     the same one a mere crash raises well before any retry budget is
+     spent (`retire_disconnected`) — raising it locally would be the
+     false positive recovery's own `given_up_at` marks exist to avoid.
+     A task-tied session's eventual failure is the point above's
+     business; a taskless orchestrator's or reviewer's eventual give-up
+     is the recovery producer's own `unknown` item
+     (`orchestrator_given_up_items`, `reviewer_given_up_items`), read with
+     every other recovery item below — never derived from the bare flag
+     here, on either client, for either seat.
 
    Every recovery item is its own row, with no goal of its own the way a
    composed task or session row has one: the CLI's `RECOVERY` section
@@ -279,24 +318,32 @@ producers (registered already, empty — rule 10) their eligibility rules.
   (`attention.rs::an_exhausted_session_already_switched_raises_no_quota_item`);
   and one nobody is waiting on raises nothing even while exhausted
   (`attention.rs::an_exhausted_session_nobody_is_waiting_on_raises_no_quota_item`).
-- A failed task raises nothing while its goal has an orchestrator session
-  that has not yet been handed a prompt naming it
-  (`attention.rs::a_failed_tasks_item_waits_for_its_orchestrator_to_actually_be_told`),
-  nor while a told orchestrator is still mid-turn on it
-  (`attention.rs::a_failed_tasks_item_waits_while_its_told_orchestrator_is_still_mid_turn`),
-  and raises its item once told and not mid-turn
-  (same test, after telling). An orchestrator's own unrelated activity —
-  ending a turn that never carried the news — does not answer for the
-  failure on its own
-  (`attention.rs::an_orchestrators_unrelated_turn_does_not_answer_for_a_failure_it_was_never_told`).
+- A failed task raises nothing while its orchestrator has not yet had a
+  real turn on it, proven end to end through the real scheduler and a
+  stub agent rather than a hand-written stamp: queuing the prompt is not
+  enough on its own
+  (`attention.rs::a_failed_tasks_item_waits_for_its_orchestrator_to_actually_have_a_turn_on_it`).
+  Confirmation is read by this task's own id, never by whether the goal
+  has any confirmed turn at all — a turn that confirmed a different
+  failure does not answer for this one
+  (`attention.rs::a_failed_tasks_item_still_waits_while_only_a_different_failure_was_confirmed`).
   A goal whose dead orchestrator has not yet been given up on still
   raises nothing, since `keep_orchestrator` may still relaunch it
-  (`attention.rs::a_failed_task_raises_nothing_while_its_dead_orchestrator_has_not_been_given_up_on`),
-  and raises its item once that orchestrator is given up on
+  (`attention.rs::a_failed_task_raises_nothing_while_its_dead_orchestrator_has_not_been_given_up_on`);
+  a mere crash is not read as that give-up either — the `disconnected`
+  flag a crash alone raises answers for nothing on its own
+  (`attention.rs::a_failed_task_raises_nothing_while_its_orchestrator_merely_crashed_without_giving_up`);
+  and the item raises once the goal's own give-up mark is actually set
   (`attention.rs::a_failed_task_raises_its_item_once_its_orchestrator_is_given_up_on`).
   Retrying a failed task takes its item down without losing the
   transition that recorded why it failed
   (`attention.rs::retrying_a_failed_task_removes_its_item_without_losing_the_transition`).
+- A taskless orchestrator given up on — a goal still planning, with no
+  failed task of its own — raises its own `unknown` item end to end
+  through the real scheduler's spawn-retry budget actually running out,
+  and that item answers for it even though the same crash has already
+  raised the generic `disconnected` flag on the alarm row
+  (`scheduler_attention.rs::an_orchestrator_that_dies_the_moment_it_starts_is_given_up_on`).
 - A forge integration whose fetch failed on the daemon's own "CLI not
   installed" words is a `configuration` item naming the repository
   (`attention.rs::a_missing_forge_cli_is_a_configuration_item`); one whose
@@ -311,6 +358,12 @@ producers (registered already, empty — rule 10) their eligibility rules.
   end to end through the real forge poll worker and a scripted CLI that
   fails both `pr list` and `auth status`
   (`attention.rs::a_forge_cli_signed_out_mid_fetch_is_confirmed_reactively_and_reaches_the_list`).
+  The marker is read from whether the CLI actually ran that check, not
+  merely whether it returned an error, so a missing binary or a timeout
+  on the check itself never gets misread as a confirmed rejection
+  (`forge/mod.rs::a_refusal_has_run_only_where_the_cli_reached_an_exit_code`,
+  and `::a_cli_that_reads_no_input_is_stopped_by_the_deadline` for a real
+  timeout's own `Refusal::ran()` reading `false`).
 - The same recovery item answers the same id across two reads, and that id
   is derived from the shared cause alone
   (`attention.rs::a_recovery_items_id_is_stable_across_two_reads`), including
@@ -318,9 +371,10 @@ producers (registered already, empty — rule 10) their eligibility rules.
   file — the closest this suite comes to a daemon restart, since nothing
   else in it spawns a second daemon process either
   (`attention.rs::a_recovery_items_id_is_stable_across_a_fresh_store_connection`).
-- The CLI board raises no `exhausted` or `stalled` row of its own, and a
-  task-tied session's `disconnected` only once its own board rule applies
+- The CLI board raises no `exhausted` row of its own, and no `disconnected`
+  or `stalled` row either, task-tied or not
   (`board.rs::an_exhausted_session_raises_no_row_of_its_own_on_this_board`,
+  `::a_taskless_disconnected_or_stalled_session_raises_no_row_of_its_own_on_this_board`,
   `::a_flagged_session_row_spells_the_reason_the_ui_spells`,
   `::a_row_names_what_it_is_about`); every recovery item, `quota` included,
   prints in its own section with its reason, its waiting time, its action
@@ -343,13 +397,17 @@ producers (registered already, empty — rule 10) their eligibility rules.
   it, raises no row for a failed task once a complete recovery read
   answers with nothing to say about it — rather than falling back to the
   bare status the moment a membership check on the read's own items came
-  up empty —, raises no row for a task-tied stalled or disconnected
-  session, and still raises one for a stalled or disconnected session
-  with no task
+  up empty —, and raises no row of its own for a stalled or disconnected
+  session, task-tied or not — a taskless orchestrator's `disconnected`
+  flag included, which only raises a row once recovery's own give-up
+  item names its goal, never from the bare flag
   (`ui/src/features/goals/attention.test.tsx`, "raises no row for a
   failed task once a complete recovery read has nothing to say about
-  it"). A grouped quota item with two or more affected sessions gives
-  each its own link to its own session's terminal — asserted against the
+  it", "raises no row of its own for a taskless orchestrator's
+  disconnected flag", "raises a row for a taskless orchestrator once
+  recovery's own give-up item names its goal"). A grouped quota item with
+  two or more affected sessions gives each its own link to its own
+  session's terminal — asserted against the
   exact destination `sessionTerminalFrom` itself builds, not only the id
   copied into the helper's result — and one with a single session adds no
   second line saying the same thing the row's own link already does
@@ -369,30 +427,29 @@ producers (registered already, empty — rule 10) their eligibility rules.
   that answer empty: the question and pull-request eligibility rules this
   route was built for, and migrating the client behavior that already
   covers them onto it, are a later task's.
-- A pull request's own reviewer session, stalled or disconnected with no
-  task, is still read entirely off the client's own composed list (rule
-  7), unlike a goal's orchestrator — which the recovery producer now
-  covers through `Goal::orchestrator_told_at` and the goal's own
-  orchestrator sessions, both read by `orchestrator_has_answered_for`.
-  Finding an analogous persisted give-up signal for a reviewer seat is a
-  later task's: `scheduler/pull_requests.rs` has no spawn-retry budget or
-  give-up alarm of its own to read in its place the way
-  `scheduler::goals::orchestrator_could_not_start` already gives the
-  orchestrator path. `stalled`'s escalation past that point is the
-  watchdog thresholds of 009, untouched here either way.
 
 ## Sources
 
 `crates/ariadne-api/src/attention.rs`, `crates/ariadne-daemon/src/attention/`
-(`mod`, `recovery` — including `orchestrator_has_answered_for` and
-`access_items` — `agent_requests`, `pull_requests`),
-`crates/ariadne-daemon/src/http/attention.rs`,
+(`mod`, `recovery` — including `orchestrator_has_answered_for`,
+`access_items`, `orchestrator_given_up_items`, `reviewer_given_up_items` —
+`agent_requests`, `pull_requests`), `crates/ariadne-daemon/src/http/attention.rs`,
+`crates/ariadne-daemon/src/http/events.rs` (`ingest_event`'s
+`promote_goal_orchestrator_told` call on an orchestrator's own `stop`),
 `crates/ariadne-daemon/src/scheduler/auto_switch.rs` (`recovery_block`,
 `switch_chain`, `switch_target`), `crates/ariadne-daemon/src/scheduler/goals.rs`
-(`tell_orchestrator`, `orchestrator_could_not_start`),
+(`tell_orchestrator`, `keep_orchestrator`, `orchestrator_could_not_start`),
+`crates/ariadne-daemon/src/scheduler/pull_requests.rs`
+(`start_pull_request_session`, `review_pass`),
 `crates/ariadne-store/src/goals.rs` (`set_goal_orchestrator_told`,
-`Goal::orchestrator_told_at`), `crates/ariadne-daemon/src/forge/poll.rs`
-(`FORGE_SIGNED_OUT`), `crates/ariadne-cli/src/commands/attention.rs`,
+`promote_goal_orchestrator_told`, `set_goal_orchestrator_given_up`,
+`clear_goal_orchestrator_given_up`, `Goal::orchestrator_told_failed_task_ids`,
+`Goal::orchestrator_answered_failed_task_ids`, `Goal::orchestrator_given_up_at`),
+`crates/ariadne-store/src/pull_requests.rs` (`set_pull_request_reviewer_given_up`,
+`clear_pull_request_reviewer_given_up`, `PullRequestRow::reviewer_given_up_at`),
+`crates/ariadne-daemon/src/forge/mod.rs` (`ForgeClient::confirmed_signed_out`,
+`Refusal::ran`), `crates/ariadne-daemon/src/forge/poll.rs` (`FORGE_SIGNED_OUT`),
+`crates/ariadne-cli/src/commands/attention.rs`,
 `crates/ariadne-cli/src/commands/attention/board.rs`,
 `ui/src/features/goals/attention.ts`, `ui/src/features/goals/attention-alerts.tsx`,
 `ui/src/features/goals/attention-strip.tsx`.

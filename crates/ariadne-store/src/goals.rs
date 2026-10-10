@@ -259,17 +259,59 @@ impl Store {
         Ok(goal)
     }
 
-    /// Stamp the moment the orchestrator was handed a prompt naming
-    /// whatever its goal's tasks currently need (`tell_orchestrator`),
-    /// including a failure. The attention producer's recovery items read
-    /// this to tell a failed task recovery has already had its say about
-    /// from one it has not: a stamp made at or after the failure proves the
-    /// orchestrator was actually handed a prompt naming it, where a session's
-    /// own `last_activity_at` would prove only that it did something, which
-    /// may have been unrelated.
-    pub async fn set_goal_orchestrator_told(&self, id: &str) -> Result<()> {
-        sqlx::query("UPDATE goals SET orchestrator_told_at = ? WHERE id = ?")
+    /// Record the failed task ids named in the prompt `tell_orchestrator`
+    /// just handed the orchestrator, pending confirmation that a turn
+    /// actually answered it (`promote_goal_orchestrator_told`). Queuing a
+    /// prompt is not the same as the orchestrator having had a turn on it,
+    /// so this alone does not yet answer for any of them.
+    pub async fn set_goal_orchestrator_told(
+        &self,
+        id: &str,
+        failed_task_ids: &[String],
+    ) -> Result<()> {
+        let json = serde_json::to_string(failed_task_ids).expect("ids serialize");
+        sqlx::query("UPDATE goals SET orchestrator_told_failed_task_ids = ? WHERE id = ?")
+            .bind(&json)
+            .bind(id)
+            .execute(self.w())
+            .await?;
+        Ok(())
+    }
+
+    /// Confirm whatever failed task ids are pending on this goal: called
+    /// from the agent-event ingest the moment an orchestrator session next
+    /// reports `stop`, which is the turn that actually carried the prompt
+    /// `tell_orchestrator` queued. A no-op where nothing is pending.
+    pub async fn promote_goal_orchestrator_told(&self, id: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE goals SET
+                 orchestrator_answered_failed_task_ids = orchestrator_told_failed_task_ids,
+                 orchestrator_told_failed_task_ids = NULL
+             WHERE id = ? AND orchestrator_told_failed_task_ids IS NOT NULL",
+        )
+        .bind(id)
+        .execute(self.w())
+        .await?;
+        Ok(())
+    }
+
+    /// Mark that `scheduler::goals::orchestrator_could_not_start` has given
+    /// up on this goal's orchestrator: the spawn-retry budget ran out, not
+    /// merely a crash the liveness sweep is about to retry.
+    pub async fn set_goal_orchestrator_given_up(&self, id: &str) -> Result<()> {
+        sqlx::query("UPDATE goals SET orchestrator_given_up_at = ? WHERE id = ?")
             .bind(now())
+            .bind(id)
+            .execute(self.w())
+            .await?;
+        Ok(())
+    }
+
+    /// Take the give-up mark down: recovery has taken ownership of this
+    /// goal's orchestrator again, a live one found or a resume/spawn
+    /// succeeded.
+    pub async fn clear_goal_orchestrator_given_up(&self, id: &str) -> Result<()> {
+        sqlx::query("UPDATE goals SET orchestrator_given_up_at = NULL WHERE id = ?")
             .bind(id)
             .execute(self.w())
             .await?;
