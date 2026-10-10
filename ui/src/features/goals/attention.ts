@@ -50,23 +50,6 @@ function attentionListQueryOptions() {
   })
 }
 
-/**
- * Every task id a recovery item's `affected` list already names, whatever
- * its cause: the task's own `failed`/`stalled` row would say the same
- * thing a second time, generic where the recovery item is specific — so
- * `collectAttention` leaves those tasks to the recovery item's own row
- * entirely.
- */
-function recoveryAffectedTaskIds(recovery: AttentionListDto | undefined): Set<string> {
-  const ids = new Set<string>()
-  for (const item of recovery?.items ?? []) {
-    for (const subject of item.affected) {
-      if (subject.kind === "task") ids.add(subject.id)
-    }
-  }
-  return ids
-}
-
 /** Why a task is on the list, strongest first. */
 export type AttentionReason = "failed" | "stalled"
 
@@ -231,7 +214,15 @@ function collectAttention(
 ): AttentionItem[] {
   const goalsById = new Map((goals ?? []).map((goal) => [goal.id, goal]))
   const tasksById = new Map((tasks ?? []).map((task) => [task.id, task]))
-  const recoveryTasks = recoveryAffectedTaskIds(recovery)
+  // Once the recovery read is complete, it is authoritative for every
+  // failed task — including by staying silent while its orchestrator is
+  // still the one answering it (the daemon's recovery producer raises an
+  // item for a failed task only once it has given up on it). Falling back
+  // to the bare status whenever a task merely goes unnamed by a recovery
+  // item would undo that silence the moment `collectAttention` ran, so the
+  // fallback is reserved for a read that could not be trusted at all —
+  // absent, or itself marked `complete: false`.
+  const recoveryTrustworthy = recovery?.complete ?? false
   /** Keyed by what identifies a row, which is what folds the two kinds. */
   const rows = new Map<string, AttentionItem>()
   /**
@@ -242,10 +233,7 @@ function collectAttention(
   const flaggedAt = new Map<string, string>()
 
   for (const task of tasks ?? []) {
-    // A task a recovery item already names is that item's row to carry,
-    // with the cause and the action this board's generic `failed` does
-    // not — not a second, blanker row here.
-    if (recoveryTasks.has(task.id)) continue
+    if (recoveryTrustworthy) continue
     const reason = taskAttentionReason(task)
     if (!reason) continue
     rows.set(task.id, {

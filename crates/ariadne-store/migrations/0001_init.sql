@@ -188,7 +188,15 @@ CREATE TABLE goals (
     issue_url    TEXT,
     -- The workflow every task of the goal runs on. Chosen once, when the goal
     -- is created; its columns are snapshotted into `goal_steps`.
-    workflow     TEXT NOT NULL REFERENCES workflows (name)
+    workflow     TEXT NOT NULL REFERENCES workflows (name),
+    -- When the orchestrator was last handed a prompt naming every task of
+    -- this goal that needed it (`tell_orchestrator`), including a failure.
+    -- NULL until the first one goes out. The attention producer reads this,
+    -- not `last_activity_at`, to tell whether a failed task's orchestrator
+    -- has already been told of it: the stamp is only ever written at the
+    -- moment the prompt naming the failure is actually handed off, where
+    -- ambient activity could be an unrelated turn ending.
+    orchestrator_told_at TEXT
 );
 
 -- Which repositories a goal works in, by reference.

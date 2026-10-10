@@ -311,6 +311,74 @@ async fn a_missing_forge_cli_is_a_configuration_item() {
     assert_eq!(item.affected[0].id, repo.id);
 }
 
+/// A forge fetch error the daemon's own reactive sign-in check confirmed
+/// is the forge CLI being signed out is an `access` item naming the host:
+/// signing back in is the fix wherever that host's repositories are.
+#[tokio::test]
+async fn a_signed_out_forge_cli_is_an_access_item() {
+    let h = harness().await;
+    let repo = h.repository(&h.git_repo("repo")).await;
+    with_forge(&h, &repo).await;
+    let error = format!(
+        "{}: gh: HTTP 401: Bad credentials",
+        ariadne_daemon::forge::poll::FORGE_SIGNED_OUT
+    );
+    h.store
+        .set_forge_fetch_error(&repo.id, Some(&error))
+        .await
+        .unwrap();
+
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 1);
+    let item = &list.items[0];
+    assert_eq!(item.reason, AttentionCause::Access);
+    assert!(item.summary.contains("github.com"), "{}", item.summary);
+    assert_eq!(item.affected.len(), 1);
+    assert_eq!(item.affected[0].kind, AttentionSubjectKind::Repository);
+    assert_eq!(item.affected[0].id, repo.id);
+}
+
+/// End to end, through the real forge poll worker and a scripted CLI
+/// rather than a fetch error written in by hand: a `pr list` that fails
+/// while `auth status` also fails is read by `forge/poll.rs` as the CLI
+/// being signed out, confirmed reactively rather than guessed from the
+/// list error alone, and reaches `GET /v1/attention` as an `access` item.
+#[tokio::test]
+async fn a_forge_cli_signed_out_mid_fetch_is_confirmed_reactively_and_reaches_the_list() {
+    use crate::common::eventually;
+    use crate::common::forge::{answer, stub_forge_cli};
+
+    let stub = stub_forge_cli(serde_json::json!([
+        answer(&["auth", "status"], 1, ""),
+        answer(&["pr", "list"], 1, "")
+    ]));
+    let h = harness().forge_cli(&stub).await;
+    let repo = h.repository(&h.git_repo("repo")).await;
+    with_forge(&h, &repo).await;
+    h.state.forge_poll.wake(&repo.id);
+
+    eventually(
+        crate::common::TIMEOUT,
+        "the access item to be raised",
+        || async {
+            let list: AttentionListDto = h.get("/v1/attention").await;
+            list.items
+                .iter()
+                .any(|item| item.reason == AttentionCause::Access)
+        },
+    )
+    .await;
+
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    let item = list
+        .items
+        .iter()
+        .find(|item| item.reason == AttentionCause::Access)
+        .unwrap();
+    assert!(item.summary.contains("github.com"), "{}", item.summary);
+    assert_eq!(item.affected[0].id, repo.id);
+}
+
 /// A forge fetch error that does not name a missing CLI raises nothing:
 /// `forge/poll.rs` keeps retrying it forever with no budget to spend, so
 /// there is no evidence here that recovery has given up — only that it is
@@ -426,12 +494,109 @@ async fn an_exhausted_session_already_switched_raises_no_quota_item() {
     assert_eq!(list.items, Vec::new());
 }
 
-/// A failed task raises nothing while its goal's orchestrator is still
-/// mid-turn: it may be the very turn that answers the failure (009 rule
-/// 4), and this producer gives it the same "automatic recovery still
-/// trying" grace every other cause here does.
+/// A failed task of a goal whose orchestrator has never been told of it
+/// raises nothing yet — the same "automatic recovery still trying" grace
+/// every other cause here gives — and an orchestrator that merely finished
+/// an unrelated turn is not being told: ending a turn already running
+/// when the task failed bumps its session's own activity stamp without
+/// the orchestrator ever having been handed a prompt naming this failure,
+/// which is exactly what the superseded heuristic (`last_activity_at`,
+/// read against an idle orchestrator) would have misread as answered —
+/// raising the item before the orchestrator ever had a real chance at it.
 #[tokio::test]
-async fn a_failed_task_raises_nothing_while_its_orchestrator_is_mid_turn() {
+async fn an_orchestrators_unrelated_turn_does_not_answer_for_a_failure_it_was_never_told() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    let orchestrator = h
+        .store
+        .create_session(NewSession {
+            goal_id: Some(cast.goal.id.clone()),
+            task_id: None,
+            seat: Some(Seat::Orchestrator),
+            task_agent_id: None,
+            model: test_pin().model,
+            effort: None,
+            worktree_path: None,
+            pull_request_id: None,
+        })
+        .await
+        .unwrap();
+    h.store
+        .transition_task(
+            &cast.task.id,
+            TaskStatus::Failed,
+            Actor::Daemon,
+            Some("the tests did not pass"),
+            None,
+        )
+        .await
+        .unwrap();
+    // The orchestrator's unrelated turn ends after the failure and leaves
+    // it idle, its own activity stamp moved past the failure — but it was
+    // never handed a prompt naming it, so `orchestrator_told_at` stays
+    // unset.
+    h.store
+        .set_session_status_if_live(&orchestrator.id, SessionStatus::Idle, None)
+        .await
+        .unwrap();
+    h.store.touch_session(&orchestrator.id).await.unwrap();
+
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items, Vec::new());
+}
+
+/// A failed task raises nothing while its orchestrator exists but has not
+/// yet been handed a prompt naming it — the same "automatic recovery
+/// still trying" grace every other cause here gives — and raises its item
+/// the moment it has (`Goal::orchestrator_told_at`, stamped by the same
+/// `tell_orchestrator` call production runs): told, and not mid-turn on
+/// it, is as settled as it is going to get without a retry.
+#[tokio::test]
+async fn a_failed_tasks_item_waits_for_its_orchestrator_to_actually_be_told() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    // An orchestrator session exists but has not been told.
+    h.store
+        .create_session(NewSession {
+            goal_id: Some(cast.goal.id.clone()),
+            task_id: None,
+            seat: Some(Seat::Orchestrator),
+            task_agent_id: None,
+            model: test_pin().model,
+            effort: None,
+            worktree_path: None,
+            pull_request_id: None,
+        })
+        .await
+        .unwrap();
+    h.store
+        .transition_task(
+            &cast.task.id,
+            TaskStatus::Failed,
+            Actor::Daemon,
+            Some("the tests did not pass"),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let before: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(before.items, Vec::new(), "not told yet, so still trying");
+
+    h.store
+        .set_goal_orchestrator_told(&cast.goal.id)
+        .await
+        .unwrap();
+
+    let after: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(after.items.len(), 1, "told, and not mid-turn on it");
+}
+
+/// Told, but still running the turn the prompt started: it may be the
+/// very turn that retries the task, so the item stays out until that
+/// turn ends, whatever it decided.
+#[tokio::test]
+async fn a_failed_tasks_item_waits_while_its_told_orchestrator_is_still_mid_turn() {
     let h = harness().await;
     let cast = h.cast().await;
     let orchestrator = h
@@ -462,17 +627,24 @@ async fn a_failed_task_raises_nothing_while_its_orchestrator_is_mid_turn() {
         )
         .await
         .unwrap();
+    h.store
+        .set_goal_orchestrator_told(&cast.goal.id)
+        .await
+        .unwrap();
 
     let list: AttentionListDto = h.get("/v1/attention").await;
     assert_eq!(list.items, Vec::new());
 }
 
-/// A failed task raises nothing while its idle orchestrator has not had a
-/// turn since the failure — it has not yet been told — and raises its
-/// item once the orchestrator goes through a turn after it, whatever that
-/// turn decided.
+/// A goal whose orchestrator crashed and has no live session this instant,
+/// but has not been given up on, still has automatic recovery coming
+/// (`keep_orchestrator`'s own budget, `scheduler::goals`) — so a failed
+/// task of that goal raises nothing yet. No *live* orchestrator is not the
+/// same as nothing left to try it, which the superseded heuristic read as
+/// answered on the strength of there being no live session to check at
+/// all, with no regard for whether a relaunch was still in flight.
 #[tokio::test]
-async fn a_failed_tasks_item_waits_for_the_orchestrators_next_turn() {
+async fn a_failed_task_raises_nothing_while_its_dead_orchestrator_has_not_been_given_up_on() {
     let h = harness().await;
     let cast = h.cast().await;
     let orchestrator = h
@@ -490,7 +662,7 @@ async fn a_failed_tasks_item_waits_for_the_orchestrators_next_turn() {
         .await
         .unwrap();
     h.store
-        .set_session_status_if_live(&orchestrator.id, SessionStatus::Idle, None)
+        .set_session_status(&orchestrator.id, SessionStatus::Exited)
         .await
         .unwrap();
     h.store
@@ -504,14 +676,53 @@ async fn a_failed_tasks_item_waits_for_the_orchestrators_next_turn() {
         .await
         .unwrap();
 
-    let before: AttentionListDto = h.get("/v1/attention").await;
-    assert_eq!(before.items, Vec::new(), "not told yet, so nothing to see");
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items, Vec::new(), "a relaunch may still be coming");
+}
 
-    // The orchestrator's next turn, whatever it did with the news.
-    h.store.touch_session(&orchestrator.id).await.unwrap();
+/// Once that same dead orchestrator's budget has run out and
+/// `orchestrator_could_not_start` raises its own `disconnected` alarm —
+/// automatic recovery's word that it has given up — a failed task of that
+/// goal raises its item.
+#[tokio::test]
+async fn a_failed_task_raises_its_item_once_its_orchestrator_is_given_up_on() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    let orchestrator = h
+        .store
+        .create_session(NewSession {
+            goal_id: Some(cast.goal.id.clone()),
+            task_id: None,
+            seat: Some(Seat::Orchestrator),
+            task_agent_id: None,
+            model: test_pin().model,
+            effort: None,
+            worktree_path: None,
+            pull_request_id: None,
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_session_status(&orchestrator.id, SessionStatus::Exited)
+        .await
+        .unwrap();
+    h.store
+        .set_session_attention(&orchestrator.id, AttentionReason::Disconnected)
+        .await
+        .unwrap();
+    h.store
+        .transition_task(
+            &cast.task.id,
+            TaskStatus::Failed,
+            Actor::Daemon,
+            Some("the tests did not pass"),
+            None,
+        )
+        .await
+        .unwrap();
 
-    let after: AttentionListDto = h.get("/v1/attention").await;
-    assert_eq!(after.items.len(), 1);
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 1);
 }
 
 /// A reviewer session's affected label names its seat, the same as an

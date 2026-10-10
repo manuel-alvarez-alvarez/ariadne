@@ -2,7 +2,7 @@
 //! tasks first and then its stuck sessions, in the order the UI's strip lists
 //! them.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use serde::Serialize;
 
@@ -67,7 +67,7 @@ pub(super) fn group(
     goals: Vec<GoalDto>,
     tasks: Vec<TaskDto>,
     sessions: Vec<SessionEntryDto>,
-    recovery_tasks: &HashSet<String>,
+    recovery_trustworthy: bool,
 ) -> Attention {
     let mut goals = goals;
     goals.sort_by(|a, b| b.id.cmp(&a.id));
@@ -88,16 +88,18 @@ pub(super) fn group(
         }
     };
 
-    // A task a recovery item already names is the recovery section's to
-    // show, with the cause and the action this board's generic `failed`
-    // does not carry — not a second, blanker row here.
-    for task in tasks {
-        if recovery_tasks.contains(&task.id) {
-            continue;
-        }
-        if let Some(reason) = task_reason(&task) {
-            let i = index_of(&mut groups, &task.goal_id);
-            groups[i].tasks.push(AttentionTask { reason, task });
+    // Once the recovery read is complete, it is authoritative for every
+    // failed task — including by staying silent while its orchestrator is
+    // still the one answering it. Falling back to the bare status for a
+    // task recovery merely left unnamed would undo that silence on the
+    // spot, so the fallback is reserved for a read that could not be
+    // trusted at all.
+    if !recovery_trustworthy {
+        for task in tasks {
+            if let Some(reason) = task_reason(&task) {
+                let i = index_of(&mut groups, &task.goal_id);
+                groups[i].tasks.push(AttentionTask { reason, task });
+            }
         }
     }
     for session in sessions {
@@ -229,7 +231,7 @@ mod tests {
             title: Some("Fix widgets".into()),
             ..flagged("01PRS", "01GOAL", AttentionReason::WaitingUser)
         };
-        let attention = group(Vec::new(), Vec::new(), vec![session], &HashSet::new());
+        let attention = group(Vec::new(), Vec::new(), vec![session], false);
         assert_eq!(heading(&attention.goals[0]), "Pull requests");
         let rows = rows(&attention.goals[0], &HashMap::new(), chrono::Utc::now());
         assert_eq!(rows[0][0], "01PRS");
@@ -245,7 +247,7 @@ mod tests {
             seat: None,
             ..dead("01LOOSE", "01GOAL", None)
         };
-        let attention = group(Vec::new(), Vec::new(), vec![session], &HashSet::new());
+        let attention = group(Vec::new(), Vec::new(), vec![session], false);
         assert_eq!(attention.count, 1);
         assert_eq!(attention.goals[0].goal_id, "-");
         let rows = rows(&attention.goals[0], &HashMap::new(), chrono::Utc::now());
@@ -267,7 +269,7 @@ mod tests {
                 dead("01S1", "01GB", None),
                 session("01S2", "01GA", Some("01T4")),
             ],
-            &HashSet::new(),
+            false,
         );
         let ids: Vec<&str> = attention.goals.iter().map(|g| g.goal_id.as_str()).collect();
         assert_eq!(ids, ["01GB", "01GA", "01GONE"]);
@@ -286,12 +288,7 @@ mod tests {
         );
         assert!(attention.goals[2].goal.is_none());
 
-        let quiet = group(
-            vec![goal("01GA", "A")],
-            Vec::new(),
-            Vec::new(),
-            &HashSet::new(),
-        );
+        let quiet = group(vec![goal("01GA", "A")], Vec::new(), Vec::new(), false);
         assert_eq!(quiet.count, 0);
         assert!(quiet.goals.is_empty());
     }
@@ -306,12 +303,7 @@ mod tests {
         let titles = task_titles(&tasks);
         let now = chrono::Utc::now();
         let rows_of = |sessions| {
-            let attention = group(
-                vec![goal("01GA", "A")],
-                tasks.clone(),
-                sessions,
-                &HashSet::new(),
-            );
+            let attention = group(vec![goal("01GA", "A")], tasks.clone(), sessions, false);
             rows(&attention.goals[0], &titles, now)
         };
 
@@ -374,13 +366,7 @@ mod tests {
                 }
             })
             .collect();
-        let g = &group(
-            vec![goal("01GA", "A")],
-            Vec::new(),
-            sessions,
-            &HashSet::new(),
-        )
-        .goals[0];
+        let g = &group(vec![goal("01GA", "A")], Vec::new(), sessions, false).goals[0];
         let rows = rows(g, &HashMap::new(), chrono::Utc::now());
         let labels: Vec<&str> = rows.iter().map(|row| row[2].as_str()).collect();
         assert_eq!(labels, flags.map(|(_, label)| label));
@@ -397,13 +383,28 @@ mod tests {
     #[test]
     fn an_exhausted_session_raises_no_row_of_its_own_on_this_board() {
         let session = flagged("01S", "01GA", AttentionReason::Exhausted);
-        let attention = group(
-            vec![goal("01GA", "A")],
-            Vec::new(),
-            vec![session],
-            &HashSet::new(),
-        );
+        let attention = group(vec![goal("01GA", "A")], Vec::new(), vec![session], false);
         assert!(attention.goals.is_empty());
+    }
+
+    /// A complete recovery read is authoritative for every failed task, not
+    /// only the ones its own items name: once `GET /v1/attention` answered
+    /// in full, a failed task recovery is still working stays off this
+    /// board entirely rather than falling back to the bare `failed` row —
+    /// the exact bypass a membership check on recovery's own `affected`
+    /// lists used to leave open (an empty, complete recovery read is
+    /// indistinguishable from a task recovery had nothing to say about).
+    /// Only once the read itself could not be trusted does the bare status
+    /// stand in.
+    #[test]
+    fn a_failed_task_recovery_has_not_named_stays_off_the_board_once_recovery_is_trustworthy() {
+        let tasks = vec![task("01T1", "01GA", TaskStatus::Failed, false)];
+
+        let trusted = group(vec![goal("01GA", "A")], tasks.clone(), Vec::new(), true);
+        assert!(trusted.goals.is_empty());
+
+        let untrusted = group(vec![goal("01GA", "A")], tasks, Vec::new(), false);
+        assert_eq!(untrusted.count, 1);
     }
 
     /// The heading is the goal's title and the same shortened id the UI's
@@ -429,7 +430,7 @@ mod tests {
             vec![goal("01GA", "A")],
             vec![task("01T1", "01GA", TaskStatus::Failed, false)],
             vec![flagged("01S1", "01GA", AttentionReason::WaitingPermission)],
-            &HashSet::new(),
+            false,
         );
         let doc = serde_json::to_value(&attention).expect("serialize");
         assert_eq!(doc["count"], 2);

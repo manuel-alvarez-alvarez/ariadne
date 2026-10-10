@@ -34,6 +34,7 @@ pub(crate) async fn items(store: &Store, launcher: &Launcher) -> Result<Vec<Atte
     let mut items = quota_items(store, launcher).await?;
     items.extend(failed_task_items(store).await?);
     items.extend(configuration_items(store).await?);
+    items.extend(access_items(store).await?);
     Ok(items)
 }
 
@@ -210,14 +211,33 @@ async fn failed_task_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
 }
 
 /// Whether a failed task's goal has nothing left to automatically answer
-/// it: no live orchestrator at all (the goal is not even `planning` or
-/// `active` any more, or none has ever been spawned — either way nothing
-/// is coming), or one that has gone idle again since the failure —
-/// meaning it ran a turn after being told and this is what it left
-/// standing, whatever it decided. One still starting, or mid-turn since
-/// before the failure, has not had its say yet: the orchestrator is only
-/// told once it is next found idle (009 rule 4), so a turn already
-/// running when the task failed may be the very one that answers it.
+/// it: either nothing automatic is ever coming (the goal carries no
+/// orchestrator at all, is not even `planning` or `active` any more, or
+/// has never once had an orchestrator session to its name), its last
+/// attempt at one has already been given up on
+/// (`AttentionReason::Disconnected`, the alarm
+/// `scheduler::goals::orchestrator_could_not_start` raises once the spawn
+/// budget runs out), or its orchestrator has actually been handed a
+/// prompt naming this failure — `Goal::orchestrator_told_at`, stamped by
+/// `tell_orchestrator` at the exact moment the prompt goes out, at or
+/// after the failure — and is not mid-turn on it right now.
+///
+/// The stamp, not a session's own `last_activity_at`, is what is read for
+/// "told": an orchestrator can go idle and run again for a reason that has
+/// nothing to do with this task — ending a turn already running when the
+/// task failed, say — and `last_activity_at` would move right along with
+/// it whether or not the orchestrator was ever told, where the stamp only
+/// ever moves at the one call that hands it a prompt naming the goal's
+/// current failures. Told is not yet answered, though: the orchestrator
+/// may retry the task on the very turn the prompt starts, so "answered" is
+/// held back until that turn is not still running — the same "automatic
+/// recovery still trying" grace mid-turn gets everywhere else here. And a
+/// goal with no *live* orchestrator this instant is not necessarily one
+/// with nothing coming: `keep_orchestrator` relaunches one across a
+/// restart or a crash on its own, within its own budget
+/// (`SPAWN_RETRY_BUDGET`), so every orchestrator session the goal has ever
+/// had is read here, not only the live ones, to tell a relaunch still in
+/// flight from one already given up on.
 async fn orchestrator_has_answered_for(
     store: &Store,
     goal_id: &str,
@@ -230,29 +250,40 @@ async fn orchestrator_has_answered_for(
         Err(ariadne_store::StoreError::NotFound { .. }) => return Ok(true),
         Err(error) => return Err(error),
     };
-    if !matches!(goal.status(), GoalStatus::Planning | GoalStatus::Active) {
+    if !goal.orchestrated || !matches!(goal.status(), GoalStatus::Planning | GoalStatus::Active) {
         return Ok(true);
     }
-    let sessions = store
+    let orchestrators: Vec<_> = store
         .list_sessions(SessionFilter {
             goal_id: Some(goal_id.to_string()),
-            live_only: true,
             ..Default::default()
         })
-        .await?;
-    let Some(orchestrator) = sessions
-        .iter()
-        .find(|s| s.seat() == Some(Seat::Orchestrator))
-    else {
+        .await?
+        .into_iter()
+        .filter(|s| s.seat() == Some(Seat::Orchestrator))
+        .collect();
+    // Never had one at all: nothing automatic has ever touched this goal,
+    // which is as good as nothing coming.
+    if orchestrators.is_empty() {
         return Ok(true);
-    };
-    if orchestrator.status() != SessionStatus::Idle {
+    }
+    if orchestrators
+        .iter()
+        .any(|s| s.attention_reason() == Some(AttentionReason::Disconnected))
+    {
+        return Ok(true);
+    }
+    let told = goal
+        .orchestrator_told_at
+        .as_deref()
+        .is_some_and(|at| at >= failed_at);
+    if !told {
         return Ok(false);
     }
-    Ok(orchestrator
-        .last_activity_at
-        .as_deref()
-        .is_some_and(|at| at >= failed_at))
+    let mid_turn = orchestrators
+        .iter()
+        .any(|s| s.status() == SessionStatus::Running);
+    Ok(!mid_turn)
 }
 
 /// An enabled forge integration whose last fetch failed on the daemon's
@@ -317,5 +348,62 @@ async fn configuration_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
                 target: AttentionTarget::Settings { section },
             },
         )
+        .collect())
+}
+
+/// An enabled forge integration whose last fetch failed with the daemon's
+/// own reactive confirmation that the forge CLI is signed out groups with
+/// every other one of the same host: the fix — signing back in — is the
+/// same wherever it is. The confirmation
+/// (`crate::forge::poll::FORGE_SIGNED_OUT`) is read off the fetch error
+/// rather than guessed from the error alone, since `forge/poll.rs` runs
+/// the CLI's own sign-in check only once a fetch has already failed —
+/// checking an existing status, reactively, is not the new monitoring
+/// service this producer does not add. Any other fetch error stays
+/// `configuration`'s or nobody's, the same way as before.
+async fn access_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
+    let repositories = store.list_repositories().await?;
+    let mut groups: BTreeMap<String, (String, Vec<AttentionSubjectDto>, String)> = BTreeMap::new();
+    for repository in repositories {
+        let Some(forge) = repository.forge.as_ref().filter(|forge| forge.enabled) else {
+            continue;
+        };
+        let Some(_error) = forge
+            .fetch_error
+            .as_ref()
+            .filter(|error| error.contains(crate::forge::poll::FORGE_SIGNED_OUT))
+        else {
+            continue;
+        };
+        let group = groups.entry(forge.host.clone()).or_insert_with(|| {
+            (
+                forge.updated_at.clone(),
+                Vec::new(),
+                format!("repositories/{}/forge", repository.id),
+            )
+        });
+        if forge.updated_at < group.0 {
+            group.0 = forge.updated_at.clone();
+        }
+        group.1.push(AttentionSubjectDto {
+            kind: AttentionSubjectKind::Repository,
+            id: repository.id.clone(),
+            label: format!("{}/{}", forge.owner, forge.name),
+        });
+    }
+    Ok(groups
+        .into_iter()
+        .map(|(host, (since, affected, section))| AttentionItemDto {
+            id: format!("recovery:access:{host}"),
+            producer: AttentionProducer::Recovery,
+            reason: AttentionCause::Access,
+            summary: format!("The forge CLI is not signed in to {host}."),
+            required_action: format!(
+                "Sign the forge CLI back in to {host}, then it is used on the next poll."
+            ),
+            since,
+            affected,
+            target: AttentionTarget::Settings { section },
+        })
         .collect())
 }

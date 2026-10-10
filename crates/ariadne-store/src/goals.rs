@@ -259,6 +259,23 @@ impl Store {
         Ok(goal)
     }
 
+    /// Stamp the moment the orchestrator was handed a prompt naming
+    /// whatever its goal's tasks currently need (`tell_orchestrator`),
+    /// including a failure. The attention producer's recovery items read
+    /// this to tell a failed task recovery has already had its say about
+    /// from one it has not: a stamp made at or after the failure proves the
+    /// orchestrator was actually handed a prompt naming it, where a session's
+    /// own `last_activity_at` would prove only that it did something, which
+    /// may have been unrelated.
+    pub async fn set_goal_orchestrator_told(&self, id: &str) -> Result<()> {
+        sqlx::query("UPDATE goals SET orchestrator_told_at = ? WHERE id = ?")
+            .bind(now())
+            .bind(id)
+            .execute(self.w())
+            .await?;
+        Ok(())
+    }
+
     /// Announce a goal as it now stands, for a write that changed something
     /// a goal is read with rather than the goal row itself — the usage of a
     /// session under it, which rides in the goal's own fat event.

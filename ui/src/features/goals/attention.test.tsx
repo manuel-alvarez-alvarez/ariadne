@@ -17,6 +17,7 @@ import { waitFor } from "@testing-library/react"
 import { beforeEach, expect, it, vi } from "vitest"
 
 import type { AttentionItemDto, SessionDto } from "@/api"
+import { sessionTerminalFrom } from "@/routes/paths"
 import { aGoal, aSession, aSessionPage, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { type AttentionItem, attentionAffectedLinks } from "./attention"
@@ -159,6 +160,35 @@ it("does not also count a task's own row once a recovery item already names it",
   await waitFor(() => expect(document.title).toBe("(1) Ariadne"))
 })
 
+it("raises no row for a failed task once a complete recovery read has nothing to say about it", async () => {
+  // A complete, empty `/v1/attention` is what the daemon answers while a
+  // failed task's own orchestrator is still the one being told of it —
+  // that silence is the whole point of the suppression (009), and it must
+  // read the same as "recovery looked and found nothing", not as "recovery
+  // never named this task so fall back to the bare status". A membership
+  // check on recovery's own `affected` lists cannot tell those two apart;
+  // only `complete` can.
+  const failed = aTask({ id: "01FAILED", goal_id: GOAL.id, status: "failed" })
+  daemonFetch.mockImplementation((input: Request | string | URL) => {
+    const { pathname } = new URL(
+      typeof input === "string" ? input : input instanceof URL ? input : input.url,
+    )
+    const body =
+      pathname === "/v1/goals"
+        ? [GOAL]
+        : pathname === "/v1/tasks"
+          ? [failed]
+          : pathname === "/v1/attention"
+            ? { items: [], complete: true }
+            : aSessionPage([])
+    return Promise.resolve(jsonResponse(body))
+  })
+  const { queryClient } = renderAlerts()
+  await settled(queryClient)
+
+  expect(document.title).toBe("Ariadne Desktop")
+})
+
 it("raises no row for a task-tied stalled or disconnected session", async () => {
   sessions = [
     aSession({
@@ -221,7 +251,7 @@ function aRecoveryRow(item: AttentionItemDto): AttentionItem {
   }
 }
 
-it("gives a grouped quota item's every session its own link", () => {
+it("gives a grouped quota item's every session its own link to its own terminal", () => {
   const row = aRecoveryRow({
     id: "recovery:quota:claude-sonnet-5:spent-its-automatic-switch-budget",
     producer: "recovery",
@@ -235,8 +265,19 @@ it("gives a grouped quota item's every session its own link", () => {
     ],
     target: { kind: "console", session_id: "01SA" },
   })
-  const links = attentionAffectedLinks(row, new URLSearchParams(), "/goals")
+  const search = new URLSearchParams()
+  const links = attentionAffectedLinks(row, search, "/goals")
   expect(links?.map((link) => link.id)).toEqual(["01SA", "01SB"])
+  const [first, second] = links ?? []
+  expect(first).toBeDefined()
+  expect(second).toBeDefined()
+  // Each session's own link, not a copy of the item's own target (which
+  // would open only 01SA for both rows) — asserted against the exact
+  // destination `sessionTerminalFrom` itself builds, not only the id
+  // copied into the helper's result.
+  expect(first?.to).toEqual(sessionTerminalFrom("/goals", search, "01SA"))
+  expect(second?.to).toEqual(sessionTerminalFrom("/goals", search, "01SB"))
+  expect(first?.to).not.toEqual(second?.to)
 })
 
 it("gives a single-session quota item no extra links of its own", () => {

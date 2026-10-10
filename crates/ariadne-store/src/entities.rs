@@ -413,6 +413,10 @@ pub struct Goal {
     pub effort: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// When the orchestrator was last handed a prompt naming every task of
+    /// this goal that needed one, including a failure (`tell_orchestrator`).
+    /// `None` until the first one goes out.
+    pub orchestrator_told_at: Option<String>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

@@ -346,6 +346,10 @@ impl super::Scheduler {
         }
         info!(goal = %goal.id, session = %orchestrator.id, "the goal's tasks need the orchestrator");
         self.goal_told.insert(goal.id.clone(), situation.clone());
+        // Persisted so the attention producer can tell a failed task its
+        // orchestrator has already been handed a prompt naming it from one
+        // it has not — `goal_told` alone is in-memory and gone on restart.
+        let _ = self.store.set_goal_orchestrator_told(&goal.id).await;
         Ok(())
     }
 

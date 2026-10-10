@@ -12,6 +12,13 @@ use std::{
 use tokio::sync::{Notify, mpsc, oneshot, watch};
 use tracing::warn;
 
+/// Prefixed onto a fetch's stored error once the forge CLI's own sign-in
+/// check, run reactively after the fetch already failed, confirms it is
+/// signed out — the recovery producer's deterministic word that this one
+/// fetch error is an `access` cause rather than a transient one
+/// (`crate::attention::recovery`).
+pub const FORGE_SIGNED_OUT: &str = "the forge CLI is not signed in";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Timer,
@@ -363,7 +370,23 @@ async fn fetch(store: &Store, cfg: &Config, handoff: &Handoff, id: &str) -> Resu
     let pulls::Listed {
         open: listed,
         requested,
-    } = client.list_open_pull_requests(&slug, &login).await?;
+    } = match client.list_open_pull_requests(&slug, &login).await {
+        Ok(listed) => listed,
+        // Checking the CLI's own sign-in once the fetch it would have
+        // carried has already failed is not a new watch over it — only a
+        // reactive answer to a failure that already happened, read the
+        // same way a human asked to look into it would: is the CLI even
+        // signed in? A fetch error with this marker is the one this
+        // producer's `access` item can tell apart from a transient one
+        // with no such confirmation (009, "do not introduce speculative
+        // failure classification").
+        Err(error) => {
+            return Err(match client.auth_status(&integration.host).await {
+                Ok(()) => error,
+                Err(_) => format!("{FORGE_SIGNED_OUT}: {error}"),
+            });
+        }
+    };
     // A request that asks for my review, out of draft, on a repository with
     // a review pin, is one Ariadne reviews: the first fetch that finds it
     // gives it a row (029). Nothing else the lists hold is kept.

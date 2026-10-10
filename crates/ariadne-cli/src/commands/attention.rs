@@ -16,12 +16,12 @@
 
 mod board;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use anyhow::Result;
 use serde::Serialize;
 
-use ariadne_api::attention::{AttentionCause, AttentionListDto, AttentionSubjectKind};
+use ariadne_api::attention::{AttentionCause, AttentionListDto};
 use ariadne_api::goals::GoalDto;
 use ariadne_api::sessions::{SessionEntryDto, SessionKind, SessionPageDto, SessionPageQuery};
 use ariadne_api::tasks::TaskDto;
@@ -79,8 +79,9 @@ impl Reason {
 /// alone, kept only as the fallback a recovery read that could not be
 /// read in full leaves standing: `failed` is terminal, and once
 /// `GET /v1/attention` can see it, its own recovery item — named and
-/// actionable — is what this board shows for it instead
-/// (`recovery_affected_task_ids`). `stalled` is never reported here at
+/// actionable, and silent exactly where recovery is still the one
+/// working it — is what this board shows for it instead (`group`, gated
+/// on `recovery.complete`). `stalled` is never reported here at
 /// all: it is a flag *on top of* a status, raised while automatic
 /// recovery (a nudge, then a relaunch) is still working the agent, and
 /// showing it immediately would be exactly the "automatic recovery still
@@ -134,23 +135,6 @@ fn session_reason(session: &SessionEntryDto) -> Option<Reason> {
         }
         reason => reason.map(Into::into),
     }
-}
-
-/// Every task id a recovery item's `affected` list already names: the
-/// board's own `task_reason` would say the same failure a second time,
-/// generic where the recovery item is specific, so this board leaves those
-/// tasks to the recovery section entirely.
-fn recovery_affected_task_ids(recovery: &AttentionListDto) -> HashSet<String> {
-    recovery
-        .items
-        .iter()
-        .flat_map(|item| {
-            item.affected
-                .iter()
-                .filter(|subject| subject.kind == AttentionSubjectKind::Task)
-                .map(|subject| subject.id.clone())
-        })
-        .collect()
 }
 
 /// Every item `GET /v1/attention` currently finds, printed as its own
@@ -354,14 +338,13 @@ async fn render(client: &Client, format: Format) -> Result<()> {
     let tasks: Vec<TaskDto> = client.get_json("/v1/tasks").await?;
     let sessions = ariadne_sessions(client).await?;
     let recovery: AttentionListDto = client.get_json("/v1/attention").await?;
-    let recovery_tasks = recovery_affected_task_ids(&recovery);
     let now = chrono::Utc::now();
     let recovery_section = recovery_items_section(&recovery, now);
 
     // Every task, not only the ones on the list: a session's row is named by
     // the task it was run for, which is usually a task that is doing fine.
     let titles = task_titles(&tasks);
-    let attention = group(goals, tasks, sessions, &recovery_tasks);
+    let attention = group(goals, tasks, sessions, recovery.complete);
     // A producer that could not read its evidence costs the list its own
     // items, not an all-clear: an empty board under an incomplete read is
     // unknown, never "nothing needs attention" (009).
@@ -423,6 +406,7 @@ async fn render(client: &Client, format: Format) -> Result<()> {
 pub(crate) mod tests {
     use super::*;
 
+    use ariadne_api::attention::AttentionSubjectKind;
     use ariadne_core::SessionStatus;
 
     use crate::commands::fixtures::{self, NOW};
@@ -623,34 +607,6 @@ pub(crate) mod tests {
         }
     }
 
-    /// Every task id any recovery item names, whatever its cause — the
-    /// board's own `task_reason` leaves every one of them to the recovery
-    /// section rather than repeating a blanker version of the same row.
-    #[test]
-    fn recovery_affected_task_ids_names_every_cause() {
-        let recovery = AttentionListDto {
-            items: vec![
-                attention_item(
-                    AttentionCause::Resource,
-                    vec![(AttentionSubjectKind::Task, "01T1")],
-                ),
-                attention_item(
-                    AttentionCause::Unknown,
-                    vec![(AttentionSubjectKind::Task, "01T2")],
-                ),
-                attention_item(
-                    AttentionCause::Quota,
-                    vec![(AttentionSubjectKind::Session, "01S")],
-                ),
-            ],
-            complete: true,
-        };
-        assert_eq!(
-            recovery_affected_task_ids(&recovery),
-            HashSet::from(["01T1".to_string(), "01T2".to_string()])
-        );
-    }
-
     /// Every item `GET /v1/attention` finds is its own section, whatever
     /// its cause — a `quota` item included, since this board no longer
     /// derives a session row from the bare `exhausted` flag at all — and
@@ -734,7 +690,7 @@ pub(crate) mod tests {
             vec![goal("01GA", "Older goal"), goal("01GB", "Newer goal")],
             tasks,
             Vec::new(),
-            &HashSet::new(),
+            false,
         );
         let screen = board(&attention, &titles, chrono::Utc::now(), &View::plain()).expect("board");
 
@@ -799,7 +755,7 @@ pub(crate) mod tests {
             vec![goal("01GA", "Older goal"), goal("01GB", "Newer goal")],
             tasks,
             vec![session],
-            &HashSet::new(),
+            false,
         );
         let all: Vec<Vec<String>> = attention
             .goals
@@ -815,7 +771,7 @@ pub(crate) mod tests {
     /// showed it.
     #[test]
     fn quiet_rows_also_names_every_recovery_item() {
-        let attention = group(Vec::new(), Vec::new(), Vec::new(), &HashSet::new());
+        let attention = group(Vec::new(), Vec::new(), Vec::new(), false);
         let recovery = AttentionListDto {
             items: vec![attention_item(
                 AttentionCause::Configuration,
