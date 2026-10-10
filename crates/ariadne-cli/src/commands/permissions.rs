@@ -30,6 +30,7 @@ pub(crate) enum PermissionsCommand {
 pub(crate) enum LearnedPermissionsCommand {
     /// List learned choices
     List {
+        /// Repository by id or registered path
         #[arg(long)]
         repo: Option<String>,
     },
@@ -127,9 +128,24 @@ fn learned_row(row: &LearnedPermissionDto, now: chrono::DateTime<chrono::Utc>) -
         row.scope.as_str().into(),
         row.target.as_str().into(),
         row.selected_option.clone(),
+        ai_score(row.output.as_ref()),
         age(&row.created_at, now),
         age(&row.updated_at, now),
     ]
+}
+
+/// The model's label and danger for a row, or a dash where it did not score it.
+fn ai_score(output: Option<&serde_json::Value>) -> String {
+    let Some(output) = output else {
+        return "-".into();
+    };
+    let (Some(label), Some(danger)) = (
+        output.get("label").and_then(serde_json::Value::as_str),
+        output.get("danger").and_then(serde_json::Value::as_f64),
+    ) else {
+        return "-".into();
+    };
+    format!("{label} {danger:.4}")
 }
 
 const LEARNED_LIST: &[Column] = &[
@@ -142,9 +158,12 @@ const LEARNED_LIST: &[Column] = &[
     col("scope", 10),
     col("target", 6),
     col("selected", 20),
+    col("ai", 12),
     col("created", UNCAPPED),
     col("updated", UNCAPPED),
 ];
+
+const LEARNED_EMPTY: &str = "No learned choices yet.";
 
 async fn run_learned(
     client: &Client,
@@ -164,7 +183,7 @@ async fn run_learned(
                 &response.items,
                 LEARNED_LIST,
                 |row| learned_row(row, now),
-                "No learned choices yet.",
+                LEARNED_EMPTY,
             )
         }
         LearnedPermissionsCommand::Show { id } => {
@@ -739,10 +758,15 @@ mod tests {
     #[test]
     fn learned_list_and_show_print_the_new_fields() {
         let row = learned();
+        let unscored = LearnedPermissionDto {
+            output: None,
+            ..row.clone()
+        };
         let now = chrono::DateTime::parse_from_rfc3339("2026-09-30T00:00:00Z")
             .unwrap()
             .to_utc();
         let listed = learned_row(&row, now);
+        let unscored_listed = learned_row(&unscored, now);
         assert_eq!(
             LEARNED_LIST
                 .iter()
@@ -758,12 +782,13 @@ mod tests {
                 "scope",
                 "target",
                 "selected",
+                "ai",
                 "created",
                 "updated"
             ]
         );
         assert_eq!(
-            listed[2..9],
+            listed[2..10],
             [
                 "Bash",
                 "command",
@@ -771,9 +796,11 @@ mod tests {
                 r#"{"command":"git show <HASH>"}"#,
                 "repository",
                 "ai",
-                "yes"
+                "yes",
+                "ask 0.4100"
             ]
         );
+        assert_eq!(unscored_listed[9], "-");
 
         let text = crate::output::kv_block(&learned_fields(&row), &crate::output::View::plain());
         for expected in [
@@ -803,6 +830,20 @@ mod tests {
                 "{expected:?} missing from:\n{text}"
             );
         }
+    }
+
+    #[test]
+    fn learned_list_prints_its_empty_state_once() {
+        let (table, note) = crate::output::list_text(
+            LEARNED_LIST,
+            &[],
+            &crate::output::View::plain(),
+            LEARNED_EMPTY,
+        )
+        .unwrap();
+
+        assert!(!table.contains(LEARNED_EMPTY), "{table}");
+        assert_eq!(note, [LEARNED_EMPTY]);
     }
 
     #[test]

@@ -226,7 +226,9 @@ same binary also serves (013).
     warning for `failed: <last_error>`.
 34. `ariadne permissions learned` lists, shows, removes and widens or narrows
     learned permissions. `list` shows the columns id, repository, tool, level,
-    family, key, scope, target, selected, created and updated. `show` prints
+    family, key, scope, target, selected, ai, created and updated; it has no
+    source column. The AI column shows the label and danger to four decimal
+    places, or a dash where the model did not score the row. `show` prints
     every field: the level, the family, the key, the risk tags and the scope
     among them, and the JSON fields pretty-printed, the raw input in the
     tool call included. `scope <id> <all|repository>` sends the chosen scope

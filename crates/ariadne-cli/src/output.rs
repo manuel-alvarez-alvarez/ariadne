@@ -137,15 +137,34 @@ pub(crate) fn print_list<T: Serialize>(
         return print_json(&items);
     }
     let rows: Vec<Vec<String>> = items.iter().map(row).collect();
-    match view().quiet {
-        true if !rows.is_empty() => println!("{}", table::quiet_lines(&rows)),
-        true => {}
-        false => print_table(columns, &rows)?,
+    let (text, notes) = list_text(columns, &rows, view(), empty)?;
+    if !text.is_empty() {
+        println!("{text}");
     }
-    if items.is_empty() && !empty.as_ref().is_empty() {
-        note(empty.as_ref());
+    for message in notes {
+        note(&message);
     }
     Ok(())
+}
+
+/// The human text and notes for a listing, kept separate because notes go to
+/// stderr while table rows go to stdout.
+pub(crate) fn list_text(
+    columns: &[Column],
+    rows: &[Vec<String>],
+    view: &View,
+    empty: impl AsRef<str>,
+) -> anyhow::Result<(String, Vec<String>)> {
+    let text = match view.quiet {
+        true if !rows.is_empty() => table::quiet_lines(rows),
+        true => String::new(),
+        false => render_table(columns, rows, view)?,
+    };
+    let notes = match (rows.is_empty(), empty.as_ref().is_empty()) {
+        (true, false) => vec![empty.as_ref().to_string()],
+        _ => vec![],
+    };
+    Ok((text, notes))
 }
 
 /// Print rows as an aligned table with an uppercase header, laid out for this
