@@ -200,9 +200,9 @@ async fn an_exhausted_session_on_an_unranked_model_is_a_quota_item() {
     assert_eq!(item.affected.len(), 1);
     assert_eq!(item.affected[0].kind, AttentionSubjectKind::Session);
     assert_eq!(item.affected[0].id, session.id);
-    // A task-less session's affected label names its seat, not the model —
-    // the model is already the grouping key.
-    assert_eq!(item.affected[0].label, "orchestrator");
+    // A task-less session's affected label names its seat and its own
+    // switch count, not the model — the model is already the grouping key.
+    assert_eq!(item.affected[0].label, "orchestrator (0 switch(es))");
     assert_eq!(
         item.target,
         ariadne_api::attention::AttentionTarget::Console {
@@ -244,7 +244,10 @@ async fn a_quota_items_affected_entry_names_the_sessions_task() {
 
     let list: AttentionListDto = h.get("/v1/attention").await;
     assert_eq!(list.items.len(), 1);
-    assert_eq!(list.items[0].affected[0].label, cast.task.id);
+    assert_eq!(
+        list.items[0].affected[0].label,
+        format!("{} (0 switch(es))", cast.task.id)
+    );
 }
 
 /// A session nobody is waiting on — one whose task moved past the column it
@@ -421,4 +424,290 @@ async fn an_exhausted_session_already_switched_raises_no_quota_item() {
 
     let list: AttentionListDto = h.get("/v1/attention").await;
     assert_eq!(list.items, Vec::new());
+}
+
+/// A failed task raises nothing while its goal's orchestrator is still
+/// mid-turn: it may be the very turn that answers the failure (009 rule
+/// 4), and this producer gives it the same "automatic recovery still
+/// trying" grace every other cause here does.
+#[tokio::test]
+async fn a_failed_task_raises_nothing_while_its_orchestrator_is_mid_turn() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    let orchestrator = h
+        .store
+        .create_session(NewSession {
+            goal_id: Some(cast.goal.id.clone()),
+            task_id: None,
+            seat: Some(Seat::Orchestrator),
+            task_agent_id: None,
+            model: test_pin().model,
+            effort: None,
+            worktree_path: None,
+            pull_request_id: None,
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_session_status_if_live(&orchestrator.id, SessionStatus::Running, None)
+        .await
+        .unwrap();
+    h.store
+        .transition_task(
+            &cast.task.id,
+            TaskStatus::Failed,
+            Actor::Daemon,
+            Some("the tests did not pass"),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items, Vec::new());
+}
+
+/// A failed task raises nothing while its idle orchestrator has not had a
+/// turn since the failure — it has not yet been told — and raises its
+/// item once the orchestrator goes through a turn after it, whatever that
+/// turn decided.
+#[tokio::test]
+async fn a_failed_tasks_item_waits_for_the_orchestrators_next_turn() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    let orchestrator = h
+        .store
+        .create_session(NewSession {
+            goal_id: Some(cast.goal.id.clone()),
+            task_id: None,
+            seat: Some(Seat::Orchestrator),
+            task_agent_id: None,
+            model: test_pin().model,
+            effort: None,
+            worktree_path: None,
+            pull_request_id: None,
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_session_status_if_live(&orchestrator.id, SessionStatus::Idle, None)
+        .await
+        .unwrap();
+    h.store
+        .transition_task(
+            &cast.task.id,
+            TaskStatus::Failed,
+            Actor::Daemon,
+            Some("the tests did not pass"),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let before: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(before.items, Vec::new(), "not told yet, so nothing to see");
+
+    // The orchestrator's next turn, whatever it did with the news.
+    h.store.touch_session(&orchestrator.id).await.unwrap();
+
+    let after: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(after.items.len(), 1);
+}
+
+/// A reviewer session's affected label names its seat, the same as an
+/// orchestrator's: neither ran a task of its own.
+#[tokio::test]
+async fn a_quota_items_affected_entry_names_a_reviewer_session_by_seat() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: cast.repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "reviewer".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    crate::common::forge::seed_live(&h, &pull, "someone", "fix-1", "abc", true);
+    let session = h
+        .store
+        .create_session(NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: Some(Seat::Reviewer),
+            task_agent_id: None,
+            model: "stub:no-such-model".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: Some(pull.id.clone()),
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_session_status_if_live(&session.id, SessionStatus::Exited, None)
+        .await
+        .unwrap();
+    h.store
+        .set_session_attention(&session.id, AttentionReason::Exhausted)
+        .await
+        .unwrap();
+
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 1);
+    assert_eq!(list.items[0].affected[0].label, "reviewer (0 switch(es))");
+}
+
+/// Two sessions exhausted on the same model for two different reasons —
+/// one out of switch budget, one out of candidate models — stay two
+/// separate items rather than one that could only report one reason and
+/// one required action.
+#[tokio::test]
+async fn two_sessions_on_the_same_model_blocked_for_different_reasons_stay_separate_items() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    let budget_spent = h
+        .store
+        .create_session(NewSession {
+            goal_id: Some(cast.goal.id.clone()),
+            task_id: None,
+            seat: Some(Seat::Orchestrator),
+            task_agent_id: None,
+            model: "stub:shared-model".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: None,
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_session_status_if_live(&budget_spent.id, SessionStatus::Exited, None)
+        .await
+        .unwrap();
+    h.store
+        .set_session_attention(&budget_spent.id, AttentionReason::Exhausted)
+        .await
+        .unwrap();
+    for n in 0..3 {
+        h.store
+            .create_event(ariadne_store::NewAgentEvent {
+                session_id: Some(budget_spent.id.clone()),
+                task_id: None,
+                kind: "session.switched".into(),
+                payload: serde_json::json!({"reason": "exhausted", "n": n}),
+            })
+            .await
+            .unwrap();
+    }
+
+    let second = h
+        .store
+        .create_session(NewSession {
+            goal_id: Some(cast.goal.id.clone()),
+            task_id: Some(cast.task.id.clone()),
+            seat: Some(Seat::Agent),
+            task_agent_id: Some(cast.agents[0].id.clone()),
+            model: "stub:shared-model".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: None,
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_session_status_if_live(&second.id, SessionStatus::Exited, None)
+        .await
+        .unwrap();
+    h.store
+        .set_session_attention(&second.id, AttentionReason::Exhausted)
+        .await
+        .unwrap();
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 2, "{:?}", list.items);
+    let budget_item = list
+        .items
+        .iter()
+        .find(|item| item.summary.contains("spent its automatic switch budget"))
+        .expect("the budget-spent session has its own item");
+    assert_eq!(budget_item.affected[0].id, budget_spent.id);
+    let candidate_item = list
+        .items
+        .iter()
+        .find(|item| item.summary.contains("no other model is available"))
+        .expect("the no-candidate session has its own item");
+    assert_eq!(candidate_item.affected[0].id, second.id);
+}
+
+/// Retrying a failed task — the orchestrator's or the user's own answer to
+/// it — takes its item down: the task is no longer `failed`, so nothing
+/// here names it any more. The transition that recorded the failure is
+/// kept all the same: resolving an item is not expected to erase why it
+/// was ever raised.
+#[tokio::test]
+async fn retrying_a_failed_task_removes_its_item_without_losing_the_transition() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    h.store
+        .transition_task(
+            &cast.task.id,
+            TaskStatus::Failed,
+            Actor::Daemon,
+            Some(ariadne_daemon::scheduler::DESCRIPTOR_LIMIT_REASON),
+            None,
+        )
+        .await
+        .unwrap();
+    let before: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(before.items.len(), 1);
+
+    h.store
+        .transition_task(&cast.task.id, TaskStatus::Ready, Actor::User, None, None)
+        .await
+        .unwrap();
+
+    let after: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(after.items, Vec::new());
+
+    let transitions = h.store.list_task_transitions(&cast.task.id).await.unwrap();
+    assert!(
+        transitions
+            .iter()
+            .any(|t| t.to_status == TaskStatus::Failed.as_str()
+                && t.reason.as_deref() == Some(ariadne_daemon::scheduler::DESCRIPTOR_LIMIT_REASON)),
+        "{transitions:?}"
+    );
+}
+
+/// The same item answers with the same id from a second, independent
+/// store connection opened on the same database file — the daemon's own
+/// restart opens a fresh connection pool too, and carries none of the
+/// first one's in-memory state with it, so an id that survives this
+/// survives that.
+#[tokio::test]
+async fn a_recovery_items_id_is_stable_across_a_fresh_store_connection() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    h.store
+        .transition_task(
+            &cast.task.id,
+            TaskStatus::Failed,
+            Actor::Daemon,
+            Some(ariadne_daemon::scheduler::DESCRIPTOR_LIMIT_REASON),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let first = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    let reopened = ariadne_store::Store::open(h.dir.path().join("test.db"))
+        .await
+        .unwrap();
+    let second = ariadne_daemon::attention::collect(&reopened, &h.launcher).await;
+
+    assert_eq!(first.items.len(), 1);
+    assert_eq!(first.items[0].id, second.items[0].id);
 }

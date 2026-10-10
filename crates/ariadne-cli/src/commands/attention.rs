@@ -167,12 +167,6 @@ fn recovery_items_section(
     }
     let mut lines = vec!["RECOVERY".to_string()];
     for item in &recovery.items {
-        let affected = item
-            .affected
-            .iter()
-            .map(|subject| subject.label.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
         lines.push(format!(
             "- [{}] {} ({} old)",
             cause_label(item.reason),
@@ -180,7 +174,13 @@ fn recovery_items_section(
             age(&item.since, now)
         ));
         lines.push(format!("  action: {}", item.required_action));
-        lines.push(format!("  affects: {affected}"));
+        // The id leads so every affected entry stays reachable on its own —
+        // `ariadne attach <id>` or `session switch <id>` — not only the
+        // item's own single target, which a grouped item can answer with
+        // only one of several affected sessions.
+        for subject in &item.affected {
+            lines.push(format!("  affects: {} ({})", subject.id, subject.label));
+        }
     }
     Some(lines.join("\n"))
 }

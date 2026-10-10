@@ -42,6 +42,7 @@ import { describeError, plural, shortId } from "@/lib/format"
 import {
   type AttentionItem,
   attentionAffected,
+  attentionAffectedLinks,
   attentionDetail,
   attentionSubject,
   attentionTarget,
@@ -178,6 +179,10 @@ function Row({ item }: { item: AttentionItem }) {
   const { pathname } = useLocation()
   const status = item.taskReason && item.task ? TASK_STATUS_META[item.task.status] : null
   const target = attentionTarget(item, search, pathname)
+  // A grouped quota item's own target opens only one of its sessions;
+  // every one of them gets its own small link below, so none of them is
+  // unreachable just because another one happened to be first.
+  const affectedLinks = attentionAffectedLinks(item, search, pathname)
 
   return (
     <li>
@@ -213,6 +218,20 @@ function Row({ item }: { item: AttentionItem }) {
           <RowId id={item.id} />
         </div>
       </Link>
+      {affectedLinks ? (
+        <div className="flex flex-wrap gap-2 px-3 pb-2 pl-9 text-xs text-muted-foreground">
+          <span>Open:</span>
+          {affectedLinks.map((link) => (
+            <Link
+              key={link.id}
+              to={link.to}
+              className="underline underline-offset-2 hover:text-foreground"
+            >
+              {link.label}
+            </Link>
+          ))}
+        </div>
+      ) : null}
     </li>
   )
 }

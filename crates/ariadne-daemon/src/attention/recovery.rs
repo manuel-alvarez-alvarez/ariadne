@@ -12,7 +12,7 @@ use ariadne_api::attention::{
     AttentionCause, AttentionItemDto, AttentionProducer, AttentionSubjectDto, AttentionSubjectKind,
     AttentionTarget,
 };
-use ariadne_core::{AttentionReason, SessionStatus, TaskStatus};
+use ariadne_core::{AttentionReason, GoalStatus, Seat, SessionStatus, TaskStatus};
 use ariadne_store::{Result, SessionFilter, Store, TaskFilter};
 
 use crate::launcher::Launcher;
@@ -38,12 +38,13 @@ pub(crate) async fn items(store: &Store, launcher: &Launcher) -> Result<Vec<Atte
 }
 
 /// A session flagged `exhausted` groups with every other one exhausted on
-/// the same model: the same cause, and much of the same action — raise
-/// that model's quota, or switch away from it yourself. The group's
-/// summary and action follow one representative session's own blocker
-/// (`scheduler::auto_switch::recovery_block`); its `affected` entries each
-/// still carry their own session id and the task it was running, so every
-/// one of them is identifiable on its own.
+/// the same model *for the same reason* — the key is `(model, reason)`,
+/// not the model alone, so two sessions blocked for different reasons
+/// (one out of budget, one out of candidates) never collapse into one
+/// item that could only report one of them. Every affected entry still
+/// carries its own session id, the task it was running (or its seat, for
+/// one that ran none) and its own switch count, so each is identifiable
+/// and answerable on its own even inside a shared item.
 async fn quota_items(store: &Store, launcher: &Launcher) -> Result<Vec<AttentionItemDto>> {
     let sessions = store
         .list_sessions(SessionFilter {
@@ -51,7 +52,7 @@ async fn quota_items(store: &Store, launcher: &Launcher) -> Result<Vec<Attention
             ..Default::default()
         })
         .await?;
-    let mut groups: BTreeMap<String, QuotaGroup> = BTreeMap::new();
+    let mut groups: BTreeMap<(String, &'static str), QuotaGroup> = BTreeMap::new();
     for session in sessions {
         if session.attention_reason() != Some(AttentionReason::Exhausted)
             || session.status() != SessionStatus::Exited
@@ -66,23 +67,20 @@ async fn quota_items(store: &Store, launcher: &Launcher) -> Result<Vec<Attention
             .attention_since
             .clone()
             .unwrap_or_else(|| session.created_at.clone());
-        let label = session
-            .task_id
-            .clone()
-            .unwrap_or_else(|| "orchestrator".to_string());
+        let label = match (&session.task_id, session.seat()) {
+            (Some(task_id), _) => format!("{task_id} ({} switch(es))", block.switches),
+            (None, Some(Seat::Reviewer)) => format!("reviewer ({} switch(es))", block.switches),
+            _ => format!("orchestrator ({} switch(es))", block.switches),
+        };
         let group = groups
-            .entry(session.model.clone())
+            .entry((session.model.clone(), block.reason))
             .or_insert_with(|| QuotaGroup {
                 since: since.clone(),
                 affected: Vec::new(),
-                switches: block.switches,
-                reason: block.reason,
             });
         if since < group.since {
             group.since = since;
         }
-        group.switches = block.switches;
-        group.reason = block.reason;
         group.affected.push(AttentionSubjectDto {
             kind: AttentionSubjectKind::Session,
             id: session.id.clone(),
@@ -91,21 +89,18 @@ async fn quota_items(store: &Store, launcher: &Launcher) -> Result<Vec<Attention
     }
     Ok(groups
         .into_iter()
-        .map(|(model, group)| {
+        .map(|((model, reason), group)| {
             let session_id = group
                 .affected
                 .first()
                 .map(|s| s.id.clone())
                 .unwrap_or_default();
             AttentionItemDto {
-                id: format!("recovery:quota:{model}"),
+                id: format!("recovery:quota:{model}:{}", reason.replace(' ', "-")),
                 producer: AttentionProducer::Recovery,
                 reason: AttentionCause::Quota,
-                summary: format!(
-                    "{model} hit a usage limit; automatic switching {} after {} switch(es).",
-                    group.reason, group.switches
-                ),
-                required_action: required_action_for(group.reason),
+                summary: format!("{model} hit a usage limit; automatic switching {reason}."),
+                required_action: required_action_for(reason),
                 since: group.since,
                 affected: group.affected,
                 target: AttentionTarget::Console { session_id },
@@ -117,8 +112,6 @@ async fn quota_items(store: &Store, launcher: &Launcher) -> Result<Vec<Attention
 struct QuotaGroup {
     since: String,
     affected: Vec<AttentionSubjectDto>,
-    switches: u32,
-    reason: &'static str,
 }
 
 fn required_action_for(reason: &str) -> String {
@@ -139,15 +132,21 @@ fn required_action_for(reason: &str) -> String {
     }
 }
 
-/// Every task the daemon will never retry on its own: `failed` is terminal
-/// — nothing in the scheduler starts a failed task's agent again, so
-/// reaching it is itself proof that whatever automatic recovery and the
-/// orchestrator could do, they already did. One failed on the daemon's
-/// own descriptor-limit words groups with every other one on it: one
-/// machine, one shortage. Every other one is its own `unknown` item,
-/// naming that task alone, rather than guessed into a group with no
-/// reliable evidence it shares a cause with another (009, "unknown causes
-/// remain separate").
+/// Every task the daemon will never retry on its own, and whose
+/// orchestrator has already had its say: `failed` is terminal — nothing in
+/// the scheduler starts a failed task's agent again — but the orchestrator
+/// is told of the failure (009 rule 4) and may retry it itself
+/// (`http::tasks::retry`), which moves the task off `failed` entirely and
+/// so off this list, before a human ever needs to. While the orchestrator
+/// might still be answering that telling — mid-turn, or not yet idle since
+/// the failure — the task is left out, the same "automatic recovery still
+/// trying" rule every other cause here follows
+/// (`orchestrator_has_answered_for`). One failed on the daemon's own
+/// descriptor-limit words groups with every other one on it: one machine,
+/// one shortage. Every other one is its own `unknown` item, naming that
+/// task alone, rather than guessed into a group with no reliable evidence
+/// it shares a cause with another (009, "unknown causes remain
+/// separate").
 async fn failed_task_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
     let tasks = store
         .list_tasks(TaskFilter {
@@ -159,6 +158,9 @@ async fn failed_task_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
     let mut descriptor_affected = Vec::new();
     let mut unknown = Vec::new();
     for task in tasks {
+        if !orchestrator_has_answered_for(store, &task.goal_id, &task.updated_at).await? {
+            continue;
+        }
         let reason = store.ended_reason(&task).await?;
         let affected = AttentionSubjectDto {
             kind: AttentionSubjectKind::Task,
@@ -205,6 +207,52 @@ async fn failed_task_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
         });
     }
     Ok(items)
+}
+
+/// Whether a failed task's goal has nothing left to automatically answer
+/// it: no live orchestrator at all (the goal is not even `planning` or
+/// `active` any more, or none has ever been spawned — either way nothing
+/// is coming), or one that has gone idle again since the failure —
+/// meaning it ran a turn after being told and this is what it left
+/// standing, whatever it decided. One still starting, or mid-turn since
+/// before the failure, has not had its say yet: the orchestrator is only
+/// told once it is next found idle (009 rule 4), so a turn already
+/// running when the task failed may be the very one that answers it.
+async fn orchestrator_has_answered_for(
+    store: &Store,
+    goal_id: &str,
+    failed_at: &str,
+) -> Result<bool> {
+    let goal = match store.get_goal(goal_id).await {
+        Ok(goal) => goal,
+        // A goal gone from the store is a terminal one cleaned up after
+        // the fact: nothing is left to automatically answer for it.
+        Err(ariadne_store::StoreError::NotFound { .. }) => return Ok(true),
+        Err(error) => return Err(error),
+    };
+    if !matches!(goal.status(), GoalStatus::Planning | GoalStatus::Active) {
+        return Ok(true);
+    }
+    let sessions = store
+        .list_sessions(SessionFilter {
+            goal_id: Some(goal_id.to_string()),
+            live_only: true,
+            ..Default::default()
+        })
+        .await?;
+    let Some(orchestrator) = sessions
+        .iter()
+        .find(|s| s.seat() == Some(Seat::Orchestrator))
+    else {
+        return Ok(true);
+    };
+    if orchestrator.status() != SessionStatus::Idle {
+        return Ok(false);
+    }
+    Ok(orchestrator
+        .last_activity_at
+        .as_deref()
+        .is_some_and(|at| at >= failed_at))
 }
 
 /// An enabled forge integration whose last fetch failed on the daemon's

@@ -525,3 +525,31 @@ export function attentionAffected(item: AttentionItem): string | null {
   if (!item.recovery || item.recovery.affected.length === 0) return null
   return item.recovery.affected.map((subject) => subject.label).join(", ")
 }
+
+/** One affected session, reachable on its own. */
+interface AttentionAffectedLink {
+  id: string
+  label: string
+  to: { pathname?: string; search: string }
+}
+
+/**
+ * Every affected session a grouped recovery item names, each with its own
+ * link to its console — not only the item's single `target`, which a
+ * group of several can answer with only one of them. `null` below two
+ * entries: a lone session is already where the row's own link goes, and a
+ * second line saying the same thing is noise.
+ */
+export function attentionAffectedLinks(
+  item: AttentionItem,
+  current: URLSearchParams,
+  pathname: string,
+): AttentionAffectedLink[] | null {
+  const sessions = item.recovery?.affected.filter((subject) => subject.kind === "session") ?? []
+  if (sessions.length < 2) return null
+  return sessions.map((subject) => ({
+    id: subject.id,
+    label: subject.label,
+    to: sessionTerminalFrom(pathname, current, subject.id),
+  }))
+}

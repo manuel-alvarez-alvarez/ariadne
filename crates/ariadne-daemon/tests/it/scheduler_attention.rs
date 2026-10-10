@@ -1461,7 +1461,16 @@ fn alarms(rows: &[AgentSession]) -> usize {
 /// which is a different thing that has already been ruled out.
 #[tokio::test]
 async fn a_task_whose_agent_dies_the_moment_it_starts_fails_with_the_reason_on_it() {
-    let h = harness().dying_agent().await;
+    // The budget is spent over several reconcile passes (009 rule 29); a
+    // fast tick is what keeps this test off the clock it would otherwise
+    // wait on between each death and the next relaunch attempt.
+    let h = harness()
+        .dying_agent()
+        .timeouts(Timeouts {
+            full_reconcile: SWEEPS_SOON,
+            ..Timeouts::default()
+        })
+        .await;
     // A real repository: an author is launched in a worktree of it, and the
     // launch has to work for the death that follows to be the thing under
     // test.

@@ -19,7 +19,7 @@ import { beforeEach, expect, it, vi } from "vitest"
 import type { AttentionItemDto, SessionDto } from "@/api"
 import { aGoal, aSession, aSessionPage, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
-
+import { type AttentionItem, attentionAffectedLinks } from "./attention"
 import { AttentionAlerts } from "./attention-alerts"
 
 const GOAL = aGoal()
@@ -204,4 +204,51 @@ it("never reads an incomplete recovery read as nothing needing attention", async
   // Zero items under a read that did not finish is unknown, not quiet —
   // the title says so, distinct from the true all-clear.
   expect(document.title).toBe("(!) Ariadne")
+})
+
+function aRecoveryRow(item: AttentionItemDto): AttentionItem {
+  return {
+    id: item.id,
+    goalId: "",
+    goal: undefined,
+    at: item.since,
+    taskId: null,
+    task: undefined,
+    taskReason: null,
+    session: undefined,
+    sessionReason: null,
+    recovery: item,
+  }
+}
+
+it("gives a grouped quota item's every session its own link", () => {
+  const row = aRecoveryRow({
+    id: "recovery:quota:claude-sonnet-5:spent-its-automatic-switch-budget",
+    producer: "recovery",
+    reason: "quota",
+    summary: "claude-sonnet-5 hit a usage limit.",
+    required_action: "Raise the quota.",
+    since: "2026-01-01T00:00:00Z",
+    affected: [
+      { kind: "session", id: "01SA", label: "01TASKA (3 switch(es))" },
+      { kind: "session", id: "01SB", label: "01TASKB (3 switch(es))" },
+    ],
+    target: { kind: "console", session_id: "01SA" },
+  })
+  const links = attentionAffectedLinks(row, new URLSearchParams(), "/goals")
+  expect(links?.map((link) => link.id)).toEqual(["01SA", "01SB"])
+})
+
+it("gives a single-session quota item no extra links of its own", () => {
+  const row = aRecoveryRow({
+    id: "recovery:quota:claude-sonnet-5:spent-its-automatic-switch-budget",
+    producer: "recovery",
+    reason: "quota",
+    summary: "claude-sonnet-5 hit a usage limit.",
+    required_action: "Raise the quota.",
+    since: "2026-01-01T00:00:00Z",
+    affected: [{ kind: "session", id: "01SA", label: "01TASKA (3 switch(es))" }],
+    target: { kind: "console", session_id: "01SA" },
+  })
+  expect(attentionAffectedLinks(row, new URLSearchParams(), "/goals")).toBeNull()
 })
