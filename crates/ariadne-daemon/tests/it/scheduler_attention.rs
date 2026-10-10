@@ -49,7 +49,7 @@ use ariadne_store::{AgentSession, Goal, NewTaskAgent, SessionFilter, Task};
 
 #[cfg(unix)]
 use common::sh;
-use common::{Harness, QUIET, eventually, harness, test_pin};
+use common::{Harness, eventually, harness, test_pin};
 
 /// The budget the goal's orchestrator spends: how many attempts starting one is
 /// worth, as the scheduler has it.
@@ -642,9 +642,10 @@ async fn a_vanished_agent_with_work_still_active_is_flagged_disconnected() {
     }
 
     // And it stays raised: a session that ended needing attention keeps the
-    // reason until it is resumed or replaced.
+    // reason until it is resumed or replaced. Flushed rather than waited
+    // out, so the pass this send started is known done, not merely likely.
     sched.goal(&goal);
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    sched.flush().await;
     assert_eq!(
         h.attention(&session).await,
         Some(AttentionReason::Disconnected),
@@ -709,15 +710,17 @@ async fn a_vanished_agent_nobody_is_waiting_on_is_not_raised() {
         w.launched_ago(gone, 60).await;
     }
 
-    let _sched = w.scheduler();
+    let sched = w.scheduler();
     for gone in [&left_behind, &cancelled] {
         eventually(TIMEOUT, "the vanished session to be retired", async || {
             w.session_status(gone).await == SessionStatus::Exited
         })
         .await;
     }
-    // Whatever else that pass had to say about them would have been said now.
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // The retirement just observed is the sweep's own write; the rest of
+    // that same pass — whatever else it had to say about them — is only
+    // known done once a flush sent after it is answered.
+    sched.flush().await;
     let task = w.store.get_task(&in_review.id).await.unwrap();
     assert_eq!(
         (task.status(), task.step.as_deref()),
@@ -1103,11 +1106,12 @@ async fn a_task_that_could_never_be_started_fails_with_the_reason_on_it() {
     .await;
 
     // Failed once, however many passes ask about a task that has already
-    // ended.
+    // ended. Flushed rather than waited out, so every one of the sends
+    // above is known reconciled before the count below is read.
     for _ in 0..3 {
         sched.task(&w.task);
     }
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    sched.flush().await;
     let ended: Vec<_> = w
         .store
         .list_task_transitions(&w.task.id)
@@ -1315,11 +1319,12 @@ async fn an_orchestrator_that_can_never_be_started_gives_up_with_one_alarm() {
         "and no orchestrator left running: {rows:?}"
     );
 
-    // And the passes after it try nothing at all: no new row.
+    // And the passes after it try nothing at all: no new row. Flushed
+    // rather than waited out, so every send above is known reconciled.
     for _ in 0..3 {
         sched.goal(&goal);
     }
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    sched.flush().await;
     assert_eq!(
         orchestrators(&h, &goal).await.len(),
         rows.len(),
@@ -1423,11 +1428,12 @@ async fn an_orchestrator_that_dies_the_moment_it_starts_is_given_up_on() {
 
     // And nothing has been started again: given up on, rather than between
     // two launches. Three more passes over the same goal is what "a tick
-    // later" needs proving, not five more seconds of wall time.
+    // later" needs proving, and a flush sent after them is what proves they
+    // ran, rather than a wait that only bets they were fast enough.
     for _ in 0..3 {
         sched.goal(&goal);
     }
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    sched.flush().await;
     let after = orchestrators(&h, &goal).await;
     assert_eq!(
         after.len(),
@@ -1841,9 +1847,9 @@ async fn an_idle_orchestrator_stays_up_for_the_whole_goal() {
 
     let sched = w.scheduler();
     sched.goal(&w.goal);
-    // Whatever the passes and the sweep beside them had to say would have
-    // been said by now.
-    tokio::time::sleep(Duration::from_millis(600)).await;
+    // Whatever that pass had to say is known said once a flush sent after
+    // it is answered, rather than guessed from how long it usually takes.
+    sched.flush().await;
     assert_eq!(
         w.session_status(&orchestrator).await,
         SessionStatus::Idle,
@@ -1948,8 +1954,10 @@ async fn an_open_pull_request_raises_no_attention() {
         },
     )
     .await;
+    // Flushed rather than waited out, so the second pass over an already
+    // settled task is known to have raised nothing, not merely likely to.
     sched.task(&w.task);
-    tokio::time::sleep(QUIET).await;
+    sched.flush().await;
     assert_eq!(
         w.attention(&session).await,
         None,
@@ -2059,10 +2067,12 @@ async fn an_idle_pr_agent_keeping_its_open_request_is_never_nudged() {
     w.backdate(&["launched_at"], &session, NUDGE_SECS + 60)
         .await;
     let launched = w.launched_at(&session).await;
+    // Flushed after each send, so both passes over the idle agent are known
+    // to have nudged, relaunched and flagged nothing, not merely likely to.
     sched.task(&w.task);
-    tokio::time::sleep(QUIET).await;
+    sched.flush().await;
     sched.task(&w.task);
-    tokio::time::sleep(QUIET).await;
+    sched.flush().await;
     assert_eq!(
         w.prompts_to(&session).len(),
         told,
@@ -2110,10 +2120,12 @@ async fn a_failed_task_wakes_the_orchestrator_once() {
     assert!(woken.contains("`list_tasks`"), "{woken}");
 
     // Every pass after it says the same thing, so nothing is said again.
+    // Flushed after each send, so every pass is known reconciled before the
+    // next one is sent, rather than guessed from a wait between them.
     let said = w.prompted(&orchestrator).matches("`list_tasks`").count();
     for _ in 0..3 {
         sched.goal(&w.goal);
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        sched.flush().await;
     }
     assert_eq!(
         w.prompted(&orchestrator).matches("`list_tasks`").count(),
@@ -2205,9 +2217,11 @@ async fn a_goal_whose_tasks_are_running_leaves_its_orchestrator_alone() {
     w.advance_to(&w.task, "review").await;
 
     let sched = w.scheduler();
+    // Flushed after each send, so every pass is known reconciled before the
+    // next one is sent, rather than guessed from a wait between them.
     for _ in 0..3 {
         sched.goal(&w.goal);
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        sched.flush().await;
     }
     assert!(
         !w.prompted(&orchestrator).contains("`list_tasks`"),

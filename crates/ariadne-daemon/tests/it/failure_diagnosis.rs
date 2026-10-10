@@ -339,6 +339,8 @@ async fn disabled_by_default_produces_no_diagnosis() {
     let server = ModelServer::answer("exhausted", json!({})).await;
     let (h, agent) = world(quota_error(), false, &server).await;
 
+    // Quiet: disabled, nothing ever asks the model, so no later event marks
+    // the asking done — only its continued absence proves it never ran.
     tokio::time::sleep(QUIET).await;
     assert!(
         events_of(&h, &agent.id, "session.diagnosis")
@@ -360,6 +362,9 @@ async fn a_malformed_answer_produces_no_diagnosis() {
         !server.requests.lock().unwrap().is_empty()
     })
     .await;
+    // Quiet: the malformed answer is validated and dropped in the one task
+    // that asked, which reports nothing else — no later event marks that
+    // task's end, so only the continued absence of a diagnosis proves it.
     tokio::time::sleep(QUIET).await;
     assert!(
         events_of(&h, &agent.id, "session.diagnosis")
@@ -430,6 +435,9 @@ async fn an_absent_model_produces_no_diagnosis_the_same_as_one_still_loading() {
     )
     .await;
 
+    // Quiet: the model is absent, so `consider` returns before ever asking
+    // it — no later event marks that decision, so only the continued
+    // absence of a request or a diagnosis proves it was never made.
     tokio::time::sleep(QUIET).await;
     assert!(
         events_of(&h, &agent.id, "session.diagnosis")
@@ -540,6 +548,10 @@ async fn a_second_failure_while_one_is_in_flight_is_skipped_not_queued() {
     })
     .await;
 
+    // Quiet: a skipped second failure never asks the model at all, and a
+    // queued one stays queued behind the first's hang — either way no later
+    // event marks the decision, so only the request count staying at one
+    // proves it was not sent.
     tokio::time::sleep(QUIET).await;
     assert_eq!(
         server.requests.lock().unwrap().len(),
@@ -575,7 +587,10 @@ async fn a_diagnosis_that_runs_past_its_bound_times_out_and_produces_none() {
         !server.requests.lock().unwrap().is_empty()
     })
     .await;
-    tokio::time::sleep(Duration::from_millis(600)).await;
+    // Quiet, past the 200 ms bound above: a timed-out request reports
+    // nothing, so no later event marks it — only the continued absence of
+    // a diagnosis proves it never arrived.
+    tokio::time::sleep(QUIET).await;
     assert!(
         events_of(&h, &agent.id, "session.diagnosis")
             .await
