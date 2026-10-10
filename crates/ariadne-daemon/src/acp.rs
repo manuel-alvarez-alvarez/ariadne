@@ -734,16 +734,47 @@ impl AcpRuntime {
     /// which is the point: this reproduces the failure without needing the
     /// real window's timing.
     pub fn close_prompt_channel_for_test(&self, session_id: &str) {
+        let _ = self.close_prompt_channel_until_reopened_for_test(session_id);
+    }
+
+    /// Test support: [`Self::close_prompt_channel_for_test`], and a function
+    /// that gives the same agent its working channel back. A test that wants
+    /// the agent to hear again reopens it rather than launching another
+    /// under the session: the launch takes the agent down first, and a pass
+    /// landing in between finds the seat empty and fills it itself.
+    pub fn close_prompt_channel_until_reopened_for_test(
+        &self,
+        session_id: &str,
+    ) -> impl FnOnce() + '_ {
         let (closed, unread) = mpsc::unbounded_channel();
         drop(unread);
-        if let Some(agent) = self
+        let taken = self
             .inner
             .running
             .lock()
             .expect("acp registry lock")
             .get_mut(session_id)
-        {
-            agent.prompts = closed;
+            .map(|agent| {
+                (
+                    agent.launch_id.clone(),
+                    std::mem::replace(&mut agent.prompts, closed),
+                )
+            });
+        let session_id = session_id.to_string();
+        move || {
+            let Some((launch_id, prompts)) = taken else {
+                return;
+            };
+            if let Some(agent) = self
+                .inner
+                .running
+                .lock()
+                .expect("acp registry lock")
+                .get_mut(&session_id)
+                .filter(|agent| agent.launch_id == launch_id)
+            {
+                agent.prompts = prompts;
+            }
         }
     }
 
@@ -1091,12 +1122,15 @@ impl AcpRuntime {
     /// Drop a driver's own entry, and only its own: by the time a replaced
     /// driver gets here, the seat's entry is its successor's, and removing
     /// that one would kill the very agent the relaunch just started.
-    fn deregister(&self, session_id: &str, launch_id: &str) {
+    ///
+    /// Answers whether the entry was still this driver's: an agent that
+    /// ended by itself, rather than one a kill or a relaunch took down first.
+    fn deregister(&self, session_id: &str, launch_id: &str) -> bool {
         let mut running = self.inner.running.lock().expect("acp registry lock");
-        if running
+        let own = running
             .get(session_id)
-            .is_some_and(|agent| agent.launch_id == launch_id)
-        {
+            .is_some_and(|agent| agent.launch_id == launch_id);
+        if own {
             running.remove(session_id);
         }
         // The driver has reaped its child by now: a launch that comes later
@@ -1119,6 +1153,7 @@ impl AcpRuntime {
         {
             consoles.remove(session_id);
         }
+        own
     }
 
     /// One agent's whole life: the protocol until it ends, is killed, or
@@ -1350,7 +1385,20 @@ impl AcpRuntime {
             json!({"session_id": sink.agent_session_id(&launch.config)}),
         )
         .await;
-        self.deregister(&launch.session_id, &launch.launch_id);
+        // Every wake the session's last words sent can be answered by a pass
+        // that still finds this agent registered, and leaves the seat alone
+        // as filled. Only from here does the runtime say nobody runs for it,
+        // so the scheduler is told once more, past any window. An agent a
+        // kill or a relaunch took down is the daemon's own doing, and owes
+        // no pass.
+        if self.deregister(&launch.session_id, &launch.launch_id)
+            && let Some(tx) = self.inner.scheduler.get()
+        {
+            let _ = tx.send(SchedEvent::SessionEnded {
+                session_id: launch.session_id.clone(),
+                launch_id: launch.launch_id.clone(),
+            });
+        }
     }
 }
 

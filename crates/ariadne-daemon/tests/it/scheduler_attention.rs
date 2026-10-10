@@ -318,6 +318,16 @@ impl Sched {
             .unwrap();
     }
 
+    /// Report a launch ending after its successor has already started.
+    fn ended(&self, session: &AgentSession, launch_id: &str) {
+        self.0
+            .send(SchedEvent::SessionEnded {
+                session_id: session.id.clone(),
+                launch_id: launch_id.to_string(),
+            })
+            .unwrap();
+    }
+
     /// Block until every event sent so far has been reconciled to
     /// completion — see [`ariadne_daemon::scheduler::flush_for_test`].
     async fn flush(&self) {
@@ -1499,10 +1509,19 @@ fn alarms(rows: &[AgentSession]) -> usize {
 /// which is a different thing that has already been ruled out.
 #[tokio::test]
 async fn a_task_whose_agent_dies_the_moment_it_starts_fails_with_the_reason_on_it() {
-    let h = harness().dying_agent().await;
+    let h = harness()
+        .dying_agent()
+        .timeouts(Timeouts {
+            full_reconcile: NO_TICK,
+            session_wake: NO_TICK,
+            ..Timeouts::default()
+        })
+        .await;
     // A real repository: an author is launched in a worktree of it, and the
     // launch has to work for the death that follows to be the thing under
-    // test.
+    // test. Neither the tick nor the end of a wake window comes round: every
+    // death after the first is noticed through the wake its agent's end
+    // sends once the runtime has let it go, or not at all.
     h.git_repo("repo");
     let cast = h.cast().await;
     let goal = h.activate(&cast.goal).await;
@@ -1522,6 +1541,19 @@ async fn a_task_whose_agent_dies_the_moment_it_starts_fails_with_the_reason_on_i
     )
     .await;
 
+    eventually(TIMEOUT, "the ended sessions to be retired", async || {
+        h.store
+            .list_sessions(SessionFilter {
+                task_id: Some(cast.task.id.clone()),
+                live_only: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .is_empty()
+    })
+    .await;
+
     let ended: Vec<_> = h
         .store
         .list_task_transitions(&cast.task.id)
@@ -1536,6 +1568,33 @@ async fn a_task_whose_agent_dies_the_moment_it_starts_fails_with_the_reason_on_i
         Some("its agent stopped as soon as it started"),
         "the task does not say what stopped it"
     );
+}
+
+/// An end event belongs to one launch, not to every later launch in the
+/// session's row. A replacement can start before the scheduler dequeues the
+/// old launch's end event.
+#[tokio::test]
+async fn an_ended_launch_does_not_retire_its_successor() {
+    let w = World::active().await;
+    w.advance(&w.task, TaskStatus::InProgress).await;
+    w.briefed(&w.task).await;
+    let develop = w.develop_of(&w.task).await;
+    let session = w
+        .session(&w.goal, Some(&w.task), Seat::Agent, &develop)
+        .await;
+    let ended_launch = "ended-launch".to_string();
+    w.agent_runs(&session).await;
+    let successor = w.launch_id(&session).await.unwrap();
+    assert_ne!(successor, ended_launch, "the successor has its own launch");
+
+    let sched = w.scheduler();
+    sched.ended(&session, &ended_launch);
+    sched.flush().await;
+
+    let row = w.store.get_session(&session.id).await.unwrap();
+    assert_eq!(row.status(), SessionStatus::Running);
+    assert_eq!(row.launch_id.as_deref(), Some(successor.as_str()));
+    assert!(w.launcher.acp.is_running(&session.id));
 }
 
 /// A goal the user cancelled takes its tasks with it, and every one of them
@@ -2179,11 +2238,9 @@ async fn a_failed_task_wakes_the_orchestrator_once() {
 /// deregistered — and `hand_prompt` says so by failing. Marked told at that
 /// failed attempt regardless, the situation would never be said again.
 ///
-/// The passes are the ones this test sends and no others: the agent it puts
-/// back under the session is launched from outside the daemon, and a tick
-/// landing inside that launch finds a session whose row is live with no agent
-/// behind it — which is an orchestrator to resume, spending attempts on a
-/// seat the test is about to fill itself.
+/// Restore the channel on the same agent after the failed pass. Relaunching
+/// it from the fixture races the scheduler: the old launch's exit wakes a
+/// pass even without a tick, and that pass can try to resume the same seat.
 #[tokio::test]
 async fn a_situation_survives_a_failed_hand_off_and_is_told_on_the_next_pass() {
     let h = harness()
@@ -2209,9 +2266,10 @@ async fn a_situation_survives_a_failed_hand_off_and_is_told_on_the_next_pass() {
         .unwrap();
 
     // Live per the registry, but its prompt channel is already closed.
-    w.launcher
+    let reopen = w
+        .launcher
         .acp
-        .close_prompt_channel_for_test(&orchestrator.id);
+        .close_prompt_channel_until_reopened_for_test(&orchestrator.id);
     let sched = w.scheduler();
     sched.goal(&w.goal);
     // Waited out rather than slept past: the flush answers only once the
@@ -2223,10 +2281,8 @@ async fn a_situation_survives_a_failed_hand_off_and_is_told_on_the_next_pass() {
         "the closed channel could not have delivered anything"
     );
 
-    // The agent comes back — a fresh, working registration under the same
-    // session — and the situation is still owed.
-    w.agent_runs(&orchestrator).await;
-    w.set_status(&orchestrator, SessionStatus::Idle).await;
+    // The same agent hears again, and the situation is still owed.
+    reopen();
     eventually(
         TIMEOUT,
         "the orchestrator to be told now that it can hear it",
