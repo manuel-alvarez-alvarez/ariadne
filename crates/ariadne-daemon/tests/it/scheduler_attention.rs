@@ -519,7 +519,21 @@ async fn a_session_waiting_on_a_person_is_never_nudged() {
 #[tokio::test]
 async fn an_agent_in_the_middle_of_a_turn_is_not_nudged() {
     let w = World::active().await;
+    // The agent holds the turn it is handed open until the test ends.
+    let hold = w.dir.path().join("held-turn");
+    let mut script = common::acp::script();
+    script["prompts"] =
+        serde_json::json!([{"wait_for": hold.display().to_string(), "updates": []}]);
+    w.agent.reprogram(script);
     let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
+    w.launcher
+        .acp
+        .send_prompt(&session.id, "Work on it.".into())
+        .unwrap();
+    eventually(TIMEOUT, "the agent inside its turn", async || {
+        hold.with_extension("reached").exists()
+    })
+    .await;
     w.launched_ago(&session, NUDGE_SECS + 60).await;
 
     // A second task's author, idle in the same silence: its nudge is what
@@ -538,14 +552,38 @@ async fn an_agent_in_the_middle_of_a_turn_is_not_nudged() {
 
     assert_eq!(
         w.prompts_to(&session).len(),
-        0,
-        "nothing is sent to an agent that is working"
+        1,
+        "nothing more is sent to an agent that is working"
     );
     assert_eq!(
         w.attention(&session).await,
         None,
         "nor is it raised for the user this early"
     );
+}
+
+/// An agent that came up and was never handed a prompt reads `running` from
+/// its `session_start`, but it is between turns: past the first threshold it
+/// is nudged like any idle agent, rather than left until the relaunch.
+#[tokio::test]
+async fn an_agent_up_and_never_prompted_is_nudged() {
+    let w = World::active().await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
+    w.launched_ago(&session, NUDGE_SECS + 60).await;
+
+    let sched = w.scheduler();
+    sched.task(&w.task);
+    eventually(TIMEOUT, "the agent to be nudged", async || {
+        !w.prompts_to(&session).is_empty()
+    })
+    .await;
+
+    assert!(
+        w.prompted(&session).contains(RESUME),
+        "{}",
+        w.prompted(&session)
+    );
+    assert_eq!(w.attention(&session).await, None);
 }
 
 /// An agent that reported an error is already asking for the user by name.

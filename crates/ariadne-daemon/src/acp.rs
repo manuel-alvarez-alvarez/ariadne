@@ -581,6 +581,21 @@ impl AcpRuntime {
             .contains_key(session_id)
     }
 
+    /// Whether this session's agent is inside a turn: a `session/prompt`
+    /// out and its response not yet in. `None` where no agent is driven here
+    /// for the session, and there is nothing to ask.
+    pub(crate) async fn in_turn(&self, session_id: &str) -> Option<bool> {
+        let turn = self
+            .inner
+            .running
+            .lock()
+            .expect("acp registry lock")
+            .get(session_id)?
+            .turn
+            .clone();
+        Some(turn.lock().await.running)
+    }
+
     /// Queue an option change ahead of the next prompt. A running turn does
     /// not hold up the caller; between turns the caller receives the result.
     pub(crate) async fn switch_pin(
