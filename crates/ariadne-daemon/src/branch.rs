@@ -468,33 +468,42 @@ mod tests {
     }
 
     #[cfg(target_os = "macos")]
-    fn open_descriptors() -> usize {
+    fn open_descriptors(repo: &Path) -> usize {
+        let git_dir = repo.join(".git").canonicalize().unwrap();
         let out = Command::new("lsof")
             .args(["-a", "-p", &std::process::id().to_string(), "-Fn"])
             .output()
             .unwrap();
         assert!(out.status.success(), "lsof failed");
-        String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .filter(|line| {
-                line.strip_prefix('f')
-                    .and_then(|fd| fd.chars().next())
-                    .is_some_and(|first| first.is_ascii_digit())
-            })
-            .count()
+        let mut descriptor = false;
+        let mut count = 0;
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            if let Some(fd) = line.strip_prefix('f') {
+                descriptor = fd
+                    .chars()
+                    .next()
+                    .is_some_and(|first| first.is_ascii_digit());
+            } else if descriptor
+                && line
+                    .strip_prefix('n')
+                    .is_some_and(|name| Path::new(name).starts_with(&git_dir))
+            {
+                count += 1;
+            }
+        }
+        count
     }
 
     #[cfg(target_os = "macos")]
-    async fn settled_descriptors() -> usize {
-        tokio::time::sleep(Duration::from_secs(1)).await;
+    async fn settled_descriptors(repo: &Path) -> usize {
         let deadline = tokio::time::Instant::now() + PATIENCE;
         let mut last = usize::MAX;
         let mut same = 0;
         loop {
-            let current = open_descriptors();
+            let current = open_descriptors(repo);
             if current == last {
                 same += 1;
-                if same == 5 {
+                if same == 2 {
                     return current;
                 }
             } else {
@@ -507,6 +516,18 @@ mod tests {
             );
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn create_branches(repo: &Path, prefix: &str, count: usize) {
+        sh(
+            repo,
+            &format!(
+                "n=0; while [ $n -lt {count} ]; do \\
+                 printf 'create refs/heads/{prefix}-%s HEAD\\n' $n; n=$((n + 1)); done | \\
+                 git update-ref --stdin"
+            ),
+        );
     }
 
     /// The head the next `task_branch_updated` carries.
@@ -695,20 +716,16 @@ mod tests {
     async fn twelve_followed_branches_share_one_repository_watch() {
         let dir = tempfile::tempdir().unwrap();
         let repo = repo(dir.path());
-        for n in 0..100 {
-            sh(&repo, &format!("git branch work-{n}"));
-        }
-        let baseline = settled_descriptors().await;
+        create_branches(&repo, "work", 100);
+        let baseline = settled_descriptors(&repo).await;
         let events = EventBus::new();
         let watchers = BranchWatchers::new(events);
         for n in 0..12 {
             watchers.watch(&task_on(&repo, n), &repo);
         }
-        let _ = settled_descriptors().await;
-        for n in 0..20 {
-            sh(&repo, &format!("git branch late-{n}"));
-        }
-        let twelve = settled_descriptors().await;
+        let _ = settled_descriptors(&repo).await;
+        create_branches(&repo, "late", 20);
+        let twelve = settled_descriptors(&repo).await;
         assert!(
             twelve <= baseline + 8,
             "descriptors grew with followed tasks: baseline={baseline}, twelve={twelve}"
@@ -722,15 +739,13 @@ mod tests {
     async fn packing_refs_releases_deleted_ref_descriptors() {
         let dir = tempfile::tempdir().unwrap();
         let repo = repo(dir.path());
-        let baseline = settled_descriptors().await;
+        let baseline = settled_descriptors(&repo).await;
         let events = EventBus::new();
         let watchers = BranchWatchers::new(events);
         watchers.watch(&task(&repo), &repo);
-        let _ = settled_descriptors().await;
-        for n in 0..100 {
-            sh(&repo, &format!("git branch packed-{n}"));
-        }
-        let loose = settled_descriptors().await;
+        let _ = settled_descriptors(&repo).await;
+        create_branches(&repo, "packed", 100);
+        let loose = settled_descriptors(&repo).await;
         // Every ref creation wakes and recreates the watcher. Therefore the
         // descriptors do not accumulate before packing either. Removing that
         // re-arm makes this assertion fail by about the number of new refs.
@@ -740,7 +755,7 @@ mod tests {
         );
 
         sh(&repo, "git pack-refs --all");
-        let packed = settled_descriptors().await;
+        let packed = settled_descriptors(&repo).await;
         assert!(
             packed <= baseline + 8,
             "deleted loose refs stayed open: baseline={baseline}, loose={loose}, packed={packed}"
