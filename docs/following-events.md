@@ -19,6 +19,7 @@ ariadne attention --watch              # redrawn whenever something needs you
 ariadne task ls --watch --goal <id>    # redrawn whenever a task moves
 ariadne goal ls --watch                # redrawn whenever a goal moves
 ariadne session ls --watch --seat agent  # redrawn whenever a session moves
+ariadne pr ls --watch                   # redrawn when tracked requests move
 ```
 
 `ariadne events` opens on the most recent recorded events — the last 200 of
@@ -39,24 +40,16 @@ for a daemon that is not answering.
 
 With `ai_failure_diagnosis` on (see [Configuration](configuration.md)), a
 failed session may later carry a `session.diagnosis` event too: an advisory
-reading of the error beside it — quota exhaustion, a temporary failure, an
+reading of the error — quota exhaustion, a temporary failure, an
 authentication or configuration problem, a task failure, or insufficient
-evidence — from the local model `ai` permission mode already uses (022). It
-appears in `ariadne events`, in `ariadne session logs` and `ariadne task
-logs` as a line under the `ERROR` block it is about, and in the desktop
-app's session activity, however much later it arrives and however the
-session has ended by then. It never changes what the error itself says, and
-never decides whether a session retries or switches models: the model may
-disagree with the daemon's own exhaustion check, and that disagreement is
-never acted on (021, 024).
+evidence. It appears in `ariadne events`, in `ariadne session logs` and
+`ariadne task logs` as a line under the `ERROR` block it is about, however
+much later it arrives. It never changes what the error itself says, and
+never decides whether a session retries or switches models.
 
 A repository with the forge integration on (see [The forge
-integration](forge.md)) also carries `pull_requests_changed` in `ariadne
-events -f`, with the repository's id as the subject, whenever its requests
-move on the forge or in what Ariadne keeps of them — the requests
-themselves are read live, so the event carries none; and
-`forge_settings_updated`, subject "forge tunnel", whenever the webhook
-tunnel's switch or state changes. Neither belongs to a goal or a task, so
-`--goal` and `--task` leave them out; `--kind` still selects them, and
-`ariadne pr inspect <repo> <number>` reads a request's current state
-directly.
+integration](forge.md)) also carries `pull_requests_changed`, subject the
+repository's id, whenever its requests move; and `forge_settings_updated`,
+subject "forge tunnel", whenever the webhook tunnel's switch or state
+changes. Neither belongs to a goal or a task, so `--goal` and `--task` leave
+them out; `--kind` still selects them.

@@ -660,3 +660,28 @@ ariadne doctor
 `ariadne doctor` checks the CLI, daemon, configuration, service, and ACP
 registry. It distinguishes an agent command your shell cannot find from one
 the daemon cannot find or cannot use.
+
+## Command reference
+
+All commands accept `--endpoint`. Table commands also accept `--format`,
+`--color`, `--no-trunc`, `-q`, `--output`, and `--columns`; long output
+accepts `--no-pager`. Use `ariadne help [COMMAND]` or `COMMAND --help` for
+the built-in help screen.
+
+| Group | Commands and options |
+| --- | --- |
+| `version`, `doctor` | No command-specific options. |
+| `daemon` | `start`, `stop [--timeout SECONDS]`, `restart [--timeout SECONDS]`, `status`, and `logs [-f]`; each accepts `--home PATH`. |
+| `agent` | `ls`, `refresh`, and `update AGENT [--flag FLAG]... [--clear-flags\|--reset]`. |
+| `models` | `ls [--agent AGENT]`, `show MODEL`, `enable MODEL`, `disable MODEL`, `rank MODEL RANK\|--clear`. |
+| `skill` | `ls`, `get NAME`, `inspect NAME`, `create NAME [--file FILE]`, `set NAME [--file FILE]`, `reset NAME [-y]`, `rm NAME [-y]`. |
+| `workflow` | `ls`, `show NAME`, `check [--file FILE]`, `create NAME [--file FILE]`, `update NAME [--file FILE]`, `reset NAME [-y]`, `rm NAME [-y]`. |
+| `repo` | `ls`, `inspect ID`, `add PATH`, `update ID`, `rm ID [-y]`. Add and update use `--branch`, `--description`, `--permission-mode auto\|ask\|learn\|ai`, `--workflow`, `--forge on\|off`, `--review-model`, and `--review-effort`; update also uses `--path`. |
+| `goal` | `create --model AGENT:MODEL [--title] [-d\|--description] [--from-issue] [--repo]... [--effort] [--workflow]`; `ls [--status STATUS,...] [-a] [--watch]`; `inspect`, `complete`, `cancel [-y]`, `rm [-y]`, and `attach` take an ID. |
+| `task` | `create GOAL --title TEXT --agent STEP[:SKILLS]=MODEL[@EFFORT] [--description] [--depends-on]... [--repo]`; `update ID` accepts `--title`, `--description`, repeatable `--agent` and `--depends-on`, or `--clear-depends-on`; `ls` accepts `--goal`, repeatable `--status`, `-a`, `--step`, and `--watch`; `inspect`, `messages [--full]`, `history`, `cancel [-y]`, `retry`, `diff`, `attach [--seat] [--step]`, and `logs [--seat] [-f] [--tail] [--since] [--kind]...` take an ID. |
+| `session` | `ls` accepts `--kind`, `--agent`, `--task`, `--goal`, `--pull-request`, repeatable `--status`, `--seat`, `--attention`, `--dir`, `--since`, `--until`, `--search`, `--limit`, `--cursor`, `--refresh`, `-a`, and `--watch`; `new --model AGENT:MODEL [--effort] [--dir] [--attach]`; `switch ID --model AGENT:MODEL [--effort]`; `inspect ID`; `send ID TEXT`; `logs ID [-f] [--tail] [--since] [--kind]...`; `resume ID`; `kill ID [-y]`. |
+| `events`, `attention`, `attach` | `events [-f] [--goal] [--task] [--session] [--kind]...`; `attention [--watch]`; `attach ID [--seat orchestrator\|agent\|reviewer] [--agent AGENT]`. |
+| `stats` | `work`, `time`, `spend`, `models`, and `attention`; each accepts `--since` and `--repo`; `models` also accepts `--seat`. |
+| `pr`, `issue`, `forge` | `pr ls [--repo] [--mine\|--review-requests] [--watch]`, `inspect REPO NUMBER`, `search --repo REPO QUERY`, `refresh [--repo]`, `review REPO NUMBER [--model] [--effort] [--skill]... [--attach\|--stop]`; `issue ls --repo REPO [--all]`; `forge tunnel [on\|off]`. |
+| `permissions` | `ai show`, `enable [--wait]`, `disable`, `refresh [--wait]`, `set` with `--allow-threshold`, `--deny-threshold`, `--default-thresholds`, `--flavour`, or `--device`, and `test --tool TEXT --input JSON [--kind] [--option]... [--location]... [--workspace]`; `learned list [--repo]`, `show ID`, `rm ID`, and `scope ID all\|repository`. |
+| `completions`, `mcp` | `completions SHELL [--static]` for bash, elvish, fish, PowerShell, or zsh; `completions install [--shell bash\|zsh\|fish]`; `mcp serve`. |
