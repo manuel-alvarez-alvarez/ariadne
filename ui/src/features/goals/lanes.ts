@@ -32,11 +32,35 @@ function stepKey(id: string): string {
 }
 
 /**
+ * Where a stepless lane files a task under way: it has no workflow column to
+ * sit in, so it gets the one column a goal with no steps still owns.
+ */
+const IN_PROGRESS_KEY = "in_progress"
+
+/**
  * The columns a goal's lane draws, in order.
  *
- * Every goal draws Pending, its workflow columns, then Done.
+ * Every goal draws Pending, then Done. Between them sits either a goal's
+ * workflow columns, one per step, or, for a goal with no steps, the one
+ * column a task under way sits in.
  */
 export function laneColumns(goal: Pick<GoalDto, "steps">): LaneColumn[] {
+  const middle: LaneColumn[] =
+    goal.steps.length > 0
+      ? goal.steps.map((step) => ({
+          key: stepKey(step.id),
+          label: step.title,
+          hint: step.description || step.title,
+          dot: TASK_STATUS_META.in_progress.dot,
+        }))
+      : [
+          {
+            key: IN_PROGRESS_KEY,
+            label: TASK_STATUS_META.in_progress.label,
+            hint: "No workflow runs; an agent is working on the task.",
+            dot: TASK_STATUS_META.in_progress.dot,
+          },
+        ]
   return [
     {
       key: "pending",
@@ -44,12 +68,7 @@ export function laneColumns(goal: Pick<GoalDto, "steps">): LaneColumn[] {
       hint: TASK_STATUS_META.pending.hint,
       dot: TASK_STATUS_META.pending.dot,
     },
-    ...goal.steps.map((step) => ({
-      key: stepKey(step.id),
-      label: step.title,
-      hint: step.description || step.title,
-      dot: TASK_STATUS_META.in_progress.dot,
-    })),
+    ...middle,
     {
       key: "finished",
       label: "Done",
@@ -73,7 +92,9 @@ export function laneColumns(goal: Pick<GoalDto, "steps">): LaneColumn[] {
  * back exactly there. Its card is outlined in danger and badged `Failed`.
  *
  * On a stepped goal, a task under way sits in the column of its `step`; one
- * whose step the goal does not list sits in the first step's column.
+ * whose step the goal does not list sits in the first step's column. On a
+ * stepless goal, a task under way sits in the lane's one `IN_PROGRESS_KEY`
+ * column.
  */
 export function laneColumnOf(
   task: TaskDto,
@@ -83,8 +104,10 @@ export function laneColumnOf(
   if (task.status === "failed" || isStillPlanning(goal.status)) return "pending"
   if (task.status === "pending" || task.status === "ready") return "pending"
   if (task.status === "finished") return "finished"
-  const step = goal.steps.find((one) => one.id === task.step) ?? goal.steps[0]
-  return step ? stepKey(step.id) : status
+  const firstStep = goal.steps[0]
+  if (!firstStep) return IN_PROGRESS_KEY
+  const step = goal.steps.find((one) => one.id === task.step) ?? firstStep
+  return stepKey(step.id)
 }
 
 /**

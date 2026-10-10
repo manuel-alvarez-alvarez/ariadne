@@ -608,8 +608,9 @@ Out: the daemon endpoints themselves (012).
     goals board draws its own column row: Pending (pending, ready, and failed
     outlined in danger), one column per step in order, titled by the step,
     then Done (finished); cancelled stays off the board. A card sits in the
-    column of its task's `step`. A lane of a goal with no steps draws the five
-    pipeline columns. Each lane carries its own column row, and its grid takes
+    column of its task's `step`. A lane of a goal with no steps draws Pending,
+    In progress and Done, and a task of that goal under way sits in In
+    progress. Each lane carries its own column row, and its grid takes
     as many columns as it has, at the same width floors; the board scrolls
     sideways to its widest lane. A card whose status shows names the step
     where the status said `in progress`.

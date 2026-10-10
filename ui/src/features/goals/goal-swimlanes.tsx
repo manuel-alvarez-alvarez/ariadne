@@ -1,7 +1,7 @@
 /**
  * The goals list as a board: one horizontal swimlane per goal, every task of
- * every shown goal in its cell. Each lane draws its own columns: the five
- * pipeline stages for a goal with no workflow, or Pending, one column per
+ * every shown goal in its cell. Each lane draws its own columns: Pending, In
+ * progress and Done for a goal with no workflow, or Pending, one column per
  * step and Done for a goal a workflow runs.
  *
  * The board scrolls in both directions inside its own box, which is what makes
@@ -39,13 +39,14 @@ import { GOAL_STATUS_META, isTerminalGoalStatus } from "./status"
 /**
  * One template for a lane's header row and its cards, so the columns line up:
  * as many as the lane has, and none of them narrower than a card is readable
- * at. A lane sets `--lane-columns` to its own count — five for a goal with no
- * workflow, Pending, its steps and Done for one with.
+ * at. A lane sets `--lane-columns` to its own count — three (Pending, In
+ * progress, Done) for a goal with no workflow, or Pending, its steps and Done
+ * for one with.
  *
  * Two floors, because a 1280px laptop is the machine this is used on: 13rem is
  * what a card wants, 11rem is what it still reads at, and below `xl` the
- * second one is what keeps the fifth column on screen instead of past the
- * right edge.
+ * second one is what keeps a wide lane's last column on screen instead of
+ * past the right edge.
  */
 const COLUMNS_GRID =
   "grid grid-cols-[repeat(var(--lane-columns),minmax(11rem,1fr))] gap-3 xl:grid-cols-[repeat(var(--lane-columns),minmax(13rem,1fr))]"
@@ -54,9 +55,9 @@ const COLUMNS_GRID =
  * What the lanes are laid out at before the board gives up and scrolls: the
  * widest lane's floor (its columns and their 0.75rem gaps) plus the padding
  * either side of a lane, rounded up — 12rem a column at the narrow floor,
- * 14.4rem at the wide one, which is 60rem and 72rem for five. It sits on the
- * block *inside* the scrollport, which is what makes a narrow window scroll
- * the board rather than squeeze its columns past reading.
+ * 14.4rem at the wide one, which for a five-column lane is 60rem and 72rem.
+ * It sits on the block *inside* the scrollport, which is what makes a narrow
+ * window scroll the board rather than squeeze its columns past reading.
  */
 const BOARD_WIDTH =
   "min-w-[calc(var(--board-columns)*12rem)] xl:min-w-[calc(var(--board-columns)*14.4rem)]"

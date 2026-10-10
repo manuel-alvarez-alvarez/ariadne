@@ -20,3 +20,14 @@ it("draws each goal workflow columns", async () => {
   expect(screen.getByText("Test")).toBeTruthy()
   expect(screen.getByText("Done")).toBeTruthy()
 })
+
+it("draws an in-progress task of a stepless goal in its own column", async () => {
+  const goal = aGoal({ steps: [] })
+  daemonFetch.mockResolvedValue(jsonResponse([aTask({ goal_id: goal.id, status: "in_progress" })]))
+  renderScreen(<GoalSwimlanes goals={[goal]} />)
+  expect(await screen.findByText("Pending")).toBeTruthy()
+  expect(screen.getByText("Done")).toBeTruthy()
+  const column = screen.getByText("In progress")
+  expect(column).toBeTruthy()
+  expect(screen.getByText("Wire the sessions screen")).toBeTruthy()
+})
