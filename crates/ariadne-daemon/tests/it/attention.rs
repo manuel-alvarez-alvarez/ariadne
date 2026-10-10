@@ -1,7 +1,9 @@
 //! `GET /v1/attention`: the authoritative "Needs attention" list, and its
 //! first producer, recovery.
 
-use ariadne_api::attention::{AttentionCause, AttentionListDto, AttentionSubjectKind};
+use ariadne_api::attention::{
+    AttentionCause, AttentionListDto, AttentionProducer, AttentionSubjectKind,
+};
 use ariadne_core::{Actor, AttentionReason, Seat, SessionStatus, TaskStatus};
 use ariadne_store::NewSession;
 
@@ -140,6 +142,7 @@ async fn an_exhausted_session_on_an_unranked_model_is_a_quota_item() {
     let list: AttentionListDto = h.get("/v1/attention").await;
     assert_eq!(list.items.len(), 1);
     let item = &list.items[0];
+    assert_eq!(item.producer, AttentionProducer::Recovery);
     assert_eq!(item.cause, AttentionCause::Quota);
     assert_eq!(item.affected.len(), 1);
     assert_eq!(item.affected[0].kind, AttentionSubjectKind::Session);
@@ -254,4 +257,126 @@ async fn a_recovery_items_id_is_stable_across_two_reads() {
     let second: AttentionListDto = h.get("/v1/attention").await;
     assert_eq!(first.items.len(), 1);
     assert_eq!(first.items[0].id, second.items[0].id);
+}
+
+/// An exhausted session already switched to a successor raises no quota
+/// item: recovery already acted, and the row left flagged is not the one
+/// still waiting on a person.
+#[tokio::test]
+async fn an_exhausted_session_already_switched_raises_no_quota_item() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    let old = h
+        .store
+        .create_session(NewSession {
+            goal_id: Some(cast.goal.id.clone()),
+            task_id: None,
+            seat: Some(Seat::Orchestrator),
+            task_agent_id: None,
+            model: "stub:no-such-model".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: None,
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_session_status_if_live(&old.id, SessionStatus::Exited, None)
+        .await
+        .unwrap();
+    h.store
+        .set_session_attention(&old.id, AttentionReason::Exhausted)
+        .await
+        .unwrap();
+    h.store
+        .create_switched_session(
+            NewSession {
+                goal_id: Some(cast.goal.id.clone()),
+                task_id: None,
+                seat: Some(Seat::Orchestrator),
+                task_agent_id: None,
+                model: "stub:test-model".into(),
+                effort: None,
+                worktree_path: None,
+                pull_request_id: None,
+            },
+            &old.id,
+        )
+        .await
+        .unwrap();
+
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items, Vec::new());
+}
+
+/// An enabled forge integration's fetch error that does not name a missing
+/// CLI is not dropped for want of a pattern to match: it is its own
+/// `unknown` item, naming the repository, kept apart from every other item
+/// (009, "unknown causes remain separate").
+#[tokio::test]
+async fn an_unmatched_forge_fetch_error_is_its_own_unknown_item() {
+    let h = harness().await;
+    let repo = h.repository(&h.git_repo("repo")).await;
+    with_forge(&h, &repo).await;
+    let error = "gh: rate limit exceeded, try again later";
+    h.store
+        .set_forge_fetch_error(&repo.id, Some(error))
+        .await
+        .unwrap();
+
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 1);
+    let item = &list.items[0];
+    assert_eq!(item.producer, AttentionProducer::Recovery);
+    assert_eq!(item.cause, AttentionCause::Unknown);
+    assert_eq!(item.summary, error);
+    assert_eq!(item.affected.len(), 1);
+    assert_eq!(item.affected[0].id, repo.id);
+}
+
+/// Two repositories whose forge CLI fetch fails on the same unmatched words
+/// stay two separate `unknown` items: unlike `configuration`, an unknown
+/// cause is never grouped, since there is no reliable evidence the two
+/// share one.
+#[tokio::test]
+async fn two_unmatched_forge_errors_stay_separate_unknown_items() {
+    use ariadne_core::ForgeKind;
+    use ariadne_store::SetForgeIntegration;
+
+    let h = harness().await;
+    let first = h.repository(&h.git_repo("repo1")).await;
+    let second = h.repository(&h.git_repo("repo2")).await;
+    with_forge(&h, &first).await;
+    h.store
+        .set_forge_integration(SetForgeIntegration {
+            repository_id: second.id.clone(),
+            kind: ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "gizmos".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+            review_model: None,
+            review_effort: None,
+        })
+        .await
+        .unwrap();
+    let error = "gh: rate limit exceeded, try again later";
+    h.store
+        .set_forge_fetch_error(&first.id, Some(error))
+        .await
+        .unwrap();
+    h.store
+        .set_forge_fetch_error(&second.id, Some(error))
+        .await
+        .unwrap();
+
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 2, "{:?}", list.items);
+    assert!(
+        list.items
+            .iter()
+            .all(|item| item.cause == AttentionCause::Unknown)
+    );
 }

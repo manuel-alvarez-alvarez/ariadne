@@ -173,7 +173,8 @@ impl AppState {
         ariadne_api::events::EventOrder, ariadne_api::events::PermissionReplyDto,
         ariadne_api::logs::LogLineDto, ariadne_api::logs::LogSnapshotResponse,
         ariadne_api::attention::AttentionListDto, ariadne_api::attention::AttentionItemDto,
-        ariadne_api::attention::AttentionCause, ariadne_api::attention::AttentionSubjectDto,
+        ariadne_api::attention::AttentionProducer, ariadne_api::attention::AttentionCause,
+        ariadne_api::attention::AttentionSubjectDto,
         ariadne_api::attention::AttentionSubjectKind, ariadne_api::attention::AttentionTarget,
     )),
     tags(

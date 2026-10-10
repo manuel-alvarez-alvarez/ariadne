@@ -56,6 +56,8 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       void queryClient.invalidateQueries({ queryKey: qk.goals.lists() })
       void queryClient.invalidateQueries({ queryKey: qk.tasks.all() })
       void queryClient.invalidateQueries({ queryKey: qk.sessions.all() })
+      // A deleted goal can take a recovery item's affected task with it.
+      void queryClient.invalidateQueries({ queryKey: qk.attention.lists() })
       break
     }
     case "task_created": {
@@ -163,6 +165,8 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
     case "repository_deleted": {
       queryClient.removeQueries({ queryKey: qk.repositories.detail(event.data.id) })
       void queryClient.invalidateQueries({ queryKey: qk.repositories.lists() })
+      // A deleted repository can take a configuration recovery item with it.
+      void queryClient.invalidateQueries({ queryKey: qk.attention.lists() })
       break
     }
     case "ai_permissions_updated": {

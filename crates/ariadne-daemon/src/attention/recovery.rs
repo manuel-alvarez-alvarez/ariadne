@@ -9,7 +9,8 @@
 use std::collections::BTreeMap;
 
 use ariadne_api::attention::{
-    AttentionCause, AttentionItemDto, AttentionSubjectDto, AttentionSubjectKind, AttentionTarget,
+    AttentionCause, AttentionItemDto, AttentionProducer, AttentionSubjectDto, AttentionSubjectKind,
+    AttentionTarget,
 };
 use ariadne_core::{AttentionReason, SessionStatus, TaskStatus};
 use ariadne_store::{Result, SessionFilter, Store, TaskFilter};
@@ -27,13 +28,13 @@ const FORGE_BINARY_MISSING: &str = "is not installed on the daemon's PATH";
 
 /// Every recovery item this producer currently finds: a model exhausted
 /// with no automatic switch left, a task failed on a machine resource
-/// shortage, and a forge CLI missing from the daemon's own PATH. Each is
-/// grouped by the one fact that makes it a shared cause rather than three
-/// separate ones.
+/// shortage, and whatever an enabled forge integration's own last fetch
+/// error says — the daemon's "CLI not installed" words where they match,
+/// and the error verbatim, kept apart and ungrouped, where they do not.
 pub(crate) async fn items(store: &Store, launcher: &Launcher) -> Result<Vec<AttentionItemDto>> {
     let mut items = quota_items(store, launcher).await?;
     items.extend(resource_items(store).await?);
-    items.extend(configuration_items(store).await?);
+    items.extend(forge_items(store).await?);
     Ok(items)
 }
 
@@ -52,8 +53,10 @@ async fn quota_items(store: &Store, launcher: &Launcher) -> Result<Vec<Attention
         if session.attention_reason() != Some(AttentionReason::Exhausted)
             || session.status() != SessionStatus::Exited
             || !work_is_active(store, &session).await
-            || !recovery_exhausted(store, launcher, &session).await
         {
+            continue;
+        }
+        if !recovery_exhausted(store, launcher, &session).await? {
             continue;
         }
         let since = session
@@ -78,6 +81,7 @@ async fn quota_items(store: &Store, launcher: &Launcher) -> Result<Vec<Attention
             let session_id = affected.first().map(|s| s.id.clone()).unwrap_or_default();
             AttentionItemDto {
                 id: format!("recovery:quota:{model}"),
+                producer: AttentionProducer::Recovery,
                 cause: AttentionCause::Quota,
                 summary: format!(
                     "{model} hit a usage limit, and automatic model switching has no model \
@@ -126,6 +130,7 @@ async fn resource_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
     let task_id = affected.first().map(|s| s.id.clone()).unwrap_or_default();
     Ok(vec![AttentionItemDto {
         id: "recovery:resource:descriptor-limit".into(),
+        producer: AttentionProducer::Recovery,
         cause: AttentionCause::Resource,
         summary: DESCRIPTOR_LIMIT_REASON.into(),
         required_action: "Free file descriptors on the daemon's machine, then retry the task."
@@ -136,54 +141,71 @@ async fn resource_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
     }])
 }
 
-/// An enabled forge integration whose last fetch failed on the daemon's own
-/// "not installed" message groups with every other one naming the same
-/// forge CLI: the fix is the same install, wherever it is missing from.
-async fn configuration_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
+/// Every enabled forge integration whose last fetch failed, read for the
+/// daemon's own evidence: an integration missing its CLI groups with every
+/// other one naming the same program, since the fix is the same install
+/// wherever it is missing from — a `configuration` item. Anything else the
+/// forge CLI answered is not guessed at; it is kept, as its own `unknown`
+/// item naming that one repository, rather than dropped for want of a
+/// pattern to name it by (009, "unknown causes remain separate"). A
+/// disabled integration's fetch error is nobody's business: turning the
+/// integration off is itself the fix.
+async fn forge_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
     let repositories = store.list_repositories().await?;
-    let mut groups: BTreeMap<String, (String, Vec<AttentionSubjectDto>, String, String)> =
+    let mut configuration: BTreeMap<String, (String, Vec<AttentionSubjectDto>, String, String)> =
         BTreeMap::new();
+    let mut unknown = Vec::new();
     for repository in repositories {
         let Some(forge) = repository.forge.as_ref().filter(|forge| forge.enabled) else {
             continue;
         };
-        let Some(error) = forge
-            .fetch_error
-            .as_ref()
-            .filter(|error| error.contains(FORGE_BINARY_MISSING))
-        else {
+        let Some(error) = forge.fetch_error.as_ref() else {
             continue;
         };
-        // `name` of the fixed message `` `{name}` is not installed... `` —
-        // the CLI program the daemon could not find, and the grouping key:
-        // every repository missing the same CLI shares the same fix.
-        let program = error
-            .split('`')
-            .nth(1)
-            .unwrap_or(error.as_str())
-            .to_string();
-        let group = groups.entry(program.clone()).or_insert_with(|| {
-            (
-                forge.updated_at.clone(),
-                Vec::new(),
-                error.clone(),
-                format!("repositories/{}/forge", repository.id),
-            )
-        });
-        if forge.updated_at < group.0 {
-            group.0 = forge.updated_at.clone();
-        }
-        group.1.push(AttentionSubjectDto {
+        let section = format!("repositories/{}/forge", repository.id);
+        let affected = AttentionSubjectDto {
             kind: AttentionSubjectKind::Repository,
             id: repository.id.clone(),
             label: format!("{}/{}", forge.owner, forge.name),
-        });
+        };
+        if error.contains(FORGE_BINARY_MISSING) {
+            // `name` of the fixed message `` `{name}` is not installed... ``
+            // — the CLI program the daemon could not find, and the
+            // grouping key: every repository missing the same CLI shares
+            // the same fix.
+            let program = error
+                .split('`')
+                .nth(1)
+                .unwrap_or(error.as_str())
+                .to_string();
+            let group = configuration
+                .entry(program)
+                .or_insert_with(|| (forge.updated_at.clone(), Vec::new(), error.clone(), section));
+            if forge.updated_at < group.0 {
+                group.0 = forge.updated_at.clone();
+            }
+            group.1.push(affected);
+        } else {
+            unknown.push(AttentionItemDto {
+                id: format!("recovery:unknown:forge:{}", repository.id),
+                producer: AttentionProducer::Recovery,
+                cause: AttentionCause::Unknown,
+                summary: error.clone(),
+                required_action: "Read the forge CLI's own error, fix what it names, then it is \
+                                   used on the next poll."
+                    .into(),
+                since: forge.updated_at.clone(),
+                affected: vec![affected],
+                target: AttentionTarget::Settings { section },
+            });
+        }
     }
-    Ok(groups
+    let mut items: Vec<AttentionItemDto> = configuration
         .into_iter()
         .map(
             |(program, (since, affected, error, section))| AttentionItemDto {
                 id: format!("recovery:configuration:{program}"),
+                producer: AttentionProducer::Recovery,
                 cause: AttentionCause::Configuration,
                 summary: error,
                 required_action: "Install the forge CLI the error names, or point config.toml at \
@@ -194,5 +216,7 @@ async fn configuration_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
                 target: AttentionTarget::Settings { section },
             },
         )
-        .collect())
+        .collect();
+    items.extend(unknown);
+    Ok(items)
 }

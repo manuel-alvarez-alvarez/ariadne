@@ -31,7 +31,7 @@ use ariadne_core::{AttentionReason, TaskStatus};
 use super::{follow, query_path};
 
 use crate::output::table::{check_columns, heading as heading_style, quiet_lines, render_groups};
-use crate::output::{Format, View, empty_state, note, print_json, view};
+use crate::output::{Format, View, age, empty_state, note, print_json, view};
 use board::{Attention, Group, ROWS, group, heading, rows, task_titles};
 
 /// Why a row is on the list — the task reasons and the session reasons in one
@@ -114,20 +114,17 @@ pub(crate) fn reason_label(reason: AttentionReason) -> &'static str {
     Reason::from(reason).label()
 }
 
-/// Whether this session wants the user, and what for. The stored reason is the
-/// whole rule, as in the UI's `sessionAttention` — except `exhausted`, which
-/// is no longer trusted bare: automatic model switching may still clear it on
-/// the very next tick, so a row for it is raised only once `GET /v1/attention`
-/// has said recovery has nothing left to try (`recovery_exhausted`, the
-/// session ids its `quota` items name).
-fn session_reason(
-    session: &SessionEntryDto,
-    recovery_exhausted: &HashSet<String>,
-) -> Option<Reason> {
+/// Whether this session wants the user, and what for. The stored reason is
+/// the whole rule, as in the UI's `sessionAttention` — except `exhausted`,
+/// which this board no longer raises a row for on its own: automatic model
+/// switching may still clear the bare flag on the very next tick, so
+/// whether it is still worth a person's time is `GET /v1/attention`'s own
+/// call, not a flag read here. A `quota` item carries the session's own
+/// subject already (`recovery_items_section`), so folding it into this
+/// board's rows would say the same thing twice.
+fn session_reason(session: &SessionEntryDto) -> Option<Reason> {
     match session.attention_reason {
-        Some(AttentionReason::Exhausted) => recovery_exhausted
-            .contains(&session.id)
-            .then_some(Reason::Exhausted),
+        Some(AttentionReason::Exhausted) => None,
         Some(AttentionReason::WaitingUser) if session.pull_request_id.is_some() => {
             match session.seat {
                 Some(ariadne_core::Seat::Reviewer) => Some(Reason::ReviewPosted),
@@ -138,51 +135,82 @@ fn session_reason(
     }
 }
 
-/// The session ids `GET /v1/attention` names in a `quota` item: a model
-/// exhausted with no automatic switch left, the one cause this board still
-/// derives a session row from — every other recovery cause has no row of
-/// its own to gate and is printed as its own section instead
-/// (`recovery_items_section`).
-fn recovery_exhausted_sessions(recovery: &AttentionListDto) -> HashSet<String> {
+/// Every task id a recovery item's `affected` list already names: the
+/// board's own `task_reason` would say the same failure a second time,
+/// generic where the recovery item is specific, so this board leaves those
+/// tasks to the recovery section entirely.
+fn recovery_affected_task_ids(recovery: &AttentionListDto) -> HashSet<String> {
     recovery
         .items
         .iter()
-        .filter(|item| item.cause == AttentionCause::Quota)
         .flat_map(|item| {
             item.affected
                 .iter()
-                .filter(|subject| subject.kind == AttentionSubjectKind::Session)
+                .filter(|subject| subject.kind == AttentionSubjectKind::Task)
                 .map(|subject| subject.id.clone())
         })
         .collect()
 }
 
-/// Every recovery item with no row of its own on the per-goal board — a
-/// machine resource or a daemon configuration blocker, neither of which
-/// belongs to one goal — printed as its own section: cause, summary, the
-/// one action that clears it, and what it affects.
-fn recovery_items_section(recovery: &AttentionListDto) -> Option<String> {
-    let rows: Vec<&ariadne_api::attention::AttentionItemDto> = recovery
-        .items
-        .iter()
-        .filter(|item| item.cause != AttentionCause::Quota)
-        .collect();
-    if rows.is_empty() {
+/// Every item `GET /v1/attention` currently finds, printed as its own
+/// section below the per-goal board: cause, summary, the one action that
+/// clears it, how long it has waited, and what it affects. None of these
+/// belongs to one goal the way a task or a loose session's row does, so
+/// they stand apart from the board rather than inside one of its groups.
+fn recovery_items_section(
+    recovery: &AttentionListDto,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<String> {
+    if recovery.items.is_empty() {
         return None;
     }
     let mut lines = vec!["RECOVERY".to_string()];
-    for item in rows {
+    for item in &recovery.items {
         let affected = item
             .affected
             .iter()
             .map(|subject| subject.label.as_str())
             .collect::<Vec<_>>()
             .join(", ");
-        lines.push(format!("- {}", item.summary));
+        lines.push(format!(
+            "- [{}] {} ({} old)",
+            cause_label(item.cause),
+            item.summary,
+            age(&item.since, now)
+        ));
         lines.push(format!("  action: {}", item.required_action));
         lines.push(format!("  affects: {affected}"));
     }
     Some(lines.join("\n"))
+}
+
+/// `-q`'s rows: every goal's own, and one per recovery item — a
+/// configuration-only blocker with no goal of its own would otherwise
+/// print nothing under `-q` while the table still showed it.
+fn quiet_rows(
+    attention: &Attention,
+    titles: &HashMap<String, String>,
+    now: chrono::DateTime<chrono::Utc>,
+    recovery: &AttentionListDto,
+) -> Vec<Vec<String>> {
+    let mut rows: Vec<Vec<String>> = attention
+        .goals
+        .iter()
+        .flat_map(|group| board::rows(group, titles, now))
+        .collect();
+    rows.extend(recovery.items.iter().map(|item| vec![item.id.clone()]));
+    rows
+}
+
+/// The table spelling of a recovery cause.
+fn cause_label(cause: AttentionCause) -> &'static str {
+    match cause {
+        AttentionCause::Access => "access",
+        AttentionCause::Quota => "quota",
+        AttentionCause::Configuration => "configuration",
+        AttentionCause::Resource => "resource",
+        AttentionCause::Unknown => "unknown",
+    }
 }
 
 /// When this session's row last moved: when its reason was raised, else the
@@ -212,8 +240,10 @@ fn relevant(frame: &SseEvent) -> bool {
             | "session_created"
             | "session_updated"
             // A repository's forge fetch error is a configuration recovery
-            // item's own evidence (`GET /v1/attention`).
+            // item's own evidence, and its removal or a goal's is what
+            // takes a stale one down (`GET /v1/attention`).
             | "repository_updated"
+            | "repository_deleted"
     )
 }
 
@@ -323,35 +353,40 @@ async fn render(client: &Client, format: Format) -> Result<()> {
     let tasks: Vec<TaskDto> = client.get_json("/v1/tasks").await?;
     let sessions = ariadne_sessions(client).await?;
     let recovery: AttentionListDto = client.get_json("/v1/attention").await?;
-    let recovery_exhausted = recovery_exhausted_sessions(&recovery);
-    let recovery_section = recovery_items_section(&recovery);
+    let recovery_tasks = recovery_affected_task_ids(&recovery);
+    let now = chrono::Utc::now();
+    let recovery_section = recovery_items_section(&recovery, now);
 
     // Every task, not only the ones on the list: a session's row is named by
     // the task it was run for, which is usually a task that is doing fine.
     let titles = task_titles(&tasks);
-    let attention = group(goals, tasks, sessions, &recovery_exhausted);
-    let now = chrono::Utc::now();
+    let attention = group(goals, tasks, sessions, &recovery_tasks);
+    // A producer that could not read its evidence costs the list its own
+    // items, not an all-clear: an empty board under an incomplete read is
+    // unknown, never "nothing needs attention" (009).
+    let incomplete = !recovery.complete;
     match format {
         Format::Json => print_json(&serde_json::json!({
             "goals": &attention.goals,
-            "count": attention.count,
+            "count": attention.count + recovery.items.len(),
             "recovery": &recovery.items,
+            "complete": recovery.complete,
         }))?,
         // `-q` is the same promise here as in every `ls`: the ids, one per
         // line, so what is stuck can be piped into whatever unsticks it. The
         // goal headings are for eyes and go with the table.
         Format::Table if view().quiet => {
-            let rows: Vec<Vec<String>> = attention
-                .goals
-                .iter()
-                .flat_map(|group| rows(group, &titles, now))
-                .collect();
+            let rows = quiet_rows(&attention, &titles, now, &recovery);
             if !rows.is_empty() {
                 println!("{}", quiet_lines(&rows));
             }
         }
         Format::Table if attention.goals.is_empty() && recovery_section.is_none() => {
-            note(&empty_state("Nothing needs attention.", None));
+            if incomplete {
+                note("Some of what needs attention could not be read; showing what is known.");
+            } else {
+                note(&empty_state("Nothing needs attention.", None));
+            }
         }
         Format::Table => {
             if !attention.goals.is_empty() {
@@ -362,6 +397,10 @@ async fn render(client: &Client, format: Format) -> Result<()> {
                     println!();
                 }
                 println!("{section}");
+            }
+            if incomplete {
+                println!();
+                note("Some of what needs attention could not be read; showing what is known.");
             }
         }
     }
@@ -463,12 +502,11 @@ pub(crate) mod tests {
 
     /// The reasons the UI reports for a session: the daemon's flag, and
     /// nothing else — an agent nothing is owed to is nobody's business,
-    /// whether it is working or long dead. `exhausted` is the one exception:
-    /// the flag alone is not trusted, only `GET /v1/attention` naming the
-    /// session in a `quota` item is.
+    /// whether it is working or long dead. `exhausted` is never one of
+    /// them: this board leaves it to `GET /v1/attention`'s own `quota`
+    /// item entirely (`recovery_items_section`).
     #[test]
     fn a_session_is_reported_for_the_reason_the_ui_would_give() {
-        let none = HashSet::new();
         for (flag, expected) in [
             (
                 AttentionReason::WaitingPermission,
@@ -481,12 +519,16 @@ pub(crate) mod tests {
             (AttentionReason::Stalled, Reason::Stalled),
         ] {
             assert_eq!(
-                session_reason(&flagged("01S", "01GA", flag), &none),
+                session_reason(&flagged("01S", "01GA", flag)),
                 Some(expected),
                 "{}",
                 flag.as_str()
             );
         }
+        assert_eq!(
+            session_reason(&flagged("01S", "01GA", AttentionReason::Exhausted)),
+            None
+        );
 
         // A pull request session waiting on the user has a request that is
         // the user's to merge.
@@ -496,7 +538,7 @@ pub(crate) mod tests {
             pull_request_id: Some("01PR".into()),
             ..flagged("01S", "01GA", AttentionReason::WaitingUser)
         };
-        assert_eq!(session_reason(&ready, &none), Some(Reason::ReadyToMerge));
+        assert_eq!(session_reason(&ready), Some(Reason::ReadyToMerge));
         assert_eq!(Reason::ReadyToMerge.label(), "ready to merge");
         // A reviewer session waiting on the user has posted its review, and
         // the approval is the user's to give (029).
@@ -504,7 +546,7 @@ pub(crate) mod tests {
             seat: Some(ariadne_core::Seat::Reviewer),
             ..ready
         };
-        assert_eq!(session_reason(&reviewed, &none), Some(Reason::ReviewPosted));
+        assert_eq!(session_reason(&reviewed), Some(Reason::ReviewPosted));
         assert_eq!(
             Reason::ReviewPosted.label(),
             "review posted, approve yourself"
@@ -512,10 +554,10 @@ pub(crate) mod tests {
 
         // Dead with nothing owed to it — the daemon deliberately raises no
         // flag for a reviewer that exited after voting — so it is not here.
-        assert_eq!(session_reason(&session("01S", "01GA", None), &none), None);
+        assert_eq!(session_reason(&session("01S", "01GA", None)), None);
         // Dead with work still on it: the daemon's flag puts it on the list.
         assert_eq!(
-            session_reason(&dead("01S", "01GA", Some("01T9")), &none),
+            session_reason(&dead("01S", "01GA", Some("01T9"))),
             Some(Reason::Disconnected)
         );
         // A flag survives the death that followed it.
@@ -523,7 +565,7 @@ pub(crate) mod tests {
             status: Some(SessionStatus::Failed),
             ..flagged("01S", "01GA", AttentionReason::AgentError)
         };
-        assert_eq!(session_reason(&died_after, &none), Some(Reason::AgentError));
+        assert_eq!(session_reason(&died_after), Some(Reason::AgentError));
 
         for status in [
             SessionStatus::Starting,
@@ -535,37 +577,18 @@ pub(crate) mod tests {
                 status: Some(status),
                 ..session("01S", "01GA", None)
             };
-            assert_eq!(session_reason(&healthy, &none), None, "{}", status.as_str());
+            assert_eq!(session_reason(&healthy), None, "{}", status.as_str());
         }
-    }
-
-    /// `exhausted` is raised only while `GET /v1/attention` still names the
-    /// session: automatic switching may clear the flag on the very next
-    /// tick, and a row shown on the strength of the bare flag alone would be
-    /// exactly the "automatic recovery still trying" row the attention
-    /// contract (009) asks never to raise.
-    #[test]
-    fn an_exhausted_session_is_a_row_only_once_recovery_has_named_it() {
-        let exhausted = flagged("01S", "01GA", AttentionReason::Exhausted);
-        assert_eq!(session_reason(&exhausted, &HashSet::new()), None);
-        assert_eq!(
-            session_reason(&exhausted, &HashSet::from(["01S".to_string()])),
-            Some(Reason::Exhausted)
-        );
-        // Naming another session changes nothing for this one.
-        assert_eq!(
-            session_reason(&exhausted, &HashSet::from(["01S2".to_string()])),
-            None
-        );
     }
 
     fn attention_item(
         cause: AttentionCause,
         affected: Vec<(AttentionSubjectKind, &str)>,
     ) -> ariadne_api::attention::AttentionItemDto {
-        use ariadne_api::attention::{AttentionSubjectDto, AttentionTarget};
+        use ariadne_api::attention::{AttentionProducer, AttentionSubjectDto, AttentionTarget};
         ariadne_api::attention::AttentionItemDto {
             id: "01I".into(),
+            producer: AttentionProducer::Recovery,
             cause,
             summary: "a blocker".into(),
             required_action: "clear it".into(),
@@ -584,55 +607,65 @@ pub(crate) mod tests {
         }
     }
 
-    /// Only a `quota` item's session ids gate the board's own `exhausted`
-    /// row — a `resource` item naming a session changes nothing, since that
-    /// cause has no session row to gate in the first place.
+    /// Every task id any recovery item names, whatever its cause — the
+    /// board's own `task_reason` leaves every one of them to the recovery
+    /// section rather than repeating a blanker version of the same row.
     #[test]
-    fn only_quota_items_name_a_recovery_exhausted_session() {
+    fn recovery_affected_task_ids_names_every_cause() {
         let recovery = AttentionListDto {
             items: vec![
                 attention_item(
-                    AttentionCause::Quota,
-                    vec![(AttentionSubjectKind::Session, "01S")],
+                    AttentionCause::Resource,
+                    vec![(AttentionSubjectKind::Task, "01T1")],
                 ),
                 attention_item(
-                    AttentionCause::Resource,
-                    vec![(AttentionSubjectKind::Task, "01T")],
+                    AttentionCause::Unknown,
+                    vec![(AttentionSubjectKind::Task, "01T2")],
+                ),
+                attention_item(
+                    AttentionCause::Quota,
+                    vec![(AttentionSubjectKind::Session, "01S")],
                 ),
             ],
             complete: true,
         };
         assert_eq!(
-            recovery_exhausted_sessions(&recovery),
-            HashSet::from(["01S".to_string()])
+            recovery_affected_task_ids(&recovery),
+            HashSet::from(["01T1".to_string(), "01T2".to_string()])
         );
     }
 
-    /// A resource or configuration item has no goal of its own, so it is
-    /// printed as its own section rather than folded into a goal's board —
-    /// and a `quota` item, which already has a board row, is left out of it.
+    /// Every item `GET /v1/attention` finds is its own section, whatever
+    /// its cause — a `quota` item included, since this board no longer
+    /// derives a session row from the bare `exhausted` flag at all — and
+    /// each line names the cause, how long it has waited, the action that
+    /// clears it, and what it affects.
     #[test]
-    fn recovery_items_other_than_quota_print_as_their_own_section() {
-        let only_quota = AttentionListDto {
+    fn every_recovery_item_prints_in_its_own_section() {
+        let now = NOW.parse::<chrono::DateTime<chrono::Utc>>().unwrap();
+        let recovery = AttentionListDto {
             items: vec![attention_item(
                 AttentionCause::Quota,
                 vec![(AttentionSubjectKind::Session, "01S")],
             )],
             complete: true,
         };
-        assert_eq!(recovery_items_section(&only_quota), None);
-
-        let resource = AttentionListDto {
-            items: vec![attention_item(
-                AttentionCause::Resource,
-                vec![(AttentionSubjectKind::Task, "01T")],
-            )],
-            complete: true,
-        };
-        let section = recovery_items_section(&resource).expect("a resource item has a section");
+        let section = recovery_items_section(&recovery, now).expect("a quota item has a section");
+        assert!(section.contains("[quota]"), "{section}");
         assert!(section.contains("a blocker"), "{section}");
         assert!(section.contains("clear it"), "{section}");
-        assert!(section.contains("01T"), "{section}");
+        assert!(section.contains("01S"), "{section}");
+
+        assert_eq!(
+            recovery_items_section(
+                &AttentionListDto {
+                    items: Vec::new(),
+                    complete: true
+                },
+                now
+            ),
+            None
+        );
     }
 
     /// The three stamps the UI ages a session row by, in its order.
@@ -752,6 +785,24 @@ pub(crate) mod tests {
             .flat_map(|group| rows(group, &titles, now))
             .collect();
         assert_eq!(quiet_lines(&all), "01T2\n01T1\n01S1");
+    }
+
+    /// `-q` is the ids of every recovery item too, not only the per-goal
+    /// board's: a configuration-only blocker has no goal of its own, so it
+    /// would otherwise print nothing under `-q` while the table still
+    /// showed it.
+    #[test]
+    fn quiet_rows_also_names_every_recovery_item() {
+        let attention = group(Vec::new(), Vec::new(), Vec::new(), &HashSet::new());
+        let recovery = AttentionListDto {
+            items: vec![attention_item(
+                AttentionCause::Configuration,
+                vec![(AttentionSubjectKind::Repository, "01R")],
+            )],
+            complete: true,
+        };
+        let rows = quiet_rows(&attention, &HashMap::new(), chrono::Utc::now(), &recovery);
+        assert_eq!(quiet_lines(&rows), "01I");
     }
 
     /// The daemon answers `GET /v1/sessions` with a page object, not a bare

@@ -4652,6 +4652,7 @@
         "description": "One item on the Needs attention list.",
         "required": [
           "id",
+          "producer",
           "cause",
           "summary",
           "required_action",
@@ -4673,6 +4674,9 @@
           "id": {
             "type": "string",
             "description": "Stable across a restart and across the same cause recurring: derived\nfrom the cause and what it shares rather than issued fresh, so the\nsame blocker is the same row for as long as it stands."
+          },
+          "producer": {
+            "$ref": "#/components/schemas/AttentionProducer"
           },
           "required_action": {
             "type": "string",
@@ -4710,6 +4714,15 @@
             }
           }
         }
+      },
+      "AttentionProducer": {
+        "type": "string",
+        "description": "Which producer raised an item — distinct from [`AttentionCause`], since\na cause describes *why* a blocker exists and a later producer (an\nagent's own request, a pull request's next step) may share none of\nrecovery's causes, or raise `unknown` for a reason a client still needs\nto tell apart from recovery's.",
+        "enum": [
+          "recovery",
+          "agent_request",
+          "pull_request"
+        ]
       },
       "AttentionReason": {
         "type": "string",

@@ -226,7 +226,7 @@ the query cache and it stays live.
 |---|---|
 | `goal_created` | patch `goals.detail`, invalidate `goals.lists` |
 | `goal_updated` | patch `goals.detail`, invalidate `goals.lists` and `stats.all` |
-| `goal_deleted` | remove `goals.detail`, invalidate `goals.lists` and every task and session key |
+| `goal_deleted` | remove `goals.detail`, invalidate `goals.lists`, every task and session key, and `attention.lists` |
 | `task_created` | patch `tasks.detail`, invalidate `tasks.lists` |
 | `task_updated` | patch `tasks.detail`, invalidate `tasks.lists`, `stats.all` and `attention.lists`; a transition on the event also invalidates `tasks.transitions` and `tasks.diff` — a transition can be the task landing, and the diff answers for the merge commit once there is one |
 | `task_branch_updated` | invalidate `tasks.diff` for the task — a commit in the author's worktree, with nothing about the task row itself changed |
@@ -240,7 +240,7 @@ the query cache and it stays live.
 | `workflow_deleted` | remove `workflows.detail`, invalidate `workflows.lists` |
 | `repository_created` | patch `repositories.detail`, invalidate `repositories.lists` |
 | `repository_updated` | the same, plus every goal key — goals carry their repositories inline — and `attention.lists`, a forge fetch error being a configuration recovery item's own evidence |
-| `repository_deleted` | remove `repositories.detail`, invalidate `repositories.lists` |
+| `repository_deleted` | remove `repositories.detail`, invalidate `repositories.lists` and `attention.lists` |
 | `ai_permissions_updated` | patch `permissions.ai()` whole — the one settings row, no list beside it |
 | `forge_settings_updated` | patch `forge.tunnel()` whole — the tunnel switch and state, no list beside it |
 | `pull_requests_changed` | invalidate every `pullRequests` key — requests are read live off the forge, so the event carries none |

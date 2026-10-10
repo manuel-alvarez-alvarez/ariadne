@@ -51,18 +51,17 @@ function attentionListQueryOptions() {
 }
 
 /**
- * Session ids a `quota` item names: a model exhausted with no automatic
- * switch left to try. The bare `exhausted` flag on a session is not enough
- * on its own — automatic switching may still clear it on the very next
- * tick — so a row for it is raised only once the daemon's own producer has
- * said recovery has nothing left (009's attention contract).
+ * Every task id a recovery item's `affected` list already names, whatever
+ * its cause: the task's own `failed`/`stalled` row would say the same
+ * thing a second time, generic where the recovery item is specific — so
+ * `collectAttention` leaves those tasks to the recovery item's own row
+ * entirely.
  */
-function recoveryExhaustedSessions(recovery: AttentionListDto | undefined): Set<string> {
+function recoveryAffectedTaskIds(recovery: AttentionListDto | undefined): Set<string> {
   const ids = new Set<string>()
   for (const item of recovery?.items ?? []) {
-    if (item.cause !== "quota") continue
     for (const subject of item.affected) {
-      if (subject.kind === "session") ids.add(subject.id)
+      if (subject.kind === "task") ids.add(subject.id)
     }
   }
   return ids
@@ -155,6 +154,18 @@ interface Attention {
   refetch: () => void
 }
 
+/**
+ * A synthetic error for the one case that is not a query failure: the
+ * recovery producer answered 200 but said `complete: false`. Folded into
+ * the same `error`/`partial` path every other failure already takes, so an
+ * empty board under an incomplete read is never read as "nothing needs
+ * attention" (009) without a second code path to keep in step with the
+ * first.
+ */
+const INCOMPLETE_RECOVERY_READ = new Error(
+  "the recovery producer could not read all of its evidence",
+)
+
 export function useAttention(): Attention {
   const goals = useQuery(goalsQueryOptions())
   const tasks = useQuery(taskListQueryOptions())
@@ -178,7 +189,12 @@ export function useAttention(): Attention {
     [goals.data, tasks.data, sessions.data, recovery.data],
   )
 
-  const error = goals.error ?? tasks.error ?? sessions.error ?? recovery.error
+  const error =
+    goals.error ??
+    tasks.error ??
+    sessions.error ??
+    recovery.error ??
+    (recovery.data?.complete === false ? INCOMPLETE_RECOVERY_READ : null)
 
   return {
     items,
@@ -220,7 +236,7 @@ function collectAttention(
 ): AttentionItem[] {
   const goalsById = new Map((goals ?? []).map((goal) => [goal.id, goal]))
   const tasksById = new Map((tasks ?? []).map((task) => [task.id, task]))
-  const recoveryExhausted = recoveryExhaustedSessions(recovery)
+  const recoveryTasks = recoveryAffectedTaskIds(recovery)
   /** Keyed by what identifies a row, which is what folds the two kinds. */
   const rows = new Map<string, AttentionItem>()
   /**
@@ -231,6 +247,10 @@ function collectAttention(
   const flaggedAt = new Map<string, string>()
 
   for (const task of tasks ?? []) {
+    // A task a recovery item already names is that item's row to carry,
+    // with the cause and the action this board's generic `failed` does
+    // not — not a second, blanker row here.
+    if (recoveryTasks.has(task.id)) continue
     const reason = taskAttentionReason(task)
     if (!reason) continue
     rows.set(task.id, {
@@ -249,10 +269,11 @@ function collectAttention(
   for (const session of sessions ?? []) {
     const reason = sessionAttention(session)
     if (!reason) continue
-    // `exhausted` alone is not enough: automatic model switching may still
-    // clear it on the very next tick, so this row is raised only once the
-    // daemon's own recovery producer has said there is nothing left to try.
-    if (reason === "exhausted" && !recoveryExhausted.has(session.id)) continue
+    // `exhausted` is never a row of its own here: automatic switching may
+    // still clear the bare flag on the very next tick, and whether it is
+    // still worth a person's time is the recovery producer's own `quota`
+    // item to say, read below with every other cause.
+    if (reason === "exhausted") continue
     const at = sessionAttentionAt(session)
     const taskId = session.task_id ?? null
     const key = taskId ?? session.id
@@ -279,11 +300,11 @@ function collectAttention(
     })
   }
 
-  // Every recovery item with no session row to land on — `quota` always has
-  // one, by construction of `recoveryExhausted` above; a machine resource or
-  // a daemon configuration blocker belongs to no goal and is its own row.
+  // Every recovery item is its own row, whatever its cause: none of them
+  // belongs to one goal the way a task or a loose session's row does, and
+  // a `quota` item's own summary, action and target say more than this
+  // board could derive from the bare `exhausted` flag alone.
   for (const item of recovery?.items ?? []) {
-    if (item.cause === "quota") continue
     rows.set(item.id, {
       id: item.id,
       goalId: "",
@@ -490,4 +511,16 @@ export function attentionDetail(item: AttentionItem): string {
   }
   const reason = item.taskReason
   return `Task · ${reason === "stalled" ? STALLED_META.hint : TASK_STATUS_META.failed.hint}`
+}
+
+/**
+ * What a recovery row's blocker affects, as one line of labels — null for
+ * every other row, which already names its one task or session in the
+ * subject. A grouped item (a model exhausted on three sessions, a machine
+ * resource shortage across two tasks) would otherwise say only the first
+ * of them.
+ */
+export function attentionAffected(item: AttentionItem): string | null {
+  if (!item.recovery || item.recovery.affected.length === 0) return null
+  return item.recovery.affected.map((subject) => subject.label).join(", ")
 }

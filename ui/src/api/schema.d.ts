@@ -1903,6 +1903,7 @@ export interface components {
              *     same blocker is the same row for as long as it stands.
              */
             id: string;
+            producer: components["schemas"]["AttentionProducer"];
             /** @description The one action that clears this item. */
             required_action: string;
             /** @description When this blocker was first observed, RFC 3339. */
@@ -1921,6 +1922,15 @@ export interface components {
             complete: boolean;
             items: components["schemas"]["AttentionItemDto"][];
         };
+        /**
+         * @description Which producer raised an item — distinct from [`AttentionCause`], since
+         *     a cause describes *why* a blocker exists and a later producer (an
+         *     agent's own request, a pull request's next step) may share none of
+         *     recovery's causes, or raise `unknown` for a reason a client still needs
+         *     to tell apart from recovery's.
+         * @enum {string}
+         */
+        AttentionProducer: "recovery" | "agent_request" | "pull_request";
         /**
          * @description Why a live agent session needs the user's attention.
          *

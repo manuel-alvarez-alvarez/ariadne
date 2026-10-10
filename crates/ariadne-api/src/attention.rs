@@ -46,6 +46,23 @@ pub enum AttentionSubjectKind {
     Repository,
 }
 
+/// Which producer raised an item — distinct from [`AttentionCause`], since
+/// a cause describes *why* a blocker exists and a later producer (an
+/// agent's own request, a pull request's next step) may share none of
+/// recovery's causes, or raise `unknown` for a reason a client still needs
+/// to tell apart from recovery's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AttentionProducer {
+    /// `crate::attention::recovery` (`ariadne-daemon`): a blocker automatic
+    /// recovery has given up on, or that no retry loop covers at all.
+    Recovery,
+    /// Not produced yet: a session's own question to the user.
+    AgentRequest,
+    /// Not produced yet: a pull request's next step.
+    PullRequest,
+}
+
 /// One entity an item's blocker affects.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct AttentionSubjectDto {
@@ -78,6 +95,7 @@ pub struct AttentionItemDto {
     /// from the cause and what it shares rather than issued fresh, so the
     /// same blocker is the same row for as long as it stands.
     pub id: String,
+    pub producer: AttentionProducer,
     pub cause: AttentionCause,
     /// What is blocked and why, in one line.
     pub summary: String,

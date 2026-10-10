@@ -67,7 +67,7 @@ pub(super) fn group(
     goals: Vec<GoalDto>,
     tasks: Vec<TaskDto>,
     sessions: Vec<SessionEntryDto>,
-    recovery_exhausted: &HashSet<String>,
+    recovery_tasks: &HashSet<String>,
 ) -> Attention {
     let mut goals = goals;
     goals.sort_by(|a, b| b.id.cmp(&a.id));
@@ -88,14 +88,20 @@ pub(super) fn group(
         }
     };
 
+    // A task a recovery item already names is the recovery section's to
+    // show, with the cause and the action this board's generic `failed`
+    // does not carry — not a second, blanker row here.
     for task in tasks {
+        if recovery_tasks.contains(&task.id) {
+            continue;
+        }
         if let Some(reason) = task_reason(&task) {
             let i = index_of(&mut groups, &task.goal_id);
             groups[i].tasks.push(AttentionTask { reason, task });
         }
     }
     for session in sessions {
-        if let Some(reason) = session_reason(&session, recovery_exhausted) {
+        if let Some(reason) = session_reason(&session) {
             // A pull request session works for no goal: its requests are
             // one section of their own.
             let goal_id = match (&session.goal_id, &session.pull_request_id) {
@@ -316,7 +322,10 @@ mod tests {
     }
 
     /// The wording the UI's `SESSION_ATTENTION_META` labels lowercase to,
-    /// which `session ls` and `session inspect` take from here too.
+    /// which `session ls` and `session inspect` take from here too —
+    /// `exhausted` included, since `reason_label` still spells it for those
+    /// two even though this board no longer raises a row for the bare flag
+    /// (`an_exhausted_session_raises_no_row_of_its_own_on_this_board`).
     #[test]
     fn a_flagged_session_row_spells_the_reason_the_ui_spells() {
         let flags = [
@@ -326,27 +335,17 @@ mod tests {
             (AttentionReason::AgentError, "agent error"),
             (AttentionReason::Disconnected, "disconnected"),
             (AttentionReason::Stalled, "stalled"),
-            (AttentionReason::Exhausted, "exhausted"),
         ];
         let sessions: Vec<_> = flags
             .iter()
             .enumerate()
             .map(|(i, (flag, _))| flagged(&format!("01S{i}"), "01GA", *flag))
             .collect();
-        // `exhausted` needs `GET /v1/attention` to have named the session —
-        // the row count of every other flag does not, so this is the one row
-        // whose id is pre-confirmed rather than read off the bare flag.
-        let exhausted_id = sessions
-            .iter()
-            .find(|s| s.attention_reason == Some(AttentionReason::Exhausted))
-            .map(|s| s.id.clone())
-            .expect("one session is flagged exhausted");
-        let recovery_exhausted = HashSet::from([exhausted_id]);
         let g = &group(
             vec![goal("01GA", "A")],
             Vec::new(),
             sessions,
-            &recovery_exhausted,
+            &HashSet::new(),
         )
         .goals[0];
         let rows = rows(g, &HashMap::new(), chrono::Utc::now());
@@ -355,6 +354,23 @@ mod tests {
         for (flag, label) in flags {
             assert_eq!(reason_label(flag), label);
         }
+        assert_eq!(reason_label(AttentionReason::Exhausted), "exhausted");
+    }
+
+    /// `exhausted` is never a row of its own on this board, however it is
+    /// asked: only `GET /v1/attention`'s `quota` item, read in
+    /// `recovery_items_section`, says whether it is still worth a person's
+    /// time.
+    #[test]
+    fn an_exhausted_session_raises_no_row_of_its_own_on_this_board() {
+        let session = flagged("01S", "01GA", AttentionReason::Exhausted);
+        let attention = group(
+            vec![goal("01GA", "A")],
+            Vec::new(),
+            vec![session],
+            &HashSet::new(),
+        );
+        assert!(attention.goals.is_empty());
     }
 
     /// The heading is the goal's title and the same shortened id the UI's
