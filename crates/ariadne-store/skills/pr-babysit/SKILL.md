@@ -16,7 +16,8 @@ request and sends you its news. Handle the news, then end your turn.
 2. Call `get_pull_request` for the branches and checks. Call `list_comments`
    with `unanswered_only`.
 3. Handle each existing thread that asks for a change.
-   - Make the requested change in a new commit. Reply once in that thread.
+   - Make the requested change in a new commit. Run the tests and lint of
+     what changed. Push the branch plainly. Reply once in that thread.
      State the change and the commit.
    - Reply once in the thread when you do not make the change. State why you
      did not make the change.
