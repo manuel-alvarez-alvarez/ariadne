@@ -57,29 +57,11 @@ idle window makes no requests at all.
 | `npm run lint:fix` | Biome, applying safe fixes |
 | `npm run format` | Biome formatter only |
 | `npm run check:unused` | fails on unused declared dependencies, production exports, or non-test source files |
-| `npm run gen:api` | regenerate the API types (below) |
+| `npm run gen:api` | regenerate the API types (see below) |
 | `npm run tauri <cmd>` | the Tauri CLI (`dev`, `build`, `info`, …) |
 
-## Regenerating the API types
-
-`src/api/schema.d.ts` is generated from the daemon's OpenAPI document by
-[openapi-typescript](https://openapi-ts.dev). **Both it and the `openapi.json`
-snapshot it was generated from are committed**, so nothing here needs a running
-daemon to build. Regenerate whenever the daemon's API changes:
-
-```sh
-npm run gen:api                            # live daemon on 127.0.0.1:7676
-npm run gen:api -- http://host:7676        # live daemon elsewhere
-npm run gen:api -- ../some-spec-dump.json  # a spec dump on disk
-```
-
-and commit both files. `openapi.json` is the daemon's verbatim document; one
-normalization happens on the script's own copy before generating: utoipa derives `operationId`
-from the handler function name, so ids collide across tags (`goals::list` and
-`tasks::list` are both `list`), and `scripts/gen-api.mjs` qualifies them with
-their tag — `goals_list`, `tasks_list` — which is what the generated
-`operations` map is keyed by. The `paths` types, which is what the client uses,
-are unaffected.
+Regenerating the API types after a daemon change is covered in
+[`AGENTS.md`](AGENTS.md#regenerating-the-api-types).
 
 ## Keyboard
 
@@ -92,6 +74,7 @@ are unaffected.
 | `G` then `G`/`S`/`K`/`A`/`R` | goals, sessions, skills, agents, repositories |
 | `?` | the cheat sheet: this table, in the app |
 | `Escape` | closes the palette, then the topmost panel |
+| `⌘Esc` / `Ctrl+Esc` | leaves a focused console for the pane or the modal around it |
 
 The two ⌘ chords answer to **either** modifier, on every platform: the app runs
 in a Tauri WebView and in a browser tab, and a chord that silently does nothing

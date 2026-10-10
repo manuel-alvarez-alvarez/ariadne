@@ -14,7 +14,15 @@ npm run check:unused           # dependency, export and source reachability
 ```
 
 Before a commit on `main`, run the whole suite: `npm test`, `npm run
-typecheck`, `npm run lint` and `npm run check:unused`.
+typecheck`, `npm run lint` and `npm run check:unused` — `npm run check` runs
+all four at once.
+
+Touching `ui/src-tauri`: CI runs `cargo fmt --all -- --check` and
+`cargo check`, both from inside `ui/src-tauri` — it is excluded from the root
+cargo workspace (see [Layout](#layout)), so [`crates/AGENTS.md`](../crates/AGENTS.md)'s
+cargo commands never reach it. One root-level step does reach it: `cargo
+machete .`, run from the repository root, reads source and descends into
+`ui/src-tauri` too.
 
 The suite needs no daemon and no agent. The daemon is a stubbed `fetch`, a
 stubbed `EventSource` and a stubbed `WebSocket` (`src/test/`), and a session's
@@ -33,16 +41,19 @@ src/
   events/          the one SSE connection, its dispatcher, the reconnect machinery
   stores/          zustand: settings (daemon URL), stream status
   hooks/           shared hooks (connection state, global shortcuts, focus return)
-  lib/             format, clipboard, keyboard chords
-  routes/          the route table, URL/panel helpers, 404
+  lib/             format, clipboard, keyboard chords, design tokens
+  routes/          the route table, URL/panel helpers, the Stats page, panel
+                   history, and the error and 404 pages
   components/      app shell, sidebar, theme + settings + connection, and the
                    table / form dialog / delete dialog / panel pieces features reuse
+    stats/         each stat family's section, and the tiles / table / chart
+                   pieces they share
     ui/            shadcn/ui primitives
   features/
     command-palette/ ⌘K: search over every entity, plus the actions
     goals/         the goals board (swimlanes, attention strip), the goal panel,
                    and the attention count the shell shows everywhere else
-    tasks/         the task panel: facts, diff, reviews, history
+    tasks/         the task panel: facts, steps, diff, messages, sessions, history
     forge/         the Forge screen: one sidebar entry, its two tabs the
                    pull requests and issues routes below it
     pull-requests/ the Forge tab of the open pull requests — every one, the
@@ -54,29 +65,31 @@ src/
                    terminal pane on the daemon's terminal socket
     models/        the pin picker, the model catalog and the agent summary
     skills/        skills screen: the catalog, and the document each one is
+    workflows/     the Workflows screen: the catalog, the document editor, and
+                   its parsed kanban preview
     repositories/  the registered checkouts goals are created against, their
                    forge integration, and the webhook tunnel switch
                    the settings dialog shows
-    agents/        agents screen: the flags each registry agent is launched with
+    agents/        agents screen: the flags each registry agent is launched
+                   with, and the model catalog each may be staffed on (what
+                   `#/models` redirects onto)
     permissions/   the Permissions screen: Learned (every approval a `learn`
                    or `ai` repository has kept, and one added by hand) and AI
                    (the model's settings behind the `ai` permission mode)
     system/        the daemon-logs drawer and the log stream behind it
   test/            setup, render harness, DTO fixtures and the browser stand-ins
                    the suite shares
-src-tauri/         the Tauri shell (deliberately empty: no commands)
+src-tauri/         the Tauri shell: no commands, only the per-OS webview setup
+                   it needs before it opens (`lib.rs`)
 ```
 
 Every screen renders under one header bar (`components/app-shell.tsx`), not a
 header of its own: the bar's `h1` is the route's `handle.title`, and a
 screen's `PageHeader` (`components/page-header.tsx`) carries no heading at
-all. A screen's `actions` reach that bar through `PageHeaderContext`, which
-`AppShell` provides and `PageHeader` portals its `actions` into — the slot at
-the header's own end, before search, theme and settings. `description` reaches
-the same bar as the tooltip of its title. Outside the shell — every feature
-test mounts its screen on its own — there is no context to portal into, so
-`PageHeader` renders `actions` inline instead, exactly where a test's existing
-query for them already looks.
+all. Its `actions` portal into that bar through `PageHeaderContext`, and its
+`description` becomes the tooltip of the header's title; mounted with no shell
+around it — every feature test mounts its screen on its own — it renders
+`actions` in place instead. See spec 015 ("Behavior") for the full rule.
 
 `ui/src-tauri` is **excluded from the root cargo workspace** (see `exclude` in
 the repository's `Cargo.toml`), so `cargo build --workspace` never builds the
@@ -103,6 +116,27 @@ daemon's `{error: {code, message, details}}` envelope — branch on `error.code`
 not a complete mapping of the document, and `npm run check:unused` fails on an
 alias nothing imports. Add one when a screen needs it.
 
+### Regenerating the API types
+
+`src/api/schema.d.ts` is generated from the daemon's OpenAPI document by
+[openapi-typescript](https://openapi-ts.dev). **Both it and the `openapi.json`
+snapshot it was generated from are committed**, so nothing here needs a running
+daemon to build. Regenerate whenever the daemon's API changes:
+
+```sh
+npm run gen:api                            # live daemon on 127.0.0.1:7676
+npm run gen:api -- http://host:7676        # live daemon elsewhere
+npm run gen:api -- ../some-spec-dump.json  # a spec dump on disk
+```
+
+and commit both files. `openapi.json` is the daemon's verbatim document; one
+normalization happens on the script's own copy before generating: utoipa derives `operationId`
+from the handler function name, so ids collide across tags (`goals::list` and
+`tasks::list` are both `list`), and `scripts/gen-api.mjs` qualifies them with
+their tag — `goals_list`, `tasks_list` — which is what the generated
+`operations` map is keyed by. The `paths` types, which is what the client uses,
+are unaffected.
+
 ## Conventions
 
 ### Query keys
@@ -113,33 +147,46 @@ write a key literal. Every key is `[entity, "list" | "detail", ...]`:
 ```
 ["goals",        "list", filters]   ["goals",    "detail", id]
 ["tasks",        "list", filters]   ["tasks",    "detail", id]
+["tasks",        "detail", id, "messages" | "transitions" | "diff"]
 ["sessions",     "list", filters]   ["sessions", "detail", id]
 ["outside-sessions", "list", filters]
-["skills",       "list", {}]        ["skills",   "detail", name]
+["skills",       "list", filters]   ["skills",   "detail", name]
+["workflows",    "list", {}]        ["workflows", "detail", name]
+["workflows",    "parse", document]
 ["repositories", "list", filters]   ["repositories", "detail", id]
 ["agents",       "list", {}]        ["models",   "list", {}]
+["acp-agents",   "list", {}]
 ["agent-events", "list", filters]
 ["permissions",  "detail", "ai"]  ["forge",    "detail", "tunnel"]
 ["issues",       "list", repository, { assigned }]
 ["pull-requests", "list", filters]  ["pull-requests", "detail", id | "repository:number"]
+["pull-requests", "search", { repo, q }]
 ["learned-permissions", "list", filters] ["learned-permissions", "detail", id]
 ["stats",        "list", family, filter]
 ```
 
-`stats` is one group over the six stat families (`work`, `time`, `spend`,
-`models`, `attention`, `tools`), `[stats, "list", family, { since, repo }]`,
-read through `qk.stats.<family>(filter)`: a task or a session that moves can
-be a fact of any family, so the dispatcher invalidates `qk.stats.all()` whole.
+`workflows.parse` and `pullRequests.search` are the two keys outside the
+`list`/`detail` convention: each caches one derived read — a parsed document,
+a repository's matching requests — that is neither a list nor a detail.
+
+`stats` is one group over the five stat families (`work`, `time`, `spend`,
+`models`, `attention`), `[stats, "list", family, { since, repo }]`, read
+through `qk.stats.<family>(filter)`: a task or a session that moves can be a
+fact of any family, so the dispatcher invalidates `qk.stats.all()` whole.
 
 `permissions.ai()` and `forge.tunnel()` are the keys with no list beside
 them: each is one settings row (`GET /v1/permissions/ai`,
 `GET /v1/forge/tunnel`), not a collection.
 
-The outside-sessions list is the one key with no detail beside it, and the one
-list the daemon pages: its cursor stays out of the key, because the pages of
-one filter are the pages of one infinite query.
+Several keys have no `detail` beside their list: `outsideSessions`, `agents`,
+`models`, `acpAgents`, `agentEvents` and `issues` are each read whole or
+filtered, with nothing the app opens on one id alone.
 
-Sub-resources hang off their detail key: `["tasks", "detail", id, "reviews"]`,
+The outside-sessions list is the one key the daemon pages: its cursor stays
+out of the key, because the pages of one filter are the pages of one infinite
+query.
+
+Sub-resources hang off their detail key: `["tasks", "detail", id, "messages"]`,
 `… "transitions"`, `… "diff"`. Two consequences the event dispatcher
 depends on: invalidating `qk.tasks.lists()` refetches every task list without
 disturbing an open detail view, and invalidating a detail key also invalidates
@@ -170,13 +217,16 @@ the query cache and it stays live.
 | `goal_updated` | patch `goals.detail`, invalidate `goals.lists` and `stats.all` |
 | `goal_deleted` | remove `goals.detail`, invalidate `goals.lists` and every task and session key |
 | `task_created` | patch `tasks.detail`, invalidate `tasks.lists` |
-| `task_updated` | patch `tasks.detail`, invalidate `tasks.lists` and `stats.all`, and `tasks.transitions` when the event carries a transition |
+| `task_updated` | patch `tasks.detail`, invalidate `tasks.lists` and `stats.all`; a transition on the event also invalidates `tasks.transitions` and `tasks.diff` — a transition can be the task landing, and the diff answers for the merge commit once there is one |
+| `task_branch_updated` | invalidate `tasks.diff` for the task — a commit in the author's worktree, with nothing about the task row itself changed |
 | `message_sent` | invalidate `tasks.messages` for the task it is about; a message about the goal itself belongs to no task's channel |
-| `session_created` | patch `sessions.detail`, invalidate `sessions.lists` and `outsideSessions.lists` — a resume adopts an outside row; a session with a `pull_request_id` also invalidates that `pullRequests.detail` and `pullRequests.list`, for its `session_id` |
-| `session_updated` | patch `sessions.detail`, invalidate `sessions.lists` and `stats.all`; a session with a `pull_request_id` also invalidates that `pullRequests.detail` and `pullRequests.list` |
+| `session_created` | patch `sessions.detail`, invalidate `sessions.lists` and `outsideSessions.lists` — a resume adopts an outside row; a session carrying a `pull_request_id` also invalidates that request's `pullRequests.detail` and `pullRequests.lists` |
+| `session_updated` | patch `sessions.detail`, invalidate `sessions.lists` and `stats.all`; a session carrying a `pull_request_id` also invalidates that request's `pullRequests.detail` and `pullRequests.lists` |
 | `agent_event` | invalidate `agentEvents.lists` |
 | `skill_created`, `skill_updated` | patch `skills.detail`, invalidate `skills.lists` |
 | `skill_deleted` | remove `skills.detail`, invalidate `skills.lists` |
+| `workflow_created`, `workflow_updated` | patch `workflows.detail`, invalidate `workflows.lists` |
+| `workflow_deleted` | remove `workflows.detail`, invalidate `workflows.lists` |
 | `repository_created` | patch `repositories.detail`, invalidate `repositories.lists` |
 | `repository_updated` | the same, plus every goal key — goals carry their repositories inline |
 | `repository_deleted` | remove `repositories.detail`, invalidate `repositories.lists` |
@@ -188,34 +238,20 @@ the query cache and it stays live.
 | `learned_permission_deleted` | remove `learnedPermissions.detail`, invalidate `learnedPermissions.lists` |
 
 The daemon has **no replay**: anything that happened while the stream was down
-is simply gone. So both a reconnect and the daemon's `resync` control event
-(sent when this client fell too far behind, just before the daemon hangs up)
-invalidate *everything*. Reconnection itself — capped exponential backoff with
-jitter, closing the old socket before opening a new one — is
-`src/events/reconnecting-stream.ts`, shared with the daemon-log stream;
-`DomainEventStream` adds the protocol and publishes its state through
-`useStreamStore`. A session's console is a WebSocket rather than an
-`EventSource` (see below), and retries on the same backoff.
+is gone. So a reconnect — any open that follows a gap, a first connection that
+only came up after failed attempts included — and the daemon's `resync`
+control event (sent just before it hangs up on a client that fell behind)
+invalidate *everything* (`src/events/stream.test.ts` pins both). Reconnection
+itself — capped exponential backoff with jitter — is
+`src/events/reconnecting-stream.ts`, shared with the daemon-log stream and, on
+the same backoff, a session's console socket; `DomainEventStream` adds the
+protocol and publishes its state through `useStreamStore`.
 
-"Reconnect" here means *any open that follows a gap*, not just an open that
-follows a previous one. A first connection that only came up after a few failed
-attempts — the app launched before the daemon did — is a reconnect too: REST
-queries may have loaded during those seconds, and whatever the daemon published
-in between is unrecoverable. Only a first connection that succeeded straight
-away skips the invalidation. `src/events/stream.test.ts` pins both directions.
-
-An `EventSource` alone is **not** enough to notice a daemon that went away: the
-socket can stay in `OPEN` with no `error` ever firing, and the UI would go
-quietly stale. With `ariadned` that is the normal case, not an edge case — its
-graceful shutdown waits for in-flight requests and an SSE stream never
-finishes, so the connection outlives the daemon that is stopping (the daemon
-only exits once the last stream client disconnects). The daemon therefore says
-so itself: a `heartbeat` control event (`{version, started_at}`) on open and
-every 15 idle seconds. That cadence arms the stream's **idle budget** — 2.5
-beats, re-armed by every frame whatever it carried — and a longer silence
-calls `forceReconnect`. It is the one timer the client keeps, and the only
-thing standing between a dead daemon and a screen that looks fine; the Retry
-button in the connection banner is the same call, made by hand.
+An `EventSource` can sit `OPEN` with no `error` while the daemon is gone, so
+the stream keeps the one timer the client has: an **idle budget**, re-armed by
+every frame including the daemon's own `heartbeat` (sent on open and every 15
+idle seconds), that calls `forceReconnect` after 2.5 missed beats. The Retry
+button in the connection banner makes the same call by hand.
 
 The heartbeat is also who the UI is talking to: `useStreamStore` keeps what the
 last one said, and that is where the footer's daemon version and uptime come
@@ -266,43 +302,37 @@ one line, and a file that mounted one said less about its feature than the line
 it held. What the header calls a screen rides on the route's own `handle`.
 
 Screens with URLs of their own — `#/goals`, `#/sessions`, `#/skills`,
-`#/agents`, `#/permissions`, `#/repositories`, `#/stats`, and the Forge
-screen's two tabs, `#/forge/pull-requests` and `#/forge/issues` (`#/forge`
-opens the first) — and `#/` redirects onto the board. The Stats screen is `src/routes/stats.tsx`, and
-each stat family is a section of it, `src/components/stats/<family>-section.tsx`,
-drawn through the shared `StatSection`, `StatTiles`, `StatTable`,
-`StatTimeChart` and `StatBarChart` beside it.
+`#/workflows`, `#/agents`, `#/permissions`, `#/repositories`, `#/stats`, and
+the Forge screen's two tabs, `#/forge/pull-requests` and `#/forge/issues`
+(`#/forge` opens the first) — and `#/` redirects onto the board. `#/models`
+redirects onto `#/agents`, which folded the model catalog in; `#/tasks`
+redirects the same way onto the board. The Stats screen is
+`src/routes/stats.tsx`, and each stat family is a section of it,
+`src/components/stats/<family>-section.tsx`, drawn through the shared
+`StatSection`, `StatTiles`, `StatTable`, `StatTimeChart` and `StatBarChart`
+beside it.
 Goals, tasks and sessions have no pages: their details occupy one **floating pane** driven by
 search params (`?goal=` on the board, `?task=` over any screen, `?session=` for
 a session's own panel, `?tab=sessions&session=` for a session inside a goal's or
-a task's panel), which `src/components/detail-panels.tsx` reads. The old
-`#/goals/:goalId` and `#/tasks/:taskId` deep links survive as redirects onto the
-board with the panel open.
+a task's panel, `?pr=` for a pull request's panel, `?skill=` and `?workflow=`
+for the selected row on their own screens, `?focus=` for a control a link asks
+the panel it opens to hand the keyboard to), which `src/components/detail-panels.tsx`
+reads. The old `#/goals/:goalId` and `#/tasks/:taskId` deep links survive as
+redirects onto the board with the panel open.
 
 The pane floats over the screen at the window's right edge, so `<main>` keeps
 its full width and layout behind it; the shell mounts `DetailPanels` outside
-its row. A scrim covers the screen, and a click on it closes the pane through
-the same `onClose` as the close button. Tab stays inside the pane while it is
-open. The pane slides in from the right and the scrim fades in; the global
-reduced-motion rule in `src/index.css` stops both. Below `md` the pane covers
-the screen at full width. `DockedPane` renders the close button
-(`aria-label="Close"`) above its children, as the pane's first tab stop, so a
-panel renders no close control of its own. The left handle resizes the pane
-from 24rem to 60% of the window, by pointer or keyboard. A drag keeps its
-width in component state and writes the settings store once, on release; a
-double-click resets the width to the 36rem default.
-`PanelSheet` owns close decisions and focus return, over `ui/docked-pane.tsx`.
-It opens a panel on its first control after the close button.
-The pane holds one panel at a time: a task opened from a goal replaces the
-goal's panel rather than stacking on it, carrying a breadcrumb back that
-reopens the goal in its place. Session drill-downs replace the panel outright,
-header and tabs included. Escape within the pane closes it outright — the
-current task, goal or standalone session, through the existing history
-helpers, never back to a goal a task replaced; Escape on the board does
-nothing to it. Modal portals own their own Escape. Headers do not shrink.
-`PaneBody` takes the remaining height and scrolls, with one `h-full` child to
-give a session view its height. Keep `ui/sheet.tsx` for modal drawers and the
-learned-permission detail.
+its row, and a scrim's click closes it the same as the close button does. See
+spec 015 ("Behavior") for the exact width range, defaults and motion a change
+here must keep. `PanelSheet` owns close decisions and focus return, over
+`ui/docked-pane.tsx`, and opens a panel on its first control after the close
+button. The pane holds one panel at a time: a task opened from a goal
+replaces the goal's panel rather than stacking on it, carrying a breadcrumb
+back that reopens the goal in its place, and session drill-downs replace the
+panel outright, header and tabs included. Escape within the pane closes it
+outright — never back to a goal a task replaced — and does nothing on the
+board; modal portals own their own Escape. Keep `ui/sheet.tsx` for modal
+drawers and the learned-permission detail.
 
 **The sessions screen is the one exception**, and the only place a param means
 two things: there `?goal=` and `?task=` are what the *list* is narrowed to — the
@@ -323,8 +353,9 @@ built on them — `sessionTerminalFrom`, `taskSessionPanelFrom`, and
 correctly from every screen it is carried onto.
 
 Link with the helpers in `src/routes/paths.ts` (`paths.goal`, `taskPanelFrom`,
-`sessionPanelFrom`, `panelSessionTo`, …) rather than hand-written paths, so a
-panel opened from a list keeps the screen and the filters behind it.
+`sessionPanelFrom`, `usePanelSessionTo`, `usePanelSessionNavigation`, …) rather
+than hand-written paths, so a panel opened from a list keeps the screen and
+the filters behind it.
 
 A **hash router** is used on purpose: in a packaged build the frontend is served
 straight off Tauri's asset protocol with no history fallback, so a reload on a
@@ -345,9 +376,11 @@ two layers at once.
 `?` is the one typed chord `isBareKey` cannot guard, since Shift is how the
 character is typed on most layouts: `matchesHelpKey` matches the character the
 keyboard produced instead. It opens `src/components/keyboard-shortcuts-dialog.tsx`,
-whose rows are `SHORTCUT_HELP` — built from the chords the shell binds, in this
-table's order, so the sheet cannot fall behind them. "Keyboard shortcuts" in the
-palette opens the same sheet.
+whose rows are `SHORTCUT_HELP` — built from `SCREEN_SHORTCUTS` and the other
+chords the shell binds, in the order it declares them, so the sheet cannot
+fall behind them. `ui/README.md`'s keyboard table is kept by hand: match it to
+`SHORTCUT_HELP`, row for row, in the same order, when a chord changes.
+"Keyboard shortcuts" in the palette opens the same sheet.
 
 The palette (`src/features/command-palette/`) leads with **Needs attention** —
 the attention list's own rows (`features/goals/attention.ts`), which decide
