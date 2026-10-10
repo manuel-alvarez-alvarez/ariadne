@@ -312,7 +312,7 @@ pub const PULL_REQUEST_PLACEHOLDERS: [&str; 10] = [
 /// made *with* the user — the orchestrator is the one seat that talks to
 /// them — it writes no code, and a point it cannot settle goes to the user
 /// rather than being decided alone.
-const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"Plan one goal with the user. Never write code. Ask the user where blocked. After a question, end your turn. Do not poll `read_messages`. Ariadne delivers the answer as a new turn."#;
+const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"Never write code. Call `request_user_input` when blocked. Never use it for agent questions. End the turn after a question. Do not poll `read_messages`; Ariadne sends the answer."#;
 
 /// The one task seat text: what the agent of a column owes, whatever the
 /// column is. The work of the column is its skills'; the two step calls
@@ -322,7 +322,7 @@ const AGENT_SYSTEM_PROMPT: &str = r#"Work only in the task's shared worktree, on
 2. Complete the step with `complete_step` and a reason that briefs the next agent.
 3. Return work with `fail_step` and a reason that tells the previous agent what to fix.
 4. Call `fail_task` if the task cannot be done.
-5. Ask only where the task cannot continue without an answer.
+5. Call `request_user_input` only where the task cannot continue without a user answer. Do not use it for agent questions.
 6. End your turn after a step call or a question. Do not poll."#;
 
 /// First briefing of a column's agent: the task, the column, the values its

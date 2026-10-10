@@ -42,6 +42,7 @@ fn permission_request() -> serde_json::Value {
         "session_id": "stub-session",
         "tool_name": "Bash",
         "tool_input": {"command": "touch /tmp/probe"},
+        "waiting": true,
         "options": [{"optionId": "yes", "name": "Allow", "kind": "allow_once"}],
     })
 }

@@ -4,11 +4,334 @@
 use ariadne_api::attention::{
     AttentionCause, AttentionListDto, AttentionProducer, AttentionSubjectKind,
 };
+use ariadne_api::stream::DomainEvent;
 use ariadne_core::{Actor, AttentionReason, Seat, SessionStatus, TaskStatus};
 use ariadne_store::NewSession;
 
 use crate::common::test_pin;
-use crate::common::{Harness, TIMEOUT, eventually, harness, with_forge};
+use crate::common::{Harness, TIMEOUT, as_session, eventually, harness, next_event, with_forge};
+
+/// An agent question is explicit evidence, so punctuation and an idle turn
+/// cannot create this row. The item keeps the session console as its target.
+#[tokio::test]
+async fn an_explicit_agent_question_opens_its_own_console_until_answered() {
+    let h = harness().await;
+    let session = h.lone_session("question").await;
+    let _: serde_json::Value = h
+        .json(
+            as_session(
+                &format!("/v1/sessions/{}/agent-requests", session.id),
+                &session.id,
+                serde_json::json!({"summary": "Which base branch should I use?"}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 1);
+    assert_eq!(list.items[0].producer, AttentionProducer::AgentRequest);
+    assert_eq!(list.items[0].summary, "Which base branch should I use?");
+    assert_eq!(
+        list.items[0].target,
+        ariadne_api::attention::AttentionTarget::Console {
+            session_id: session.id.clone()
+        }
+    );
+    let _: Vec<ariadne_api::events::AgentEventDto> =
+        h.get(&format!("/v1/sessions/{}/console", session.id)).await;
+    let still_pending: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(still_pending.items.len(), 1);
+    h.agent_runs(&session).await;
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &format!("/v1/sessions/{}/console/input", session.id),
+            serde_json::json!({"text": "main"}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    let answered: AttentionListDto = h.get("/v1/attention").await;
+    assert!(answered.items.is_empty());
+}
+
+/// A column agent's explicit question belongs to that worker, not to the
+/// orchestrator that planned its task.
+#[tokio::test]
+async fn a_worker_question_targets_the_workers_console() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    h.store
+        .transition_task(&cast.task.id, TaskStatus::Ready, Actor::Daemon, None, None)
+        .await
+        .unwrap();
+    h.store
+        .transition_task(
+            &cast.task.id,
+            TaskStatus::InProgress,
+            Actor::Daemon,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let worker = h.agent_session(&cast, "develop").await;
+    let _: serde_json::Value = h
+        .json(
+            as_session(
+                &format!("/v1/sessions/{}/agent-requests", worker.id),
+                &worker.id,
+                serde_json::json!({"summary": "Which API version applies?"}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(
+        list.items[0].target,
+        ariadne_api::attention::AttentionTarget::Console {
+            session_id: worker.id
+        }
+    );
+}
+
+#[tokio::test]
+async fn a_repeated_question_is_one_attention_item() {
+    let h = harness().await;
+    let session = h.lone_session("duplicate-question").await;
+    let path = format!("/v1/sessions/{}/agent-requests", session.id);
+    for _ in 0..2 {
+        let _: serde_json::Value = h
+            .json(
+                as_session(
+                    &path,
+                    &session.id,
+                    serde_json::json!({"summary": "Choose a branch."}),
+                ),
+                axum::http::StatusCode::OK,
+            )
+            .await;
+    }
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 1);
+}
+
+#[tokio::test]
+async fn agent_messages_and_idle_turns_raise_no_agent_request() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    let sender = h.agent_session(&cast, "review").await;
+    let receiver = h.agent_session(&cast, "develop").await;
+
+    let _: serde_json::Value = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/messages", cast.task.id),
+                &sender.id,
+                serde_json::json!({
+                    "to_actor": "agent",
+                    "to_agent_id": cast.develop().id,
+                    "body": "Please check the current branch.",
+                }),
+            ),
+            axum::http::StatusCode::CREATED,
+        )
+        .await;
+    h.ingest(&receiver, "session_end", serde_json::json!({}))
+        .await;
+
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert!(list.items.is_empty());
+}
+
+#[tokio::test]
+async fn answering_or_withdrawing_one_request_keeps_the_others() {
+    let h = harness().await;
+    let first = h.lone_session("first-request").await;
+    let second = h.lone_session("second-request").await;
+    let create = |session: &ariadne_store::AgentSession, summary: &str| {
+        as_session(
+            &format!("/v1/sessions/{}/agent-requests", session.id),
+            &session.id,
+            serde_json::json!({"summary": summary}),
+        )
+    };
+    let first_id: serde_json::Value = h
+        .json(create(&first, "First question"), axum::http::StatusCode::OK)
+        .await;
+    let _: serde_json::Value = h
+        .json(
+            create(&first, "Second question"),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    let _: serde_json::Value = h
+        .json(
+            create(&second, "Other session question"),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+
+    h.agent_runs(&first).await;
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &format!("/v1/sessions/{}/console/input", first.id),
+            serde_json::json!({"text": "the answer"}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 2);
+
+    let second_id: serde_json::Value = h
+        .json(create(&first, "Third question"), axum::http::StatusCode::OK)
+        .await;
+    let request_id = second_id["id"].as_str().unwrap();
+    let (status, _) = h
+        .send(as_session(
+            &format!("/v1/sessions/{}/agent-requests/{request_id}", first.id),
+            &first.id,
+            serde_json::json!({}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 2);
+    assert!(
+        list.items
+            .iter()
+            .any(|item| item.summary == "Second question")
+    );
+    assert!(
+        list.items
+            .iter()
+            .any(|item| item.summary == "Other session question")
+    );
+    assert_ne!(first_id["id"], second_id["id"]);
+}
+
+#[tokio::test]
+async fn permission_events_only_create_items_while_waiting_for_a_person() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    let waiting = h.agent_session(&cast, "develop").await;
+    h.ingest(
+        &waiting,
+        "permission_request",
+        serde_json::json!({"waiting": true}),
+    )
+    .await;
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 1);
+    assert_eq!(list.items[0].producer, AttentionProducer::AgentRequest);
+    assert_eq!(
+        list.items[0].target,
+        ariadne_api::attention::AttentionTarget::Console {
+            session_id: waiting.id
+        }
+    );
+
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    let automatic = h.agent_session(&cast, "develop").await;
+    h.ingest(
+        &automatic,
+        "permission_request",
+        serde_json::json!({"waiting": false}),
+    )
+    .await;
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert!(list.items.is_empty());
+}
+
+#[tokio::test]
+async fn another_session_cannot_create_or_withdraw_a_request() {
+    let h = harness().await;
+    let owner = h.lone_session("request-owner").await;
+    let other = h.lone_session("request-other").await;
+    let path = format!("/v1/sessions/{}/agent-requests", owner.id);
+    let created: serde_json::Value = h
+        .json(
+            as_session(
+                &path,
+                &owner.id,
+                serde_json::json!({"summary": "Owner question"}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    let (status, _) = h
+        .send(as_session(
+            &path,
+            &other.id,
+            serde_json::json!({"summary": "Intrusion"}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
+    let (status, _) = h
+        .send(as_session(
+            &format!("{}/{}", path, created["id"].as_str().unwrap()),
+            &other.id,
+            serde_json::json!({}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn agent_request_changes_publish_session_updated() {
+    let h = harness().await;
+    let session = h.lone_session("request-events").await;
+    let path = format!("/v1/sessions/{}/agent-requests", session.id);
+    let mut events = h.bus.subscribe();
+    let _: serde_json::Value = h
+        .json(
+            as_session(&path, &session.id, serde_json::json!({"summary": "First"})),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    next_event(
+        &mut events,
+        |event| matches!(&event.event, DomainEvent::SessionUpdated(row) if row.id == session.id),
+    )
+    .await;
+    h.agent_runs(&session).await;
+    let mut events = h.bus.subscribe();
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &format!("/v1/sessions/{}/console/input", session.id),
+            serde_json::json!({"text": "answer"}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    next_event(
+        &mut events,
+        |event| matches!(&event.event, DomainEvent::SessionUpdated(row) if row.id == session.id),
+    )
+    .await;
+    let created: serde_json::Value = h
+        .json(
+            as_session(&path, &session.id, serde_json::json!({"summary": "Second"})),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    let mut events = h.bus.subscribe();
+    let (status, _) = h
+        .send(as_session(
+            &format!("{}/{}", path, created["id"].as_str().unwrap()),
+            &session.id,
+            serde_json::json!({}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    next_event(
+        &mut events,
+        |event| matches!(&event.event, DomainEvent::SessionUpdated(row) if row.id == session.id),
+    )
+    .await;
+}
 
 /// Confirm, directly through the store's own persisted evidence, that this
 /// goal's orchestrator has had a turn on exactly this task's current

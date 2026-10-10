@@ -34,13 +34,13 @@ bare flag.
 In: the shared item shape, `GET /v1/attention`, the producer registry
 (`crate::attention` in `ariadne-daemon`), and the first complete producer —
 recovery — which covers a model's quota, every task the daemon will never
-retry on its own, and a forge CLI missing from the daemon's PATH.
+retry on its own, a forge CLI missing from the daemon's PATH, explicit agent
+questions, and pending human permission requests.
 
 Out: the recovery semantics themselves — the auto-switch ladder, the
 spawn-retry budget, the watchdog thresholds — which are 009's. An agent's
-own request and a pull request's next step, which stay on the question and
-pull-request surfaces (009, 026, 029) until a later task gives their own
-producers (registered already, empty — rule 10) their eligibility rules.
+own request's recovery semantics and a pull request's next step, which remain
+with their own subsystems (009, 026, 029).
 
 ## Behavior
 
@@ -389,18 +389,40 @@ producers (registered already, empty — rule 10) their eligibility rules.
 10. Registering a further producer is adding its own module beside
     `recovery` (`crate::attention::<name>`) and a call to it from
     `crate::attention::collect`; nothing about the route or the DTO
-    changes to add one. `agent_requests` and `pull_requests` are
-    registered already, each answering an empty list, so the route a
-    later task's producer and client migration need already compiles and
-    runs; the question and pull-request eligibility rules themselves, and
-    migrating the client behavior they already carry onto this route, are
-    out of this spec's scope (see Scope).
+    changes to add one. `pull_requests` remains empty until its eligibility
+    rules land.
+11. An agent creates a question only with `request_user_input`; punctuation,
+    idle turns, and agent messages create none. A repeated pending summary is
+    one request, and each request targets its session console.
+12. Console input answers the oldest request of that session. Withdrawal
+    answers only its named request. A pending human permission is an item;
+    an automatic decision is not. Each request change publishes
+    `session_updated`.
 
 ## Acceptance criteria
 
 - The route answers an empty, complete list when nothing is stuck, and is
   in the API document under the `attention` tag
   (`attention.rs::an_empty_daemon_answers_an_empty_complete_list`).
+- Explicit questions target their orchestrator or worker console, survive a
+  console read, and resolve through console input
+  (`attention.rs::an_explicit_agent_question_opens_its_own_console_until_answered`,
+  `::a_worker_question_targets_the_workers_console`).
+- Agent messages and idle turns do not create requests
+  (`attention.rs::agent_messages_and_idle_turns_raise_no_agent_request`), and
+  repeating a pending question remains one item
+  (`attention.rs::a_repeated_question_is_one_attention_item`).
+- Answering or withdrawing one request preserves independent requests,
+  including one in another session
+  (`attention.rs::answering_or_withdrawing_one_request_keeps_the_others`),
+  and another session cannot create or withdraw its request
+  (`attention.rs::another_session_cannot_create_or_withdraw_a_request`).
+- A waiting permission targets its session console, while an automatic
+  permission creates no item
+  (`attention.rs::permission_events_only_create_items_while_waiting_for_a_person`,
+  `classify.rs::an_automatic_permission_request_raises_no_attention`).
+- Creating, answering, and withdrawing a request each publish
+  `session_updated` (`attention.rs::agent_request_changes_publish_session_updated`).
 - A task failed on the descriptor-limit words is a `resource` item naming
   that task (`attention.rs::a_descriptor_limit_failure_is_a_resource_item`),
   two tasks sharing the same words are one grouped item
@@ -611,10 +633,8 @@ producers (registered already, empty — rule 10) their eligibility rules.
 
 ## Known gap
 
-- `agent_requests` and `pull_requests` are registered producer modules
-  that answer empty: the question and pull-request eligibility rules this
-  route was built for, and migrating the client behavior that already
-  covers them onto it, are a later task's.
+- `pull_requests` is a registered producer module that answers empty until
+  a later task gives its request eligibility rules.
 
 ## Sources
 
