@@ -34,13 +34,22 @@ answer in a thread you opened. Do one round, then end your turn.
      once to say so and why.
    - Still there, and not answered: post nothing in it. Wait for an answer.
 8. Write the review `body`: the whole summary as it is now. Ariadne keeps
-   one summary comment and puts this text in it, so write all of it:
-   - The commit range you reviewed, from the base to the head.
-   - The state: "Changes requested" while a P0 is open, "Changes
-     recommended" while a P1 or P2 is open, else "No findings".
-   - The count of each open priority, then one line per open finding with
-     its priority and title.
-   Name no file, line or detail, and nothing of what you did.
+   one summary comment and puts this text in it, so write all three parts:
+   - Header: one line per commit the round reviewed, read with `git log`
+     in your worktree. Give each commit its short sha and subject. Use
+     `git log <base>..HEAD` on the first round, and `git log
+     <reviewed_sha>..HEAD` later. Keep the full base-to-head range on its
+     own line too.
+   - Summary: one short paragraph of prose, not bullets. Say what the
+     change does, where its risk sits, and how serious it is. Name each
+     open finding's priority and title in the prose.
+   - Recommendation: one line that follows from the open findings:
+     - A P0 is open: say "Request changes", and name the P0 findings
+       that block it.
+     - A P1 or P2 is open, with no P0: say "Changes recommended", and
+       name what to fix before it lands.
+     - Nothing is open: say "No findings: ready for a human to approve".
+   Name no file or line, and nothing of what you did.
 9. Call `submit_review` once, with the body and only the new comments. Set
    `event` to `request_changes` while a P0 is open. Else set it to `comment`.
 10. Call `report_pull_request` with `reviewed_sha` set to the head you
@@ -61,8 +70,8 @@ answer in a thread you opened. Do one round, then end your turn.
 
 ## Do not tell yourself
 
-- "One summary with every finding is easier to read." -> Each finding is a
-  comment on its line. The summary only counts and names them.
+- "A bullet list reads easier than prose." -> Bullets lose how the
+  findings tie together. Write prose that connects them.
 - "The reader wants to know what I checked." -> The summary is a verdict.
   What you did is no finding.
 - "Nobody answered, so I say it again." -> The thread waits for an answer.
@@ -72,6 +81,7 @@ answer in a thread you opened. Do one round, then end your turn.
 ## Done
 
 Each answered thread has one reply, and each fixed one is resolved. The
-summary names the range, the state and each open finding. Each new finding
-is one inline comment with a title, the failure and a fix. Your turn has
-ended.
+summary has a header of the commits reviewed, a prose paragraph on the
+change and its risk, and a recommendation that names the open findings.
+Each new finding is one inline comment with a title, the failure and a
+fix. Your turn has ended.
