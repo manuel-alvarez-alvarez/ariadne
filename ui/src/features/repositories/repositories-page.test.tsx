@@ -39,6 +39,7 @@ const SANDBOX: RepositoryDto = aRepository({
   base_branch: "trunk",
   description: null,
   permission_mode: "learn",
+  default_workflow: "release",
 })
 
 /** `DELETE /v1/repositories/{id}` answers this instead of 204, when set. */
@@ -102,6 +103,19 @@ describe("RepositoriesPage", () => {
     expect(screen.getByText("Auto")).toBeDefined()
     expect(screen.getByText("Learn")).toBeDefined()
     expect(screen.queryByText("2 repositories")).toBeNull()
+  })
+
+  it("shows each repository workflow and opens its workflow", async () => {
+    const user = userEvent.setup()
+    const { location } = renderScreen(<RepositoriesPage />)
+
+    expect(await screen.findByRole("columnheader", { name: "Workflow" })).toBeDefined()
+    expect(await screen.findByRole("link", { name: ARIADNE.default_workflow })).toBeDefined()
+
+    await user.click(screen.getByRole("link", { name: SANDBOX.default_workflow }))
+
+    expect(location.url).toBe("/workflows?workflow=release")
+    expect(screen.queryByRole("dialog")).toBeNull()
   })
 
   it("shows localtunnel green while the hook is live, and red with the error when it is not", async () => {
