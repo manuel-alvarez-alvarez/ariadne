@@ -736,6 +736,52 @@ async fn a_step_briefing_survives_a_closed_prompt_channel() {
     );
 }
 
+/// A pass that read the task before its column completed sees the next
+/// column's entry as the newest one. That entry's briefing is the next
+/// column's agent's, and the agent that just left the column is handed
+/// nothing for it: briefed there, it would take the next column's one
+/// briefing with it.
+#[tokio::test]
+async fn a_pass_behind_a_completion_hands_the_next_entry_to_nobody() {
+    let h = harness().scheduler().await;
+    let task = stepped(&h).await;
+    let develop = session_at(&h, &task, "develop").await;
+    sh(
+        std::path::Path::new(develop.worktree_path.as_deref().unwrap()),
+        "echo change > feature && git add feature && git -c user.name=Test -c user.email=test@test commit -qm 'feat: add change'",
+    );
+    // The reviewer holds its first turn open, so whatever a pass hands it
+    // waits in its queue until the move is whole.
+    let release = h.dir.path().join("review-turn");
+    let mut script = crate::common::acp::script();
+    script["stored_sessions"] = json!(["uuid-1234", "stub-session"]);
+    script["prompts"] = json!([{"wait_for": release.display().to_string(), "updates": []}]);
+    h.agent.reprogram(script);
+    call(&h, &task, &develop, "complete", "The change is ready.").await;
+    let review = session_at(&h, &task, "review").await;
+    eventually(TIMEOUT, "the reviewer inside its turn", || async {
+        release.with_extension("reached").exists()
+    })
+    .await;
+
+    h.entry_ahead_of_its_task(&task, "review", "merge").await;
+    h.notify(&task.id);
+    h.flush_scheduler().await;
+    h.task_row_on(&task, "merge").await;
+    std::fs::write(&release, "go").unwrap();
+    h.notify(&task.id);
+    h.flush_scheduler().await;
+
+    let merge = session_at(&h, &task, "merge").await;
+    assert!(h.prompted(&merge).contains("The column is done."));
+    assert_eq!(
+        h.prompts_to(&review).len(),
+        1,
+        "{:?}",
+        h.prompts_to(&review)
+    );
+}
+
 async fn gated_task(h: &Harness, gate: &str) -> (Task, AgentSession) {
     let path = h.git_repo("gate-repo");
     let repo = h.repository(&path).await;

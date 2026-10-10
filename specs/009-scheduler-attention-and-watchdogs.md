@@ -86,7 +86,10 @@ the ACP runtime that takes a prompt (021).
     build fails if the three thresholds fall out of that order.
 11. Only an idle agent is nudged. An agent inside a turn is left to the
     thresholds behind the nudge, since a nudge would only queue behind the
-    turn it is in.
+    turn it is in. The row reads `running` from the agent's `session_start`
+    on, so the runtime driving the agent says whether a turn is in flight:
+    an agent that came up and was never prompted is between turns, and is
+    nudged like any idle agent.
 12. An agent is nudged once for the situation it went quiet in, not once per
     pass. A new task status or a new column entry is a new situation. The
     entry's briefing is delivered before this quiet clock watches it.
@@ -250,7 +253,8 @@ the ACP runtime that takes a prompt (021).
 - An idle agent is nudged once for the situation it went quiet in
   (`::an_idle_agent_is_nudged_once_for_the_situation_it_went_quiet_in`), and
   an agent mid-turn is not nudged
-  (`::an_agent_in_the_middle_of_a_turn_is_not_nudged`).
+  (`::an_agent_in_the_middle_of_a_turn_is_not_nudged`), while one up and
+  never prompted is (`::an_agent_up_and_never_prompted_is_nudged`).
 - An agent that reports nothing is flagged and then relaunched
   (`::an_agent_that_reports_nothing_is_flagged_and_then_relaunched`), one
   that keeps reporting is left alone
