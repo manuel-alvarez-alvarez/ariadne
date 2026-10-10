@@ -2,6 +2,14 @@
 # reads, so a failed test's name shows up in the run summary instead of
 # buried in the log. One profile: the whole suite, tmux and git tests
 # included, runs as a single invocation.
+
+[profile.default]
+# Mark tests that run past 10 seconds: no daemon test waits on a clock.
+# A test marked SLOW waits on sleep or a scheduler tick. The marker
+# does not fail the test; it signals a test that needs rework to
+# poll the thing it needs instead.
+slow-timeout = { period = "10s" }
+
 [test-groups]
 # Daemon integration tests start Python stubs and real git worktrees, so cap
 # them at two to keep tick-driven assertions from starving on four-core CI.

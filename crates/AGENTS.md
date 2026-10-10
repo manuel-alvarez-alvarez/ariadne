@@ -63,6 +63,12 @@ A daemon test does not wait on a clock. Wait for the thing itself:
   is checked before it first starts, one at a time, so the tests wait for each
   other. Share one file and link it, as the stub launcher does.
 
+nextest marks a test `SLOW` if it runs past the `slow-timeout` of 10 seconds.
+A test in that marker waits on a clock or a scheduler tick. Find the wait and
+rework the test to poll the thing itself, with `eventually(TIMEOUT, …)` or
+listen to events, so the test returns as soon as its assertion passes. See
+the rules above.
+
 Before a commit on `main`, run the whole workspace:
 
 ```sh
