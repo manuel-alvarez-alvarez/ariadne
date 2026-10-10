@@ -83,6 +83,7 @@ function emptyTitle(filters: SessionListFilters): string {
 export function SessionsList({
   filters,
   selectedId,
+  sessionStep,
   onSelect,
 }: {
   filters: SessionListFilters
@@ -93,6 +94,12 @@ export function SessionsList({
    * told which one that was.
    */
   selectedId?: string
+  /**
+   * The workflow step a row's agent works, read by title under its seat.
+   * Only the task panel's own table passes this — the goal panel's and the
+   * Sessions page's calls leave it out, and their rows show no step.
+   */
+  sessionStep?: (session: SessionDto) => string | undefined
   /** Called with the whole session, so callers do not have to look it up again. */
   onSelect: (session: SessionDto) => void
 }) {
@@ -135,6 +142,7 @@ export function SessionsList({
               key={session.id}
               session={session}
               selected={session.id === selected}
+              step={sessionStep?.(session)}
               onSelect={() => onSelect(session)}
             />
           ))}
@@ -147,10 +155,13 @@ export function SessionsList({
 function SessionRow({
   session,
   selected,
+  step,
   onSelect,
 }: {
   session: SessionDto
   selected: boolean
+  /** The title of the workflow step the session's agent works, if any. */
+  step?: string
   onSelect: () => void
 }) {
   const attention = shownAttention(session)
@@ -173,7 +184,10 @@ function SessionRow({
       }}
     >
       {/* The seat and the id on the same line, small and quiet enough that
-          the seat is still what the cell reads as. */}
+          the seat is still what the cell reads as. The step, where the
+          caller names one, rides underneath — the task panel's own agent,
+          not the goal panel's orchestrator or the Sessions page's mix of
+          both kinds. */}
       <TableCell>
         <span className="flex items-center gap-2">
           <SessionRole session={session} onSelect={onSelect} />
@@ -185,6 +199,7 @@ function SessionRow({
             className="text-xs"
           />
         </span>
+        {step ? <span className="block text-xs text-muted-foreground">{step}</span> : null}
       </TableCell>
       {/* What the agent runs on, and nothing else: an agent has no name to
           carry it any more, so this column is the model itself — the agent and
