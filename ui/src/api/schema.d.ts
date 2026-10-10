@@ -81,6 +81,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/attention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every item a human has something to do about right now: read off every
+         *     registered producer (`crate::attention`), not inferred here from a task
+         *     or a session's bare status.
+         */
+        get: operations["attention_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/doctor": {
         parameters: {
             query?: never;
@@ -1834,6 +1855,14 @@ export interface components {
              */
             skills?: string[];
         };
+        /**
+         * @description What kind of blocker an item is, in the one vocabulary every producer
+         *     shares. `Unknown` is for a blocker a producer raises without reliable
+         *     evidence of which of the other four it is — it is never grouped with
+         *     another item, unknown or not (009, "Unknown causes remain separate").
+         * @enum {string}
+         */
+        AttentionCause: "access" | "quota" | "configuration" | "resource" | "unknown";
         AttentionFlagDto: {
             /** Format: double */
             mean_wait_secs: number;
@@ -1858,6 +1887,54 @@ export interface components {
             /** Format: int64 */
             total: number;
         };
+        /** @description One item on the Needs attention list. */
+        AttentionItemDto: {
+            /**
+             * @description Every entity this blocker's affected work names. A grouped item
+             *     (009, "A shared access or resource failure produces one grouped
+             *     item") lists every one of them here rather than splitting into an
+             *     item per entity.
+             */
+            affected: components["schemas"]["AttentionSubjectDto"][];
+            /**
+             * @description Stable across a restart and across the same cause recurring: derived
+             *     from the cause and what it shares rather than issued fresh, so the
+             *     same blocker is the same row for as long as it stands.
+             */
+            id: string;
+            producer: components["schemas"]["AttentionProducer"];
+            /**
+             * @description The shared contract's `reason`: why this blocker exists, in the one
+             *     vocabulary every producer draws from (`AttentionCause`).
+             */
+            reason: components["schemas"]["AttentionCause"];
+            /** @description The one action that clears this item. */
+            required_action: string;
+            /** @description When this blocker was first observed, RFC 3339. */
+            since: string;
+            /** @description What is blocked and why, in one line. */
+            summary: string;
+            target: components["schemas"]["AttentionTarget"];
+        };
+        /** @description The whole list, as `GET /v1/attention` answers it. */
+        AttentionListDto: {
+            /**
+             * @description False where a producer's read failed, so a partial list is never
+             *     read as an all-clear: it still answers with whatever the other
+             *     producers found.
+             */
+            complete: boolean;
+            items: components["schemas"]["AttentionItemDto"][];
+        };
+        /**
+         * @description Which producer raised an item — distinct from [`AttentionCause`], since
+         *     a cause describes *why* a blocker exists and a later producer (an
+         *     agent's own request, a pull request's next step) may share none of
+         *     recovery's causes, or raise `unknown` for a reason a client still needs
+         *     to tell apart from recovery's.
+         * @enum {string}
+         */
+        AttentionProducer: "recovery" | "agent_request" | "pull_request";
         /**
          * @description Why a live agent session needs the user's attention.
          *
@@ -1904,6 +1981,42 @@ export interface components {
              * @default 0
              */
             sessions_stalled: number;
+        };
+        /** @description One entity an item's blocker affects. */
+        AttentionSubjectDto: {
+            id: string;
+            kind: components["schemas"]["AttentionSubjectKind"];
+            /**
+             * @description What to call it where there is room for one word more than the id —
+             *     a task's title, a session's model.
+             */
+            label: string;
+        };
+        /**
+         * @description What an item is about: an entity whose work the blocker touches.
+         * @enum {string}
+         */
+        AttentionSubjectKind: "goal" | "task" | "session" | "repository";
+        /**
+         * @description Where opening an item takes a client. Opening a target never resolves
+         *     the item on its own — only the thing the item names doing so does.
+         */
+        AttentionTarget: {
+            /** @enum {string} */
+            kind: "console";
+            session_id: string;
+        } | {
+            /** @enum {string} */
+            kind: "task";
+            task_id: string;
+        } | {
+            /** @enum {string} */
+            kind: "pull_request";
+            pull_request_id: string;
+        } | {
+            /** @enum {string} */
+            kind: "settings";
+            section: string;
         };
         /** @description A binary as the daemon can — or cannot — find it. */
         BinaryDto: {
@@ -3397,7 +3510,7 @@ export interface components {
         /**
          * @description Payload of `task_branch_updated`: where a task's branch points now.
          *
-         *     A commit in the author's worktree changes nothing in the store, so no
+         *     A commit in the task's worktree changes nothing in the store, so no
          *     other event says the task's diff is no longer the one a client fetched.
          */
         TaskBranchDto: {
@@ -3917,6 +4030,25 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    attention_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttentionListDto"];
+                };
             };
         };
     };

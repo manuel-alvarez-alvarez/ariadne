@@ -67,6 +67,7 @@ pub(super) fn group(
     goals: Vec<GoalDto>,
     tasks: Vec<TaskDto>,
     sessions: Vec<SessionEntryDto>,
+    recovery_trustworthy: bool,
 ) -> Attention {
     let mut goals = goals;
     goals.sort_by(|a, b| b.id.cmp(&a.id));
@@ -87,14 +88,33 @@ pub(super) fn group(
         }
     };
 
-    for task in tasks {
-        if let Some(reason) = task_reason(&task) {
-            let i = index_of(&mut groups, &task.goal_id);
-            groups[i].tasks.push(AttentionTask { reason, task });
+    // Once the recovery read is complete, it is authoritative for every
+    // failed task — including by staying silent while its orchestrator is
+    // still the one answering it. Falling back to the bare status for a
+    // task recovery merely left unnamed would undo that silence on the
+    // spot, so the fallback is reserved for a read that could not be
+    // trusted at all.
+    if !recovery_trustworthy {
+        for task in tasks {
+            if let Some(reason) = task_reason(&task) {
+                let i = index_of(&mut groups, &task.goal_id);
+                groups[i].tasks.push(AttentionTask { reason, task });
+            }
         }
     }
     for session in sessions {
         if let Some(reason) = session_reason(&session) {
+            // A session's stall or disconnection is never this board's own
+            // business, task-tied or not: while the agent is still being
+            // nudged or relaunched, automatic recovery is still trying it,
+            // and whichever recovery item eventually covers it — the
+            // task's own, once it actually fails, or the taskless
+            // orchestrator's or reviewer's own give-up item — says the
+            // same thing with the cause and the action this bare flag
+            // cannot.
+            if matches!(reason, Reason::Stalled | Reason::Disconnected) {
+                continue;
+            }
             // A pull request session works for no goal: its requests are
             // one section of their own.
             let goal_id = match (&session.goal_id, &session.pull_request_id) {
@@ -199,7 +219,7 @@ mod tests {
     use ariadne_core::{AttentionReason, Seat, TaskStatus};
 
     use crate::commands::attention::reason_label;
-    use crate::commands::attention::tests::{dead, flagged, goal, session, task};
+    use crate::commands::attention::tests::{flagged, goal, session, task};
 
     /// A pull request session ready to merge is listed under the pull
     /// requests, by the request's title.
@@ -212,7 +232,7 @@ mod tests {
             title: Some("Fix widgets".into()),
             ..flagged("01PRS", "01GOAL", AttentionReason::WaitingUser)
         };
-        let attention = group(Vec::new(), Vec::new(), vec![session]);
+        let attention = group(Vec::new(), Vec::new(), vec![session], false);
         assert_eq!(heading(&attention.goals[0]), "Pull requests");
         let rows = rows(&attention.goals[0], &HashMap::new(), chrono::Utc::now());
         assert_eq!(rows[0][0], "01PRS");
@@ -226,9 +246,9 @@ mod tests {
             goal_id: None,
             task_id: None,
             seat: None,
-            ..dead("01LOOSE", "01GOAL", None)
+            ..flagged("01LOOSE", "01GOAL", AttentionReason::AgentError)
         };
-        let attention = group(Vec::new(), Vec::new(), vec![session]);
+        let attention = group(Vec::new(), Vec::new(), vec![session], false);
         assert_eq!(attention.count, 1);
         assert_eq!(attention.goals[0].goal_id, "-");
         let rows = rows(&attention.goals[0], &HashMap::new(), chrono::Utc::now());
@@ -247,16 +267,22 @@ mod tests {
                 task("01T4", "01GA", TaskStatus::Ready, false),
             ],
             vec![
-                dead("01S1", "01GB", None),
+                SessionEntryDto {
+                    task_id: None,
+                    seat: Some(Seat::Orchestrator),
+                    ..flagged("01S1", "01GB", AttentionReason::AgentError)
+                },
                 session("01S2", "01GA", Some("01T4")),
             ],
+            false,
         );
         let ids: Vec<&str> = attention.goals.iter().map(|g| g.goal_id.as_str()).collect();
         assert_eq!(ids, ["01GB", "01GA", "01GONE"]);
-        // The count is what the UI's badge shows: three task rows and the one
-        // flagged session, which is an orchestrator's and lands in its goal's
-        // group.
-        assert_eq!(attention.count, 4);
+        // The count is what the UI's badge shows: two failed task rows and
+        // the one flagged session, which is an orchestrator's and lands in
+        // its goal's group. The stalled task reports nothing of its own —
+        // automatic recovery is still trying it (see `task_reason`).
+        assert_eq!(attention.count, 3);
         assert_eq!(
             attention.goals[0].goal.as_ref().map(|g| g.title.as_str()),
             Some("newer")
@@ -267,7 +293,7 @@ mod tests {
         );
         assert!(attention.goals[2].goal.is_none());
 
-        let quiet = group(vec![goal("01GA", "A")], Vec::new(), Vec::new());
+        let quiet = group(vec![goal("01GA", "A")], Vec::new(), Vec::new(), false);
         assert_eq!(quiet.count, 0);
         assert!(quiet.goals.is_empty());
     }
@@ -282,29 +308,44 @@ mod tests {
         let titles = task_titles(&tasks);
         let now = chrono::Utc::now();
         let rows_of = |sessions| {
-            let attention = group(vec![goal("01GA", "A")], tasks.clone(), sessions);
+            let attention = group(vec![goal("01GA", "A")], tasks.clone(), sessions, false);
             rows(&attention.goals[0], &titles, now)
         };
 
-        let rows = rows_of(vec![dead("01S1", "01GA", Some("01T9"))]);
+        // `agent_error`, not `disconnected`: a task-tied disconnection is
+        // this board's business only once the task itself fails (see
+        // `an_exhausted_session_raises_no_row_of_its_own_on_this_board`'s
+        // sibling rule), where `agent_error` carries no such gate.
+        let task_tied = flagged("01S1", "01GA", AttentionReason::AgentError);
+        let rows = rows_of(vec![task_tied]);
         assert_eq!(rows[0][..4], ["01T9", "task 01T9", "failed", "-"]);
         assert_eq!(rows[1][0], "01S1");
         assert_eq!(rows[1][1], "agent session");
-        assert_eq!(rows[1][2], "disconnected");
+        assert_eq!(rows[1][2], "agent error");
         assert_eq!(rows[1][3], "task 01T9");
 
         // A task the list no longer carries: named by its short id rather than
         // leaving the column empty. An orchestrator belongs to no task at all.
         let rows = rows_of(vec![
-            dead("01S1", "01GA", Some("01ARZ3NDEKTSV4RRFFQ69G5FAV")),
-            dead("01S2", "01GA", None),
+            SessionEntryDto {
+                task_id: Some("01ARZ3NDEKTSV4RRFFQ69G5FAV".into()),
+                ..flagged("01S1", "01GA", AttentionReason::AgentError)
+            },
+            SessionEntryDto {
+                task_id: None,
+                seat: Some(Seat::Orchestrator),
+                ..flagged("01S2", "01GA", AttentionReason::AgentError)
+            },
         ]);
         assert_eq!(rows[1][3], "…Q69G5FAV");
         assert_eq!(rows[2][3], "-");
     }
 
     /// The wording the UI's `SESSION_ATTENTION_META` labels lowercase to,
-    /// which `session ls` and `session inspect` take from here too.
+    /// which `session ls` and `session inspect` take from here too —
+    /// `exhausted` included, since `reason_label` still spells it for those
+    /// two even though this board no longer raises a row for the bare flag
+    /// (`an_exhausted_session_raises_no_row_of_its_own_on_this_board`).
     #[test]
     fn a_flagged_session_row_spells_the_reason_the_ui_spells() {
         let flags = [
@@ -312,22 +353,78 @@ mod tests {
             (AttentionReason::WaitingInput, "waiting for input"),
             (AttentionReason::WaitingUser, "waiting for you"),
             (AttentionReason::AgentError, "agent error"),
-            (AttentionReason::Disconnected, "disconnected"),
-            (AttentionReason::Stalled, "stalled"),
-            (AttentionReason::Exhausted, "exhausted"),
         ];
-        let sessions = flags
+        let sessions: Vec<_> = flags
             .iter()
             .enumerate()
             .map(|(i, (flag, _))| flagged(&format!("01S{i}"), "01GA", *flag))
             .collect();
-        let g = &group(vec![goal("01GA", "A")], Vec::new(), sessions).goals[0];
+        let g = &group(vec![goal("01GA", "A")], Vec::new(), sessions, false).goals[0];
         let rows = rows(g, &HashMap::new(), chrono::Utc::now());
         let labels: Vec<&str> = rows.iter().map(|row| row[2].as_str()).collect();
         assert_eq!(labels, flags.map(|(_, label)| label));
         for (flag, label) in flags {
             assert_eq!(reason_label(flag), label);
         }
+        // `reason_label` still spells every reason correctly for
+        // `session ls`/`session inspect`, even the ones this board never
+        // raises a row of its own for.
+        assert_eq!(reason_label(AttentionReason::Exhausted), "exhausted");
+        assert_eq!(reason_label(AttentionReason::Disconnected), "disconnected");
+        assert_eq!(reason_label(AttentionReason::Stalled), "stalled");
+    }
+
+    /// `exhausted` is never a row of its own on this board, however it is
+    /// asked: only `GET /v1/attention`'s `quota` item, read in
+    /// `recovery_items_section`, says whether it is still worth a person's
+    /// time.
+    #[test]
+    fn an_exhausted_session_raises_no_row_of_its_own_on_this_board() {
+        let session = flagged("01S", "01GA", AttentionReason::Exhausted);
+        let attention = group(vec![goal("01GA", "A")], Vec::new(), vec![session], false);
+        assert!(attention.goals.is_empty());
+    }
+
+    /// `disconnected` and `stalled` are never rows of their own either,
+    /// task-tied or not: a taskless orchestrator's or reviewer's own
+    /// give-up is `GET /v1/attention`'s own `unknown` item to raise, read
+    /// in `recovery_items_section`, never derived from the bare flag here.
+    #[test]
+    fn a_taskless_disconnected_or_stalled_session_raises_no_row_of_its_own_on_this_board() {
+        let sessions = vec![
+            SessionEntryDto {
+                task_id: None,
+                seat: Some(Seat::Orchestrator),
+                ..flagged("01S1", "01GA", AttentionReason::Disconnected)
+            },
+            SessionEntryDto {
+                task_id: None,
+                seat: Some(Seat::Orchestrator),
+                ..flagged("01S2", "01GA", AttentionReason::Stalled)
+            },
+        ];
+        let attention = group(vec![goal("01GA", "A")], Vec::new(), sessions, false);
+        assert!(attention.goals.is_empty());
+    }
+
+    /// A complete recovery read is authoritative for every failed task, not
+    /// only the ones its own items name: once `GET /v1/attention` answered
+    /// in full, a failed task recovery is still working stays off this
+    /// board entirely rather than falling back to the bare `failed` row —
+    /// the exact bypass a membership check on recovery's own `affected`
+    /// lists used to leave open (an empty, complete recovery read is
+    /// indistinguishable from a task recovery had nothing to say about).
+    /// Only once the read itself could not be trusted does the bare status
+    /// stand in.
+    #[test]
+    fn a_failed_task_recovery_has_not_named_stays_off_the_board_once_recovery_is_trustworthy() {
+        let tasks = vec![task("01T1", "01GA", TaskStatus::Failed, false)];
+
+        let trusted = group(vec![goal("01GA", "A")], tasks.clone(), Vec::new(), true);
+        assert!(trusted.goals.is_empty());
+
+        let untrusted = group(vec![goal("01GA", "A")], tasks, Vec::new(), false);
+        assert_eq!(untrusted.count, 1);
     }
 
     /// The heading is the goal's title and the same shortened id the UI's
@@ -351,14 +448,15 @@ mod tests {
     fn the_json_document_uses_wire_spellings() {
         let attention = group(
             vec![goal("01GA", "A")],
-            vec![task("01T1", "01GA", TaskStatus::InProgress, true)],
+            vec![task("01T1", "01GA", TaskStatus::Failed, false)],
             vec![flagged("01S1", "01GA", AttentionReason::WaitingPermission)],
+            false,
         );
         let doc = serde_json::to_value(&attention).expect("serialize");
         assert_eq!(doc["count"], 2);
         assert_eq!(doc["goals"][0]["goal_id"], "01GA");
         assert_eq!(doc["goals"][0]["goal"]["title"], "A");
-        assert_eq!(doc["goals"][0]["tasks"][0]["reason"], "stalled");
+        assert_eq!(doc["goals"][0]["tasks"][0]["reason"], "failed");
         assert_eq!(doc["goals"][0]["tasks"][0]["task"]["id"], "01T1");
         assert_eq!(
             doc["goals"][0]["sessions"][0]["reason"],

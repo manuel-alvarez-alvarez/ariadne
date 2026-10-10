@@ -7,7 +7,7 @@
 
 use tracing::{info, warn};
 
-use ariadne_core::{Actor, AttentionReason, SessionStatus, TaskStatus};
+use ariadne_core::{Actor, AttentionReason, Seat, SessionStatus, TaskStatus};
 use ariadne_store::AgentSession;
 
 use super::{QUIET_FLAG_SECS, QUIET_NUDGE_SECS, QUIET_RELAUNCH_SECS, SPAWN_RETRY_BUDGET};
@@ -208,6 +208,28 @@ impl super::Scheduler {
         if spent >= SPAWN_RETRY_BUDGET {
             warn!(session = %session.id, seat = ?session.seat, relaunches = spent - 1, "the agent went quiet again after every relaunch");
             let Some(task_id) = session.task_id.clone() else {
+                // A taskless session — an orchestrator's, a reviewer's —
+                // has no task to fail instead: this exhausted-relaunch
+                // decision is its own give-up, the same evidence the
+                // spawn-retry budget leaves behind elsewhere, so a client
+                // reads one recovery item either way rather than the bare
+                // `stalled` flag this watchdog has itself stopped acting
+                // on.
+                match (session.seat(), &session.goal_id, &session.pull_request_id) {
+                    (Some(Seat::Orchestrator), Some(goal_id), _) => {
+                        let _ = self
+                            .store
+                            .set_goal_orchestrator_given_up(goal_id, true)
+                            .await;
+                    }
+                    (Some(Seat::Reviewer), _, Some(pull_request_id)) => {
+                        let _ = self
+                            .store
+                            .set_pull_request_reviewer_given_up(pull_request_id, true)
+                            .await;
+                    }
+                    _ => {}
+                }
                 return Ok(());
             };
             if let Err(e) = self.launcher.kill_session(&session.id).await {

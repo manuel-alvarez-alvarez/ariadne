@@ -175,6 +175,15 @@ impl super::Scheduler {
             .store
             .set_session_attention(&alarm, AttentionReason::Disconnected)
             .await;
+        // Distinct from the flag above: that one is also what an ordinary
+        // crash raises, and the liveness sweep may still resolve it on its
+        // own. This mark is the budget actually running out — the
+        // attention producer's own evidence that nothing automatic is
+        // coming for this goal any more.
+        let _ = self
+            .store
+            .set_goal_orchestrator_given_up(&goal.id, false)
+            .await;
     }
 
     /// Leave one row of this goal saying anything about an orchestrator that
@@ -253,6 +262,24 @@ impl super::Scheduler {
             .await?;
         if let Some(orchestrator) = live.first() {
             self.spent_on_a_dead_launch(&goal.id, &goal.id, orchestrator);
+            // A live process is not by itself genuine recovery: the
+            // watchdog's own exhausted-relaunch give-up
+            // (`quiet::relaunch_wedged`) leaves a wedged session's process
+            // running, silent, exactly as it was — and that same
+            // still-live, still-silent session must not clear its own
+            // give-up mark on every later pass that merely finds it still
+            // there. Only a session that has reported *something* since
+            // the mark was set — its own `last_activity_at` moved past
+            // `orchestrator_given_up_at` — is the genuine progress that
+            // answers for it.
+            if let Some(given_up) = goal.orchestrator_given_up_at.as_deref()
+                && orchestrator
+                    .last_activity_at
+                    .as_deref()
+                    .is_some_and(|at| at > given_up)
+            {
+                let _ = self.store.clear_goal_orchestrator_given_up(&goal.id).await;
+            }
             return Ok(());
         }
         let last = self
@@ -299,10 +326,13 @@ impl super::Scheduler {
             self.orchestrator_could_not_start(goal).await;
             return Err(e);
         }
+        let _ = self.store.clear_goal_orchestrator_given_up(&goal.id).await;
         Ok(())
     }
 
-    /// Tell the orchestrator what its tasks need, once per situation.
+    /// Tell the orchestrator what its tasks need, once per situation —
+    /// and again, whatever `goal_told` says, until every failure it names
+    /// is actually confirmed.
     ///
     /// Three things it is woken for, and the text names whichever of them is
     /// true: a task that failed, a task that has gone quiet, and a goal with
@@ -310,17 +340,45 @@ impl super::Scheduler {
     /// exactly what the orchestrator delegated and has no business
     /// interrupting.
     ///
-    /// Once per situation rather than once per pass: the line the tasks render
-    /// to is the key, so a second task failing is news and the same one still
-    /// failed is not. Sent as a prompt to the live agent rather than as a
-    /// resume, since the session is up and the user may be mid-conversation
-    /// with it.
+    /// Once per situation rather than once per pass, with one exception:
+    /// `goal_told` is an in-memory cache of what was *handed off*, not of
+    /// what actually reached a confirmed turn — a prompt whose write
+    /// failed, or whose turn never finished before the connection it ran
+    /// under ended, leaves the cache believing a failure was told that
+    /// was not. So the cache alone never suppresses a resend while any
+    /// currently failed task is still missing from
+    /// `Goal::orchestrator_answered_failed_task_ids`: only once every one
+    /// of them is actually confirmed does the identical situation stop
+    /// being re-queued. Sent as a prompt to the live agent rather than as
+    /// a resume, since the session is up and the user may be mid-
+    /// conversation with it.
     async fn tell_orchestrator(&mut self, goal: &Goal, tasks: &[Task]) -> anyhow::Result<()> {
         let Some(situation) = goal_attention(tasks) else {
             self.goal_told.remove(&goal.id);
             return Ok(());
         };
-        if self.goal_told.get(&goal.id) == Some(&situation) {
+        // Tagged with exactly the failed tasks this prompt would name,
+        // each with the id of the transition that actually failed it —
+        // stable evidence a later metadata edit (`Store::update_task`,
+        // allowed on a `failed` task) does not move, unlike
+        // `Task::updated_at`.
+        let mut failed_tasks: Vec<(String, String)> = Vec::new();
+        for task in tasks.iter().filter(|t| t.status() == TaskStatus::Failed) {
+            if let Some(transition_id) = self
+                .store
+                .latest_transition_to(&task.id, TaskStatus::Failed)
+                .await?
+            {
+                failed_tasks.push((task.id.clone(), transition_id));
+            }
+        }
+        let confirmed: Vec<(String, String)> = goal
+            .orchestrator_answered_failed_task_ids
+            .as_deref()
+            .and_then(|json| serde_json::from_str(json).ok())
+            .unwrap_or_default();
+        let all_confirmed = failed_tasks.iter().all(|pair| confirmed.contains(pair));
+        if self.goal_told.get(&goal.id) == Some(&situation) && all_confirmed {
             return Ok(());
         }
         let orchestrators = self
@@ -337,11 +395,12 @@ impl super::Scheduler {
         };
         let template = prompts::template_for(PromptKind::GoalAttention);
         let text = prompts::goal_attention_briefing(template, goal, &situation);
-        // Counted as told only once the prompt has actually gone out: the
-        // orchestrator's runtime entry can be gone in the moment between the
-        // liveness check above and this hand-off. Marked at the attempt
-        // regardless, this situation would never be said again.
-        if !self.hand_prompt(orchestrator, text) {
+        // The delivery itself carries its own confirmation evidence,
+        // written only once this exact prompt's own turn ends
+        // (`acp::serve_with_input`), so an unrelated turn landing on the
+        // same session first can never confirm a failure it never
+        // carried.
+        if !self.hand_goal_attention(orchestrator, text, &goal.id, failed_tasks) {
             return Ok(());
         }
         info!(goal = %goal.id, session = %orchestrator.id, "the goal's tasks need the orchestrator");

@@ -409,11 +409,24 @@ impl super::Scheduler {
             *self.spawn_failures.entry(pull.id.clone()).or_default() += 1;
         }
         if self.spawn_failures.get(&pull.id).copied().unwrap_or(0) >= SPAWN_RETRY_BUDGET {
+            // Distinct from `retire_disconnected`'s own flag, which a mere
+            // crash also raises and the liveness sweep may still retry:
+            // this mark is the budget actually running out — the
+            // attention producer's own evidence that nothing automatic is
+            // coming for this request any more.
+            let _ = self
+                .store
+                .set_pull_request_reviewer_given_up(&pull.id, false)
+                .await;
             return Ok(());
         }
         match self.launcher.resume_pull_request_session(pull, pin).await {
             Ok(session) => {
                 info!(pull_request = %pull.id, session = %session.id, "the request's session is up");
+                let _ = self
+                    .store
+                    .clear_pull_request_reviewer_given_up(&pull.id)
+                    .await;
                 Ok(())
             }
             Err(e) => {
@@ -513,6 +526,26 @@ impl super::Scheduler {
             .iter()
             .find(|s| s.seat() == Some(Seat::Reviewer) && self.launcher.acp.is_running(&s.id))
             .cloned();
+        // A live process is not by itself genuine recovery: the watchdog's
+        // own exhausted-relaunch give-up (`quiet::relaunch_wedged`) leaves
+        // a wedged session's process running, silent, exactly as it was —
+        // and that same still-live, still-silent session must not clear
+        // its own give-up mark on every later pass that merely finds it
+        // still there. Only a session that has reported *something* since
+        // the mark was set — its own `last_activity_at` moved past
+        // `reviewer_given_up_at` — is the genuine progress that answers
+        // for it.
+        if let (Some(session), Some(given_up)) = (&running, pull.reviewer_given_up_at.as_deref())
+            && session
+                .last_activity_at
+                .as_deref()
+                .is_some_and(|at| at > given_up)
+        {
+            let _ = self
+                .store
+                .clear_pull_request_reviewer_given_up(&pull.id)
+                .await;
+        }
         let Some(session) = running else {
             // A request of mine is reviewed on the pin the user picked when
             // asking (029); any other on the repository's review pin.
@@ -572,6 +605,16 @@ impl super::Scheduler {
         pull: &PullRequest,
         live: &[AgentSession],
     ) -> anyhow::Result<()> {
+        // Reached only once `review_pass` has already found the request no
+        // longer wants a reviewer session, for any reason — closed, no
+        // longer asking, back to draft, or the integration's own review
+        // pin gone. Whatever earlier give-up this request's reviewer seat
+        // carries is no longer this recovery's to answer for: the work it
+        // was given up on does not exist any more either way.
+        let _ = self
+            .store
+            .clear_pull_request_reviewer_given_up(&pull.id)
+            .await;
         let done = pull.role == "reviewer" && (pull.state != "open" || !pull.review_requested);
         if live.is_empty() && !self.launcher.pull_request_worktree_exists(&pull.id) && !done {
             return Ok(());

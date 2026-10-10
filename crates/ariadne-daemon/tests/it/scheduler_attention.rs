@@ -872,6 +872,127 @@ async fn an_orchestrator_whose_agent_went_away_is_resumed_in_its_own_row() {
     assert_eq!(h.attention(&session).await, None, "and the alarm is down");
 }
 
+/// A taskless orchestrator that goes quiet again after every relaunch has
+/// no task to fail instead — unlike a column's agent, whose task carries
+/// why it ended. This exhausted-relaunch decision is its own give-up,
+/// recorded the same way the spawn-retry path's own give-up already is
+/// (`Goal::orchestrator_given_up_at`), so `GET /v1/attention` still
+/// raises one item for it rather than leaving only the bare `stalled`
+/// flag the watchdog itself has stopped acting on.
+#[tokio::test]
+async fn an_orchestrator_that_wedges_after_every_relaunch_is_given_up_on_without_a_task_to_fail() {
+    let h = harness().await;
+    let goal = h.planning_goal().await;
+    std::fs::create_dir_all(h.dir.path().join("repo")).unwrap();
+    let session = h.orchestrator_session(&goal).await;
+    h.agent_runs(&session).await;
+
+    let sched = Sched(scheduler::start(
+        h.store.clone(),
+        h.launcher.clone(),
+        false,
+        h.timeouts,
+    ));
+    sched.goal(&goal);
+
+    // Two relaunches out of the budget of three, each one wedging again.
+    for relaunch in 1..=2 {
+        h.launched_ago(&session, RELAUNCH_SECS + 60).await;
+        let launched = h.launched_at(&session).await;
+        sched.goal(&goal);
+        eventually(TIMEOUT, &format!("relaunch {relaunch}"), async || {
+            h.relaunched(&session, &launched).await
+        })
+        .await;
+    }
+    assert!(
+        h.store
+            .get_goal(&goal.id)
+            .await
+            .unwrap()
+            .orchestrator_given_up_at
+            .is_none(),
+        "not given up on while a relaunch is still being tried"
+    );
+
+    // And it wedges once more: the budget runs out.
+    h.launched_ago(&session, RELAUNCH_SECS + 60).await;
+    sched.goal(&goal);
+
+    eventually(
+        TIMEOUT,
+        "the goal's orchestrator to be given up on",
+        async || {
+            h.store
+                .get_goal(&goal.id)
+                .await
+                .unwrap()
+                .orchestrator_given_up_at
+                .is_some()
+        },
+    )
+    .await;
+
+    let list: ariadne_api::attention::AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 1, "{:?}", list.items);
+    assert_eq!(
+        list.items[0].reason,
+        ariadne_api::attention::AttentionCause::Unknown
+    );
+    assert_eq!(list.items[0].affected[0].id, goal.id);
+    let goal_row = h.store.get_goal(&goal.id).await.unwrap();
+    assert!(
+        goal_row.orchestrator_given_up_wedged,
+        "the budget ran out on a relaunch, not a spawn that never started"
+    );
+    // The jump straight from the first pass to the relaunch threshold
+    // (`h.launched_ago(&session, RELAUNCH_SECS + 60)`) skips the flag
+    // threshold entirely, so the alarm session never actually carries
+    // `AttentionReason::Stalled` — the summary's cause must still read
+    // right, read from the persisted mark rather than inferred from that
+    // flag. Only two relaunches actually ran: the third call gave up in
+    // place of relaunching, per `SPAWN_RETRY_BUDGET - 1`.
+    assert!(
+        list.items[0]
+            .summary
+            .contains("stopped answering after 2 relaunches"),
+        "{}",
+        list.items[0].summary
+    );
+    let given_up_at = goal_row
+        .orchestrator_given_up_at
+        .expect("already given up on");
+
+    // The exhausted relaunch left the wedged session alive, still silent.
+    // A later pass finding that same, still-live session must not clear
+    // the give-up mark, re-set it with a new `since`, or otherwise change
+    // the item a client already has: no genuine recovery happened.
+    // Flushed, not merely slept past: this waits for the two passes just
+    // sent to have actually been reconciled to completion before the
+    // assertion below reads their effect.
+    sched.goal(&goal);
+    sched.flush().await;
+    sched.goal(&goal);
+    sched.flush().await;
+
+    assert_eq!(
+        h.store
+            .get_goal(&goal.id)
+            .await
+            .unwrap()
+            .orchestrator_given_up_at,
+        Some(given_up_at.clone()),
+        "the give-up mark and its since must survive ordinary reconciliation \
+         of the same wedged session"
+    );
+    let still: ariadne_api::attention::AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(
+        still.items, list.items,
+        "the item must not flap across later passes"
+    );
+    assert_eq!(still.complete, list.complete);
+}
+
 /// Resuming an agent is the recovery: whatever it needed the user for goes
 /// with the relaunch, so a session that came back drops off the attention
 /// list.
@@ -1493,6 +1614,19 @@ async fn an_orchestrator_that_dies_the_moment_it_starts_is_given_up_on() {
         1,
         "and the alarm the user answers stands: {after:?}"
     );
+
+    // A taskless orchestrator has no failed task to be named by: this is
+    // its only route onto `GET /v1/attention`, through the scheduler's own
+    // give-up decision (`Goal::orchestrator_given_up_at`) rather than the
+    // `disconnected` flag above, which a mere crash also raises and which
+    // the sweep could still resolve on its own.
+    let list: ariadne_api::attention::AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 1, "{:?}", list.items);
+    assert_eq!(
+        list.items[0].reason,
+        ariadne_api::attention::AttentionCause::Unknown
+    );
+    assert_eq!(list.items[0].affected[0].id, goal.id);
 }
 
 /// How many of these rows are asking for the user.
@@ -2231,6 +2365,164 @@ async fn a_failed_task_wakes_the_orchestrator_once() {
     );
 }
 
+/// Editing a confirmed, still-failed task's description must not erase its
+/// recovery item: `Task::updated_at` moves on the edit
+/// (`Store::update_task`), but the confirmation pair this scheduler writes
+/// and `attention::recovery` reads is keyed on the task's failed
+/// *transition* id, which the edit does not touch.
+#[tokio::test]
+async fn editing_a_failed_tasks_description_does_not_lose_its_recovery_item() {
+    let w = World::active().await;
+    let orchestrator = w.orchestrator_session(&w.goal).await;
+    w.agent_runs(&orchestrator).await;
+    w.set_status(&orchestrator, SessionStatus::Idle).await;
+    w.advance(&w.task, TaskStatus::InProgress).await;
+    w.store
+        .transition_task(
+            &w.task.id,
+            TaskStatus::Failed,
+            Actor::Agent,
+            Some("the crate the task names was deleted upstream"),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let sched = w.scheduler();
+    eventually(TIMEOUT, "the orchestrator to be woken", async || {
+        sched.goal(&w.goal);
+        w.prompted(&orchestrator).contains("failed")
+    })
+    .await;
+    let transition_id = w
+        .store
+        .latest_transition_to(&w.task.id, TaskStatus::Failed)
+        .await
+        .unwrap()
+        .expect("a failed task has a transition to failed on record");
+    w.store
+        .confirm_goal_orchestrator_answered(&w.goal.id, &[(w.task.id.clone(), transition_id)])
+        .await
+        .unwrap();
+
+    let before: ariadne_api::attention::AttentionListDto = w.get("/v1/attention").await;
+    assert_eq!(before.items.len(), 1, "{:?}", before.items);
+
+    w.store
+        .update_task(
+            &w.task.id,
+            ariadne_store::TaskUpdate {
+                agents: None,
+                title: None,
+                description: Some("a rewritten description".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+    let after: ariadne_api::attention::AttentionListDto = w.get("/v1/attention").await;
+    assert_eq!(
+        after.items.len(),
+        1,
+        "a metadata edit on the same failure must not remove its item: {:?}",
+        after.items
+    );
+    assert_eq!(after.items[0].id, before.items[0].id);
+    assert_eq!(after.items[0].reason, before.items[0].reason);
+    assert_eq!(after.items[0].affected, before.items[0].affected);
+    assert_eq!(
+        after.items[0].since, before.items[0].since,
+        "the edit must not reset the item's reported waiting time either"
+    );
+}
+
+/// A task retried and failed again before the scheduler ever reconciled the
+/// brief non-failed window between the two failures sees the same
+/// `goal_attention` situation text both times — title, id and `failed`
+/// status, nothing else — so the in-memory `goal_told` cache alone cannot
+/// tell the two failures apart. Only the persisted, transition-id-keyed
+/// confirmation can, and it must: the second failure is unconfirmed, so the
+/// orchestrator is told of it too.
+#[tokio::test]
+async fn a_second_failure_missed_between_reconciles_is_still_told() {
+    let w = World::active().await;
+    let orchestrator = w.orchestrator_session(&w.goal).await;
+    w.agent_runs(&orchestrator).await;
+    w.set_status(&orchestrator, SessionStatus::Idle).await;
+    w.advance(&w.task, TaskStatus::InProgress).await;
+    let reason = "the tests did not pass";
+    w.store
+        .transition_task(
+            &w.task.id,
+            TaskStatus::Failed,
+            Actor::Agent,
+            Some(reason),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let sched = w.scheduler();
+    eventually(TIMEOUT, "the orchestrator to be woken", async || {
+        sched.goal(&w.goal);
+        w.prompted(&orchestrator).contains("failed")
+    })
+    .await;
+    let told_once = w.prompted(&orchestrator).matches("failed").count();
+    let first_transition = w
+        .store
+        .latest_transition_to(&w.task.id, TaskStatus::Failed)
+        .await
+        .unwrap()
+        .expect("a failed task has a transition to failed on record");
+    w.store
+        .confirm_goal_orchestrator_answered(
+            &w.goal.id,
+            &[(w.task.id.clone(), first_transition.clone())],
+        )
+        .await
+        .unwrap();
+    w.set_status(&orchestrator, SessionStatus::Idle).await;
+
+    // Retried and failed again, on the exact same words, with no
+    // reconciliation pass sent in between: nothing has told the scheduler
+    // this task ever left `failed`, let alone come back to it.
+    w.store
+        .transition_task(&w.task.id, TaskStatus::Ready, Actor::User, None, None)
+        .await
+        .unwrap();
+    w.store
+        .transition_task(
+            &w.task.id,
+            TaskStatus::Failed,
+            Actor::Agent,
+            Some(reason),
+            None,
+        )
+        .await
+        .unwrap();
+    let second_transition = w
+        .store
+        .latest_transition_to(&w.task.id, TaskStatus::Failed)
+        .await
+        .unwrap()
+        .expect("a failed task has a transition to failed on record");
+    assert_ne!(
+        first_transition, second_transition,
+        "the retry must have stamped a new transition for this to prove anything"
+    );
+
+    eventually(
+        TIMEOUT,
+        "the orchestrator to be woken again for the new failure",
+        async || {
+            sched.goal(&w.goal);
+            w.prompted(&orchestrator).matches("failed").count() > told_once
+        },
+    )
+    .await;
+}
+
 /// A situation is not told once and forgotten if the telling failed. The
 /// orchestrator's runtime entry can close its prompt channel in the moment
 /// between the liveness check and the hand-off — the same state its own
@@ -2508,6 +2800,124 @@ async fn pull_request_session(h: &Harness, number: i64) -> AgentSession {
     h.seed_conversation(&session.id, "uuid-1234").await;
     h.agent_runs(&session).await;
     session
+}
+
+/// A reviewer session that goes quiet again after every relaunch has no
+/// task to fail either — it sits on no task any more than an orchestrator
+/// does. The same give-up mark the orchestrator's own exhausted-relaunch
+/// path now leaves is recorded here too
+/// (`PullRequestRow::reviewer_given_up_at`), so `GET /v1/attention`
+/// raises an item naming the request rather than leaving only the bare
+/// `stalled` flag standing.
+#[tokio::test]
+async fn a_reviewer_session_that_wedges_after_every_relaunch_is_given_up_on_without_a_task_to_fail()
+{
+    let h = harness().await;
+    let session = pull_request_session(&h, 1).await;
+    let pull_request_id = session.pull_request_id.clone().unwrap();
+    let wake = |sched: &UnboundedSender<SchedEvent>| {
+        sched
+            .send(SchedEvent::PullRequestChanged(pull_request_id.clone()))
+            .unwrap();
+    };
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    wake(&sched);
+
+    for relaunch in 1..=2 {
+        h.launched_ago(&session, RELAUNCH_SECS + 60).await;
+        let launched = h.launched_at(&session).await;
+        wake(&sched);
+        eventually(TIMEOUT, &format!("relaunch {relaunch}"), async || {
+            h.relaunched(&session, &launched).await
+        })
+        .await;
+    }
+    assert!(
+        h.store
+            .get_pull_request(&pull_request_id)
+            .await
+            .unwrap()
+            .reviewer_given_up_at
+            .is_none(),
+        "not given up on while a relaunch is still being tried"
+    );
+
+    h.launched_ago(&session, RELAUNCH_SECS + 60).await;
+    wake(&sched);
+
+    eventually(
+        TIMEOUT,
+        "the request's reviewer session to be given up on",
+        async || {
+            h.store
+                .get_pull_request(&pull_request_id)
+                .await
+                .unwrap()
+                .reviewer_given_up_at
+                .is_some()
+        },
+    )
+    .await;
+
+    let list: ariadne_api::attention::AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 1, "{:?}", list.items);
+    assert_eq!(
+        list.items[0].reason,
+        ariadne_api::attention::AttentionCause::Unknown
+    );
+    assert_eq!(
+        list.items[0].target,
+        ariadne_api::attention::AttentionTarget::PullRequest {
+            pull_request_id: pull_request_id.clone()
+        }
+    );
+    let pull_row = h.store.get_pull_request(&pull_request_id).await.unwrap();
+    assert!(
+        pull_row.reviewer_given_up_wedged,
+        "the budget ran out on a relaunch, not a spawn that never started"
+    );
+    // The jump straight from the first wake to the relaunch threshold
+    // skips the flag threshold entirely, so the session never actually
+    // carries `AttentionReason::Stalled` — the summary's cause must
+    // still read right, read from the persisted mark rather than
+    // inferred from that flag. Only two relaunches actually ran.
+    assert!(
+        list.items[0]
+            .summary
+            .contains("stopped answering after 2 relaunches"),
+        "{}",
+        list.items[0].summary
+    );
+    let given_up_at = pull_row.reviewer_given_up_at.expect("already given up on");
+
+    // The exhausted relaunch left the wedged reviewer session alive, still
+    // silent. A later wake finding that same, still-live session must not
+    // clear the give-up mark or change the item a client already has: no
+    // genuine recovery happened. Flushed, not merely slept past: this
+    // waits for the two wakes just sent to have actually been reconciled
+    // before the assertion below reads their effect.
+    wake(&sched);
+    ariadne_daemon::scheduler::flush_for_test(&sched).await;
+    wake(&sched);
+    ariadne_daemon::scheduler::flush_for_test(&sched).await;
+
+    assert_eq!(
+        h.store
+            .get_pull_request(&pull_request_id)
+            .await
+            .unwrap()
+            .reviewer_given_up_at,
+        Some(given_up_at.clone()),
+        "the give-up mark and its since must survive ordinary reconciliation \
+         of the same wedged session"
+    );
+    let still: ariadne_api::attention::AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(
+        still.items, list.items,
+        "the item must not flap across later passes"
+    );
+    assert_eq!(still.complete, list.complete);
 }
 
 /// An idle pull request session is waiting on the forge, as an idle

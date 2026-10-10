@@ -437,6 +437,29 @@ describe("stats", () => {
   })
 })
 
+describe("recovery attention", () => {
+  it("refetches the attention list on a goal's own confirmed-turn or give-up evidence", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    queryClient.setQueryData(qk.attention.list(), { items: [], complete: true })
+
+    dispatch(queryClient, { event: "goal_updated", data: GOAL })
+
+    expect(stale(queryClient, qk.attention.list())).toBe(true)
+  })
+
+  it("refetches the attention list on a reviewer session's own give-up evidence", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    queryClient.setQueryData(qk.attention.list(), { items: [], complete: true })
+
+    dispatch(queryClient, {
+      event: "pull_requests_changed",
+      data: { repository_id: "repo" },
+    })
+
+    expect(stale(queryClient, qk.attention.list())).toBe(true)
+  })
+})
+
 describe("workflow events", () => {
   it("patches created and updated workflows, then drops a deleted workflow", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })

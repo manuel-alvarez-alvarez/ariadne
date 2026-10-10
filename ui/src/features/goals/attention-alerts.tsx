@@ -44,6 +44,15 @@ import { type AttentionItem, attentionSubject, attentionTarget, useAttention } f
 const QUIET_TITLE = "Ariadne Desktop"
 
 /**
+ * The title while the list itself could not be read in full — a failed
+ * query, or the recovery producer's own `complete: false` — with zero items
+ * to show for it. Distinct from {@link QUIET_TITLE} on purpose: an empty
+ * board under a read that did not finish is unknown, not "nothing needs
+ * attention" (009).
+ */
+const UNAVAILABLE_TITLE = "(!) Ariadne"
+
+/**
  * The title while something does. The count leads, and what follows it is the
  * short name: a tab strip gives a title a couple of dozen pixels, and the
  * number is the part that has to survive being cut off.
@@ -54,14 +63,16 @@ const counted = (count: number) => `(${count}) Ariadne`
 export function AttentionAlerts() {
   const attention = useAttention()
   const count = attention.items.length
+  // A failed read with nothing to show for it is unknown, not quiet.
+  const unavailable = count === 0 && attention.error !== null
   const onBoard = useLocation().pathname === paths.goals()
 
   useEffect(() => {
-    document.title = count > 0 ? counted(count) : QUIET_TITLE
+    document.title = count > 0 ? counted(count) : unavailable ? UNAVAILABLE_TITLE : QUIET_TITLE
     return () => {
       document.title = QUIET_TITLE
     }
-  }, [count])
+  }, [count, unavailable])
 
   useAttentionToasts(attention.items, {
     // A list still loading has no news in it, and a list with a failed query
@@ -77,16 +88,23 @@ export function AttentionAlerts() {
 
 /** The count on the Goals entry in the sidebar, absent while there is none. */
 export function AttentionBadge() {
-  const { items } = useAttention()
-  if (items.length === 0) return null
+  const { items, error } = useAttention()
+  // A failed read with nothing to show for it still gets a badge: an empty
+  // one here would read as "nothing needs attention" (009), which a read
+  // that did not finish has no business saying.
+  if (items.length === 0 && error === null) return null
   return (
     <Badge
       // The warn step of the status ramp, which is what every attention badge
       // on the board and in the panels is drawn in.
       className="ml-auto bg-status-warn-soft text-status-warn-fg"
-      aria-label={`${plural(items.length, "item")} needing attention`}
+      aria-label={
+        items.length > 0
+          ? `${plural(items.length, "item")} needing attention`
+          : "could not read what needs attention"
+      }
     >
-      {items.length}
+      {items.length > 0 ? items.length : "!"}
     </Badge>
   )
 }

@@ -33,6 +33,9 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       // Requests are read live off the forge and carried by no event: every
       // list and panel over them reads again.
       void queryClient.invalidateQueries({ queryKey: qk.pullRequests.all() })
+      // A reviewer session's own give-up, set or cleared, is a recovery
+      // item's own evidence (`PullRequestRow::reviewer_given_up_at`).
+      void queryClient.invalidateQueries({ queryKey: qk.attention.lists() })
       break
     }
     case "goal_created": {
@@ -46,6 +49,11 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       // A goal that moves to completed or cancelled wrote a fact the stats
       // read.
       void queryClient.invalidateQueries({ queryKey: qk.stats.all() })
+      // The orchestrator's own confirmed-turn and give-up evidence rides on
+      // this same event (`Goal::orchestrator_answered_failed_task_ids`,
+      // `Goal::orchestrator_given_up_at`) — both a failed task's own item
+      // and the taskless orchestrator's own item can turn on it.
+      void queryClient.invalidateQueries({ queryKey: qk.attention.lists() })
       break
     }
     case "goal_deleted": {
@@ -56,6 +64,8 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       void queryClient.invalidateQueries({ queryKey: qk.goals.lists() })
       void queryClient.invalidateQueries({ queryKey: qk.tasks.all() })
       void queryClient.invalidateQueries({ queryKey: qk.sessions.all() })
+      // A deleted goal can take a recovery item's affected task with it.
+      void queryClient.invalidateQueries({ queryKey: qk.attention.lists() })
       break
     }
     case "task_created": {
@@ -76,6 +86,8 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       }
       // A task that moves is a fact the stats count, or will.
       void queryClient.invalidateQueries({ queryKey: qk.stats.all() })
+      // A failed task is a machine-resource recovery item's own evidence.
+      void queryClient.invalidateQueries({ queryKey: qk.attention.lists() })
       break
     }
     case "task_branch_updated": {
@@ -106,6 +118,8 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       void queryClient.invalidateQueries({ queryKey: qk.sessions.lists() })
       // A session that ended wrote a fact the stats read.
       void queryClient.invalidateQueries({ queryKey: qk.stats.all() })
+      // An `exhausted` flag's own recovery state is a quota item's evidence.
+      void queryClient.invalidateQueries({ queryKey: qk.attention.lists() })
       invalidateWatchedPullRequest(queryClient, event.data.pull_request_id)
       break
     }
@@ -152,11 +166,15 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       // goal that works in it until the goals are read again. This is the one
       // case that reaches outside its own entity, and the reason it has to.
       void queryClient.invalidateQueries({ queryKey: qk.goals.all() })
+      // A forge fetch error is a configuration recovery item's own evidence.
+      void queryClient.invalidateQueries({ queryKey: qk.attention.lists() })
       break
     }
     case "repository_deleted": {
       queryClient.removeQueries({ queryKey: qk.repositories.detail(event.data.id) })
       void queryClient.invalidateQueries({ queryKey: qk.repositories.lists() })
+      // A deleted repository can take a configuration recovery item with it.
+      void queryClient.invalidateQueries({ queryKey: qk.attention.lists() })
       break
     }
     case "ai_permissions_updated": {

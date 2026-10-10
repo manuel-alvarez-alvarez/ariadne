@@ -12,7 +12,7 @@
 //! reporting. What the scheduler says to an agent goes out through
 //! [`Scheduler::hand_prompt`].
 
-mod auto_switch;
+pub(crate) mod auto_switch;
 mod coalesce;
 mod goals;
 mod messages;
@@ -97,7 +97,7 @@ pub const SPAWN_RETRY_BUDGET: u32 = 3;
 /// wakes. Leave time for another task to end before spending another attempt.
 const DESCRIPTOR_RETRY: Duration = Duration::from_secs(30);
 const SPAWN_FAILURE_REASON: &str = "the agent could not be started";
-const DESCRIPTOR_LIMIT_REASON: &str =
+pub const DESCRIPTOR_LIMIT_REASON: &str =
     "the agent could not start because the daemon reached its open file descriptor limit";
 /// How long a session may report nothing before it is nudged: told to get on
 /// with the work in front of it.
@@ -289,6 +289,26 @@ impl Scheduler {
     /// on it back, so the next pass over this session sends it again.
     fn hand_prompt(&mut self, session: &AgentSession, text: String) -> bool {
         let handed = self.launcher.acp.send_prompt(&session.id, text);
+        self.handed(session, handed)
+    }
+
+    /// [`Self::hand_prompt`] for a goal's own attention briefing (031),
+    /// tagged with the failed tasks it names so the turn that answers it
+    /// can confirm exactly those once it ends, through the ACP driver —
+    /// never from an ambient session status.
+    fn hand_goal_attention(
+        &mut self,
+        session: &AgentSession,
+        text: String,
+        goal_id: &str,
+        failed_tasks: Vec<(String, String)>,
+    ) -> bool {
+        let handed = self.launcher.acp.send_goal_attention(
+            &session.id,
+            text,
+            goal_id.to_string(),
+            failed_tasks,
+        );
         self.handed(session, handed)
     }
 

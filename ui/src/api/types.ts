@@ -42,6 +42,9 @@ export type ResumeOutsideSessionRequest = Schemas["ResumeOutsideSessionRequest"]
 export type NewSessionRequest = Schemas["NewSessionRequest"]
 export type SwitchSessionRequest = Schemas["SwitchSessionRequest"]
 
+export type AttentionListDto = Schemas["AttentionListDto"]
+export type AttentionItemDto = Schemas["AttentionItemDto"]
+
 /**
  * What one agent spent — the same three counters wherever they are read: a
  * session's own, each half of a task's {@link TaskUsage}, each seat of a

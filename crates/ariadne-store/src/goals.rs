@@ -259,6 +259,80 @@ impl Store {
         Ok(goal)
     }
 
+    /// Confirm the failed task ids this goal's orchestrator has actually
+    /// had a turn on: called only from the ACP driver, once the exact
+    /// `session/prompt` call carrying them has itself returned
+    /// (`acp::serve_with_input`), never from an ambient session status —
+    /// an unrelated turn landing on the same session first must not
+    /// confirm a failure it never carried. `at` is each task's own
+    /// `updated_at` as it stood at the moment the prompt was queued, so a
+    /// later retry of the same task — which stamps a new `updated_at` on
+    /// its next failure — finds no confirmation already waiting for it.
+    /// Overwrites the previous snapshot whole, which is always safe: the
+    /// situation a prompt carries is always every currently failed and
+    /// stalled task, so a superseding prompt's own confirmation is a
+    /// superset by construction.
+    pub async fn confirm_goal_orchestrator_answered(
+        &self,
+        id: &str,
+        failed_tasks: &[(String, String)],
+    ) -> Result<()> {
+        let json = serde_json::to_string(failed_tasks).expect("ids serialize");
+        sqlx::query("UPDATE goals SET orchestrator_answered_failed_task_ids = ? WHERE id = ?")
+            .bind(&json)
+            .bind(id)
+            .execute(self.w())
+            .await?;
+        self.publish_goal_update(id).await?;
+        Ok(())
+    }
+
+    /// Mark that this goal's orchestrator has been given up on: either
+    /// `scheduler::goals::orchestrator_could_not_start`'s spawn-retry
+    /// budget running out (`wedged: false`, one that never got off the
+    /// ground), or `scheduler::quiet::relaunch_wedged`'s own
+    /// exhausted-relaunch decision (`wedged: true`, one that started and
+    /// then stopped answering) — neither merely a crash the liveness
+    /// sweep is about to retry. A goal already marked keeps its first
+    /// `since` *and* its first `wedged` — this fires again on every later
+    /// pass that still finds the orchestrator given up, and a mark moving
+    /// its own age or cause forward every time would hide how long, and
+    /// why, the user has actually been waiting on it.
+    pub async fn set_goal_orchestrator_given_up(&self, id: &str, wedged: bool) -> Result<()> {
+        let n = sqlx::query(
+            "UPDATE goals SET orchestrator_given_up_at = ?, orchestrator_given_up_wedged = ?
+             WHERE id = ? AND orchestrator_given_up_at IS NULL",
+        )
+        .bind(now())
+        .bind(wedged)
+        .bind(id)
+        .execute(self.w())
+        .await?
+        .rows_affected();
+        if n > 0 {
+            self.publish_goal_update(id).await?;
+        }
+        Ok(())
+    }
+
+    /// Take the give-up mark down: recovery has taken ownership of this
+    /// goal's orchestrator again, a live one found or a resume/spawn
+    /// succeeded.
+    pub async fn clear_goal_orchestrator_given_up(&self, id: &str) -> Result<()> {
+        let n = sqlx::query(
+            "UPDATE goals SET orchestrator_given_up_at = NULL
+             WHERE id = ? AND orchestrator_given_up_at IS NOT NULL",
+        )
+        .bind(id)
+        .execute(self.w())
+        .await?
+        .rows_affected();
+        if n > 0 {
+            self.publish_goal_update(id).await?;
+        }
+        Ok(())
+    }
+
     /// Announce a goal as it now stands, for a write that changed something
     /// a goal is read with rather than the goal row itself — the usage of a
     /// session under it, which rides in the goal's own fat event.

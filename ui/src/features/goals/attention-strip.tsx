@@ -41,6 +41,8 @@ import { describeError, plural, shortId } from "@/lib/format"
 
 import {
   type AttentionItem,
+  attentionAffected,
+  attentionAffectedLinks,
   attentionDetail,
   attentionSubject,
   attentionTarget,
@@ -177,6 +179,10 @@ function Row({ item }: { item: AttentionItem }) {
   const { pathname } = useLocation()
   const status = item.taskReason && item.task ? TASK_STATUS_META[item.task.status] : null
   const target = attentionTarget(item, search, pathname)
+  // A grouped quota item's own target opens only one of its sessions;
+  // every one of them gets its own small link below, so none of them is
+  // unreachable just because another one happened to be first.
+  const affectedLinks = attentionAffectedLinks(item, search, pathname)
 
   return (
     <li>
@@ -194,7 +200,11 @@ function Row({ item }: { item: AttentionItem }) {
             top of whatever status the task is sitting in. */}
         {item.taskReason === "stalled" ? <StalledBadge /> : null}
         {item.sessionReason ? <SessionAttentionBadge attention={item.sessionReason} /> : null}
-        <Subject subject={attentionSubject(item)} detail={attentionDetail(item)} />
+        <Subject
+          subject={attentionSubject(item)}
+          detail={attentionDetail(item)}
+          affected={attentionAffected(item)}
+        />
         {/* Its own line while the strip is narrow, where the goal, the stamp
             and the id together took half the row and left the subject twenty
             characters. */}
@@ -208,6 +218,20 @@ function Row({ item }: { item: AttentionItem }) {
           <RowId id={item.id} />
         </div>
       </Link>
+      {affectedLinks ? (
+        <div className="flex flex-wrap gap-2 px-3 pb-2 pl-9 text-xs text-muted-foreground">
+          <span>Open:</span>
+          {affectedLinks.map((link) => (
+            <Link
+              key={link.id}
+              to={link.to}
+              className="underline underline-offset-2 hover:text-foreground"
+            >
+              {link.label}
+            </Link>
+          ))}
+        </div>
+      ) : null}
     </li>
   )
 }
@@ -225,16 +249,29 @@ function Row({ item }: { item: AttentionItem }) {
  * one `Tooltip` over the pair rather than a `title=` on each, which is what
  * puts it in reach of a keyboard.
  */
-function Subject({ subject, detail }: { subject: string; detail: string }) {
+function Subject({
+  subject,
+  detail,
+  affected,
+}: {
+  subject: string
+  detail: string
+  /** A recovery row's own `affected` list, joined — null for every other row. */
+  affected: string | null
+}) {
   return (
     <Tooltip>
       <TooltipTrigger render={<span className="min-w-0 flex-1" />}>
         <span className="block truncate font-medium">{subject}</span>
         <span className="block truncate text-xs text-muted-foreground">{detail}</span>
+        {affected ? (
+          <span className="block truncate text-xs text-muted-foreground">Affects: {affected}</span>
+        ) : null}
       </TooltipTrigger>
       <TooltipContent className="flex-col items-start gap-0.5">
         <span className="font-medium">{subject}</span>
         <span className="text-background/70">{detail}</span>
+        {affected ? <span className="text-background/70">Affects: {affected}</span> : null}
       </TooltipContent>
     </Tooltip>
   )

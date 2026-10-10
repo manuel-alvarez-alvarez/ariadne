@@ -21,6 +21,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use serde::Serialize;
 
+use ariadne_api::attention::{AttentionCause, AttentionListDto};
 use ariadne_api::goals::GoalDto;
 use ariadne_api::sessions::{SessionEntryDto, SessionKind, SessionPageDto, SessionPageQuery};
 use ariadne_api::tasks::TaskDto;
@@ -30,7 +31,7 @@ use ariadne_core::{AttentionReason, TaskStatus};
 use super::{follow, query_path};
 
 use crate::output::table::{check_columns, heading as heading_style, quiet_lines, render_groups};
-use crate::output::{Format, View, empty_state, note, print_json, view};
+use crate::output::{Format, View, age, empty_state, note, print_json, view};
 use board::{Attention, Group, ROWS, group, heading, rows, task_titles};
 
 /// Why a row is on the list — the task reasons and the session reasons in one
@@ -74,20 +75,22 @@ impl Reason {
     }
 }
 
-/// Whether this task wants the user, and what for. Kept identical to
-/// `taskAttentionReason` in the UI.
-///
-/// A task sent back to an earlier column is deliberately not one of them: the
-/// review column has spoken and the daemon briefs the develop agent itself,
-/// so that task waits on an agent. A resume that does not happen shows up as the session's own
-/// `disconnected` or `stalled` flag. And `stalled` is checked last because it
-/// is a flag on top of a status — the task's column mirrors any of its
-/// sessions carrying `stalled` and comes down when that session's does — so a
-/// task that also failed reads as failed.
+/// Whether this task wants the user on the strength of its bare status
+/// alone, kept only as the fallback a recovery read that could not be
+/// read in full leaves standing: `failed` is terminal, and once
+/// `GET /v1/attention` can see it, its own recovery item — named and
+/// actionable, and silent exactly where recovery is still the one
+/// working it — is what this board shows for it instead (`group`, gated
+/// on `recovery.complete`). `stalled` is never reported here at
+/// all: it is a flag *on top of* a status, raised while automatic
+/// recovery (a nudge, then a relaunch) is still working the agent, and
+/// showing it immediately would be exactly the "automatic recovery still
+/// trying" row 009's attention contract asks never to raise. If the
+/// relaunch also fails, the task fails, and that is this board's business
+/// again, the same way any other failure is.
 fn task_reason(task: &TaskDto) -> Option<Reason> {
     match task.status {
         TaskStatus::Failed => Some(Reason::Failed),
-        _ if task.stalled => Some(Reason::Stalled),
         _ => None,
     }
 }
@@ -113,15 +116,17 @@ pub(crate) fn reason_label(reason: AttentionReason) -> &'static str {
     Reason::from(reason).label()
 }
 
-/// Whether this session wants the user, and what for. The stored reason is the
-/// whole rule, as in the UI's `sessionAttention`.
-///
-/// A dead session raises no reason of its own on purpose: the daemon flags the
-/// agent it still owes work to and leaves the rest alone, so a reviewer that
-/// exited after voting is finished, not stuck — and reading `status` here
-/// would put it back on the list the daemon kept it off.
+/// Whether this session wants the user, and what for. The stored reason is
+/// the whole rule, as in the UI's `sessionAttention` — except `exhausted`,
+/// which this board no longer raises a row for on its own: automatic model
+/// switching may still clear the bare flag on the very next tick, so
+/// whether it is still worth a person's time is `GET /v1/attention`'s own
+/// call, not a flag read here. A `quota` item carries the session's own
+/// subject already (`recovery_items_section`), so folding it into this
+/// board's rows would say the same thing twice.
 fn session_reason(session: &SessionEntryDto) -> Option<Reason> {
     match session.attention_reason {
+        Some(AttentionReason::Exhausted) => None,
         Some(AttentionReason::WaitingUser) if session.pull_request_id.is_some() => {
             match session.seat {
                 Some(ariadne_core::Seat::Reviewer) => Some(Reason::ReviewPosted),
@@ -129,6 +134,67 @@ fn session_reason(session: &SessionEntryDto) -> Option<Reason> {
             }
         }
         reason => reason.map(Into::into),
+    }
+}
+
+/// Every item `GET /v1/attention` currently finds, printed as its own
+/// section below the per-goal board: cause, summary, the one action that
+/// clears it, how long it has waited, and what it affects. None of these
+/// belongs to one goal the way a task or a loose session's row does, so
+/// they stand apart from the board rather than inside one of its groups.
+fn recovery_items_section(
+    recovery: &AttentionListDto,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<String> {
+    if recovery.items.is_empty() {
+        return None;
+    }
+    let mut lines = vec!["RECOVERY".to_string()];
+    for item in &recovery.items {
+        lines.push(format!(
+            "- [{}] {} ({} old)",
+            cause_label(item.reason),
+            item.summary,
+            age(&item.since, now)
+        ));
+        lines.push(format!("  action: {}", item.required_action));
+        // The id leads so every affected entry stays reachable on its own —
+        // `ariadne attach <id>` or `session switch <id>` — not only the
+        // item's own single target, which a grouped item can answer with
+        // only one of several affected sessions.
+        for subject in &item.affected {
+            lines.push(format!("  affects: {} ({})", subject.id, subject.label));
+        }
+    }
+    Some(lines.join("\n"))
+}
+
+/// `-q`'s rows: every goal's own, and one per recovery item — a
+/// configuration-only blocker with no goal of its own would otherwise
+/// print nothing under `-q` while the table still showed it.
+fn quiet_rows(
+    attention: &Attention,
+    titles: &HashMap<String, String>,
+    now: chrono::DateTime<chrono::Utc>,
+    recovery: &AttentionListDto,
+) -> Vec<Vec<String>> {
+    let mut rows: Vec<Vec<String>> = attention
+        .goals
+        .iter()
+        .flat_map(|group| board::rows(group, titles, now))
+        .collect();
+    rows.extend(recovery.items.iter().map(|item| vec![item.id.clone()]));
+    rows
+}
+
+/// The table spelling of a recovery cause.
+fn cause_label(cause: AttentionCause) -> &'static str {
+    match cause {
+        AttentionCause::Access => "access",
+        AttentionCause::Quota => "quota",
+        AttentionCause::Configuration => "configuration",
+        AttentionCause::Resource => "resource",
+        AttentionCause::Unknown => "unknown",
     }
 }
 
@@ -158,6 +224,15 @@ fn relevant(frame: &SseEvent) -> bool {
             | "task_updated"
             | "session_created"
             | "session_updated"
+            // A repository's forge fetch error is a configuration recovery
+            // item's own evidence, and its removal or a goal's is what
+            // takes a stale one down (`GET /v1/attention`).
+            | "repository_updated"
+            | "repository_deleted"
+            // A reviewer session's own give-up, set or cleared, is a
+            // recovery item's own evidence
+            // (`PullRequestRow::reviewer_given_up_at`).
+            | "pull_requests_changed"
     )
 }
 
@@ -266,31 +341,67 @@ async fn render(client: &Client, format: Format) -> Result<()> {
     let goals: Vec<GoalDto> = client.get_json("/v1/goals").await?;
     let tasks: Vec<TaskDto> = client.get_json("/v1/tasks").await?;
     let sessions = ariadne_sessions(client).await?;
+    let recovery: AttentionListDto = client.get_json("/v1/attention").await?;
+    let now = chrono::Utc::now();
+    let recovery_section = recovery_items_section(&recovery, now);
 
     // Every task, not only the ones on the list: a session's row is named by
     // the task it was run for, which is usually a task that is doing fine.
     let titles = task_titles(&tasks);
-    let attention = group(goals, tasks, sessions);
-    let now = chrono::Utc::now();
+    let attention = group(goals, tasks, sessions, recovery.complete);
+    // A producer that could not read its evidence costs the list its own
+    // items, not an all-clear: an empty board under an incomplete read is
+    // unknown, never "nothing needs attention" (009).
+    let incomplete = !recovery.complete;
     match format {
-        Format::Json => print_json(&attention)?,
+        Format::Json => print_json(&serde_json::json!({
+            "goals": &attention.goals,
+            "count": attention.count + recovery.items.len(),
+            "recovery": &recovery.items,
+            "complete": recovery.complete,
+        }))?,
         // `-q` is the same promise here as in every `ls`: the ids, one per
         // line, so what is stuck can be piped into whatever unsticks it. The
         // goal headings are for eyes and go with the table.
         Format::Table if view().quiet => {
-            let rows: Vec<Vec<String>> = attention
-                .goals
-                .iter()
-                .flat_map(|group| rows(group, &titles, now))
-                .collect();
+            let rows = quiet_rows(&attention, &titles, now, &recovery);
             if !rows.is_empty() {
                 println!("{}", quiet_lines(&rows));
             }
+            // A bare identifier stream has no field to carry `complete` in,
+            // so an incomplete read says so the only way it can: failing
+            // the command rather than succeeding silently on whatever ids
+            // it did get, which a script piping them could not tell apart
+            // from a read that saw everything.
+            if incomplete {
+                anyhow::bail!(
+                    "some of what needs attention could not be read; the ids above are not the \
+                     whole list"
+                );
+            }
         }
-        Format::Table if attention.goals.is_empty() => {
-            note(&empty_state("Nothing needs attention.", None));
+        Format::Table if attention.goals.is_empty() && recovery_section.is_none() => {
+            if incomplete {
+                note("Some of what needs attention could not be read; showing what is known.");
+            } else {
+                note(&empty_state("Nothing needs attention.", None));
+            }
         }
-        Format::Table => println!("{}", board(&attention, &titles, now, view())?),
+        Format::Table => {
+            if !attention.goals.is_empty() {
+                println!("{}", board(&attention, &titles, now, view())?);
+            }
+            if let Some(section) = recovery_section {
+                if !attention.goals.is_empty() {
+                    println!();
+                }
+                println!("{section}");
+            }
+            if incomplete {
+                println!();
+                note("Some of what needs attention could not be read; showing what is known.");
+            }
+        }
     }
     Ok(())
 }
@@ -299,10 +410,31 @@ async fn render(client: &Client, format: Format) -> Result<()> {
 pub(crate) mod tests {
     use super::*;
 
+    use ariadne_api::attention::AttentionSubjectKind;
     use ariadne_core::SessionStatus;
 
     use crate::commands::fixtures::{self, NOW};
     use crate::output::style;
+
+    fn frame(event: &str) -> SseEvent {
+        SseEvent {
+            event: event.into(),
+            data: String::new(),
+            id: None,
+        }
+    }
+
+    /// `--watch` redraws on a reviewer session's own give-up evidence
+    /// (`PullRequestRow::reviewer_given_up_at`), which rides on
+    /// `pull_requests_changed`, the same as it already does on a goal's
+    /// own confirmed-turn and give-up evidence, which rides on
+    /// `goal_updated`.
+    #[test]
+    fn watch_redraws_on_a_goals_or_a_pull_requests_own_recovery_evidence() {
+        assert!(relevant(&frame("goal_updated")));
+        assert!(relevant(&frame("pull_requests_changed")));
+        assert!(!relevant(&frame("ai_permissions_updated")));
+    }
 
     /// A failed session the daemon raised nothing for — which is nobody's
     /// business. `flagged` and `dead` are the ones that are on the list.
@@ -376,7 +508,11 @@ pub(crate) mod tests {
         let reason = |status, stalled| task_reason(&task("01T", "01G", status, stalled));
         assert_eq!(reason(TaskStatus::Failed, false), Some(Reason::Failed));
         assert_eq!(reason(TaskStatus::Failed, true), Some(Reason::Failed));
-        assert_eq!(reason(TaskStatus::InProgress, true), Some(Reason::Stalled));
+        // `stalled` is never reported here: it is a flag raised while
+        // automatic recovery (a nudge, then a relaunch) is still trying,
+        // and showing it immediately would be the "still trying" row this
+        // list never raises.
+        assert_eq!(reason(TaskStatus::InProgress, true), None);
         assert_eq!(reason(TaskStatus::InProgress, false), None);
         assert_eq!(reason(TaskStatus::Finished, false), None);
 
@@ -390,7 +526,9 @@ pub(crate) mod tests {
 
     /// The reasons the UI reports for a session: the daemon's flag, and
     /// nothing else — an agent nothing is owed to is nobody's business,
-    /// whether it is working or long dead.
+    /// whether it is working or long dead. `exhausted` is never one of
+    /// them: this board leaves it to `GET /v1/attention`'s own `quota`
+    /// item entirely (`recovery_items_section`).
     #[test]
     fn a_session_is_reported_for_the_reason_the_ui_would_give() {
         for (flag, expected) in [
@@ -403,7 +541,6 @@ pub(crate) mod tests {
             (AttentionReason::AgentError, Reason::AgentError),
             (AttentionReason::Disconnected, Reason::Disconnected),
             (AttentionReason::Stalled, Reason::Stalled),
-            (AttentionReason::Exhausted, Reason::Exhausted),
         ] {
             assert_eq!(
                 session_reason(&flagged("01S", "01GA", flag)),
@@ -412,6 +549,10 @@ pub(crate) mod tests {
                 flag.as_str()
             );
         }
+        assert_eq!(
+            session_reason(&flagged("01S", "01GA", AttentionReason::Exhausted)),
+            None
+        );
 
         // A pull request session waiting on the user has a request that is
         // the user's to merge.
@@ -464,6 +605,65 @@ pub(crate) mod tests {
         }
     }
 
+    fn attention_item(
+        reason: AttentionCause,
+        affected: Vec<(AttentionSubjectKind, &str)>,
+    ) -> ariadne_api::attention::AttentionItemDto {
+        use ariadne_api::attention::{AttentionProducer, AttentionSubjectDto, AttentionTarget};
+        ariadne_api::attention::AttentionItemDto {
+            id: "01I".into(),
+            producer: AttentionProducer::Recovery,
+            reason,
+            summary: "a blocker".into(),
+            required_action: "clear it".into(),
+            since: NOW.into(),
+            affected: affected
+                .into_iter()
+                .map(|(kind, id)| AttentionSubjectDto {
+                    kind,
+                    id: id.into(),
+                    label: id.into(),
+                })
+                .collect(),
+            target: AttentionTarget::Settings {
+                section: "forge".into(),
+            },
+        }
+    }
+
+    /// Every item `GET /v1/attention` finds is its own section, whatever
+    /// its cause — a `quota` item included, since this board no longer
+    /// derives a session row from the bare `exhausted` flag at all — and
+    /// each line names the cause, how long it has waited, the action that
+    /// clears it, and what it affects.
+    #[test]
+    fn every_recovery_item_prints_in_its_own_section() {
+        let now = NOW.parse::<chrono::DateTime<chrono::Utc>>().unwrap();
+        let recovery = AttentionListDto {
+            items: vec![attention_item(
+                AttentionCause::Quota,
+                vec![(AttentionSubjectKind::Session, "01S")],
+            )],
+            complete: true,
+        };
+        let section = recovery_items_section(&recovery, now).expect("a quota item has a section");
+        assert!(section.contains("[quota]"), "{section}");
+        assert!(section.contains("a blocker"), "{section}");
+        assert!(section.contains("clear it"), "{section}");
+        assert!(section.contains("01S"), "{section}");
+
+        assert_eq!(
+            recovery_items_section(
+                &AttentionListDto {
+                    items: Vec::new(),
+                    complete: true
+                },
+                now
+            ),
+            None
+        );
+    }
+
     /// The three stamps the UI ages a session row by, in its order.
     #[test]
     fn a_session_row_is_aged_by_when_its_reason_was_raised() {
@@ -514,6 +714,7 @@ pub(crate) mod tests {
             vec![goal("01GA", "Older goal"), goal("01GB", "Newer goal")],
             tasks,
             Vec::new(),
+            false,
         );
         let screen = board(&attention, &titles, chrono::Utc::now(), &View::plain()).expect("board");
 
@@ -568,10 +769,17 @@ pub(crate) mod tests {
         ];
         let titles = task_titles(&tasks);
         let now = chrono::Utc::now();
+        // `agent_error`, not `disconnected`: a task-tied disconnection is
+        // this board's business only once the task itself fails.
+        let session = SessionEntryDto {
+            attention_reason: Some(AttentionReason::AgentError),
+            ..dead("01S1", "01GA", Some("01T1"))
+        };
         let attention = group(
             vec![goal("01GA", "Older goal"), goal("01GB", "Newer goal")],
             tasks,
-            vec![dead("01S1", "01GA", Some("01T1"))],
+            vec![session],
+            false,
         );
         let all: Vec<Vec<String>> = attention
             .goals
@@ -579,6 +787,24 @@ pub(crate) mod tests {
             .flat_map(|group| rows(group, &titles, now))
             .collect();
         assert_eq!(quiet_lines(&all), "01T2\n01T1\n01S1");
+    }
+
+    /// `-q` is the ids of every recovery item too, not only the per-goal
+    /// board's: a configuration-only blocker has no goal of its own, so it
+    /// would otherwise print nothing under `-q` while the table still
+    /// showed it.
+    #[test]
+    fn quiet_rows_also_names_every_recovery_item() {
+        let attention = group(Vec::new(), Vec::new(), Vec::new(), false);
+        let recovery = AttentionListDto {
+            items: vec![attention_item(
+                AttentionCause::Configuration,
+                vec![(AttentionSubjectKind::Repository, "01R")],
+            )],
+            complete: true,
+        };
+        let rows = quiet_rows(&attention, &HashMap::new(), chrono::Utc::now(), &recovery);
+        assert_eq!(quiet_lines(&rows), "01I");
     }
 
     /// The daemon answers `GET /v1/sessions` with a page object, not a bare
@@ -602,11 +828,18 @@ pub(crate) mod tests {
                 snapshot_at: NOW.into(),
             })
         }
+        async fn attention() -> axum::Json<AttentionListDto> {
+            axum::Json(AttentionListDto {
+                items: Vec::new(),
+                complete: true,
+            })
+        }
 
         let app = Router::new()
             .route("/v1/goals", get(goals))
             .route("/v1/tasks", get(tasks))
-            .route("/v1/sessions", get(sessions));
+            .route("/v1/sessions", get(sessions))
+            .route("/v1/attention", get(attention));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -616,6 +849,58 @@ pub(crate) mod tests {
         server.abort();
 
         rendered.expect("a page object decodes, where a bare array once failed");
+    }
+
+    /// `-q` under an incomplete recovery read fails the command: a bare
+    /// identifier stream has no field to carry `complete` in, so a script
+    /// piping those ids has to be told some other way that they are not
+    /// the whole list.
+    #[tokio::test]
+    async fn quiet_mode_fails_on_an_incomplete_recovery_read() {
+        use axum::Router;
+        use axum::routing::get;
+
+        crate::output::init(crate::output::View {
+            quiet: true,
+            ..crate::output::View::plain()
+        });
+
+        async fn goals() -> axum::Json<Vec<GoalDto>> {
+            axum::Json(Vec::new())
+        }
+        async fn tasks() -> axum::Json<Vec<TaskDto>> {
+            axum::Json(Vec::new())
+        }
+        async fn sessions() -> axum::Json<SessionPageDto> {
+            axum::Json(SessionPageDto {
+                sessions: Vec::new(),
+                next_cursor: None,
+                total: 0,
+                snapshot_at: NOW.into(),
+            })
+        }
+        async fn attention() -> axum::Json<AttentionListDto> {
+            axum::Json(AttentionListDto {
+                items: Vec::new(),
+                complete: false,
+            })
+        }
+
+        let app = Router::new()
+            .route("/v1/goals", get(goals))
+            .route("/v1/tasks", get(tasks))
+            .route("/v1/sessions", get(sessions))
+            .route("/v1/attention", get(attention));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let client = Client::tcp(format!("http://{address}"));
+        let rendered = render(&client, Format::Table).await;
+        server.abort();
+
+        let error = rendered.expect_err("an incomplete read under -q must fail the command");
+        assert!(error.to_string().contains("could not be read"), "{error}");
     }
 
     /// A board with more sessions than fit in one page still sees every one

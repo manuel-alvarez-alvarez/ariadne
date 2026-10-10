@@ -503,6 +503,31 @@ impl ForgeClient {
         }
     }
 
+    /// Whether the forge itself has actually rejected the CLI's
+    /// credentials for `host` — a conclusive, read answer, not merely
+    /// that some check returned an error. Reads the same account call
+    /// [`Self::whoami`] already makes (`api user`, a real round trip to
+    /// the forge, not `auth status`'s own composite of config and SSO
+    /// checks that can fail before ever reaching the forge) and asks only
+    /// whether the forge's own answer was `HTTP 401` or `HTTP 403`
+    /// (`Refusal::is_unauthorized`) — the same deterministic convention
+    /// [`Refusal::is_missing`] already reads for a 404. A missing binary,
+    /// a spawn or write failure, a timeout, or a network or server error
+    /// of the forge's own answers nothing about the credentials
+    /// themselves, and stays `false`: read reactively, after a fetch has
+    /// already failed (`forge/poll.rs`), so this can tell the two apart
+    /// before naming either as the fetch's cause.
+    pub(crate) async fn confirmed_signed_out(&self, host: &str) -> bool {
+        let cli = match self {
+            ForgeClient::Github(cli) => &cli.cli,
+            ForgeClient::Gitlab(cli) => &cli.cli,
+        };
+        cli.call(&["api", "user", "--hostname", host])
+            .await
+            .err()
+            .is_some_and(|refusal| refusal.ran() && refusal.is_unauthorized())
+    }
+
     /// The account the CLI is signed in to `host` as.
     pub async fn whoami(&self, host: &str) -> Result<String, String> {
         match self {
@@ -635,6 +660,7 @@ impl Cli {
         let output = self.run(args, input).await.map_err(|message| Refusal {
             said: None,
             answer: None,
+            executed: false,
             message,
         })?;
         if output.status.success() {
@@ -658,6 +684,7 @@ impl Cli {
         Err(Refusal {
             answer: Some(stdout.trim().to_string()).filter(|answer| !answer.is_empty()),
             said: Some(said).filter(|said| !said.is_empty()),
+            executed: true,
             message,
         })
     }
@@ -674,6 +701,11 @@ pub(crate) struct Refusal {
     /// The forge's own answer alone, as the CLI printed it to standard
     /// output: `gh api`'s JSON, `{"message": ..., "errors": [...]}`.
     answer: Option<String>,
+    /// Whether the CLI process actually ran to an exit code, however it
+    /// answered — `false` only where [`Cli::run`] itself failed: the
+    /// binary is missing, could not be spawned, could not be written to,
+    /// or did not answer in time. Read by [`Self::ran`].
+    executed: bool,
     message: String,
 }
 
@@ -687,11 +719,45 @@ impl Refusal {
             .is_some_and(|said| said.contains("HTTP 404") || said.contains("404 Not Found"))
     }
 
+    /// Whether the forge itself answered that the credentials are no
+    /// good — positive evidence of exactly that, not merely a forbidden
+    /// response: `HTTP 401` is unambiguous (the API never answers it for
+    /// anything else), and `Bad credentials` is the forge's own fixed
+    /// words for a rejected or revoked token, the same deterministic
+    /// convention [`Self::is_missing`] reads for a 404. A network
+    /// failure, a timeout, or a server error of its own is neither, and
+    /// proves nothing about the credentials themselves.
+    ///
+    /// A bare `HTTP 403` is deliberately *not* read as a sign-out: GitHub
+    /// answers the same `HTTP 403` for primary and secondary rate
+    /// limiting, with otherwise valid credentials (GitHub's own REST
+    /// rate-limit documentation), and for restrictions an authenticated
+    /// user can still be caught by — an IP allow list, SAML enforcement
+    /// (GitHub's own network access restriction documentation) — neither
+    /// of which a sign-in answers for. `is_missing`'s own 404 is a single,
+    /// unambiguous case the forge means one thing by; `403` is not, so it
+    /// takes no action here on its own, leaving a 403 with no positive
+    /// credential evidence to raise nothing at all (`configuration`'s own
+    /// cause, or silence, rather than a guessed one).
+    pub(crate) fn is_unauthorized(&self) -> bool {
+        self.said
+            .as_deref()
+            .is_some_and(|said| said.contains("HTTP 401") || said.contains("Bad credentials"))
+    }
+
     /// The forge's own answer as JSON, where it gave one.
     pub(crate) fn answer(&self) -> Option<serde_json::Value> {
         self.answer
             .as_deref()
             .and_then(|answer| serde_json::from_str(answer).ok())
+    }
+
+    /// Whether the CLI actually ran to an exit code, however it answered —
+    /// as opposed to [`Cli::run`] itself having failed (a missing binary,
+    /// a spawn or write failure, or a timeout), which is no word from the
+    /// CLI about what was asked at all.
+    pub(crate) fn ran(&self) -> bool {
+        self.executed
     }
 }
 
@@ -729,6 +795,218 @@ mod tests {
             started.elapsed()
         );
         assert!(refused.to_string().contains("did not answer"), "{refused}");
+        assert!(!refused.ran(), "a deadline is not the CLI having answered");
+    }
+
+    /// One shell script, written once for the whole run of this test
+    /// binary and shared by every test below, rather than a fresh
+    /// executable per call: macOS checks each executable before it starts,
+    /// so a test that wrote its own would pay that cost per test
+    /// (crates/AGENTS.md). Each test instead gets its own directory of
+    /// *data* — `stderr`, `exit`, and an optional `hold` that makes the
+    /// script sleep well past any call's deadline — and a `gh` link
+    /// pointing at this one script, which reads `$(dirname "$0")`: its own
+    /// link's directory, not the shared script's, exactly as
+    /// `tests/it/common/acp.rs::stub_acp_agent` and
+    /// `tests/it/common/forge.rs::stub_forge_cli` already share theirs.
+    /// Unreachable from here, in a different compilation unit (this is a
+    /// `src/`-level unit test, not part of the separate `tests/it`
+    /// integration binary), so reimplemented locally rather than imported.
+    fn shared_gh_script() -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        // `exec` on the hold branch replaces this shell with `sleep`
+        // itself, rather than running it as a child the shell would then
+        // wait on: `Cli::run`'s timeout kills only the one process it
+        // spawned (`kill_on_drop`), and a `sleep` left as that process's
+        // own *child* would simply be orphaned onto init rather than
+        // killed with it. With `exec`, the process the daemon spawned and
+        // the one that is sleeping are the same pid, so killing it ends
+        // the hold too.
+        const SCRIPT: &str = "#!/bin/sh\n\
+dir=$(dirname \"$0\")\n\
+if [ -f \"$dir/hold\" ]; then exec sleep 3600; fi\n\
+if [ -f \"$dir/stderr\" ]; then cat \"$dir/stderr\" 1>&2; fi\n\
+exit \"$(cat \"$dir/exit\")\"\n";
+        // Named for the script's own content, as
+        // `tests/it/common/mod.rs::shared_script` names its shared files:
+        // a script edited since a previous run of this binary gets a
+        // fresh path rather than silently reusing a stale file left on
+        // disk from before the edit — the exact way the pre-`exec`
+        // version of this script once lingered under a fixed name and
+        // kept orphaning `sleep` well after the fix landed.
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        SCRIPT.hash(&mut hasher);
+        let name = format!("gh-stub-{:016x}", hasher.finish());
+        let dir = std::env::temp_dir().join("ariadne-forge-mod-test-scripts");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        if !path.exists() {
+            // Tests run in processes of their own: write aside and rename,
+            // so no test ever launches a file another test is still
+            // writing.
+            let partial = dir.join(format!("gh-stub.{}", std::process::id()));
+            std::fs::write(&partial, SCRIPT).unwrap();
+            std::fs::set_permissions(&partial, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::fs::rename(&partial, &path).unwrap();
+        }
+        path
+    }
+
+    /// A `gh` link to the one shared script, reading `stderr` and `exit`
+    /// from the per-test directory it was given, so
+    /// [`ForgeClient::confirmed_signed_out`] can be driven through a real
+    /// process without a real forge.
+    fn fake_gh(dir: &std::path::Path, stderr: &str, exit: i32) -> String {
+        std::fs::write(dir.join("stderr"), stderr).unwrap();
+        std::fs::write(dir.join("exit"), exit.to_string()).unwrap();
+        let link = dir.join("gh");
+        std::os::unix::fs::symlink(shared_gh_script(), &link).unwrap();
+        link.display().to_string()
+    }
+
+    /// A `gh` link to the shared script that holds every call open well
+    /// past any deadline a test gives it, so a real timeout is actually
+    /// exercised rather than a `/bin/sleep` that errors out immediately on
+    /// `api user`'s own arguments.
+    fn fake_gh_held(dir: &std::path::Path) -> String {
+        std::fs::write(dir.join("hold"), "").unwrap();
+        let link = dir.join("gh");
+        std::os::unix::fs::symlink(shared_gh_script(), &link).unwrap();
+        link.display().to_string()
+    }
+
+    fn github_client(binary: &str) -> ForgeClient {
+        ForgeClient::Github(github::Github::new(Cli {
+            configured: Some(binary.to_string()),
+            program: "gh",
+            timeout: Duration::from_secs(5),
+        }))
+    }
+
+    /// The forge's own `HTTP 401` is a confirmed rejection: sign-out is
+    /// the one thing the daemon can say for certain happened.
+    #[tokio::test]
+    async fn confirmed_signed_out_is_true_on_the_forges_own_401() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = github_client(&fake_gh(
+            dir.path(),
+            "gh: HTTP 401: Bad credentials (https://api.github.com/user)",
+            1,
+        ));
+        assert!(client.confirmed_signed_out("github.com").await);
+    }
+
+    /// GitHub answers `HTTP 403` for primary and secondary rate limiting
+    /// too, with otherwise valid credentials — a rate-limited `api user`
+    /// read is no proof of sign-out, and raising `access` for it would be
+    /// a false sign-in action over a retryable condition.
+    #[tokio::test]
+    async fn confirmed_signed_out_is_false_on_a_rate_limited_403() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = github_client(&fake_gh(
+            dir.path(),
+            "gh: API rate limit exceeded for user ID 1. (HTTP 403)",
+            1,
+        ));
+        assert!(!client.confirmed_signed_out("github.com").await);
+    }
+
+    /// A 403 naming no credential problem at all — GitHub's own wording
+    /// for an IP allow list or SAML enforcement restriction, which an
+    /// already-signed-in, already-valid token can still be caught by — is
+    /// no more a confirmed sign-out than the rate-limited one above: a
+    /// 403 is read for positive evidence of a credential rejection, never
+    /// inferred from the status alone.
+    #[tokio::test]
+    async fn confirmed_signed_out_is_false_on_a_generic_forbidden_403() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = github_client(&fake_gh(
+            dir.path(),
+            "gh: Although you appear to have the correct authorization credentials, \
+             the acme organization has an IP allow list enabled, and your IP address \
+             is not permitted to access this resource. (HTTP 403)",
+            1,
+        ));
+        assert!(!client.confirmed_signed_out("github.com").await);
+    }
+
+    /// A server error of the forge's own, with no `401`/`403` in it, is
+    /// not a credential rejection — raising `access` for it would be
+    /// exactly the speculative classification this read exists to avoid.
+    #[tokio::test]
+    async fn confirmed_signed_out_is_false_on_an_unrelated_server_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = github_client(&fake_gh(
+            dir.path(),
+            "gh: Internal Server Error (HTTP 500)",
+            1,
+        ));
+        assert!(!client.confirmed_signed_out("github.com").await);
+    }
+
+    /// A network failure or a configuration error the CLI reports before
+    /// ever reaching the forge is the same kind of answer as a 500: the
+    /// CLI ran and said something, but said nothing about credentials.
+    #[tokio::test]
+    async fn confirmed_signed_out_is_false_on_a_network_or_configuration_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = github_client(&fake_gh(
+            dir.path(),
+            "gh: could not resolve host: api.github.com",
+            1,
+        ));
+        assert!(!client.confirmed_signed_out("github.com").await);
+    }
+
+    /// A timeout is the check never actually running at all —
+    /// [`Refusal::ran`] reads `false` — which answers nothing about the
+    /// credentials either way. Held open by the shared stub's own `hold`
+    /// file until the deadline, rather than `/bin/sleep` given `api user
+    /// --hostname <host>`, which exits immediately on its own usage error
+    /// and so never actually exercises the deadline at all.
+    #[tokio::test]
+    async fn confirmed_signed_out_is_false_on_a_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = ForgeClient::Github(github::Github::new(Cli {
+            configured: Some(fake_gh_held(dir.path())),
+            program: "gh",
+            timeout: Duration::from_millis(200),
+        }));
+        assert!(!client.confirmed_signed_out("github.com").await);
+    }
+
+    /// A missing executable never runs at all either — [`Cli::binary`]
+    /// fails before [`Cli::run`] even spawns anything.
+    #[tokio::test]
+    async fn confirmed_signed_out_is_false_on_a_missing_executable() {
+        let client = github_client("/no/such/gh/binary/here");
+        assert!(!client.confirmed_signed_out("github.com").await);
+    }
+
+    /// `ran()` is what tells a confirmed refusal — the CLI reached an exit
+    /// code and said something — apart from [`Cli::run`] itself never
+    /// managing to ask: a missing binary, a spawn or write failure, or a
+    /// timeout, none of which is the CLI having answered the question at
+    /// all. [`ForgeClient::confirmed_signed_out`] reads this, alongside
+    /// [`Refusal::is_unauthorized`], before naming a forge fetch's
+    /// failure a credential rejection.
+    #[test]
+    fn a_refusal_has_run_only_where_the_cli_reached_an_exit_code() {
+        let executed = Refusal {
+            said: Some("gh: not logged in to any hosts".into()),
+            answer: None,
+            executed: true,
+            message: "`gh auth status`: gh: not logged in to any hosts".into(),
+        };
+        let never_ran = Refusal {
+            said: None,
+            answer: None,
+            executed: false,
+            message: "cannot run `gh`: No such file or directory".into(),
+        };
+        assert!(executed.ran());
+        assert!(!never_ran.ran());
     }
 
     #[test]
@@ -738,6 +1016,7 @@ mod tests {
         let refusal = |said: Option<&str>| Refusal {
             said: said.map(str::to_string),
             answer: None,
+            executed: said.is_some(),
             message: "`gh api -f body=P1: Handle HTTP 404 responses`".into(),
         };
         assert!(!refusal(Some("gh: Server Error (HTTP 502)")).is_missing());

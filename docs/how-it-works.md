@@ -52,6 +52,16 @@ it is an inline pane with the transcript above and a status line and input
 box pinned under it. Escape cancels the running turn, and Ctrl-C twice
 disconnects your console without stopping the agent.
 
+`GET /v1/attention` is the one list both the CLI and Ariadne Desktop read
+for a blocker only a person can clear: a model's quota with no automatic
+switch left, a task failed on a machine's own descriptor limit, or a forge
+CLI missing from the daemon's PATH. Automatic recovery still trying — a
+model switch about to run, a forge poll about to retry — raises nothing
+there; only recovery that has spent its options does. See [Scheduler,
+attention and watchdogs](../specs/009-scheduler-attention-and-watchdogs.md)
+for the rules, and [Needs attention](../specs/031-needs-attention.md) for
+the item shape and the producers that fill it.
+
 `attach` also resumes a stored outside conversation and revives an ended
 Ariadne session, each with no separate step first. A resumed outside session
 has no goal, no task and no worktree: the agent keeps working in the

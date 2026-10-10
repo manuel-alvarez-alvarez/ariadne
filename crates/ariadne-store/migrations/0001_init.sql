@@ -188,7 +188,37 @@ CREATE TABLE goals (
     issue_url    TEXT,
     -- The workflow every task of the goal runs on. Chosen once, when the goal
     -- is created; its columns are snapshotted into `goal_steps`.
-    workflow     TEXT NOT NULL REFERENCES workflows (name)
+    workflow     TEXT NOT NULL REFERENCES workflows (name),
+    -- The goal's failed and stalled task ids, each with the `updated_at`
+    -- its failure carried at the moment the orchestrator's own
+    -- `session/prompt` turn naming them actually returned (a JSON array
+    -- of `[id, transition id]` pairs, the id of the `task_transitions` row
+    -- that moved the task to `failed`) — written only by that turn's own
+    -- completion (`acp::serve_with_input`, `Delivery::GoalAttention`),
+    -- never by an ambient session status: an unrelated turn landing on
+    -- the same session must not confirm a failure it never carried. The
+    -- attention producer matches a task by both its id and this transition
+    -- id, not by `Task.updated_at`, which an ordinary metadata edit on a
+    -- failed task also moves; a later retry of the same task stamps a
+    -- fresh transition row, so that confirmation does not answer for it.
+    orchestrator_answered_failed_task_ids TEXT,
+    -- When `scheduler::goals::orchestrator_could_not_start` gave up on this
+    -- goal's orchestrator: the spawn-retry budget ran out, not merely a
+    -- crash the liveness sweep is about to retry. Distinct from the
+    -- `disconnected` flag `retire_disconnected` raises on every crash,
+    -- which the scheduler may still resolve on its own; cleared the moment
+    -- `keep_orchestrator` has a live orchestrator or a resume/spawn
+    -- succeeds, so recovery taking ownership again takes this down with it.
+    orchestrator_given_up_at TEXT,
+    -- Whether that give-up was `scheduler::quiet::relaunch_wedged`'s own
+    -- exhausted-relaunch decision for a session that started and then
+    -- stopped answering, rather than `orchestrator_could_not_start`'s —
+    -- one that never got off the ground at all. Read directly rather than
+    -- inferred from the alarm session's own `stalled` flag: a pass can
+    -- jump straight past the flag threshold to the relaunch one and give
+    -- up without ever raising it, so the flag is not reliable evidence of
+    -- which give-up this was.
+    orchestrator_given_up_wedged INTEGER NOT NULL DEFAULT 0
 );
 
 -- Which repositories a goal works in, by reference.
@@ -285,6 +315,16 @@ CREATE TABLE pull_requests (
     -- forge id, written when the review first posts it, and edited in place
     -- on every later round. NULL until the first review of the request.
     summary_comment_id    TEXT,
+    -- When `scheduler::pull_requests::start_pull_request_session` gave up
+    -- on this request's reviewer session: its spawn-retry budget ran out,
+    -- not merely a crash the liveness sweep is about to retry. Cleared the
+    -- moment a resume or spawn of that session next succeeds.
+    reviewer_given_up_at  TEXT,
+    -- Whether that give-up was `scheduler::quiet::relaunch_wedged`'s own
+    -- exhausted-relaunch decision rather than `start_pull_request_session`'s
+    -- own spawn-retry exhaustion — the same distinction, and for the same
+    -- reason, as `goals.orchestrator_given_up_wedged`.
+    reviewer_given_up_wedged INTEGER NOT NULL DEFAULT 0,
     UNIQUE (repository_id, number)
 );
 
