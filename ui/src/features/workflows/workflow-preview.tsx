@@ -1,10 +1,10 @@
-import { useQuery } from "@tanstack/react-query"
 import { useEffect, useState } from "react"
-
-import { api, type ParsedWorkflowDto, unwrap, type WorkflowStepDto } from "@/api"
+import type { ParsedWorkflowDto, WorkflowStepDto } from "@/api"
 import { Badge } from "@/components/ui/badge"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { describeError } from "@/lib/format"
+
+import type { WorkflowParseResult } from "./use-workflow-parse"
 
 function StepBadge({ kind, value }: { kind: "rank" | "gate"; value: string }) {
   const meaning =
@@ -38,27 +38,13 @@ function WorkflowCard({ step }: { step: WorkflowStepDto }) {
   )
 }
 
-export function WorkflowPreview({ document }: { document: string }) {
-  const [settledDocument, setSettledDocument] = useState(document)
+export function WorkflowPreview({ parsed }: { parsed: WorkflowParseResult }) {
   const [lastGood, setLastGood] = useState<ParsedWorkflowDto | null>(null)
-  useEffect(() => {
-    const timeout = window.setTimeout(() => setSettledDocument(document), 250)
-    return () => window.clearTimeout(timeout)
-  }, [document])
-  const parsed = useQuery({
-    queryKey: ["workflows", "parse", settledDocument],
-    queryFn: () =>
-      unwrap(api().POST("/v1/workflows/parse", { body: { document: settledDocument } })),
-  })
   useEffect(() => {
     if (parsed.data) setLastGood(parsed.data)
   }, [parsed.data])
   const refusal = parsed.isError ? describeError(parsed.error) : null
-  const line =
-    parsed.isError &&
-    typeof (parsed.error as { details?: { line?: unknown } }).details?.line === "number"
-      ? (parsed.error as unknown as { details: { line: number } }).details.line
-      : null
+  const line = parsed.errorLine
   return (
     <section aria-label="Workflow preview" className="flex min-h-0 flex-1 flex-col gap-3">
       <header>
@@ -71,9 +57,7 @@ export function WorkflowPreview({ document }: { document: string }) {
           {refusal}
         </p>
       ) : null}
-      <div
-        className={refusal ? "flex gap-3 overflow-x-auto opacity-50" : "flex gap-3 overflow-x-auto"}
-      >
+      <div className={refusal ? "flex flex-col gap-3 opacity-50" : "flex flex-col gap-3"}>
         {(parsed.data ?? lastGood)?.steps.map((step) => (
           <WorkflowCard key={step.id} step={step} />
         ))}
