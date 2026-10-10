@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use serde::Serialize;
 
 use ariadne_api::goals::GoalDto;
-use ariadne_api::sessions::SessionDto;
+use ariadne_api::sessions::SessionEntryDto;
 use ariadne_api::tasks::TaskDto;
 
 use super::{Reason, session_at, session_reason, task_reason};
@@ -58,7 +58,7 @@ pub(super) struct AttentionTask {
 #[derive(Serialize)]
 pub(super) struct AttentionSession {
     pub reason: Reason,
-    pub session: SessionDto,
+    pub session: SessionEntryDto,
 }
 
 /// The three lists as one document: goals first, newest first — the order the
@@ -66,7 +66,7 @@ pub(super) struct AttentionSession {
 pub(super) fn group(
     goals: Vec<GoalDto>,
     tasks: Vec<TaskDto>,
-    sessions: Vec<SessionDto>,
+    sessions: Vec<SessionEntryDto>,
 ) -> Attention {
     let mut goals = goals;
     goals.sort_by(|a, b| b.id.cmp(&a.id));
@@ -205,7 +205,7 @@ mod tests {
     /// requests, by the request's title.
     #[test]
     fn a_pull_request_ready_to_merge_is_listed_by_its_title() {
-        let session = SessionDto {
+        let session = SessionEntryDto {
             goal_id: None,
             task_id: None,
             pull_request_id: Some("01PR".into()),
@@ -222,7 +222,7 @@ mod tests {
 
     #[test]
     fn a_loose_session_keeps_its_attention_row() {
-        let session = SessionDto {
+        let session = SessionEntryDto {
             goal_id: None,
             task_id: None,
             seat: None,

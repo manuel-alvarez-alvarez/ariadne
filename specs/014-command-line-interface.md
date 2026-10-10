@@ -505,6 +505,11 @@ same binary also serves (013).
   (`attention.rs::quiet_output_is_the_ids_of_every_group`), and only a run
   that prints a table refuses a `--columns`
   (`::a_columns_flag_is_refused_only_where_a_table_is_printed`).
+- `ariadne attention` reads `GET /v1/sessions` as a page object, asking for
+  the Ariadne kind alone and following every `next_cursor` until the last
+  page, so a session the first page left off still reaches the board
+  (`attention.rs::the_board_renders_against_a_paged_sessions_response`,
+  `::every_page_of_ariadne_sessions_is_fetched`).
 - Mutation lines and empty listings share their output forms
   (`output.rs::quiet_mutations_print_only_the_id`,
   `::an_empty_state_puts_the_next_command_on_its_own_line`).
