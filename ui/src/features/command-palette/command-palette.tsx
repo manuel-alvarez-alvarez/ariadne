@@ -42,6 +42,7 @@ import {
   SunIcon,
   TargetIcon,
   TriangleAlertIcon,
+  WorkflowIcon,
 } from "lucide-react"
 import { useTheme } from "next-themes"
 import { type ReactNode, useMemo, useState } from "react"
@@ -393,7 +394,7 @@ const PAGES = [
   { label: "Goals", path: paths.goals(), icon: TargetIcon },
   { label: "Sessions", path: paths.sessions(), icon: RadioTowerIcon },
   { label: "Skills", path: paths.skills(), icon: CpuIcon },
-  { label: "Workflows", path: paths.workflows(), icon: ListChecksIcon },
+  { label: "Workflows", path: paths.workflows(), icon: WorkflowIcon },
   { label: "Agents", path: paths.agents(), icon: BotIcon },
   { label: "Repositories", path: paths.repositories(), icon: FolderGit2Icon },
 ] as const
@@ -404,7 +405,7 @@ const GROUPS = [
   { key: "tasks", heading: "Tasks", icon: ListChecksIcon },
   { key: "sessions", heading: "Sessions", icon: RadioTowerIcon },
   { key: "skills", heading: "Skills", icon: CpuIcon },
-  { key: "workflows", heading: "Workflows", icon: ListChecksIcon },
+  { key: "workflows", heading: "Workflows", icon: WorkflowIcon },
   { key: "repositories", heading: "Repositories", icon: FolderGit2Icon },
 ] as const satisfies readonly {
   key: keyof PaletteEntries

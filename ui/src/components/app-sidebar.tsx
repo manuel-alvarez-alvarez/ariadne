@@ -36,11 +36,11 @@ import {
   CpuIcon,
   FolderGit2Icon,
   GitPullRequestIcon,
-  ListChecksIcon,
   type LucideIcon,
   RadioTowerIcon,
   ShieldIcon,
   TargetIcon,
+  WorkflowIcon,
 } from "lucide-react"
 import { NavLink } from "react-router-dom"
 
@@ -66,7 +66,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: paths.sessions(), label: "Sessions", icon: RadioTowerIcon },
   { to: paths.forge(), label: "Forge", icon: GitPullRequestIcon },
   { to: paths.skills(), label: "Skills", icon: CpuIcon },
-  { to: paths.workflows(), label: "Workflows", icon: ListChecksIcon },
+  { to: paths.workflows(), label: "Workflows", icon: WorkflowIcon },
   { to: paths.agents(), label: "Agents", icon: BotIcon },
   { to: paths.permissions(), label: "Permissions", icon: ShieldIcon },
   { to: paths.repositories(), label: "Repositories", icon: FolderGit2Icon },
