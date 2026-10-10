@@ -41,6 +41,8 @@ that writes and staffs the tasks (003), the channel the agents talk on
 (018), what the forge holds of a request (026), the CLI (014) and the
 desktop (015).
 
+## Behavior
+
 ## The document syntax
 
 ```
@@ -94,12 +96,12 @@ every other wire enum (011).
    own deleted rather than reset. The same open adopts a user workflow under
    a name the catalog gains, and prunes a built-in the catalog drops that
    holds nothing of anybody's.
-2. Ariadne ships two: `develop-review-merge`, which lands a task on the base
-   branch itself (its `merge` column stages the `merge` skill), and
-   `develop-review-pr`, whose `develop` and `review` columns are the same and
-   whose third column, `pr[Pull request]`, stages `pr-babysit` and gates on
-   `request-merged`. `develop-review-merge` is the default of every
-   repository that names none (`DEFAULT_WORKFLOW`).
+2. Ariadne ships `develop-review-merge` with `develop` (`committed`), `review`
+   (no gate), and `merge` (`merged`) columns, and `develop-review-pr` with
+   `develop` (`committed`), `review` (no gate), and `pr[Pull request]`
+   (`request-merged`) columns; `merge` stages `merge`, `pr` stages
+   `pr-babysit`, and `develop-review-merge` is the default of every repository
+   that names none (`DEFAULT_WORKFLOW`).
 3. A save — a create or a document write — parses the document and refuses a
    document that breaks a syntax rule, naming the line. It also refuses a
    document whose `workflow <name>` line does not equal the row's name, and

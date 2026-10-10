@@ -9,7 +9,6 @@ tests:
   - crates/ariadne-store/src/stats/mod.rs
   - crates/ariadne-daemon/tests/it/stats.rs
   - crates/ariadne-daemon/tests/it/switch_stats.rs
-  - crates/ariadne-daemon/tests/it/review_stats.rs
   - crates/ariadne-daemon/tests/it/outcome_stats.rs
   - crates/ariadne-daemon/tests/it/stats_work.rs
   - crates/ariadne-daemon/tests/it/stats_time.rs
@@ -25,7 +24,6 @@ tests:
   - ui/src/components/stats/time-section.test.tsx
   - ui/src/components/stats/spend-section.test.tsx
   - ui/src/components/stats/stat-time-chart.test.tsx
-  - ui/src/components/stats/models-section.test.tsx
   - ui/src/components/stats/attention-section.test.tsx
   - ui/src/components/stats/status-colors.test.ts
   - ui/src/components/stats/stat-explain.test.tsx
@@ -531,21 +529,23 @@ alongside the family's other totals, and the Stats screen's key figures (rule
   key `qk` names (`stats.test.tsx` "asks every family with the filters in
   its URL, under the key qk names"), and renders an error rather than the
   empty sentence when a read fails (`stats.test.tsx` "renders an error, not
-  the empty sentence, when the daemon refuses a read"). It leads with the
-  key figures, read off the work, spend and models answers, and lays Models
-  across the full width with the other four as a two-column card grid
-  (`stats.test.tsx` "leads with the key figures, read off the work, spend
-  and models answers", "lays Models across the full width, and the other
-  four out as a two-column card grid").
-- Each section asks for its family with the filter under
-  `qk.stats.<family>(filter)`, and says its empty sentence under its heading
-  and its question (`<family>-section.test.tsx` "asks for its family with
-  the filter, and says its empty sentence", one per family).
-- A task or a session update invalidates the stats
-  (`dispatch.test.ts` "refetches every stat when a task or a session moves").
-- Stats is the last entry of the sidebar
-  (`app-shell.test.tsx` "ends the navigation with stats, right after
-  repositories and permissions").
+  the empty sentence, when the daemon refuses a read"). It leads with key
+  figures from Work, Spend, and Attention, and lays Models across the full
+  width (`stats.test.tsx` "leads with the key figures, read off the work,
+  spend and attention answers", "lays Models across the full width, and the
+  other four out as a two-column card grid").
+- Work and Spend show their empty sentence, Attention shows its empty state,
+  and Time draws its family figures (`work-section.test.tsx` "asks for its
+  family with the filter, and says its empty sentence";
+  `spend-section.test.tsx` "asks for its family with the filter, and says
+  its empty sentence"; `attention-section.test.tsx` "shows the empty state
+  when every attention figure is zero"; `time-section.test.tsx` "asks for
+  its family with the filter and draws its time figures").
+- A task, session, or goal update invalidates the stats
+  (`dispatch.test.ts` "refetches every stat when a task, a session or a goal
+  moves, since any may be a fact").
+- Stats ends the navigation, which includes Forge (`app-shell.test.tsx`
+  "ends the navigation with stats, and lists Forge beside the other screens").
 - `STATUS_COLORS` maps each meaning to the status ramp's own CSS variable
   (`status-colors.test.ts` "maps each meaning to the status ramp's own CSS
   variable, so every panel's chart draws it the same").
@@ -563,13 +563,12 @@ alongside the family's other totals, and the Stats screen's key figures (rule
   rather than dropped
   (`stat-time-chart.test.tsx` "labels an hour bucket as a time, with the
   date added, not a bare date").
-- Every key figure, and every tile, column and chart series of the Work,
-  Time, Spend, Attention and Models sections, explains itself on hover
-  (`stats.test.tsx` "explains every key figure, on hover";
-  `work-section.test.tsx`, `time-section.test.tsx`, `spend-section.test.tsx`
-  and `attention-section.test.tsx`, each "explains every tile and every
-  chart series, on hover"; `models-section.test.tsx` "explains every column
-  of every seat table, on hover").
+- Every key figure, and every tile and chart series in the Work, Time, Spend,
+  and Attention sections, explains itself on hover (`stats.test.tsx`
+  "explains every key figure, on hover"; `work-section.test.tsx`,
+  `time-section.test.tsx`, `spend-section.test.tsx`, and
+  `attention-section.test.tsx`, each "explains every tile and every chart
+  series, on hover").
 
 #### Work
 
@@ -618,7 +617,8 @@ alongside the family's other totals, and the Stats screen's key figures (rule
 - The route reads a finished task into the time DTO
   (`stats_time.rs::the_time_stat_answers_and_is_in_the_api_document`).
 - The desktop section renders its tiles and status chart from `qk.stats.time`
-  (`time-section.test.tsx::asks_for_its_family_with_the_filter_and_draws_its_time_figures`).
+  (`time-section.test.tsx` "asks for its family with the filter and draws its
+  time figures").
 
 #### Spend
 
@@ -680,11 +680,10 @@ alongside the family's other totals, and the Stats screen's key figures (rule
   `::the_seat_option_belongs_only_to_models_and_prints_one_table`).
 - JSON preserves the complete DTO with a seat selected
   (`commands/stats/models.rs::tests::json_reads_the_complete_dto_even_with_a_seat_selected`).
-- The desktop reads under `qk.stats.models`, draws three sorted tables with their columns and formats, and omits empty seats
-  (`models-section.test.tsx`: "draws three seat tables with their columns, formats and count ordering",
-  "omits a table when its seat has no rows", and the section's empty-state test).
-- A response containing only seatless rows shows the shared empty state and no table
-  (`models-section.test.tsx`: "shows the empty state when the response contains only seatless rows").
+- The Stats screen reads the Models family under `qk.stats.models` and renders
+  its section with the other four families (`stats.test.tsx` "asks every
+  family with the filters in its URL, under the key qk names"; "renders the
+  five sections in order, under one heading style").
 
 #### Attention
 

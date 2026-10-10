@@ -15,7 +15,6 @@ tests:
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-cli/src/commands/attention.rs
   - crates/ariadne-cli/src/commands/pr.rs
-  - ui/src/features/goals/attention.test.tsx
   - ui/src/features/pull-requests/pull-requests-page.test.tsx
 ---
 
@@ -84,7 +83,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
    Each start and resume writes it to `head_sha`, since the briefing names
    that head.
 7. The news of a reviewer row (`forge/news.rs`) is a push and the replies in
-   the threads the integration login opened, each told once (026 rule 18).
+   the threads the integration login opened, each told once (026 rule 14).
    A push is a `head_sha` that differs from `told_head_sha`. Its line names
    the new head and the last `reviewed_sha`, and asks for a review of the
    commits since it. Checks, the base, the review decision and the state are
@@ -101,7 +100,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 9. A row that turns `merged` or `closed`, goes back to draft, or loses the
    user's review request has its sessions killed and its worktree removed. No
    branch is touched. Then Ariadne stops working on it and its row goes,
-   but for a draft, whose review waits for it to leave draft (026 rule 23).
+   but for a draft, whose review waits for it to leave draft.
    A request of the user's own leaves its row to its author's side; one
    whose asking stopped and that no task keeps goes as well.
 
@@ -180,12 +179,12 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
       request's `diffs` are read before anything is posted, and a renamed
       file takes its old path as `old_path`.
     The daemon marks the posted summary and comments `from_review`
-    (`pull_request_comment_marks`, 026 rule 14), as it marks a review
+    (`pull_request_comment_marks`, 026 rule 10), as it marks a review
     session's replies, holds them beside the last read until the next fetch
     reads them back, and answers them with 201. On a request of
     the user's own a `from_review` comment counts as another login's: it is
     told once to the task's author, as "by the Ariadne review", and waits
-    on it until the author replies (026 rules 17 to 19). The other way, a
+    on it until the author replies (026 rules 12 to 16). The other way, a
     comment under the login that no review posted — the author's answer,
     or the user's — in a thread a review opened is the review session's
     news, so the answer to a finding reaches its reviewer. On a request of the user's
@@ -349,8 +348,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   `::opens the console of a review resumed on the same session`.
 - The attention text says the review is posted and the approval is the
   user's:
-  `attention.rs::tests::a_session_is_reported_for_the_reason_the_ui_would_give`,
-  `attention.test.tsx::carries a reviewer pull request session's waiting_user as review posted`.
+  `attention.rs::tests::a_session_is_reported_for_the_reason_the_ui_would_give`.
 - `ariadne pr review` sends the pin it is given or the repository's own, is
   refused with no pin at all, and `--stop` sends `asked: false` alone and
   conflicts with every asking flag:

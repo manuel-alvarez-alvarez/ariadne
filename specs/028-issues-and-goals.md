@@ -1,7 +1,7 @@
 ---
 id: issues-and-goals
 status: current
-updated: 2026-10-08
+updated: 2026-10-10
 areas: [api, daemon, store, cli, ui, prompts]
 commits: []
 tests:

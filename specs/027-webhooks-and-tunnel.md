@@ -1,7 +1,7 @@
 ---
 id: webhooks-and-tunnel
 status: current
-updated: 2026-10-08
+updated: 2026-10-10
 areas: [store, api, daemon, cli, ui]
 commits: []
 tests:
@@ -208,8 +208,6 @@ A disabled integration has no worker, regardless of its retained hook status.
   `repositories-page.test.tsx::shows polling with the tunnel off: green with how to turn it on, red with the fetch error`.
 - The last fetch error is written only when it changes:
   `store.rs::the_last_fetch_error_is_written_only_when_it_changes`.
-  The form shows none of the webhook:
-  `repository-form-dialog.test.tsx::the forge integration > shows the detected remote, and enables the forge with its one switch`.
 - With one enabled integration, the switch on and no public URL, the tunnel opens to the stand-in at the random
   listener port, and the hook is created with the stand-in's URL. A signed delivery to that URL reaches the listener
   and triggers one fetch:

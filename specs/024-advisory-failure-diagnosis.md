@@ -1,7 +1,7 @@
 ---
 id: advisory-failure-diagnosis
 status: current
-updated: 2026-10-07
+updated: 2026-10-10
 areas: [daemon, api, core, store, ui]
 commits: []
 tests:

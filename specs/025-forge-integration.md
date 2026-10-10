@@ -1,7 +1,7 @@
 ---
 id: forge-integration
 status: current
-updated: 2026-10-08
+updated: 2026-10-10
 areas: [core, api, store, daemon, cli, ui]
 commits: []
 tests:
@@ -38,9 +38,8 @@ the desktop app as a whole (015).
    `forge_integrations`, keyed by `repository_id`. The row holds `kind`
    (`github` or `gitlab`), `host`, `owner`, `name`, `remote`, `enabled`,
    `login`, `review_model`, `review_effort`, `detected_at` and `updated_at`.
-   There is no babysit pin: a request of the user's is
-   kept by the author of the task that opened it, on that author's own pin
-   (005, 026). `host`, `owner` and
+   There is no babysit pin: the current task-column agent keeps its request
+   under the workflow rule in [030](030-workflows.md). `host`, `owner` and
    `name` are stored lower-cased. A repository with no usable remote has no
    row. Deleting the repository deletes its row.
    Hook metadata and the nested DTO block follow [027](027-webhooks-and-tunnel.md).
@@ -178,16 +177,6 @@ the desktop app as a whole (015).
 - The repositories table shows the Forge column
   (`ui/src/features/repositories/repositories-page.test.tsx::shows the forge
   each remote is on over two lines, and whether it is enabled`).
-- The form shows the detected remote and enables the forge with its one
-  switch (`ui/src/features/repositories/repository-form-dialog.test.tsx::the
-  forge integration > shows the detected remote, and enables the forge with
-  its one switch`), sends nothing of the forge where the switch did not move
-  (`::sends nothing of the forge where the switch did not move`), puts a
-  refusal on the switch (`::puts a refusal to enable on the switch, in the
-  CLI's own words`), and shows no switch on registration or where nothing
-  was detected (`::shows no forge while registering: nothing is detected
-  before the daemon opens the checkout`, `::offers no switch where no GitHub
-  or GitLab remote was detected`).
 
 ## Sources
 

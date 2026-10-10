@@ -28,10 +28,6 @@ tests:
   - ui/src/components/app-shell.test.tsx
   - ui/src/features/pull-requests/pull-request-panel.test.tsx
   - ui/src/routes/paths.test.ts
-  - ui/src/features/sessions/sessions-page.test.tsx
-  - ui/src/features/sessions/session-panel.test.tsx
-  - ui/src/features/goals/attention.test.tsx
-  - ui/src/features/goals/attention-strip.test.tsx
   - ui/src/events/dispatch.test.ts
 ---
 
@@ -94,38 +90,24 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
 
 ## The agent who keeps a request
 
-9. A row with role `author` and an origin task is kept by the agent of the task's current column (030): the `pr` column of `develop-review-pr`.
-   It gets no session of its own: that agent's own session is told its news.
-10. The `pr` column stages the `pr-babysit` skill (030).
-    The agent opens the request once and keeps the branch current.
-    It replies once only in an existing thread that asks for a change.
-    It names the new commit after it makes a requested change.
-    It gives a reason when it does not make the change.
-    It posts no reply to comments that ask for no change.
-    It posts no thanks, praise, acknowledgement, new thread, or top-level comment.
-    It commits only requested changes and failed-check fixes.
-    It pushes tested fixes as new commits.
-11. An agent whose session went away while its request is open is resumed by the task's own pass, as any column's agent is (009 rule 23): it reads the request again and waits for its news.
-    A restart that resumes the agent while its open request still reads ready raises `waiting_user` again.
-12. The scheduler reconciles requests on every full pass, on every request change, and on every event of a request's session (`scheduler/pull_requests.rs`).
-    An idle `pr` agent with an open request waits on the forge: it is never nudged for sitting idle (009 rule 41).
-    A disabled integration tells the agent nothing; its task stays on the `pr` column until the integration is on again.
+The current task-column agent owns an author request, its skill, its fixes,
+and its idle handling under [030](030-workflows.md), rule 10.
 
 ## Comments, checks and the detail read
 
-13. Each fetch reads the details of every open request Ariadne works on.
+9. Each fetch reads the details of every open request Ariadne works on.
     `ForgeClient::details(number)` answers the request, every comment with its thread and author, the failed checks, and whether the head is behind the base.
     GitHub reads `gh api` review comments, issue comments and reviews, thread ids and resolution through `gh api graphql`, check runs of the head, and a base compare.
     Every list is read with `--paginate`, the review threads and the check runs included.
     GitLab reads `glab api` discussions, the jobs of the latest pipeline, and the diverged commit count.
     One detail read is bounded by `Timeouts::forge_details`, 30 seconds by default. One that fails keeps the details the last read found.
-14. A comment is the forge's, and its id is the forge's: `rc-<n>`, `ic-<n>`, `rv-<n>` or `note-<n>`.
+10. A comment is the forge's, and its id is the forge's: `rc-<n>`, `ic-<n>`, `rv-<n>` or `note-<n>`.
     `kind` is `review_comment`, `issue_comment` or `review`. A review with no body is no comment.
     Comments on the conversation and review bodies share one thread, `conversation`.
     `answered` holds where a later comment in the thread is the integration login's own side's.
     What the database keeps of one is a mark (`pull_request_comment_marks`): `told_at`, once its session was told of it, and `from_review`, once an Ariadne review posted it (029). The marks go with their row.
     What Ariadne posts itself is held beside the last read until the next fetch reads it back.
-15. The DTO joins the forge's read and the row.
+11. The DTO joins the forge's read and the row.
     It includes the request's fields, `failed_checks`, `behind_base`, `id`, `origin_task_id`, `ready`, review ask, and `session_id`.
     For an origin task, `session_id` names the current column agent's newest session.
     Otherwise it names the newest review session on the request.
@@ -133,13 +115,13 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
 
 ## The news
 
-16. `forge/news.rs` computes what the session has not been told: comments of the other side with no `told_at` mark in a thread nobody answered or resolved, checks that turned to failure, a rolled-up check state that changed, `behind_base` that turned true, a review decision that changed, and a state that turned `merged` or `closed`.
+12. `forge/news.rs` computes what the session has not been told: comments of the other side with no `told_at` mark in a thread nobody answered or resolved, checks that turned to failure, a rolled-up check state that changed, `behind_base` that turned true, a review decision that changed, and a state that turned `merged` or `closed`.
     The check state is what a ready report turns on: checks that end green after an approval, or go back to pending after a report, are news.
     The prompt lists each item on one line, and names each comment by its id.
-17. The scheduler hands the news as a `session/prompt`, queued behind a running turn (009 rule 6).
+13. The scheduler hands the news as a `session/prompt`, queued behind a running turn (009 rule 6).
     A session still `starting` gets the news once it has its briefing.
     A fetch that finds nothing new hands nothing.
-18. Each change is told once (009 rule 4).
+14. Each change is told once (009 rule 4).
     A told comment's mark carries `told_at`. The row keeps a told mark for the rest: the failed checks by name, `behind_base`, the check state, the review decision and the state.
     The ACP driver writes both right before the prompt goes out, as it claims an agent message (018). A prompt that never went out, a kill before it included, gives them back.
     The claim is a compare and set: it holds only while the row still carries the mark the news was computed from, and every comment it names is untold. A stale news is refused, its prompt is skipped, and the next pass computes the news again.
@@ -148,30 +130,30 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
 
 ## Tools and replies
 
-19. The agent seat lists `get_pull_request`, `list_comments`, `get_comment`, `reply_comment` and `report_pull_request` beside its task tools (013).
+15. The agent seat lists `get_pull_request`, `list_comments`, `get_comment`, `reply_comment` and `report_pull_request` beside its task tools (013).
     `get_pull_request`, `list_comments` and `get_comment` read the forge at the call: what a session works from is never an earlier read.
     Each finds the request its task opened through `GET /v1/pull-requests?task=<id>&role=author`; with none, it says to call `open_pull_request` first.
     No agent tool resolves a thread. A review session resolves a thread it opened, once a push fixed it (029); every other thread is the keeping agent's to resolve.
-20. A reply posts through the forge CLI: `gh api .../pulls/<n>/comments/<id>/replies` on the thread's first review comment, else `gh pr comment`; GitLab adds a note to the discussion.
+16. A reply posts through the forge CLI: `gh api .../pulls/<n>/comments/<id>/replies` on the thread's first review comment, else `gh pr comment`; GitLab adds a note to the discussion.
     A review session's reply is marked `from_review`. The repository is fetched again, which reads the reply back.
-21. A report with `ready: true` on a change raises `waiting_user` on the keeping agent's session. `ready: false` on a change clears it. A repeat raises nothing.
+17. A report with `ready: true` on a change raises `waiting_user` on the keeping agent's session. `ready: false` on a change clears it. A repeat raises nothing.
     The state is the forge's to say: no session reports it.
     Accept comments, replies, and reports only from the current column agent or the review session (029).
     Another session gets 403. A report or reply with no session gets 403. The user reads comments freely.
-22. `complete_step` on the `pr` column is accepted once the forge, read at the call, says its request merged (030 rule 5). A close is told to the agent, which fails the task.
+18. `complete_step` on the `pr` column is accepted once the forge, read at the call, says its request merged (030 rule 5). A close is told to the agent, which fails the task.
 
 ## Cleanup
 
-23. A `merged` or `closed` request is told to the keeping agent like any other news; the agent completes its step on a merge or fails the task on a close.
+19. A `merged` or `closed` request is told to the keeping agent like any other news; the agent completes its step on a merge or fails the task on a close.
     The daemon advances a merged request column itself when that agent falls quiet after the news, and finishes the task when that column is last (030 rule 10).
     Once the task is over, what is left of the request is taken down: any session or worktree an earlier release started on it.
     The task's own cleanup took its worktree and its branch.
     Then Ariadne stops working on the request: its row and its marks go, so an ended request takes no room. Its sessions stay, with their history and spend, let go of it.
     A deletion that fails keeps the row: the next change of the request tries it again, and the tick after 60 seconds, and so does a restarted daemon.
     A task that ends while the last read says its request is open reads the forge again first: a step completion reads it at the call, so a merge no fetch has read yet still has its work taken down. A request still open lets go of it too, unless the user asked Ariadne to review it.
-24. With the integration disabled, nothing reads the forge for its requests: each review session ends and its worktree goes, and Ariadne stops working on every request but a task's. Nobody merged or closed anything, so nothing is told.
+20. With the integration disabled, nothing reads the forge for its requests: each review session ends and its worktree goes, and Ariadne stops working on every request but a task's. Nobody merged or closed anything, so nothing is told.
     A task's row stays, and the next fetch with the integration on reads it again.
-25. Nothing adds or removes a request by hand, from the desktop or the CLI: Ariadne starts and stops working on requests on its own.
+21. Nothing adds or removes a request by hand, from the desktop or the CLI: Ariadne starts and stops working on requests on its own.
 
 ## HTTP
 
@@ -324,14 +306,6 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 - `ariadne attention` lists a request ready to merge by its title:
   `attention.rs::tests::a_session_is_reported_for_the_reason_the_ui_would_give`,
   `board.rs::tests::a_pull_request_ready_to_merge_is_listed_by_its_title`.
-- The sessions screen names a request session by its request, linked to the forge, and says it is ready to merge:
-  `sessions-page.test.tsx::names a pull request session by its request, linked to the forge, and says it is ready to merge`.
-- The session panel shows the request, linked to the forge, in place of a goal and a task:
-  `session-panel.test.tsx::shows a pull request session's request, linked to the forge, in place of a goal and a task`.
-- The attention list carries `waiting_user` of a request session as ready to merge and opens its session panel:
-  `attention.test.tsx::carries a pull request session's waiting_user as ready to merge, opening its session panel`,
-  `::keeps a pull request session off the board, having no card and no lane`,
-  `attention-strip.test.tsx::lists a pull request ready to merge by its title and opens its session panel`.
 - The Pull requests screen row opens its session and shows the unanswered count:
   `pull-requests-page.test.tsx::opens a request's session panel from its row and shows its unanswered comments`.
 - A session event of a request refetches that request:
