@@ -518,10 +518,11 @@ its eligibility rules.
     publishes `pull_requests_changed` on the transition, so a client
     watching the stream re-reads this item rather than holding a
     withdrawn one, or a restored one, on an older read
-    (`pull_requests.rs::an_outer_list_failure_withdraws_the_rows_evidence`,
+    (`kept_requests.rs::an_outer_list_failure_withdraws_the_rows_evidence`,
     `::a_direct_read_failure_withdraws_the_rows_evidence`,
-    `::an_outer_list_failure_publishes_pull_requests_changed`,
-    `::a_route_level_read_failure_withdraws_the_rows_evidence_and_publishes_its_recovery`).
+    `::a_route_level_read_failure_withdraws_the_readiness_item_and_its_recovery_restores_it`,
+    `pull_requests.rs::an_outer_list_failure_publishes_pull_requests_changed`,
+    `::a_route_level_read_failure_withdraws_the_rows_evidence`).
 14. `mergeable` is read off the forge's own mergeability for the head,
     never derived from `checks` or `review_decision`, and read by each
     state's own documented meaning rather than guessed from its name:

@@ -50,16 +50,23 @@ fn client(state: &AppState, forge: &ForgeIntegration) -> ForgeClient {
 /// than the poll's own cycle: publishing on every call here, success or
 /// not, would have an event-triggered panel re-read of this very route
 /// republish forever even where nothing changed, so this names only an
-/// actual transition against `before` — `None` (nothing cached before
-/// this read) is never one, since nothing was shown stale in the first
+/// actual transition between the fingerprints `before` and `after`
+/// bracket — taken from [`live::LivePulls::set_fingerprinted`] or
+/// [`live::LivePulls::mark_evidence_failed_fingerprinted`], both read and
+/// written under the one lock each holds, so the pair compared here is
+/// the one a single mutation actually bridged rather than a snapshot
+/// taken before some slow network await, which a second call racing the
+/// first past that same await could already have moved past; `before`
+/// is `None` only where nothing was cached before this read, which is
+/// never a transition, since nothing was shown stale in the first
 /// place. The poll's own dedup is invalidated the same moment, so the
-/// next poll-driven fetch is compared against nothing rather than a hash
-/// taken before this transition, and reads it as a change too.
+/// next poll-driven fetch is compared against nothing rather than a
+/// hash taken before this transition, and reads it as a change too.
 fn publish_evidence_transition(
     state: &AppState,
     row: &PullRequestRow,
-    before: Option<bool>,
-    after: bool,
+    before: Option<u64>,
+    after: u64,
 ) {
     if before.is_some_and(|was| was != after) {
         state.forge_poll.invalidate_pulls_dedup(&row.repository_id);
@@ -72,7 +79,6 @@ fn publish_evidence_transition(
 /// earlier read.
 async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullRequest> {
     let forge = integration(state, &row.repository_id).await?;
-    let before = state.launcher.live.get(&row.id).map(|l| l.evidence_ok);
     let details = match client(state, &forge)
         .details(
             &slug(&forge),
@@ -87,14 +93,24 @@ async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullReques
             // evidence, where it holds any, is no longer confirmed
             // current, the same as a failed detail fetch through the
             // poll's own path leaves it (`forge::live::LivePulls::set_pull_evidence_failed`).
-            state.launcher.live.mark_evidence_failed(&row.id);
-            publish_evidence_transition(state, &row, before, false);
+            if let Some((before, after)) = state
+                .launcher
+                .live
+                .mark_evidence_failed_fingerprinted(&row.id)
+            {
+                publish_evidence_transition(state, &row, Some(before), after);
+            }
             return Err(forge_error(error));
         }
     };
     if details.pull.number != row.number {
-        state.launcher.live.mark_evidence_failed(&row.id);
-        publish_evidence_transition(state, &row, before, false);
+        if let Some((before, after)) = state
+            .launcher
+            .live
+            .mark_evidence_failed_fingerprinted(&row.id)
+        {
+            publish_evidence_transition(state, &row, Some(before), after);
+        }
         return Err(forge_error(
             "the forge returned another request number".into(),
         ));
@@ -108,7 +124,7 @@ async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullReques
         .get(&row.id)
         .map_or(row.role == "reviewer", |l| l.review_requested);
     let head_sha = details.pull.head_sha.clone();
-    state.launcher.live.set(
+    let (before, after) = state.launcher.live.set_fingerprinted(
         &row.id,
         Live {
             pull: details.pull,
@@ -122,7 +138,7 @@ async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullReques
             evidence_ok: true,
         },
     );
-    publish_evidence_transition(state, &row, before, true);
+    publish_evidence_transition(state, &row, before, after);
     live::of_row(&state.store, &state.launcher.live, row)
         .await?
         .ok_or_else(|| ApiError::conflict("the request could not be read off the forge"))

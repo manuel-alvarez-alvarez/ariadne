@@ -654,14 +654,23 @@ async fn a_direct_read_failure_withdraws_the_rows_evidence() {
     .await;
 }
 
-/// `script_for_head`, with the request's own read fully approved, every
-/// check green, and the forge reporting the head clear to merge: what a
-/// babysat request's readiness item needs beside its own `ready` report.
-fn script_ready_for_head(head: &str) -> Value {
+/// The request's own read, fully approved, every check green, and the
+/// forge reporting the head clear to merge: what a babysat request's
+/// readiness item needs beside its own `ready` report.
+fn ready_pull(head: &str) -> Value {
     let mut ready = pull("OPEN", head);
     ready["reviewDecision"] = json!("APPROVED");
     ready["mergeStateStatus"] = json!("CLEAN");
     ready["statusCheckRollup"] = json!([{"conclusion": "SUCCESS", "status": "COMPLETED"}]);
+    ready
+}
+
+/// `script_for_head`, with the request's own read given as `read` rather
+/// than built in: every other entry — the comments, the reviews, the
+/// threads, the checks and the comparison — stays the one a ready
+/// request needs, so only what `read` itself says about the request can
+/// differ between two scripts built this way.
+fn script_with_read(head: &str, read: &Value) -> Value {
     let threads =
         json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
     json!([
@@ -669,7 +678,7 @@ fn script_ready_for_head(head: &str) -> Value {
         answer(&["api", "user"], 0, "me"),
         answer(&["pr", "create"], 0, URL),
         answer(&["pr", "list"], 0, "[]"),
-        answer(&["pr", "view"], 0, &ready.to_string()),
+        answer(&["pr", "view"], 0, &read.to_string()),
         answer(&["api", "repos/acme/widgets/pulls/1/comments"], 0, "[]"),
         answer(&["api", "repos/acme/widgets/issues/1/comments"], 0, "[]"),
         answer(&["api", "repos/acme/widgets/pulls/1/reviews"], 0, "[]"),
@@ -688,6 +697,13 @@ fn script_ready_for_head(head: &str) -> Value {
             r#"{"behind_by": 0}"#
         ),
     ])
+}
+
+/// `script_for_head`, with the request's own read fully approved, every
+/// check green, and the forge reporting the head clear to merge: what a
+/// babysat request's readiness item needs beside its own `ready` report.
+fn script_ready_for_head(head: &str) -> Value {
+    script_with_read(head, &ready_pull(head))
 }
 
 /// `script_ready_for_head`, with the one entry whose args start with
@@ -768,6 +784,66 @@ async fn a_route_level_read_failure_withdraws_the_readiness_item_and_its_recover
     let _: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
     next_event(&mut events, moved).await;
     assert!(!items().await.is_empty(), "the recovery restores it");
+}
+
+/// A direct, route-level read that succeeds outright, same as the one
+/// before it, but reads the approval dismissed: `evidence_ok` stays
+/// `true` on both reads, so comparing only that flag would miss this
+/// transition entirely. Comparing the fingerprint of everything the
+/// readiness item depends on catches it all the same, withdraws the
+/// item, and publishes `pull_requests_changed` — held in `WakeOnly`
+/// throughout, so nothing but this direct read could have told anyone.
+#[tokio::test]
+async fn a_successful_route_level_read_withdraws_the_readiness_item_when_approval_is_dismissed() {
+    use ariadne_api::stream::DomainEvent;
+    let head = "a".repeat(40);
+    let Kept {
+        h,
+        stub,
+        agent,
+        id,
+        repo,
+        ..
+    } = kept_request(script_ready_for_head(&head)).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    fetch_again(&h, &stub, &repo).await;
+
+    let _: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/report"),
+                &agent.id,
+                json!({"ready": true, "head_sha": head}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    let items = || async {
+        ariadne_daemon::attention::collect(&h.store, &h.launcher)
+            .await
+            .items
+    };
+    eventually(TIMEOUT, "the readiness item", async || {
+        !items().await.is_empty()
+    })
+    .await;
+
+    let mut events = h.bus.subscribe();
+    let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == repo);
+
+    let mut dismissed = ready_pull(&head);
+    dismissed["reviewDecision"] = json!("");
+    stub.reprogram(script_with_read(&head, &dismissed));
+    let _: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
+    assert!(
+        h.launcher.live.get(&id).unwrap().evidence_ok,
+        "the read succeeded outright; evidence_ok never moved"
+    );
+    next_event(&mut events, moved).await;
+    assert!(
+        items().await.is_empty(),
+        "the dismissed approval withdraws the item although evidence_ok stayed true throughout"
+    );
 }
 
 /// A push lands, through the real forge fetch path, between the agent's
