@@ -1,7 +1,7 @@
 ---
 id: sessions-terminals-and-logs
 status: current
-updated: 2026-10-10
+updated: 2026-10-11
 areas: [daemon, cli, ui]
 commits: [e4816cf6, 39937143, a69b953f, 7880c022, 29e6d84e, 1b09ac10, a4d7da95]
 tests:
@@ -13,6 +13,9 @@ tests:
   - crates/ariadne-daemon/tests/it/logs.rs
   - crates/ariadne-console/src/transcript.rs
   - crates/ariadne-console/src/tui/mod.rs
+  - crates/ariadne-console/src/tui/blocks.rs
+  - crates/ariadne-console/src/tui/picker.rs
+  - crates/ariadne-cli/src/commands/transcript.rs
 ---
 
 # Sessions, terminals and logs
@@ -57,6 +60,8 @@ Out: ACP process ownership (021), task transitions (001), and prompt wording
 25. A cross-agent switch starts a new conversation and leaves the old session exited.
 26. A cancelled-goal session, a model turned off, or an already switched session refuses switching.
 27. The daemon log snapshot preserves order and a tail limit, and its stream starts with a snapshot.
+28. The console draws an agent's thought whole, as dimmed markdown; Ctrl-O does not fold it.
+29. The console draws the question an agent asks the user through `request_user_input` whole, as markdown in the terminal's own foreground, in the permission picker, in its answered block and under its call; `session logs` prints it whole under the permission line. The rest of a permission's command is drawn in the terminal's own foreground too.
 
 ## Acceptance criteria
 
@@ -69,6 +74,8 @@ Out: ACP process ownership (021), task transitions (001), and prompt wording
 7. A reconnect redraws without duplicate scrollback (`ariadne-console::tui::tests::a_reconnect_redraws_the_fresh_snapshot_without_repeating_the_scrollback`).
 8. Session switches preserve the required conversation behavior (`crates/ariadne-daemon/tests/it/switch.rs::a_same_agent_switch_keeps_the_row_and_conversation`, `::a_switched_agent_starts_a_new_session_briefed_on_its_column`, `::a_session_already_switched_is_not_switched_again`).
 9. Logs preserve order, tail, and stream snapshots (`crates/ariadne-daemon/tests/it/logs.rs::the_snapshot_returns_captured_lines_in_order`, `::tail_limits_the_snapshot_to_the_last_n_lines`, `::the_stream_opens_with_a_snapshot_then_follows_with_deltas`).
+10. A thought is drawn whole, as markdown (`ariadne-console::tui::blocks::tests::a_thought_draws_its_markdown_whole`, `::ctrl_o_draws_a_daemon_prompt_whole_and_a_thought_is_whole_either_way`).
+11. A question to the user is drawn whole, as markdown, and not dimmed (`ariadne-console::tui::picker::tests::a_question_to_the_user_draws_its_markdown_whole_and_keeps_it_once_answered`, `ariadne-console::tui::blocks::tests::a_question_to_the_user_draws_whole_under_its_call`, `crates/ariadne-cli/src/commands/transcript.rs::a_question_to_the_user_is_printed_whole`).
 
 ## Sources
 

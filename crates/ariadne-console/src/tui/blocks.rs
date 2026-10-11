@@ -29,9 +29,9 @@ pub(super) fn renders() -> usize {
     RENDERS.get()
 }
 
-/// A thought and a tool's output are context, not the answer: they are folded
-/// to this many lines with a count of what was left out. The output keeps its
-/// last lines, which is where a command says how it went.
+/// A tool's output is context, not the answer: it is folded to this many
+/// lines with a count of what was left out. It keeps its last lines, which is
+/// where a command says how it went.
 const FOLD: usize = 4;
 /// A diff is read from the top, so it keeps its first lines: this many, with
 /// a count of what was left out.
@@ -48,8 +48,8 @@ const BODY_INDENT: &str = "    ";
 /// `picked` is the highlighted option of a permission question being answered
 /// right now — `None` everywhere else, including once it is in the scrollback.
 /// `whole` is the console's fold state: folded draws a tool's output, a
-/// diff, a thought and a daemon prompt to their usual limit, and whole draws
-/// every line of them (Ctrl-O).
+/// diff and a daemon prompt to their usual limit, and whole draws every line
+/// of them (Ctrl-O). A thought and a question to the user are always whole.
 pub(super) fn block(
     item: &TranscriptItem,
     width: usize,
@@ -75,14 +75,17 @@ pub(super) fn block(
             // line of text rides on it rather than under it.
             join_first(lines)
         }
-        TranscriptItem::Thought { text, .. } => prefixed(
-            text,
-            theme::THOUGHT_MARKER,
-            DIM,
-            DIM,
-            width,
-            (!whole).then_some(FOLD),
-        ),
+        // A thought is never folded: it is how the agent got to what it
+        // does, and it is markdown like the agent's text.
+        TranscriptItem::Thought { text, .. } => {
+            let mut lines = vec![Line::from(Span::styled(theme::THOUGHT_MARKER, DIM))];
+            for line in markdown::render(text, width.saturating_sub(2)) {
+                let mut spans = vec![Span::raw("  ")];
+                spans.extend(line.spans.into_iter().map(|span| span.patch_style(DIM)));
+                lines.push(Line::from(spans));
+            }
+            join_first(lines)
+        }
         TranscriptItem::Plan { entries, .. } => plan(entries, width),
         TranscriptItem::ToolCall { meta, tool } => call(tool, &meta.created_at, width, whole),
         TranscriptItem::PermissionQuestion {
@@ -295,6 +298,18 @@ fn call(tool: &Tool, started_at: &str, width: usize, whole: bool) -> Vec<Line<'s
         .as_deref()
         .and_then(|ended_at| elapsed(started_at, ended_at));
     let mut body = Vec::new();
+    // A question to the user is what the call is for: whole, never folded.
+    if let Some(question) = tool.user_question() {
+        body.extend(
+            markdown::render(question, width.saturating_sub(BODY_INDENT.width()))
+                .into_iter()
+                .map(|line| {
+                    let mut spans = vec![Span::raw(BODY_INDENT)];
+                    spans.extend(line.spans);
+                    Line::from(spans)
+                }),
+        );
+    }
     if let Some(output) = &tool.output {
         body.extend(folded(
             output,
@@ -1338,12 +1353,12 @@ mod tests {
         assert!(!shown.contains("line 7"), "{shown}");
     }
 
-    /// Ctrl-O draws a daemon prompt and a thought whole, and a second Ctrl-O
-    /// folds them again (rule 24, 27).
+    /// Ctrl-O draws a daemon prompt whole, and a second Ctrl-O folds it
+    /// again (rule 24, 27). A thought is whole either way.
     #[test]
-    fn ctrl_o_draws_a_daemon_prompt_and_a_thought_whole_and_a_second_ctrl_o_folds_them_again() {
+    fn ctrl_o_draws_a_daemon_prompt_whole_and_a_thought_is_whole_either_way() {
         let mut console = Console::new(header());
-        let mut terminal = Terminal::new(TestBackend::new(80, 70)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(80, 90)).unwrap();
         let now = tokio::time::Instant::now();
         let briefing: Vec<String> = (1..=20).map(|n| format!("line {n}")).collect();
         console.apply(&event(
@@ -1355,7 +1370,7 @@ mod tests {
         console.apply(&event(
             "agent_thought",
             "thinking",
-            json!({"text": thought.join("\n")}),
+            json!({"text": thought.join("\n\n")}),
         ));
 
         terminal
@@ -1364,12 +1379,11 @@ mod tests {
         let folded = screen(&terminal);
         assert!(folded.contains("» daemon\n  line 1\n"), "{folded}");
         assert!(folded.contains("… 14 more lines"), "{folded}");
-        assert!(!folded.contains("line 20"), "{folded}");
+        assert!(!folded.contains("  line 20"), "{folded}");
         assert!(
-            folded.contains("thought line 1") && folded.contains("… 16 more lines"),
-            "the thought keeps its first 4 lines: {folded}"
+            folded.contains("thought line 1") && folded.contains("thought line 20"),
+            "a thought is never folded: {folded}"
         );
-        assert!(!folded.contains("thought line 5"), "{folded}");
 
         console.key(ctrl('o'));
         terminal
@@ -1388,6 +1402,66 @@ mod tests {
             .draw(|frame| console.render_at(frame, now))
             .unwrap();
         assert_eq!(screen(&terminal), folded, "a second Ctrl-O folds it again");
+    }
+
+    /// A thought is markdown, drawn dim and whole like the agent's text.
+    #[test]
+    fn a_thought_draws_its_markdown_whole() {
+        let mut text = String::from("I weigh **two** options:\n\n- keep `FOLD`\n- drop it\n");
+        for n in 1..=8 {
+            text.push_str(&format!("\nstep {n} of the reasoning\n"));
+        }
+        let mut console = Console::new(header());
+        let mut terminal = Terminal::new(TestBackend::new(80, 40)).unwrap();
+        console.apply(&event("agent_thought", "thought", json!({"text": text})));
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        let shown = screen(&terminal);
+
+        assert!(shown.contains("· I weigh two options:"), "{shown}");
+        assert!(
+            !shown.contains("**"),
+            "the markdown is drawn, not shown: {shown}"
+        );
+        assert!(shown.contains("step 8 of the reasoning"), "{shown}");
+        assert!(!shown.contains("more lines"), "{shown}");
+        assert!(
+            style_at(terminal.backend().buffer(), "two")
+                .add_modifier
+                .contains(Modifier::BOLD | Modifier::DIM),
+            "bold stays bold, and dim"
+        );
+    }
+
+    /// The question an agent puts to the user through `request_user_input`
+    /// is drawn under its call, whole and as markdown.
+    #[test]
+    fn a_question_to_the_user_draws_whole_under_its_call() {
+        let question =
+            "Plan review: **Task 1** writes every skill.\n\nWrite yes to start, or name a change.";
+        let (shown, terminal) = drawn(&[event(
+            "post_tool_use",
+            "asked",
+            json!({"tool_name": "mcp__ariadne__request_user_input",
+                   "tool_input": {"summary": question},
+                   "acp": {"toolCallId": "ask", "kind": "other", "status": "completed",
+                           "content": [{"type": "content",
+                                        "content": {"type": "text", "text": "{\"id\": \"01R\"}"}}]}}),
+        )]);
+
+        assert!(
+            shown.contains("Plan review: Task 1 writes every skill."),
+            "{shown}"
+        );
+        assert!(
+            shown.contains("Write yes to start, or name a change."),
+            "{shown}"
+        );
+        assert!(
+            !style_at(terminal.backend().buffer(), "Write yes")
+                .add_modifier
+                .contains(Modifier::DIM),
+            "the question is in the terminal's own foreground"
+        );
     }
 
     #[test]

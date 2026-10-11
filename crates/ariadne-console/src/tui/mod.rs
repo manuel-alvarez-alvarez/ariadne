@@ -209,7 +209,7 @@ pub struct Console {
     /// transcript again at the new size ([`Console::redraws_whole_on_resize`]).
     whole_on_resize: bool,
     /// Whether a fold in the pane draws every line instead: a tool's output,
-    /// a diff, a thought and a daemon prompt. Folded at each attach, and
+    /// a diff and a daemon prompt. Folded at each attach, and
     /// toggled by Ctrl-O for as long as the attach lasts. A block moved to
     /// the scrollback while this is set carries every line of it, since a
     /// block already there cannot be drawn again; a block part-way there

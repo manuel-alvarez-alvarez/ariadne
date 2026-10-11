@@ -157,8 +157,8 @@ a turn ends. Nothing is shown there before the session has spent a token.
 
 Every fold below is one press of Ctrl-O away. It switches the pane between
 folded, which is where each attach starts, and whole, which draws every line
-of a tool's output, a diff, a thought and a daemon prompt; press it again to
-fold them back. A reconnect keeps whichever the attach had. A block that
+of a tool's output, a diff and a daemon prompt; press it again to fold them
+back. A thought and a question the agent asks you are always whole. A reconnect keeps whichever the attach had. A block that
 leaves for the scrollback while the pane is whole keeps every line there too,
 since a block already in the scrollback cannot be drawn again. A block that
 is part-way into the scrollback keeps the fold its first lines had, and
@@ -251,7 +251,7 @@ in a language the console knows, such as `rust`, `json` or `sh`, is coloured
 in your terminal's own palette: comments dim, strings green, keywords
 magenta, numbers cyan and types yellow. Other fenced code is drawn in one
 colour, and so is a language the console does not bundle, such as TOML. A
-thought is dimmed and folded to a few lines, until Ctrl-O unfolds it. A plan
+thought is markdown too, dimmed and always drawn whole. A plan
 is a checklist that counts what is done (`plan 2/5`): `☐` pending, `◐` in
 progress, `☑` done and dimmed. A briefing or a nudge from the daemon shows
 under `» daemon`, folded to its first six lines, until Ctrl-O unfolds it. An
@@ -354,8 +354,11 @@ Use `ariadne session send <session-id> "Please explain the failure"`
 when a script or a one-line response is enough. When a session is waiting on a
 permission request, the console shows the call it asks about — its head line,
 the rest of the command or the diff under it — and then its choices; pick one
-with the arrow keys or its number key. See
-[Permission modes](permissions.md).
+with the arrow keys or its number key. The rest of the command draws in your
+terminal's own foreground, not dimmed. When the agent asks you a question
+through `request_user_input`, the question takes the place of the tool's
+name: its markdown, whole, in your terminal's own foreground, and it stays
+whole once answered. See [Permission modes](permissions.md).
 
 ```
 ─ permission ───────────────────────────────────

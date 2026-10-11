@@ -4,6 +4,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
 
+use crate::markdown;
 use crate::theme::{self, ASK, DIM, FRAME, PICKED, QUESTION, TOOL};
 use crate::transcript::{PermissionOption, Tool, TranscriptItem};
 use crate::wrap;
@@ -138,12 +139,17 @@ fn frame(
     (above, below)
 }
 
-/// The question in bold, wrapped, and under it the head of the call.
+/// The question, and under it the head of the call. A question the agent
+/// puts to the user is its markdown, whole, in the terminal's own
+/// foreground; any other question is the call's name, in bold.
 fn asked(question: &str, tool: &Tool, mark: Span<'static>, width: usize) -> Vec<Line<'static>> {
-    let mut lines: Vec<_> = fit(question, width)
-        .into_iter()
-        .map(|row| Line::from(Span::styled(row, QUESTION)))
-        .collect();
+    let mut lines: Vec<_> = match tool.user_question() {
+        Some(asked) => markdown::render(asked, width),
+        None => fit(question, width)
+            .into_iter()
+            .map(|row| Line::from(Span::styled(row, QUESTION)))
+            .collect(),
+    };
     lines.push(head(tool, mark, None, width));
     lines
 }
@@ -166,7 +172,7 @@ fn body(tool: &Tool, width: usize, fold: usize) -> Vec<Line<'static>> {
                 width.saturating_sub(4),
             )
             .into_iter()
-            .map(|line| Line::from(vec![Span::raw("    "), Span::styled(line, DIM)]))
+            .map(|line| Line::from(vec![Span::raw("    "), Span::styled(line, theme::OUTPUT)]))
             .collect(),
             fold,
         ));
@@ -237,6 +243,7 @@ fn fit(text: &str, width: usize) -> Vec<String> {
 mod tests {
 
     use ratatui::backend::TestBackend;
+    use ratatui::style::Modifier;
     use serde_json::json;
     use unicode_width::UnicodeWidthStr;
 
@@ -284,6 +291,69 @@ mod tests {
             row_of(&shown, "-fn a() {}") < row_of(&shown, "+fn b() {}")
                 && row_of(&shown, "+fn b() {}") < row_of(&shown, "❯ 1. Reject"),
             "the diff is above the options: {shown}"
+        );
+    }
+
+    /// The question an agent puts to the user through `request_user_input`
+    /// is the question of its permission picker: its markdown, whole and in
+    /// the terminal's own foreground, while it waits and once it is answered.
+    #[test]
+    fn a_question_to_the_user_draws_its_markdown_whole_and_keeps_it_once_answered() {
+        let question = "Design check: `<home>/skills/<name>/SKILL.md` is **rewritten** on daemon start and on every skill change; each session's `skills` folder becomes a symlink to it.\n\nAccept, or change the path, the link scope or the Windows fallback?";
+        let mut console = Console::new(header());
+        console.apply(&event(
+            "permission_request",
+            "Permission requested for mcp__ariadne__request_user_input",
+            json!({"tool_name": "mcp__ariadne__request_user_input",
+                   "tool_input": {"summary": question},
+                   "acp": {"toolCallId": "ask", "name": "mcp__ariadne__request_user_input",
+                           "status": "pending", "rawInput": {"summary": question}},
+                   "options": [{"optionId": "yes", "name": "Allow"},
+                               {"optionId": "no", "name": "Reject"}]}),
+        ));
+        let mut terminal = Terminal::new(TestBackend::new(60, 30)).unwrap();
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        let shown = screen(&terminal);
+
+        assert!(
+            shown.contains("Design check: `<home>/skills/<name>/SKILL.md` is rewritten"),
+            "{shown}"
+        );
+        assert!(
+            shown.contains("Accept, or change the path, the link scope or the"),
+            "the question is whole: {shown}"
+        );
+        assert!(
+            !shown.contains("**"),
+            "the markdown is drawn, not shown: {shown}"
+        );
+        let buffer = terminal.backend().buffer();
+        let at = |text: &str| {
+            (0..buffer.area.height)
+                .find_map(|y| {
+                    let row: String = (0..buffer.area.width)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect();
+                    row.find(text)
+                        .map(|x| buffer[(u16::try_from(row[..x].width()).unwrap(), y)].modifier)
+                })
+                .unwrap_or_else(|| panic!("{text:?} is not on the screen: {shown}"))
+        };
+        assert!(
+            !at("Accept").contains(Modifier::DIM),
+            "the question is not dimmed"
+        );
+        assert!(at("rewritten").contains(Modifier::BOLD), "its bold is bold");
+
+        console.apply(&event(
+            "permission.replied",
+            "answered",
+            json!({"option_id": "yes", "decided_by": "console"}),
+        ));
+        let shown = pane(&console, 60, 20);
+        assert!(
+            shown.contains("Accept, or change the path, the link scope or the"),
+            "the answered question keeps it whole: {shown}"
         );
     }
 
