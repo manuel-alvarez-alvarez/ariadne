@@ -11,7 +11,8 @@ is what `git remote -v` names, if it names one.
 ## Steps
 
 1. Fetch the base: `git fetch <remote> <base>` where a remote exists.
-   With no remote, use `<base>` from the primary checkout.
+   Fast-forward `<base>` with `--ff-only <remote>/<base>` where the primary
+   checkout sits on `<base>`. Else fetch it straight onto `<base>`.
 2. Rebase the task branch onto `<base>`. Fix every conflict yourself.
 3. Squash the task branch onto its merge base with `<base>`:
    `git reset --soft "$(git merge-base <base> HEAD)" && git commit`,

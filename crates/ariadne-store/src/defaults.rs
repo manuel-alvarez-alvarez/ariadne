@@ -811,7 +811,7 @@ mod tests {
     fn the_review_skill_starts_its_checks_before_the_read_and_ends_on_a_step_call() {
         let text = unwrapped(default_skill_document("code-review").unwrap());
         let checks = text
-            .find("Start the tests and lint of the crates and packages the diff changed, once for this verdict")
+            .find("Start the tests and lint of the crates and packages the diff changed, once for this verdict.")
             .expect("the code-review skill does not start scoped checks once");
         let read = text
             .find("Read the task")
@@ -1027,6 +1027,7 @@ mod tests {
         let mut at = 0;
         for step in [
             "git fetch <remote> <base>",
+            "Fast-forward `<base>` with `--ff-only <remote>/<base>` where the primary checkout sits on `<base>`.",
             "Rebase the task branch onto `<base>`.",
             "git reset --soft \"$(git merge-base <base> HEAD)\" && git commit",
             "git diff --stat <base> HEAD",
@@ -1046,6 +1047,10 @@ mod tests {
         assert!(
             text.contains("The repository's hooks run its checks on the push."),
             "the merge skill does not leave the push checks to the repository hooks"
+        );
+        assert!(
+            text.contains("Else fetch it straight onto `<base>`."),
+            "the merge skill does not update the local base without a primary checkout"
         );
         for (name, text) in all_defaults().into_iter().chain(all_skills()) {
             for command in ["gh pr merge", "glab mr merge"] {
