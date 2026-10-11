@@ -156,8 +156,10 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     or `P2`). One call is one round of the review. `comments` are the
     round's new findings, each one inline comment on the line of its
     defect, posted as `**[P0] Title**`, a blank line, then its body: what
-    goes wrong and how to fix it. `body` is required: the review's whole
-    summary as it stands, tied to no line. The review keeps one summary
+    goes wrong and how to fix it, with a trailer an agent's skill appends
+    stripped first (026 rule 16). `body` is required: the review's whole
+    summary as it stands, tied to no line, stripped of such a trailer too.
+    The review keeps one summary
     comment on the request (`pull_requests.summary_comment_id`):
     the first round posts it, and every later round replaces its
     text, so the request carries one summary however many rounds ran. A
@@ -313,6 +315,9 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   That retried body, with no text before the mark, still reads back as the
   review's own:
   `pulls.rs::tests::the_review_mark_alone_reads_back_as_signed_with_no_text`.
+- A trailer an agent's skill appends to the round's summary or a finding's
+  body is stripped before either is signed:
+  `pull_request_reviews.rs::a_review_strips_a_trailing_trailer_from_its_summary_and_its_findings`.
 - A new or edited round of the review's own summary is no news of its own to
   the task's author, though an inline finding the same round posts still is:
   `news.rs::tests::a_review_summary_wakes_no_keeping_agent`,

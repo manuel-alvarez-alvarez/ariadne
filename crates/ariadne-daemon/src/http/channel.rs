@@ -16,6 +16,7 @@ use super::caller::{CallCtx, call_ctx, ensure_task_scope};
 use super::convert::{message_dto, task_dto_of};
 use super::error::{ApiError, ApiResult, Json};
 use crate::forge::ForgeClient;
+use crate::forge::pulls;
 use crate::stats::session_fact;
 
 /// Git could not answer about the task's branch: a conflict, since what the
@@ -110,13 +111,17 @@ pub(super) async fn open_pull_request(
     // The host rides along: a repository on an enterprise host is opened
     // there, not on the CLI's default one.
     let slug = format!("{}/{}/{}", forge.host, forge.owner, forge.name);
+    // The forge never sees a trailer an agent's skill appends: a
+    // `Generated with` footer or a `Co-Authored-By` is noise on a request a
+    // human reads.
+    let body = pulls::strip_trailers(&req.body);
     let url = client
         .open(
             &slug,
             &task.branch,
             &repo.base_branch,
             &req.title,
-            &req.body,
+            &body,
             req.draft,
         )
         .await

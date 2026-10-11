@@ -723,6 +723,47 @@ async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
     assert_eq!(row.summary_comment_id.as_deref(), Some("ic-301"));
 }
 
+/// A trailer an agent's skill appends to the round's summary or a finding's
+/// body never reaches the forge: the daemon strips it before signing either.
+#[tokio::test]
+async fn a_review_strips_a_trailing_trailer_from_its_summary_and_its_findings() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    repository(&h, &path, Some(PIN)).await;
+    let id = the_request(&h).await;
+    let session = idle_session(&h, &id).await;
+    let reviews = format!("/v1/pull-requests/{id}/reviews");
+
+    let footer = "\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)";
+    let summary = "Reviewed main..abc. Changes requested: P0 open.";
+    let _: Vec<Value> = h
+        .json(
+            as_session(
+                &reviews,
+                &session.id,
+                json!({"event": "request_changes", "body": format!("{summary}{footer}"), "comments": [
+                    {"path": "src/lib.rs", "line": 3, "title": "Empty list",
+                     "body": format!("An empty list panics.{footer}"), "priority": "P0"}
+                ]}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let (_, review) = review_bodies(&stub).pop().unwrap();
+    assert_eq!(
+        review["comments"][0]["body"],
+        json!("**[P0] Empty list**\n\nAn empty list panics.\n\n<!-- ariadne:review -->")
+    );
+    let signed =
+        |text: &str| format!("{text}\n\n<!-- ariadne:review-summary -->\n<!-- ariadne:review -->");
+    assert_eq!(
+        summary_writes(&stub),
+        [("POST".to_string(), signed(summary))]
+    );
+}
+
 /// Once a push fixed a finding, the review session resolves the thread it
 /// opened: through `resolveReviewThread` on the thread GitHub holds for the
 /// comment, and the stored thread reads resolved. A thread somebody else
