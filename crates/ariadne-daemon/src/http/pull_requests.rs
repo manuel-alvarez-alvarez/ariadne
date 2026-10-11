@@ -491,18 +491,29 @@ pub(super) async fn reply(
     let session = own_session(&state, &headers, &row).await?;
     // A review session's reply is the review's, as its findings are.
     let from_review = session.pull_request_id.as_deref() == Some(row.id.as_str());
-    let body = req.body.trim();
+    // The forge never sees a trailer an agent's skill appends; a body of
+    // nothing else is empty, same as a body given empty.
+    let body = pulls::strip_trailers(req.body.trim());
     if body.is_empty() {
         return Err(ApiError::bad_request("a reply needs a body"));
     }
     let pull = read_held(&state, row).await?;
     let comment = find_comment(&state, &pull, &comment_id).await?;
+    // The keeping agent answers a defect in its own thread, an inline
+    // review comment, never the conversation: a review session alone
+    // replies there, under its own name (029).
+    if !from_review && comment.kind != "review_comment" {
+        return Err(ApiError::bad_request(
+            "reply only in the thread of the defect: an inline review comment, not the \
+             conversation",
+        ));
+    }
     let forge = integration(&state, &pull.repository_id).await?;
     let login = forge.login.clone().unwrap_or_default();
     // A review's reply is signed as the review's (029).
     let sent = match from_review {
-        true => pulls::signed(body, false),
-        false => body.to_string(),
+        true => pulls::signed(&body, false),
+        false => body.clone(),
     };
     let forge_id = client(&state, &forge)
         .reply(&slug(&forge), pull.number, &comment, &sent)
@@ -533,7 +544,7 @@ pub(super) async fn reply(
         .into(),
         author_login: login,
         author_is_bot: false,
-        body: body.to_string(),
+        body: body.clone(),
         path: comment.path.clone(),
         line: comment.line,
         in_reply_to,
@@ -785,8 +796,10 @@ pub(super) async fn submit_review(
     // review of a request of mine is a comment, whatever it found (029).
     let request_changes = asked && row.role == "reviewer";
     // The body is the review's one summary: where the review stands, kept
-    // on the request in a comment of its own and edited every round.
-    let body = req.body.trim().to_string();
+    // on the request in a comment of its own and edited every round. The
+    // forge never sees a trailer an agent's skill appends; a body of
+    // nothing else is empty, same as a body given empty.
+    let body = pulls::strip_trailers(req.body.trim());
     if body.is_empty() {
         return Err(ApiError::bad_request(
             "a review needs a body: the summary of where it stands",
@@ -801,10 +814,13 @@ pub(super) async fn submit_review(
                 comment.priority
             )));
         }
+        // The forge never sees a trailer an agent's skill appends; a body
+        // of nothing else is empty, same as a body given empty.
+        let finding_body = pulls::strip_trailers(comment.body.trim());
         if comment.path.trim().is_empty()
             || comment.line < 1
             || comment.title.trim().is_empty()
-            || comment.body.trim().is_empty()
+            || finding_body.is_empty()
         {
             return Err(ApiError::bad_request(
                 "a comment needs a path, a line from 1, a title and a body",
@@ -820,7 +836,7 @@ pub(super) async fn submit_review(
                     "**[{}] {}**\n\n{}",
                     comment.priority,
                     comment.title.trim(),
-                    comment.body.trim()
+                    finding_body
                 ),
                 false,
             ),

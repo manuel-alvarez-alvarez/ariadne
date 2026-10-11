@@ -5,6 +5,52 @@ use ariadne_store::{
     ForgeIntegration, NewPullRequest, NewPullRequestComment, PullRequestRow, Store,
 };
 
+/// Whether `line` is a trailer a coding agent's skill appends and the forge
+/// must never see: `Co-Authored-By:`, a `Generated with` footer — led by an
+/// emoji or not, a markdown link in it or not — or a tool's `Signed-off-by:`.
+/// A leading run of anything but a letter or a digit is skipped first, so an
+/// emoji or other mark before the words does not hide them.
+fn is_trailer_line(line: &str) -> bool {
+    let trimmed = line
+        .trim()
+        .trim_start_matches(|c: char| !c.is_ascii_alphanumeric())
+        .trim_start();
+    let lower = trimmed.to_ascii_lowercase();
+    lower.starts_with("co-authored-by:")
+        || lower.starts_with("generated with")
+        || lower.starts_with("signed-off-by:")
+}
+
+/// `text` without the trailer lines a coding agent's skill leaves at its
+/// end — `Co-Authored-By`, `Generated with …`, `Signed-off-by` — and the
+/// blank lines before them. The rest of the text is unchanged, and text with
+/// no trailing trailer is answered whole.
+pub(crate) fn strip_trailers(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut cut = lines.len();
+    let mut at = lines.len();
+    loop {
+        let mut before = at;
+        while before > 0 && lines[before - 1].trim().is_empty() {
+            before -= 1;
+        }
+        if before == 0 || !is_trailer_line(lines[before - 1]) {
+            break;
+        }
+        at = before - 1;
+        cut = at;
+    }
+    if cut == lines.len() {
+        return text.to_string();
+    }
+    // The blank line that used to separate the real text from the trailer
+    // block goes with it, so the text does not keep a footer's empty shell.
+    while cut > 0 && lines[cut - 1].trim().is_empty() {
+        cut -= 1;
+    }
+    lines[..cut].join("\n")
+}
+
 /// What a detail fetch reads of one request beyond the list fetch's
 /// fields (026): the request as `pull_request` reads it, every comment with
 /// its thread, the checks that failed on the head, and whether the head is
@@ -258,5 +304,36 @@ mod tests {
                 summary: false,
             }
         );
+    }
+
+    /// A trailer a coding agent's skill appends, an emoji or a markdown link
+    /// in it or not, and the blank line before it, are stripped; a second
+    /// trailer right above the first goes too, with its own blank line.
+    #[test]
+    fn strip_trailers_takes_off_a_trailing_trailer_and_the_blank_line_before_it() {
+        assert_eq!(
+            strip_trailers(
+                "Fixes widgets.\n\n\
+                 🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\
+                 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+            ),
+            "Fixes widgets."
+        );
+        assert_eq!(
+            strip_trailers("Fixes widgets.\n\nGenerated with Claude Code"),
+            "Fixes widgets."
+        );
+        assert_eq!(
+            strip_trailers("Fixes widgets.\n\nSigned-off-by: a-tool <bot@example.com>"),
+            "Fixes widgets."
+        );
+    }
+
+    /// Text with no trailing trailer is answered whole, trailing blank
+    /// lines of its own included.
+    #[test]
+    fn strip_trailers_leaves_text_with_no_trailer_whole() {
+        let text = "Fixes widgets.\n\nSee also Generated.md for context.\n\n";
+        assert_eq!(strip_trailers(text), text);
     }
 }
