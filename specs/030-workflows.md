@@ -54,12 +54,12 @@ workflow develop-review-merge
     rank: balanced
     gate: committed
   review[Review]
-    Run the whole suite and judge the change against the task and the repository rules.
+    Judge the change against the task and the repository rules.
     Fail the step with the changes to make.
     skills: code-review
     rank: frontier
   merge[Merge]
-    Rebase onto the base branch, run the whole suite, squash, fast-forward and push.
+    Rebase onto the base branch, squash, push and fast-forward.
     skills: merge
     rank: fast
     gate: merged
@@ -113,16 +113,17 @@ every other wire enum (011).
    `develop-review-pr` stages it.
 4. The `merge` skill is shipped alongside the two workflows
    (`crates/ariadne-store/skills/merge/SKILL.md`): rebase the task branch
-   onto the base, run the whole suite once, squash onto the merge base,
-   check `git diff --stat`, fast-forward the base branch in the primary
-   checkout, push where a remote exists, then call `complete_step` with the
-   base branch's sha as `merge_commit`. The squash goes onto the merge base
-   rather than the base branch's name, since the base can move while the
-   suite runs; a `git diff --stat` that lists a file the task did not touch,
-   or a fast-forward that fails, says the base moved, and the agent starts
-   again from the fetch. No skill merges a request: a human does. It obeys
-   the STE rules and size caps of 006 and the shipped-skill tests of
-   `defaults.rs`, the same as every other skill in the catalog.
+   onto the base, squash onto the merge base, check `git diff --stat`, push
+   where a remote exists, fast-forward the base branch in the primary
+   checkout, then call `complete_step` with the base branch's sha as
+   `merge_commit`. The repository's hooks run the suite at that push. The
+   squash goes onto the merge base rather than the base branch's name,
+   since the base can move while the push runs; a `git diff --stat` that
+   lists a file the task did not touch, or a fast-forward that fails, says
+   the base moved, and the agent starts again from the fetch. No skill
+   merges a request: a human does. It obeys the STE rules and size caps of
+   006 and the shipped-skill tests of `defaults.rs`, the same as every
+   other skill in the catalog.
 5. The daemon exposes the catalog at `/v1/workflows`, mirroring the skill
    routes (017) and their error codes:
    - `GET /v1/workflows` — list every workflow, shipped and written.

@@ -47,8 +47,7 @@ const PARSED_STEPS = [
   {
     id: "review",
     title: "Review",
-    description:
-      "Run the whole suite and judge the change against the task and the repository rules.",
+    description: "Judge the change against the task and the repository rules.",
     skills: ["code-review"],
     rank: "frontier" as const,
     gate: null,
@@ -56,7 +55,7 @@ const PARSED_STEPS = [
   {
     id: "merge",
     title: "Merge",
-    description: "Rebase onto the base branch, run the whole suite, squash, fast-forward and push.",
+    description: "Rebase onto the base branch, squash, push and fast-forward.",
     skills: ["merge"],
     rank: "fast" as const,
     gate: "merged",

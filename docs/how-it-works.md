@@ -23,18 +23,17 @@ its own git worktree.
    agent calls `complete_step`, with a reason, to move the task to the next
    column or finish it from the last one; it calls `fail_step` to send the
    task back one column for changes, with what to change. A development
-   column builds and commits the change; a review column runs the whole
-   suite and judges it against the task and the repository's rules, failing
-   the step back where it finds a problem. See [Workflows](workflows.md) for
-   the two shipped workflows, every column's gate, and how to write your
-   own.
+   column builds and commits the change; a review column judges it against
+   the task and the repository's rules, failing the step back where it
+   finds a problem. See [Workflows](workflows.md) for the two shipped
+   workflows, every column's gate, and how to write your own.
 5. The last column's gate decides whether the task is actually done. In
    `develop-review-merge`, its `merge` column rebases the task onto the
-   base branch, runs the whole suite, squashes, fast-forwards and pushes.
-   In `develop-review-pr`, its `pr` column pushes the branch and opens a
-   request through the daemon's own call to the forge — never a command
-   the agent runs itself — and keeps the request until a human merges or
-   closes it.
+   base branch, squashes, pushes and fast-forwards; the repository's
+   checks run at that push. In `develop-review-pr`, its `pr` column pushes
+   the branch and opens a request through the daemon's own call to the
+   forge — never a command the agent runs itself — and keeps the request
+   until a human merges or closes it.
 6. The `pr` column's agent keeps its request open with the `pr-babysit`
    skill until a human merges or closes it; a request asking for your
    review gets a `pr-reviewer` session instead. See [The forge
