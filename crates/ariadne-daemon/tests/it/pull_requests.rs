@@ -690,7 +690,10 @@ async fn a_fetch_publishes_pull_requests_changed_only_when_the_requests_moved() 
     // and latches the listed/requested state `pulls_moved` watches, each
     // publishing its own event; drain the second before the quiet check
     // below, which is about a later, unchanged fetch, not this first one.
-    let _ = tokio::time::timeout(QUIET, next_event(&mut events, moved)).await;
+    while tokio::time::timeout(QUIET, next_event(&mut events, moved))
+        .await
+        .is_ok()
+    {}
     h.state.forge_poll.set_mode(&id, Mode::WakeOnly);
     h.state.forge_poll.wake(&id);
     assert!(

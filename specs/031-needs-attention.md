@@ -43,19 +43,18 @@ bare flag.
 In: the shared item shape, `GET /v1/attention`, the producer registry
 (`crate::attention` in `ariadne-daemon`), the first complete producer —
 recovery — which covers a model's quota, every task the daemon will never
-retry on its own, and a forge CLI missing from the daemon's PATH, and the
-second — `pull_requests` — which covers a review request nobody is
-assigned to and a request a babysitting task has confirmed ready to merge
-(rules 11-14), migrating the "ready to merge" / "review posted" session
-surface onto it and removing it from 029's own `waiting_user` rule.
+retry on its own, a forge CLI missing from the daemon's PATH, explicit agent
+questions, pending human permission requests, and the second complete producer —
+`pull_requests` — which covers a review request nobody is assigned to and a
+request a babysitting task has confirmed ready to merge (rules 13-16),
+migrating the "ready to merge" / "review posted" session surface onto it and
+removing it from 029's own `waiting_user` rule.
 
 Out: the recovery semantics themselves — the auto-switch ladder, the
 spawn-retry budget, the watchdog thresholds — which are 009's; the review
-and readiness semantics themselves — which row wants a session, the
-verdict policy, `report_pull_request`'s own fields — which are 029's. An
-agent's own request, which stays on the question surface (009) until a
-later task gives its own producer (registered already, empty — rule 10)
-its eligibility rules.
+and readiness semantics themselves — which row wants a session, the verdict
+policy, and `report_pull_request` fields — which are 029's. Agent request
+semantics remain with 009.
 
 ## Behavior
 
@@ -404,16 +403,20 @@ its eligibility rules.
 10. Registering a further producer is adding its own module beside
     `recovery` (`crate::attention::<name>`) and a call to it from
     `crate::attention::collect`; nothing about the route or the DTO
-    changes to add one. `agent_requests` is registered already, answering
-    an empty list, so the route a later task's producer and client
-    migration need already compiles and runs; the question eligibility
-    rules themselves, and migrating the client behavior they already
-    carry onto this route, are out of this spec's scope (see Scope).
-    `pull_requests` is the second complete producer, below.
+    changes to add one. `agent_requests` and `pull_requests` are complete
+    producers, below.
+
+11. An agent creates a question only with `request_user_input`; punctuation,
+    idle turns, and agent messages create none. A repeated pending summary is
+    one request, and each request targets its session console.
+12. Console input answers the oldest request of that session. Withdrawal
+    answers only its named request. A pending human permission is an item;
+    an automatic decision is not. Each request change publishes
+    `session_updated`.
 
 ## The pull-request producer
 
-11. `crate::attention::pull_requests` raises two items, both read off a
+13. `crate::attention::pull_requests` raises two items, both read off a
     request's last fetch (`crate::forge::live::of_row`) rather than from a
     guess: a review request nobody is assigned to, and a request a
     babysitting task has claimed is ready to merge, confirmed against the
@@ -421,7 +424,7 @@ its eligibility rules.
     request that is closed, merged, back in draft, or that the last fetch
     has not read yet (`of_row` answers `None`): missing evidence withholds
     both items the same way it withholds a recovery one.
-12. A review request item (`AttentionCause::Configuration`) is raised for
+14. A review request item (`AttentionCause::Configuration`) is raised for
     a `reviewer` row that still asks for the user's review
     (`review_requested`) where neither the repository's own
     `review_model` nor one asked directly on the row
@@ -444,7 +447,7 @@ its eligibility rules.
     request gets its row the moment the first fetch finds it (029 rule 1),
     whether or not it is pinned, so that moment is also the moment nobody
     was yet assigned to it.
-13. A readiness item (`AttentionCause::Unknown`) is raised for an `author`
+15. A readiness item (`AttentionCause::Unknown`) is raised for an `author`
     row a task keeps (`origin_task_id`) once every one of three pieces of
     the forge's own evidence for the request's current head holds
     together: `review_decision == "approved"` (a current approval, not an
@@ -523,7 +526,7 @@ its eligibility rules.
     `::a_route_level_read_failure_withdraws_the_readiness_item_and_its_recovery_restores_it`,
     `pull_requests.rs::an_outer_list_failure_publishes_pull_requests_changed`,
     `::a_route_level_read_failure_withdraws_the_rows_evidence`).
-14. `mergeable` is read off the forge's own mergeability for the head,
+16. `mergeable` is read off the forge's own mergeability for the head,
     never derived from `checks` or `review_decision`, and read by each
     state's own documented meaning rather than guessed from its name:
     GitHub's `mergeStateStatus`
@@ -552,6 +555,25 @@ its eligibility rules.
 - The route answers an empty, complete list when nothing is stuck, and is
   in the API document under the `attention` tag
   (`attention.rs::an_empty_daemon_answers_an_empty_complete_list`).
+- Explicit questions target their orchestrator or worker console, survive a
+  console read, and resolve through console input
+  (`attention.rs::an_explicit_agent_question_opens_its_own_console_until_answered`,
+  `::a_worker_question_targets_the_workers_console`).
+- Agent messages and idle turns do not create requests
+  (`attention.rs::agent_messages_and_idle_turns_raise_no_agent_request`), and
+  repeating a pending question remains one item
+  (`attention.rs::a_repeated_question_is_one_attention_item`).
+- Answering or withdrawing one request preserves independent requests,
+  including one in another session
+  (`attention.rs::answering_or_withdrawing_one_request_keeps_the_others`),
+  and another session cannot create or withdraw its request
+  (`attention.rs::another_session_cannot_create_or_withdraw_a_request`).
+- A waiting permission targets its session console, while an automatic
+  permission creates no item
+  (`attention.rs::permission_events_only_create_items_while_waiting_for_a_person`,
+  `classify.rs::an_automatic_permission_request_raises_no_attention`).
+- Creating, answering, and withdrawing a request each publish
+  `session_updated` (`attention.rs::agent_request_changes_publish_session_updated`).
 - A task failed on the descriptor-limit words is a `resource` item naming
   that task (`attention.rs::a_descriptor_limit_failure_is_a_resource_item`),
   two tasks sharing the same words are one grouped item
@@ -840,9 +862,6 @@ its eligibility rules.
 
 ## Known gap
 
-- `agent_requests` is a registered producer module that answers empty:
-  the question eligibility rules this route was built for, and migrating
-  the client behavior that already covers it onto it, are a later task's.
 
 ## Sources
 

@@ -43,6 +43,8 @@ impl McpSeat {
     fn tools(&self) -> &'static [&'static str] {
         match self {
             McpSeat::Orchestrator => &[
+                "request_user_input",
+                "withdraw_user_request",
                 "get_task",
                 "create_task",
                 "update_task",
@@ -63,6 +65,8 @@ impl McpSeat {
             // too. None of them resolves a thread: the reviewer that opened
             // it does.
             McpSeat::Agent => &[
+                "request_user_input",
+                "withdraw_user_request",
                 "get_task",
                 "complete_step",
                 "fail_step",
@@ -82,6 +86,8 @@ impl McpSeat {
             // opened, once a push fixed it. No tool approves: the user gives
             // every approval (029).
             McpSeat::PullRequestReviewer => &[
+                "request_user_input",
+                "withdraw_user_request",
                 "get_pull_request",
                 "get_diff",
                 "list_comments",
@@ -254,16 +260,13 @@ fn json_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
 fn ask_rule(seat: &McpSeat) -> &'static str {
     match seat {
         McpSeat::Orchestrator => {
-            "The user answers in your console. Ask in plain turn text, one \
-             question at a time. Then wait."
+            "Call `request_user_input` for each user question. Do not use it for agent questions. Then wait."
         }
         McpSeat::Agent => {
-            "Work alone. Ask only where the task cannot go on without an \
-             answer."
+            "Call `request_user_input` only where the task cannot continue without a user answer. Do not use it for agent questions."
         }
         McpSeat::PullRequestReviewer => {
-            "Work alone. Ask only where the request cannot go on without \
-             an answer."
+            "Call `request_user_input` only where the request cannot continue without a user answer. Do not use it for agent questions."
         }
     }
 }
@@ -447,6 +450,8 @@ pub(crate) mod tests {
             (
                 McpSeat::Orchestrator,
                 &[
+                    "request_user_input",
+                    "withdraw_user_request",
                     "get_task",
                     "create_task",
                     "update_task",
@@ -465,6 +470,8 @@ pub(crate) mod tests {
             (
                 McpSeat::Agent,
                 &[
+                    "request_user_input",
+                    "withdraw_user_request",
                     "get_task",
                     "complete_step",
                     "fail_step",
@@ -483,6 +490,8 @@ pub(crate) mod tests {
             (
                 McpSeat::PullRequestReviewer,
                 &[
+                    "request_user_input",
+                    "withdraw_user_request",
                     "get_pull_request",
                     "get_diff",
                     "list_comments",
@@ -519,12 +528,14 @@ pub(crate) mod tests {
             "read_messages",
             "reply_comment",
             "report_pull_request",
+            "request_user_input",
             "resolve_thread",
             "retry_task",
             "send_message",
             "submit_review",
             "switch_session",
             "update_task",
+            "withdraw_user_request",
         ];
         assert_eq!(distinct_tools(), EVERY_TOOL);
         for gone in [
@@ -559,7 +570,7 @@ pub(crate) mod tests {
             McpSeat::Agent,
             Client::resolve(Some("http://127.0.0.1:1"), None),
         );
-        assert_eq!(mcp.seat.tools().len(), 13);
+        assert_eq!(mcp.seat.tools().len(), 15);
         for tool in [
             "get_pull_request",
             "list_comments",
@@ -568,6 +579,8 @@ pub(crate) mod tests {
             "open_pull_request",
             "complete_step",
             "fail_step",
+            "request_user_input",
+            "withdraw_user_request",
         ] {
             assert!(mcp.allows(tool), "{tool} is the agent's");
         }
@@ -615,8 +628,10 @@ pub(crate) mod tests {
                 "list_comments",
                 "reply_comment",
                 "report_pull_request",
+                "request_user_input",
                 "resolve_thread",
                 "submit_review",
+                "withdraw_user_request",
             ],
             "the pull request reviewer is listed eight tools"
         );
@@ -721,8 +736,7 @@ pub(crate) mod tests {
             Client::resolve(Some("http://127.0.0.1:1"), None),
         );
         let instructions = orchestrator.get_info().instructions.expect("instructions");
-        assert!(instructions.contains("The user answers in your console"));
-        assert!(instructions.contains("Ask in plain turn text, one question at a time"));
+        assert!(instructions.contains("Call `request_user_input` for each user question"));
         assert!(instructions.contains("Then wait"));
 
         for seat in SEATS {
@@ -744,8 +758,7 @@ pub(crate) mod tests {
         let instructions = agent.get_info().instructions.expect("instructions");
         assert!(
             instructions.contains(
-                "Work alone. Ask only where the task cannot go on \
-                 without an answer."
+                "Call `request_user_input` only where the task cannot continue without a user answer."
             ),
             "{instructions}"
         );

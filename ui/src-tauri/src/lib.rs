@@ -43,6 +43,7 @@ pub fn run() {
 
     // Windows uses WebView2, and CI does not build this shell on Windows.
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(

@@ -993,6 +993,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sessions/{id}/agent-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["sessions_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sessions/{id}/console": {
         parameters: {
             query?: never;
@@ -1187,6 +1203,22 @@ export interface paths {
          *     included. A session of a cancelled goal is refused.
          */
         post: operations["sessions_switch_session"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{session_id}/agent-requests/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["sessions_withdraw"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2089,6 +2121,11 @@ export interface components {
          */
         ConsoleInputRequest: {
             text: string;
+        };
+        /** @description An explicit request from an agent for a human answer. */
+        CreateAgentRequest: {
+            /** @description The question or decision the human must answer. */
+            summary: string;
         };
         CreateGoalRequest: {
             description?: string;
@@ -5862,6 +5899,29 @@ export interface operations {
             };
         };
     };
+    sessions_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAgentRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     sessions_snapshot: {
         parameters: {
             query?: never;
@@ -6122,6 +6182,26 @@ export interface operations {
                 content?: never;
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sessions_withdraw: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };

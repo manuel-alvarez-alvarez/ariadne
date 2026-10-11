@@ -639,6 +639,7 @@ pub(super) async fn take_input(state: &AppState, id: &str, text: String) -> ApiR
         state.store.set_session_title_if_unset(id, &title).await?;
     }
     state.store.clear_session_attention(id).await?;
+    state.store.answer_agent_request(id).await?;
     state.notify_scheduler_session(id);
     Ok(())
 }

@@ -140,7 +140,7 @@ fn recovery_items_section(
     if recovery.items.is_empty() {
         return None;
     }
-    let mut lines = vec!["RECOVERY".to_string()];
+    let mut lines = vec!["NEEDS ATTENTION".to_string()];
     for item in &recovery.items {
         lines.push(format!(
             "- [{}] {} ({} old)",
@@ -149,6 +149,9 @@ fn recovery_items_section(
             age(&item.since, now)
         ));
         lines.push(format!("  action: {}", item.required_action));
+        if let ariadne_api::attention::AttentionTarget::Console { session_id } = &item.target {
+            lines.push(format!("  attach: ariadne attach {session_id}"));
+        }
         // The id leads so every affected entry stays reachable on its own —
         // `ariadne attach <id>` or `session switch <id>` — not only the
         // item's own single target, which a grouped item can answer with

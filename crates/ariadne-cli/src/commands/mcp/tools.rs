@@ -182,6 +182,18 @@ pub(super) struct SendMessageReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+pub(super) struct UserRequestReq {
+    pub summary: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(super) struct WithdrawUserRequestReq {
+    pub request_id: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
 pub(super) struct ListCommentsReq {
     /// List only the threads that wait on your answer.
     pub unanswered_only: Option<bool>,
@@ -399,6 +411,38 @@ fn roll_call(agents: &[serde_json::Value]) -> String {
 
 #[tool_router(vis = "pub(super)")]
 impl AriadneMcp {
+    #[tool(
+        description = "Ask the user a question that blocks your work. The Needs attention list opens your console. End your turn after this call."
+    )]
+    async fn request_user_input(
+        &self,
+        Parameters(req): Parameters<UserRequestReq>,
+    ) -> Result<CallToolResult, McpError> {
+        json_result(
+            self.post(
+                &format!("/v1/sessions/{}/agent-requests", self.session_id),
+                &serde_json::json!({"summary": req.summary}),
+            )
+            .await?,
+        )
+    }
+
+    #[tool(description = "Withdraw one unanswered user request when it no longer applies.")]
+    async fn withdraw_user_request(
+        &self,
+        Parameters(req): Parameters<WithdrawUserRequestReq>,
+    ) -> Result<CallToolResult, McpError> {
+        json_result(
+            self.post(
+                &format!(
+                    "/v1/sessions/{}/agent-requests/{}",
+                    self.session_id, req.request_id
+                ),
+                &serde_json::json!({}),
+            )
+            .await?,
+        )
+    }
     #[tool(
         description = "Read a task: its column, status, branch, dependencies and agents. Each agent gives its column and skills. The goal columns give each rank and gate."
     )]
