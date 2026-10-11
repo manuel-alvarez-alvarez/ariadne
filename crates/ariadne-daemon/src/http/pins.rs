@@ -45,18 +45,6 @@ pub(super) struct Standing<'a> {
     pub model: &'a str,
 }
 
-/// What an edit says about the pin a row is on.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum Repin {
-    /// The request said nothing about it: the row keeps the pin it has.
-    Untouched,
-    /// Onto this agent, model and effort.
-    To(AgentPin),
-    /// The model stays where it is and only the effort moves: `Some` to that
-    /// effort, `None` back to the agent's own.
-    Effort(Option<String>),
-}
-
 /// The pin a creation asks for. A model is required: a request that names
 /// none, or writes the empty string or `default`, is refused by the rule.
 pub(super) async fn chosen(
@@ -66,30 +54,6 @@ pub(super) async fn chosen(
     effort: Option<&str>,
 ) -> ApiResult<AgentPin> {
     pin(store, registry, required(model)?, named(effort)).await
-}
-
-/// The same for an edit, which has one more thing to say: an effort can move
-/// on its own, checked against the model the row already runs.
-pub(super) async fn rechosen(
-    store: &Store,
-    registry: &AgentRegistry,
-    model: Option<&str>,
-    effort: Option<&str>,
-    standing: Standing<'_>,
-) -> ApiResult<Repin> {
-    match model {
-        Some(model) => Ok(Repin::To(
-            pin(store, registry, required(Some(model))?, named(effort)).await?,
-        )),
-        None => match effort {
-            None => Ok(Repin::Untouched),
-            Some(effort) if CLEAR_EFFORT.contains(&effort) => Ok(Repin::Effort(None)),
-            Some(effort) => {
-                checked(registry, standing, effort).await?;
-                Ok(Repin::Effort(Some(effort.to_string())))
-            }
-        },
-    }
 }
 
 /// A model refused for how it is written, before anything it names is looked

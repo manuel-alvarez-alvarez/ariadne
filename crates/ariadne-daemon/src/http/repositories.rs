@@ -15,7 +15,6 @@ use super::AppState;
 use super::convert::repository_dto;
 use super::error::{ApiError, ApiResult, Json};
 use super::permissions::ai_needs_the_model;
-use super::pins::{self, Repin, Standing};
 use crate::forge::{self, ForgeClient};
 use crate::gitwt::GitManager;
 
@@ -221,7 +220,7 @@ async fn forge_asked(
     detected: Option<SetForgeIntegration>,
     update: Option<&ForgeUpdate>,
 ) -> ApiResult<Option<SetForgeIntegration>> {
-    let Some(update) = update.filter(|u| asks_anything(u)) else {
+    let Some(update) = update.filter(|u| u.enabled.is_some()) else {
         return Ok(detected);
     };
     let Some(mut row) = detected else {
@@ -232,13 +231,6 @@ async fn forge_asked(
              `origin`, or the only remote where there is no `origin`",
         ));
     };
-    (row.review_model, row.review_effort) = pinned(
-        state,
-        (row.review_model, row.review_effort),
-        update.review_model.as_deref(),
-        update.review_effort.as_deref(),
-    )
-    .await?;
     match update.enabled {
         Some(true) if !row.enabled => {
             state
@@ -260,48 +252,4 @@ async fn forge_asked(
         _ => {}
     }
     Ok(Some(row))
-}
-
-fn asks_anything(update: &ForgeUpdate) -> bool {
-    update.enabled.is_some() || update.review_model.is_some() || update.review_effort.is_some()
-}
-
-/// One role's pin after a request: a model is checked as a goal's is, an
-/// empty model clears the pin, and an effort alone moves on the model the
-/// role already runs.
-async fn pinned(
-    state: &AppState,
-    standing: (Option<String>, Option<String>),
-    model: Option<&str>,
-    effort: Option<&str>,
-) -> ApiResult<(Option<String>, Option<String>)> {
-    let (store, registry) = (&state.store, &state.agent_registry);
-    match (model, effort) {
-        (Some(""), _) => Ok((None, None)),
-        (Some(model), effort) => {
-            let pin = pins::chosen(store, registry, Some(model), effort).await?;
-            Ok((Some(pin.model), pin.effort))
-        }
-        (None, None) => Ok(standing),
-        (None, Some(effort)) => {
-            let Some(model) = standing.0 else {
-                return Err(ApiError::bad_request(
-                    "an effort needs a model: pin the role's model first",
-                ));
-            };
-            let effort = match pins::rechosen(
-                store,
-                registry,
-                None,
-                Some(effort),
-                Standing { model: &model },
-            )
-            .await?
-            {
-                Repin::Effort(effort) => effort,
-                Repin::Untouched | Repin::To(_) => standing.1,
-            };
-            Ok((Some(model), effort))
-        }
-    }
 }

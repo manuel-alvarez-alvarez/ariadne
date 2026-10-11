@@ -1379,9 +1379,9 @@ impl Launcher {
 }
 
 /// A review session: its worktree detached at the request's head, its row,
-/// and its agent (029). The daemon staffs it on the repository's
-/// `review_model`; no goal, task or orchestrator is behind it. A request of
-/// the user's own has none: its task's `pr` column keeps it (030).
+/// and its agent (029). The daemon staffs it on the pin asked directly on
+/// the row; no goal, task or orchestrator is behind it. A request of the
+/// user's own has none: its task's `pr` column keeps it (030).
 impl Launcher {
     /// Where a request's worktree is cut: one per request, named by its id.
     fn pull_request_worktree_path(&self, pull_request_id: &str) -> PathBuf {

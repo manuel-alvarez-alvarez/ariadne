@@ -249,7 +249,7 @@ semantics remain with 009.
      request no longer wants a reviewer session at all —
      `scheduler::pull_requests::end_review`, reached once `wants_session`
      answers `false` for any reason: closed, no longer asking, back to
-     draft, or the repository's own review pin gone — so a request that
+     draft, or never asked for directly on its own row — so a request that
      stopped asking does not carry a stale blocker for work nothing is
      trying any more): a reviewer session sits on no task either, and
      carries the same `disconnected` false-positive risk the
@@ -425,28 +425,26 @@ semantics remain with 009.
     has not read yet (`of_row` answers `None`): missing evidence withholds
     both items the same way it withholds a recovery one.
 14. A review request item (`AttentionCause::Configuration`) is raised for
-    a `reviewer` row that still asks for the user's review
-    (`review_requested`) where neither the repository's own
-    `review_model` nor one asked directly on the row
-    (`PullRequestRow::review_model`) names a model: `wants_session`
-    (029) answers `false` for exactly this reason, and nothing automatic
-    is ever going to start a session for it, so a human still has
-    something to start by hand. A request `recovery`'s own
+    every `reviewer` row that still asks for the user's review
+    (`review_requested`) and has no asked review of its own
+    (`!PullRequestRow::review_asked`): `wants_session` (029) answers
+    `false` for exactly this reason, since nothing ever starts a session
+    for a request on its own any more, so a human always has something to
+    start by hand until they do. A request `recovery`'s own
     `reviewer_given_up_items` already carries
     (`PullRequestRow::reviewer_given_up_at`) raises nothing more here: that
     is the same underlying request as a different kind of "nobody is
     handling it", and a second item would only repeat the first's fix.
-    Starting a session — on the repository's own pin, or by asking
-    directly on the row through `PUT
+    Asking directly on the row through `PUT
     .../pull-requests/{number}/ariadne-review` (029 rule 10, open to a
-    review request on an unpinned repository the same as to a request of
-    the user's own) — clears the item the moment `wants_session` answers
-    `true` for it; a reviewer taking the row over, the same route's
-    `asked: false`, or the repository gaining a pin removes it the same
-    way. The item's `since` is the row's own `created_at`: a review
-    request gets its row the moment the first fetch finds it (029 rule 1),
-    whether or not it is pinned, so that moment is also the moment nobody
-    was yet assigned to it.
+    review request the same as to a request of the user's own) clears the
+    item the moment `wants_session` answers `true` for it; stopping that
+    ask (`asked: false`) with the request still asking for the user's
+    review on the forge's own side brings the item back, since nobody is
+    assigned to it again. The item's `since` is the row's own
+    `created_at`: a review request gets its row the moment the first fetch
+    finds it (029 rule 1), which is also the moment nobody was yet
+    assigned to it.
 15. A readiness item (`AttentionCause::Unknown`) is raised for an `author`
     row a task keeps (`origin_task_id`) once every one of three pieces of
     the forge's own evidence for the request's current head holds
@@ -660,10 +658,7 @@ semantics remain with 009.
   (`attention.rs::retrying_a_failed_task_removes_its_item_without_losing_the_transition`).
 - A cancelled goal's orchestrator give-up raises nothing, though the mark
   itself is left as history rather than deleted
-  (`attention.rs::a_cancelled_goals_orchestrator_give_up_raises_nothing`);
-  a request whose review pin is gone clears its reviewer's give-up mark
-  the same way `end_review` already takes its session down
-  (`attention.rs::a_request_whose_review_pin_is_gone_clears_its_reviewers_give_up`).
+  (`attention.rs::a_cancelled_goals_orchestrator_give_up_raises_nothing`).
 - A taskless orchestrator given up on — a goal still planning, with no
   failed task of its own — raises its own `unknown` item end to end
   through the real scheduler's spawn-retry budget actually running out,
@@ -784,18 +779,18 @@ semantics remain with 009.
   reviewer session's own give-up evidence"); the CLI's `--watch` treats
   both the same way
   (`attention.rs::watch_redraws_on_a_goals_or_a_pull_requests_own_recovery_evidence`).
-- A review request with no pin anywhere offers a manual-start item naming
-  its repository, and takes none once the row or the repository gains one;
-  the same request already given up on by recovery carries only
-  recovery's own item, never a second
+- A review request with no asked review of its own offers a manual-start
+  item naming its repository, takes none once the row is asked, and gets
+  it back once that ask is stopped while the forge's own timeline still
+  asks for the user's review; the same request already given up on by
+  recovery carries only recovery's own item, never a second
   (`attention.rs::an_unpinned_review_request_offers_a_manual_start_item`,
-  `::a_review_request_pinned_on_its_repository_offers_no_manual_start_item`,
   `::a_review_request_recovery_has_given_up_on_carries_no_second_item`).
   `ariadne pr review` and the desktop panel's Start review both reach the
   same route on such a request, the same way they do on a request of the
   user's own
-  (`pull_request_reviews.rs::asking_needs_a_model_and_takes_an_unpinned_review_request`,
-  `pull-request-panel.test.tsx::offers a manual Start review on a request that asks for my review when the repository pins none`).
+  (`pull_request_reviews.rs::asking_needs_a_model_and_takes_a_review_request_of_anothers`,
+  `pull-request-panel.test.tsx::offers a manual Start review on every request that asks for my review`).
   The manual ask itself survives a scheduler pass that runs before the
   next forge fetch could ever confirm the request still asks: the live
   cache's own `review_requested` is written `true` by the ask route
@@ -803,7 +798,7 @@ semantics remain with 009.
   fetch, so `scheduler::pull_requests::end_review` never reads the
   request as having stopped asking and deletes it out from under the
   reviewer session the same call just started
-  (`pull_request_reviews.rs::asking_needs_a_model_and_takes_an_unpinned_review_request`).
+  (`pull_request_reviews.rs::asking_needs_a_model_and_takes_a_review_request_of_anothers`).
 - A babysat request's readiness item answers only once approval, no open
   conversation-side comment, every *resolvable* review thread actually
   resolved (not merely answered, and regardless of who opened it), green

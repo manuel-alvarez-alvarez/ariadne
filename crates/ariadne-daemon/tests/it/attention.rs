@@ -1496,110 +1496,6 @@ async fn a_cancelled_goals_orchestrator_give_up_raises_nothing() {
     );
 }
 
-/// A request still open and still asking for review, but whose
-/// repository lost its configured review pin, no longer wants a reviewer
-/// session either — the same thing `scheduler::pull_requests::end_review`
-/// reads to take its session down — and its earlier give-up mark is
-/// cleared with it: nothing is trying to start that session any more, so
-/// there is nothing left to have given up on. The `pull_request` producer
-/// raises its own item in its place: nobody is assigned to it either, and
-/// a human can still start one by hand (the recovery item named a dead
-/// attempt to start automatically; this one names that nothing will try
-/// again on its own).
-#[tokio::test]
-async fn a_request_whose_review_pin_is_gone_clears_its_reviewers_give_up() {
-    let h = harness().scheduler().await;
-    let repo = h.repository(&h.at("widgets")).await;
-    h.store
-        .set_forge_integration(ariadne_store::SetForgeIntegration {
-            repository_id: repo.id.clone(),
-            kind: ariadne_core::ForgeKind::Github,
-            host: "github.com".into(),
-            owner: "acme".into(),
-            name: "widgets".into(),
-            remote: "origin".into(),
-            enabled: true,
-            login: Some("me".into()),
-            review_model: Some(test_pin().model),
-            review_effort: None,
-        })
-        .await
-        .unwrap();
-    let (pull, _) = h
-        .store
-        .upsert_pull_request(ariadne_store::NewPullRequest {
-            repository_id: repo.id.clone(),
-            number: 1,
-            url: "https://github.com/acme/widgets/pull/1".into(),
-            role: "reviewer".into(),
-            origin_task_id: None,
-        })
-        .await
-        .unwrap();
-    h.store
-        .set_pull_request_reviewer_given_up(&pull.id, false)
-        .await
-        .unwrap();
-    // Still open, still asking — but the repository's review pin is gone,
-    // so nothing wants a reviewer session for it any more either.
-    crate::common::forge::seed_live(&h, &pull, "someone", "fix-1", "abc", true);
-    h.store
-        .set_forge_integration(ariadne_store::SetForgeIntegration {
-            repository_id: repo.id.clone(),
-            kind: ariadne_core::ForgeKind::Github,
-            host: "github.com".into(),
-            owner: "acme".into(),
-            name: "widgets".into(),
-            remote: "origin".into(),
-            enabled: true,
-            login: Some("me".into()),
-            review_model: None,
-            review_effort: None,
-        })
-        .await
-        .unwrap();
-
-    h.state.forge_poll.wake(&repo.id);
-    h.state
-        .sched_tx
-        .as_ref()
-        .unwrap()
-        .send(ariadne_daemon::scheduler::SchedEvent::PullRequestChanged(
-            pull.id.clone(),
-        ))
-        .unwrap();
-
-    eventually(
-        TIMEOUT,
-        "the reviewer's give-up mark to be cleared",
-        || async {
-            h.store
-                .get_pull_request(&pull.id)
-                .await
-                .unwrap()
-                .reviewer_given_up_at
-                .is_none()
-        },
-    )
-    .await;
-
-    let list: AttentionListDto = h.get("/v1/attention").await;
-    assert_eq!(
-        list.items.len(),
-        1,
-        "the recovery give-up item is gone, replaced by the pull_request \
-         producer's own: {:?}",
-        list.items
-    );
-    assert_eq!(list.items[0].producer, AttentionProducer::PullRequest);
-    assert_eq!(
-        list.items[0].target,
-        AttentionTarget::PullRequest {
-            pull_request_id: pull.id.clone()
-        }
-    );
-}
-
 /// A reviewer session's affected label names its seat, the same as an
 /// orchestrator's: neither ran a task of its own.
 #[tokio::test]
@@ -1818,9 +1714,11 @@ async fn a_recovery_items_id_is_stable_across_a_fresh_store_connection() {
     assert_eq!(first.items[0].id, second.items[0].id);
 }
 
-/// A request that asks for my review, with no pin on the repository and
-/// none asked directly on the row either, offers a manual start: nothing
-/// else will ever start a reviewer session for it (029).
+/// A request that asks for my review, with no review asked directly on
+/// its own row, offers a manual start: nothing else will ever start a
+/// reviewer session for it (029). Asking clears the item; stopping that
+/// ask, while the forge's own timeline still asks for my review, brings
+/// it back — nobody is assigned to it again.
 #[tokio::test]
 async fn an_unpinned_review_request_offers_a_manual_start_item() {
     let h = harness().await;
@@ -1851,44 +1749,40 @@ async fn an_unpinned_review_request_offers_a_manual_start_item() {
     );
     assert_eq!(item.affected[0].kind, AttentionSubjectKind::PullRequest);
     assert_eq!(item.affected[0].id, pull.id);
-}
 
-/// The same request, pinned on the repository's own `review_model`,
-/// offers no manual start: a reviewer session already starts on its own.
-#[tokio::test]
-async fn a_review_request_pinned_on_its_repository_offers_no_manual_start_item() {
-    let h = harness().await;
-    let repo = h.repository(&h.at("widgets")).await;
     h.store
-        .set_forge_integration(ariadne_store::SetForgeIntegration {
-            repository_id: repo.id.clone(),
-            kind: ariadne_core::ForgeKind::Github,
-            host: "github.com".into(),
-            owner: "acme".into(),
-            name: "widgets".into(),
-            remote: "origin".into(),
-            enabled: true,
-            login: Some("me".into()),
-            review_model: Some(test_pin().model),
-            review_effort: None,
-        })
+        .set_pull_request_review_asked(
+            &pull.id,
+            Some((
+                &AgentPin {
+                    model: test_pin().model,
+                    effort: None,
+                },
+                &[],
+            )),
+        )
         .await
         .unwrap();
-    let (pull, _) = h
-        .store
-        .upsert_pull_request(ariadne_store::NewPullRequest {
-            repository_id: repo.id.clone(),
-            number: 1,
-            url: "https://github.com/acme/widgets/pull/1".into(),
-            role: "reviewer".into(),
-            origin_task_id: None,
-        })
-        .await
-        .unwrap();
-    crate::common::forge::seed_live(&h, &pull, "someone", "fix-1", "abc", true);
+    let asked = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(
+        asked.items,
+        Vec::new(),
+        "asking clears the manual-start item: {:?}",
+        asked.items
+    );
 
-    let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
-    assert_eq!(list.items, Vec::new(), "{:?}", list.items);
+    h.store
+        .set_pull_request_review_asked(&pull.id, None)
+        .await
+        .unwrap();
+    let stopped = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(
+        stopped.items.len(),
+        1,
+        "stopping with the forge still asking brings the item back: {:?}",
+        stopped.items
+    );
+    assert_eq!(stopped.items[0].target, item.target);
 }
 
 /// A request automatic recovery has already given up starting a reviewer
@@ -1909,8 +1803,6 @@ async fn a_review_request_recovery_has_given_up_on_carries_no_second_item() {
             remote: "origin".into(),
             enabled: true,
             login: Some("me".into()),
-            review_model: None,
-            review_effort: None,
         })
         .await
         .unwrap();
@@ -2439,8 +2331,6 @@ async fn a_ready_claim_on_a_disabled_integration_raises_no_readiness_item() {
             remote: "origin".into(),
             enabled: false,
             login: Some("ariadne-bot".into()),
-            review_model: None,
-            review_effort: None,
         })
         .await
         .unwrap();

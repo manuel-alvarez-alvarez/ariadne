@@ -35,7 +35,7 @@ tests:
 # Pull requests
 
 Ariadne reads pull requests live off the forge and stores none of what the forge holds.
-It keeps a row only for a request it works on — the request a task opened, one that asks for the user's review on a repository with a review pin, and one of the user's they asked Ariadne to review (029) — and lets go of it once the request merged or closed.
+It keeps a row only for a request it works on — the request a task opened, one that asks for the user's review, and one of the user's they asked Ariadne to review (029) — and lets go of it once the request merged or closed.
 The agent of the task's `pr` column keeps its request until a human merges or closes it (030). The daemon sends news to that session.
 
 ## Scope
@@ -64,7 +64,7 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
 3. A row exists while Ariadne works on the request, or while a human still
    might start it working by hand, and only then:
    - the request a task opened: `open_pull_request` writes it, with the task as origin (030 rule 10);
-   - a request that asks for the user's review, out of draft: the first fetch that finds it writes it, whether or not the repository's integration names a `review_model` — one that does not starts no session on its own, but the row is what lets a human start one by hand (029, 031);
+   - a request that asks for the user's review, out of draft: the first fetch that finds it writes it — nothing starts a session on it on its own, but the row is what lets a human start one by hand (029, 031);
    - a request of the user's they asked Ariadne to review: the ask writes it (029).
    A request nobody works on, and nobody could start work on by asking, has no row, whatever the lists hold.
 4. What the forge says of a request Ariadne works on is read on every fetch and held in memory alone (`forge::live::LivePulls`, by row id): the request's own read, whether it asks for the user's review, and, while it is open, its details.
@@ -191,7 +191,7 @@ The command and screen follow [014](014-command-line-interface.md) and [015](015
 - `pr inspect <repo> <number>` prints every field of one request, read off the forge now, as a hand-written key-value block in a fixed reading order, the body last after a `---` line (014).
 - `pr search --repo <id|path> <query>` searches the forge.
 - `pr refresh [--repo <id|path>]` requests a fetch.
-- `pr review <repo> <number> --model AGENT:MODEL [--effort E] [--skill S]... [--attach]` calls `PUT .../ariadne-review` with `{asked: true, model, effort, skills}` (029): `--model` left out and the repository carrying its own `review_model` sends that pin and its `review_effort`; with neither, a usage error names `--model`. `--attach` waits for the review session to start and opens its console, as `session new --attach` does. `pr review <repo> <number> --stop` sends `{asked: false}` alone, and conflicts with `--model`, `--effort`, `--skill` and `--attach`.
+- `pr review <repo> <number> --model AGENT:MODEL [--effort E] [--skill S]... [--attach]` calls `PUT .../ariadne-review` with `{asked: true, model, effort, skills}` (029): `--model` is required, since there is no repository pin to fall back to any more, and a usage error names it when it is missing. `--attach` waits for the review session to start and opens its console, as `session new --attach` does. `pr review <repo> <number> --stop` sends `{asked: false}` alone, and conflicts with `--model`, `--effort`, `--skill` and `--attach`.
 
 The sidebar's Forge entry opens the Forge screen, titled "Forge", whose two tabs are Pull requests (`#/forge/pull-requests`, where `#/forge` lands) and Issues (028).
 Pull requests lists the open requests, read live. A three-way choice narrows them: All (every open request), Mine (`role=author`), and Review requests (`role=reviewer&requested=true`).
@@ -217,11 +217,11 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `store.rs::a_pull_request_row_keeps_its_identity_and_origin_and_its_sessions_outlive_it`.
 - Comment marks are claimed once, released whole, keep the review's mark, and go with their row:
   `store.rs::comment_marks_are_claimed_once_released_whole_and_keep_the_review_mark`.
-- The list is read live, a request of the user's own nobody asked Ariadne to review has no row, a request that asks for the user's review is tracked whether or not the repository pins a `review_model`, and nothing adds or removes a row by hand:
+- The list is read live, a request of the user's own nobody asked Ariadne to review has no row, a request that asks for the user's review is tracked the moment it is seen, and nothing adds or removes a row by hand:
   `pull_requests.rs::the_list_is_read_live_and_tracks_only_a_request_that_asks_for_my_review`.
 - A detail read asks the forge for its parts together:
   `pull_requests.rs::a_detail_read_asks_the_forge_for_its_parts_together`.
-- A review request on a repository with a review pin has a row while it is reviewed and none once it merged:
+- A review request has a row while it is reviewed and none once it merged:
   `pull_requests.rs::a_review_request_has_a_row_while_it_is_reviewed_and_none_once_it_merged`.
 - A request of mine has a row once a task opened it, and not before:
   `pull_requests.rs::a_request_of_mine_has_a_row_once_a_task_opened_it_and_not_before`.
@@ -248,13 +248,11 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `pr ls` carries the branches and the session, and `pr inspect` prints a
   fixed reading order with the body last: `::pr_ls_shows_the_branches_and_session_columns`,
   `::pr_inspect_prints_readable_keys_in_order_with_the_body_last`.
-- `pr review` sends the asking pin whole and the stop body alone, falls back
-  to the repository's own review pin with no `--model`, is refused naming
-  `--model` where the repository has none, and `--stop` conflicts with every
-  asking flag:
+- `pr review` sends the asking pin whole and the stop body alone, is refused
+  naming `--model` with no model and no `--stop`, and `--stop` conflicts
+  with every asking flag:
   `pr.rs::tests::pr_review_sends_the_ask_body_with_its_pin_and_the_stop_body_alone`,
-  `::pr_review_with_no_model_uses_the_repositorys_own_review_pin`,
-  `::pr_review_with_no_model_and_no_repository_pin_is_refused`,
+  `::pr_review_with_no_model_and_no_stop_is_refused`,
   `::pr_review_refuses_stop_combined_with_an_asking_flag_and_a_bare_default_model`.
 - `session ls --pull-request` reaches the daemon under `SessionPageQuery`'s
   own parameter: `session.rs::tests::pull_request_reaches_its_own_query_parameter`.

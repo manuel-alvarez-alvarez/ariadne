@@ -813,8 +813,6 @@ mod tests {
                 remote: "origin".into(),
                 enabled: true,
                 login: Some("octocat".into()),
-                review_model: None,
-                review_effort: None,
             });
             Json(vec![repository])
         });

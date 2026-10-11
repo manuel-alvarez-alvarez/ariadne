@@ -16,7 +16,6 @@ use crate::output::{
 };
 use anyhow::Result;
 use ariadne_api::pull_requests::{PullRequestDto, PullRequestListQuery, PullRequestMatchDto};
-use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::sessions::{SessionPageDto, SessionPageQuery};
 use ariadne_client::Client;
 use clap::Subcommand;
@@ -81,8 +80,8 @@ pub(crate) enum PrCommand {
         repo: String,
         /// The request's number
         number: i64,
-        /// What the review runs on: AGENT:MODEL — default: the repository's
-        /// own review pin (`repo update --review-model`)
+        /// What the review runs on: AGENT:MODEL — required with no `--stop`,
+        /// since every review starts manually
         #[arg(long, value_name = "MODEL", value_parser = parse_review_model, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
         model: Option<String>,
         /// The reasoning effort that model is run at
@@ -300,7 +299,7 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
             stop,
         } => {
             let repo_id = resolve::id(client, Kind::Repo, &repo).await?;
-            let request = review_request(client, &repo_id, stop, model, effort, skills).await?;
+            let request = review_request(stop, model, effort, skills)?;
             let pull: PullRequestDto = client
                 .put_json(&review_path(&repo_id, number), &request)
                 .await?;
@@ -325,11 +324,10 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
 /// The body `pr review` sends: `{asked: false}` alone for `--stop` — no
 /// pin and no skills travel with a request to stop, as the desktop's own
 /// Stop review sends — else `{asked: true, model, effort, skills}` on the
-/// pin the caller gave, or the repository's own `review_model` and
-/// `review_effort` where they left `--model` out.
-async fn review_request(
-    client: &Client,
-    repo_id: &str,
+/// pin the caller gave. Every review starts manually now, so `--model` is
+/// required with no `--stop` (029): there is no repository pin to fall
+/// back to any more.
+fn review_request(
     stop: bool,
     model: Option<String>,
     effort: Option<String>,
@@ -338,28 +336,10 @@ async fn review_request(
     if stop {
         return Ok(json!({"asked": false}));
     }
-    let (model, effort) = match model {
-        Some(model) => (model, effort),
-        None => default_review_pin(client, repo_id).await?,
-    };
+    let model = model.ok_or_else(|| {
+        Failure::usage("no --model was given: a review needs one, as agent:model").err()
+    })?;
     Ok(json!({"asked": true, "model": model, "effort": effort, "skills": skills}))
-}
-
-/// The repository's own review pin (`repo update --review-model`), for a
-/// `pr review` with no `--model` of its own.
-async fn default_review_pin(client: &Client, repo_id: &str) -> Result<(String, Option<String>)> {
-    let repo: RepositoryDto = client
-        .get_json(&format!("/v1/repositories/{repo_id}"))
-        .await?;
-    repo.forge
-        .and_then(|forge| forge.review_model.map(|model| (model, forge.review_effort)))
-        .ok_or_else(|| {
-            Failure::usage(
-                "no --model was given, and this repository has no review model of its own \
-                 — pass --model, or pin one with `ariadne repo update --review-model`",
-            )
-            .err()
-        })
 }
 
 fn review_path(repo_id: &str, number: i64) -> String {
@@ -421,7 +401,7 @@ mod tests {
     };
     use std::sync::{Arc, Mutex};
 
-    use ariadne_api::repositories::{ForgeDto, WebhookDto};
+    use ariadne_api::repositories::RepositoryDto;
 
     fn row() -> serde_json::Value {
         json!({"id":"pull-42","repository_id":"repo-1","number":42,"url":"https://github.com/acme/widgets/pull/42","title":"Fix widgets","author_login":"me","role":"author","state":"open","draft":false,"head_branch":"fix","head_sha":"abc","head_repo":null,"base_branch":"main","checks":"none","review_decision":"none","unanswered_comments":0,"ready":false,"origin_task_id":null,"opened_at":"2026-10-01","updated_at":"2026-10-07"})
@@ -664,83 +644,12 @@ mod tests {
         );
     }
 
-    /// A repository registered with its own review pin (`repo update
-    /// --review-model`) supplies it to `pr review` run with no `--model` of
-    /// its own.
+    /// `pr review` with no `--model` and no `--stop` is refused — naming the
+    /// flag — rather than asking the daemon with nothing to pin a session
+    /// on: every review starts manually now, so there is no repository pin
+    /// to fall back to (029).
     #[tokio::test]
-    async fn pr_review_with_no_model_uses_the_repositorys_own_review_pin() {
-        let repo = RepositoryDto {
-            forge: Some(ForgeDto {
-                webhook: WebhookDto {
-                    state: "live".into(),
-                    url: None,
-                    error: None,
-                    last_delivery_at: None,
-                    fetch_error: None,
-                },
-                kind: ariadne_core::ForgeKind::Github,
-                host: "github.com".into(),
-                owner: "acme".into(),
-                name: "widgets".into(),
-                remote: "origin".into(),
-                enabled: true,
-                login: Some("octocat".into()),
-                review_model: Some("stub:review-model".into()),
-                review_effort: Some("balanced".into()),
-            }),
-            ..crate::commands::fixtures::repository("repo-1", "/work/widgets", "main")
-        };
-        let calls: Calls = Arc::default();
-        let app = repo_router(repo).merge(
-            Router::new()
-                .route(
-                    "/v1/repositories/repo-1/pull-requests/42/ariadne-review",
-                    put(answer),
-                )
-                .with_state(calls.clone()),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let client = Client::tcp(format!("http://{}", listener.local_addr().unwrap()));
-        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-
-        run(
-            &client,
-            PrCommand::Review {
-                repo: "repo-1".into(),
-                number: 42,
-                model: None,
-                effort: None,
-                skills: Vec::new(),
-                attach: false,
-                stop: false,
-            },
-            Format::Json,
-        )
-        .await
-        .unwrap();
-        server.abort();
-
-        let bodies: Vec<_> = calls
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|(method, path, _)| method == "PUT" && path.ends_with("/ariadne-review"))
-            .map(|(_, _, body)| body.clone())
-            .collect();
-        assert_eq!(
-            bodies,
-            [json!({
-                "asked": true, "model": "stub:review-model", "effort": "balanced",
-                "skills": [],
-            })]
-        );
-    }
-
-    /// A repository with no review pin of its own, and no `--model` on the
-    /// line, is refused — naming the flag — rather than asking the daemon
-    /// with nothing to pin a session on.
-    #[tokio::test]
-    async fn pr_review_with_no_model_and_no_repository_pin_is_refused() {
+    async fn pr_review_with_no_model_and_no_stop_is_refused() {
         let repo = crate::commands::fixtures::repository("repo-1", "/work/widgets", "main");
         let app = repo_router(repo);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

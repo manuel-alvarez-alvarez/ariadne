@@ -166,20 +166,50 @@ fn push(path: &Path) -> String {
     sh(path, "git rev-parse fix")
 }
 
-/// The repository registered with its integration on, and the pin a review
-/// session runs on where `review` names one.
-async fn repository(h: &Harness, path: &Path, review: Option<&str>) -> String {
-    let mut forge = json!({"enabled": true});
-    if let Some(model) = review {
-        forge["review_model"] = json!(model);
-    }
+/// The repository registered with its integration on.
+async fn repository(h: &Harness, path: &Path) -> String {
     let repo: Value = h
         .json(
-            post_json("/v1/repositories", json!({"path": path, "forge": forge})),
+            post_json(
+                "/v1/repositories",
+                json!({"path": path, "forge": {"enabled": true}}),
+            ),
             StatusCode::CREATED,
         )
         .await;
     repo["id"].as_str().unwrap().to_string()
+}
+
+/// Ask Ariadne to review request `number` on `model`: the manual start
+/// every review now takes (029), where a test once relied on the
+/// repository's own review pin.
+///
+/// Waits for the row's own live cache evidence that the repository's
+/// last-triggered fetch actually finished reading it, not merely that the
+/// forge CLI's own `compare` call started: `common/forge.rs`'s stub logs
+/// an invocation the moment it is run, before it waits on any gate or
+/// writes its answer, so counting invocations proves nothing about
+/// whether the read — and the `wake_scheduler` call right after it writes
+/// the cache, in `forge/poll.rs::read_row` — ever actually ran. `evidence_ok`
+/// is written only once that read's answer is in hand, which is also this
+/// call's own write (`http/pull_requests.rs::ask_review`) racing a stale
+/// or still-running one.
+async fn ask_review(h: &Harness, id: &str, repo: &str, number: i64, model: &str) -> Value {
+    eventually(TIMEOUT, "the request's live details", async || {
+        h.launcher.live.get(id).is_some_and(|l| l.evidence_ok)
+    })
+    .await;
+    let ask = axum::http::Request::builder()
+        .method("PUT")
+        .uri(format!(
+            "/v1/repositories/{repo}/pull-requests/{number}/ariadne-review"
+        ))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"asked": true, "model": model}).to_string(),
+        ))
+        .unwrap();
+    h.json(ask, StatusCode::OK).await
 }
 
 /// The one request of the ledger, once the first fetch recorded it.
@@ -311,8 +341,8 @@ fn summary_writes(stub: &StubForgeCli) -> Vec<(String, String)> {
         .collect()
 }
 
-/// An open request out of draft that asks for my review, in a repository
-/// with a `review_model`, gets one live session on that pin: seat
+/// An open request out of draft that asks for my review, asked for
+/// directly on its own row, gets one live session on that pin: seat
 /// `reviewer`, a worktree detached at the head, and the `pr-reviewer`
 /// document written and indexed.
 #[tokio::test]
@@ -321,8 +351,9 @@ async fn an_open_request_i_review_gets_one_session_detached_at_its_head() {
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, head) = checkout(&h);
     stub.reprogram(script(&Shown::open(&head)));
-    repository(&h, &path, Some(PIN)).await;
+    let repo = repository(&h, &path).await;
     let id = the_request(&h).await;
+    ask_review(&h, &id, &repo, 1, PIN).await;
     let session = idle_session(&h, &id).await;
 
     assert_eq!(session.model, PIN);
@@ -375,7 +406,7 @@ async fn a_draft_starts_no_review_until_it_leaves_draft() {
         draft: true,
         ..Shown::open(&head)
     }));
-    let repo = repository(&h, &path, Some(PIN)).await;
+    let repo = repository(&h, &path).await;
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     h.state.forge_poll.wake(&repo);
     // Prove that the draft creates no review row.
@@ -386,30 +417,57 @@ async fn a_draft_starts_no_review_until_it_leaves_draft() {
     stub.reprogram(script(&Shown::open(&head)));
     h.state.forge_poll.wake(&repo);
     let id = the_request(&h).await;
+    ask_review(&h, &id, &repo, 1, PIN).await;
     idle_session(&h, &id).await;
 }
 
-/// A repository with no `review_model` starts nothing for a request I
-/// review.
+/// A request that asks for my review starts no session until the user
+/// asks Ariadne for one: every review starts manually now, and there is no
+/// repository pin left to start one on its own (the goal this whole task
+/// is for).
 #[tokio::test]
-async fn a_repository_with_no_review_model_starts_no_review() {
+async fn a_review_requested_pull_request_starts_no_session_until_asked() {
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, head) = checkout(&h);
     stub.reprogram(script(&Shown::open(&head)));
-    let repo = repository(&h, &path, None).await;
+    let repo = repository(&h, &path).await;
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     h.state.forge_poll.wake(&repo);
     // The request still gets a row — nobody else will ever start a review
     // for it, so a human still has something to start by hand (029) — but
-    // the missing review model starts no session of its own.
+    // asking nobody starts no session of its own.
     let id = the_request(&h).await;
-    tokio::time::sleep(QUIET).await;
+    // Wait for the row's own live cache evidence that the fetch's detail
+    // read actually finished, not merely that the forge CLI's `compare`
+    // call started (`common/forge.rs`'s stub logs an invocation before it
+    // answers). `evidence_ok` is written in the same statement
+    // (`forge/poll.rs::read_row`) right before `wake_scheduler` runs.
+    eventually(TIMEOUT, "the request's live details", async || {
+        h.launcher.live.get(&id).is_some_and(|l| l.evidence_ok)
+    })
+    .await;
+    // Force the scheduler to evaluate the request itself, rather than
+    // betting that `wake_scheduler`'s own send already landed in the
+    // channel by the time this runs: the two statements share no await
+    // point in `read_row`, but nothing stops this test's own task from
+    // being scheduled in that gap, on another thread.
+    h.state
+        .sched_tx
+        .as_ref()
+        .unwrap()
+        .send(ariadne_daemon::scheduler::SchedEvent::PullRequestChanged(
+            id.clone(),
+        ))
+        .unwrap();
     h.flush_scheduler().await;
     assert!(
         sessions(&h, &id).await.is_empty(),
         "nothing reviews it on its own, so it is no automatic work"
     );
+
+    ask_review(&h, &id, &repo, 1, PIN).await;
+    idle_session(&h, &id).await;
 }
 
 /// A push moves the worktree to the new head and hands the session one
@@ -421,8 +479,9 @@ async fn a_push_moves_the_worktree_and_is_told_once_with_the_last_reviewed_sha()
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, first) = checkout(&h);
     stub.reprogram(script(&Shown::open(&first)));
-    let repo = repository(&h, &path, Some(PIN)).await;
+    let repo = repository(&h, &path).await;
     let id = the_request(&h).await;
+    ask_review(&h, &id, &repo, 1, PIN).await;
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     let session = idle_session(&h, &id).await;
     let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
@@ -475,8 +534,9 @@ async fn a_push_reaches_an_idle_session_without_a_wait() {
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, first) = checkout(&h);
     stub.reprogram(script(&Shown::open(&first)));
-    let repo = repository(&h, &path, Some(PIN)).await;
+    let repo = repository(&h, &path).await;
     let id = the_request(&h).await;
+    ask_review(&h, &id, &repo, 1, PIN).await;
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     let session = idle_session(&h, &id).await;
     let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
@@ -537,8 +597,9 @@ async fn the_diff_reads_the_worktree_against_its_base_and_since_narrows_it() {
     let (path, first) = checkout(&h);
     let second = push(&path);
     stub.reprogram(script(&Shown::open(&second)));
-    repository(&h, &path, Some(PIN)).await;
+    let repo = repository(&h, &path).await;
     let id = the_request(&h).await;
+    ask_review(&h, &id, &repo, 1, PIN).await;
     let session = idle_session(&h, &id).await;
 
     let read = async |uri: String| {
@@ -583,8 +644,9 @@ async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, head) = checkout(&h);
     stub.reprogram(script(&Shown::open(&head)));
-    repository(&h, &path, Some(PIN)).await;
+    let repo = repository(&h, &path).await;
     let id = the_request(&h).await;
+    ask_review(&h, &id, &repo, 1, PIN).await;
     let session = idle_session(&h, &id).await;
     let reviews = format!("/v1/pull-requests/{id}/reviews");
 
@@ -792,8 +854,9 @@ async fn a_review_resolves_the_thread_of_its_own_fixed_finding_and_no_other() {
         ),
     );
     stub.reprogram(script);
-    repository(&h, &path, Some(PIN)).await;
+    let repo = repository(&h, &path).await;
     let id = the_request(&h).await;
+    ask_review(&h, &id, &repo, 1, PIN).await;
     let session = idle_session(&h, &id).await;
 
     let stored: Vec<Value> = h
@@ -871,8 +934,9 @@ async fn a_reviewed_sha_is_stored_and_raises_no_waiting_user() {
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, first) = checkout(&h);
     stub.reprogram(script(&Shown::open(&first)));
-    repository(&h, &path, Some(PIN)).await;
+    let repo = repository(&h, &path).await;
     let id = the_request(&h).await;
+    ask_review(&h, &id, &repo, 1, PIN).await;
     let session = idle_session(&h, &id).await;
     let report = |sha: &str| {
         as_session(
@@ -912,8 +976,9 @@ async fn the_review_ends_when_the_request_shows(shown: impl Fn(&str) -> Shown<'_
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, head) = checkout(&h);
     stub.reprogram(script(&Shown::open(&head)));
-    let repo = repository(&h, &path, Some(PIN)).await;
+    let repo = repository(&h, &path).await;
     let id = the_request(&h).await;
+    ask_review(&h, &id, &repo, 1, PIN).await;
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     let session = idle_session(&h, &id).await;
     let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
@@ -977,8 +1042,9 @@ async fn reviewed() -> Reviewed {
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, head) = checkout(&h);
     stub.reprogram(script(&Shown::open(&head)));
-    let repo = repository(&h, &path, Some(PIN)).await;
+    let repo = repository(&h, &path).await;
     let id = the_request(&h).await;
+    ask_review(&h, &id, &repo, 1, PIN).await;
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     let session = idle_session(&h, &id).await;
     let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
@@ -1091,8 +1157,9 @@ async fn a_request_of_mine_is_reviewed_once_asked_and_its_review_is_a_comment() 
         author: "me",
         ..Shown::open(&head)
     }));
-    // No repository review pin: a request of mine runs on the one asked.
-    let repo = repository(&h, &path, None).await;
+    // Every review runs on the pin asked directly: a request of mine is
+    // no different.
+    let repo = repository(&h, &path).await;
     let mut rows: Vec<Value> = Vec::new();
     eventually(TIMEOUT, "the request to be listed", async || {
         rows = h.get("/v1/pull-requests").await;
@@ -1244,10 +1311,10 @@ async fn a_request_of_mine_is_reviewed_once_asked_and_its_review_is_a_comment() 
 }
 
 /// Asking needs a model the catalog holds. A request that asks for my
-/// review, on a repository with no review pin of its own, takes the same
-/// asking (029): nothing else will ever start a session for it.
+/// review takes the same asking a request of mine does (029): nothing
+/// else will ever start a session for it.
 #[tokio::test]
-async fn asking_needs_a_model_and_takes_an_unpinned_review_request() {
+async fn asking_needs_a_model_and_takes_a_review_request_of_anothers() {
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, head) = checkout(&h);
@@ -1255,7 +1322,7 @@ async fn asking_needs_a_model_and_takes_an_unpinned_review_request() {
         author: "me",
         ..Shown::open(&head)
     }));
-    let repo = repository(&h, &path, None).await;
+    let repo = repository(&h, &path).await;
     let ask = |body: Value| {
         axum::http::Request::builder()
             .method("PUT")
@@ -1287,9 +1354,8 @@ async fn asking_needs_a_model_and_takes_an_unpinned_review_request() {
         "a refusal starts no work"
     );
 
-    // A request that asks for my review, on a repository with no review
-    // pin, takes a manual ask the same way a request of mine does: nobody
-    // else is going to start it (029).
+    // A request that asks for my review takes a manual ask the same way a
+    // request of mine does: nobody else is going to start it (029).
     let mut theirs = script(&Shown::open(&head));
     theirs.as_array_mut().unwrap().insert(
         0,
@@ -1324,29 +1390,6 @@ async fn asking_needs_a_model_and_takes_an_unpinned_review_request() {
         id,
         "the row survives the scheduler pass"
     );
-
-    // The repository then pins one of its own: the row already has a
-    // review of its own, and takes no second asking.
-    h.store
-        .set_forge_integration(ariadne_store::SetForgeIntegration {
-            repository_id: repo.clone(),
-            kind: ariadne_core::ForgeKind::Github,
-            host: "github.com".into(),
-            owner: "acme".into(),
-            name: "widgets".into(),
-            remote: "origin".into(),
-            enabled: true,
-            login: Some("me".into()),
-            review_model: Some(PIN.into()),
-            review_effort: None,
-        })
-        .await
-        .unwrap();
-    h.error(
-        ask(json!({"asked": true, "model": PIN})),
-        StatusCode::CONFLICT,
-    )
-    .await;
 }
 
 /// On GitLab a finding on a renamed file is placed with the file's path on
@@ -1476,8 +1519,9 @@ async fn a_failed_summary_keeps_the_posted_findings_for_a_round_with_no_comments
     entry(&mut failing, &summary_post)["exit"] = json!(1);
     entry(&mut failing, &summary_post)["stderr"] = json!("gh: Server Error (HTTP 502)");
     stub.reprogram(failing);
-    repository(&h, &path, Some(PIN)).await;
+    let repo = repository(&h, &path).await;
     let id = the_request(&h).await;
+    ask_review(&h, &id, &repo, 1, PIN).await;
     let session = idle_session(&h, &id).await;
     let reviews = format!("/v1/pull-requests/{id}/reviews");
     let refused = h
@@ -1594,7 +1638,7 @@ async fn a_detail_read_before_any_fetch_keeps_a_review_request_asking() {
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, head) = checkout(&h);
     stub.reprogram(script(&Shown::open(&head)));
-    let repo = repository(&h, &path, Some(PIN)).await;
+    let repo = repository(&h, &path).await;
     let id = the_request(&h).await;
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     h.launcher.live.remove(&id);

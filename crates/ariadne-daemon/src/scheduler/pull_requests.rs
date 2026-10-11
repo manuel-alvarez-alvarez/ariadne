@@ -6,10 +6,10 @@
 //! session of its own. The task's own pass starts, resumes and watches the
 //! agent; an idle agent on an open request waits on the forge (009).
 //!
-//! A request that asks for my review wants a reviewer session on the
-//! repository's `review_model` and `review_effort` (029): one detached at the
-//! request's head, told of each push and of the replies in its own threads,
-//! and taken down once the request is merged, closed, or no longer asks.
+//! A request that asks for my review wants a reviewer session on the pin
+//! asked directly on its own row (029): one detached at the request's
+//! head, told of each push and of the replies in its own threads, and
+//! taken down once the request is merged, closed, or no longer asks.
 
 use std::time::{Duration, Instant};
 
@@ -510,8 +510,9 @@ impl super::Scheduler {
     }
 
     /// A request that asks for my review (029): one live reviewer session
-    /// while it is open, out of draft and still asks, in a repository with
-    /// a `review_model`; its sessions and worktree taken down otherwise.
+    /// while it is open, out of draft, still asks, and was asked for
+    /// directly on its own row; its sessions and worktree taken down
+    /// otherwise.
     async fn review_pass(&mut self, pull: &PullRequest) -> anyhow::Result<()> {
         let integration = self.store.forge_integration(&pull.repository_id).await?;
         let live = self.live_pull_request_sessions(&pull.id).await?;
@@ -519,9 +520,9 @@ impl super::Scheduler {
             .as_ref()
             .and_then(|i| i.login.clone())
             .unwrap_or_default();
-        let Some(integration) = integration.filter(|i| wants_session(pull, i)) else {
+        if !integration.is_some_and(|i| wants_session(pull, &i)) {
             return self.end_review(pull, &live).await;
-        };
+        }
         let running = live
             .iter()
             .find(|s| s.seat() == Some(Seat::Reviewer) && self.launcher.acp.is_running(&s.id))
@@ -547,27 +548,11 @@ impl super::Scheduler {
                 .await;
         }
         let Some(session) = running else {
-            // A request of mine is reviewed on the pin the user picked when
-            // asking (029); one that asks for my review runs on the
-            // repository's review pin, or on a pin asked directly on the
-            // row where the repository has none (a manual start on an
-            // otherwise unpinned repository).
-            let pin = match pull.role.as_str() {
-                "author" => AgentPin {
-                    model: pull.review_model.clone().unwrap_or_default(),
-                    effort: pull.review_effort.clone(),
-                },
-                _ => AgentPin {
-                    model: integration
-                        .review_model
-                        .clone()
-                        .or_else(|| pull.review_model.clone())
-                        .unwrap_or_default(),
-                    effort: integration
-                        .review_effort
-                        .clone()
-                        .or_else(|| pull.review_effort.clone()),
-                },
+            // Every role is reviewed on the pin asked directly on its own
+            // row (029): nothing else ever starts a session for it.
+            let pin = AgentPin {
+                model: pull.review_model.clone().unwrap_or_default(),
+                effort: pull.review_effort.clone(),
             };
             // The briefing names the head the worktree is put at, so only a
             // later push is news.
@@ -617,8 +602,8 @@ impl super::Scheduler {
     ) -> anyhow::Result<()> {
         // Reached only once `review_pass` has already found the request no
         // longer wants a reviewer session, for any reason — closed, no
-        // longer asking, back to draft, or the integration's own review
-        // pin gone. Whatever earlier give-up this request's reviewer seat
+        // longer asking, back to draft, or never asked for directly on its
+        // own row. Whatever earlier give-up this request's reviewer seat
         // carries is no longer this recovery's to answer for: the work it
         // was given up on does not exist any more either way.
         let _ = self

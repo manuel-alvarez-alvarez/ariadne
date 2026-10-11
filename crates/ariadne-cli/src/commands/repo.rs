@@ -13,7 +13,7 @@ use clap::{Args, ValueEnum};
 use serde_json::json;
 
 use super::resolve::{self, Kind};
-use super::{Subject, confirm, parse_effort_or_default, parse_model};
+use super::{Subject, confirm};
 use crate::cli::values::Spelling;
 use crate::output::{
     Column, Format, Kv, UNCAPPED, age, col, empty_state, moment, ok_id_line, print, print_kv,
@@ -40,21 +40,13 @@ pub(crate) enum Switch {
     Off,
 }
 
-/// The forge integration of a repository (025): the switch, and the pin of
-/// the session that reviews a request asking for the user's review (029).
+/// The forge integration of a repository (025): the switch.
 #[derive(Args, Debug, Default)]
 pub(crate) struct ForgeArgs {
     /// Work with the forge the repository's remote is on: on needs `gh` or
     /// `glab` signed in to its host
     #[arg(long, value_enum)]
     forge: Option<Switch>,
-    /// What the session that reviews a request runs on: AGENT:MODEL, or ""
-    /// for no such session
-    #[arg(long, value_name = "MODEL", value_parser = parse_pin_model, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
-    review_model: Option<String>,
-    /// The effort that model is run at, or "default"
-    #[arg(long, value_name = "EFFORT", value_parser = parse_effort_or_default, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::efforts))]
-    review_effort: Option<String>,
 }
 
 impl ForgeArgs {
@@ -62,21 +54,8 @@ impl ForgeArgs {
     fn update(self) -> Option<ForgeUpdate> {
         let update = ForgeUpdate {
             enabled: self.forge.map(|switch| switch == Switch::On),
-            review_model: self.review_model,
-            review_effort: self.review_effort,
         };
-        let given = update.enabled.is_some()
-            || update.review_model.is_some()
-            || update.review_effort.is_some();
-        given.then_some(update)
-    }
-}
-
-/// A role's model: `AGENT:MODEL`, or empty to pin none.
-fn parse_pin_model(s: &str) -> Result<String, String> {
-    match s.is_empty() {
-        true => Ok(String::new()),
-        false => parse_model(s),
+        update.enabled.is_some().then_some(update)
     }
 }
 
@@ -274,15 +253,6 @@ fn forge_label(forge: &ForgeDto) -> String {
     )
 }
 
-/// A role's pin: the model, and the effort where one was pinned.
-fn role_pin(model: Option<&str>, effort: Option<&str>) -> String {
-    match (model, effort) {
-        (None, _) => "-".into(),
-        (Some(model), None) => model.into(),
-        (Some(model), Some(effort)) => format!("{model} @ {effort}"),
-    }
-}
-
 /// What `repo inspect` prints, the forge block included.
 fn inspect_rows(r: &RepositoryDto, tunnel: Option<&ForgeTunnelDto>) -> Vec<(&'static str, Kv)> {
     let mut rows = vec![
@@ -351,14 +321,6 @@ fn inspect_rows(r: &RepositoryDto, tunnel: Option<&ForgeTunnelDto>) -> Vec<(&'st
                 "forge login",
                 forge.login.clone().unwrap_or_else(|| "-".into()).into(),
             ),
-            (
-                "review",
-                role_pin(
-                    forge.review_model.as_deref(),
-                    forge.review_effort.as_deref(),
-                )
-                .into(),
-            ),
         ]),
     }
     rows.extend([
@@ -417,15 +379,14 @@ mod tests {
             remote: "origin".into(),
             enabled,
             login: login.map(Into::into),
-            review_model: Some("stub:test-model".into()),
-            review_effort: Some("high".into()),
         }
     }
 
-    /// `--forge` and the pin flags reach the request; none of them leaves the
-    /// forge out of it, and an empty model clears a role's pin.
+    /// `--forge` reaches the request; `--review-model` and `--review-effort`
+    /// are no flags of `add` or `update` any more, since every review now
+    /// starts manually, through `PUT .../ariadne-review` (029).
     #[test]
-    fn repo_add_and_update_take_the_forge_flags() {
+    fn repo_add_and_update_take_the_forge_flag_and_reject_the_review_pin_flags() {
         #[derive(clap::Parser)]
         struct Repo {
             #[command(subcommand)]
@@ -440,23 +401,12 @@ mod tests {
                 _ => unreachable!("add or update"),
             }
         };
-        let update = forge_of(&[
-            "repo",
-            "update",
-            "01R",
-            "--forge",
-            "on",
-            "--review-model",
-            "stub:test-model",
-            "--review-effort",
-            "high",
-        ])
-        .expect("the forge flags were given");
+        let update = forge_of(&["repo", "update", "01R", "--forge", "on"])
+            .expect("the forge flag was given");
         assert_eq!(update.enabled, Some(true));
-        assert_eq!(update.review_model.as_deref(), Some("stub:test-model"));
-        assert_eq!(update.review_effort.as_deref(), Some("high"));
-        let cleared = forge_of(&["repo", "update", "01R", "--review-model", ""]).expect("given");
-        assert_eq!(cleared.review_model.as_deref(), Some(""));
+        let off = forge_of(&["repo", "add", "/r", "--forge", "off"]).expect("given");
+        assert_eq!(off.enabled, Some(false));
+        assert!(forge_of(&["repo", "add", "/r"]).is_none());
         assert!(
             <Repo as clap::Parser>::try_parse_from([
                 "repo",
@@ -469,14 +419,16 @@ mod tests {
             "a request of the user's own runs on its task's `pr` column, not on a pin"
         );
 
-        let off = forge_of(&["repo", "add", "/r", "--forge", "off"]).expect("given");
-        assert_eq!(off.enabled, Some(false));
-        assert!(forge_of(&["repo", "add", "/r"]).is_none());
-        assert!(
-            <Repo as clap::Parser>::try_parse_from(["repo", "add", "/r", "--review-model", "x"])
-                .is_err(),
-            "a model names its agent"
-        );
+        for argv in [
+            ["repo", "update", "01R", "--review-model", "stub:test-model"],
+            ["repo", "update", "01R", "--review-effort", "high"],
+            ["repo", "add", "/r", "--review-model", "stub:test-model"],
+        ] {
+            assert!(
+                <Repo as clap::Parser>::try_parse_from(argv).is_err(),
+                "{argv:?} should be an unknown flag"
+            );
+        }
     }
 
     /// `--workflow` reaches `add` and `update` the way every other flag of
@@ -616,12 +568,6 @@ mod tests {
             "{block}"
         );
         assert!(block.contains("2026-10-07T10:00:00Z"), "{block}");
-        assert!(
-            block
-                .lines()
-                .any(|l| l.starts_with("review") && l.contains("stub:test-model @ high")),
-            "{block}"
-        );
         assert!(!block.contains("babysit"), "{block}");
 
         let none = fixtures::repository("01B", "/repos/local", "main");

@@ -94,22 +94,14 @@ pub struct ForgeDto {
     pub enabled: bool,
     /// The account the forge CLI is signed in as, stored on enable.
     pub login: Option<String>,
-    /// The pin of the session that reviews a request; null starts none.
-    pub review_model: Option<String>,
-    pub review_effort: Option<String>,
 }
 
-/// A change to the forge integration; absent fields stay unchanged. A model
-/// written empty clears that role's pin and its effort.
+/// A change to the forge integration; absent fields stay unchanged.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ForgeUpdate {
     #[serde(default)]
     pub enabled: Option<bool>,
-    #[serde(default)]
-    pub review_model: Option<String>,
-    #[serde(default)]
-    pub review_effort: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

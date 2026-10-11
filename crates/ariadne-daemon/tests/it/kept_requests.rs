@@ -1535,28 +1535,25 @@ async fn a_closed_request_i_review_deletes_no_branch() {
         .json(
             post_json(
                 "/v1/repositories",
-                json!({"path": path, "forge": {"enabled": true, "review_model": "stub:review-model"}}),
+                json!({"path": path, "forge": {"enabled": true}}),
             ),
             StatusCode::CREATED,
         )
         .await;
     let repo = created["id"].as_str().unwrap().to_string();
-    let mut rows = Vec::new();
-    eventually(
-        TIMEOUT,
-        "Ariadne to start reviewing the request",
-        async || {
-            rows = h
-                .store
-                .list_pull_requests(ariadne_store::PullRequestFilter::default())
-                .await
-                .unwrap();
-            rows.len() == 1
-        },
-    )
-    .await;
-    assert_eq!(rows[0].role, "reviewer");
-    let id = rows[0].id.clone();
+    let ask = Request::builder()
+        .method("PUT")
+        .uri(format!(
+            "/v1/repositories/{repo}/pull-requests/1/ariadne-review"
+        ))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"asked": true, "model": "stub:review-model"}).to_string(),
+        ))
+        .unwrap();
+    let dto: Value = h.json(ask, StatusCode::OK).await;
+    assert_eq!(dto["role"], "reviewer");
+    let id = dto["id"].as_str().unwrap().to_string();
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
 
     read["state"] = json!("CLOSED");

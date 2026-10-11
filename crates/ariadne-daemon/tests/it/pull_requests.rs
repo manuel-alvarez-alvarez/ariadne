@@ -5,8 +5,6 @@ use crate::common::{delete, get, harness, post_json, sh};
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
-const PIN: &str = "stub:review-model";
-
 fn github_pull(number: i64, author: &str) -> Value {
     json!({"number": number, "url": format!("https://github.com/acme/widgets/pull/{number}"),
         "title": "Fix widgets", "body": "Fixes widgets.", "author": {"login": author},
@@ -57,19 +55,18 @@ fn details(number: i64) -> Vec<Value> {
     ]
 }
 
-async fn enabled_repository(h: &crate::common::Harness, review: Option<&str>) -> String {
+async fn enabled_repository(h: &crate::common::Harness) -> String {
     let path = h.git_repo("enabled");
     sh(
         &path,
         "git remote add origin https://github.com/acme/widgets.git",
     );
-    let mut forge = json!({"enabled": true});
-    if let Some(model) = review {
-        forge["review_model"] = json!(model);
-    }
     let repo: Value = h
         .json(
-            post_json("/v1/repositories", json!({"path": path, "forge": forge})),
+            post_json(
+                "/v1/repositories",
+                json!({"path": path, "forge": {"enabled": true}}),
+            ),
             StatusCode::CREATED,
         )
         .await;
@@ -99,9 +96,9 @@ fn script(list: Vec<Value>, view: Value) -> Value {
 /// ones that ask for my review, and one of them whole, its checks and
 /// comments read with it. A request of mine Ariadne was not asked to
 /// review stays untracked; a request that asks for my review gets a row
-/// even on a repository with no review pin (029), so a human still has
-/// something to start by hand — but nothing starts its session, and
-/// nothing adds or removes a row here by hand.
+/// (029), so a human still has something to start by hand — but nothing
+/// starts its session on its own, and nothing adds or removes a row here
+/// by hand.
 #[tokio::test]
 async fn the_list_is_read_live_and_tracks_only_a_request_that_asks_for_my_review() {
     use crate::common::{TIMEOUT, eventually};
@@ -110,7 +107,7 @@ async fn the_list_is_read_live_and_tracks_only_a_request_that_asks_for_my_review
         github_pull(2, "other"),
     ));
     let h = harness().forge_cli(&stub).await;
-    let id = enabled_repository(&h, None).await;
+    let id = enabled_repository(&h).await;
     eventually(TIMEOUT, "the first fetch", async || {
         stub.invocations()
             .iter()
@@ -182,7 +179,7 @@ async fn a_detail_read_asks_the_forge_for_its_parts_together() {
     use crate::common::{TIMEOUT, eventually};
     let stub = stub_forge_cli(script(vec![], github_pull(2, "other")));
     let h = harness().forge_cli(&stub).await;
-    let id = enabled_repository(&h, None).await;
+    let id = enabled_repository(&h).await;
     let gate = h.dir.path().join("release-reviews");
     let mut blocked = script(vec![], github_pull(2, "other"));
     for entry in blocked.as_array_mut().unwrap() {
@@ -218,10 +215,9 @@ async fn a_detail_read_asks_the_forge_for_its_parts_together() {
     assert_eq!(one["behind_base"], false);
 }
 
-/// A request that asks for my review on a repository with a review pin is
-/// one Ariadne reviews (029): the fetch that finds it gives it a row, which
-/// lists with its id. Once it merged its review is taken down and the row
-/// goes, so it takes no room; nothing brings it back.
+/// A request that asks for my review is one Ariadne tracks (029): the
+/// fetch that finds it gives it a row, which lists with its id. Once it
+/// merged the row goes, so it takes no room; nothing brings it back.
 #[tokio::test]
 async fn a_review_request_has_a_row_while_it_is_reviewed_and_none_once_it_merged() {
     use crate::common::{TIMEOUT, eventually};
@@ -230,7 +226,7 @@ async fn a_review_request_has_a_row_while_it_is_reviewed_and_none_once_it_merged
         github_pull(2, "other"),
     ));
     let h = harness().scheduler().forge_cli(&stub).await;
-    let id = enabled_repository(&h, Some(PIN)).await;
+    let id = enabled_repository(&h).await;
     let rows = || async {
         h.store
             .list_pull_requests(ariadne_store::PullRequestFilter::default())
@@ -273,7 +269,7 @@ async fn timer_wake_only_and_disable_control_repository_fetches() {
             ..Default::default()
         })
         .await;
-    let id = enabled_repository(&h, None).await;
+    let id = enabled_repository(&h).await;
     let lists = || {
         stub.invocations()
             .iter()
@@ -330,7 +326,7 @@ async fn wakes_during_a_fetch_coalesce_into_one_following_fetch() {
     let mut blocked = script(vec![github_pull(1, "other")], github_pull(1, "other"));
     blocked[2]["wait_for"] = json!(gate);
     stub.reprogram(blocked);
-    let id = enabled_repository(&h, None).await;
+    let id = enabled_repository(&h).await;
     let lists = || {
         stub.invocations()
             .iter()
@@ -395,8 +391,6 @@ async fn a_request_of_mine_has_a_row_once_a_task_opened_it_and_not_before() {
             remote: "origin".into(),
             enabled: true,
             login: Some("me".into()),
-            review_model: None,
-            review_effort: None,
         })
         .await
         .unwrap();
@@ -469,7 +463,7 @@ async fn startup_fetches_enabled_repositories_and_reads_a_missing_row_as_merged(
         github_pull(1, "other"),
     ));
     let mut h = harness().forge_cli(&stub).await;
-    let id = enabled_repository(&h, Some(PIN)).await;
+    let id = enabled_repository(&h).await;
     let row = || async {
         h.store
             .list_pull_requests(ariadne_store::PullRequestFilter::default())
@@ -576,7 +570,7 @@ async fn disabling_during_a_fetch_cancels_it_without_starting_work() {
     use ariadne_daemon::forge::poll::Mode;
     let stub = stub_forge_cli(script(vec![], github_pull(1, "other")));
     let h = harness().forge_cli(&stub).await;
-    let repo = enabled_repository(&h, Some(PIN)).await;
+    let repo = enabled_repository(&h).await;
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     let lists = || {
         stub.invocations()
@@ -647,7 +641,7 @@ async fn a_fetch_publishes_issues_changed_only_when_the_open_issues_moved() {
     let stub = stub_forge_cli(with_issues(vec![issue(7, "Fix widgets")]));
     let h = harness().forge_cli(&stub).await;
     let mut events = h.bus.subscribe();
-    let id = enabled_repository(&h, None).await;
+    let id = enabled_repository(&h).await;
     let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::IssuesChanged(i) if i.repository_id == id);
     next_event(&mut events, moved).await;
     h.state.forge_poll.set_mode(&id, Mode::WakeOnly);
@@ -682,7 +676,7 @@ async fn a_fetch_publishes_pull_requests_changed_only_when_the_requests_moved() 
     ));
     let h = harness().forge_cli(&stub).await;
     let mut events = h.bus.subscribe();
-    let id = enabled_repository(&h, None).await;
+    let id = enabled_repository(&h).await;
     let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == id);
     next_event(&mut events, moved).await;
     let rows = || async {
@@ -702,8 +696,8 @@ async fn a_fetch_publishes_pull_requests_changed_only_when_the_requests_moved() 
     .await;
     h.state.forge_poll.set_mode(&id, Mode::WakeOnly);
     // The first fetch both inserts the request's row — a review request
-    // is tracked whether or not the repository has a review pin (029) —
-    // and latches the listed/requested state `pulls_moved` watches, each
+    // is tracked the moment it is seen (029) — and latches the
+    // listed/requested state `pulls_moved` watches, each
     // publishing its own event; drain the second before the quiet check
     // below, which is about a later, unchanged fetch, not this first one.
     while tokio::time::timeout(QUIET, next_event(&mut events, moved))
@@ -738,7 +732,7 @@ async fn a_mergeability_only_transition_publishes_pull_requests_changed() {
     let stub = stub_forge_cli(script(vec![unknown.clone()], unknown.clone()));
     let h = harness().forge_cli(&stub).await;
     let mut events = h.bus.subscribe();
-    let id = enabled_repository(&h, None).await;
+    let id = enabled_repository(&h).await;
     let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == id);
     next_event(&mut events, moved).await;
     let rows = || async {
@@ -813,7 +807,7 @@ async fn an_evidence_refresh_failure_and_recovery_at_the_same_head_publish_pull_
     let stub = stub_forge_cli(full.clone());
     let h = harness().forge_cli(&stub).await;
     let mut events = h.bus.subscribe();
-    let id = enabled_repository(&h, None).await;
+    let id = enabled_repository(&h).await;
     let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == id);
     next_event(&mut events, moved).await;
     let _ = tokio::time::timeout(QUIET, next_event(&mut events, moved)).await;
@@ -872,7 +866,7 @@ async fn an_outer_list_failure_publishes_pull_requests_changed() {
     let stub = stub_forge_cli(full.clone());
     let h = harness().forge_cli(&stub).await;
     let mut events = h.bus.subscribe();
-    let id = enabled_repository(&h, None).await;
+    let id = enabled_repository(&h).await;
     let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == id);
     next_event(&mut events, moved).await;
     let rows = || async {
@@ -956,7 +950,7 @@ async fn a_route_level_read_failure_withdraws_the_rows_evidence() {
         github_pull(2, "other"),
     ));
     let h = harness().scheduler().forge_cli(&stub).await;
-    let repo_id = enabled_repository(&h, Some(PIN)).await;
+    let repo_id = enabled_repository(&h).await;
     let rows = || async {
         h.store
             .list_pull_requests(ariadne_store::PullRequestFilter::default())

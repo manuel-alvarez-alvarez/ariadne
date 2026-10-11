@@ -980,14 +980,12 @@ async fn hold_review_comments(
 /// Ask Ariadne to review a request on the model the user picks, or stop
 /// asking (029): a review session runs on that pin while the request is
 /// open and out of draft. A request of the user's own posts each round as
-/// a comment in the user's name; one that asks for the user's review on a
-/// repository with no review pin of its own gets the manual start the
-/// `pull_request` attention producer offers when nobody is assigned to it,
-/// and posts as any other review Ariadne runs on it would (029). Asking
-/// starts Ariadne's work on the request; stopping ends it, where no task
-/// keeps the request. A request that asks for the user's review on a
-/// repository that already pins one has a review already, and takes no
-/// asking.
+/// a comment in the user's name; one that asks for the user's review gets
+/// the manual start the `pull_request` attention producer offers when
+/// nobody is assigned to it, and posts as any other review Ariadne runs on
+/// it would (029). Asking starts Ariadne's work on the request; stopping
+/// ends it, where no task keeps the request. Every review starts this way:
+/// nothing starts one on its own.
 #[utoipa::path(put, path = "/v1/repositories/{id}/pull-requests/{number}/ariadne-review", tag = "pull-requests",
     params(("id" = String, Path), ("number" = i64, Path)),
     request_body = AskReviewRequest,
@@ -1012,17 +1010,6 @@ pub(super) async fn ask_review(
     let pin = match req.asked {
         false => None,
         true => {
-            // A request of mine asks on any pin; a request that asks for
-            // my review asks only where the repository names none of its
-            // own (029): one that already does has a review of its own on
-            // that pin, and an ask here would run a second session beside
-            // it.
-            if role == "reviewer" && forge.review_model.is_some() {
-                return Err(ApiError::conflict(
-                    "the request already has a review of its own, on the repository's review \
-                     pin",
-                ));
-            }
             if pull.state != "open" {
                 return Err(ApiError::conflict(format!(
                     "the request is {}: Ariadne reviews an open request",

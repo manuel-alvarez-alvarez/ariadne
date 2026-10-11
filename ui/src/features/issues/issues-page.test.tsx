@@ -4,6 +4,7 @@ import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { expect, it } from "vitest"
 
+import { CreateGoalDialog } from "@/features/goals/create-goal-dialog"
 import { aForge, aGoal, aModel, aRepository } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 
@@ -22,12 +23,9 @@ it("lists forge issues and fills the goal dialog from a chosen issue", async () 
       remote: "origin",
       enabled: true,
       login: "octocat",
-      review_model: null,
-      review_effort: null,
     },
   })
   const url = "https://github.com/acme/widgets/issues/12"
-  let created: Record<string, unknown> | undefined
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(String(input), init)
     const path = new URL(request.url).pathname
@@ -44,11 +42,6 @@ it("lists forge issues and fills the goal dialog from a chosen issue", async () 
           updated_at: "2026-10-01T00:00:00Z",
         },
       ])
-    if (path === "/v1/models") return jsonResponse([aModel()])
-    if (path === "/v1/goals" && request.method === "POST") {
-      created = await request.json()
-      return jsonResponse(aGoal({ title: "Fix the widget", issue_url: url }), 201)
-    }
     return new Response("not stubbed", { status: 404 })
   })
   renderScreen(<IssuesPage />, { route: "/forge/issues" })
@@ -66,6 +59,49 @@ it("lists forge issues and fills the goal dialog from a chosen issue", async () 
   expect(
     within(dialog).getByText(/Issue: https:\/\/github.com\/acme\/widgets\/issues\/12/),
   ).toBeDefined()
+})
+
+/**
+ * The model pick and the submission itself, on a dialog already open with
+ * the issue's own prefill (what `IssuesPage` hands `CreateGoalDialog`): the
+ * prefill is the test above's claim, so this one mounts the dialog directly
+ * rather than paying for the issues list and the click that opens it too,
+ * on top of the same picker round trip `create-goal-dialog.test.tsx`'s
+ * siblings do not yet cover with a model actually chosen.
+ */
+it("submits a goal dialog opened from an issue with the issue's data and the model picked", async () => {
+  // No delay between events: every step here is already real DOM
+  // interaction, and user-event's own default 0ms `setTimeout` between
+  // steps only adds a real-timer wait a busy test run can stretch well
+  // past what the step itself takes.
+  const user = userEvent.setup({ delay: null })
+  const url = "https://github.com/acme/widgets/issues/12"
+  let created: Record<string, unknown> | undefined
+  daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(String(input), init)
+    const path = new URL(request.url).pathname
+    if (path === "/v1/repositories") return jsonResponse([aRepository({ id: "repo-1" })])
+    if (path === "/v1/models") return jsonResponse([aModel()])
+    if (path === "/v1/goals" && request.method === "POST") {
+      created = await request.json()
+      return jsonResponse(aGoal({ title: "Fix the widget", issue_url: url }), 201)
+    }
+    return new Response("not stubbed", { status: 404 })
+  })
+  renderScreen(
+    <CreateGoalDialog
+      open
+      onOpenChange={() => {}}
+      initial={{
+        title: "Fix the widget",
+        description: `The widget fails.\n\nIssue: ${url}`,
+        repository_id: "repo-1",
+        issue_url: url,
+      }}
+    />,
+  )
+
+  const dialog = await screen.findByRole("dialog", { name: "New goal" })
   await user.click(within(dialog).getByRole("button", { name: "Orchestrator runs on" }))
   const models = await screen.findByRole("listbox", { name: "Models" })
   await user.click(within(models).getByText(aModel().id))
@@ -75,7 +111,7 @@ it("lists forge issues and fills the goal dialog from a chosen issue", async () 
   expect(created).toMatchObject({
     title: "Fix the widget",
     description: `The widget fails.\n\nIssue: ${url}`,
-    repository_ids: [repository.id],
+    repository_ids: ["repo-1"],
     issue_url: url,
   })
 })

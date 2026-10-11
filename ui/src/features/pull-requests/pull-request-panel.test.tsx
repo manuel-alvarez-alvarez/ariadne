@@ -12,7 +12,7 @@ import userEvent from "@testing-library/user-event"
 import { expect, it } from "vitest"
 
 import type { PullRequestDto, RepositoryDto } from "@/api"
-import { aForge, aModel, aRepository, aSession, aSessionPage } from "@/test/fixtures"
+import { aModel, aSession, aSessionPage } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { pull } from "@/test/pull-request"
 import { PullRequestPanel } from "./pull-request-panel"
@@ -176,31 +176,27 @@ it("starts an Ariadne review of a request of mine on the model and skills picked
   await waitFor(() => expect(location.url).toContain(`session=${review.id}`), { timeout: 4000 })
   expect(location.url).toContain("tab=sessions")
 
-  // Back on the request, the review can be stopped. The session's header
-  // replaces the one its loading showed, breadcrumb and all, so the click
-  // is made on whichever one is on screen until it takes.
-  await waitFor(async () => {
-    const back = within(screen.getByRole("navigation", { name: "Breadcrumb" }))
-    await user.click(back.getByRole("button", { name: /#42 Fix widgets/ }))
-    expect(location.url).not.toContain("session=")
-  })
+  // Back on the request, the review can be stopped. The panel shows a
+  // loading placeholder header until the session's own query resolves
+  // (`session.data && ours`, `PullRequestSessionView`), then swaps in
+  // `SessionPanelHeader` — a different branch of the same ternary, so
+  // React mounts it whole rather than patching the placeholder's own
+  // breadcrumb button in place. A click on a button `findByRole` resolved
+  // just before that swap lands on the node the swap is about to tear
+  // down, so wait for the swapped-in header's own content first — the
+  // "started" stamp only it renders — before querying the breadcrumb at
+  // all, since by then the swap that would strand a click has already
+  // happened.
+  await screen.findByText("started")
+  await user.click(screen.getByRole("button", { name: /#42 Fix widgets/ }))
+  await waitFor(() => expect(location.url).not.toContain("session="))
   await user.click(await screen.findByRole("button", { name: "Stop review" }, { timeout: 4000 }))
   await waitFor(() => expect(writes).toHaveLength(2))
   expect(await writes[1]?.json()).toEqual({ asked: false })
 })
 
-it("offers no Ariadne review on a request that asks for my review when the repository already pins one", async () => {
-  daemon(() => pull, [], [aRepository({ id: "repo", forge: aForge({ review_model: "stub:pin" }) })])
-  renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
-  await screen.findByText("#42 Fix widgets")
-  // The repository read lands a moment after the request's own: the button
-  // this repository's pin refuses must not show even in that gap.
-  await waitFor(() => expect(screen.queryByRole("button", { name: "Start review" })).toBeNull())
-  expect(screen.getByText("someone")).toBeTruthy()
-})
-
-it("offers a manual Start review on a request that asks for my review when the repository pins none", async () => {
-  daemon(() => pull, [], [aRepository({ id: "repo", forge: null })])
+it("offers a manual Start review on every request that asks for my review", async () => {
+  daemon(() => pull)
   renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
   await screen.findByText("#42 Fix widgets")
   expect(screen.getByRole("button", { name: "Start review" })).toBeTruthy()
