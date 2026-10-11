@@ -150,4 +150,11 @@ control it, and `ariadne daemon status` to see its manager. The daemon starts
 the ACP agents as child processes and keeps their conversations available
 through the console.
 
+On macOS the service is registered as interactive work (`ProcessType`
+`Interactive` in `~/Library/LaunchAgents/dev.ariadne.daemon.plist`). Without
+it, launchd throttles the daemon and every agent it starts, so their builds
+and tests run on the efficiency cores at about a third of the speed. A
+service installed before this setting existed keeps the throttle until you
+re-run the installer.
+
 [ACP]: https://agentclientprotocol.com
