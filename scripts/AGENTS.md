@@ -29,9 +29,13 @@ in the root [`AGENTS.md`](../AGENTS.md).
   finds the setting already there changes nothing. See the root
   [`AGENTS.md`](../AGENTS.md#checks).
 - `tests/install-command.sh` — the stand-in for every external tool
-  (`gh`, `git`, `tar`, `ldconfig`, `systemctl`, `security`, `codesign`, …) the
-  installer boundary tests put on `PATH`, driven by the arguments it is
-  called with.
+  (`gh`, `git`, `tar`, `ldconfig`, `systemctl`, `security`, `codesign`,
+  `launchctl`, …) the installer boundary tests put on `PATH`, driven by the
+  arguments it is called with. Its `launchctl print` keeps the service label
+  present for `TEST_PRINT_POLLS` calls (default 2) before reporting it gone,
+  and its `launchctl bootstrap` fails the first call with the real
+  "Bootstrap failed: 5: Input/output error" before succeeding — a bootout
+  that returned before launchd actually dropped the job.
 - `tests/install-linux.sh` — a Linux installer scenario, run as `bash
   scripts/tests/install-linux.sh CASE [host|present|missing]` for one of its
   cases: `missing`, `source-missing`, `release`, `source`, `rejected`,
@@ -47,6 +51,12 @@ in the root [`AGENTS.md`](../AGENTS.md).
   `desktop-missing` prove the identity reaches `npm run tauri build` as
   `APPLE_SIGNING_IDENTITY` the same way, stopping right after — ditto'ing
   the bundle to `/Applications` is a system path no sandboxed test may touch.
+- `tests/install-service-macos.sh` — a macOS installer scenario, run as
+  `bash scripts/tests/install-service-macos.sh`. The fake `launchctl` above
+  keeps the old daemon's label present for a couple of polls after
+  `bootout` and fails the first `bootstrap`, proving `install.sh` waits
+  `ui_stop_daemon`'s launchd poll out, retries the bootstrap, and still ends
+  with the service registered rather than calling `ui_die`.
 - `tests/make-signing-cert-command.sh` — the stand-in for `openssl`,
   `security` and `gh` `tests/make-signing-cert-scenarios.sh` puts on `PATH`:
   no real keychain, network or cryptography is used, and a PKCS#12 file is a
@@ -100,9 +110,10 @@ shellcheck .githooks/*
 
 `tests/install-linux.sh` is not in CI: run it by hand, on Linux, once for each
 case above, since it exercises the systemd and GNOME paths `ci.yml` does not
-cover. `tests/install-sign-macos.sh` and `tests/make-signing-cert-scenarios.sh`
-are the same, on macOS, for each of their cases. `tests/githooks.sh` is the
-same, for each of its cases, on any OS. `tests/install-command.sh`,
+cover. `tests/install-sign-macos.sh`, `tests/install-service-macos.sh` and
+`tests/make-signing-cert-scenarios.sh` are the same, on macOS, for each of
+their cases. `tests/githooks.sh` is the same, for each of its cases, on any
+OS. `tests/install-command.sh`,
 `tests/make-signing-cert-command.sh` and `tests/githooks-command.sh` need no
 direct invocation; the scenario scripts put them on `PATH` for the tools they
 stand in for.
