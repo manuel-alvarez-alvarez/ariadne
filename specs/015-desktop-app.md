@@ -747,9 +747,9 @@ Out: the daemon endpoints themselves (012).
   most screens are asserted in their own `*.test.tsx` beside them, though a
   few (noted under Known gap) are exercised only through the panels and
   boards that mount them.
-- The sidebar lists Repositories after Permissions and before Stats, and
-  `#/repositories` mounts the repositories screen, while a screen the app
-  dropped leads nowhere
+- The sidebar lists Goals, Sessions, Forge, Repositories, Workflows, Agents,
+  Skills, Permissions and Stats, in that order, and `#/repositories` mounts
+  the repositories screen, while a screen the app dropped leads nowhere
   (`ui/src/components/app-shell.test.tsx::ends the navigation with stats, and lists Forge beside the other screens`,
   `ui/src/routes/router.test.tsx::mounts the repositories screen at #/repositories`,
   `ui/src/routes/router.test.tsx::leads nowhere from a screen the app no longer has`).

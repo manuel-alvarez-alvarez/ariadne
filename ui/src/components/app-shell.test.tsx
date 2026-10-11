@@ -71,11 +71,11 @@ it("ends the navigation with stats, and lists Forge beside the other screens", (
     "Goals",
     "Sessions",
     "Forge",
-    "Skills",
+    "Repositories",
     "Workflows",
     "Agents",
+    "Skills",
     "Permissions",
-    "Repositories",
     "Stats",
   ])
   expect(screen.getByRole("link", { name: "Forge" }).getAttribute("href")).toBe("/forge")
