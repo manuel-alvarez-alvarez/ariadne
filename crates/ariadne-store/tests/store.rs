@@ -3206,6 +3206,35 @@ async fn a_database_on_the_old_chain_is_refused_with_the_pre_squash_message() {
     );
 }
 
+/// A database created before pull-request readiness used the shipped init
+/// migration unchanged. Opening it applies the later migration instead of
+/// rejecting the old init checksum.
+#[tokio::test]
+async fn an_existing_database_adds_pull_request_readiness_columns() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("old.db");
+    drop(Store::open(&path).await.unwrap());
+
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE pull_requests DROP COLUMN ready_head_sha")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE pull_requests DROP COLUMN ready_confirmed_at")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 3")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    drop(Store::open(&path).await.unwrap());
+}
+
 // -- token usage ------------------------------------------------------------
 
 fn usage(input_tokens: u64, cached_input_tokens: u64, output_tokens: u64) -> TokenUsage {
