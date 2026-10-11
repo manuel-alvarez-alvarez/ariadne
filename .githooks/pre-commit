@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# Runs the checks for what is staged: Rust fmt/clippy/machete, UI biome and
+# typecheck, the Tauri shell's fmt, and shellcheck on a staged script.
+# Run by hand: .githooks/pre-commit [--all]
+set -euo pipefail
+
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$HOOK_DIR/.." && pwd)"
+cd "$REPO_ROOT"
+
+# shellcheck source=lib.sh disable=SC1091
+. "$HOOK_DIR/lib.sh"
+
+all=0
+if [ "${1:-}" = "--all" ]; then
+    all=1
+fi
+
+run_rust=0
+run_ui=0
+run_tauri=0
+run_workspace_clippy=0
+run_machete=0
+rust_crates=()
+ui_files=()
+shellcheck_files=()
+
+add_crate() {
+    local c
+    for c in "${rust_crates[@]:-}"; do
+        [ "$c" = "$1" ] && return 0
+    done
+    rust_crates[${#rust_crates[@]}]="$1"
+}
+
+if [ "$all" = 1 ]; then
+    run_rust=1
+    run_ui=1
+    run_tauri=1
+    run_workspace_clippy=1
+    run_machete=1
+else
+    while IFS= read -r -d '' f; do
+        [ -z "$f" ] && continue
+        area="$(githooks_area_for "$f")"
+        case "$area" in
+            rust)
+                run_rust=1
+                case "$f" in
+                    Cargo.toml|Cargo.lock) run_workspace_clippy=1 ;;
+                esac
+                case "$(basename "$f")" in
+                    Cargo.toml) run_machete=1 ;;
+                esac
+                crate="$(githooks_crate_for "$f")"
+                [ -n "$crate" ] && add_crate "$crate"
+                ;;
+            ui)
+                run_ui=1
+                ui_files[${#ui_files[@]}]="${f#ui/}"
+                ;;
+            tauri) run_tauri=1 ;;
+        esac
+        case "$f" in
+            scripts/*.sh|.githooks/*)
+                shellcheck_files[${#shellcheck_files[@]}]="$f"
+                ;;
+        esac
+    done < <(git diff --cached --name-only --diff-filter=ACMR -z)
+fi
+
+if [ "$run_rust" = 1 ]; then
+    githooks_run cargo fmt --all -- --check
+fi
+
+if [ "$run_workspace_clippy" = 1 ]; then
+    githooks_run cargo clippy --workspace --all-targets -- -D warnings
+else
+    for crate in "${rust_crates[@]:-}"; do
+        [ -z "$crate" ] && continue
+        githooks_run cargo clippy -p "$crate" --all-targets -- -D warnings
+    done
+fi
+
+if [ "$run_machete" = 1 ]; then
+    githooks_run cargo machete .
+fi
+
+if [ "$run_ui" = 1 ]; then
+    if [ ! -d ui/node_modules ]; then
+        (cd ui && githooks_run npm ci)
+    fi
+    if [ "$all" = 1 ]; then
+        (cd ui && githooks_run npx biome check .)
+    else
+        (cd ui && githooks_run npx biome check "${ui_files[@]}")
+    fi
+    (cd ui && githooks_run npm run typecheck)
+fi
+
+if [ "$run_tauri" = 1 ]; then
+    (cd ui/src-tauri && githooks_run cargo fmt --all -- --check)
+fi
+
+for f in "${shellcheck_files[@]:-}"; do
+    [ -z "$f" ] && continue
+    githooks_run shellcheck "$f"
+done
