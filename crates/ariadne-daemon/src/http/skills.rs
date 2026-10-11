@@ -37,6 +37,7 @@ pub(super) async fn create(
     State(state): State<AppState>,
     Json(req): Json<CreateSkillRequest>,
 ) -> ApiResult<(StatusCode, Json<SkillDto>)> {
+    let _guard = crate::agents::SKILLS_SYNC_LOCK.lock().await;
     let skill = state
         .store
         .create_skill(NewSkill {
@@ -79,6 +80,7 @@ pub(super) async fn update(
     Path(name): Path<String>,
     Json(req): Json<UpdateSkillRequest>,
 ) -> ApiResult<Json<SkillDto>> {
+    let _guard = crate::agents::SKILLS_SYNC_LOCK.lock().await;
     let skill = match req.document {
         Some(document) => state.store.set_skill_document(&name, &document).await?,
         None => state.store.get_skill(&name).await?,
@@ -97,6 +99,7 @@ pub(super) async fn delete(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> ApiResult<StatusCode> {
+    let _guard = crate::agents::SKILLS_SYNC_LOCK.lock().await;
     state.store.delete_skill(&name).await?;
     crate::agents::sync_skills(&state.store, &state.launcher.cfg.skills_dir)
         .await
@@ -112,6 +115,7 @@ pub(super) async fn reset_document(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> ApiResult<Json<SkillDto>> {
+    let _guard = crate::agents::SKILLS_SYNC_LOCK.lock().await;
     let skill = state.store.reset_skill(&name).await?;
     crate::agents::sync_skills(&state.store, &state.launcher.cfg.skills_dir)
         .await

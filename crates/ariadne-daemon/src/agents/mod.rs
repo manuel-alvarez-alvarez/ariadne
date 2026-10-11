@@ -95,6 +95,16 @@ pub fn write_skills(run_dir: &Path, skills: &[(String, String)]) -> Result<PathB
     Ok(root)
 }
 
+/// Serializes a skill mutation with the sync that follows it.
+///
+/// Two concurrent mutations each call the store, then `sync_skills`. Without
+/// a shared lock, one call's directory removal can run between the other
+/// call's store read and its write, deleting a skill the store still holds.
+/// Holding this lock across a mutation and its sync rules that out: the two
+/// pairs run one after the other, never interleaved.
+pub static SKILLS_SYNC_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
 /// Rewrite the shared home copy of every skill the store holds.
 ///
 /// A directory under `skills_dir` belongs to a skill only when its name is in
