@@ -56,7 +56,7 @@ const PARSED_STEPS = [
   {
     id: "merge",
     title: "Merge",
-    description: "Rebase onto the base branch, squash, push and fast-forward.",
+    description: "Rebase onto the base branch, squash, fast-forward and push.",
     skills: ["merge"],
     rank: "fast" as const,
     gate: "merged",

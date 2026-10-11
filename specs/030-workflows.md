@@ -59,7 +59,7 @@ workflow develop-review-merge
     skills: code-review
     rank: frontier
   merge[Merge]
-    Rebase onto the base branch, squash, push and fast-forward.
+    Rebase onto the base branch, squash, fast-forward and push.
     skills: merge
     rank: fast
     gate: merged
@@ -113,9 +113,9 @@ every other wire enum (011).
    `develop-review-pr` stages it.
 4. The `merge` skill is shipped alongside the two workflows
    (`crates/ariadne-store/skills/merge/SKILL.md`): rebase the task branch
-   onto the base, squash onto the merge base, check `git diff --stat`, push
-   where a remote exists, fast-forward the base branch in the primary
-   checkout, then call `complete_step` with the base branch's sha as
+   onto the base, squash onto the merge base, check `git diff --stat`,
+   fast-forward the base branch in the primary checkout, push where a remote
+   exists, then call `complete_step` with the base branch's sha as
    `merge_commit`. The repository's hooks run the suite at that push. The
    squash goes onto the merge base rather than the base branch's name,
    since the base can move while the push runs; a `git diff --stat` that

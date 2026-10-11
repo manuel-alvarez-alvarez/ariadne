@@ -29,7 +29,7 @@ its own git worktree.
    workflows, every column's gate, and how to write your own.
 5. The last column's gate decides whether the task is actually done. In
    `develop-review-merge`, its `merge` column rebases the task onto the
-   base branch, squashes, pushes and fast-forwards; the repository's
+   base branch, squashes, fast-forwards and pushes; the repository's
    checks run at that push. In `develop-review-pr`, its `pr` column pushes
    the branch and opens a request through the daemon's own call to the
    forge — never a command the agent runs itself — and keeps the request

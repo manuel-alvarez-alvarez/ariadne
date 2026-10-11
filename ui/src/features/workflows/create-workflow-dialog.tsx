@@ -30,7 +30,7 @@ const TEMPLATE = `workflow develop-review-merge
     skills: code-review
     rank: frontier
   merge[Merge]
-    Rebase onto the base branch, squash, push and fast-forward.
+    Rebase onto the base branch, squash, fast-forward and push.
     skills: merge
     rank: fast
     gate: merged`
