@@ -3,7 +3,7 @@ use super::Github;
 use crate::forge::pulls::ForgePullRequest;
 use serde::Deserialize;
 
-const FIELDS: &str = "number,url,title,body,author,state,isDraft,headRefName,headRefOid,headRepository,headRepositoryOwner,baseRefName,statusCheckRollup,reviewDecision,createdAt,updatedAt,mergeCommit";
+const FIELDS: &str = "number,url,title,body,author,state,isDraft,headRefName,headRefOid,headRepository,headRepositoryOwner,baseRefName,statusCheckRollup,reviewDecision,mergeStateStatus,createdAt,updatedAt,mergeCommit";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -23,6 +23,9 @@ struct Pull {
     base_ref_name: String,
     status_check_rollup: Option<Vec<Check>>,
     review_decision: Option<String>,
+    /// Absent on an older read: unknown mergeability stands for it.
+    #[serde(default)]
+    merge_state_status: Option<String>,
     created_at: String,
     /// Absent from an older read: the opening time stands for it.
     #[serde(default)]
@@ -109,6 +112,17 @@ impl Pull {
                 Some("CHANGES_REQUESTED") => "changes_requested",
                 Some("REVIEW_REQUIRED") => "review_required",
                 _ => "none",
+            }
+            .into(),
+            // GitHub's own `mergeStateStatus`: `CLEAN` is the only state
+            // that says the head can be merged now; `UNKNOWN` is the forge
+            // still computing it, never read as clean. Every other state
+            // (`BEHIND`, `BLOCKED`, `DIRTY`, `DRAFT`, `HAS_HOOKS`,
+            // `UNSTABLE`) blocks a merge right now, whatever the reason.
+            mergeable: match self.merge_state_status.as_deref() {
+                Some("CLEAN") => "clean",
+                Some("UNKNOWN") | None => "unknown",
+                Some(_) => "blocked",
             }
             .into(),
             updated_at: self.updated_at.unwrap_or_else(|| self.created_at.clone()),

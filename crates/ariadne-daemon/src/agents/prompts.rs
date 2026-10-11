@@ -538,6 +538,7 @@ mod tests {
             base_branch: "main".into(),
             checks: "none".into(),
             review_decision: "none".into(),
+            mergeable: "unknown".into(),
             unanswered_comments: 0,
             origin_task_id: None,
             opened_at: String::new(),
@@ -566,6 +567,7 @@ mod tests {
             summary_comment_id: None,
             reviewer_given_up_at: None,
             reviewer_given_up_wedged: false,
+            ready_confirmed_at: None,
         };
         for template in [pull_request_briefing_prompt(), pull_request_news_prompt()] {
             let mut rest = template;

@@ -15,7 +15,6 @@ use ariadne_api::pull_requests::{
     PullRequestDto, PullRequestListQuery, PullRequestMatchDto, ReplyCommentRequest,
     ReportPullRequestRequest, SubmitReviewRequest,
 };
-use ariadne_core::AttentionReason;
 use ariadne_store::{
     AgentSession, ForgeIntegration, PullRequest, PullRequestComment, PullRequestFilter,
     PullRequestRow,
@@ -548,9 +547,14 @@ pub(super) async fn resolve(
     Ok(Json(pull_request_comment_dto(comment)))
 }
 
-/// What the request's session says of it: `ready` once every required
-/// approval and check reads green, which raises `waiting_user` on the
-/// session, and the head a review session posted its review on.
+/// What the request's session says of it: `ready` once the babysitting task
+/// believes every required approval and check reads green, and the head a
+/// review session posted its review on. Neither raises `waiting_user` on
+/// the session by itself (029): the claim alone is not confirmed evidence,
+/// and a pr-reviewer session finishing its own review must notify nobody —
+/// the `pull_request` attention producer reads the forge's own evidence
+/// against this claim and raises its own item once it actually backs the
+/// claim up.
 #[utoipa::path(post, path = "/v1/pull-requests/{id}/report", tag = "pull-requests",
     params(("id" = String, Path)),
     request_body = ReportPullRequestRequest,
@@ -562,21 +566,14 @@ pub(super) async fn report(
     Json(req): Json<ReportPullRequestRequest>,
 ) -> ApiResult<Json<PullRequestDto>> {
     let mut row = state.store.get_pull_request(&id).await?;
-    let session = own_session(&state, &headers, &row).await?;
+    own_session(&state, &headers, &row).await?;
     if let Some(ready) = req.ready {
-        let (next, moved) = state.store.set_pull_request_ready(&row.id, ready).await?;
+        let (next, _moved) = state.store.set_pull_request_ready(&row.id, ready).await?;
         row = next;
-        if moved && ready {
-            state
-                .store
-                .set_session_attention(&session.id, AttentionReason::WaitingUser)
-                .await?;
-        } else if moved && session.attention_reason() == Some(AttentionReason::WaitingUser) {
-            state.store.clear_session_attention(&session.id).await?;
-        }
     }
-    // A review posted on a new head is the user's to act on: the approval
-    // is theirs to give (029). The same sha again raises nothing.
+    // A review posted on a new head is kept for the record (029); the
+    // user's approval is theirs to give in their own time, and this alone
+    // asks nothing of them.
     if let Some(sha) = req.reviewed_sha.as_deref() {
         if row.role != "reviewer" && !row.review_asked {
             return Err(ApiError::bad_request(
@@ -586,17 +583,8 @@ pub(super) async fn report(
         if !is_sha(sha) {
             return Err(ApiError::bad_request(format!("{sha} is no commit sha")));
         }
-        let (next, moved) = state.store.set_pull_request_reviewed(&row.id, sha).await?;
+        let (next, _moved) = state.store.set_pull_request_reviewed(&row.id, sha).await?;
         row = next;
-        if moved {
-            if session.attention_reason() == Some(AttentionReason::WaitingUser) {
-                state.store.clear_session_attention(&session.id).await?;
-            }
-            state
-                .store
-                .set_session_attention(&session.id, AttentionReason::WaitingUser)
-                .await?;
-        }
     }
     state.notify_scheduler_pull_request(&row.id);
     let pull = read_held(&state, row).await?;
@@ -872,13 +860,17 @@ async fn hold_review_comments(
     Ok(())
 }
 
-/// Ask Ariadne to review a request of the user's own on the model the user
-/// picks, or stop asking (029): a review session runs on that pin while the
-/// request is open and out of draft, and posts each round as a comment in
-/// the user's name. Asking starts Ariadne's work on the request; stopping
-/// ends it, where no task keeps the request. A request that asks for the
-/// user's review has a review already, on the repository's review pin, and
-/// takes no asking.
+/// Ask Ariadne to review a request on the model the user picks, or stop
+/// asking (029): a review session runs on that pin while the request is
+/// open and out of draft. A request of the user's own posts each round as
+/// a comment in the user's name; one that asks for the user's review on a
+/// repository with no review pin of its own gets the manual start the
+/// `pull_request` attention producer offers when nobody is assigned to it,
+/// and posts as any other review Ariadne runs on it would (029). Asking
+/// starts Ariadne's work on the request; stopping ends it, where no task
+/// keeps the request. A request that asks for the user's review on a
+/// repository that already pins one has a review already, and takes no
+/// asking.
 #[utoipa::path(put, path = "/v1/repositories/{id}/pull-requests/{number}/ariadne-review", tag = "pull-requests",
     params(("id" = String, Path), ("number" = i64, Path)),
     request_body = AskReviewRequest,
@@ -898,16 +890,22 @@ pub(super) async fn ask_review(
             "the forge returned another request number".into(),
         ));
     }
-    if pulls::role(&pull.author_login, &forge) != "author" {
-        return Err(ApiError::conflict(
-            "Ariadne reviews a request that asks for your review on its own: ask only on a \
-             request of yours",
-        ));
-    }
+    let role = pulls::role(&pull.author_login, &forge);
     let row = state.store.pull_request_by_number(&id, number).await?;
     let pin = match req.asked {
         false => None,
         true => {
+            // A request of mine asks on any pin; a request that asks for
+            // my review asks only where the repository names none of its
+            // own (029): one that already does has a review of its own on
+            // that pin, and an ask here would run a second session beside
+            // it.
+            if role == "reviewer" && forge.review_model.is_some() {
+                return Err(ApiError::conflict(
+                    "the request already has a review of its own, on the repository's review \
+                     pin",
+                ));
+            }
             if pull.state != "open" {
                 return Err(ApiError::conflict(format!(
                     "the request is {}: Ariadne reviews an open request",
@@ -955,7 +953,6 @@ pub(super) async fn ask_review(
         }
         // Nothing works on it, so there is no asking to stop.
         (None, None) => {
-            let role = pulls::role(&pull.author_login, &forge);
             return Ok(Json(forge_pull_dto(&id, pull, role, false)));
         }
     };

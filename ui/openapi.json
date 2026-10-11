@@ -1706,7 +1706,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "What the request's session says of it: `ready` once every required\napproval and check reads green, which raises `waiting_user` on the\nsession, and the head a review session posted its review on.",
+        "summary": "What the request's session says of it: `ready` once the babysitting task\nbelieves every required approval and check reads green, and the head a\nreview session posted its review on. Neither raises `waiting_user` on\nthe session by itself (029): the claim alone is not confirmed evidence,\nand a pr-reviewer session finishing its own review must notify nobody —\nthe `pull_request` attention producer reads the forge's own evidence\nagainst this claim and raises its own item once it actually backs the\nclaim up.",
         "operationId": "report",
         "parameters": [
           {
@@ -2164,7 +2164,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "Ask Ariadne to review a request of the user's own on the model the user\npicks, or stop asking (029): a review session runs on that pin while the\nrequest is open and out of draft, and posts each round as a comment in\nthe user's name. Asking starts Ariadne's work on the request; stopping\nends it, where no task keeps the request. A request that asks for the\nuser's review has a review already, on the repository's review pin, and\ntakes no asking.",
+        "summary": "Ask Ariadne to review a request on the model the user picks, or stop\nasking (029): a review session runs on that pin while the request is\nopen and out of draft. A request of the user's own posts each round as\na comment in the user's name; one that asks for the user's review on a\nrepository with no review pin of its own gets the manual start the\n`pull_request` attention producer offers when nobody is assigned to it,\nand posts as any other review Ariadne runs on it would (029). Asking\nstarts Ariadne's work on the request; stopping ends it, where no task\nkeeps the request. A request that asks for the user's review on a\nrepository that already pins one has a review already, and takes no\nasking.",
         "operationId": "ask_review",
         "parameters": [
           {
@@ -4823,7 +4823,8 @@
           "goal",
           "task",
           "session",
-          "repository"
+          "repository",
+          "pull_request"
         ]
       },
       "AttentionTarget": {
@@ -7187,6 +7188,10 @@
               "null"
             ],
             "description": "Ariadne's id of the request while it works on it; null on a request\nnobody works on, which the forge alone holds."
+          },
+          "mergeable": {
+            "type": "string",
+            "description": "The forge's own mergeability for the head now: `clean`, `blocked`,\n`dirty` or `unknown` where the forge has not finished computing it."
           },
           "number": {
             "type": "integer",

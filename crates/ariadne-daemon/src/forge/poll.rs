@@ -389,20 +389,21 @@ async fn fetch(store: &Store, cfg: &Config, handoff: &Handoff, id: &str) -> Resu
             });
         }
     };
-    // A request that asks for my review, out of draft, on a repository with
-    // a review pin, is one Ariadne reviews: the first fetch that finds it
-    // gives it a row (029). Nothing else the lists hold is kept.
-    if integration.review_model.is_some() {
-        for pull in listed.iter().filter(|p| {
-            requested.contains(&p.number)
-                && !p.draft
-                && pulls::role(&p.author_login, &integration) == "reviewer"
-        }) {
-            if !still_enabled(store, &integration).await? {
-                return Ok(());
-            }
-            pulls::start_work(store, &integration, pull, None).await?;
+    // A request that asks for my review, out of draft, is one Ariadne keeps
+    // a row of, whether or not the repository has a review pin (029): a
+    // repository with none starts no session of its own, but the request
+    // still needs its row, so the `pull_request` attention producer can
+    // offer a human a manual start on it. Nothing else the lists hold is
+    // kept.
+    for pull in listed.iter().filter(|p| {
+        requested.contains(&p.number)
+            && !p.draft
+            && pulls::role(&p.author_login, &integration) == "reviewer"
+    }) {
+        if !still_enabled(store, &integration).await? {
+            return Ok(());
         }
+        pulls::start_work(store, &integration, pull, None).await?;
     }
     let rows = store
         .list_pull_requests(PullRequestFilter {
@@ -627,15 +628,20 @@ async fn still_enabled(store: &Store, expected: &ForgeIntegration) -> Result<boo
 }
 
 /// Whether the request `row` wants a review session of its own: an open
-/// request out of draft, in a repository whose integration names a
-/// `review_model`, that asks for my review — or one of mine whose review the
-/// user asked Ariadne for (029). The author of the task that opened a
-/// request of mine keeps it in its own session (005).
+/// request out of draft, that asks for my review on a repository whose
+/// integration names a `review_model`, or whose own row was given a pin by
+/// an explicit manual start (029) — or one of mine whose review the user
+/// asked Ariadne for. The author of the task that opened a request of mine
+/// keeps it in its own session (005).
 pub(crate) fn wants_session(row: &PullRequest, integration: &ForgeIntegration) -> bool {
     // A request that asks for my review runs on the repository's review
-    // pin; one of mine runs on the pin the user picked when asking.
+    // pin, or on one asked directly on the row where the repository has
+    // none; one of mine runs on the pin the user picked when asking.
     let pinned = match row.role.as_str() {
-        "reviewer" => row.review_requested && integration.review_model.is_some(),
+        "reviewer" => {
+            row.review_requested
+                && (integration.review_model.is_some() || row.review_model.is_some())
+        }
         _ => row.review_asked && row.review_model.is_some(),
     };
     pinned && row.state == "open" && integration.enabled && !row.draft

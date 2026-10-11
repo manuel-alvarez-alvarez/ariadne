@@ -1,7 +1,7 @@
 ---
 id: pull-requests
 status: current
-updated: 2026-10-10
+updated: 2026-10-11
 areas: [store, api, daemon, cli, ui]
 commits: []
 tests:
@@ -60,11 +60,12 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
    A `pull_requests` row (`PullRequestRow`) is Ariadne's bookkeeping of a request it works on: `id`, `repository_id`, `number`, `url`, `role`, `origin_task_id`, `ready`, the told marks (rule 18), `reviewed_sha`, `review_asked` and its pin and skills, and `summary_comment_id` (029). The row holds no other column, and there is no comments table.
    `role` is `author` when the request's author is the integration login, ignoring case, else `reviewer`.
    An upsert keeps the existing id and creation time, and the first origin task.
-3. A row exists while Ariadne works on the request, and only then:
+3. A row exists while Ariadne works on the request, or while a human still
+   might start it working by hand, and only then:
    - the request a task opened: `open_pull_request` writes it, with the task as origin (030 rule 10);
-   - a request that asks for the user's review, out of draft, on a repository whose integration names a `review_model`: the first fetch that finds it writes it (029);
+   - a request that asks for the user's review, out of draft: the first fetch that finds it writes it, whether or not the repository's integration names a `review_model` — one that does not starts no session on its own, but the row is what lets a human start one by hand (029, 031);
    - a request of the user's they asked Ariadne to review: the ask writes it (029).
-   A request nobody works on has no row, whatever the lists hold.
+   A request nobody works on, and nobody could start work on by asking, has no row, whatever the lists hold.
 4. What the forge says of a request Ariadne works on is read on every fetch and held in memory alone (`forge::live::LivePulls`, by row id): the request's own read, whether it asks for the user's review, and, while it is open, its details.
    The scheduler and the routes join the row to that read (`PullRequest`, the view). A daemon that restarts holds nothing until its first fetch, which runs at once; until a request has been read, the scheduler does nothing for it.
 5. A repository fetch lists every open request of the repository, and the ones that ask for the login's review; the two lists are read from the forge at the same time.
@@ -213,8 +214,8 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `store.rs::a_pull_request_row_keeps_its_identity_and_origin_and_its_sessions_outlive_it`.
 - Comment marks are claimed once, released whole, keep the review's mark, and go with their row:
   `store.rs::comment_marks_are_claimed_once_released_whole_and_keep_the_review_mark`.
-- The list is read live, a request nobody works on has no row, and nothing adds or removes one:
-  `pull_requests.rs::the_list_is_read_live_and_nothing_is_stored_for_a_request_nobody_works_on`.
+- The list is read live, a request of the user's own nobody asked Ariadne to review has no row, a request that asks for the user's review is tracked whether or not the repository pins a `review_model`, and nothing adds or removes a row by hand:
+  `pull_requests.rs::the_list_is_read_live_and_tracks_only_a_request_that_asks_for_my_review`.
 - A detail read asks the forge for its parts together:
   `pull_requests.rs::a_detail_read_asks_the_forge_for_its_parts_together`.
 - A review request on a repository with a review pin has a row while it is reviewed and none once it merged:

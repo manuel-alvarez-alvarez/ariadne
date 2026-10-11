@@ -44,6 +44,7 @@ pub enum AttentionSubjectKind {
     Task,
     Session,
     Repository,
+    PullRequest,
 }
 
 /// Which producer raised an item — distinct from [`AttentionCause`], since
@@ -59,7 +60,9 @@ pub enum AttentionProducer {
     Recovery,
     /// Not produced yet: a session's own question to the user.
     AgentRequest,
-    /// Not produced yet: a pull request's next step.
+    /// `crate::attention::pull_requests` (`ariadne-daemon`): a review
+    /// request nobody is assigned to, or a request a babysitting task has
+    /// confirmed ready to merge.
     PullRequest,
 }
 

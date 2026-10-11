@@ -29,6 +29,10 @@ pub struct PullRequestDto {
     /// The rolled-up checks: `pending`, `success`, `failure` or `none`.
     pub checks: String,
     pub review_decision: String,
+    /// The forge's own mergeability for the head now: `clean`, `blocked`,
+    /// `dirty` or `unknown` where the forge has not finished computing it.
+    #[serde(default)]
+    pub mergeable: String,
     pub opened_at: String,
     /// When the forge last saw the request move.
     pub updated_at: String,

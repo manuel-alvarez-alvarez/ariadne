@@ -97,10 +97,13 @@ fn script(list: Vec<Value>, view: Value) -> Value {
 
 /// The open requests are read live off the forge: every one, mine, or the
 /// ones that ask for my review, and one of them whole, its checks and
-/// comments read with it. Ariadne works on none of them, so the database
-/// holds none, and nothing adds or removes one by hand.
+/// comments read with it. A request of mine Ariadne was not asked to
+/// review stays untracked; a request that asks for my review gets a row
+/// even on a repository with no review pin (029), so a human still has
+/// something to start by hand — but nothing starts its session, and
+/// nothing adds or removes a row here by hand.
 #[tokio::test]
-async fn the_list_is_read_live_and_nothing_is_stored_for_a_request_nobody_works_on() {
+async fn the_list_is_read_live_and_tracks_only_a_request_that_asks_for_my_review() {
     use crate::common::{TIMEOUT, eventually};
     let stub = stub_forge_cli(script(
         vec![github_pull(1, "me"), github_pull(2, "other")],
@@ -117,7 +120,10 @@ async fn the_list_is_read_live_and_nothing_is_stored_for_a_request_nobody_works_
 
     let rows: Vec<Value> = h.get("/v1/pull-requests").await;
     assert_eq!(rows.len(), 2);
-    assert!(rows.iter().all(|r| r["id"].is_null()), "{rows:?}");
+    let mine_row = rows.iter().find(|r| r["number"] == 1).unwrap();
+    assert!(mine_row["id"].is_null(), "{mine_row:?}");
+    let asked_row = rows.iter().find(|r| r["number"] == 2).unwrap();
+    assert!(!asked_row["id"].is_null(), "{asked_row:?}");
     let mine: Vec<Value> = h.get("/v1/pull-requests?role=author").await;
     assert_eq!(mine.len(), 1);
     assert_eq!(mine[0]["number"], 1);
@@ -134,23 +140,29 @@ async fn the_list_is_read_live_and_nothing_is_stored_for_a_request_nobody_works_
         .await;
     assert_eq!(one["title"], "Fix widgets");
     assert_eq!(one["unanswered_comments"], 0);
-    assert!(one["id"].is_null());
+    assert!(!one["id"].is_null());
 
+    // Search excludes a request of mine (`author`) outright; the one that
+    // asks for my review is tracked now, so the search says so.
     let matches: Vec<Value> = h
         .get(&format!(
             "/v1/repositories/{id}/pull-requests/search?q=widgets"
         ))
         .await;
-    assert!(matches.iter().all(|m| m["tracked"] == false), "{matches:?}");
+    assert!(matches.iter().all(|m| m["tracked"] == true), "{matches:?}");
 
-    assert!(
-        h.store
-            .list_pull_requests(ariadne_store::PullRequestFilter::default())
-            .await
-            .unwrap()
-            .is_empty(),
-        "nobody works on either: nothing is stored"
+    let stored = h
+        .store
+        .list_pull_requests(ariadne_store::PullRequestFilter::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        stored.len(),
+        1,
+        "only the request that asks for my review is tracked: {stored:?}"
     );
+    assert_eq!(stored[0].number, 2);
+    assert_eq!(stored[0].role, "reviewer");
     for request in [
         post_json(
             "/v1/pull-requests",
@@ -673,6 +685,12 @@ async fn a_fetch_publishes_pull_requests_changed_only_when_the_requests_moved() 
     let id = enabled_repository(&h, None).await;
     let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == id);
     next_event(&mut events, moved).await;
+    // The first fetch both inserts the request's row — a review request
+    // is tracked whether or not the repository has a review pin (029) —
+    // and latches the listed/requested state `pulls_moved` watches, each
+    // publishing its own event; drain the second before the quiet check
+    // below, which is about a later, unchanged fetch, not this first one.
+    let _ = tokio::time::timeout(QUIET, next_event(&mut events, moved)).await;
     h.state.forge_poll.set_mode(&id, Mode::WakeOnly);
     h.state.forge_poll.wake(&id);
     assert!(

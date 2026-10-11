@@ -92,6 +92,18 @@ impl Pull {
                 _ => "none",
             }
             .into(),
+            // GitLab's own `detailed_merge_status` (029): `mergeable` is
+            // the only status that says the head can be merged now; an
+            // unevaluated status is the forge still computing it, never
+            // read as clean, and every other named status — failing
+            // checks, unresolved discussions, missing approval, a denied
+            // policy and the like — blocks a merge right now.
+            mergeable: match self.detailed_merge_status.as_str() {
+                "mergeable" => "clean",
+                "unchecked" | "checking" | "preparing" | "ci_still_running" => "unknown",
+                _ => "blocked",
+            }
+            .into(),
             updated_at: self.updated_at.unwrap_or_else(|| self.created_at.clone()),
             opened_at: self.created_at,
             merge_sha,

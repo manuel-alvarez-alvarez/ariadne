@@ -287,17 +287,23 @@ impl Store {
     }
 
     /// Set whether the request's session reports it ready to merge. Answers
-    /// the row, and whether the flag moved.
+    /// the row, and whether the flag moved. A move to `true` stamps
+    /// `ready_confirmed_at` fresh — the `pull_request` attention producer's
+    /// own `since` once the forge's own evidence backs the claim up; a
+    /// move to `false` clears it, so a later claim gets its own, fresh
+    /// `since` rather than the first one's.
     pub async fn set_pull_request_ready(
         &self,
         id: &str,
         ready: bool,
     ) -> Result<(PullRequestRow, bool)> {
+        let confirmed_at = ready.then(now);
         let changed: Option<PullRequestRow> = sqlx::query_as(
-            "UPDATE pull_requests SET ready = ?, updated_at = ? WHERE id = ? AND ready <> ?
-             RETURNING *",
+            "UPDATE pull_requests SET ready = ?, ready_confirmed_at = ?, updated_at = ?
+             WHERE id = ? AND ready <> ? RETURNING *",
         )
         .bind(ready)
+        .bind(confirmed_at)
         .bind(now())
         .bind(id)
         .bind(ready)

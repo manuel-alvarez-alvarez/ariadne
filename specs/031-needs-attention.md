@@ -7,7 +7,12 @@ commits: []
 tests:
   - crates/ariadne-daemon/tests/it/attention.rs
   - crates/ariadne-daemon/tests/it/scheduler_attention.rs
+  - crates/ariadne-daemon/tests/it/pull_request_reviews.rs
+  - crates/ariadne-daemon/tests/it/kept_requests.rs
+  - crates/ariadne-daemon/tests/it/workflow_pull_request.rs
+  - crates/ariadne-daemon/tests/it/pull_requests.rs
   - crates/ariadne-daemon/src/attention/recovery.rs
+  - crates/ariadne-daemon/src/attention/pull_requests.rs
   - crates/ariadne-daemon/src/attention/mod.rs
   - crates/ariadne-daemon/src/acp.rs
   - crates/ariadne-daemon/src/scheduler/auto_switch.rs
@@ -16,11 +21,14 @@ tests:
   - crates/ariadne-daemon/src/scheduler/quiet.rs
   - crates/ariadne-daemon/src/forge/mod.rs
   - crates/ariadne-daemon/src/forge/poll.rs
+  - crates/ariadne-daemon/src/forge/github/pulls.rs
+  - crates/ariadne-daemon/src/forge/gitlab/pulls.rs
   - crates/ariadne-cli/src/commands/attention.rs
   - crates/ariadne-cli/src/commands/attention/board.rs
   - ui/src/features/goals/attention.test.tsx
   - ui/src/features/goals/attention-alerts.test.tsx
   - ui/src/events/dispatch.test.ts
+  - ui/src/features/pull-requests/pull-request-panel.test.tsx
 ---
 
 # Needs attention
@@ -32,15 +40,21 @@ bare flag.
 ## Scope
 
 In: the shared item shape, `GET /v1/attention`, the producer registry
-(`crate::attention` in `ariadne-daemon`), and the first complete producer —
+(`crate::attention` in `ariadne-daemon`), the first complete producer —
 recovery — which covers a model's quota, every task the daemon will never
-retry on its own, and a forge CLI missing from the daemon's PATH.
+retry on its own, and a forge CLI missing from the daemon's PATH, and the
+second — `pull_requests` — which covers a review request nobody is
+assigned to and a request a babysitting task has confirmed ready to merge
+(rules 11-14), migrating the "ready to merge" / "review posted" session
+surface onto it and removing it from 029's own `waiting_user` rule.
 
 Out: the recovery semantics themselves — the auto-switch ladder, the
-spawn-retry budget, the watchdog thresholds — which are 009's. An agent's
-own request and a pull request's next step, which stay on the question and
-pull-request surfaces (009, 026, 029) until a later task gives their own
-producers (registered already, empty — rule 10) their eligibility rules.
+spawn-retry budget, the watchdog thresholds — which are 009's; the review
+and readiness semantics themselves — which row wants a session, the
+verdict policy, `report_pull_request`'s own fields — which are 029's. An
+agent's own request, which stays on the question surface (009) until a
+later task gives its own producer (registered already, empty — rule 10)
+its eligibility rules.
 
 ## Behavior
 
@@ -389,12 +403,86 @@ producers (registered already, empty — rule 10) their eligibility rules.
 10. Registering a further producer is adding its own module beside
     `recovery` (`crate::attention::<name>`) and a call to it from
     `crate::attention::collect`; nothing about the route or the DTO
-    changes to add one. `agent_requests` and `pull_requests` are
-    registered already, each answering an empty list, so the route a
-    later task's producer and client migration need already compiles and
-    runs; the question and pull-request eligibility rules themselves, and
-    migrating the client behavior they already carry onto this route, are
-    out of this spec's scope (see Scope).
+    changes to add one. `agent_requests` is registered already, answering
+    an empty list, so the route a later task's producer and client
+    migration need already compiles and runs; the question eligibility
+    rules themselves, and migrating the client behavior they already
+    carry onto this route, are out of this spec's scope (see Scope).
+    `pull_requests` is the second complete producer, below.
+
+## The pull-request producer
+
+11. `crate::attention::pull_requests` raises two items, both read off a
+    request's last fetch (`crate::forge::live::of_row`) rather than from a
+    guess: a review request nobody is assigned to, and a request a
+    babysitting task has claimed is ready to merge, confirmed against the
+    forge's own evidence for the current head. Neither applies to a
+    request that is closed, merged, back in draft, or that the last fetch
+    has not read yet (`of_row` answers `None`): missing evidence withholds
+    both items the same way it withholds a recovery one.
+12. A review request item (`AttentionCause::Configuration`) is raised for
+    a `reviewer` row that still asks for the user's review
+    (`review_requested`) where neither the repository's own
+    `review_model` nor one asked directly on the row
+    (`PullRequestRow::review_model`) names a model: `wants_session`
+    (029) answers `false` for exactly this reason, and nothing automatic
+    is ever going to start a session for it, so a human still has
+    something to start by hand. A request `recovery`'s own
+    `reviewer_given_up_items` already carries
+    (`PullRequestRow::reviewer_given_up_at`) raises nothing more here: that
+    is the same underlying request as a different kind of "nobody is
+    handling it", and a second item would only repeat the first's fix.
+    Starting a session — on the repository's own pin, or by asking
+    directly on the row through `PUT
+    .../pull-requests/{number}/ariadne-review` (029 rule 10, open to a
+    review request on an unpinned repository the same as to a request of
+    the user's own) — clears the item the moment `wants_session` answers
+    `true` for it; a reviewer taking the row over, the same route's
+    `asked: false`, or the repository gaining a pin removes it the same
+    way. The item's `since` is the row's own `created_at`: a review
+    request gets its row the moment the first fetch finds it (029 rule 1),
+    whether or not it is pinned, so that moment is also the moment nobody
+    was yet assigned to it.
+13. A readiness item (`AttentionCause::Unknown`) is raised for an `author`
+    row a task keeps (`origin_task_id`) once every one of four pieces of
+    the forge's own evidence for the request's current head holds
+    together: `review_decision == "approved"` (a current approval, not an
+    Ariadne review's own summary, which the forge never counts as one —
+    029 rule 14 refuses an approval from any review route this daemon
+    runs), `unanswered_comments == 0` (no open review comment), `checks ==
+    "success"` (every check green) and `mergeable == "clean"` (rule 14 —
+    the forge's own confirmation the head can be merged now, not merely
+    inferred from the checks rollup). The babysitting task's own `ready`
+    report (`POST /pull-requests/{id}/report`, 029 rule 15) is read beside
+    them as a fifth condition, never in their place: `ready` alone, or
+    three of the four forge conditions without it, raises nothing. A
+    request no task keeps — asked for ad hoc, through the same report
+    route a reviewer session also answers to (029 rule 11) — raises
+    nothing either, whatever its `ready` flag says: only the babysitting
+    task's own claim is read, never a bare flag on a row nothing manages
+    (029, "Only the babysitter raises readiness attention for a request it
+    manages"). Every field above is the live state of the request's
+    current head, read fresh on every call to this producer rather than
+    latched anywhere: a later commit, a reopened comment, or an approval
+    the forge no longer counts (dismissed, or superseded by a new push)
+    drops the item on the very next read, with nothing of its own to
+    invalidate. The item's `since` is `PullRequestRow::ready_confirmed_at`,
+    stamped the moment `ready` itself last moved from `false` to `true`
+    (`Store::set_pull_request_ready`) and cleared the moment it moves back
+    — not `updated_at`, which a fetch bumps on every poll whether or not
+    anything about readiness changed, the same trap rule 4's own `since`
+    values avoid for a task's `failed` transition.
+14. `mergeable` is read off the forge's own mergeability for the head,
+    never derived from `checks` or `review_decision`: GitHub's
+    `mergeStateStatus` (`CLEAN` is `clean`; `UNKNOWN` is `unknown`; every
+    other named state — `BEHIND`, `BLOCKED`, `DIRTY`, `DRAFT`,
+    `HAS_HOOKS`, `UNSTABLE` — is `blocked`, since each blocks a merge
+    right now for its own reason) and GitLab's `detailed_merge_status`
+    (`mergeable` is `clean`; `unchecked`, `checking`, `preparing` and
+    `ci_still_running` are `unknown`, the forge still computing it; every
+    other named status is `blocked`). `unknown` is never read as `clean`:
+    a readiness item answers for a confirmed mergeability, not an
+    unevaluated one.
 
 ## Acceptance criteria
 
@@ -608,20 +696,50 @@ producers (registered already, empty — rule 10) their eligibility rules.
   reviewer session's own give-up evidence"); the CLI's `--watch` treats
   both the same way
   (`attention.rs::watch_redraws_on_a_goals_or_a_pull_requests_own_recovery_evidence`).
+- A review request with no pin anywhere offers a manual-start item naming
+  its repository, and takes none once the row or the repository gains one;
+  the same request already given up on by recovery carries only
+  recovery's own item, never a second
+  (`attention.rs::an_unpinned_review_request_offers_a_manual_start_item`,
+  `::a_review_request_pinned_on_its_repository_offers_no_manual_start_item`,
+  `::a_review_request_recovery_has_given_up_on_carries_no_second_item`).
+  `ariadne pr review` and the desktop panel's Start review both reach the
+  same route on such a request, the same way they do on a request of the
+  user's own
+  (`pull_request_reviews.rs::asking_needs_a_model_and_takes_an_unpinned_review_request`,
+  `pull-request-panel.test.tsx::offers a manual Start review on a request that asks for my review when the repository pins none`).
+- A babysat request's readiness item answers only once approval, no open
+  comment, green checks and confirmed mergeability all hold for the
+  current head; any one short of that — pending checks, an open comment,
+  or mergeability the forge has not confirmed — withholds it even where
+  the task's own `ready` claims it, and a request no task keeps raises
+  nothing whatever its `ready` says
+  (`attention.rs::a_ready_request_the_forges_own_evidence_backs_up_raises_a_readiness_item`,
+  `::a_ready_claim_with_pending_checks_raises_no_readiness_item`,
+  `::a_ready_claim_with_an_open_review_comment_raises_no_readiness_item`,
+  `::a_ready_claim_with_unconfirmed_mergeability_raises_no_readiness_item`,
+  `::a_ready_claim_on_a_request_no_task_keeps_raises_no_readiness_item`).
+- Neither a posted review nor a ready report raises `waiting_user` on the
+  session any more, so neither shows a row, a toast or a badge increment
+  of its own on either client
+  (`pull_request_reviews.rs::a_reviewed_sha_is_stored_and_raises_no_waiting_user`,
+  `kept_requests.rs::the_pr_agent_replies_and_reports_and_no_other_session_may`,
+  `workflow_pull_request.rs::the_pr_column_opens_the_request_once_and_keeps_it`,
+  `attention/board.rs::a_pull_request_sessions_own_waiting_user_raises_no_row_of_its_own_on_this_board`).
 
 ## Known gap
 
-- `agent_requests` and `pull_requests` are registered producer modules
-  that answer empty: the question and pull-request eligibility rules this
-  route was built for, and migrating the client behavior that already
-  covers them onto it, are a later task's.
+- `agent_requests` is a registered producer module that answers empty:
+  the question eligibility rules this route was built for, and migrating
+  the client behavior that already covers it onto it, are a later task's.
 
 ## Sources
 
 `crates/ariadne-api/src/attention.rs`, `crates/ariadne-daemon/src/attention/`
 (`mod`, `recovery` — including `orchestrator_has_answered_for`,
 `access_items`, `orchestrator_given_up_items`, `reviewer_given_up_items`,
-`last_session_error` — `agent_requests`, `pull_requests`),
+`last_session_error` — `agent_requests`, `pull_requests` —
+`review_start_item`, `readiness_item`),
 `crates/ariadne-daemon/src/http/attention.rs`, `crates/ariadne-daemon/src/acp.rs`
 (`Delivery::GoalAttention`, `send_goal_attention`, `claim_message`,
 `serve_with_input`'s confirmation of a completed `GoalAttention` turn),
@@ -636,10 +754,17 @@ give-up branch), `crates/ariadne-store/src/goals.rs`
 `clear_goal_orchestrator_given_up`, `Goal::orchestrator_answered_failed_task_ids`,
 `Goal::orchestrator_given_up_at`), `crates/ariadne-store/src/pull_requests.rs`
 (`set_pull_request_reviewer_given_up`, `clear_pull_request_reviewer_given_up`,
-`PullRequestRow::reviewer_given_up_at`), `crates/ariadne-daemon/src/forge/mod.rs`
+`PullRequestRow::reviewer_given_up_at`, `set_pull_request_ready`,
+`PullRequestRow::ready_confirmed_at`), `crates/ariadne-daemon/src/forge/mod.rs`
 (`ForgeClient::confirmed_signed_out`, `Refusal::ran`, `Refusal::is_unauthorized`),
-`crates/ariadne-daemon/src/forge/poll.rs` (`FORGE_SIGNED_OUT`),
+`crates/ariadne-daemon/src/forge/poll.rs` (`FORGE_SIGNED_OUT`, `wants_session`),
+`crates/ariadne-daemon/src/forge/pulls.rs` (`ForgePullRequest::mergeable`),
+`crates/ariadne-daemon/src/forge/github/pulls.rs`,
+`crates/ariadne-daemon/src/forge/gitlab/pulls.rs`,
+`crates/ariadne-daemon/src/http/pull_requests.rs` (`ask_review`, `report`),
 `crates/ariadne-cli/src/commands/attention.rs` (including `relevant`),
 `crates/ariadne-cli/src/commands/attention/board.rs`,
 `ui/src/features/goals/attention.ts`, `ui/src/features/goals/attention-alerts.tsx`,
-`ui/src/features/goals/attention-strip.tsx`, `ui/src/events/dispatch.ts`.
+`ui/src/features/goals/attention-strip.tsx`, `ui/src/events/dispatch.ts`,
+`ui/src/features/sessions/session-display.tsx`,
+`ui/src/features/pull-requests/pull-request-panel.tsx`.

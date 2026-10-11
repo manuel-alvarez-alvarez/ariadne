@@ -2,10 +2,10 @@
 //! first producer, recovery.
 
 use ariadne_api::attention::{
-    AttentionCause, AttentionListDto, AttentionProducer, AttentionSubjectKind,
+    AttentionCause, AttentionListDto, AttentionProducer, AttentionSubjectKind, AttentionTarget,
 };
 use ariadne_core::{Actor, AttentionReason, Seat, SessionStatus, TaskStatus};
-use ariadne_store::NewSession;
+use ariadne_store::{AgentPin, NewSession};
 
 use crate::common::test_pin;
 use crate::common::{Harness, TIMEOUT, eventually, harness, with_forge};
@@ -1178,7 +1178,11 @@ async fn a_cancelled_goals_orchestrator_give_up_raises_nothing() {
 /// session either — the same thing `scheduler::pull_requests::end_review`
 /// reads to take its session down — and its earlier give-up mark is
 /// cleared with it: nothing is trying to start that session any more, so
-/// there is nothing left to have given up on.
+/// there is nothing left to have given up on. The `pull_request` producer
+/// raises its own item in its place: nobody is assigned to it either, and
+/// a human can still start one by hand (the recovery item named a dead
+/// attempt to start automatically; this one names that nothing will try
+/// again on its own).
 #[tokio::test]
 async fn a_request_whose_review_pin_is_gone_clears_its_reviewers_give_up() {
     let h = harness().scheduler().await;
@@ -1258,10 +1262,18 @@ async fn a_request_whose_review_pin_is_gone_clears_its_reviewers_give_up() {
 
     let list: AttentionListDto = h.get("/v1/attention").await;
     assert_eq!(
-        list.items,
-        Vec::new(),
-        "nothing is trying to start that session any more: {:?}",
+        list.items.len(),
+        1,
+        "the recovery give-up item is gone, replaced by the pull_request \
+         producer's own: {:?}",
         list.items
+    );
+    assert_eq!(list.items[0].producer, AttentionProducer::PullRequest);
+    assert_eq!(
+        list.items[0].target,
+        AttentionTarget::PullRequest {
+            pull_request_id: pull.id.clone()
+        }
     );
 }
 
@@ -1283,6 +1295,22 @@ async fn a_quota_items_affected_entry_names_a_reviewer_session_by_seat() {
         .await
         .unwrap();
     crate::common::forge::seed_live(&h, &pull, "someone", "fix-1", "abc", true);
+    // Pinned directly on the row, so the `pull_request` producer's own
+    // "nobody is assigned" item stays out of this test's count: what is
+    // tested here is the quota item's own label, not that one.
+    h.store
+        .set_pull_request_review_asked(
+            &pull.id,
+            Some((
+                &AgentPin {
+                    model: "stub:no-such-model".into(),
+                    effort: None,
+                },
+                &[],
+            )),
+        )
+        .await
+        .unwrap();
     let session = h
         .store
         .create_session(NewSession {
@@ -1465,4 +1493,274 @@ async fn a_recovery_items_id_is_stable_across_a_fresh_store_connection() {
 
     assert_eq!(first.items.len(), 1);
     assert_eq!(first.items[0].id, second.items[0].id);
+}
+
+/// A request that asks for my review, with no pin on the repository and
+/// none asked directly on the row either, offers a manual start: nothing
+/// else will ever start a reviewer session for it (029).
+#[tokio::test]
+async fn an_unpinned_review_request_offers_a_manual_start_item() {
+    let h = harness().await;
+    let repo = h.repository(&h.at("widgets")).await;
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "reviewer".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    crate::common::forge::seed_live(&h, &pull, "someone", "fix-1", "abc", true);
+
+    let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(list.items.len(), 1);
+    let item = &list.items[0];
+    assert_eq!(item.producer, AttentionProducer::PullRequest);
+    assert_eq!(item.reason, AttentionCause::Configuration);
+    assert_eq!(
+        item.target,
+        AttentionTarget::PullRequest {
+            pull_request_id: pull.id.clone()
+        }
+    );
+    assert_eq!(item.affected[0].kind, AttentionSubjectKind::PullRequest);
+    assert_eq!(item.affected[0].id, pull.id);
+}
+
+/// The same request, pinned on the repository's own `review_model`,
+/// offers no manual start: a reviewer session already starts on its own.
+#[tokio::test]
+async fn a_review_request_pinned_on_its_repository_offers_no_manual_start_item() {
+    let h = harness().await;
+    let repo = h.repository(&h.at("widgets")).await;
+    h.store
+        .set_forge_integration(ariadne_store::SetForgeIntegration {
+            repository_id: repo.id.clone(),
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+            review_model: Some(test_pin().model),
+            review_effort: None,
+        })
+        .await
+        .unwrap();
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "reviewer".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    crate::common::forge::seed_live(&h, &pull, "someone", "fix-1", "abc", true);
+
+    let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(list.items, Vec::new(), "{:?}", list.items);
+}
+
+/// A request automatic recovery has already given up starting a reviewer
+/// for carries only `recovery`'s own item: the `pull_request` producer
+/// raises nothing more for a request that is `recovery`'s business
+/// already, which would otherwise be two items naming the same blocker.
+#[tokio::test]
+async fn a_review_request_recovery_has_given_up_on_carries_no_second_item() {
+    let h = harness().await;
+    let repo = h.repository(&h.at("widgets")).await;
+    h.store
+        .set_forge_integration(ariadne_store::SetForgeIntegration {
+            repository_id: repo.id.clone(),
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+            review_model: None,
+            review_effort: None,
+        })
+        .await
+        .unwrap();
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "reviewer".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    crate::common::forge::seed_live(&h, &pull, "someone", "fix-1", "abc", true);
+    h.store
+        .set_pull_request_reviewer_given_up(&pull.id, false)
+        .await
+        .unwrap();
+
+    let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(list.items.len(), 1, "{:?}", list.items);
+    assert_eq!(list.items[0].producer, AttentionProducer::Recovery);
+}
+
+/// A request a babysitting task keeps, ready and backed by the forge's
+/// own evidence for the current head — an approval, no open review
+/// comment, every check green, and the forge's own confirmation the head
+/// can be merged now — raises a readiness item that links to the request.
+#[tokio::test]
+async fn a_ready_request_the_forges_own_evidence_backs_up_raises_a_readiness_item() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: cast.repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "author".into(),
+            origin_task_id: Some(cast.task.id.clone()),
+        })
+        .await
+        .unwrap();
+    crate::common::forge::seed_review_evidence(&h, &pull, "success", "approved", "clean", false);
+    h.store
+        .set_pull_request_ready(&pull.id, true)
+        .await
+        .unwrap();
+
+    let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(list.items.len(), 1, "{:?}", list.items);
+    let item = &list.items[0];
+    assert_eq!(item.producer, AttentionProducer::PullRequest);
+    assert_eq!(
+        item.target,
+        AttentionTarget::PullRequest {
+            pull_request_id: pull.id.clone()
+        }
+    );
+}
+
+/// The same request, approved and clear of open comments, but whose
+/// checks have not gone green yet, raises nothing: missing or stale
+/// evidence withholds a readiness claim rather than trusting the
+/// babysitting task's own `ready` report alone.
+#[tokio::test]
+async fn a_ready_claim_with_pending_checks_raises_no_readiness_item() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: cast.repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "author".into(),
+            origin_task_id: Some(cast.task.id.clone()),
+        })
+        .await
+        .unwrap();
+    crate::common::forge::seed_review_evidence(&h, &pull, "pending", "approved", "clean", false);
+    h.store
+        .set_pull_request_ready(&pull.id, true)
+        .await
+        .unwrap();
+
+    let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(list.items, Vec::new(), "{:?}", list.items);
+}
+
+/// Approved, checks green and mergeable clean, but a review comment the
+/// forge still shows open, raises nothing either: resolved comments and
+/// approval must both hold for the current revision.
+#[tokio::test]
+async fn a_ready_claim_with_an_open_review_comment_raises_no_readiness_item() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: cast.repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "author".into(),
+            origin_task_id: Some(cast.task.id.clone()),
+        })
+        .await
+        .unwrap();
+    crate::common::forge::seed_review_evidence(&h, &pull, "success", "approved", "clean", true);
+    h.store
+        .set_pull_request_ready(&pull.id, true)
+        .await
+        .unwrap();
+
+    let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(list.items, Vec::new(), "{:?}", list.items);
+}
+
+/// Approved, no open comment and checks green, but the forge has not
+/// confirmed the head can be merged now, raises nothing: a successful
+/// checks rollup alone never establishes readiness on its own.
+#[tokio::test]
+async fn a_ready_claim_with_unconfirmed_mergeability_raises_no_readiness_item() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: cast.repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "author".into(),
+            origin_task_id: Some(cast.task.id.clone()),
+        })
+        .await
+        .unwrap();
+    crate::common::forge::seed_review_evidence(&h, &pull, "success", "approved", "unknown", false);
+    h.store
+        .set_pull_request_ready(&pull.id, true)
+        .await
+        .unwrap();
+
+    let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(list.items, Vec::new(), "{:?}", list.items);
+}
+
+/// A request of the user's own that nobody is babysitting — asked for an
+/// Ariadne review ad hoc, with no task keeping it — raises no readiness
+/// item even where `ready` and every other piece of evidence hold: only
+/// the babysitting task's own claim counts (029, "Only the babysitter
+/// raises readiness attention for a request it manages").
+#[tokio::test]
+async fn a_ready_claim_on_a_request_no_task_keeps_raises_no_readiness_item() {
+    let h = harness().await;
+    let repo = h.repository(&h.at("widgets")).await;
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "author".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    crate::common::forge::seed_review_evidence(&h, &pull, "success", "approved", "clean", false);
+    h.store
+        .set_pull_request_ready(&pull.id, true)
+        .await
+        .unwrap();
+
+    let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(list.items, Vec::new(), "{:?}", list.items);
 }

@@ -207,12 +207,77 @@ pub(crate) fn seed_live(
                 base_branch: "main".into(),
                 checks: "none".into(),
                 review_decision: "none".into(),
+                mergeable: "clean".into(),
                 opened_at: "2026-10-01T00:00:00Z".into(),
                 updated_at: "2026-10-01T00:00:00Z".into(),
                 merge_sha: None,
             },
             review_requested,
             details: Some(ariadne_daemon::forge::live::Details::default()),
+        },
+    );
+}
+
+/// A request a babysitting task keeps, with the forge's own evidence of
+/// readiness named explicitly: `checks` and `review_decision` as the live
+/// read answers them, `mergeable` as the forge's own mergeability, and one
+/// open review comment where `has_open_comment` asks for it — the one the
+/// `pull_request` attention producer's readiness item reads against the
+/// babysitting task's own `ready` claim.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn seed_review_evidence(
+    h: &super::Harness,
+    row: &ariadne_store::PullRequestRow,
+    checks: &str,
+    review_decision: &str,
+    mergeable: &str,
+    has_open_comment: bool,
+) {
+    let comments = if has_open_comment {
+        vec![ariadne_store::NewPullRequestComment {
+            forge_id: "rc-1".into(),
+            thread_id: "T1".into(),
+            kind: "review_comment".into(),
+            author_login: "someone".into(),
+            author_is_bot: false,
+            body: "What about this case?".into(),
+            path: Some("src/lib.rs".into()),
+            line: Some(1),
+            in_reply_to: None,
+            created_at: "2026-10-01T00:00:00Z".into(),
+            resolved: false,
+            from_review: false,
+        }]
+    } else {
+        Vec::new()
+    };
+    h.launcher.live.set(
+        &row.id,
+        ariadne_daemon::forge::live::Live {
+            pull: ariadne_daemon::forge::pulls::ForgePullRequest {
+                number: row.number,
+                url: row.url.clone(),
+                title: format!("Fix widgets {}", row.number),
+                body: String::new(),
+                author_login: "me".into(),
+                state: "open".into(),
+                draft: false,
+                head_branch: "fix".into(),
+                head_sha: "abc".into(),
+                head_repo: None,
+                base_branch: "main".into(),
+                checks: checks.into(),
+                review_decision: review_decision.into(),
+                mergeable: mergeable.into(),
+                opened_at: "2026-10-01T00:00:00Z".into(),
+                updated_at: "2026-10-01T00:00:00Z".into(),
+                merge_sha: None,
+            },
+            review_requested: false,
+            details: Some(ariadne_daemon::forge::live::Details {
+                comments,
+                ..Default::default()
+            }),
         },
     );
 }

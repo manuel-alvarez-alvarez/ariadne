@@ -131,6 +131,7 @@ pub fn view(row: PullRequestRow, live: &Live, marks: &[CommentMark], login: &str
             base_branch: pull.base_branch.clone(),
             checks: pull.checks.clone(),
             review_decision: pull.review_decision.clone(),
+            mergeable: pull.mergeable.clone(),
             opened_at: pull.opened_at.clone(),
             forge_updated_at: pull.updated_at.clone(),
             failed_checks: serde_json::to_string(&details.failed_checks)

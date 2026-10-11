@@ -15,7 +15,7 @@ use crate::common::{
 };
 use ariadne_api::SESSION_HEADER;
 use ariadne_api::tasks::TaskDto;
-use ariadne_core::{AttentionReason, SessionStatus, TaskStatus};
+use ariadne_core::{SessionStatus, TaskStatus};
 use ariadne_daemon::forge::poll::Mode;
 use ariadne_daemon::scheduler::SchedEvent;
 use ariadne_store::defaults::PULL_REQUEST_WORKFLOW;
@@ -328,9 +328,10 @@ async fn the_news_of_its_request_reaches_the_pr_agent_once() {
 
 /// The `pr` agent replies through the forge's reply command, stored as my
 /// comment in the thread, which answers it; the agent resolves no thread.
-/// Its `ready: true` raises `waiting_user` on its own session once, and
-/// `ready: false` takes it down. Any other session is refused, and so is a
-/// call that comes from no session.
+/// Its `ready: true` is stored but raises nothing of its own on the
+/// session (029): the `pull_request` attention producer reads the forge's
+/// own evidence against the claim instead. Any other session is refused,
+/// and so is a call that comes from no session.
 #[tokio::test]
 async fn the_pr_agent_replies_and_reports_and_no_other_session_may() {
     let comments = [review_comment(101, "alice", None, "2026-10-02T00:00:00Z")];
@@ -411,10 +412,7 @@ async fn the_pr_agent_replies_and_reports_and_no_other_session_may() {
     };
     let dto: Value = h.json(report(true), StatusCode::OK).await;
     assert_eq!(dto["ready"], true);
-    assert_eq!(
-        h.attention(&agent).await,
-        Some(AttentionReason::WaitingUser)
-    );
+    assert_eq!(h.attention(&agent).await, None);
     let _: Value = h.json(report(false), StatusCode::OK).await;
     assert_eq!(h.attention(&agent).await, None);
 
