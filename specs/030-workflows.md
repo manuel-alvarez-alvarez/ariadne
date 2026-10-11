@@ -1,7 +1,7 @@
 ---
 id: workflows
 status: current
-updated: 2026-10-10
+updated: 2026-10-11
 areas: [core, store, api, daemon, prompts]
 commits: []
 tests:
@@ -256,8 +256,9 @@ every other wire enum (011).
     once; a repeat returns the same URL. The request's news goes to that
     agent (026): its session is the request DTO's `session_id`, its tools
     accept that session, and an idle agent waits on the forge without a
-    quiet nudge (009 rule 41). A ready report raises `waiting_user` on that
-    session; a later false report clears it. The agent makes requested
+    quiet nudge (009 rule 41). A ready report is stored but raises nothing
+    of its own on that session: the `pull_request` attention producer
+    reads the forge's own evidence against the claim instead (031). The agent makes requested
     fixes as new commits, runs the changed tests and lint, and pushes. On
     merge, it brings the remote base into the checkout before completing
     the step. An open request fails the `request_merged` gate with 409 at

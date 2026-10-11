@@ -2248,14 +2248,20 @@ async fn on_the_pr_column_with_a_kept_request(w: &World) -> (AgentSession, Strin
     (session, pull.id)
 }
 
-/// A `pr` agent whose open request last read ready to merge is owed the user
-/// again when its agent comes back (030 rule 10): the restart is no answer to
-/// a person who still has the request to merge.
+/// A `pr` agent whose open request last read ready to merge raises no
+/// `waiting_user` of its own when its agent comes back (031): the bare
+/// `ready` flag says nothing of a current approval, an open comment, a
+/// failing check or an unconfirmed mergeability, so it is the
+/// `pull_request` attention producer's own call, read fresh off the
+/// forge every time, rather than this session's.
 #[tokio::test]
-async fn a_pr_agent_whose_open_request_reads_ready_is_owed_the_user_again_on_its_restart() {
+async fn a_pr_agent_whose_open_request_reads_ready_raises_no_waiting_user_on_its_restart() {
     let w = World::on_pull_requests().await;
     let (session, pull) = on_the_pr_column_with_a_kept_request(&w).await;
-    w.store.set_pull_request_ready(&pull, true).await.unwrap();
+    w.store
+        .set_pull_request_ready(&pull, true, Some("abc"))
+        .await
+        .unwrap();
 
     let sched = w.scheduler();
     sched.task(&w.task);
@@ -2265,10 +2271,7 @@ async fn a_pr_agent_whose_open_request_reads_ready_is_owed_the_user_again_on_its
         async || w.relaunched(&session, &None).await,
     )
     .await;
-    eventually(TIMEOUT, "the user to be owed again", async || {
-        w.attention(&session).await == Some(AttentionReason::WaitingUser)
-    })
-    .await;
+    assert_eq!(w.attention(&session).await, None);
 }
 
 /// An idle `pr` agent whose request is open waits on the forge (030 rule 10,

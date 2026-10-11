@@ -138,9 +138,9 @@ and its idle handling under [030](030-workflows.md), rule 10.
     No agent tool resolves a thread. A review session resolves a thread it opened, once a push fixed it (029); every other thread is the keeping agent's to resolve.
 16. A reply posts through the forge CLI: `gh api .../pulls/<n>/comments/<id>/replies` on the thread's first review comment, else `gh pr comment`; GitLab adds a note to the discussion.
     A review session's reply is marked `from_review`. The repository is fetched again, which reads the reply back.
-17. A report with `ready: true` on a change raises `waiting_user` on the keeping agent's session. `ready: false` on a change clears it. A repeat raises nothing.
+17. A report with `ready: true` or `ready: false` is stored and raises nothing of its own on any session (031): the `pull_request` attention producer reads the forge's own evidence against the claim instead of trusting it. A request a task keeps accepts a `ready` report from the current column agent alone, never from a review session that also answers for the same row (a request of mine a task keeps can also carry an Ariadne self-review asked on it, 029) — read by seat (`Seat::Agent`), not merely by which session answers for the row.
     The state is the forge's to say: no session reports it.
-    Accept comments, replies, and reports only from the current column agent or the review session (029).
+    Accept comments, replies, and reports only from the current column agent or the review session (029), subject to the `ready`-specific restriction above.
     Another session gets 403. A report or reply with no session gets 403. The user reads comments freely.
 18. `complete_step` on the `pr` column is accepted once the forge, read at the call, says its request merged (030 rule 5). A close is told to the agent, which fails the task.
 
@@ -308,9 +308,10 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `defaults.rs::tests::the_pr_babysit_skill_replies_only_to_requested_changes`.
 - `session ls` titles a request session with its title and URL:
   `session.rs::tests::a_pull_request_session_shows_the_request_title_and_url`.
-- `ariadne attention` lists a request ready to merge by its title:
-  `attention.rs::tests::a_session_is_reported_for_the_reason_the_ui_would_give`,
-  `board.rs::tests::a_pull_request_ready_to_merge_is_listed_by_its_title`.
+- A ready report raises no row of its own on `ariadne attention`: that is
+  the `pull_request` attention producer's own item, confirmed against the
+  forge's evidence, not a bare flag on the session (031):
+  `board.rs::tests::a_pull_request_sessions_own_waiting_user_raises_no_row_of_its_own_on_this_board`.
 - The Pull requests screen row opens its session and shows the unanswered count:
   `pull-requests-page.test.tsx::opens a request's session panel from its row and shows its unanswered comments`.
 - A session event of a request refetches that request:

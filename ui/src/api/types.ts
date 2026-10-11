@@ -44,6 +44,7 @@ export type SwitchSessionRequest = Schemas["SwitchSessionRequest"]
 
 export type AttentionListDto = Schemas["AttentionListDto"]
 export type AttentionItemDto = Schemas["AttentionItemDto"]
+export type AttentionCause = Schemas["AttentionCause"]
 
 /**
  * What one agent spent — the same three counters wherever they are read: a

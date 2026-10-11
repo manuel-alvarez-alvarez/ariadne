@@ -568,6 +568,7 @@ mod tests {
             reviewer_given_up_at: None,
             reviewer_given_up_wedged: false,
             ready_confirmed_at: None,
+            ready_head_sha: None,
         };
         for template in [pull_request_briefing_prompt(), pull_request_news_prompt()] {
             let mut rest = template;

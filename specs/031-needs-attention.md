@@ -19,6 +19,7 @@ tests:
   - crates/ariadne-daemon/src/scheduler/goals.rs
   - crates/ariadne-daemon/src/scheduler/pull_requests.rs
   - crates/ariadne-daemon/src/scheduler/quiet.rs
+  - crates/ariadne-daemon/src/scheduler/tasks.rs
   - crates/ariadne-daemon/src/forge/mod.rs
   - crates/ariadne-daemon/src/forge/poll.rs
   - crates/ariadne-daemon/src/forge/github/pulls.rs
@@ -473,16 +474,28 @@ its eligibility rules.
     anything about readiness changed, the same trap rule 4's own `since`
     values avoid for a task's `failed` transition.
 14. `mergeable` is read off the forge's own mergeability for the head,
-    never derived from `checks` or `review_decision`: GitHub's
-    `mergeStateStatus` (`CLEAN` is `clean`; `UNKNOWN` is `unknown`; every
-    other named state — `BEHIND`, `BLOCKED`, `DIRTY`, `DRAFT`,
-    `HAS_HOOKS`, `UNSTABLE` — is `blocked`, since each blocks a merge
-    right now for its own reason) and GitLab's `detailed_merge_status`
-    (`mergeable` is `clean`; `unchecked`, `checking`, `preparing` and
-    `ci_still_running` are `unknown`, the forge still computing it; every
-    other named status is `blocked`). `unknown` is never read as `clean`:
-    a readiness item answers for a confirmed mergeability, not an
-    unevaluated one.
+    never derived from `checks` or `review_decision`, and read by each
+    state's own documented meaning rather than guessed from its name:
+    GitHub's `mergeStateStatus`
+    (https://docs.github.com/en/graphql/reference/enums#mergestatestatus)
+    answers `clean` for `CLEAN` and, by that same documentation, for
+    `HAS_HOOKS` ("mergeable with passing commit status and pre-receive
+    hooks") and `UNSTABLE` ("mergeable with non-passing commit status") —
+    `checks` is this producer's own gate on commit status passing, so
+    reading `UNSTABLE` as `clean` here never lets a non-passing check
+    through on its own; `UNKNOWN`, or no field at all, is `unknown`; every
+    other named state — `BEHIND`, `BLOCKED`, `DIRTY`, `DRAFT` — is
+    `blocked`, each for its own reason. GitLab's `detailed_merge_status`
+    answers `clean` for `mergeable`; `unknown` for `unchecked`, `checking`,
+    `preparing`, `ci_still_running`, or no field at all — the forge still
+    computing it, or simply not telling us, never a guessed `clean`; every
+    other named status is `blocked`. `unknown` is never read as `clean`: a
+    readiness item answers for a confirmed mergeability, not an
+    unevaluated one
+    (`forge/github/pulls.rs::tests::mergeable_reads_every_merge_state_status_by_its_documented_meaning`,
+    `::a_read_naming_no_merge_state_status_is_unknown`,
+    `forge/gitlab/pulls.rs::tests::mergeable_reads_every_detailed_merge_status_by_its_documented_meaning`,
+    `::a_read_naming_no_detailed_merge_status_is_unknown`).
 
 ## Acceptance criteria
 
@@ -708,24 +721,65 @@ its eligibility rules.
   user's own
   (`pull_request_reviews.rs::asking_needs_a_model_and_takes_an_unpinned_review_request`,
   `pull-request-panel.test.tsx::offers a manual Start review on a request that asks for my review when the repository pins none`).
+  The manual ask itself survives a scheduler pass that runs before the
+  next forge fetch could ever confirm the request still asks: the live
+  cache's own `review_requested` is written `true` by the ask route
+  itself for exactly this row, not merely held over from an earlier
+  fetch, so `scheduler::pull_requests::end_review` never reads the
+  request as having stopped asking and deletes it out from under the
+  reviewer session the same call just started
+  (`pull_request_reviews.rs::asking_needs_a_model_and_takes_an_unpinned_review_request`).
 - A babysat request's readiness item answers only once approval, no open
-  comment, green checks and confirmed mergeability all hold for the
-  current head; any one short of that — pending checks, an open comment,
-  or mergeability the forge has not confirmed — withholds it even where
-  the task's own `ready` claims it, and a request no task keeps raises
-  nothing whatever its `ready` says
+  comment, every review thread actually resolved (not merely answered),
+  green checks, confirmed mergeability, fresh comment evidence and a
+  claim current for the request's own head all hold together; any one
+  short of that — pending checks, an open or merely-answered-but-
+  unresolved comment, mergeability the forge has not confirmed, stale
+  comment evidence a failed detail refresh left standing, a disabled
+  integration, or a claim a later push has already passed — withholds it
+  even where the task's own `ready` claims it, and a request no task
+  keeps raises nothing whatever its `ready` says
   (`attention.rs::a_ready_request_the_forges_own_evidence_backs_up_raises_a_readiness_item`,
+  `::a_ready_claim_with_resolved_comments_but_no_approval_raises_no_readiness_item`,
   `::a_ready_claim_with_pending_checks_raises_no_readiness_item`,
   `::a_ready_claim_with_an_open_review_comment_raises_no_readiness_item`,
+  `::a_ready_claim_with_an_answered_but_unresolved_review_thread_raises_no_readiness_item`,
+  `::a_ready_claim_with_a_resolved_review_thread_raises_a_readiness_item`,
   `::a_ready_claim_with_unconfirmed_mergeability_raises_no_readiness_item`,
+  `::a_ready_claim_on_a_disabled_integration_raises_no_readiness_item`,
+  `::a_push_past_the_ready_head_withdraws_the_item_until_reconfirmed`,
+  `::stale_comment_evidence_raises_no_readiness_item`,
   `::a_ready_claim_on_a_request_no_task_keeps_raises_no_readiness_item`).
+  Only the babysitting task's own column agent may report a task-kept
+  request ready: a reviewer session that also answers for the same row —
+  an Ariadne self-review asked on a request a task also keeps — gets 403
+  on `ready`, though its own `reviewed_sha` still goes through
+  (`kept_requests.rs::the_pr_agent_replies_and_reports_and_no_other_session_may`).
 - Neither a posted review nor a ready report raises `waiting_user` on the
   session any more, so neither shows a row, a toast or a badge increment
-  of its own on either client
+  of its own on either client, even once the agent that carried the flag
+  is relaunched
   (`pull_request_reviews.rs::a_reviewed_sha_is_stored_and_raises_no_waiting_user`,
   `kept_requests.rs::the_pr_agent_replies_and_reports_and_no_other_session_may`,
   `workflow_pull_request.rs::the_pr_column_opens_the_request_once_and_keeps_it`,
-  `attention/board.rs::a_pull_request_sessions_own_waiting_user_raises_no_row_of_its_own_on_this_board`).
+  `attention/board.rs::a_pull_request_sessions_own_waiting_user_raises_no_row_of_its_own_on_this_board`,
+  `scheduler_attention.rs::a_pr_agent_whose_open_request_reads_ready_raises_no_waiting_user_on_its_restart`).
+- A mergeability-only transition still publishes `pull_requests_changed`,
+  both directions, and an unchanged fetch after it still raises nothing:
+  (`pull_requests.rs::a_mergeability_only_transition_publishes_pull_requests_changed`).
+- A `pull_request` producer item renders through the shared recovery
+  rendering extension point, not the task or session fallback: a toast
+  titles an unassigned review request "Review needed" and a readiness
+  item "Ready to merge", naming the request, its repository and its
+  required action; a session with no producer item behind it — a
+  completed automated review's own bare `waiting_user` chief among them —
+  raises neither a notification nor a badge; and repeated reads of the
+  same item raise one toast, a withdrawal raises none, and a later,
+  different readiness transition on the same request raises its own
+  (`attention-alerts.test.tsx::raises a toast titled for an unassigned review request, naming the request and its action`,
+  `::titles a readiness item as ready to merge`,
+  `::raises no notification or badge for a session with no recovery item behind it`,
+  `::raises one toast per readiness transition, none for a repeat, and none for a withdrawal`).
 
 ## Known gap
 

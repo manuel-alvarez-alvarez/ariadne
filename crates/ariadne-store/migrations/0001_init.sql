@@ -330,6 +330,13 @@ CREATE TABLE pull_requests (
     -- distinct from `updated_at`, which every fetch moves regardless of
     -- `ready`. Cleared the moment `ready` moves back to false.
     ready_confirmed_at    TEXT,
+    -- The head the babysitting task reported `ready` on, stamped beside
+    -- `ready_confirmed_at`: the head `pull_requests`'s own live read
+    -- carried at that exact report, read fresh every time rather than
+    -- latched once. A later commit moves the live head past this one, and
+    -- the readiness item reads that mismatch as the claim's own revision
+    -- gone stale, whatever the forge's own approval or checks still say.
+    ready_head_sha        TEXT,
     UNIQUE (repository_id, number)
 );
 

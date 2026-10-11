@@ -71,6 +71,7 @@ async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullReques
         .live
         .get(&row.id)
         .map_or(row.role == "reviewer", |l| l.review_requested);
+    let head_sha = details.pull.head_sha.clone();
     state.launcher.live.set(
         &row.id,
         Live {
@@ -80,6 +81,7 @@ async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullReques
                 comments: details.comments,
                 failed_checks: details.failed_checks,
                 behind_base: details.behind_base,
+                head_sha,
             }),
         },
     );
@@ -566,9 +568,33 @@ pub(super) async fn report(
     Json(req): Json<ReportPullRequestRequest>,
 ) -> ApiResult<Json<PullRequestDto>> {
     let mut row = state.store.get_pull_request(&id).await?;
-    own_session(&state, &headers, &row).await?;
+    let session = own_session(&state, &headers, &row).await?;
     if let Some(ready) = req.ready {
-        let (next, _moved) = state.store.set_pull_request_ready(&row.id, ready).await?;
+        // `ready` is the babysitting task's own claim (031): a row it
+        // keeps answers through its own column agent alone
+        // (`Seat::Agent`), never through a reviewer session that also
+        // happens to answer for the same row — a request of mine a task
+        // keeps can also carry an Ariadne self-review asked on it, and
+        // that reviewer seat's own claim must never pass as the
+        // babysitter's.
+        if row.origin_task_id.is_some() && session.seat() != Some(ariadne_core::Seat::Agent) {
+            return Err(ApiError::forbidden(
+                "only the task that keeps this request may report it ready",
+            ));
+        }
+        // The head this report answers for is the live read's own, at the
+        // moment of the report: a readiness item answers for exactly this
+        // revision (031), never for whichever one a later fetch happens to
+        // find.
+        let head_sha = state
+            .launcher
+            .live
+            .get(&row.id)
+            .map(|live| live.pull.head_sha);
+        let (next, _moved) = state
+            .store
+            .set_pull_request_ready(&row.id, ready, head_sha.as_deref())
+            .await?;
         row = next;
     }
     // A review posted on a new head is kept for the record (029); the
@@ -963,7 +989,20 @@ pub(super) async fn ask_review(
             pin.as_ref().map(|(pin, skills)| (pin, skills.as_slice())),
         )
         .await?;
-    state.launcher.live.set_pull(&row.id, pull.clone(), false);
+    // A request of mine never asks for my own review, so `false` names it
+    // correctly; a request that asks for mine is exactly this call's own
+    // premise (rule 10: asking it takes the same ask a request of mine
+    // does) — reading it any other way here would read as "no longer
+    // asks" the moment this write lands, through either a stale `false`
+    // this row never actually held or one a row fresh off this very call
+    // never got the chance to hold yet. `review_pass` would then read
+    // `wants_session` false and `end_review` would delete the row as
+    // `done`, before the next fetch could correct it.
+    let review_requested = role == "reviewer";
+    state
+        .launcher
+        .live
+        .set_pull(&row.id, pull.clone(), review_requested);
     // The session is the scheduler's to start, and the details its news is
     // read from the fetch's.
     state.forge_poll.wake(&row.repository_id);

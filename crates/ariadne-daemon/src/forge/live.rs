@@ -41,6 +41,15 @@ pub struct Details {
     pub comments: Vec<NewPullRequestComment>,
     pub failed_checks: Vec<FailedCheck>,
     pub behind_base: bool,
+    /// The head this detail read was taken at: a failed detail fetch
+    /// leaves the last successful one standing (`set_pull`) rather than
+    /// losing it, which can leave it behind a `pull.head_sha` a later,
+    /// successful list read already moved on. Comparing the two is how a
+    /// reader tells a comment list that is current for this head from one
+    /// that is merely the last one read, which the `pull_request`
+    /// attention producer must never read as "no open comment" for a head
+    /// it was never actually read on.
+    pub head_sha: String,
 }
 
 /// The last read of every request Ariadne works on, by row id.

@@ -35,7 +35,13 @@ import { STALLED_META, TASK_STATUS_META } from "@/features/tasks"
 import { plural } from "@/lib/format"
 import { paths } from "@/routes/paths"
 
-import { type AttentionItem, attentionSubject, attentionTarget, useAttention } from "./attention"
+import {
+  type AttentionItem,
+  attentionSubject,
+  attentionTarget,
+  recoveryHeadline,
+  useAttention,
+} from "./attention"
 
 /**
  * The title of a window with nothing waiting in it — the one `index.html`
@@ -165,6 +171,7 @@ function alertKey(item: AttentionItem): string {
 
 /** What the toast leads with: the reason, in the words the badges use. */
 function headline(item: AttentionItem): string {
+  if (item.recovery) return recoveryHeadline(item.recovery)
   if (item.sessionReason) return SESSION_ATTENTION_META[item.sessionReason].label
   if (item.taskReason === "stalled") return STALLED_META.label
   return TASK_STATUS_META.failed.label

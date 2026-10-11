@@ -1,7 +1,7 @@
 ---
 id: scheduler-attention-and-watchdogs
 status: current
-updated: 2026-10-10
+updated: 2026-10-11
 areas: [daemon]
 commits: [f68b8ec1, 506e9d76, 7add2a61, a69b953f, 29e6d84e]
 tests:
@@ -280,9 +280,12 @@ the ACP runtime that takes a prompt (021).
   (`::an_agent_that_reported_an_error_is_left_alone`).
 - A wedged agent flagged for the user keeps the flag and is relaunched
   (`::a_wedged_agent_flagged_for_the_user_keeps_the_flag_and_is_relaunched`),
-  and a `pr` agent whose open request reads ready is owed the user again on
-  its restart
-  (`::a_pr_agent_whose_open_request_reads_ready_is_owed_the_user_again_on_its_restart`).
+  and a `pr` agent whose open request reads ready raises no `waiting_user`
+  of its own on its restart: that bare flag says nothing of a current
+  approval, an open comment, a failing check or an unconfirmed
+  mergeability, so it is the `pull_request` attention producer's own call
+  (031), read fresh off the forge every time
+  (`::a_pr_agent_whose_open_request_reads_ready_raises_no_waiting_user_on_its_restart`).
 - A dead agent is reaped and its session retired
   (`acp_runtime.rs::a_dead_acp_agent_is_reaped_and_its_session_retired`), and
   a starting session is swept only once its grace window has run out

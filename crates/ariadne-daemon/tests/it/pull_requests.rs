@@ -705,3 +705,57 @@ async fn a_fetch_publishes_pull_requests_changed_only_when_the_requests_moved() 
     h.state.forge_poll.wake(&id);
     next_event(&mut events, moved).await;
 }
+
+/// A mergeability-only transition — every other hashed field unchanged —
+/// still publishes `pull_requests_changed`: a client watching only the
+/// hashed fields for news would otherwise miss exactly the change the
+/// `pull_request` attention producer's readiness item depends on (031).
+#[tokio::test]
+async fn a_mergeability_only_transition_publishes_pull_requests_changed() {
+    use crate::common::{QUIET, next_event};
+    use ariadne_api::stream::DomainEvent;
+    use ariadne_daemon::forge::poll::Mode;
+    let mut unknown = github_pull(1, "other");
+    unknown["mergeStateStatus"] = json!("UNKNOWN");
+    let stub = stub_forge_cli(script(vec![unknown.clone()], unknown.clone()));
+    let h = harness().forge_cli(&stub).await;
+    let mut events = h.bus.subscribe();
+    let id = enabled_repository(&h, None).await;
+    let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == id);
+    next_event(&mut events, moved).await;
+    let _ = tokio::time::timeout(QUIET, next_event(&mut events, moved)).await;
+    h.state.forge_poll.set_mode(&id, Mode::WakeOnly);
+    h.state.forge_poll.wake(&id);
+    assert!(
+        tokio::time::timeout(QUIET, next_event(&mut events, moved))
+            .await
+            .is_err(),
+        "the same requests are no news"
+    );
+
+    // Mergeability alone moves, UNKNOWN to CLEAN: every other hashed field
+    // — number, state, draft, title, head, checks, review decision,
+    // updated time — reads exactly as it did.
+    let mut clean = unknown.clone();
+    clean["mergeStateStatus"] = json!("CLEAN");
+    stub.reprogram(script(vec![clean.clone()], clean.clone()));
+    h.state.forge_poll.wake(&id);
+    next_event(&mut events, moved).await;
+    let _ = tokio::time::timeout(QUIET, next_event(&mut events, moved)).await;
+
+    // And the other direction, CLEAN to BLOCKED.
+    let mut blocked = clean.clone();
+    blocked["mergeStateStatus"] = json!("BLOCKED");
+    stub.reprogram(script(vec![blocked.clone()], blocked.clone()));
+    h.state.forge_poll.wake(&id);
+    next_event(&mut events, moved).await;
+
+    // An unchanged fetch after that is no news either.
+    h.state.forge_poll.wake(&id);
+    assert!(
+        tokio::time::timeout(QUIET, next_event(&mut events, moved))
+            .await
+            .is_err(),
+        "the same requests are no news"
+    );
+}

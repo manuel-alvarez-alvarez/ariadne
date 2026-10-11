@@ -46,7 +46,8 @@ pub(crate) async fn items(store: &Store, launcher: &Launcher) -> Result<Vec<Atte
                 }
             }
             "author" if pull.origin_task_id.is_some() => {
-                items.extend(readiness_item(&pull, &repo));
+                let enabled = integration.is_some_and(|i| i.enabled);
+                items.extend(readiness_item(store, launcher, &pull, enabled, &repo).await?);
             }
             _ => {}
         }
@@ -107,31 +108,74 @@ fn review_start_item(
 
 /// A request a babysitting task claims is ready to merge (`ready`), with
 /// the forge's own evidence, for the request's current head, actually
-/// backing that claim up: a current approval (`review_decision`), no open
-/// review comment (`unanswered_comments`), every check green (`checks`)
-/// and the forge's own confirmation the head can be merged now
-/// (`mergeable`). Any one short of this — stale, missing or simply not
-/// there yet — withholds the item rather than claiming readiness on a
-/// guess; since every field is read off the live state of the current
-/// head, a later commit, a reopened comment or a withdrawn approval drops
-/// the item on its own, with no mark of its own to invalidate. Raised only
-/// for a request a task keeps (`origin_task_id`): that is the babysitting
-/// task's own request, and only its claim counts (029, "Only the babysitter
-/// raises readiness attention for a request it manages").
-fn readiness_item(pull: &PullRequest, repo: &str) -> Option<AttentionItemDto> {
-    if !pull.ready
+/// backing that claim up:
+/// - a current approval (`review_decision == "approved"`);
+/// - no comment the login's own side has not answered
+///   (`unanswered_comments == 0`), *and* no comment a review opened that
+///   the forge still shows unresolved — a reply alone answers a thread
+///   (`forge::live::waiting_threads`'s own "answered" reading) without
+///   resolving it, and a resolve is the only mark this item reads as the
+///   thread actually being done with (031, "Require explicit resolution
+///   of every review thread");
+/// - every check green (`checks == "success"`);
+/// - the forge's own confirmation the head can be merged now
+///   (`mergeable == "clean"`);
+/// - the comment evidence itself current for this head
+///   (`Details::head_sha == pull.head_sha`) — a failed detail fetch
+///   leaves an older read standing (`forge::live::LivePulls::set_pull`),
+///   which must never be read as "no open comment" for a head it was
+///   never actually read on;
+/// - the babysitting task's own claim itself current for this head
+///   (`PullRequestRow::ready_head_sha == pull.head_sha`) — a push the
+///   claim predates must drop it, whatever the forge's own approval or
+///   checks still say about the new head;
+/// - the repository's forge integration still enabled — a disabled one's
+///   cached evidence is nobody's business (recovery's own rule 4
+///   `configuration` note applies the same way here).
+///
+/// Any one short of this — stale, missing or simply not there yet —
+/// withholds the item rather than claiming readiness on a guess. Raised
+/// only for a request a task keeps (`origin_task_id`): that is the
+/// babysitting task's own request, and only its claim counts (029, "Only
+/// the babysitter raises readiness attention for a request it manages") —
+/// `crates/ariadne-daemon/src/http/pull_requests.rs::report` refuses a
+/// `ready` write from any other session a task-kept row also answers to.
+async fn readiness_item(
+    store: &Store,
+    launcher: &Launcher,
+    pull: &PullRequest,
+    integration_enabled: bool,
+    repo: &str,
+) -> Result<Option<AttentionItemDto>> {
+    if !integration_enabled
+        || !pull.ready
         || pull.review_decision != "approved"
         || pull.unanswered_comments != 0
         || pull.checks != "success"
         || pull.mergeable != "clean"
     {
-        return None;
+        return Ok(None);
+    }
+    let details_head_sha = launcher
+        .live
+        .get(&pull.id)
+        .and_then(|live| live.details)
+        .map(|details| details.head_sha);
+    if details_head_sha.as_deref() != Some(pull.head_sha.as_str()) {
+        return Ok(None);
+    }
+    if pull.ready_head_sha.as_deref() != Some(pull.head_sha.as_str()) {
+        return Ok(None);
+    }
+    let comments = live::comments_of(store, &launcher.live, pull).await?;
+    if comments.iter().any(|c| c.from_review && !c.resolved) {
+        return Ok(None);
     }
     let since = pull
         .ready_confirmed_at
         .clone()
         .unwrap_or_else(|| pull.updated_at.clone());
-    Some(AttentionItemDto {
+    Ok(Some(AttentionItemDto {
         id: format!("pull_request:ready:{}", pull.id),
         producer: AttentionProducer::PullRequest,
         reason: AttentionCause::Unknown,
@@ -145,5 +189,5 @@ fn readiness_item(pull: &PullRequest, repo: &str) -> Option<AttentionItemDto> {
         target: AttentionTarget::PullRequest {
             pull_request_id: pull.id.clone(),
         },
-    })
+    }))
 }

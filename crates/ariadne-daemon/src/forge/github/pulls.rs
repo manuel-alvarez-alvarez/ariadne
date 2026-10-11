@@ -114,13 +114,20 @@ impl Pull {
                 _ => "none",
             }
             .into(),
-            // GitHub's own `mergeStateStatus`: `CLEAN` is the only state
-            // that says the head can be merged now; `UNKNOWN` is the forge
-            // still computing it, never read as clean. Every other state
-            // (`BEHIND`, `BLOCKED`, `DIRTY`, `DRAFT`, `HAS_HOOKS`,
-            // `UNSTABLE`) blocks a merge right now, whatever the reason.
+            // GitHub's own `mergeStateStatus`
+            // (https://docs.github.com/en/graphql/reference/enums#mergestatestatus):
+            // `CLEAN` is mergeable outright, and so, by GitHub's own
+            // documented meaning, are `HAS_HOOKS` ("mergeable with passing
+            // commit status and pre-receive hooks") and `UNSTABLE`
+            // ("mergeable with non-passing commit status") — `checks` is
+            // this producer's own gate on commit status passing, so
+            // reading `UNSTABLE` as `clean` here never lets a non-passing
+            // check through on its own. `UNKNOWN` is the forge still
+            // computing it, never read as clean. `BEHIND`, `BLOCKED`,
+            // `DIRTY` and `DRAFT` block a merge right now, each for its
+            // own reason.
             mergeable: match self.merge_state_status.as_deref() {
-                Some("CLEAN") => "clean",
+                Some("CLEAN" | "HAS_HOOKS" | "UNSTABLE") => "clean",
                 Some("UNKNOWN") | None => "unknown",
                 Some(_) => "blocked",
             }
@@ -213,5 +220,83 @@ impl Github {
         serde_json::from_str::<Pull>(&output)
             .map(Pull::normalized)
             .map_err(|e| format!("cannot read GitHub pull request: {e}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Pull;
+    use serde_json::json;
+
+    /// A `gh pr list --json` read, exactly as `FIELDS` names it. `extra`
+    /// overrides or adds fields on top of a minimal, otherwise valid read
+    /// — `mergeStateStatus` above all: GitHub's own documented meaning
+    /// for each of its values
+    /// (https://docs.github.com/en/graphql/reference/enums#mergestatestatus)
+    /// is what `mergeable` must read, not a guess from its name alone —
+    /// `HAS_HOOKS` and `UNSTABLE` are both still mergeable by that
+    /// documented meaning, and must normalize to `clean`, never `blocked`.
+    fn provider_shaped(extra: serde_json::Value) -> Pull {
+        let mut value = json!({
+            "number": 1,
+            "url": "https://github.com/acme/widgets/pull/1",
+            "title": "Fix widgets",
+            "author": {"login": "someone"},
+            "state": "OPEN",
+            "isDraft": false,
+            "headRefName": "fix",
+            "headRefOid": "abc",
+            "headRepository": {"url": "https://github.com/acme/widgets"},
+            "baseRefName": "main",
+            "statusCheckRollup": [],
+            "reviewDecision": "APPROVED",
+            "mergeStateStatus": "CLEAN",
+            "createdAt": "2026-10-01T00:00:00Z",
+        });
+        value
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().cloned().unwrap_or_default());
+        serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn mergeable_reads_every_merge_state_status_by_its_documented_meaning() {
+        for (status, expected) in [
+            ("CLEAN", "clean"),
+            ("HAS_HOOKS", "clean"),
+            ("UNSTABLE", "clean"),
+            ("UNKNOWN", "unknown"),
+            ("BEHIND", "blocked"),
+            ("BLOCKED", "blocked"),
+            ("DIRTY", "blocked"),
+            ("DRAFT", "blocked"),
+        ] {
+            let pull = provider_shaped(json!({"mergeStateStatus": status}));
+            assert_eq!(Pull::normalized(pull).mergeable, expected, "{status}");
+        }
+    }
+
+    /// A read from before this field existed names none at all: unknown
+    /// mergeability stands for it, never a guessed `clean`.
+    #[test]
+    fn a_read_naming_no_merge_state_status_is_unknown() {
+        let value = json!({
+            "number": 1,
+            "url": "https://github.com/acme/widgets/pull/1",
+            "title": "Fix widgets",
+            "author": {"login": "someone"},
+            "state": "OPEN",
+            "isDraft": false,
+            "headRefName": "fix",
+            "headRefOid": "abc",
+            "headRepository": {"url": "https://github.com/acme/widgets"},
+            "baseRefName": "main",
+            "statusCheckRollup": [],
+            "reviewDecision": "APPROVED",
+            "createdAt": "2026-10-01T00:00:00Z",
+        });
+        let pull: Pull = serde_json::from_value(value).unwrap();
+        assert_eq!(Pull::normalized(pull).mergeable, "unknown");
     }
 }

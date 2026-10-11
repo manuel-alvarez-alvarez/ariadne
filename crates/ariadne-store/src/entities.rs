@@ -717,6 +717,10 @@ pub struct PullRequestRow {
     /// Cleared the moment `ready` moves back to false, so a later claim
     /// gets its own, fresh `since` rather than the first one's.
     pub ready_confirmed_at: Option<String>,
+    /// The head the babysitting task reported `ready` on. A later commit
+    /// moves the live head past it, which the `pull_request` attention
+    /// producer reads as the claim's own revision gone stale.
+    pub ready_head_sha: Option<String>,
 }
 
 /// What the forge says of a request, as the last read found it: held in
@@ -804,6 +808,7 @@ pub struct PullRequest {
     pub reviewer_given_up_at: Option<String>,
     pub reviewer_given_up_wedged: bool,
     pub ready_confirmed_at: Option<String>,
+    pub ready_head_sha: Option<String>,
 }
 
 impl PullRequest {
@@ -854,6 +859,7 @@ impl PullRequest {
             reviewer_given_up_at: row.reviewer_given_up_at,
             reviewer_given_up_wedged: row.reviewer_given_up_wedged,
             ready_confirmed_at: row.ready_confirmed_at,
+            ready_head_sha: row.ready_head_sha,
         }
     }
 

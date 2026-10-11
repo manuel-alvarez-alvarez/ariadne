@@ -1266,9 +1266,23 @@ async fn asking_needs_a_model_and_takes_an_unpinned_review_request() {
     let dto: Value = h
         .json(ask(json!({"asked": true, "model": PIN})), StatusCode::OK)
         .await;
+    let id = dto["id"].as_str().unwrap().to_string();
     assert_eq!(dto["role"], "reviewer");
     assert_eq!(dto["review_asked"], true);
     assert_eq!(dto["review_model"], PIN);
+
+    // The scheduler runs well before the next forge refresh could ever
+    // confirm the request still asks for my review: the row must survive
+    // that gap, and a reviewer session must actually start on the pin just
+    // chosen, not be read as a request that stopped asking and deleted
+    // (`scheduler::pull_requests::end_review`) before the fetch ever ran.
+    let session = idle_session(&h, &id).await;
+    assert_eq!(session.model, PIN);
+    assert_eq!(
+        h.store.get_pull_request(&id).await.unwrap().id,
+        id,
+        "the row survives the scheduler pass"
+    );
 
     // The repository then pins one of its own: the row already has a
     // review of its own, and takes no second asking.

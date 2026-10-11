@@ -439,6 +439,64 @@ async fn the_pr_agent_replies_and_reports_and_no_other_session_may() {
         StatusCode::FORBIDDEN,
     )
     .await;
+
+    // An Ariadne self-review of the same request (029) also answers for
+    // it — `own_session` lets it call `/report` at all — but its own
+    // `ready` claim must never pass as the babysitting `pr` agent's
+    // (031): only the task's own column agent reports this row ready.
+    h.store
+        .set_pull_request_review_asked(
+            &id,
+            Some((
+                &ariadne_store::AgentPin {
+                    model: "stub:model".into(),
+                    effort: None,
+                },
+                &[],
+            )),
+        )
+        .await
+        .unwrap();
+    let reviewer = h
+        .store
+        .create_session(ariadne_store::NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: Some(ariadne_core::Seat::Reviewer),
+            task_agent_id: None,
+            model: "stub:model".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: Some(id.clone()),
+        })
+        .await
+        .unwrap();
+    h.error(
+        as_session(
+            &format!("/v1/pull-requests/{id}/report"),
+            &reviewer.id,
+            json!({"ready": true}),
+        ),
+        StatusCode::FORBIDDEN,
+    )
+    .await;
+    assert!(
+        !h.store.get_pull_request(&id).await.unwrap().ready,
+        "the reviewer's claim never lands"
+    );
+    // Its own `reviewed_sha` still goes through: that is legitimately
+    // its own report to make.
+    let dto: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/report"),
+                &reviewer.id,
+                json!({"reviewed_sha": "0".repeat(40)}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(dto["id"], id);
 }
 
 /// A merge done on the forge while the `pr` agent is down ends the task on

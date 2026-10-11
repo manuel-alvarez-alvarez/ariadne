@@ -267,6 +267,7 @@ mod tests {
             reviewer_given_up_at: None,
             reviewer_given_up_wedged: false,
             ready_confirmed_at: None,
+            ready_head_sha: None,
         }
     }
 

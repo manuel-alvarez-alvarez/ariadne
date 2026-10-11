@@ -218,39 +218,111 @@ pub(crate) fn seed_live(
     );
 }
 
-/// A request a babysitting task keeps, with the forge's own evidence of
-/// readiness named explicitly: `checks` and `review_decision` as the live
-/// read answers them, `mergeable` as the forge's own mergeability, and one
-/// open review comment where `has_open_comment` asks for it — the one the
-/// `pull_request` attention producer's readiness item reads against the
-/// babysitting task's own `ready` claim.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn seed_review_evidence(
-    h: &super::Harness,
-    row: &ariadne_store::PullRequestRow,
-    checks: &str,
-    review_decision: &str,
-    mergeable: &str,
-    has_open_comment: bool,
-) {
-    let comments = if has_open_comment {
-        vec![ariadne_store::NewPullRequestComment {
+/// An enabled GitHub integration for `repository_id`, with no review pin:
+/// what a readiness item's own integration-enabled check needs to pass at
+/// all, and what a test proving the disabled case flips off afterwards.
+pub(crate) async fn enable_integration(h: &super::Harness, repository_id: &str, login: &str) {
+    h.store
+        .set_forge_integration(ariadne_store::SetForgeIntegration {
+            repository_id: repository_id.into(),
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some(login.into()),
+            review_model: None,
+            review_effort: None,
+        })
+        .await
+        .unwrap();
+}
+
+/// What `seed_review_evidence` holds for one scripted read: the forge's own
+/// evidence a readiness item reads against the babysitting task's own
+/// `ready` claim, every field named rather than defaulted, so a test states
+/// exactly which piece of evidence it is proving withholds the item.
+pub(crate) struct ReviewEvidence<'a> {
+    pub checks: &'a str,
+    pub review_decision: &'a str,
+    pub mergeable: &'a str,
+    /// The request's own current head.
+    pub head_sha: &'a str,
+    /// The head the comment evidence below was actually read at; `None`
+    /// keeps it the same as `head_sha` (comments current for this head).
+    /// `Some` of a different head simulates a failed detail refresh that
+    /// left an older read's own comments standing while `head_sha` itself
+    /// already moved (`forge::live::LivePulls::set_pull`).
+    pub details_head_sha: Option<&'a str>,
+    pub comments: Vec<ariadne_store::NewPullRequestComment>,
+}
+
+/// A review comment nobody has answered or resolved: `unanswered_comments`
+/// counts it, and so does the stricter resolved-thread check.
+pub(crate) fn open_review_comment() -> ariadne_store::NewPullRequestComment {
+    ariadne_store::NewPullRequestComment {
+        forge_id: "rc-1".into(),
+        thread_id: "T1".into(),
+        kind: "review_comment".into(),
+        author_login: "someone".into(),
+        author_is_bot: false,
+        body: "What about this case?".into(),
+        path: Some("src/lib.rs".into()),
+        line: Some(1),
+        in_reply_to: None,
+        created_at: "2026-10-01T00:00:00Z".into(),
+        resolved: false,
+        from_review: false,
+    }
+}
+
+/// A review's own finding (`from_review: true`), replied to by the
+/// integration login — which `waiting_threads` reads as "answered",
+/// zeroing `unanswered_comments` — but never marked resolved on the forge:
+/// the trap `forge/live.rs::waiting_threads` leaves standing, which
+/// readiness must read through to the thread's own `resolved` flag
+/// instead.
+pub(crate) fn answered_but_unresolved_review_comment(
+    login: &str,
+) -> Vec<ariadne_store::NewPullRequestComment> {
+    vec![
+        ariadne_store::NewPullRequestComment {
             forge_id: "rc-1".into(),
             thread_id: "T1".into(),
             kind: "review_comment".into(),
-            author_login: "someone".into(),
+            author_login: login.into(),
             author_is_bot: false,
-            body: "What about this case?".into(),
+            body: "[P1] Missing a test".into(),
             path: Some("src/lib.rs".into()),
             line: Some(1),
             in_reply_to: None,
             created_at: "2026-10-01T00:00:00Z".into(),
             resolved: false,
+            from_review: true,
+        },
+        ariadne_store::NewPullRequestComment {
+            forge_id: "rc-2".into(),
+            thread_id: "T1".into(),
+            kind: "review_comment".into(),
+            author_login: login.into(),
+            author_is_bot: false,
+            body: "Added it.".into(),
+            path: Some("src/lib.rs".into()),
+            line: Some(1),
+            in_reply_to: Some("rc-1".into()),
+            created_at: "2026-10-02T00:00:00Z".into(),
+            resolved: false,
             from_review: false,
-        }]
-    } else {
-        Vec::new()
-    };
+        },
+    ]
+}
+
+pub(crate) fn seed_review_evidence(
+    h: &super::Harness,
+    row: &ariadne_store::PullRequestRow,
+    evidence: ReviewEvidence,
+) {
     h.launcher.live.set(
         &row.id,
         ariadne_daemon::forge::live::Live {
@@ -263,19 +335,23 @@ pub(crate) fn seed_review_evidence(
                 state: "open".into(),
                 draft: false,
                 head_branch: "fix".into(),
-                head_sha: "abc".into(),
+                head_sha: evidence.head_sha.into(),
                 head_repo: None,
                 base_branch: "main".into(),
-                checks: checks.into(),
-                review_decision: review_decision.into(),
-                mergeable: mergeable.into(),
+                checks: evidence.checks.into(),
+                review_decision: evidence.review_decision.into(),
+                mergeable: evidence.mergeable.into(),
                 opened_at: "2026-10-01T00:00:00Z".into(),
                 updated_at: "2026-10-01T00:00:00Z".into(),
                 merge_sha: None,
             },
             review_requested: false,
             details: Some(ariadne_daemon::forge::live::Details {
-                comments,
+                comments: evidence.comments,
+                head_sha: evidence
+                    .details_head_sha
+                    .unwrap_or(evidence.head_sha)
+                    .into(),
                 ..Default::default()
             }),
         },

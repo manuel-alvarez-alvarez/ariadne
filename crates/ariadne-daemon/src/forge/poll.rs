@@ -469,6 +469,7 @@ async fn read_row(
     }
     match client.details(slug, row.number, handoff.details).await {
         Ok(details) if details.pull.number == row.number => {
+            let head_sha = details.pull.head_sha.clone();
             handoff.live.set(
                 &row.id,
                 Live {
@@ -478,6 +479,7 @@ async fn read_row(
                         comments: details.comments,
                         failed_checks: details.failed_checks,
                         behind_base: details.behind_base,
+                        head_sha,
                     }),
                 },
             );
@@ -554,6 +556,7 @@ fn pulls_moved(
             &pull.head_sha,
             &pull.checks,
             &pull.review_decision,
+            &pull.mergeable,
             &pull.updated_at,
         )
             .hash(&mut hasher);

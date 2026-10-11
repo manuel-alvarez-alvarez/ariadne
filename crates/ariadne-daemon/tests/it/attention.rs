@@ -1621,6 +1621,7 @@ async fn a_review_request_recovery_has_given_up_on_carries_no_second_item() {
 async fn a_ready_request_the_forges_own_evidence_backs_up_raises_a_readiness_item() {
     let h = harness().await;
     let cast = h.cast().await;
+    crate::common::forge::enable_integration(&h, &cast.repo.id, "ariadne-bot").await;
     let (pull, _) = h
         .store
         .upsert_pull_request(ariadne_store::NewPullRequest {
@@ -1632,9 +1633,20 @@ async fn a_ready_request_the_forges_own_evidence_backs_up_raises_a_readiness_ite
         })
         .await
         .unwrap();
-    crate::common::forge::seed_review_evidence(&h, &pull, "success", "approved", "clean", false);
+    crate::common::forge::seed_review_evidence(
+        &h,
+        &pull,
+        crate::common::forge::ReviewEvidence {
+            checks: "success",
+            review_decision: "approved",
+            mergeable: "clean",
+            head_sha: "abc",
+            details_head_sha: None,
+            comments: Vec::new(),
+        },
+    );
     h.store
-        .set_pull_request_ready(&pull.id, true)
+        .set_pull_request_ready(&pull.id, true, Some("abc"))
         .await
         .unwrap();
 
@@ -1650,14 +1662,15 @@ async fn a_ready_request_the_forges_own_evidence_backs_up_raises_a_readiness_ite
     );
 }
 
-/// The same request, approved and clear of open comments, but whose
-/// checks have not gone green yet, raises nothing: missing or stale
-/// evidence withholds a readiness claim rather than trusting the
-/// babysitting task's own `ready` report alone.
+/// The same request, with every review thread resolved and no open
+/// comment, but no current approval, raises nothing either: both
+/// conditions — a current approval and resolved comments — must hold
+/// together for the current revision, neither standing in for the other.
 #[tokio::test]
-async fn a_ready_claim_with_pending_checks_raises_no_readiness_item() {
+async fn a_ready_claim_with_resolved_comments_but_no_approval_raises_no_readiness_item() {
     let h = harness().await;
     let cast = h.cast().await;
+    crate::common::forge::enable_integration(&h, &cast.repo.id, "ariadne-bot").await;
     let (pull, _) = h
         .store
         .upsert_pull_request(ariadne_store::NewPullRequest {
@@ -1669,9 +1682,61 @@ async fn a_ready_claim_with_pending_checks_raises_no_readiness_item() {
         })
         .await
         .unwrap();
-    crate::common::forge::seed_review_evidence(&h, &pull, "pending", "approved", "clean", false);
+    crate::common::forge::seed_review_evidence(
+        &h,
+        &pull,
+        crate::common::forge::ReviewEvidence {
+            checks: "success",
+            review_decision: "review_required",
+            mergeable: "clean",
+            head_sha: "abc",
+            details_head_sha: None,
+            comments: Vec::new(),
+        },
+    );
     h.store
-        .set_pull_request_ready(&pull.id, true)
+        .set_pull_request_ready(&pull.id, true, Some("abc"))
+        .await
+        .unwrap();
+
+    let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(list.items, Vec::new(), "{:?}", list.items);
+}
+
+/// The same request, approved and clear of open comments, but whose
+/// checks have not gone green yet, raises nothing: missing or stale
+/// evidence withholds a readiness claim rather than trusting the
+/// babysitting task's own `ready` report alone.
+#[tokio::test]
+async fn a_ready_claim_with_pending_checks_raises_no_readiness_item() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    crate::common::forge::enable_integration(&h, &cast.repo.id, "ariadne-bot").await;
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: cast.repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "author".into(),
+            origin_task_id: Some(cast.task.id.clone()),
+        })
+        .await
+        .unwrap();
+    crate::common::forge::seed_review_evidence(
+        &h,
+        &pull,
+        crate::common::forge::ReviewEvidence {
+            checks: "pending",
+            review_decision: "approved",
+            mergeable: "clean",
+            head_sha: "abc",
+            details_head_sha: None,
+            comments: Vec::new(),
+        },
+    );
+    h.store
+        .set_pull_request_ready(&pull.id, true, Some("abc"))
         .await
         .unwrap();
 
@@ -1686,6 +1751,7 @@ async fn a_ready_claim_with_pending_checks_raises_no_readiness_item() {
 async fn a_ready_claim_with_an_open_review_comment_raises_no_readiness_item() {
     let h = harness().await;
     let cast = h.cast().await;
+    crate::common::forge::enable_integration(&h, &cast.repo.id, "ariadne-bot").await;
     let (pull, _) = h
         .store
         .upsert_pull_request(ariadne_store::NewPullRequest {
@@ -1697,14 +1763,119 @@ async fn a_ready_claim_with_an_open_review_comment_raises_no_readiness_item() {
         })
         .await
         .unwrap();
-    crate::common::forge::seed_review_evidence(&h, &pull, "success", "approved", "clean", true);
+    crate::common::forge::seed_review_evidence(
+        &h,
+        &pull,
+        crate::common::forge::ReviewEvidence {
+            checks: "success",
+            review_decision: "approved",
+            mergeable: "clean",
+            head_sha: "abc",
+            details_head_sha: None,
+            comments: vec![crate::common::forge::open_review_comment()],
+        },
+    );
     h.store
-        .set_pull_request_ready(&pull.id, true)
+        .set_pull_request_ready(&pull.id, true, Some("abc"))
         .await
         .unwrap();
 
     let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
     assert_eq!(list.items, Vec::new(), "{:?}", list.items);
+}
+
+/// A review's own finding, replied to by the integration login but never
+/// marked resolved on the forge, raises nothing either: a reply answers
+/// the thread for feedback-routing purposes (`unanswered_comments`), but
+/// that is not the same as the thread actually being resolved, and a
+/// readiness item must require the latter explicitly (031, "Require
+/// explicit resolution of every review thread").
+#[tokio::test]
+async fn a_ready_claim_with_an_answered_but_unresolved_review_thread_raises_no_readiness_item() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    crate::common::forge::enable_integration(&h, &cast.repo.id, "ariadne-bot").await;
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: cast.repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "author".into(),
+            origin_task_id: Some(cast.task.id.clone()),
+        })
+        .await
+        .unwrap();
+    crate::common::forge::seed_review_evidence(
+        &h,
+        &pull,
+        crate::common::forge::ReviewEvidence {
+            checks: "success",
+            review_decision: "approved",
+            mergeable: "clean",
+            head_sha: "abc",
+            details_head_sha: None,
+            comments: crate::common::forge::answered_but_unresolved_review_comment("ariadne-bot"),
+        },
+    );
+    h.store
+        .set_pull_request_ready(&pull.id, true, Some("abc"))
+        .await
+        .unwrap();
+
+    let live = ariadne_daemon::forge::live::of_row(&h.store, &h.launcher.live, pull.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        live.unanswered_comments, 0,
+        "the reply already answers it for feedback-routing purposes"
+    );
+    let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(list.items, Vec::new(), "{:?}", list.items);
+}
+
+/// A resolved review thread, by contrast, raises the item once every other
+/// condition holds: resolution, not a reply, is what this item reads.
+#[tokio::test]
+async fn a_ready_claim_with_a_resolved_review_thread_raises_a_readiness_item() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    crate::common::forge::enable_integration(&h, &cast.repo.id, "ariadne-bot").await;
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: cast.repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "author".into(),
+            origin_task_id: Some(cast.task.id.clone()),
+        })
+        .await
+        .unwrap();
+    let mut comments = crate::common::forge::answered_but_unresolved_review_comment("ariadne-bot");
+    for comment in &mut comments {
+        comment.resolved = true;
+    }
+    crate::common::forge::seed_review_evidence(
+        &h,
+        &pull,
+        crate::common::forge::ReviewEvidence {
+            checks: "success",
+            review_decision: "approved",
+            mergeable: "clean",
+            head_sha: "abc",
+            details_head_sha: None,
+            comments,
+        },
+    );
+    h.store
+        .set_pull_request_ready(&pull.id, true, Some("abc"))
+        .await
+        .unwrap();
+
+    let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(list.items.len(), 1, "{:?}", list.items);
 }
 
 /// Approved, no open comment and checks green, but the forge has not
@@ -1714,6 +1885,7 @@ async fn a_ready_claim_with_an_open_review_comment_raises_no_readiness_item() {
 async fn a_ready_claim_with_unconfirmed_mergeability_raises_no_readiness_item() {
     let h = harness().await;
     let cast = h.cast().await;
+    crate::common::forge::enable_integration(&h, &cast.repo.id, "ariadne-bot").await;
     let (pull, _) = h
         .store
         .upsert_pull_request(ariadne_store::NewPullRequest {
@@ -1725,9 +1897,195 @@ async fn a_ready_claim_with_unconfirmed_mergeability_raises_no_readiness_item() 
         })
         .await
         .unwrap();
-    crate::common::forge::seed_review_evidence(&h, &pull, "success", "approved", "unknown", false);
+    crate::common::forge::seed_review_evidence(
+        &h,
+        &pull,
+        crate::common::forge::ReviewEvidence {
+            checks: "success",
+            review_decision: "approved",
+            mergeable: "unknown",
+            head_sha: "abc",
+            details_head_sha: None,
+            comments: Vec::new(),
+        },
+    );
     h.store
-        .set_pull_request_ready(&pull.id, true)
+        .set_pull_request_ready(&pull.id, true, Some("abc"))
+        .await
+        .unwrap();
+
+    let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(list.items, Vec::new(), "{:?}", list.items);
+}
+
+/// A disabled forge integration's cached evidence is nobody's business
+/// (031, the same rule a `configuration` recovery item's own fetch-error
+/// read already follows): a readiness item raises nothing for a row whose
+/// integration was switched off, even where the evidence it cached while
+/// still enabled would otherwise raise one.
+#[tokio::test]
+async fn a_ready_claim_on_a_disabled_integration_raises_no_readiness_item() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    crate::common::forge::enable_integration(&h, &cast.repo.id, "ariadne-bot").await;
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: cast.repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "author".into(),
+            origin_task_id: Some(cast.task.id.clone()),
+        })
+        .await
+        .unwrap();
+    crate::common::forge::seed_review_evidence(
+        &h,
+        &pull,
+        crate::common::forge::ReviewEvidence {
+            checks: "success",
+            review_decision: "approved",
+            mergeable: "clean",
+            head_sha: "abc",
+            details_head_sha: None,
+            comments: Vec::new(),
+        },
+    );
+    h.store
+        .set_pull_request_ready(&pull.id, true, Some("abc"))
+        .await
+        .unwrap();
+    h.store
+        .set_forge_integration(ariadne_store::SetForgeIntegration {
+            repository_id: cast.repo.id.clone(),
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: false,
+            login: Some("ariadne-bot".into()),
+            review_model: None,
+            review_effort: None,
+        })
+        .await
+        .unwrap();
+
+    let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(list.items, Vec::new(), "{:?}", list.items);
+}
+
+/// A push past the head the babysitting task last reported ready on
+/// withdraws the item even where the forge's own approval and checks
+/// still read exactly as they did before the push: a provider that keeps
+/// an aggregate approval across pushes (an approval-reset setting left
+/// off) must never let an old claim stand in for the new revision's own
+/// (031). The item returns only once the babysitting task reports ready
+/// again, on the new head.
+#[tokio::test]
+async fn a_push_past_the_ready_head_withdraws_the_item_until_reconfirmed() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    crate::common::forge::enable_integration(&h, &cast.repo.id, "ariadne-bot").await;
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: cast.repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "author".into(),
+            origin_task_id: Some(cast.task.id.clone()),
+        })
+        .await
+        .unwrap();
+    crate::common::forge::seed_review_evidence(
+        &h,
+        &pull,
+        crate::common::forge::ReviewEvidence {
+            checks: "success",
+            review_decision: "approved",
+            mergeable: "clean",
+            head_sha: "abc",
+            details_head_sha: None,
+            comments: Vec::new(),
+        },
+    );
+    h.store
+        .set_pull_request_ready(&pull.id, true, Some("abc"))
+        .await
+        .unwrap();
+    let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(list.items.len(), 1, "{:?}", list.items);
+
+    // A push lands; the provider's own approval and checks still read
+    // exactly as before (an approval-reset setting left off), but the
+    // claim itself now predates the head.
+    crate::common::forge::seed_review_evidence(
+        &h,
+        &pull,
+        crate::common::forge::ReviewEvidence {
+            checks: "success",
+            review_decision: "approved",
+            mergeable: "clean",
+            head_sha: "def",
+            details_head_sha: None,
+            comments: Vec::new(),
+        },
+    );
+    let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(
+        list.items,
+        Vec::new(),
+        "the claim predates the new head: {:?}",
+        list.items
+    );
+
+    // The babysitting task reports ready again, on the new head.
+    h.store
+        .set_pull_request_ready(&pull.id, true, Some("def"))
+        .await
+        .unwrap();
+    let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(list.items.len(), 1, "{:?}", list.items);
+}
+
+/// A failed detail refresh leaves an older comment read standing even
+/// once a successful list read has already moved `head_sha` on
+/// (`forge::live::LivePulls::set_pull`): the readiness item must read
+/// that mismatch as its own comment evidence gone stale, never as "no
+/// open comment" for a head it was never actually read on.
+#[tokio::test]
+async fn stale_comment_evidence_raises_no_readiness_item() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    crate::common::forge::enable_integration(&h, &cast.repo.id, "ariadne-bot").await;
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: cast.repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "author".into(),
+            origin_task_id: Some(cast.task.id.clone()),
+        })
+        .await
+        .unwrap();
+    crate::common::forge::seed_review_evidence(
+        &h,
+        &pull,
+        crate::common::forge::ReviewEvidence {
+            checks: "success",
+            review_decision: "approved",
+            mergeable: "clean",
+            head_sha: "def",
+            // The comment evidence is still the old head's own: a detail
+            // fetch for `def` never actually succeeded.
+            details_head_sha: Some("abc"),
+            comments: Vec::new(),
+        },
+    );
+    h.store
+        .set_pull_request_ready(&pull.id, true, Some("def"))
         .await
         .unwrap();
 
@@ -1744,6 +2102,7 @@ async fn a_ready_claim_with_unconfirmed_mergeability_raises_no_readiness_item() 
 async fn a_ready_claim_on_a_request_no_task_keeps_raises_no_readiness_item() {
     let h = harness().await;
     let repo = h.repository(&h.at("widgets")).await;
+    crate::common::forge::enable_integration(&h, &repo.id, "ariadne-bot").await;
     let (pull, _) = h
         .store
         .upsert_pull_request(ariadne_store::NewPullRequest {
@@ -1755,9 +2114,20 @@ async fn a_ready_claim_on_a_request_no_task_keeps_raises_no_readiness_item() {
         })
         .await
         .unwrap();
-    crate::common::forge::seed_review_evidence(&h, &pull, "success", "approved", "clean", false);
+    crate::common::forge::seed_review_evidence(
+        &h,
+        &pull,
+        crate::common::forge::ReviewEvidence {
+            checks: "success",
+            review_decision: "approved",
+            mergeable: "clean",
+            head_sha: "abc",
+            details_head_sha: None,
+            comments: Vec::new(),
+        },
+    );
     h.store
-        .set_pull_request_ready(&pull.id, true)
+        .set_pull_request_ready(&pull.id, true, Some("abc"))
         .await
         .unwrap();
 
