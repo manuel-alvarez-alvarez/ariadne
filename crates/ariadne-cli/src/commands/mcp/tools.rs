@@ -686,7 +686,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Open the pull or merge request your task lands by. Ariadne runs the forge CLI and answers the URL. A second call on the same task answers that URL again and opens nothing."
+        description = "Open the pull or merge request your task lands by. Ariadne runs the forge CLI and answers the URL. A second call on the same task answers that URL again and opens nothing. Write no trailer in the body."
     )]
     async fn open_pull_request(
         &self,
@@ -781,7 +781,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Reply once to one comment of your pull request. Ariadne posts the reply on the forge."
+        description = "Reply once to one comment of your pull request. Ariadne posts the reply on the forge. Write no trailer in it."
     )]
     async fn reply_comment(
         &self,
@@ -853,7 +853,7 @@ impl AriadneMcp {
     // ---- pull request reviewer ----
 
     #[tool(
-        description = "Post one round of your review in the name of the user. Give each new finding its file, line and priority. The body replaces the text of your one summary comment. Set `event` to `request_changes` while a P0 is open, else to `comment`."
+        description = "Post one round of your review in the name of the user. Give each new finding its file, line and priority. The body replaces the text of your one summary comment. Set `event` to `request_changes` while a P0 is open, else to `comment`. Write no trailer."
     )]
     async fn submit_review(
         &self,

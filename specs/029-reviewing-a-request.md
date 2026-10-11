@@ -244,8 +244,10 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     otherwise. P0 breaks behavior, data or security and must change before
     the request lands; P1 is a defect or a missing proof that will bite; P2
     is worth fixing. It writes the review body as the whole summary of the
-    review as it stands, in three parts, with no file, no line and nothing
-    of what it did:
+    review as it stands, in four parts, with no file, no line, no trailer
+    and nothing of what it did:
+    - a title, "## Review summary: all changes from `<base>` to `<head>`",
+      naming the request's own base and head branches;
     - a header, one line per commit the round reviewed, each a short sha
       and its subject, read with `git log <base>..HEAD` in the worktree on
       the first round, or `git log <reviewed_sha>..HEAD` later, and the
@@ -256,7 +258,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     - a recommendation of one line: "Request changes" and the blocking P0
       findings while one is open; "Changes recommended" and what to fix
       before it lands while a P1 or P2 is open and no P0 is; else "No
-      findings: ready for a human to approve".
+      findings: this PR is ready to be merged."
     Each new finding is one inline comment with a title, the failure and a
     fix. On a later round it posts nothing more in a thread nobody answered
     since its last entry: it waits for the answer. A thread a commit fixed
