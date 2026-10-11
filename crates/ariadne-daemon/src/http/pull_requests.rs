@@ -83,6 +83,7 @@ async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullReques
                 behind_base: details.behind_base,
                 head_sha,
             }),
+            evidence_ok: true,
         },
     );
     live::of_row(&state.store, &state.launcher.live, row)
@@ -157,11 +158,14 @@ pub(super) async fn list(
                 // Ariadne works on it: the list's read beside the details the
                 // last detail read found.
                 Some(row) => {
-                    let details = state.launcher.live.get(&row.id).and_then(|l| l.details);
+                    let cached = state.launcher.live.get(&row.id);
+                    let details = cached.as_ref().and_then(|l| l.details.clone());
+                    let evidence_ok = cached.is_none_or(|l| l.evidence_ok);
                     let read = Live {
                         pull,
                         review_requested: asks,
                         details,
+                        evidence_ok,
                     };
                     let marks = state.store.pull_request_comment_marks(&row.id).await?;
                     let view = live::view(row, &read, &marks, &login);
@@ -550,13 +554,15 @@ pub(super) async fn resolve(
 }
 
 /// What the request's session says of it: `ready` once the babysitting task
-/// believes every required approval and check reads green, and the head a
-/// review session posted its review on. Neither raises `waiting_user` on
-/// the session by itself (029): the claim alone is not confirmed evidence,
-/// and a pr-reviewer session finishing its own review must notify nobody —
-/// the `pull_request` attention producer reads the forge's own evidence
-/// against this claim and raises its own item once it actually backs the
-/// claim up.
+/// believes every required approval and check reads green, on the head
+/// (`head_sha`, required with `ready: true`) it actually confirmed that
+/// against; and the head a review session posted its review on
+/// (`reviewed_sha`). Neither raises `waiting_user` on the session by
+/// itself (029): the claim alone is not confirmed evidence, and a
+/// pr-reviewer session finishing its own review must notify nobody — the
+/// `pull_request` attention producer reads the forge's own evidence
+/// against this claim, for the head it names, and raises its own item
+/// once it actually backs the claim up.
 #[utoipa::path(post, path = "/v1/pull-requests/{id}/report", tag = "pull-requests",
     params(("id" = String, Path)),
     request_body = ReportPullRequestRequest,
@@ -582,18 +588,28 @@ pub(super) async fn report(
                 "only the task that keeps this request may report it ready",
             ));
         }
-        // The head this report answers for is the live read's own, at the
-        // moment of the report: a readiness item answers for exactly this
-        // revision (031), never for whichever one a later fetch happens to
-        // find.
-        let head_sha = state
-            .launcher
-            .live
-            .get(&row.id)
-            .map(|live| live.pull.head_sha);
+        // The head this report answers for is the one the session itself
+        // confirmed, never looked up again here: a push landing between
+        // the session's own read and this call must still be judged
+        // against what the session actually saw, not whatever the
+        // daemon's cache has moved on to since (031) — reading the cache
+        // instead would let a push the session never saw pass as though
+        // it had.
+        let head_sha: Option<&str> = match (ready, req.head_sha.as_deref()) {
+            (true, Some(sha)) if is_sha(sha) => Some(sha),
+            (true, Some(sha)) => {
+                return Err(ApiError::bad_request(format!("{sha} is no commit sha")));
+            }
+            (true, None) => {
+                return Err(ApiError::bad_request(
+                    "a ready report names the head it was confirmed on",
+                ));
+            }
+            (false, _) => None,
+        };
         let (next, _moved) = state
             .store
-            .set_pull_request_ready(&row.id, ready, head_sha.as_deref())
+            .set_pull_request_ready(&row.id, ready, head_sha)
             .await?;
         row = next;
     }

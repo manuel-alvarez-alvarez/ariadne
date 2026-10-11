@@ -214,6 +214,7 @@ pub(crate) fn seed_live(
             },
             review_requested,
             details: Some(ariadne_daemon::forge::live::Details::default()),
+            evidence_ok: true,
         },
     );
 }
@@ -256,6 +257,10 @@ pub(crate) struct ReviewEvidence<'a> {
     /// already moved (`forge::live::LivePulls::set_pull`).
     pub details_head_sha: Option<&'a str>,
     pub comments: Vec<ariadne_store::NewPullRequestComment>,
+    /// Whether the last attempt to refresh the comment evidence actually
+    /// succeeded (`Live::evidence_ok`); `false` simulates a failed detail
+    /// fetch at the same head, which a head comparison alone cannot catch.
+    pub evidence_ok: bool,
 }
 
 /// A review comment nobody has answered or resolved: `unanswered_comments`
@@ -277,21 +282,26 @@ pub(crate) fn open_review_comment() -> ariadne_store::NewPullRequestComment {
     }
 }
 
-/// A review's own finding (`from_review: true`), replied to by the
-/// integration login — which `waiting_threads` reads as "answered",
-/// zeroing `unanswered_comments` — but never marked resolved on the forge:
-/// the trap `forge/live.rs::waiting_threads` leaves standing, which
-/// readiness must read through to the thread's own `resolved` flag
-/// instead.
+/// A review thread's opening finding, replied to by the integration
+/// login's own side — which `waiting_threads` reads as "answered", zeroing
+/// `unanswered_comments` — but never marked resolved on the forge: the
+/// trap `forge/live.rs::waiting_threads` leaves standing, which readiness
+/// must read through to the thread's own `resolved` flag instead,
+/// whoever opened the thread. `from_ariadne` picks which: an Ariadne
+/// review's own finding (`from_review: true`, posted under `login`) or a
+/// human reviewer's own finding (`from_review: false`, posted under
+/// `"someone"`) — a readiness item must block on either the same way.
 pub(crate) fn answered_but_unresolved_review_comment(
     login: &str,
+    from_ariadne: bool,
 ) -> Vec<ariadne_store::NewPullRequestComment> {
+    let finding_author = if from_ariadne { login } else { "someone" };
     vec![
         ariadne_store::NewPullRequestComment {
             forge_id: "rc-1".into(),
             thread_id: "T1".into(),
             kind: "review_comment".into(),
-            author_login: login.into(),
+            author_login: finding_author.into(),
             author_is_bot: false,
             body: "[P1] Missing a test".into(),
             path: Some("src/lib.rs".into()),
@@ -299,7 +309,7 @@ pub(crate) fn answered_but_unresolved_review_comment(
             in_reply_to: None,
             created_at: "2026-10-01T00:00:00Z".into(),
             resolved: false,
-            from_review: true,
+            from_review: from_ariadne,
         },
         ariadne_store::NewPullRequestComment {
             forge_id: "rc-2".into(),
@@ -314,6 +324,65 @@ pub(crate) fn answered_but_unresolved_review_comment(
             created_at: "2026-10-02T00:00:00Z".into(),
             resolved: false,
             from_review: false,
+        },
+    ]
+}
+
+/// A completed Ariadne review exactly as `submit_review` leaves it: one
+/// summary comment — posted as a plain `issue_comment`, `from_review:
+/// true`, and never itself marked `resolved` on the forge, since it names
+/// no diff-anchored thread at all — beside one finding whose thread the
+/// forge *does* show resolved, and a reply from the login's own side that
+/// settles the summary for feedback-routing purposes (`is_mine`, 029 rule
+/// 13: a `from_review` comment on a request of the user's own is the
+/// task's own news, until the task replies). A readiness item must read
+/// the summary as no resolvable thread's business either way, and the
+/// finding by its own resolved mark.
+pub(crate) fn completed_review_with_a_resolved_finding(
+    login: &str,
+) -> Vec<ariadne_store::NewPullRequestComment> {
+    vec![
+        ariadne_store::NewPullRequestComment {
+            forge_id: "ic-301".into(),
+            thread_id: "conversation".into(),
+            kind: "issue_comment".into(),
+            author_login: login.into(),
+            author_is_bot: false,
+            body: "No findings: ready for a human to approve".into(),
+            path: None,
+            line: None,
+            in_reply_to: None,
+            created_at: "2026-10-01T00:00:00Z".into(),
+            resolved: false,
+            from_review: true,
+        },
+        ariadne_store::NewPullRequestComment {
+            forge_id: "ic-302".into(),
+            thread_id: "conversation".into(),
+            kind: "issue_comment".into(),
+            author_login: login.into(),
+            author_is_bot: false,
+            body: "Acknowledged.".into(),
+            path: None,
+            line: None,
+            in_reply_to: Some("ic-301".into()),
+            created_at: "2026-10-02T00:00:00Z".into(),
+            resolved: false,
+            from_review: false,
+        },
+        ariadne_store::NewPullRequestComment {
+            forge_id: "rc-1".into(),
+            thread_id: "T1".into(),
+            kind: "review_comment".into(),
+            author_login: login.into(),
+            author_is_bot: false,
+            body: "[P1] Missing a test".into(),
+            path: Some("src/lib.rs".into()),
+            line: Some(1),
+            in_reply_to: None,
+            created_at: "2026-10-01T00:00:00Z".into(),
+            resolved: true,
+            from_review: true,
         },
     ]
 }
@@ -354,6 +423,7 @@ pub(crate) fn seed_review_evidence(
                     .into(),
                 ..Default::default()
             }),
+            evidence_ok: evidence.evidence_ok,
         },
     );
 }

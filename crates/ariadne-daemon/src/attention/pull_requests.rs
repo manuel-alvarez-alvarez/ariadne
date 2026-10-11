@@ -111,20 +111,26 @@ fn review_start_item(
 /// backing that claim up:
 /// - a current approval (`review_decision == "approved"`);
 /// - no comment the login's own side has not answered
-///   (`unanswered_comments == 0`), *and* no comment a review opened that
-///   the forge still shows unresolved — a reply alone answers a thread
-///   (`forge::live::waiting_threads`'s own "answered" reading) without
-///   resolving it, and a resolve is the only mark this item reads as the
-///   thread actually being done with (031, "Require explicit resolution
-///   of every review thread");
+///   (`unanswered_comments == 0`) — the conversation side of things;
+/// - no *resolvable* review thread the forge still shows unresolved,
+///   whoever opened it: a reply alone answers a thread for routing
+///   purposes (`forge::live::waiting_threads`'s own "answered" reading)
+///   without resolving it, and a resolve is the only mark this item reads
+///   as the thread actually being done with (031, "Require explicit
+///   resolution of every review thread"). Read by `kind == "review_comment"`
+///   rather than by who posted it (`from_review`): a human's own unresolved
+///   finding must block exactly as an Ariadne one does, and a review's own
+///   summary — posted as a plain `issue_comment`, never a resolvable thread
+///   at all — must never be read as one that blocks forever;
 /// - every check green (`checks == "success"`);
 /// - the forge's own confirmation the head can be merged now
 ///   (`mergeable == "clean"`);
-/// - the comment evidence itself current for this head
+/// - the last attempt to refresh the comment evidence itself actually
+///   succeeded (`Live::evidence_ok`) *and* left it current for this head
 ///   (`Details::head_sha == pull.head_sha`) — a failed detail fetch
-///   leaves an older read standing (`forge::live::LivePulls::set_pull`),
-///   which must never be read as "no open comment" for a head it was
-///   never actually read on;
+///   leaves an older read standing (`forge::live::LivePulls::set_pull_evidence_failed`),
+///   which must never be read as "no open comment" whether or not the
+///   head happened to move too;
 /// - the babysitting task's own claim itself current for this head
 ///   (`PullRequestRow::ready_head_sha == pull.head_sha`) — a push the
 ///   claim predates must drop it, whatever the forge's own approval or
@@ -156,19 +162,30 @@ async fn readiness_item(
     {
         return Ok(None);
     }
-    let details_head_sha = launcher
-        .live
-        .get(&pull.id)
-        .and_then(|live| live.details)
-        .map(|details| details.head_sha);
+    let cached = launcher.live.get(&pull.id);
+    if !cached.as_ref().is_some_and(|cached| cached.evidence_ok) {
+        return Ok(None);
+    }
+    let details_head_sha = cached.and_then(|cached| cached.details).map(|d| d.head_sha);
     if details_head_sha.as_deref() != Some(pull.head_sha.as_str()) {
         return Ok(None);
     }
     if pull.ready_head_sha.as_deref() != Some(pull.head_sha.as_str()) {
         return Ok(None);
     }
+    // Every resolvable review thread — one a diff-anchored review comment
+    // opened, whoever posted it — must actually be resolved on the forge,
+    // not merely answered: `unanswered_comments` above already covers the
+    // conversation side (`from_review`'s own routing for who answers
+    // what), but a reply settles that without resolving the thread
+    // (`forge/live.rs::waiting_threads`), and a review's own summary —
+    // posted as a plain `issue_comment`, never a resolvable thread at all
+    // — must never be read as one that blocks forever.
     let comments = live::comments_of(store, &launcher.live, pull).await?;
-    if comments.iter().any(|c| c.from_review && !c.resolved) {
+    if comments
+        .iter()
+        .any(|c| c.kind == "review_comment" && !c.resolved)
+    {
         return Ok(None);
     }
     let since = pull

@@ -138,6 +138,15 @@ pub struct ReplyCommentRequest {
 pub struct ReportPullRequestRequest {
     /// Every required approval and check reads green.
     pub ready: Option<bool>,
+    /// The head the session actually confirmed `ready` against — read off
+    /// its own last `get_pull_request` call, never looked up again here.
+    /// Required wherever `ready` is `true`: a push landing between that
+    /// read and this call must still be judged against the head the
+    /// session confirmed, not whatever the daemon's own cache has moved
+    /// on to since, or a push the session never actually saw could pass
+    /// as though it had (031).
+    #[serde(default)]
+    pub head_sha: Option<String>,
     /// The head a reviewer session posted its review on (029).
     #[serde(default)]
     pub reviewed_sha: Option<String>,

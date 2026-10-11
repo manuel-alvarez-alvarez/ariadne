@@ -759,3 +759,64 @@ async fn a_mergeability_only_transition_publishes_pull_requests_changed() {
         "the same requests are no news"
     );
 }
+
+/// A detail fetch that fails at the very same head the last one succeeded
+/// on still publishes `pull_requests_changed`: every hashed field of the
+/// request itself reads exactly as it did, but `Live::evidence_ok` flips,
+/// and a client watching only the other fields would otherwise miss
+/// exactly the transition a `pull_request` readiness item depends on
+/// (031). The next fetch that succeeds again, still on that head,
+/// publishes the recovery the same way; an unchanged fetch after that is
+/// no news either.
+#[tokio::test]
+async fn an_evidence_refresh_failure_and_recovery_at_the_same_head_publish_pull_requests_changed() {
+    use crate::common::{QUIET, next_event};
+    use ariadne_api::stream::DomainEvent;
+    use ariadne_daemon::forge::poll::Mode;
+    let full = script(vec![github_pull(1, "other")], github_pull(1, "other"));
+    let stub = stub_forge_cli(full.clone());
+    let h = harness().forge_cli(&stub).await;
+    let mut events = h.bus.subscribe();
+    let id = enabled_repository(&h, None).await;
+    let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == id);
+    next_event(&mut events, moved).await;
+    let _ = tokio::time::timeout(QUIET, next_event(&mut events, moved)).await;
+    h.state.forge_poll.set_mode(&id, Mode::WakeOnly);
+
+    // The next fetch finds the request's own read unchanged, but its
+    // detail entries gone: the comment evidence fails to refresh.
+    let failed = json!([
+        answer(&["auth", "status"], 0, ""),
+        answer(&["api", "user"], 0, "me"),
+        answer(
+            &["pr", "list"],
+            0,
+            &serde_json::to_string(&vec![github_pull(1, "other")]).unwrap()
+        ),
+        answer(&["pr", "view"], 0, &github_pull(1, "other").to_string()),
+        answer(
+            &["api", "repos/acme/widgets/issues?state=open&per_page=100"],
+            0,
+            "[]"
+        ),
+    ]);
+    stub.reprogram(failed);
+    h.state.forge_poll.wake(&id);
+    next_event(&mut events, moved).await;
+
+    // The fetch after that succeeds again, on the same head: the
+    // recovery is published too.
+    stub.reprogram(full);
+    h.state.forge_poll.wake(&id);
+    next_event(&mut events, moved).await;
+    let _ = tokio::time::timeout(QUIET, next_event(&mut events, moved)).await;
+
+    // An unchanged fetch after that is no news either.
+    h.state.forge_poll.wake(&id);
+    assert!(
+        tokio::time::timeout(QUIET, next_event(&mut events, moved))
+            .await
+            .is_err(),
+        "the same requests are no news"
+    );
+}

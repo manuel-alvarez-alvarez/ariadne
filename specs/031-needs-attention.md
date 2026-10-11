@@ -450,25 +450,45 @@ its eligibility rules.
     together: `review_decision == "approved"` (a current approval, not an
     Ariadne review's own summary, which the forge never counts as one —
     029 rule 14 refuses an approval from any review route this daemon
-    runs), `unanswered_comments == 0` (no open review comment), `checks ==
-    "success"` (every check green) and `mergeable == "clean"` (rule 14 —
-    the forge's own confirmation the head can be merged now, not merely
-    inferred from the checks rollup). The babysitting task's own `ready`
-    report (`POST /pull-requests/{id}/report`, 029 rule 15) is read beside
-    them as a fifth condition, never in their place: `ready` alone, or
-    three of the four forge conditions without it, raises nothing. A
-    request no task keeps — asked for ad hoc, through the same report
-    route a reviewer session also answers to (029 rule 11) — raises
-    nothing either, whatever its `ready` flag says: only the babysitting
-    task's own claim is read, never a bare flag on a row nothing manages
-    (029, "Only the babysitter raises readiness attention for a request it
-    manages"). Every field above is the live state of the request's
-    current head, read fresh on every call to this producer rather than
-    latched anywhere: a later commit, a reopened comment, or an approval
-    the forge no longer counts (dismissed, or superseded by a new push)
-    drops the item on the very next read, with nothing of its own to
-    invalidate. The item's `since` is `PullRequestRow::ready_confirmed_at`,
-    stamped the moment `ready` itself last moved from `false` to `true`
+    runs), `unanswered_comments == 0` (no open conversation-side comment
+    the login's own side has not answered — 029 rule 13's own "news"
+    reading), `checks == "success"` (every check green) and `mergeable ==
+    "clean"` (rule 14 — the forge's own confirmation the head can be
+    merged now, not merely inferred from the checks rollup). Beside those
+    four, every *resolvable* review thread must actually be resolved on
+    the forge, whoever opened it: read by `kind == "review_comment"`
+    rather than by who posted it (`from_review`), so a human's own
+    unresolved finding blocks exactly as an Ariadne one does, and a
+    review's own summary — posted as a plain `issue_comment`, never a
+    resolvable thread at all — is never read as one that blocks forever.
+    A reply alone answers a thread for `unanswered_comments`'s own
+    routing purposes without resolving it; only an explicit resolve on
+    the forge clears it here. The comment evidence itself must also be
+    both successfully refreshed (`Live::evidence_ok`, set `false` by a
+    failed detail fetch and left `false` until the next one succeeds,
+    whether or not the head moved too) and current for this head
+    (`Live::Details::head_sha == pull.head_sha`): either short, a failed
+    or stale refresh must never be read as "no open comment". The
+    babysitting task's own `ready` report (`POST
+    /pull-requests/{id}/report`, 029 rule 15) is read beside all of this
+    as a further condition, never in their place, and is itself bound to
+    the head the agent actually read: the report names the `head_sha` it
+    confirmed readiness on, and the item withholds unless that bound head
+    (`PullRequestRow::ready_head_sha`) still matches the request's current
+    head — `ready` alone, or the forge conditions without a report naming
+    the current head, raises nothing. A request no task keeps — asked for
+    ad hoc, through the same report route a reviewer session also answers
+    to (029 rule 11) — raises nothing either, whatever its `ready` flag
+    says: only the babysitting task's own claim is read, never a bare
+    flag on a row nothing manages (029, "Only the babysitter raises
+    readiness attention for a request it manages"). Every field above is
+    the live state of the request's current head, read fresh on every
+    call to this producer rather than latched anywhere: a later commit, a
+    reopened comment, an approval the forge no longer counts (dismissed,
+    or superseded by a new push), or a failed evidence refresh drops the
+    item on the very next read, with nothing of its own to invalidate.
+    The item's `since` is `PullRequestRow::ready_confirmed_at`, stamped
+    the moment `ready` itself last moved from `false` to `true`
     (`Store::set_pull_request_ready`) and cleared the moment it moves back
     — not `updated_at`, which a fetch bumps on every poll whether or not
     anything about readiness changed, the same trap rule 4's own `since`
@@ -730,25 +750,32 @@ its eligibility rules.
   reviewer session the same call just started
   (`pull_request_reviews.rs::asking_needs_a_model_and_takes_an_unpinned_review_request`).
 - A babysat request's readiness item answers only once approval, no open
-  comment, every review thread actually resolved (not merely answered),
-  green checks, confirmed mergeability, fresh comment evidence and a
-  claim current for the request's own head all hold together; any one
-  short of that — pending checks, an open or merely-answered-but-
-  unresolved comment, mergeability the forge has not confirmed, stale
-  comment evidence a failed detail refresh left standing, a disabled
-  integration, or a claim a later push has already passed — withholds it
-  even where the task's own `ready` claims it, and a request no task
-  keeps raises nothing whatever its `ready` says
+  conversation-side comment, every *resolvable* review thread actually
+  resolved (not merely answered, and regardless of who opened it), green
+  checks, confirmed mergeability, a successful and current comment-
+  evidence refresh, and a claim bound to the request's own current head
+  all hold together; any one short of that — pending checks, an open
+  conversation comment, a human or Ariadne review finding that is
+  answered but not resolved, mergeability the forge has not confirmed, a
+  failed or stale comment-evidence refresh, a disabled integration, or a
+  claim a later push has already passed — withholds it even where the
+  task's own `ready` claims it, and a request no task keeps raises
+  nothing whatever its `ready` says; a review's own summary comment never
+  blocks the item on its own, and a completed review whose summary and
+  every finding are answered or resolved raises it
   (`attention.rs::a_ready_request_the_forges_own_evidence_backs_up_raises_a_readiness_item`,
   `::a_ready_claim_with_resolved_comments_but_no_approval_raises_no_readiness_item`,
   `::a_ready_claim_with_pending_checks_raises_no_readiness_item`,
   `::a_ready_claim_with_an_open_review_comment_raises_no_readiness_item`,
-  `::a_ready_claim_with_an_answered_but_unresolved_review_thread_raises_no_readiness_item`,
+  `::a_ready_claim_with_an_ariadne_finding_answered_but_unresolved_raises_no_readiness_item`,
+  `::a_ready_claim_with_a_human_finding_answered_but_unresolved_raises_no_readiness_item`,
+  `::a_completed_review_with_its_real_summary_and_a_resolved_finding_raises_a_readiness_item`,
   `::a_ready_claim_with_a_resolved_review_thread_raises_a_readiness_item`,
   `::a_ready_claim_with_unconfirmed_mergeability_raises_no_readiness_item`,
   `::a_ready_claim_on_a_disabled_integration_raises_no_readiness_item`,
   `::a_push_past_the_ready_head_withdraws_the_item_until_reconfirmed`,
-  `::stale_comment_evidence_raises_no_readiness_item`,
+  `::comment_evidence_behind_the_live_head_raises_no_readiness_item`,
+  `::a_failed_refresh_at_the_same_head_raises_no_readiness_item`,
   `::a_ready_claim_on_a_request_no_task_keeps_raises_no_readiness_item`).
   Only the babysitting task's own column agent may report a task-kept
   request ready: a reviewer session that also answers for the same row —

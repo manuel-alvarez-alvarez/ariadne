@@ -346,7 +346,7 @@ async fn the_pr_column_opens_the_request_once_and_keeps_it() {
         as_session(
             &format!("/v1/pull-requests/{id}/report"),
             &agent.id,
-            json!({"ready": ready}),
+            json!({"ready": ready, "head_sha": "a".repeat(40)}),
         )
     };
     let _: Value = h.json(report(true), StatusCode::OK).await;

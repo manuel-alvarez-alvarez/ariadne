@@ -57,7 +57,7 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
    GitLab accepts `/merge_requests/<number>` and `/-/merge_requests/<number>`, including subgroup paths.
    A different repository or host does not match.
 2. Nothing the forge holds is stored: a stored title, check or comment goes stale the moment somebody pushes.
-   A `pull_requests` row (`PullRequestRow`) is Ariadne's bookkeeping of a request it works on: `id`, `repository_id`, `number`, `url`, `role`, `origin_task_id`, `ready`, the told marks (rule 18), `reviewed_sha`, `review_asked` and its pin and skills, and `summary_comment_id` (029). The row holds no other column, and there is no comments table.
+   A `pull_requests` row (`PullRequestRow`) is Ariadne's bookkeeping of a request it works on: `id`, `repository_id`, `number`, `url`, `role`, `origin_task_id`, `ready`, `ready_head_sha` (the head the `ready` claim was confirmed on, 031 rule 13), the told marks (rule 18), `reviewed_sha`, `review_asked` and its pin and skills, and `summary_comment_id` (029). The row holds no other column, and there is no comments table.
    `role` is `author` when the request's author is the integration login, ignoring case, else `reviewer`.
    An upsert keeps the existing id and creation time, and the first origin task.
 3. A row exists while Ariadne works on the request, or while a human still
@@ -138,7 +138,7 @@ and its idle handling under [030](030-workflows.md), rule 10.
     No agent tool resolves a thread. A review session resolves a thread it opened, once a push fixed it (029); every other thread is the keeping agent's to resolve.
 16. A reply posts through the forge CLI: `gh api .../pulls/<n>/comments/<id>/replies` on the thread's first review comment, else `gh pr comment`; GitLab adds a note to the discussion.
     A review session's reply is marked `from_review`. The repository is fetched again, which reads the reply back.
-17. A report with `ready: true` or `ready: false` is stored and raises nothing of its own on any session (031): the `pull_request` attention producer reads the forge's own evidence against the claim instead of trusting it. A request a task keeps accepts a `ready` report from the current column agent alone, never from a review session that also answers for the same row (a request of mine a task keeps can also carry an Ariadne self-review asked on it, 029) — read by seat (`Seat::Agent`), not merely by which session answers for the row.
+17. A report with `ready: true` or `ready: false` is stored and raises nothing of its own on any session (031): the `pull_request` attention producer reads the forge's own evidence against the claim instead of trusting it. A `ready: true` report also names `head_sha`, the head it was confirmed on (029 rule 15); it is stored as `ready_head_sha` and is rejected before storage when it is missing or fails the same hex-sha check `reviewed_sha` does. A request a task keeps accepts a `ready` report from the current column agent alone, never from a review session that also answers for the same row (a request of mine a task keeps can also carry an Ariadne self-review asked on it, 029) — read by seat (`Seat::Agent`), not merely by which session answers for the row.
     The state is the forge's to say: no session reports it.
     Accept comments, replies, and reports only from the current column agent or the review session (029), subject to the `ready`-specific restriction above.
     Another session gets 403. A report or reply with no session gets 403. The user reads comments freely.
@@ -175,7 +175,7 @@ All routes appear in OpenAPI, under the rules of [012](012-http-api-events-and-u
 | `GET /v1/pull-requests/{id}/comments/{comment_id}` | One comment, read off the forge now. |
 | `POST /v1/pull-requests/{id}/comments/{comment_id}/reply` | Post a reply through the forge CLI. Return 201. |
 | `POST /v1/pull-requests/{id}/comments/{comment_id}/resolve` | Resolve, from the review session, a thread it opened (029). Return 200. |
-| `POST /v1/pull-requests/{id}/report` | Take `ready`, and `reviewed_sha` (029), from the request's own session. |
+| `POST /v1/pull-requests/{id}/report` | Take `ready`, `head_sha` (required with `ready: true`), and `reviewed_sha` (029), from the request's own session. |
 | `GET /v1/sessions?pull_request=` | List the sessions of one request (012). |
 
 There is no route that adds or removes a request.
@@ -295,8 +295,8 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `prompts.rs::tests::the_pull_request_texts_fill_every_placeholder_they_name`.
 - Each change is told once, and a green check is news again when it fails again:
   `news.rs::tests::each_change_is_told_once`, `::a_quiet_request_is_no_news`.
-- A ready report moves once:
-  `store.rs::a_pull_request_reports_ready_once`.
+- A ready report moves once, per head:
+  `store.rs::a_pull_request_reports_ready_once_per_head`.
 - The agent seat lists the request's tools beside its task tools:
   `mcp.rs::tests::the_agent_seat_lists_its_step_tools_and_nothing_of_a_review`.
 - Its request tools find the request its task opened, then call its routes, and say to open one where there is none:

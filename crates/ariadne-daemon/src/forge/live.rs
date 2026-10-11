@@ -31,6 +31,21 @@ pub struct Live {
     pub review_requested: bool,
     /// What a detail read found; None where the request was only listed.
     pub details: Option<Details>,
+    /// Whether the last attempt to refresh `details` actually succeeded.
+    /// `set` (a successful detail fetch) sets this `true`; the forge
+    /// poll's own failure path sets it `false` explicitly
+    /// (`set_pull_evidence_failed`) while still leaving the last good
+    /// `details` standing, so a reader can tell "the comments are exactly
+    /// as stale as the head they were last read on" (`Details::head_sha`)
+    /// from "the most recent attempt to read them failed outright" —
+    /// the second a `pull_request` readiness item must withhold on even
+    /// where the head has not moved at all, since a reopened thread or a
+    /// withdrawn approval the failed read would have caught is invisible
+    /// to a head comparison alone. A call that touches no comment
+    /// evidence at all — an API write's own echo of the pull
+    /// (`set_pull`) — leaves it exactly as it found it: that call has
+    /// nothing to say about whether the evidence is still good.
+    pub evidence_ok: bool,
 }
 
 /// What a detail read finds of a request beyond its own read: its
@@ -72,9 +87,43 @@ impl LivePulls {
             .insert(id.to_string(), live);
     }
 
-    /// Keep a new read of the request itself, and the details an earlier
-    /// read found where this one read none.
+    /// Keep a new read of the request itself, and the details and evidence
+    /// validity an earlier read found where this one read none: a call
+    /// here has nothing of its own to say about whether the comment
+    /// evidence is still good, so it leaves that exactly as it found it.
     pub fn set_pull(&self, id: &str, pull: ForgePullRequest, review_requested: bool) {
+        let mut held = self
+            .0
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (details, evidence_ok) = held
+            .get(id)
+            .map(|live| (live.details.clone(), live.evidence_ok))
+            .unwrap_or((None, true));
+        held.insert(
+            id.to_string(),
+            Live {
+                pull,
+                review_requested,
+                details,
+                evidence_ok,
+            },
+        );
+    }
+
+    /// The same as [`Self::set_pull`], but for the one case that does have
+    /// something to say about the comment evidence: a detail fetch that
+    /// itself failed. The last good `details` is left standing — losing
+    /// comments a session still needs over one failed read would be its
+    /// own regression — but `evidence_ok` goes `false`, so a reader knows
+    /// this read is not merely old by a head comparison but outright
+    /// unconfirmed, whether or not the head moved too.
+    pub fn set_pull_evidence_failed(
+        &self,
+        id: &str,
+        pull: ForgePullRequest,
+        review_requested: bool,
+    ) {
         let mut held = self
             .0
             .write()
@@ -86,6 +135,7 @@ impl LivePulls {
                 pull,
                 review_requested,
                 details,
+                evidence_ok: false,
             },
         );
     }

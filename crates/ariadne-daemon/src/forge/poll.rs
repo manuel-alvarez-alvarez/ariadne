@@ -481,16 +481,21 @@ async fn read_row(
                         behind_base: details.behind_base,
                         head_sha,
                     }),
+                    evidence_ok: true,
                 },
             );
             Ok(())
         }
         Ok(_) => {
-            handoff.live.set_pull(&row.id, read, requested);
+            handoff
+                .live
+                .set_pull_evidence_failed(&row.id, read, requested);
             Err("the forge returned another request number".into())
         }
         Err(error) => {
-            handoff.live.set_pull(&row.id, read, requested);
+            handoff
+                .live
+                .set_pull_evidence_failed(&row.id, read, requested);
             Err(error)
         }
     }
@@ -562,6 +567,12 @@ fn pulls_moved(
             .hash(&mut hasher);
     }
     for live in held {
+        // `evidence_ok` is hashed on its own: a failed detail refresh at
+        // the same head otherwise leaves every other hashed field
+        // unchanged (the old `details` is exactly what is still held),
+        // and a client watching only those fields would miss exactly the
+        // transition a `pull_request` readiness item depends on (031).
+        live.evidence_ok.hash(&mut hasher);
         if let Some(details) = &live.details {
             (details.behind_base, details.failed_checks.len()).hash(&mut hasher);
             for comment in &details.comments {

@@ -209,12 +209,19 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 15. `report_pull_request` takes `reviewed_sha`, a hex sha, on a reviewer row,
     or on a row of the user's own with `review_asked`, alone, and `ready`,
     whether the babysitting task believes every required approval and
-    check reads green. Both are written — `pull_requests.reviewed_sha` and
-    `pull_requests.ready` — and neither raises anything of its own on the
-    session: a pr-reviewer session finishing its review must notify
-    nobody, and a `ready` claim alone is not confirmed evidence. The
-    `pull_request` attention producer (031) reads the forge's own evidence
-    against the request's current state instead of trusting either call.
+    check reads green, together with `head_sha`, the hex sha of the head
+    the task actually read before confirming readiness. A `ready: true`
+    report with no `head_sha`, or one that fails the same hex-sha check as
+    `reviewed_sha`, is refused with 400: a readiness claim binds to a
+    revision, never floats free of one. `pull_requests.reviewed_sha`,
+    `pull_requests.ready` and `pull_requests.ready_head_sha` are written,
+    and none raises anything of its own on the session: a pr-reviewer
+    session finishing its review must notify nobody, and a `ready` claim
+    alone is not confirmed evidence. The `pull_request` attention producer
+    (031 rule 13) reads the forge's own evidence against the request's
+    current state instead of trusting either call, and withholds the
+    readiness item once a later push leaves `ready_head_sha` behind the
+    request's current head.
 16. Diffs, reviews and reports are accepted from the request's own session
     alone. Another session, or a call with no session, gets 403.
 16a. `POST /v1/pull-requests/{id}/comments/{comment_id}/resolve` resolves

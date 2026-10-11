@@ -407,7 +407,7 @@ async fn the_pr_agent_replies_and_reports_and_no_other_session_may() {
         as_session(
             &format!("/v1/pull-requests/{id}/report"),
             &agent.id,
-            json!({"ready": ready}),
+            json!({"ready": ready, "head_sha": "a".repeat(40)}),
         )
     };
     let dto: Value = h.json(report(true), StatusCode::OK).await;
@@ -497,6 +497,137 @@ async fn the_pr_agent_replies_and_reports_and_no_other_session_may() {
         )
         .await;
     assert_eq!(dto["id"], id);
+}
+
+/// A whole script, every detail entry keyed on `head`: what the initial
+/// open and a later push each need, parameterized on the one thing that
+/// actually changes between them.
+fn script_for_head(head: &str) -> Value {
+    let threads =
+        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
+    json!([
+        answer(&["auth", "status"], 0, ""),
+        answer(&["api", "user"], 0, "me"),
+        answer(&["pr", "create"], 0, URL),
+        answer(&["pr", "list"], 0, "[]"),
+        answer(&["pr", "view"], 0, &pull("OPEN", head).to_string()),
+        answer(&["api", "repos/acme/widgets/pulls/1/comments"], 0, "[]"),
+        answer(&["api", "repos/acme/widgets/issues/1/comments"], 0, "[]"),
+        answer(&["api", "repos/acme/widgets/pulls/1/reviews"], 0, "[]"),
+        answer(&["api", "graphql"], 0, &threads.to_string()),
+        answer(
+            &[
+                "api",
+                &format!("repos/acme/widgets/commits/{head}/check-runs")
+            ],
+            0,
+            r#"{"check_runs": []}"#
+        ),
+        answer(
+            &["api", &format!("repos/acme/widgets/compare/main...{head}")],
+            0,
+            r#"{"behind_by": 0}"#
+        ),
+    ])
+}
+
+/// A detail fetch that fails at the very same head the last one succeeded
+/// on, through the real forge fetch path — `read_row`'s own `Err` branch —
+/// marks the comment evidence `evidence_ok: false`; the next fetch that
+/// actually succeeds again, still on that same head, marks it `true` once
+/// more. Neither move is visible to a head comparison alone, since the
+/// head itself never moves (031).
+#[tokio::test]
+async fn evidence_ok_tracks_a_real_fetchs_own_success_and_failure_at_the_same_head() {
+    let head = "a".repeat(40);
+    let Kept {
+        h, stub, id, repo, ..
+    } = kept_request(script_for_head(&head)).await;
+    assert!(h.launcher.live.get(&id).unwrap().evidence_ok);
+
+    // The next fetch fails to read the comment evidence at all — the
+    // detail entries themselves are gone — though the request's own read
+    // still succeeds, on the exact same head.
+    stub.reprogram(json!([
+        answer(&["auth", "status"], 0, ""),
+        answer(&["api", "user"], 0, "me"),
+        answer(&["pr", "create"], 0, URL),
+        answer(&["pr", "list"], 0, "[]"),
+        answer(&["pr", "view"], 0, &pull("OPEN", &head).to_string()),
+    ]));
+    h.state.forge_poll.wake(&repo);
+    eventually(TIMEOUT, "evidence_ok to drop", async || {
+        h.launcher.live.get(&id).is_some_and(|l| !l.evidence_ok)
+    })
+    .await;
+    assert_eq!(
+        h.launcher.live.get(&id).map(|l| l.pull.head_sha),
+        Some(head.clone()),
+        "the head itself never moved"
+    );
+
+    // A later fetch succeeds again, on the same head: evidence_ok
+    // recovers.
+    stub.reprogram(script_for_head(&head));
+    fetch_again(&h, &stub, &repo).await;
+    eventually(TIMEOUT, "evidence_ok to recover", async || {
+        h.launcher.live.get(&id).is_some_and(|l| l.evidence_ok)
+    })
+    .await;
+}
+
+/// A push lands, through the real forge fetch path, between the agent's
+/// own read of the request and its `ready` report: the report must still
+/// bind to the head the agent actually read, not to whatever the daemon's
+/// own cache has moved on to by the time the call lands (031). Confirming
+/// readiness for a revision the agent never actually inspected would let
+/// a stale confirmation pass for a push it never saw.
+#[tokio::test]
+async fn a_ready_report_binds_the_head_the_agent_actually_read_not_a_later_push() {
+    let old_head = "a".repeat(40);
+    let new_head = "b".repeat(40);
+    let Kept {
+        h,
+        stub,
+        agent,
+        id,
+        repo,
+        ..
+    } = kept_request(script_for_head(&old_head)).await;
+    // The agent's own read: the request is on the old head.
+    assert_eq!(
+        h.launcher.live.get(&id).map(|l| l.pull.head_sha),
+        Some(old_head.clone())
+    );
+
+    // A push lands before the agent gets to report: the next fetch reads
+    // the request whole, on its new head.
+    stub.reprogram(script_for_head(&new_head));
+    fetch_again(&h, &stub, &repo).await;
+    eventually(TIMEOUT, "the cache to read the pushed head", async || {
+        h.launcher.live.get(&id).map(|l| l.pull.head_sha) == Some(new_head.clone())
+    })
+    .await;
+
+    // The agent reports ready on the head it actually read — the old
+    // one, never the pushed one it never saw.
+    let dto: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/report"),
+                &agent.id,
+                json!({"ready": true, "head_sha": old_head}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(dto["ready"], true);
+    let row = h.store.get_pull_request(&id).await.unwrap();
+    assert_eq!(
+        row.ready_head_sha.as_deref(),
+        Some(old_head.as_str()),
+        "the report binds to the head the agent read, not the cache's current one"
+    );
 }
 
 /// A merge done on the forge while the `pr` agent is down ends the task on

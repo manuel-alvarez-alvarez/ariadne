@@ -28,9 +28,9 @@ request and sends you its news. Handle the news, then end your turn.
    `git merge --no-edit <remote>/<base>`. Run the tests and lint of what
    changed. Push the branch plainly.
 5. Never amend, rebase, or force a push.
-6. Call `report_pull_request` with `ready: true` once every required
-   approval and check reads green. Call it with `ready: false` when a later
-   change turns one back. Report only a change.
+6. Call `report_pull_request` with `ready: true`, `head_sha` the head
+   read, once every approval and check reads green. Call it with
+   `ready: false` on a later change back. Report only a change.
 7. When the request merges, fetch the base in the repository checkout.
    Run `git -C <repo> fetch <remote> <base>:<base>`, or run
    `merge --ff-only <remote>/<base>` when the checkout is on the base.
