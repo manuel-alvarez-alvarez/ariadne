@@ -383,10 +383,47 @@ async fn fetch(store: &Store, cfg: &Config, handoff: &Handoff, id: &str) -> Resu
         // sign in when the real cause is, say, the CLI not being
         // installed at all (which `configuration` already names).
         Err(error) => {
-            return Err(match client.confirmed_signed_out(&integration.host).await {
+            let failure = match client.confirmed_signed_out(&integration.host).await {
                 true => format!("{FORGE_SIGNED_OUT}: {error}"),
                 false => error,
-            });
+            };
+            // The whole round failed before any row of this repository was
+            // ever read: every one of them a cache already holds is just
+            // as unconfirmed as a detail fetch failing would leave it, so
+            // this invalidates them the same way read_row's own failure
+            // paths do, rather than reporting a round-old evidence_ok as
+            // still good because this round never got far enough to say
+            // otherwise.
+            if let Ok(rows) = store
+                .list_pull_requests(PullRequestFilter {
+                    repository_id: Some(id.into()),
+                    ..Default::default()
+                })
+                .await
+            {
+                let invalidated = rows
+                    .iter()
+                    .filter(|row| handoff.live.mark_evidence_failed(&row.id))
+                    .count();
+                if invalidated > 0 {
+                    // `pulls_moved` never ran this round — there was no
+                    // list to hash — so its own dedup still holds the
+                    // hash of the last successful round. Dropping it here
+                    // means the next call to `pulls_moved`, whether this
+                    // round's own retry or a later recovery, is compared
+                    // against nothing rather than against a hash that
+                    // never saw this round's invalidation, so it reads
+                    // the recovery as a change too, not as "no different
+                    // from before the failure ever happened".
+                    handoff
+                        .pulls_seen
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .remove(id);
+                    handoff.bus.pull_requests_changed(id);
+                }
+            }
+            return Err(failure);
         }
     };
     // A request that asks for my review, out of draft, is one Ariadne keeps
@@ -457,7 +494,17 @@ async fn read_row(
 ) -> Result<(), String> {
     let read = match listed {
         Some(pull) => pull,
-        None => client.pull_request(slug, row.number).await?,
+        None => match client.pull_request(slug, row.number).await {
+            Ok(pull) => pull,
+            Err(error) => {
+                // No new read to leave standing in its place, unlike the
+                // detail fetch below: the last good read of the pull
+                // itself is still what the cache holds, but the comment
+                // evidence beside it is no longer confirmed current.
+                handoff.live.mark_evidence_failed(&row.id);
+                return Err(error);
+            }
+        },
     };
     if read.number != row.number {
         return Err("the forge returned another request number".into());

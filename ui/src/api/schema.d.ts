@@ -769,13 +769,15 @@ export interface paths {
         put?: never;
         /**
          * What the request's session says of it: `ready` once the babysitting task
-         *     believes every required approval and check reads green, and the head a
-         *     review session posted its review on. Neither raises `waiting_user` on
-         *     the session by itself (029): the claim alone is not confirmed evidence,
-         *     and a pr-reviewer session finishing its own review must notify nobody —
-         *     the `pull_request` attention producer reads the forge's own evidence
-         *     against this claim and raises its own item once it actually backs the
-         *     claim up.
+         *     believes every required approval and check reads green, on the head
+         *     (`head_sha`, required with `ready: true`) it actually confirmed that
+         *     against; and the head a review session posted its review on
+         *     (`reviewed_sha`). Neither raises `waiting_user` on the session by
+         *     itself (029): the claim alone is not confirmed evidence, and a
+         *     pr-reviewer session finishing its own review must notify nobody — the
+         *     `pull_request` attention producer reads the forge's own evidence
+         *     against this claim, for the head it names, and raises its own item
+         *     once it actually backs the claim up.
          */
         post: operations["pull-requests_report"];
         delete?: never;
@@ -3084,6 +3086,16 @@ export interface components {
          *     says of it.
          */
         ReportPullRequestRequest: {
+            /**
+             * @description The head the session actually confirmed `ready` against — read off
+             *     its own last `get_pull_request` call, never looked up again here.
+             *     Required wherever `ready` is `true`: a push landing between that
+             *     read and this call must still be judged against the head the
+             *     session confirmed, not whatever the daemon's own cache has moved
+             *     on to since, or a push the session never actually saw could pass
+             *     as though it had (031).
+             */
+            head_sha?: string | null;
             /** @description Every required approval and check reads green. */
             ready?: boolean | null;
             /** @description The head a reviewer session posted its review on (029). */

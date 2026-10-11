@@ -1706,7 +1706,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "What the request's session says of it: `ready` once the babysitting task\nbelieves every required approval and check reads green, and the head a\nreview session posted its review on. Neither raises `waiting_user` on\nthe session by itself (029): the claim alone is not confirmed evidence,\nand a pr-reviewer session finishing its own review must notify nobody —\nthe `pull_request` attention producer reads the forge's own evidence\nagainst this claim and raises its own item once it actually backs the\nclaim up.",
+        "summary": "What the request's session says of it: `ready` once the babysitting task\nbelieves every required approval and check reads green, on the head\n(`head_sha`, required with `ready: true`) it actually confirmed that\nagainst; and the head a review session posted its review on\n(`reviewed_sha`). Neither raises `waiting_user` on the session by\nitself (029): the claim alone is not confirmed evidence, and a\npr-reviewer session finishing its own review must notify nobody — the\n`pull_request` attention producer reads the forge's own evidence\nagainst this claim, for the head it names, and raises its own item\nonce it actually backs the claim up.",
         "operationId": "report",
         "parameters": [
           {
@@ -7365,6 +7365,13 @@
         "type": "object",
         "description": "Body of `POST /v1/pull-requests/{id}/report`: what the request's session\nsays of it.",
         "properties": {
+          "head_sha": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The head the session actually confirmed `ready` against — read off\nits own last `get_pull_request` call, never looked up again here.\nRequired wherever `ready` is `true`: a push landing between that\nread and this call must still be judged against the head the\nsession confirmed, not whatever the daemon's own cache has moved\non to since, or a push the session never actually saw could pass\nas though it had (031)."
+          },
           "ready": {
             "type": [
               "boolean",

@@ -157,6 +157,29 @@ impl LivePulls {
         }
     }
 
+    /// Flip `evidence_ok` false on an already-cached read, for a failure
+    /// that has no new read of its own to leave standing in its place —
+    /// the outer list call, or an initial, listless lookup, failing
+    /// outright, rather than a detail fetch that at least read the pull
+    /// itself (`set_pull_evidence_failed`). A row this cache has never
+    /// read yet has nothing to invalidate: `of_row` already reads a
+    /// missing cache entry as missing evidence, not a false claim.
+    /// Answers whether it found a row to flip, so a caller with several
+    /// rows to invalidate at once knows which of them actually moved.
+    pub fn mark_evidence_failed(&self, id: &str) -> bool {
+        let mut held = self
+            .0
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match held.get_mut(id) {
+            Some(live) => {
+                live.evidence_ok = false;
+                true
+            }
+            None => false,
+        }
+    }
+
     pub fn remove(&self, id: &str) {
         self.0
             .write()

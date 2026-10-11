@@ -50,15 +50,26 @@ fn client(state: &AppState, forge: &ForgeIntegration) -> ForgeClient {
 /// earlier read.
 async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullRequest> {
     let forge = integration(state, &row.repository_id).await?;
-    let details = client(state, &forge)
+    let details = match client(state, &forge)
         .details(
             &slug(&forge),
             row.number,
             crate::timeouts::Timeouts::default().forge_details,
         )
         .await
-        .map_err(forge_error)?;
+    {
+        Ok(details) => details,
+        Err(error) => {
+            // No new read to leave standing in its place: the cache's own
+            // evidence, where it holds any, is no longer confirmed
+            // current, the same as a failed detail fetch through the
+            // poll's own path leaves it (`forge::live::LivePulls::set_pull_evidence_failed`).
+            state.launcher.live.mark_evidence_failed(&row.id);
+            return Err(forge_error(error));
+        }
+    };
     if details.pull.number != row.number {
+        state.launcher.live.mark_evidence_failed(&row.id);
         return Err(forge_error(
             "the forge returned another request number".into(),
         ));

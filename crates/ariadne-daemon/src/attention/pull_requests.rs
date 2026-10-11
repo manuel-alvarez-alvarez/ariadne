@@ -110,8 +110,16 @@ fn review_start_item(
 /// the forge's own evidence, for the request's current head, actually
 /// backing that claim up:
 /// - a current approval (`review_decision == "approved"`);
-/// - no comment the login's own side has not answered
-///   (`unanswered_comments == 0`) — the conversation side of things;
+/// - no conversation-side comment the login's own side has not answered,
+///   read fresh here rather than off `unanswered_comments`: that field
+///   counts a review's own summary too, posted under the login as a plain
+///   `issue_comment` on the conversation thread (`forge/pulls.rs::CONVERSATION`)
+///   and never resolved, since it names no diff-anchored thread at all —
+///   `is_mine` reads it as the other side's (029 rule 13, so a task author
+///   is told of it as news) rather than as nothing to answer, and a
+///   summary carries nothing to answer. The babysitting skill never
+///   replies to a comment that asks for no change, so a summary with no
+///   finding must never need an invented reply just to clear this item;
 /// - no *resolvable* review thread the forge still shows unresolved,
 ///   whoever opened it: a reply alone answers a thread for routing
 ///   purposes (`forge::live::waiting_threads`'s own "answered" reading)
@@ -156,7 +164,6 @@ async fn readiness_item(
     if !integration_enabled
         || !pull.ready
         || pull.review_decision != "approved"
-        || pull.unanswered_comments != 0
         || pull.checks != "success"
         || pull.mergeable != "clean"
     {
@@ -175,17 +182,36 @@ async fn readiness_item(
     }
     // Every resolvable review thread — one a diff-anchored review comment
     // opened, whoever posted it — must actually be resolved on the forge,
-    // not merely answered: `unanswered_comments` above already covers the
-    // conversation side (`from_review`'s own routing for who answers
-    // what), but a reply settles that without resolving the thread
-    // (`forge/live.rs::waiting_threads`), and a review's own summary —
-    // posted as a plain `issue_comment`, never a resolvable thread at all
-    // — must never be read as one that blocks forever.
+    // not merely answered: a reply settles a thread for conversation
+    // routing without resolving it (`forge/live.rs::waiting_threads`), and
+    // a review's own summary — posted as a plain `issue_comment`, never a
+    // resolvable thread at all — must never be read as one that blocks
+    // forever.
     let comments = live::comments_of(store, &launcher.live, pull).await?;
     if comments
         .iter()
         .any(|c| c.kind == "review_comment" && !c.resolved)
     {
+        return Ok(None);
+    }
+    // The conversation side, read fresh rather than off `unanswered_comments`:
+    // that field counts a review's own summary as the other side's input
+    // (`forge/live.rs::is_mine`, 029 rule 13), since a task author is told
+    // of it as news the same way a genuine finding is. A summary carries
+    // nothing to answer, so this item excludes it — the one comment the
+    // login posts, from a review, to the conversation thread — rather than
+    // waiting on a reply the babysitting skill is never meant to write.
+    let login = live::login_of(store, &pull.repository_id).await?;
+    let actionable: Vec<_> = comments
+        .iter()
+        .filter(|c| {
+            !(c.thread_id == crate::forge::pulls::CONVERSATION
+                && c.from_review
+                && c.author_login.eq_ignore_ascii_case(&login))
+        })
+        .cloned()
+        .collect();
+    if !live::waiting_threads(&actionable, &pull.role, &login).is_empty() {
         return Ok(None);
     }
     let since = pull

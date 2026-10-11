@@ -282,6 +282,27 @@ pub(crate) fn open_review_comment() -> ariadne_store::NewPullRequestComment {
     }
 }
 
+/// A genuine human question on the conversation thread, from neither the
+/// login nor a review: no later reply of the login's own side answers it,
+/// so it stays a real, open ask a readiness item must still block on, the
+/// same thread a review's own summary also posts to.
+pub(crate) fn open_conversation_comment() -> ariadne_store::NewPullRequestComment {
+    ariadne_store::NewPullRequestComment {
+        forge_id: "ic-1".into(),
+        thread_id: "conversation".into(),
+        kind: "issue_comment".into(),
+        author_login: "someone".into(),
+        author_is_bot: false,
+        body: "Why does this change the retry budget too?".into(),
+        path: None,
+        line: None,
+        in_reply_to: None,
+        created_at: "2026-10-01T00:00:00Z".into(),
+        resolved: false,
+        from_review: false,
+    }
+}
+
 /// A review thread's opening finding, replied to by the integration
 /// login's own side — which `waiting_threads` reads as "answered", zeroing
 /// `unanswered_comments` — but never marked resolved on the forge: the
@@ -328,16 +349,16 @@ pub(crate) fn answered_but_unresolved_review_comment(
     ]
 }
 
-/// A completed Ariadne review exactly as `submit_review` leaves it: one
-/// summary comment — posted as a plain `issue_comment`, `from_review:
-/// true`, and never itself marked `resolved` on the forge, since it names
-/// no diff-anchored thread at all — beside one finding whose thread the
-/// forge *does* show resolved, and a reply from the login's own side that
-/// settles the summary for feedback-routing purposes (`is_mine`, 029 rule
-/// 13: a `from_review` comment on a request of the user's own is the
-/// task's own news, until the task replies). A readiness item must read
-/// the summary as no resolvable thread's business either way, and the
-/// finding by its own resolved mark.
+/// A completed Ariadne review exactly as `submit_review` leaves it, with
+/// nobody ever answering it: one summary comment — posted as a plain
+/// `issue_comment`, `from_review: true`, and never itself marked `resolved`
+/// on the forge, since it names no diff-anchored thread at all, and never
+/// answered either, since a summary carries nothing to answer — beside one
+/// finding whose thread the forge *does* show resolved. The babysitting
+/// skill never replies to a comment that asks for no change (`SKILL.md`),
+/// so no fixture here may add a reply on the skill's behalf just to settle
+/// the summary: a readiness item must read the summary itself as closing
+/// nothing open, the same way it reads a resolved finding's thread.
 pub(crate) fn completed_review_with_a_resolved_finding(
     login: &str,
 ) -> Vec<ariadne_store::NewPullRequestComment> {
@@ -355,20 +376,6 @@ pub(crate) fn completed_review_with_a_resolved_finding(
             created_at: "2026-10-01T00:00:00Z".into(),
             resolved: false,
             from_review: true,
-        },
-        ariadne_store::NewPullRequestComment {
-            forge_id: "ic-302".into(),
-            thread_id: "conversation".into(),
-            kind: "issue_comment".into(),
-            author_login: login.into(),
-            author_is_bot: false,
-            body: "Acknowledged.".into(),
-            path: None,
-            line: None,
-            in_reply_to: Some("ic-301".into()),
-            created_at: "2026-10-02T00:00:00Z".into(),
-            resolved: false,
-            from_review: false,
         },
         ariadne_store::NewPullRequestComment {
             forge_id: "rc-1".into(),

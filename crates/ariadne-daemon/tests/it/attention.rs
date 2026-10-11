@@ -1940,6 +1940,48 @@ async fn a_completed_review_with_its_real_summary_and_a_resolved_finding_raises_
     assert_eq!(list.items.len(), 1, "{:?}", list.items);
 }
 
+/// A genuine open question on the conversation thread — the same thread a
+/// review's own summary posts to — still raises nothing: excluding the
+/// summary from what this item reads as open must never excuse an actual,
+/// unanswered human comment sharing that thread.
+#[tokio::test]
+async fn a_ready_claim_with_an_open_conversation_comment_raises_no_readiness_item() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    crate::common::forge::enable_integration(&h, &cast.repo.id, "ariadne-bot").await;
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: cast.repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "author".into(),
+            origin_task_id: Some(cast.task.id.clone()),
+        })
+        .await
+        .unwrap();
+    crate::common::forge::seed_review_evidence(
+        &h,
+        &pull,
+        crate::common::forge::ReviewEvidence {
+            checks: "success",
+            review_decision: "approved",
+            mergeable: "clean",
+            head_sha: "abc",
+            details_head_sha: None,
+            evidence_ok: true,
+            comments: vec![crate::common::forge::open_conversation_comment()],
+        },
+    );
+    h.store
+        .set_pull_request_ready(&pull.id, true, Some("abc"))
+        .await
+        .unwrap();
+
+    let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(list.items, Vec::new(), "{:?}", list.items);
+}
+
 /// A resolved review thread, by contrast, raises the item once every other
 /// condition holds: resolution, not a reply, is what this item reads.
 #[tokio::test]

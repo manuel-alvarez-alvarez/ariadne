@@ -820,3 +820,105 @@ async fn an_evidence_refresh_failure_and_recovery_at_the_same_head_publish_pull_
         "the same requests are no news"
     );
 }
+
+/// A failure of the outer list call itself — `fetch`'s own `Err` branch,
+/// before any row is ever read — still publishes `pull_requests_changed`
+/// for every row it invalidates: the whole round failing before a row's
+/// own read ever ran is no less a reason for a client to read the
+/// request's evidence again than a detail fetch failing is. The next
+/// fetch that succeeds again publishes the recovery the same way.
+#[tokio::test]
+async fn an_outer_list_failure_publishes_pull_requests_changed() {
+    use crate::common::{QUIET, next_event};
+    use ariadne_api::stream::DomainEvent;
+    use ariadne_daemon::forge::poll::Mode;
+    let full = script(vec![github_pull(1, "other")], github_pull(1, "other"));
+    let stub = stub_forge_cli(full.clone());
+    let h = harness().forge_cli(&stub).await;
+    let mut events = h.bus.subscribe();
+    let id = enabled_repository(&h, None).await;
+    let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == id);
+    next_event(&mut events, moved).await;
+    let _ = tokio::time::timeout(QUIET, next_event(&mut events, moved)).await;
+    h.state.forge_poll.set_mode(&id, Mode::WakeOnly);
+
+    // The next fetch fails before any row is ever read: the outer list
+    // call itself is gone.
+    let mut failed = full.clone();
+    for entry in failed.as_array_mut().unwrap() {
+        if entry["args"] == json!(["pr", "list"]) {
+            entry["exit"] = json!(1);
+            entry["stdout"] = json!("boom");
+        }
+    }
+    stub.reprogram(failed);
+    h.state.forge_poll.wake(&id);
+    next_event(&mut events, moved).await;
+
+    // The fetch after that succeeds again: the recovery is published too.
+    stub.reprogram(full);
+    h.state.forge_poll.wake(&id);
+    next_event(&mut events, moved).await;
+}
+
+/// A read, off the forge now, through the HTTP route itself
+/// (`GET /v1/pull-requests/{id}`) rather than the poll's own cycle: a
+/// failed detail read there leaves the cache's evidence no less
+/// unconfirmed, through `read_now`'s own path, which the poll's worker
+/// never runs. A later read that succeeds again restores it.
+#[tokio::test]
+async fn a_route_level_read_failure_withdraws_the_rows_evidence() {
+    use crate::common::{TIMEOUT, eventually};
+    let stub = stub_forge_cli(script(
+        vec![github_pull(2, "other")],
+        github_pull(2, "other"),
+    ));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    enabled_repository(&h, Some(PIN)).await;
+    let rows = || async {
+        h.store
+            .list_pull_requests(ariadne_store::PullRequestFilter::default())
+            .await
+            .unwrap()
+    };
+    eventually(TIMEOUT, "the review request's row", async || {
+        rows().await.len() == 1
+    })
+    .await;
+    let id = rows().await.pop().unwrap().id;
+    eventually(TIMEOUT, "the row's first live read", async || {
+        h.launcher.live.get(&id).is_some()
+    })
+    .await;
+    assert!(h.launcher.live.get(&id).unwrap().evidence_ok);
+
+    let mut failed = script(vec![github_pull(2, "other")], github_pull(2, "other"));
+    for entry in failed.as_array_mut().unwrap() {
+        if entry["args"] == json!(["pr", "view"]) {
+            entry["exit"] = json!(1);
+            entry["stdout"] = json!("boom");
+        }
+    }
+    stub.reprogram(failed);
+    let error = h
+        .error(
+            get(&format!("/v1/pull-requests/{id}")),
+            StatusCode::BAD_GATEWAY,
+        )
+        .await;
+    assert!(!error.error.message.is_empty());
+    assert!(
+        !h.launcher.live.get(&id).unwrap().evidence_ok,
+        "a direct read failure through the route withdraws the cached evidence"
+    );
+
+    stub.reprogram(script(
+        vec![github_pull(2, "other")],
+        github_pull(2, "other"),
+    ));
+    let _: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
+    assert!(
+        h.launcher.live.get(&id).unwrap().evidence_ok,
+        "a read that succeeds again restores it"
+    );
+}

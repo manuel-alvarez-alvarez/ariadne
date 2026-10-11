@@ -531,6 +531,23 @@ fn script_for_head(head: &str) -> Value {
     ])
 }
 
+/// `script_for_head`, with the one entry whose args start with `failing`
+/// made to fail outright: what an outer list call or an initial, listless
+/// read failing looks like to the stub, everything else of the fetch
+/// answering exactly as it would have.
+fn script_for_head_with(head: &str, failing: &[&str]) -> Value {
+    let Value::Array(mut entries) = script_for_head(head) else {
+        unreachable!()
+    };
+    for entry in &mut entries {
+        if entry["args"] == json!(failing) {
+            entry["exit"] = json!(1);
+            entry["stdout"] = json!("boom");
+        }
+    }
+    Value::Array(entries)
+}
+
 /// A detail fetch that fails at the very same head the last one succeeded
 /// on, through the real forge fetch path — `read_row`'s own `Err` branch —
 /// marks the comment evidence `evidence_ok: false`; the next fetch that
@@ -568,6 +585,67 @@ async fn evidence_ok_tracks_a_real_fetchs_own_success_and_failure_at_the_same_he
 
     // A later fetch succeeds again, on the same head: evidence_ok
     // recovers.
+    stub.reprogram(script_for_head(&head));
+    fetch_again(&h, &stub, &repo).await;
+    eventually(TIMEOUT, "evidence_ok to recover", async || {
+        h.launcher.live.get(&id).is_some_and(|l| l.evidence_ok)
+    })
+    .await;
+}
+
+/// A failure of the outer list itself — `fetch`'s own `Err` branch,
+/// before any row is ever read — withdraws every row it already holds
+/// cached evidence for, through the real forge fetch path, the same way
+/// a detail fetch failing does: a row's evidence is no less unconfirmed
+/// for the whole round having failed before its own read ever ran. A
+/// later fetch that succeeds again restores it.
+#[tokio::test]
+async fn an_outer_list_failure_withdraws_the_rows_evidence() {
+    let head = "a".repeat(40);
+    let Kept {
+        h, stub, id, repo, ..
+    } = kept_request(script_for_head(&head)).await;
+    assert!(h.launcher.live.get(&id).unwrap().evidence_ok);
+
+    stub.reprogram(script_for_head_with(&head, &["pr", "list"]));
+    h.state.forge_poll.wake(&repo);
+    eventually(
+        TIMEOUT,
+        "evidence_ok to drop on an outer list failure",
+        async || h.launcher.live.get(&id).is_some_and(|l| !l.evidence_ok),
+    )
+    .await;
+
+    stub.reprogram(script_for_head(&head));
+    fetch_again(&h, &stub, &repo).await;
+    eventually(TIMEOUT, "evidence_ok to recover", async || {
+        h.launcher.live.get(&id).is_some_and(|l| l.evidence_ok)
+    })
+    .await;
+}
+
+/// A failure of the initial, listless read itself — `read_row`'s own
+/// lookup for a request the list missed, before `set_pull_evidence_failed`
+/// ever runs — withdraws its evidence through the real forge fetch path
+/// the same way a failed detail fetch does. A later fetch that succeeds
+/// again restores it.
+#[tokio::test]
+async fn a_direct_read_failure_withdraws_the_rows_evidence() {
+    let head = "a".repeat(40);
+    let Kept {
+        h, stub, id, repo, ..
+    } = kept_request(script_for_head(&head)).await;
+    assert!(h.launcher.live.get(&id).unwrap().evidence_ok);
+
+    stub.reprogram(script_for_head_with(&head, &["pr", "view"]));
+    h.state.forge_poll.wake(&repo);
+    eventually(
+        TIMEOUT,
+        "evidence_ok to drop on a direct read failure",
+        async || h.launcher.live.get(&id).is_some_and(|l| !l.evidence_ok),
+    )
+    .await;
+
     stub.reprogram(script_for_head(&head));
     fetch_again(&h, &stub, &repo).await;
     eventually(TIMEOUT, "evidence_ok to recover", async || {
