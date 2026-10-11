@@ -793,7 +793,7 @@ async fn a_review_strips_a_trailing_trailer_from_its_summary_and_its_findings() 
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, head) = checkout(&h);
     stub.reprogram(script(&Shown::open(&head)));
-    repository(&h, &path, Some(PIN)).await;
+    repository(&h, &path).await;
     let id = the_request(&h).await;
     let session = idle_session(&h, &id).await;
     let reviews = format!("/v1/pull-requests/{id}/reviews");
