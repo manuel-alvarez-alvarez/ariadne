@@ -5,7 +5,7 @@ workflow develop-review-pr
     rank: balanced
     gate: committed
   review[Review]
-    Run the whole suite and judge the change against the task and the repository rules.
+    Judge the change against the task and the repository rules.
     Fail the step with the changes to make.
     skills: code-review
     rank: frontier
