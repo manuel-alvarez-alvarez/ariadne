@@ -47,7 +47,8 @@ const PARSED_STEPS = [
   {
     id: "review",
     title: "Review",
-    description: "Judge the change against the task and the repository rules.",
+    description:
+      "Judge the change against the task and the repository rules. Fail the step with the changes to make.",
     skills: ["code-review"],
     rank: "frontier" as const,
     gate: null,
