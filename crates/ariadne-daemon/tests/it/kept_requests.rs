@@ -846,6 +846,80 @@ async fn a_successful_route_level_read_withdraws_the_readiness_item_when_approva
     );
 }
 
+/// A direct, route-level read that is this request's very first —
+/// `LivePulls` holds nothing of it yet, the way a restart or an outer
+/// list failure before the poll's own first read would leave it, while
+/// the store's own `ready` claim already stands — still publishes once
+/// it creates the readiness item out of nothing: `attention::items`
+/// skips a row the cache holds no evidence for at all (`live::of_row`),
+/// so the very first successful read can turn an absent item into a
+/// present one, which an existing watcher has no way to learn of on its
+/// own under `WakeOnly`. A repeated, identical read after that publishes
+/// nothing more.
+#[tokio::test]
+async fn a_first_successful_route_level_read_creates_the_readiness_item_and_publishes_it() {
+    use ariadne_api::stream::DomainEvent;
+    let head = "a".repeat(40);
+    let Kept {
+        h,
+        stub,
+        agent,
+        id,
+        repo,
+        ..
+    } = kept_request(script_ready_for_head(&head)).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    fetch_again(&h, &stub, &repo).await;
+
+    let _: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/report"),
+                &agent.id,
+                json!({"ready": true, "head_sha": head}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    let items = || async {
+        ariadne_daemon::attention::collect(&h.store, &h.launcher)
+            .await
+            .items
+    };
+    eventually(TIMEOUT, "the readiness item", async || {
+        !items().await.is_empty()
+    })
+    .await;
+
+    // A restart, or an outer list failure before the poll's own first
+    // read, leaves the cache holding nothing of this row, though the
+    // store's own `ready` claim stands untouched.
+    h.launcher.live.remove(&id);
+    assert!(
+        items().await.is_empty(),
+        "a fresh attention read sees no item with nothing cached"
+    );
+
+    let mut events = h.bus.subscribe();
+    let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == repo);
+
+    let _: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
+    next_event(&mut events, moved).await;
+    assert!(
+        !items().await.is_empty(),
+        "the first successful read creates the item"
+    );
+
+    // The same read again changes nothing: no second publish.
+    let _: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
+    assert!(
+        tokio::time::timeout(QUIET, next_event(&mut events, moved))
+            .await
+            .is_err(),
+        "a repeated, unchanged read publishes nothing more"
+    );
+}
+
 /// A push lands, through the real forge fetch path, between the agent's
 /// own read of the request and its `ready` report: the report must still
 /// bind to the head the agent actually read, not to whatever the daemon's

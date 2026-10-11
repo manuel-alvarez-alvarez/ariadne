@@ -56,19 +56,25 @@ fn client(state: &AppState, forge: &ForgeIntegration) -> ForgeClient {
 /// written under the one lock each holds, so the pair compared here is
 /// the one a single mutation actually bridged rather than a snapshot
 /// taken before some slow network await, which a second call racing the
-/// first past that same await could already have moved past; `before`
-/// is `None` only where nothing was cached before this read, which is
-/// never a transition, since nothing was shown stale in the first
-/// place. The poll's own dedup is invalidated the same moment, so the
-/// next poll-driven fetch is compared against nothing rather than a
-/// hash taken before this transition, and reads it as a change too.
+/// first past that same await could already have moved past. `before`
+/// is `None` where nothing was cached before this read — the row's
+/// first — which is a transition too: `attention::items` skips a row
+/// `LivePulls` holds nothing of yet (`live::of_row`), so the very first
+/// successful read can create a readiness or review-start item out of
+/// one that, a moment ago, could not exist at all, and an existing
+/// watcher never told of that has no way to learn of it on its own
+/// under `WakeOnly`. Only `before == Some(after)` — the read changed
+/// nothing a watcher could already see — stays silent. The poll's own
+/// dedup is invalidated the same moment a transition fires, so the next
+/// poll-driven fetch is compared against nothing rather than a hash
+/// taken before it, and reads it as a change too.
 fn publish_evidence_transition(
     state: &AppState,
     row: &PullRequestRow,
     before: Option<u64>,
     after: u64,
 ) {
-    if before.is_some_and(|was| was != after) {
+    if before != Some(after) {
         state.forge_poll.invalidate_pulls_dedup(&row.repository_id);
         state.events.pull_requests_changed(&row.repository_id);
     }
