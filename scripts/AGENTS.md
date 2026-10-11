@@ -64,10 +64,10 @@ in the root [`AGENTS.md`](../AGENTS.md).
   value), `rust-commit`, `ui-commit`, `tauri-commit`, `docs-commit` (a staged
   file of each area runs that area's pre-commit commands, and no other
   area's), `bad-subject` (`commit-msg` refuses a subject that is not a
-  Conventional Commit and accepts one that is), `rust-push`, `ui-push` (a
-  pushed range touching one area runs that area's pre-push commands, and no
-  other area's), `push-isolation` (a linked-worktree commit and push leave
-  its HEAD, refs, index and files unchanged while a cargo stand-in uses Git
+  Conventional Commit and accepts one that is), `rust-push`, `ui-push`,
+  `tauri-push` (a pushed range touching one area runs that area's pre-push
+  commands, and no other area's), `push-isolation` (a linked-worktree commit
+  and push leave its HEAD, refs, index and files unchanged while a cargo stand-in uses Git
   in another repository), `all` (`--all` runs every area), `fail` (a
   stand-in that exits 1 fails the hook and prints the failed command).
 - `tests/githooks-command.sh` — the stand-in for `cargo`, `npm`, `npx` and

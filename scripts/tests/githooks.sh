@@ -209,6 +209,21 @@ case "$test_case" in
         grep -Fx 'npm run check' "$TEST_ROOT/commands"
         no_command_matching cargo
         ;;
+    tauri-push)
+        setup_repo
+        base="$(git -C "$TEST_ROOT/repo" rev-parse HEAD)"
+        printf '\n// changed\n' >> "$TEST_ROOT/repo/ui/src-tauri/seeded.rs"
+        git -C "$TEST_ROOT/repo" add -A
+        git -C "$TEST_ROOT/repo" commit -q -m "feat(ui): change Tauri"
+        head="$(git -C "$TEST_ROOT/repo" rev-parse HEAD)"
+        rm -f "$TEST_ROOT/commands"
+        printf 'refs/heads/main %s refs/heads/main %s\n' "$head" "$base" \
+            | "$TEST_ROOT/repo/.githooks/pre-push" origin > "$TEST_ROOT/output" 2>&1
+        grep -Fx 'cargo machete .' "$TEST_ROOT/commands"
+        grep -Fx 'cargo fmt --all -- --check' "$TEST_ROOT/commands"
+        grep -Fx 'cargo check' "$TEST_ROOT/commands"
+        ! grep -Fx 'cargo build --workspace --all-targets' "$TEST_ROOT/commands"
+        ;;
     unicode-push)
         setup_repo
         base="$(git -C "$TEST_ROOT/repo" rev-parse HEAD)"

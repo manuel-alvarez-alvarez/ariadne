@@ -74,8 +74,11 @@ else
     fi
 fi
 
-if [ "$run_rust" = 1 ]; then
+if [ "$run_rust" = 1 ] || [ "$run_tauri" = 1 ]; then
     githooks_run cargo machete .
+fi
+
+if [ "$run_rust" = 1 ]; then
     githooks_run cargo build --workspace --all-targets
     githooks_run cargo nextest run --workspace --profile ci
     githooks_run cargo test --doc --workspace
