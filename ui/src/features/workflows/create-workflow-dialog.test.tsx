@@ -299,7 +299,8 @@ describe("creating", () => {
     })
     const { onOpenChange } = renderDialog()
 
-    await user.type(within(dialog()).getByLabelText("Name"), "develop-review-merge")
+    await user.click(within(dialog()).getByLabelText("Name"))
+    await user.paste("develop-review-merge")
     await user.click(within(dialog()).getByRole("button", { name: "Create workflow" }))
 
     expect(
