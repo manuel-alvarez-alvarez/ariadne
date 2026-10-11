@@ -930,14 +930,12 @@ export interface paths {
          * Ask Ariadne to review a request on the model the user picks, or stop
          *     asking (029): a review session runs on that pin while the request is
          *     open and out of draft. A request of the user's own posts each round as
-         *     a comment in the user's name; one that asks for the user's review on a
-         *     repository with no review pin of its own gets the manual start the
-         *     `pull_request` attention producer offers when nobody is assigned to it,
-         *     and posts as any other review Ariadne runs on it would (029). Asking
-         *     starts Ariadne's work on the request; stopping ends it, where no task
-         *     keeps the request. A request that asks for the user's review on a
-         *     repository that already pins one has a review already, and takes no
-         *     asking.
+         *     a comment in the user's name; one that asks for the user's review gets
+         *     the manual start the `pull_request` attention producer offers when
+         *     nobody is assigned to it, and posts as any other review Ariadne runs on
+         *     it would (029). Asking starts Ariadne's work on the request; stopping
+         *     ends it, where no task keeps the request. Every review starts this way:
+         *     nothing starts one on its own.
          */
         put: operations["pull-requests_ask_review"];
         post?: never;
@@ -2469,9 +2467,6 @@ export interface components {
             owner: string;
             /** @description The remote it was read off, `origin` where there is one. */
             remote: string;
-            review_effort?: string | null;
-            /** @description The pin of the session that reviews a request; null starts none. */
-            review_model?: string | null;
             webhook: components["schemas"]["WebhookDto"];
         };
         /**
@@ -2499,14 +2494,9 @@ export interface components {
             /** @description The public URL while the tunnel is up. */
             url?: string | null;
         };
-        /**
-         * @description A change to the forge integration; absent fields stay unchanged. A model
-         *     written empty clears that role's pin and its effort.
-         */
+        /** @description A change to the forge integration; absent fields stay unchanged. */
         ForgeUpdate: {
             enabled?: boolean | null;
-            review_effort?: string | null;
-            review_model?: string | null;
         };
         GoalDto: {
             created_at: string;
@@ -3015,8 +3005,8 @@ export interface components {
         /**
          * @description A pull request as the forge holds it now, read live (026), with what
          *     Ariadne keeps of it where Ariadne works on it: the request a task opened,
-         *     one that asks for the user's review on a repository with a review pin,
-         *     or one of the user's they asked Ariadne to review.
+         *     one that asks for the user's review, or one of the user's they asked
+         *     Ariadne to review.
          */
         PullRequestDto: {
             author_login: string;

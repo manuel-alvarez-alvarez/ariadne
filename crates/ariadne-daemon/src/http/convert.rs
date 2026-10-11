@@ -88,7 +88,7 @@ dto! {
             last_delivery_at: f.webhook_last_delivery_at,
             fetch_error: f.fetch_error,
         },
-        .. host, owner, name, remote, enabled, login, review_model, review_effort
+        .. host, owner, name, remote, enabled, login
     }
 
     /// `repos` are the goal's repositories, `usage` its rollup and `steps`

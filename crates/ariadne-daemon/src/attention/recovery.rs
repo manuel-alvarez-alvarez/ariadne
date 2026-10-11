@@ -176,8 +176,8 @@ async fn orchestrator_given_up_items(store: &Store) -> Result<Vec<AttentionItemD
 /// scheduler's actual decision rather than the generic `disconnected`
 /// flag a mere crash also raises, cleared the moment the request itself
 /// no longer wants a reviewer session (`scheduler::pull_requests::end_review`)
-/// so a request back in draft, or whose repository lost its review pin,
-/// does not carry a stale blocker for work nothing is trying any more.
+/// so a request back in draft, or no longer asked for directly on its own
+/// row, does not carry a stale blocker for work nothing is trying any more.
 async fn reviewer_given_up_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
     let mut items = Vec::new();
     for pull in store

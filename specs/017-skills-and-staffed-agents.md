@@ -139,9 +139,10 @@ written into the system prompt (006), and the lifecycle the seats sit in
     fail.
 13. Every user-facing skill action exists in both the CLI (`ariadne skill`)
     and the desktop app, per the parity rule of spec 015.
-14. A review session (029) is staffed by the daemon on the repository's
-    `review_model` and `review_effort` (025), and loads `pr-reviewer` the
-    way a column agent loads its skills; no orchestrator staffs it.
+14. A review session (029) is staffed by the daemon on the pin asked
+    directly on the request's own row — there is no repository pin (025) —
+    and loads `pr-reviewer` the way a column agent loads its skills; no
+    orchestrator staffs it.
 15. The daemon keeps one shared copy of every store skill under
     `<home>/skills` by default, or `skills_dir` when configured. Every sync
     writes each document as `<skills_dir>/<name>/SKILL.md`, including

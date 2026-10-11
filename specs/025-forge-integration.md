@@ -1,7 +1,7 @@
 ---
 id: forge-integration
 status: current
-updated: 2026-10-10
+updated: 2026-10-11
 areas: [core, api, store, daemon, cli, ui]
 commits: []
 tests:
@@ -18,14 +18,15 @@ tests:
 
 Which forge a repository's remote is on, and whether Ariadne works with it.
 The daemon reads the forge off the checkout's remote. The user enables the
-integration and pins the model of its review role. Ariadne speaks to
-the forge only through the forge's own CLI, `gh` for GitHub and `glab` for
-GitLab.
+integration; every review of a request starts manually, on a pin asked
+directly on its own row (029), never on a repository setting. Ariadne
+speaks to the forge only through the forge's own CLI, `gh` for GitHub and
+`glab` for GitLab.
 
 ## Scope
 
 In: the detection of the remote, the `forge_integrations` row, the switch,
-the review pin, the forge CLI client, the `gh_bin` and `glab_bin` keys, and the
+the forge CLI client, the `gh_bin` and `glab_bin` keys, and the
 command-line and desktop surfaces over them.
 
 Out: what a repository is (002), how a task ends and the forge it publishes
@@ -37,9 +38,10 @@ the desktop app as a whole (015).
 1. A repository has at most one forge row, in the table
    `forge_integrations`, keyed by `repository_id`. The row holds `kind`
    (`github` or `gitlab`), `host`, `owner`, `name`, `remote`, `enabled`,
-   `login`, `review_model`, `review_effort`, `detected_at` and `updated_at`.
-   There is no babysit pin: the current task-column agent keeps its request
-   under the workflow rule in [030](030-workflows.md). `host`, `owner` and
+   `login`, `detected_at` and `updated_at`. There is no pin of any kind on
+   this row: the current task-column agent keeps its request under the
+   workflow rule in [030](030-workflows.md), and a review's pin lives on the
+   pull request's own row, asked for directly (029). `host`, `owner` and
    `name` are stored lower-cased. A repository with no usable remote has no
    row. Deleting the repository deletes its row.
    Hook metadata and the nested DTO block follow [027](027-webhooks-and-tunnel.md).
@@ -61,28 +63,26 @@ the desktop app as a whole (015).
    start, off the request path. A detection writes only what changed: a row
    for a remote that appeared, none for one that went away, and the new
    remote for one that moved. A remote that now names another forge
-   repository disables the row and clears its login, and keeps its pin: the
-   sign-in and rule 9 were checked against the old one.
+   repository disables the row and clears its login: the sign-in and rule 9
+   were checked against the old one.
 6. Every write of the row publishes `repository_updated`, carrying the
    repository with its forge (012). There is no event kind of its own.
 7. `RepositoryDto.forge` is a `ForgeDto` — `kind`, `host`, `owner`, `name`,
-   `remote`, `enabled`, `login`, `review_model`, `review_effort` — or null
-   where the repository has no row.
+   `remote`, `enabled`, `login` — or null where the repository has no row.
    Goals carry their repositories with the same `forge`.
 8. `CreateRepositoryRequest` and `UpdateRepositoryRequest` take `forge`, a
-   `ForgeUpdate` of `enabled`, `review_model` and `review_effort`. An absent
-   field is unchanged; an unknown one, `babysit_model` among them, is
-   refused with 422. A forge
-   change on a repository with no row is refused with 409
-   `forge_unavailable`. A refusal writes nothing. The repository write and
-   the forge write are one store transaction, and the request publishes one
-   event after the commit.
+   `ForgeUpdate` of `enabled` alone. An absent field is unchanged; an
+   unknown one, `review_model`, `review_effort` and `babysit_model` among
+   them, is refused with 422. A forge change on a repository with no row is
+   refused with 409 `forge_unavailable`. A refusal writes nothing. The
+   repository write and the forge write are one store transaction, and the
+   request publishes one event after the commit.
 9. Enabling runs `auth status --hostname <host>` of the CLI of the kind. A
    CLI that is not installed, or not signed in to the host, refuses the
    enable with 409 `forge_unauthenticated` and the probe's own message. On
    success the daemon stores the login: `gh api user --jq .login --hostname
    <host>`, or the `username` of `glab api user --hostname <host>`.
-   Disabling clears the login and keeps the pin. One forge repository is
+   Disabling clears the login. One forge repository is
    enabled on one repository row at a time. The same checkout can be
    registered once per base branch (002), so an enable on a second row that
    shares `host`, `owner` and `name` with an enabled row is refused with 409.
@@ -90,45 +90,39 @@ the desktop app as a whole (015).
    probe. A partial unique index enforces it again inside the transaction of
    rule 8, so of two enables at once one is refused and changes nothing: no
    repository field, and no row on a registration.
-10. The review model is checked as a goal's pin is (011): a model that is
-    no catalog model, or one that is turned off, is refused with 400. An
-    empty model clears the pin and its effort. An effort alone moves on the
-    pinned model; with no model it is refused with 400. No pin is allowed:
-    then no review session starts (029).
-11. `gh_bin` and `glab_bin` are keys of `<home>/config.toml`, listed by
+10. `gh_bin` and `glab_bin` are keys of `<home>/config.toml`, listed by
     `ariadned --help`. Each is a path taken as it stands, or a bare name
     looked up on the daemon's own `PATH`, as `python_bin` is (022). `None` is
     `gh` or `glab` on that `PATH`. The client runs the CLI as a child process
     with no stdin, and gives it 30 seconds.
-12. The forge client is `crates/ariadne-daemon/src/forge/`: `mod.rs` holds
+11. The forge client is `crates/ariadne-daemon/src/forge/`: `mod.rs` holds
     `ForgeKind`, the `Remote` parser, the detection and
     `ForgeClient::for_repository`; `github/` and `gitlab/` each hold one
     forge's CLI calls.
 
 ## Command line
 
-13. `ariadne repo add` and `ariadne repo update` take `--forge on|off`,
-    `--review-model` and `--review-effort` (014). A model is `AGENT:MODEL`,
-    or `""` to clear the pin. There is no `--babysit-model`. An effort is
-    any effort, or `default`. No forge flag sends no `forge`.
-14. `ariadne repo ls` has a FORGE column: `<kind> <owner>/<name> on|off`, for
+12. `ariadne repo add` and `ariadne repo update` take `--forge on|off`
+    (014). There is no `--review-model`, `--review-effort` or
+    `--babysit-model`: every review's pin is asked for directly on its own
+    request, never on the repository (029). No forge flag sends no `forge`.
+13. `ariadne repo ls` has a FORGE column: `<kind> <owner>/<name> on|off`, for
     example `github acme/widgets on`, or `-`. `ariadne repo inspect` prints
-    the forge block: `forge`, `forge remote` (the remote and the host),
-    `forge login` and `review`, the pin as `<model> @ <effort>`, or `-`.
+    the forge block: `forge`, `forge remote` (the remote and the host) and
+    `forge login`.
 
 ## Desktop
 
-15. The repositories table has a Forge column over two lines: the kind,
+14. The repositories table has a Forge column over two lines: the kind,
     with `· off` where the integration is disabled, then `owner/name`; or
     `none` (015).
-16. The repository dialog shows one switch, "GitHub integration" or "GitLab
+15. The repository dialog shows one switch, "GitHub integration" or "GitLab
     integration", while it edits a repository with a forge row, described by
     the detected `host/owner/name`, the CLI it goes through, and the login.
     A repository with no row, and registration, show no switch: the daemon
     detects nothing before it opens the checkout. The dialog sends
     `forge.enabled` only when the switch moved, and a refusal to enable lands
-    on the switch in the daemon's words. The review pin is the CLI's alone
-    for now: the dialog shows and sends none.
+    on the switch in the daemon's words.
 
 ## Acceptance criteria
 
@@ -145,14 +139,13 @@ the desktop app as a whole (015).
 - Another host is the forge whose CLI is signed in to it, and `glab`'s
   `username` is the login
   (`forge_integration.rs::another_host_is_the_forge_whose_cli_is_signed_in_to_it`).
+- A database at migration 0003, still carrying `forge_integrations.review_model`
+  and `review_effort`, migrates to 0004, which drops both columns, with no
+  error (`store.rs::an_existing_database_drops_the_forge_review_pin_columns`).
 - Enabling with the stub's `auth status` at exit 1 is refused with 409 and
   the probe's message. With exit 0, the stub's login is stored and one
   `repository_updated` carries `forge.enabled = true` and `forge.login`
   (`forge_integration.rs::enabling_needs_the_cli_signed_in_and_stores_its_login`).
-- A review model that is no catalog model is refused with 400, and an empty
-  one clears the pin
-  (`forge_integration.rs::a_pin_must_be_a_catalog_model_and_a_role_may_have_none`).
-  Disabling keeps the pin (`::disabling_keeps_the_pins`).
 - The same checkout on two base branches enables the integration on one row.
   The second is refused with 409 that names the first, and disabling the
   first lets the second enable
@@ -169,10 +162,11 @@ the desktop app as a whole (015).
   (`forge_integration.rs::a_changed_remote_is_detected_on_the_next_edit_and_at_daemon_start`).
 - `gh_bin` and `glab_bin` are read from `config.toml`
   (`config.rs::tests::the_forge_cli_keys_are_read`).
-- `repo add` and `repo update` take the forge flags
-  (`repo.rs::tests::repo_add_and_update_take_the_forge_flags`), `repo ls`
-  shows the FORGE column (`::repo_ls_shows_the_forge_column`), and `repo
-  inspect` prints the forge block with the login
+- `repo add` and `repo update` take `--forge` and reject `--review-model`
+  and `--review-effort` as unknown flags
+  (`repo.rs::tests::repo_add_and_update_take_the_forge_flag_and_reject_the_review_pin_flags`),
+  `repo ls` shows the FORGE column (`::repo_ls_shows_the_forge_column`), and
+  `repo inspect` prints the forge block with the login
   (`::repo_inspect_prints_the_forge_block_with_the_login`).
 - The repositories table shows the Forge column
   (`ui/src/features/repositories/repositories-page.test.tsx::shows the forge
@@ -181,6 +175,7 @@ the desktop app as a whole (015).
 ## Sources
 
 `crates/ariadne-store/migrations/0001_init.sql`,
+`crates/ariadne-store/migrations/0004_drop_forge_review_pin.sql`,
 `crates/ariadne-store/src/forge.rs`, `crates/ariadne-daemon/src/forge/`,
 `crates/ariadne-daemon/src/http/repositories.rs`,
 `crates/ariadne-daemon/tests/it/common/forge.rs`,

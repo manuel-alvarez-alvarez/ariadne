@@ -3235,6 +3235,35 @@ async fn an_existing_database_adds_pull_request_readiness_columns() {
     drop(Store::open(&path).await.unwrap());
 }
 
+/// A database at migration 0003 still carries `forge_integrations.review_model`
+/// and `review_effort`, from before every review started manually. Opening
+/// it applies 0004, which drops both columns, with no error.
+#[tokio::test]
+async fn an_existing_database_drops_the_forge_review_pin_columns() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("old.db");
+    drop(Store::open(&path).await.unwrap());
+
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE forge_integrations ADD COLUMN review_model TEXT")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE forge_integrations ADD COLUMN review_effort TEXT")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 4")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    drop(Store::open(&path).await.unwrap());
+}
+
 // -- token usage ------------------------------------------------------------
 
 fn usage(input_tokens: u64, cached_input_tokens: u64, output_tokens: u64) -> TokenUsage {
@@ -5003,8 +5032,6 @@ fn widgets(repository_id: &str) -> SetForgeIntegration {
         remote: "origin".into(),
         enabled: false,
         login: None,
-        review_model: None,
-        review_effort: None,
     }
 }
 
@@ -5258,8 +5285,6 @@ async fn store_with_my_pull_request() -> (Store, tempfile::TempDir, PullRequestR
             remote: "origin".into(),
             enabled: true,
             login: Some("me".into()),
-            review_model: None,
-            review_effort: None,
         })
         .await
         .unwrap();

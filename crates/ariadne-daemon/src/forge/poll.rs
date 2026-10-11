@@ -449,8 +449,7 @@ async fn fetch(store: &Store, cfg: &Config, handoff: &Handoff, id: &str) -> Resu
         }
     };
     // A request that asks for my review, out of draft, is one Ariadne keeps
-    // a row of, whether or not the repository has a review pin (029): a
-    // repository with none starts no session of its own, but the request
+    // a row of: nothing starts a session of its own (029), but the request
     // still needs its row, so the `pull_request` attention producer can
     // offer a human a manual start on it. Nothing else the lists hold is
     // kept.
@@ -711,21 +710,149 @@ async fn still_enabled(store: &Store, expected: &ForgeIntegration) -> Result<boo
 }
 
 /// Whether the request `row` wants a review session of its own: an open
-/// request out of draft, that asks for my review on a repository whose
-/// integration names a `review_model`, or whose own row was given a pin by
-/// an explicit manual start (029) — or one of mine whose review the user
-/// asked Ariadne for. The author of the task that opened a request of mine
-/// keeps it in its own session (005).
+/// request out of draft, asked for directly on its own row by an explicit
+/// manual start (029). One that asks for my review also needs the forge's
+/// own timeline to still ask for it — a withdrawal ends the session even
+/// though the ask itself is never un-asked. The author of the task that
+/// opened a request of mine keeps it in its own session (005).
 pub(crate) fn wants_session(row: &PullRequest, integration: &ForgeIntegration) -> bool {
-    // A request that asks for my review runs on the repository's review
-    // pin, or on one asked directly on the row where the repository has
-    // none; one of mine runs on the pin the user picked when asking.
-    let pinned = match row.role.as_str() {
-        "reviewer" => {
-            row.review_requested
-                && (integration.review_model.is_some() || row.review_model.is_some())
-        }
+    let asked = match row.role.as_str() {
+        "reviewer" => row.review_asked && row.review_requested && row.review_model.is_some(),
         _ => row.review_asked && row.review_model.is_some(),
     };
-    pinned && row.state == "open" && integration.enabled && !row.draft
+    asked && row.state == "open" && integration.enabled && !row.draft
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pull() -> PullRequest {
+        PullRequest {
+            id: "01pr".into(),
+            repository_id: "01repo".into(),
+            number: 7,
+            url: "https://github.com/acme/widgets/pull/7".into(),
+            title: "Fix widgets".into(),
+            author_login: "other".into(),
+            state: "open".into(),
+            draft: false,
+            head_branch: "fix".into(),
+            head_sha: "abc".into(),
+            head_repo: None,
+            base_branch: "main".into(),
+            checks: "none".into(),
+            review_decision: "none".into(),
+            mergeable: "unknown".into(),
+            unanswered_comments: 0,
+            origin_task_id: None,
+            opened_at: String::new(),
+            role: "reviewer".into(),
+            ready: false,
+            forge_updated_at: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            failed_checks: "[]".into(),
+            behind_base: false,
+            told_checks: "[]".into(),
+            told_behind_base: false,
+            told_review_decision: None,
+            told_state: None,
+            told_check_state: None,
+            news_told_at: None,
+            reviewed_sha: None,
+            told_head_sha: None,
+            review_requested: true,
+            review_asked: false,
+            body: String::new(),
+            review_model: None,
+            review_effort: None,
+            review_skills_json: "[]".into(),
+            merge_sha: None,
+            summary_comment_id: None,
+            reviewer_given_up_at: None,
+            reviewer_given_up_wedged: false,
+            ready_confirmed_at: None,
+            ready_head_sha: None,
+        }
+    }
+
+    fn integration() -> ForgeIntegration {
+        ForgeIntegration {
+            repository_id: "01repo".into(),
+            kind: "github".into(),
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+            webhook_id: None,
+            webhook_secret: None,
+            webhook_url: None,
+            webhook_state: "polling".into(),
+            webhook_error: None,
+            webhook_last_delivery_at: None,
+            fetch_error: None,
+            detected_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    /// A reviewer row carrying a model, with no ask of its own, wants no
+    /// session: `review_model` alone is never enough, since nothing but
+    /// the ask route (029 rule 10) ever writes one, and this predicate must
+    /// hold on its own terms rather than lean on that being the only writer.
+    #[test]
+    fn a_reviewer_row_with_a_model_but_no_ask_wants_no_session() {
+        let row = PullRequest {
+            review_model: Some("stub:test-model".into()),
+            review_asked: false,
+            review_requested: true,
+            ..pull()
+        };
+        assert!(!wants_session(&row, &integration()));
+    }
+
+    /// The same row, once asked, wants a session while the forge's own
+    /// timeline still asks for my review.
+    #[test]
+    fn a_reviewer_row_asked_and_still_requested_wants_a_session() {
+        let row = PullRequest {
+            review_model: Some("stub:test-model".into()),
+            review_asked: true,
+            review_requested: true,
+            ..pull()
+        };
+        assert!(wants_session(&row, &integration()));
+    }
+
+    /// Withdrawn on the forge's own side, asking never un-asks it, so the
+    /// row keeps `review_asked`; the session still ends, since the forge no
+    /// longer wants it.
+    #[test]
+    fn a_reviewer_row_asked_but_no_longer_requested_wants_no_session() {
+        let row = PullRequest {
+            review_model: Some("stub:test-model".into()),
+            review_asked: true,
+            review_requested: false,
+            ..pull()
+        };
+        assert!(!wants_session(&row, &integration()));
+    }
+
+    /// A request of mine never reads `review_requested`: the field is the
+    /// forge's own "still asks for *my* review", which says nothing about a
+    /// request of mine, so `review_asked` and the model alone decide it.
+    #[test]
+    fn a_request_of_mine_wants_a_session_on_its_own_ask_alone() {
+        let row = PullRequest {
+            role: "author".into(),
+            review_model: Some("stub:test-model".into()),
+            review_asked: true,
+            review_requested: false,
+            ..pull()
+        };
+        assert!(wants_session(&row, &integration()));
+    }
 }

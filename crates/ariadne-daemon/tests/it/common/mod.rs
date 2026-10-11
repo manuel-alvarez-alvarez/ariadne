@@ -866,8 +866,6 @@ pub(crate) async fn with_forge_enabled(h: &Harness, repo: &Repository, enabled: 
             remote: "origin".into(),
             enabled,
             login: enabled.then(|| "me".into()),
-            review_model: None,
-            review_effort: None,
         })
         .await
         .unwrap();

@@ -1,9 +1,9 @@
 //! Integration tests for the forge integration of a repository (025).
 //!
 //! The daemon reads the forge off the checkout's remote at registration, on
-//! every edit and once at start, and the user enables the integration with a
-//! pin for each of its two roles. `gh` and `glab` are the stub of
-//! [`common::forge`], so nothing here needs either CLI installed.
+//! every edit and once at start, and the user enables the integration.
+//! `gh` and `glab` are the stub of [`common::forge`], so nothing here needs
+//! either CLI installed.
 
 use crate::common;
 
@@ -211,49 +211,6 @@ async fn enabling_needs_the_cli_signed_in_and_stores_its_login() {
 }
 
 #[tokio::test]
-async fn a_pin_must_be_a_catalog_model_and_a_role_may_have_none() {
-    let h = harness().await;
-    let path = checkout_with_origin(&h, "repo", "https://github.com/acme/widgets");
-    let repo = register(&h, &path, "main").await;
-
-    let refused = h
-        .error(
-            edit(&repo.id, json!({"forge": {"review_model": "nosuch:model"}})),
-            StatusCode::BAD_REQUEST,
-        )
-        .await;
-    assert!(
-        refused.error.message.contains("nosuch"),
-        "{}",
-        refused.error.message
-    );
-
-    let pinned: RepositoryDto = h
-        .json(
-            edit(
-                &repo.id,
-                json!({"forge": {"review_model": "stub:test-model"}}),
-            ),
-            StatusCode::OK,
-        )
-        .await;
-    let forge = pinned.forge.unwrap();
-    assert_eq!(forge.review_model.as_deref(), Some("stub:test-model"));
-    assert_eq!(forge.review_effort, None, "a pin with no effort is allowed");
-    let cleared: RepositoryDto = h
-        .json(
-            edit(&repo.id, json!({"forge": {"review_model": ""}})),
-            StatusCode::OK,
-        )
-        .await;
-    assert_eq!(
-        cleared.forge.unwrap().review_model,
-        None,
-        "a role may have no pin"
-    );
-}
-
-#[tokio::test]
 async fn one_forge_repository_is_enabled_on_one_repository_row_at_a_time() {
     let cli = stub_forge_cli(signed_in());
     let h = harness().forge_cli(&cli).await;
@@ -296,32 +253,6 @@ async fn one_forge_repository_is_enabled_on_one_repository_row_at_a_time() {
     let enabled_rows = h.store.enabled_forge_integrations().await.unwrap();
     assert_eq!(enabled_rows.len(), 1);
     assert_eq!(enabled_rows[0].repository_id, second.id);
-}
-
-#[tokio::test]
-async fn disabling_keeps_the_pins() {
-    let cli = stub_forge_cli(signed_in());
-    let h = harness().forge_cli(&cli).await;
-    let path = checkout_with_origin(&h, "repo", "git@github.com:acme/widgets.git");
-    let repo = register(&h, &path, "main").await;
-    let _: RepositoryDto = h
-        .json(
-            edit(
-                &repo.id,
-                json!({"forge": {"enabled": true, "review_model": "stub:test-model"}}),
-            ),
-            StatusCode::OK,
-        )
-        .await;
-    let disabled: RepositoryDto = h
-        .json(
-            edit(&repo.id, json!({"forge": {"enabled": false}})),
-            StatusCode::OK,
-        )
-        .await;
-    let forge = disabled.forge.unwrap();
-    assert!(!forge.enabled);
-    assert_eq!(forge.review_model.as_deref(), Some("stub:test-model"));
 }
 
 #[tokio::test]

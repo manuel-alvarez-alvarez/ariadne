@@ -3,18 +3,17 @@
 Ariadne works with the forge a repository's remote is on — GitHub through
 `gh`, GitLab through `glab` — once you enable it. Enabled, a request a
 task's `pr` column opens is kept by that column's agent until a human
-merges it, and a request asking for your review gets a session that
-reviews it; no agent runs a forge command itself, and none approves or
-merges anything.
+merges it, and a request asking for your review is yours to start
+Ariadne's review of, by hand, whenever you choose; no agent runs a forge
+command itself, and none approves or merges anything.
 
 ## Enabling it
 
 ```sh
-ariadne repo update <repo-id> --forge on \
-    --review-model claude-acp:<model-id> --review-effort balanced
+ariadne repo update <repo-id> --forge on
 ```
 
-or on registration, with `ariadne repo add <path> --forge on ...`. Enabling
+or on registration, with `ariadne repo add <path> --forge on`. Enabling
 needs the forge's CLI signed in to the remote's host already — `gh auth
 login` for GitHub, `glab auth login` for GitLab — and probes it with `auth
 status`; a CLI that is not installed or not signed in refuses the enable
@@ -36,26 +35,18 @@ The same checkout — the same host, owner and repository name — can only be
 enabled on one registered repository row at a time, even registered twice
 under two base branches: see [Troubleshooting](#troubleshooting).
 
-## The review pin
+## Every review starts manually
 
-Enabling turns no review on by itself. One pin, a model and an effort,
-decides whether review sessions run at all:
+Enabling turns no review on by itself, and there is no repository-wide
+setting that does: every review, whether a request of yours or one asking
+for your review, starts the moment you ask for it, on a model and an
+effort you pick for that request alone — see [What a `pr-reviewer` session
+does](#what-a-pr-reviewer-session-does) below. With nothing asked, a
+request asking for your review gets no detail fetch — Ariadne still lists
+it, but reads none of its comments or checks.
 
-| Flags | Starts a session on |
-| --- | --- |
-| `--review-model`, `--review-effort` | every open request asking for your review |
-
-With no model pinned no review session starts, and a request asking for
-your review gets no detail fetch — Ariadne still lists it, but reads none of
-its comments or checks. An empty model (`--review-model ""`) clears the pin
-and its effort. An effort flag on its own only moves the effort of a model
-already pinned — given with no model pinned, it is refused — and
-`--review-effort default` clears the effort alone. The pin is set from the
-CLI only: the desktop app's repository dialog has just the switch that
-enables the integration.
-
-A request of yours needs no pin: the agent of the task that opened it
-keeps it, on that agent's own model.
+A request of yours opened by a task needs no asking at all: the agent of
+the task that opened it keeps it, on that agent's own model.
 
 ## The daemon talks to the forge, never the agent
 
@@ -103,33 +94,31 @@ too, and nobody keeps it.
 
 ## What a `pr-reviewer` session does
 
-A request that asks for your review, once it leaves draft, on a repository
-whose own review pin names a model, gets a session of its own, staffed on
-that pin, in a worktree detached at the request's head rather than a branch
-of its own. The daemon wakes it with the request, then at the next
-reconcile after a later push or a reply in a thread it opened — told at
-once, with no wait for activity to settle. A push also waits for the
-session to go idle before the worktree moves to the new head; a reply alone
-moves no worktree, so it needs no idle session.
+A request that asks for your review, once it leaves draft, gets a session
+of its own once you ask for one, staffed on the pin you gave that ask, in a
+worktree detached at the request's head rather than a branch of its own.
+The daemon wakes it with the request, then at the next reconcile after a
+later push or a reply in a thread it opened — told at once, with no wait
+for activity to settle. A push also waits for the session to go idle before
+the worktree moves to the new head; a reply alone moves no worktree, so it
+needs no idle session.
 
-A repository with no review pin of its own starts nothing automatically for
-a request that asks for your review — but the request is still tracked, and
-Needs attention offers **Review needed**, naming the repository and the
-request: nothing else is ever going to start a session for it, so you start
-one by hand. You can ask for the same on a request of your own, too: open
-either kind of request in the desktop app's Pull requests tab and press
-**Start review** in its panel. The dialog asks what the reviewer runs on —
-a model and an effort, not the repository's review pin — and which skills
-it loads: `pr-reviewer`, its own playbook, is always on and is all it starts
-with; any other skill can join it. The
-same is `PUT /v1/repositories/<repo-id>/pull-requests/<number>/ariadne-review` with `{"asked": true,
-"model": "<agent:model>", "effort": "<effort>", "skills": [...]}` — refused
-with 409 only where the repository already pins a review model of its own,
-since that request already has a review running on it. On a request of
-yours that session hears of pushes alone — the comments are the keeping
-agent's news; on an incoming request it hears of pushes and replies, the
-same as the automatically staffed kind — and its review is always posted as
-a comment where the request is your own, since no forge takes a change
+Nothing starts that session on its own: the request is tracked the moment
+it is seen, and Needs attention offers **Review needed**, naming the
+repository and the request, until you ask. You ask the same way on a
+request of your own, too: open either kind of request in the desktop app's
+Pull requests tab and press **Start review** in its panel. The dialog asks
+what the reviewer runs on — a model and an effort — and which skills it
+loads: `pr-reviewer`, its own playbook, is always on and is all it starts
+with; any other skill can join it. The same is `PUT
+/v1/repositories/<repo-id>/pull-requests/<number>/ariadne-review` with
+`{"asked": true, "model": "<agent:model>", "effort": "<effort>", "skills":
+[...]}`, from the CLI as `ariadne pr review <repo-id> <number> --model
+<agent:model>`: `--model` is required, since there is no repository
+setting to fall back to. On a request of yours that session hears of
+pushes alone — the comments are the keeping agent's news; on an incoming
+request it hears of pushes and replies — and its review is always posted
+as a comment where the request is your own, since no forge takes a change
 request from a request's own author. Starting it closes the dialog and,
 once the daemon has the agent up, opens that session's console in the
 panel. **Stop review** takes it down. The panel's Sessions tab lists the
@@ -188,9 +177,8 @@ strip, each naming the request's title, its repository, the one action that
 clears it and how long it has waited, and each linking to the request's own
 panel:
 
-- **Review needed** — a request that asks for your review, on a repository
-  with no review pin of its own: see the previous section for starting one
-  by hand.
+- **Review needed** — a request that asks for your review and has no
+  review asked yet: see the previous section for starting one by hand.
 - **Ready to merge** — a request a `pr` agent keeps, once its own `ready`
   report is actually backed up by the forge's own evidence for the request's
   current head: a current approval, every review thread actually resolved —
@@ -324,8 +312,8 @@ the same way — `get_pull_request`, `list_comments` and `get_comment` ask the
 forge at the call.
 
 It keeps a small record of a request only while it works on it: the
-request a task opened, a request that asks for your review on a repository
-with a review pin, and one of yours you asked it to review. The record is
+request a task opened, a request that asks for your review, and one of
+yours you asked it to review. The record is
 its own bookkeeping — which task keeps the request, what each agent was
 told, the head last reviewed, the review's summary comment — and a mark per
 comment it told or its review posted. Once the request merges or closes

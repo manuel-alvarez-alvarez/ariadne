@@ -2227,8 +2227,6 @@ async fn on_the_pr_column_with_a_kept_request(w: &World) -> (AgentSession, Strin
             remote: "origin".into(),
             enabled: true,
             login: Some("me".into()),
-            review_model: None,
-            review_effort: None,
         })
         .await
         .unwrap();
@@ -2746,8 +2744,8 @@ async fn a_burst_that_queues_behind_a_slow_reconcile_still_costs_two_reconciles(
     );
 }
 
-/// A pull request that asks for my review on an enabled repository with a
-/// review pin, and a review session on it with the stub agent running, as
+/// A pull request that asks for my review and was asked for one directly on
+/// its own row, and a review session on it with the stub agent running, as
 /// the launcher leaves one (029). `number` tells two of them apart.
 async fn pull_request_session(h: &Harness, number: i64) -> AgentSession {
     let repo = match h.store.list_repositories().await.unwrap().pop() {
@@ -2764,8 +2762,6 @@ async fn pull_request_session(h: &Harness, number: i64) -> AgentSession {
                     remote: "origin".into(),
                     enabled: true,
                     login: Some("me".into()),
-                    review_model: Some(test_pin().model),
-                    review_effort: None,
                 })
                 .await
                 .unwrap();
@@ -2781,6 +2777,19 @@ async fn pull_request_session(h: &Harness, number: i64) -> AgentSession {
             role: "reviewer".into(),
             origin_task_id: None,
         })
+        .await
+        .unwrap();
+    h.store
+        .set_pull_request_review_asked(
+            &pull.id,
+            Some((
+                &ariadne_store::AgentPin {
+                    model: test_pin().model,
+                    effort: None,
+                },
+                &[],
+            )),
+        )
         .await
         .unwrap();
     crate::common::forge::seed_live(h, &pull, "someone", &format!("fix-{number}"), "abc", true);

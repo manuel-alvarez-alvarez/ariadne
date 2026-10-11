@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-10-10
+updated: 2026-10-11
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 2a65c9cb]
 tests:
@@ -335,9 +335,9 @@ same binary also serves (013).
 42. `pr review <repo> <number> --model AGENT:MODEL [--effort E] [--skill
     S]... [--attach]` asks Ariadne to review a request of your own (029);
     `--model` takes the spelling every other `--model` takes and refuses
-    `default`, a review pinning a model of its own. Left out, the
-    repository's own `review_model` and `review_effort` supply the pin;
-    with neither, it is a usage error naming `--model`. `--attach` waits for
+    `default`, a review pinning a model of its own. `--model` is required
+    with no `--stop`: there is no repository pin to fall back to, so
+    leaving it out is a usage error naming `--model`. `--attach` waits for
     the review session to start and opens its console, as `session new
     --attach` does. `pr review <repo> <number> --stop` sends `{asked:
     false}` alone and conflicts with `--model`, `--effort`, `--skill` and
@@ -648,10 +648,8 @@ derive a tool detail when their summary is empty.
   `::a_followed_log_uses_the_console_event_stream`).
 - `pr review` sends the asking pin whole and the stop body alone
   (`commands/pr.rs::pr_review_sends_the_ask_body_with_its_pin_and_the_stop_body_alone`),
-  falls back to the repository's own review pin with no `--model`
-  (`::pr_review_with_no_model_uses_the_repositorys_own_review_pin`), and is
-  refused, naming `--model`, where the repository has none
-  (`::pr_review_with_no_model_and_no_repository_pin_is_refused`). `--stop`
+  and is refused, naming `--model`, with no model and no `--stop`
+  (`::pr_review_with_no_model_and_no_stop_is_refused`). `--stop`
   conflicts with every asking flag, and `--model default` is refused
   (`::pr_review_refuses_stop_combined_with_an_asking_flag_and_a_bare_default_model`).
   `pr inspect` prints a fixed reading order of lowercase keys, the body last
