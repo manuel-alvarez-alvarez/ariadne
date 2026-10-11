@@ -832,7 +832,7 @@ async fn an_evidence_refresh_failure_and_recovery_at_the_same_head_publish_pull_
 /// fetch that succeeds again publishes the recovery the same way.
 #[tokio::test]
 async fn an_outer_list_failure_publishes_pull_requests_changed() {
-    use crate::common::{QUIET, next_event};
+    use crate::common::{QUIET, TIMEOUT, eventually, next_event};
     use ariadne_api::stream::DomainEvent;
     use ariadne_daemon::forge::poll::Mode;
     let full = script(vec![github_pull(1, "other")], github_pull(1, "other"));
@@ -842,8 +842,26 @@ async fn an_outer_list_failure_publishes_pull_requests_changed() {
     let id = enabled_repository(&h, None).await;
     let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == id);
     next_event(&mut events, moved).await;
-    let _ = tokio::time::timeout(QUIET, next_event(&mut events, moved)).await;
+    let rows = || async {
+        h.store
+            .list_pull_requests(ariadne_store::PullRequestFilter::default())
+            .await
+            .unwrap()
+    };
+    eventually(TIMEOUT, "the request's first live read", async || {
+        rows().await.first().is_some_and(|pull| {
+            h.launcher
+                .live
+                .get(&pull.id)
+                .is_some_and(|live| live.evidence_ok)
+        })
+    })
+    .await;
     h.state.forge_poll.set_mode(&id, Mode::WakeOnly);
+    while tokio::time::timeout(QUIET, next_event(&mut events, moved))
+        .await
+        .is_ok()
+    {}
 
     // The next fetch fails before any row is ever read: the outer list
     // call itself is gone.
@@ -856,11 +874,29 @@ async fn an_outer_list_failure_publishes_pull_requests_changed() {
     }
     stub.reprogram(failed);
     h.state.forge_poll.wake(&id);
+    eventually(TIMEOUT, "evidence to drop", async || {
+        rows().await.first().is_some_and(|pull| {
+            h.launcher
+                .live
+                .get(&pull.id)
+                .is_some_and(|live| !live.evidence_ok)
+        })
+    })
+    .await;
     next_event(&mut events, moved).await;
 
     // The fetch after that succeeds again: the recovery is published too.
     stub.reprogram(full);
     h.state.forge_poll.wake(&id);
+    eventually(TIMEOUT, "evidence to recover", async || {
+        rows().await.first().is_some_and(|pull| {
+            h.launcher
+                .live
+                .get(&pull.id)
+                .is_some_and(|live| live.evidence_ok)
+        })
+    })
+    .await;
     next_event(&mut events, moved).await;
 }
 
