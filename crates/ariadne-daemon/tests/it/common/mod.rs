@@ -349,6 +349,9 @@ impl HarnessBuilder {
             }
         };
         let mut config = Config::load(Some(home)).unwrap();
+        ariadne_daemon::agents::sync_skills(&store, &config.skills_dir)
+            .await
+            .unwrap();
         // The model seams are the daemon's own settings rather than keys of
         // `config.toml`, so the harness writes them onto the config the way
         // the daemon would have read them.

@@ -12,7 +12,16 @@ use ariadne_store::NewSkill;
 
 use super::AppState;
 use super::convert::skill_dto;
-use super::error::{ApiResult, Json};
+use super::error::{ApiError, ApiResult, Json};
+
+fn sync_error(error: anyhow::Error) -> ApiError {
+    tracing::error!(error = %error, "cannot sync the home skill copy");
+    ApiError::new(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "internal_error",
+        "cannot sync the home skill copy",
+    )
+}
 
 /// Create a skill of the user's own.
 ///
@@ -35,6 +44,9 @@ pub(super) async fn create(
             document: req.document,
         })
         .await?;
+    crate::agents::sync_skills(&state.store, &state.launcher.cfg.skills_dir)
+        .await
+        .map_err(sync_error)?;
     Ok((StatusCode::CREATED, Json(skill_dto(skill))))
 }
 
@@ -71,6 +83,9 @@ pub(super) async fn update(
         Some(document) => state.store.set_skill_document(&name, &document).await?,
         None => state.store.get_skill(&name).await?,
     };
+    crate::agents::sync_skills(&state.store, &state.launcher.cfg.skills_dir)
+        .await
+        .map_err(sync_error)?;
     Ok(Json(skill_dto(skill)))
 }
 
@@ -83,6 +98,9 @@ pub(super) async fn delete(
     Path(name): Path<String>,
 ) -> ApiResult<StatusCode> {
     state.store.delete_skill(&name).await?;
+    crate::agents::sync_skills(&state.store, &state.launcher.cfg.skills_dir)
+        .await
+        .map_err(sync_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -94,5 +112,9 @@ pub(super) async fn reset_document(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> ApiResult<Json<SkillDto>> {
-    Ok(Json(skill_dto(state.store.reset_skill(&name).await?)))
+    let skill = state.store.reset_skill(&name).await?;
+    crate::agents::sync_skills(&state.store, &state.launcher.cfg.skills_dir)
+        .await
+        .map_err(sync_error)?;
+    Ok(Json(skill_dto(skill)))
 }

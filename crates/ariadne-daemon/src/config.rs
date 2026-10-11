@@ -21,6 +21,7 @@ pub struct Config {
     pub db_path: PathBuf,
     pub worktree_root: PathBuf,
     pub run_dir: PathBuf,
+    pub skills_dir: PathBuf,
     pub pid_file: PathBuf,
     pub tcp_listen: Option<SocketAddr>,
     /// Separate signed ingress. None binds loopback on an operating-system port.
@@ -109,6 +110,7 @@ impl Config {
             db_path: file.db_path.unwrap_or_else(|| root.join("ariadne.db")),
             worktree_root: file.worktree_root.unwrap_or_else(|| root.join("worktrees")),
             run_dir: file.run_dir.unwrap_or_else(|| root.join("run")),
+            skills_dir: file.skills_dir.unwrap_or_else(|| root.join("skills")),
             pid_file: endpoint::pid_file(&root),
             tcp_listen: file.tcp_listen,
             webhook_listen: file.webhook_listen,
@@ -142,7 +144,12 @@ impl Config {
             root,
         };
 
-        for dir in [&config.root, &config.worktree_root, &config.run_dir] {
+        for dir in [
+            &config.root,
+            &config.worktree_root,
+            &config.run_dir,
+            &config.skills_dir,
+        ] {
             std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
         }
 
@@ -162,10 +169,17 @@ impl Config {
         let root = endpoint::home(home_override)
             .context("cannot determine home directory; pass --home")?;
         let path = endpoint::config_file(&root);
-        Ok(match endpoint::parse_config(&root)? {
+        let file = endpoint::parse_config(&root)?;
+        let skills_dir = file
+            .as_ref()
+            .and_then(|config| config.skills_dir.as_ref())
+            .cloned()
+            .unwrap_or_else(|| root.join("skills"));
+        let verdict = match file {
             Some(_) => format!("{}: ok", path.display()),
             None => format!("{}: none — every default applies", path.display()),
-        })
+        };
+        Ok(format!("{verdict}\nskills_dir = {}", skills_dir.display()))
     }
 }
 
@@ -219,6 +233,7 @@ mod tests {
         assert_eq!(config.nvidia_smi_bin, None);
         assert_eq!(config.gh_bin, None);
         assert_eq!(config.glab_bin, None);
+        assert_eq!(config.skills_dir, dir.path().join("home/skills"));
     }
 
     #[test]
@@ -332,7 +347,8 @@ mod tests {
     fn check_config_reads_the_file_the_next_start_would_read() {
         let dir = home_with("prevent_sleep = false\n");
         let verdict = Config::check(Some(dir.path().join("home"))).unwrap();
-        assert!(verdict.ends_with("config.toml: ok"), "{verdict}");
+        assert!(verdict.contains("config.toml: ok"), "{verdict}");
+        assert!(verdict.contains("skills_dir ="), "{verdict}");
 
         let empty = tempfile::tempdir().unwrap();
         let verdict = Config::check(Some(empty.path().to_path_buf())).unwrap();
@@ -353,10 +369,20 @@ mod tests {
 
     #[test]
     fn a_config_file_is_read_into_the_daemons_own_shape() {
-        let dir = home_with("log_filter = \"debug\"\nprevent_sleep = false\n");
+        let dir = home_with("");
+        let skills_dir = dir.path().join("custom-skills");
+        std::fs::write(
+            dir.path().join("home/config.toml"),
+            format!(
+                "log_filter = \"debug\"\nprevent_sleep = false\nskills_dir = {:?}\n",
+                skills_dir
+            ),
+        )
+        .unwrap();
         let config = Config::load(Some(dir.path().join("home"))).unwrap();
         assert_eq!(config.log_filter, "debug");
         assert!(!config.prevent_sleep);
+        assert_eq!(config.skills_dir, skills_dir);
         assert!(
             config.delete_merged_worktrees,
             "and what the file does not say keeps its default"

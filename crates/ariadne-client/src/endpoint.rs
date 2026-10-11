@@ -46,6 +46,7 @@ pub struct FileConfig {
     pub db_path: Option<PathBuf>,
     pub worktree_root: Option<PathBuf>,
     pub run_dir: Option<PathBuf>,
+    pub skills_dir: Option<PathBuf>,
     /// e.g. "127.0.0.1:7676" — TCP listener is disabled unless set.
     pub tcp_listen: Option<SocketAddr>,
     pub webhook_listen: Option<SocketAddr>,
