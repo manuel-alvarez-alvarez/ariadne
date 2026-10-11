@@ -58,6 +58,21 @@ busy loop costs every later task on the machine, not only your own.
   shell's own command line, so `pgrep -f` finds the waiter itself and the
   wait never ends.
 
+## Checks
+
+The git hooks run the checks. Before your first commit, run `git config
+core.hooksPath`. If it does not print `.githooks`, run
+`scripts/install-githooks.sh`. The setting is the repository's, so one
+install reaches every worktree.
+
+Run a hook by hand with `.githooks/pre-push --all`. Never pass `--no-verify`
+or `-n` to `git commit` or `git push`. A hook that refuses a commit or a push
+names the fix; make it, and commit again.
+
+What each hook runs for an area is in that area's own file:
+[`crates/AGENTS.md`](crates/AGENTS.md) for Rust, and
+[`ui/AGENTS.md`](ui/AGENTS.md) for the UI and the Tauri shell.
+
 ## Commit messages
 
 This is the one place the commit types are written down: `README.md` and

@@ -93,7 +93,14 @@ A reviewer fails a Rust change for any of these:
 - A test that depends on another test, or on thread order. Ask for a test
   that holds under the `ci` profile's two-thread cap.
 
-Before a commit on `main`, run the whole workspace:
+The pre-commit hook (`.githooks/pre-commit`) runs, for what is staged:
+`cargo fmt --all -- --check`, then `cargo clippy -p <crate> --all-targets --
+-D warnings` for each changed `crates/<crate>/` (a change of the root
+`Cargo.toml` or `Cargo.lock` runs clippy on the whole workspace instead), and
+`cargo machete .` when a `Cargo.toml` is staged.
+
+The pre-push hook (`.githooks/pre-push`) runs the whole workspace, for a push
+that touches `crates/`:
 
 ```sh
 cargo machete .
@@ -103,9 +110,10 @@ cargo test --doc --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 scripts/check-unused-rust
-(cd ui/src-tauri && cargo fmt --all -- --check)
-(cd ui/src-tauri && cargo check)
 ```
+
+See the root [`AGENTS.md`](../AGENTS.md#checks) for installing the hooks and
+running one by hand.
 
 `cargo machete` is [cargo-machete](https://github.com/bnjbvr/cargo-machete)
 (`cargo binstall cargo-machete@0.9.2`, the version CI pins). It fails on a

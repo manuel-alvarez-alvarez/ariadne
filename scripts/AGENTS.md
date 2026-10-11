@@ -24,6 +24,10 @@ in the root [`AGENTS.md`](../AGENTS.md).
   captured to a log and shown only on failure. Sourced, never executed.
 - `check-unused-rust` — lists every `pub` item of a library crate that no
   other file names; see [`crates/AGENTS.md`](../crates/AGENTS.md).
+- `install-githooks.sh` — sets `core.hooksPath` to `.githooks` from the
+  repository root, so the hooks under `.githooks/` run; a repeat run that
+  finds the setting already there changes nothing. See the root
+  [`AGENTS.md`](../AGENTS.md#checks).
 - `tests/install-command.sh` — the stand-in for every external tool
   (`gh`, `git`, `tar`, `ldconfig`, `systemctl`, `security`, `codesign`, …) the
   installer boundary tests put on `PATH`, driven by the arguments it is
@@ -54,6 +58,24 @@ in the root [`AGENTS.md`](../AGENTS.md).
   `--force`), `export` (a quote in the password reaches the `.p12` and the
   printed `gh secret set` command unmangled), `secrets` (`--set-secrets`
   runs the three commands).
+- `tests/githooks.sh` — a `.githooks/` scenario, run as `bash
+  scripts/tests/githooks.sh CASE` for one of its cases: `install`
+  (`install-githooks.sh` sets `core.hooksPath`, and a worktree reads the same
+  value), `rust-commit`, `ui-commit`, `tauri-commit`, `docs-commit` (a staged
+  file of each area runs that area's pre-commit commands, and no other
+  area's), `bad-subject` (`commit-msg` refuses a subject that is not a
+  Conventional Commit and accepts one that is), `rust-push`, `ui-push`,
+  `tauri-push` (a pushed range touching one area runs that area's pre-push
+  commands, and no other area's), `push-isolation` (a linked-worktree commit
+  and push leave its HEAD, refs, index and files unchanged while a cargo stand-in uses Git
+  in another repository), `all` (`--all` runs every area), `fail` (a
+  stand-in that exits 1 fails the hook and prints the failed command).
+- `tests/githooks-command.sh` — the stand-in for `cargo`, `npm`, `npx` and
+  `shellcheck` the githooks boundary tests put on `PATH`, and for
+  `scripts/check-unused-rust` in their repository copy: it logs its own
+  invocation and exits 1 only when `TEST_FAIL` names it exactly. With
+  `TEST_GIT_PROBE=1`, its cargo clippy and nextest calls use Git in a
+  separate repository to prove the hooks clear Git routing variables.
 
 ## Conventions
 
@@ -73,11 +95,14 @@ in the root [`AGENTS.md`](../AGENTS.md).
 
 ```sh
 shellcheck scripts/*.sh
+shellcheck .githooks/*
 ```
 
 `tests/install-linux.sh` is not in CI: run it by hand, on Linux, once for each
 case above, since it exercises the systemd and GNOME paths `ci.yml` does not
 cover. `tests/install-sign-macos.sh` and `tests/make-signing-cert-scenarios.sh`
-are the same, on macOS, for each of their cases. `tests/install-command.sh`
-and `tests/make-signing-cert-command.sh` need no direct invocation; the
-scenario scripts put them on `PATH` for the tools they stand in for.
+are the same, on macOS, for each of their cases. `tests/githooks.sh` is the
+same, for each of its cases, on any OS. `tests/install-command.sh`,
+`tests/make-signing-cert-command.sh` and `tests/githooks-command.sh` need no
+direct invocation; the scenario scripts put them on `PATH` for the tools they
+stand in for.
