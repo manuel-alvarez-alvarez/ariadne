@@ -11,8 +11,9 @@ Judge two axes apart: repository conventions, and task acceptance.
 
 1. For a branch review, run
    `git checkout --detach <branch>` in the review worktree.
-   Start the whole test suite, build and linters once for this verdict,
-   as one command in the foreground with a timeout up to ten minutes.
+   Start the tests and lint of the crates and packages the diff changed,
+   once for this verdict. Run them in the foreground with a timeout up to
+   ten minutes.
    Split a run too long by crate or package. Never poll a background
    run with a no-op command.
    Send each check's output to a log file outside the worktree, such as

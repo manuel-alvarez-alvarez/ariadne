@@ -322,8 +322,9 @@ const AGENT_SYSTEM_PROMPT: &str = r#"Work only in the task's shared worktree, on
 2. Complete the step with `complete_step` and a reason that briefs the next agent.
 3. Return work with `fail_step` and a reason that tells the previous agent what to fix.
 4. Call `fail_task` if the task cannot be done.
-5. Call `request_user_input` only where the task cannot continue without a user answer. Do not use it for agent questions.
-6. End your turn after a step call or a question. Do not poll."#;
+5. Never pass `--no-verify` or `-n` to `git commit` or `git push`. A hook that refuses a commit or a push names the fix. Make it and commit again.
+6. Call `request_user_input` only where the task cannot continue without a user answer. Do not use it for agent questions.
+7. End your turn after a step call or a question. Do not poll."#;
 
 /// First briefing of a column's agent: the task, the column, the values its
 /// commands act on, and what the column before it said.
@@ -591,7 +592,7 @@ mod tests {
     /// to over 9000 characters of defaults. The workflow columns took every
     /// one of those rules: a column's skills say how its work is done, its
     /// gate says what proves it, and the two step calls move the task. What
-    /// is left is one task seat text of 600, three step texts of 300 each,
+    /// is left is one task seat text of 750, three step texts of 300 each,
     /// the orchestrator's three, the message, and the two texts of a pull
     /// request session. Moving a cap is a decision to argue for, never a way
     /// round a failing assertion.
@@ -604,10 +605,10 @@ mod tests {
 
         // A cap per seat. The orchestrator's carried its playbook up to
         // 1750; the playbook is the `orchestration` skill now, and 200 holds
-        // what is left to the seat text it is. The agent's six steps fit in
-        // 600, and the pull request reviewer's one paragraph in 400.
+        // what is left to the seat text it is. The agent's seven steps fit in
+        // 750, and the pull request reviewer's one paragraph in 400.
         let system_cap = |seat: Seat| match seat {
-            Seat::Agent => 600,
+            Seat::Agent => 750,
             Seat::Orchestrator => 200,
             Seat::Reviewer => 400,
         };
@@ -786,6 +787,7 @@ mod tests {
             "Complete the step with `complete_step` and a reason that briefs the next agent.",
             "Return work with `fail_step` and a reason that tells the previous agent what to fix.",
             "Call `fail_task` if the task cannot be done.",
+            "Never pass `--no-verify` or `-n` to `git commit` or `git push`.",
             "End your turn after a step call or a question. Do not poll.",
         ] {
             assert!(agent.contains(rule), "the agent seat text and \"{rule}\"");
@@ -803,16 +805,14 @@ mod tests {
         }
     }
 
-    /// The review column reads the diff and the task, starts every expensive
-    /// check before reading so the checks run while the review proceeds, and
-    /// ends on one of the two step calls: the step passes whole or
-    /// handed back with every finding.
+    /// The review column starts scoped checks before it reads the diff and
+    /// task, then ends on one of the two step calls.
     #[test]
     fn the_review_skill_starts_its_checks_before_the_read_and_ends_on_a_step_call() {
         let text = unwrapped(default_skill_document("code-review").unwrap());
         let checks = text
-            .find("Start the whole test suite, build and linters once for this verdict")
-            .expect("the code-review skill does not start every check once");
+            .find("Start the tests and lint of the crates and packages the diff changed, once for this verdict.")
+            .expect("the code-review skill does not start scoped checks once");
         let read = text
             .find("Read the task")
             .expect("the code-review skill does not read the task");
@@ -845,14 +845,7 @@ mod tests {
         );
     }
 
-    /// A skill scopes the step it owns to what the task changed, and names
-    /// none of the whole-suite runs: the review column and the merge column
-    /// run the whole thing, each once, and their skills are where that is
-    /// stated.
-    ///
-    /// The three here are the skills that used to end a step on the suite,
-    /// and `coding` carries two rules of its own since `testing` merged into
-    /// it: the scoped check at the end, and the one test it watches fail.
+    /// A skill scopes its checks to what its step changed.
     #[test]
     fn a_skill_scopes_its_own_checks_to_what_the_task_changed() {
         for (name, step) in [
@@ -869,28 +862,14 @@ mod tests {
                 document.contains(step),
                 "the {name} skill does not say \"{step}\""
             );
-            for suite in ["whole suite", "full suite", "the suite is green"] {
+        }
+        for (name, document) in all_skills() {
+            for phrase in ["whole suite", "full suite", "Start the whole test suite"] {
                 assert!(
-                    !document.contains(suite),
-                    "the {name} skill sends an agent to the {suite}"
+                    !document.contains(phrase),
+                    "the {name} skill contains {phrase}"
                 );
             }
-        }
-        for (name, step) in [
-            (
-                "code-review",
-                "Start the whole test suite, build and linters once",
-            ),
-            (
-                "merge",
-                "Run the whole suite, the build and the linters once.",
-            ),
-        ] {
-            let document = unwrapped(default_skill_document(name).unwrap());
-            assert!(
-                document.contains(step),
-                "the {name} skill does not run the whole suite once"
-            );
         }
     }
 
@@ -1038,8 +1017,8 @@ mod tests {
         );
     }
 
-    /// The merge column's skill runs its steps in order — fetch, rebase, the
-    /// one suite run, squash, guard, fast-forward, push, the step call — and
+    /// The merge column's skill runs its steps in order — fetch, rebase,
+    /// squash, guard, push, fast-forward, the step call — and
     /// a human merges every request: no skill names the command that would
     /// let an agent merge one itself, on either forge.
     #[test]
@@ -1048,12 +1027,12 @@ mod tests {
         let mut at = 0;
         for step in [
             "git fetch <remote> <base>",
+            "Fast-forward `<base>` with `--ff-only <remote>/<base>` where the primary checkout sits on `<base>`.",
             "Rebase the task branch onto `<base>`.",
-            "Run the whole suite, the build and the linters once.",
             "git reset --soft \"$(git merge-base <base> HEAD)\" && git commit",
             "git diff --stat <base> HEAD",
-            "Fast-forward `<base>` in the primary checkout onto the task branch.",
-            "Push `<base>` where a remote exists.",
+            "push `HEAD:<base>` to `<remote>`",
+            "git merge --ff-only <remote>/<base>",
             "Call `complete_step`. Give it the base branch's sha as `merge_commit`.",
         ] {
             let found = text[at..]
@@ -1062,8 +1041,16 @@ mod tests {
             at += found + step.len();
         }
         assert!(
-            text.contains("Push `<base>` before you call `complete_step`."),
-            "the merge skill does not say why the push comes first"
+            text.contains("A refused push is a fix on the task branch."),
+            "the merge skill does not name a refused push as a task-branch fix"
+        );
+        assert!(
+            text.contains("The repository's hooks run its checks on the push."),
+            "the merge skill does not leave the push checks to the repository hooks"
+        );
+        assert!(
+            text.contains("Else fetch it straight onto `<base>`."),
+            "the merge skill does not update the local base without a primary checkout"
         );
         assert!(
             text.contains("Write no trailer in the squash commit"),
@@ -1319,15 +1306,13 @@ mod tests {
     /// restated in a second one is a rule that goes stale in one of them.
     #[test]
     fn each_rule_is_stated_in_exactly_one_briefing() {
-        // What the two step calls are for is the agent seat text's; what
-        // `finalize_plan` is for lives in the orchestration skill, with the
-        // playbook it ends; the one suite run of the merge column is the
-        // merge skill's.
+        // The step calls and hook rule belong to the agent seat text.
+        // `finalize_plan` belongs to the orchestration skill.
         for marker in [
             "Complete the step with `complete_step`",
             "Return work with `fail_step`",
+            "Never pass `--no-verify` or `-n` to `git commit` or `git push`",
             "It starts every task and ends planning",
-            "Run the whole suite, the build and the linters once.",
         ] {
             let places = all_defaults()
                 .into_iter()
