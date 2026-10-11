@@ -1,7 +1,7 @@
 ---
 id: prompts-and-simplified-technical-english
 status: current
-updated: 2026-10-10
+updated: 2026-10-11
 areas: [prompts, store, core, mcp, daemon]
 commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
@@ -76,8 +76,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    the instruction to read a document before doing the work it covers. That
    path resolves through the run directory's `skills` folder, linked onto the
    daemon's shared home copy (017), so a broad set of skills costs an agent a
-   few lines rather than a few pages. How each CLI is pointed at those files
-   is 007.
+   few lines rather than a few pages. An agent reads the shared document when
+   it opens this path, so a later sync can change what a running agent reads.
+   How each CLI is pointed at those files is 007.
 5. The lifecycle briefings are Ariadne's own constants, read from the code on
    every launch and every resume. No route reads or writes one, and no row
    holds one. Because nothing is copied into the database, rewording a default

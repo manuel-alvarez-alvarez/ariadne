@@ -173,17 +173,15 @@ async fn an_orchestrator_session_indexes_the_orchestration_skill() {
     );
 }
 
-/// The playbook is editable like any shipped skill, and an edit reaches the
-/// next launch rather than the ones already running: the document a fresh
-/// orchestrator session's link resolves to is what the home copy holds at
-/// that moment.
+/// The playbook is editable like any shipped skill. Each session's link
+/// reads the home copy live, so an edit reaches an existing session and the
+/// next launch.
 #[tokio::test]
 async fn an_edited_orchestration_skill_reaches_the_next_launch() {
     let h = harness().await;
     let goal = h.planning_goal().await;
 
     let first = h.launcher.spawn_orchestrator(&goal.id).await.unwrap();
-    h.launcher.kill_session(&first.id).await.unwrap();
 
     const EDITED: &str = "---\nname: orchestration\ndescription: our playbook\n---\nAsk twice.\n";
     h.store
@@ -196,6 +194,21 @@ async fn an_edited_orchestration_skill_reaches_the_next_launch() {
     ariadne_daemon::agents::sync_skills(&h.store, &h.launcher.cfg.skills_dir)
         .await
         .unwrap();
+
+    let first_document = h
+        .launcher
+        .cfg
+        .run_dir
+        .join(&first.id)
+        .join("skills")
+        .join(ORCHESTRATION_SKILL)
+        .join("SKILL.md");
+    assert_eq!(
+        std::fs::read_to_string(&first_document).unwrap(),
+        EDITED,
+        "the existing session's link reads the edited home document"
+    );
+    h.launcher.kill_session(&first.id).await.unwrap();
 
     let second = h.launcher.spawn_orchestrator(&goal.id).await.unwrap();
     let document = h

@@ -1,7 +1,7 @@
 ---
 id: skills-and-staffed-agents
 status: current
-updated: 2026-10-10
+updated: 2026-10-11
 areas: [store, api, cli, ui, daemon, prompts]
 commits: [03f9c8b7, 29e6d84e]
 tests:
@@ -109,7 +109,8 @@ written into the system prompt (006), and the lifecycle the seats sit in
     (013). The launcher loads the orchestrator's skill from the store for
     every orchestrator session — indexed, and reached through the run
     directory's link the way a task agent's skills are (006, 007) — so an
-    edit or a reset of it reaches the next launch.
+    edit or a reset of it reaches the next launch and changes what a running
+    session reads when it opens the document again.
 11. A skill document obeys the STE rules and the size caps of spec 006, the
     same as every other default text. It also obeys the rules the seat texts
     state. No skill divides a task into slices or small commits. `coding`
@@ -127,7 +128,8 @@ written into the system prompt (006), and the lifecycle the seats sit in
 
     A skill document holds one text. The launcher links the run directory's
     `skills` folder onto the shared home copy that holds it (15), for the
-    agent to read whole.
+    agent to read whole. The path is shared: writing through it edits the
+    home copy for every session.
 12. The orchestrator staffs each task: for every column it names the skills
     of the agent — the column's own where it names none — and the model the
     agent runs on (011), may size the effort beside it, and may add a brief
@@ -191,7 +193,7 @@ written into the system prompt (006), and the lifecycle the seats sit in
 - An orchestrator session indexes `orchestration` and holds its document in
   the run directory
   (`skill_documents.rs::an_orchestrator_session_indexes_the_orchestration_skill`),
-  and an edit of it reaches the next launch
+  and an edit of it reaches the existing and next launches
   (`skill_documents.rs::an_edited_orchestration_skill_reaches_the_next_launch`).
 - The playbook staffs one agent per column and asks no reviewer question
   (`defaults.rs::the_orchestration_skill_staffs_one_agent_per_column_and_asks_no_reviewer_question`).

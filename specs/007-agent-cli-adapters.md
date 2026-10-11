@@ -1,7 +1,7 @@
 ---
 id: agent-cli-adapters
 status: current
-updated: 2026-10-10
+updated: 2026-10-11
 areas: [daemon, core]
 commits: [ed1c40d3, 03fbf02d, 090c5158, e94647fd, a69b953f, 03f9c8b7]
 tests:
@@ -173,9 +173,11 @@ skill says (017).
     a symlink; on Windows it is a symlink where the platform grants one, or
     else a copy of the whole home folder. The index in the system prompt
     names each skill the agent was staffed with by its path under that link
-    (006), though the agent can open any skill the link carries. A second
-    launch of the same session replaces the link or copy, leaving the home
-    copy untouched.
+    (006), though the agent can open any skill the link carries. The link is
+    a live path to the home copy: a later sync can change a document a
+    running agent reads, and a write through the path changes the home copy.
+    A second launch of the same session replaces the link or copy, leaving
+    the home copy untouched.
 16. A resume is gated on discovery: an agent whose cached capabilities lack
     `session_load` is refused as not resumable, and no process starts.
 17. A session with no agent session id is not revived, and the next launch of
