@@ -548,15 +548,25 @@ impl super::Scheduler {
         }
         let Some(session) = running else {
             // A request of mine is reviewed on the pin the user picked when
-            // asking (029); any other on the repository's review pin.
+            // asking (029); one that asks for my review runs on the
+            // repository's review pin, or on a pin asked directly on the
+            // row where the repository has none (a manual start on an
+            // otherwise unpinned repository).
             let pin = match pull.role.as_str() {
                 "author" => AgentPin {
                     model: pull.review_model.clone().unwrap_or_default(),
                     effort: pull.review_effort.clone(),
                 },
                 _ => AgentPin {
-                    model: integration.review_model.clone().unwrap_or_default(),
-                    effort: integration.review_effort.clone(),
+                    model: integration
+                        .review_model
+                        .clone()
+                        .or_else(|| pull.review_model.clone())
+                        .unwrap_or_default(),
+                    effort: integration
+                        .review_effort
+                        .clone()
+                        .or_else(|| pull.review_effort.clone()),
                 },
             };
             // The briefing names the head the worktree is put at, so only a

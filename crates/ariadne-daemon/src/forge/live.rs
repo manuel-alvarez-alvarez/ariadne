@@ -31,6 +31,21 @@ pub struct Live {
     pub review_requested: bool,
     /// What a detail read found; None where the request was only listed.
     pub details: Option<Details>,
+    /// Whether the last attempt to refresh `details` actually succeeded.
+    /// `set` (a successful detail fetch) sets this `true`; the forge
+    /// poll's own failure path sets it `false` explicitly
+    /// (`set_pull_evidence_failed`) while still leaving the last good
+    /// `details` standing, so a reader can tell "the comments are exactly
+    /// as stale as the head they were last read on" (`Details::head_sha`)
+    /// from "the most recent attempt to read them failed outright" —
+    /// the second a `pull_request` readiness item must withhold on even
+    /// where the head has not moved at all, since a reopened thread or a
+    /// withdrawn approval the failed read would have caught is invisible
+    /// to a head comparison alone. A call that touches no comment
+    /// evidence at all — an API write's own echo of the pull
+    /// (`set_pull`) — leaves it exactly as it found it: that call has
+    /// nothing to say about whether the evidence is still good.
+    pub evidence_ok: bool,
 }
 
 /// What a detail read finds of a request beyond its own read: its
@@ -41,6 +56,15 @@ pub struct Details {
     pub comments: Vec<NewPullRequestComment>,
     pub failed_checks: Vec<FailedCheck>,
     pub behind_base: bool,
+    /// The head this detail read was taken at: a failed detail fetch
+    /// leaves the last successful one standing (`set_pull`) rather than
+    /// losing it, which can leave it behind a `pull.head_sha` a later,
+    /// successful list read already moved on. Comparing the two is how a
+    /// reader tells a comment list that is current for this head from one
+    /// that is merely the last one read, which the `pull_request`
+    /// attention producer must never read as "no open comment" for a head
+    /// it was never actually read on.
+    pub head_sha: String,
 }
 
 /// The last read of every request Ariadne works on, by row id.
@@ -63,9 +87,62 @@ impl LivePulls {
             .insert(id.to_string(), live);
     }
 
-    /// Keep a new read of the request itself, and the details an earlier
-    /// read found where this one read none.
+    /// [`Self::set`], answering the attention fingerprint
+    /// ([`attention_fingerprint`]) of whatever this call itself just
+    /// replaced, and of `new` — both read and written under the one
+    /// lock this call holds throughout, so a caller comparing them
+    /// afterward is comparing against the value this exact write
+    /// followed, never a snapshot taken before some slow network await,
+    /// which a second call racing the first past that same await could
+    /// already have moved past by the time either one gets here.
+    pub fn set_fingerprinted(&self, id: &str, new: Live) -> (Option<u64>, u64) {
+        let mut held = self
+            .0
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let before = held.get(id).map(attention_fingerprint);
+        let after = attention_fingerprint(&new);
+        held.insert(id.to_string(), new);
+        (before, after)
+    }
+
+    /// Keep a new read of the request itself, and the details and evidence
+    /// validity an earlier read found where this one read none: a call
+    /// here has nothing of its own to say about whether the comment
+    /// evidence is still good, so it leaves that exactly as it found it.
     pub fn set_pull(&self, id: &str, pull: ForgePullRequest, review_requested: bool) {
+        let mut held = self
+            .0
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (details, evidence_ok) = held
+            .get(id)
+            .map(|live| (live.details.clone(), live.evidence_ok))
+            .unwrap_or((None, true));
+        held.insert(
+            id.to_string(),
+            Live {
+                pull,
+                review_requested,
+                details,
+                evidence_ok,
+            },
+        );
+    }
+
+    /// The same as [`Self::set_pull`], but for the one case that does have
+    /// something to say about the comment evidence: a detail fetch that
+    /// itself failed. The last good `details` is left standing — losing
+    /// comments a session still needs over one failed read would be its
+    /// own regression — but `evidence_ok` goes `false`, so a reader knows
+    /// this read is not merely old by a head comparison but outright
+    /// unconfirmed, whether or not the head moved too.
+    pub fn set_pull_evidence_failed(
+        &self,
+        id: &str,
+        pull: ForgePullRequest,
+        review_requested: bool,
+    ) {
         let mut held = self
             .0
             .write()
@@ -77,6 +154,7 @@ impl LivePulls {
                 pull,
                 review_requested,
                 details,
+                evidence_ok: false,
             },
         );
     }
@@ -98,12 +176,92 @@ impl LivePulls {
         }
     }
 
+    /// Flip `evidence_ok` false on an already-cached read, for a failure
+    /// that has no new read of its own to leave standing in its place —
+    /// the outer list call, or an initial, listless lookup, failing
+    /// outright, rather than a detail fetch that at least read the pull
+    /// itself (`set_pull_evidence_failed`). A row this cache has never
+    /// read yet has nothing to invalidate: `of_row` already reads a
+    /// missing cache entry as missing evidence, not a false claim.
+    /// Answers whether it found a row to flip, so a caller with several
+    /// rows to invalidate at once knows which of them actually moved.
+    pub fn mark_evidence_failed(&self, id: &str) -> bool {
+        let mut held = self
+            .0
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match held.get_mut(id) {
+            Some(live) => {
+                live.evidence_ok = false;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// [`Self::mark_evidence_failed`], fingerprinted the same way
+    /// [`Self::set_fingerprinted`] is: both reads of
+    /// [`attention_fingerprint`] bracket the one flip to `evidence_ok`,
+    /// under the one lock they share with it, so the "before" here is
+    /// the state this call's own flip actually followed rather than one
+    /// a concurrent read raced it past.
+    pub fn mark_evidence_failed_fingerprinted(&self, id: &str) -> Option<(u64, u64)> {
+        let mut held = self
+            .0
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let live = held.get_mut(id)?;
+        let before = attention_fingerprint(live);
+        live.evidence_ok = false;
+        let after = attention_fingerprint(live);
+        Some((before, after))
+    }
+
     pub fn remove(&self, id: &str) {
         self.0
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(id);
     }
+}
+
+/// A fingerprint of everything about one read the `pull_request`
+/// attention producer's output can depend on: the forge's own fields
+/// `forge::poll::pulls_moved` hashes for a whole repository's list,
+/// read here for one row alone, beside every comment's own resolution
+/// (`forge_id`, `resolved` — this item cares which thread resolved, not
+/// a comment's text) and `evidence_ok` itself. Two reads that
+/// fingerprint the same can never produce a different readiness item,
+/// review-start item, or absence of either; two that differ might —
+/// which is what [`LivePulls::set_fingerprinted`] and
+/// [`LivePulls::mark_evidence_failed_fingerprinted`] compare a direct,
+/// route-level read's own before and after against, rather than
+/// `evidence_ok` alone, which a successful read changing nothing about
+/// it can still leave exactly as it found it while every other field
+/// above moves — a dismissed approval, a reopened thread, a new commit,
+/// a failed check, or a request that closed.
+fn attention_fingerprint(live: &Live) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let pull = &live.pull;
+    (
+        &pull.state,
+        pull.draft,
+        &pull.head_sha,
+        &pull.checks,
+        &pull.review_decision,
+        &pull.mergeable,
+        live.review_requested,
+    )
+        .hash(&mut hasher);
+    live.evidence_ok.hash(&mut hasher);
+    if let Some(details) = &live.details {
+        details.head_sha.hash(&mut hasher);
+        for comment in &details.comments {
+            (&comment.forge_id, comment.resolved).hash(&mut hasher);
+        }
+    }
+    hasher.finish()
 }
 
 /// The request `row` keeps, as `live` read it, with `marks` of its
@@ -131,6 +289,7 @@ pub fn view(row: PullRequestRow, live: &Live, marks: &[CommentMark], login: &str
             base_branch: pull.base_branch.clone(),
             checks: pull.checks.clone(),
             review_decision: pull.review_decision.clone(),
+            mergeable: pull.mergeable.clone(),
             opened_at: pull.opened_at.clone(),
             forge_updated_at: pull.updated_at.clone(),
             failed_checks: serde_json::to_string(&details.failed_checks)
@@ -479,5 +638,90 @@ mod tests {
             "me",
         );
         assert!(waiting_threads(&theirs, "reviewer", "me").is_empty());
+    }
+
+    fn sample_live(evidence_ok: bool) -> Live {
+        Live {
+            pull: ForgePullRequest {
+                number: 1,
+                url: "https://github.com/acme/widgets/pull/1".into(),
+                title: "Fix widgets".into(),
+                body: String::new(),
+                author_login: "me".into(),
+                state: "open".into(),
+                draft: false,
+                head_branch: "fix".into(),
+                head_sha: "abc".into(),
+                head_repo: None,
+                base_branch: "main".into(),
+                checks: "success".into(),
+                review_decision: "approved".into(),
+                mergeable: "clean".into(),
+                opened_at: "2026-10-01T00:00:00Z".into(),
+                updated_at: "2026-10-01T00:00:00Z".into(),
+                merge_sha: None,
+            },
+            review_requested: false,
+            details: Some(Details {
+                comments: Vec::new(),
+                failed_checks: Vec::new(),
+                behind_base: false,
+                head_sha: "abc".into(),
+            }),
+            evidence_ok,
+        }
+    }
+
+    /// Two direct reads of the same request racing past the forge on
+    /// real, concurrent threads — one fails and flips `evidence_ok`
+    /// false, the other succeeds and flips it back true — started
+    /// together off one barrier to make them overlap rather than run
+    /// one after the other. Whichever actually lands second must see
+    /// the first's own write as what it replaced, never a snapshot
+    /// taken before either one reached the forge: the race
+    /// `http::pull_requests::read_now`'s `before` used to carry,
+    /// captured ahead of a slow network await the other call could run
+    /// entirely inside, comparing against a value neither mutation ever
+    /// actually touched once it landed. Checked against the map's own
+    /// final state, read back after both joins, rather than an assumed
+    /// order: a thread scheduler gives no promise which of the two
+    /// barrier-released threads a lock actually admits first.
+    #[test]
+    fn overlapping_mutations_each_compare_against_what_they_actually_replaced() {
+        let live = LivePulls::default();
+        live.set("p", sample_live(true));
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+
+        let failing = live.clone();
+        let failing_gate = barrier.clone();
+        let failure = std::thread::spawn(move || {
+            failing_gate.wait();
+            failing.mark_evidence_failed_fingerprinted("p").unwrap()
+        });
+        let succeeding = live.clone();
+        let succeeding_gate = barrier.clone();
+        let recovery = std::thread::spawn(move || {
+            succeeding_gate.wait();
+            succeeding.set_fingerprinted("p", sample_live(true))
+        });
+        let (before_failure, after_failure) = failure.join().unwrap();
+        let (before_recovery, after_recovery) = recovery.join().unwrap();
+
+        // The map holds whichever of the two actually wrote last.
+        if live.get("p").unwrap().evidence_ok {
+            assert_eq!(
+                before_recovery,
+                Some(after_failure),
+                "the recovery ran second; its own before must be the failure's own after"
+            );
+            assert_ne!(before_recovery, Some(after_recovery));
+        } else {
+            assert_eq!(
+                Some(before_failure),
+                Some(after_recovery),
+                "the failure ran second; its own before must be the recovery's own after"
+            );
+            assert_ne!(before_failure, after_failure);
+        }
     }
 }

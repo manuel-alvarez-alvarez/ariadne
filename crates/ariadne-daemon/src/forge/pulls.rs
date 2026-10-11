@@ -142,6 +142,11 @@ pub struct ForgePullRequest {
     pub base_branch: String,
     pub checks: String,
     pub review_decision: String,
+    /// The forge's own mergeability of the head now (029): `clean`,
+    /// `blocked`, `dirty` or `unknown` where the forge has not finished
+    /// computing it. Read from the forge's own evidence alone, never
+    /// derived from `checks` or `review_decision`.
+    pub mergeable: String,
     pub opened_at: String,
     /// When the forge last saw the request move.
     pub updated_at: String,

@@ -1906,6 +1906,25 @@ pub(crate) async fn eventually(
     }
 }
 
+/// [`eventually`], for a check that also hands back the value it found:
+/// the one read that satisfies the wait is the one a caller gets, so
+/// nothing later can see a different, newer state than the check itself
+/// just read.
+pub(crate) async fn eventually_some<T>(
+    patience: Duration,
+    what: &str,
+    mut check: impl AsyncFnMut() -> Option<T>,
+) -> T {
+    let deadline = Instant::now() + patience;
+    loop {
+        if let Some(value) = check().await {
+            return value;
+        }
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 /// Wait for the first event matching `pred`, skipping unrelated ones.
 pub(crate) async fn next_event(
     rx: &mut Receiver<BusEvent>,

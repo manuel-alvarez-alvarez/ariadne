@@ -11,8 +11,8 @@ import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { expect, it } from "vitest"
 
-import type { PullRequestDto } from "@/api"
-import { aModel, aSession, aSessionPage } from "@/test/fixtures"
+import type { PullRequestDto, RepositoryDto } from "@/api"
+import { aForge, aModel, aRepository, aSession, aSessionPage } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { pull } from "@/test/pull-request"
 import { PullRequestPanel } from "./pull-request-panel"
@@ -30,7 +30,11 @@ const SKILLS = ["code-review", "debugging", "pr-reviewer", "orchestration"].map(
 }))
 
 /** A daemon answering the request as `row`, and recording every write. */
-function daemon(row: () => PullRequestDto, writes: Request[] = []) {
+function daemon(
+  row: () => PullRequestDto,
+  writes: Request[] = [],
+  repositories: RepositoryDto[] = [],
+) {
   daemonFetch.mockImplementation(async (input) => {
     const request = input as Request
     const path = new URL(request.url).pathname
@@ -39,7 +43,7 @@ function daemon(row: () => PullRequestDto, writes: Request[] = []) {
     if (path === "/v1/models") return jsonResponse([aModel({ id: "stub:review-model" })])
     if (path === "/v1/skills") return jsonResponse(SKILLS)
     if (path === "/v1/sessions") return jsonResponse({ sessions: [], next_cursor: null })
-    if (path === "/v1/repositories") return jsonResponse([])
+    if (path === "/v1/repositories") return jsonResponse(repositories)
     return jsonResponse(row())
   })
 }
@@ -185,12 +189,21 @@ it("starts an Ariadne review of a request of mine on the model and skills picked
   expect(await writes[1]?.json()).toEqual({ asked: false })
 })
 
-it("offers no Ariadne review on a request that asks for my review", async () => {
-  daemon(() => pull)
+it("offers no Ariadne review on a request that asks for my review when the repository already pins one", async () => {
+  daemon(() => pull, [], [aRepository({ id: "repo", forge: aForge({ review_model: "stub:pin" }) })])
   renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
   await screen.findByText("#42 Fix widgets")
-  expect(screen.queryByRole("button", { name: "Start review" })).toBeNull()
+  // The repository read lands a moment after the request's own: the button
+  // this repository's pin refuses must not show even in that gap.
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Start review" })).toBeNull())
   expect(screen.getByText("someone")).toBeTruthy()
+})
+
+it("offers a manual Start review on a request that asks for my review when the repository pins none", async () => {
+  daemon(() => pull, [], [aRepository({ id: "repo", forge: null })])
+  renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
+  await screen.findByText("#42 Fix widgets")
+  expect(screen.getByRole("button", { name: "Start review" })).toBeTruthy()
 })
 
 it("opens the console of a review resumed on the same session", async () => {

@@ -19,6 +19,7 @@ import { queryOptions, useQuery } from "@tanstack/react-query"
 import { useMemo } from "react"
 
 import {
+  type AttentionCause,
   type AttentionItemDto,
   type AttentionListDto,
   api,
@@ -502,6 +503,28 @@ export function attentionDetail(item: AttentionItem): string {
   }
   const reason = item.taskReason
   return `Task · ${reason === "stalled" ? STALLED_META.hint : TASK_STATUS_META.failed.hint}`
+}
+
+/**
+ * A recovery row's own short title, read by its producer and cause rather
+ * than guessed from a task or session reason it carries neither of — a
+ * `pull_request` item's own two shapes get their own words, since
+ * "configuration" and "unknown" mean something different for every other
+ * producer's item under the same cause.
+ */
+const RECOVERY_CAUSE_TITLE: Record<AttentionCause, string> = {
+  access: "Sign-in needed",
+  quota: "Quota exhausted",
+  configuration: "Configuration needed",
+  resource: "Resource exhausted",
+  unknown: "Needs attention",
+}
+
+export function recoveryHeadline(item: AttentionItemDto): string {
+  if (item.producer === "pull_request") {
+    return item.reason === "configuration" ? "Review needed" : "Ready to merge"
+  }
+  return RECOVERY_CAUSE_TITLE[item.reason]
 }
 
 /**

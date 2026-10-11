@@ -6,7 +6,7 @@ use ariadne_daemon::scheduler::{self, SPAWN_RETRY_BUDGET, SchedEvent};
 use ariadne_store::{AgentPin, AgentSession, SessionFilter, Task};
 
 use crate::common::acp::{StubAcpAgent, discovery_accepted, option, script, stub_acp_agent};
-use crate::common::{Harness, TIMEOUT, eventually, harness};
+use crate::common::{Harness, TIMEOUT, eventually, eventually_some, harness};
 
 /// Start the agent of the task's first column and hand it a first prompt, the
 /// way the scheduler briefs a column's agent once it is up: the launch itself
@@ -182,21 +182,26 @@ async fn count_errors(h: &Harness, session: &AgentSession) -> usize {
         .count()
 }
 
+/// The session the first switch off `old` landed on: read off `old`'s own
+/// first `session.switched` event rather than `switched_successor`, which
+/// names only the newest `switched_from` row on `old.id` — an in-place
+/// switch keeps that id, so a model that exhausts again right away can
+/// trigger a second, cascading switch under the very same id before a
+/// caller ever gets to look, and `switched_successor` would then name that
+/// second switch's target, not the first one this helper is asked for.
 async fn successor(h: &Harness, old: &AgentSession) -> AgentSession {
-    eventually(TIMEOUT, "the exhausted session to switch", || async {
-        h.store.switched_successor(&old.id).await.unwrap().is_some()
-            || h.store
-                .list_session_events(&old.id)
-                .await
-                .unwrap()
-                .iter()
-                .any(|event| event.kind == "session.switched")
+    let event = eventually_some(TIMEOUT, "the exhausted session to switch", || async {
+        h.store
+            .list_session_events(&old.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|event| event.kind == "session.switched")
     })
     .await;
-    match h.store.switched_successor(&old.id).await.unwrap() {
-        Some(session) => session,
-        None => h.store.get_session(&old.id).await.unwrap(),
-    }
+    let payload: Value = serde_json::from_str(&event.payload).unwrap();
+    let to = payload["to"].as_str().unwrap();
+    h.store.get_session(to).await.unwrap()
 }
 
 fn codex_error() -> Value {

@@ -37,6 +37,13 @@ pub struct ForgePoll {
     /// Where a changed request is reported, once the scheduler is up: it
     /// is what starts, tells and ends the request's session (026).
     scheduler: Waker,
+    /// The same map a worker's own `Handoff` hashes requests against
+    /// (`pulls_moved`), shared rather than copied: a direct, route-level
+    /// read outside the poll's own cycle (`http::pull_requests::read_now`)
+    /// can change the very evidence that hash covers, and dropping this
+    /// repository's entry here is how the next poll-driven fetch is kept
+    /// from comparing that change against a hash taken before it.
+    pulls_seen: Arc<std::sync::Mutex<HashMap<String, u64>>>,
 }
 
 /// The scheduler's event sender, shared by the handle and every worker.
@@ -108,6 +115,19 @@ impl ForgePoll {
             .commands
             .send(Command::Mode(repository_id.into(), mode));
     }
+
+    /// Drop this repository's dedup hash, the same way an outer list
+    /// failure does on the poll's own side: the next call to
+    /// `pulls_moved`, whichever path triggers it, is compared against
+    /// nothing rather than against a hash taken before a direct,
+    /// route-level read changed the evidence it covers, so that read's
+    /// own transition is never read back as "no different from before".
+    pub(crate) fn invalidate_pulls_dedup(&self, repository_id: &str) {
+        self.pulls_seen
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(repository_id);
+    }
 }
 
 /// Start the fetches: `every` is the fallback timer, and `details` bounds one
@@ -121,12 +141,13 @@ pub fn start(
     details: Duration,
 ) -> ForgePoll {
     let scheduler: Waker = Arc::default();
+    let pulls_seen: Arc<std::sync::Mutex<HashMap<String, u64>>> = Arc::default();
     let handoff = Handoff {
         details,
         scheduler: scheduler.clone(),
         bus: events.clone(),
         issues_seen: Arc::default(),
-        pulls_seen: Arc::default(),
+        pulls_seen: pulls_seen.clone(),
         live,
     };
     let webhook_url = crate::webhooks::WebhookUrl::new(cfg.webhook_public_url.clone());
@@ -178,6 +199,7 @@ pub fn start(
         commands,
         webhook_url,
         scheduler,
+        pulls_seen,
     }
 }
 
@@ -383,26 +405,64 @@ async fn fetch(store: &Store, cfg: &Config, handoff: &Handoff, id: &str) -> Resu
         // sign in when the real cause is, say, the CLI not being
         // installed at all (which `configuration` already names).
         Err(error) => {
-            return Err(match client.confirmed_signed_out(&integration.host).await {
+            let failure = match client.confirmed_signed_out(&integration.host).await {
                 true => format!("{FORGE_SIGNED_OUT}: {error}"),
                 false => error,
-            });
+            };
+            // The whole round failed before any row of this repository was
+            // ever read: every one of them a cache already holds is just
+            // as unconfirmed as a detail fetch failing would leave it, so
+            // this invalidates them the same way read_row's own failure
+            // paths do, rather than reporting a round-old evidence_ok as
+            // still good because this round never got far enough to say
+            // otherwise.
+            if let Ok(rows) = store
+                .list_pull_requests(PullRequestFilter {
+                    repository_id: Some(id.into()),
+                    ..Default::default()
+                })
+                .await
+            {
+                let invalidated = rows
+                    .iter()
+                    .filter(|row| handoff.live.mark_evidence_failed(&row.id))
+                    .count();
+                if invalidated > 0 {
+                    // `pulls_moved` never ran this round — there was no
+                    // list to hash — so its own dedup still holds the
+                    // hash of the last successful round. Dropping it here
+                    // means the next call to `pulls_moved`, whether this
+                    // round's own retry or a later recovery, is compared
+                    // against nothing rather than against a hash that
+                    // never saw this round's invalidation, so it reads
+                    // the recovery as a change too, not as "no different
+                    // from before the failure ever happened".
+                    handoff
+                        .pulls_seen
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .remove(id);
+                    handoff.bus.pull_requests_changed(id);
+                }
+            }
+            return Err(failure);
         }
     };
-    // A request that asks for my review, out of draft, on a repository with
-    // a review pin, is one Ariadne reviews: the first fetch that finds it
-    // gives it a row (029). Nothing else the lists hold is kept.
-    if integration.review_model.is_some() {
-        for pull in listed.iter().filter(|p| {
-            requested.contains(&p.number)
-                && !p.draft
-                && pulls::role(&p.author_login, &integration) == "reviewer"
-        }) {
-            if !still_enabled(store, &integration).await? {
-                return Ok(());
-            }
-            pulls::start_work(store, &integration, pull, None).await?;
+    // A request that asks for my review, out of draft, is one Ariadne keeps
+    // a row of, whether or not the repository has a review pin (029): a
+    // repository with none starts no session of its own, but the request
+    // still needs its row, so the `pull_request` attention producer can
+    // offer a human a manual start on it. Nothing else the lists hold is
+    // kept.
+    for pull in listed.iter().filter(|p| {
+        requested.contains(&p.number)
+            && !p.draft
+            && pulls::role(&p.author_login, &integration) == "reviewer"
+    }) {
+        if !still_enabled(store, &integration).await? {
+            return Ok(());
         }
+        pulls::start_work(store, &integration, pull, None).await?;
     }
     let rows = store
         .list_pull_requests(PullRequestFilter {
@@ -456,7 +516,17 @@ async fn read_row(
 ) -> Result<(), String> {
     let read = match listed {
         Some(pull) => pull,
-        None => client.pull_request(slug, row.number).await?,
+        None => match client.pull_request(slug, row.number).await {
+            Ok(pull) => pull,
+            Err(error) => {
+                // No new read to leave standing in its place, unlike the
+                // detail fetch below: the last good read of the pull
+                // itself is still what the cache holds, but the comment
+                // evidence beside it is no longer confirmed current.
+                handoff.live.mark_evidence_failed(&row.id);
+                return Err(error);
+            }
+        },
     };
     if read.number != row.number {
         return Err("the forge returned another request number".into());
@@ -468,6 +538,7 @@ async fn read_row(
     }
     match client.details(slug, row.number, handoff.details).await {
         Ok(details) if details.pull.number == row.number => {
+            let head_sha = details.pull.head_sha.clone();
             handoff.live.set(
                 &row.id,
                 Live {
@@ -477,17 +548,23 @@ async fn read_row(
                         comments: details.comments,
                         failed_checks: details.failed_checks,
                         behind_base: details.behind_base,
+                        head_sha,
                     }),
+                    evidence_ok: true,
                 },
             );
             Ok(())
         }
         Ok(_) => {
-            handoff.live.set_pull(&row.id, read, requested);
+            handoff
+                .live
+                .set_pull_evidence_failed(&row.id, read, requested);
             Err("the forge returned another request number".into())
         }
         Err(error) => {
-            handoff.live.set_pull(&row.id, read, requested);
+            handoff
+                .live
+                .set_pull_evidence_failed(&row.id, read, requested);
             Err(error)
         }
     }
@@ -553,11 +630,18 @@ fn pulls_moved(
             &pull.head_sha,
             &pull.checks,
             &pull.review_decision,
+            &pull.mergeable,
             &pull.updated_at,
         )
             .hash(&mut hasher);
     }
     for live in held {
+        // `evidence_ok` is hashed on its own: a failed detail refresh at
+        // the same head otherwise leaves every other hashed field
+        // unchanged (the old `details` is exactly what is still held),
+        // and a client watching only those fields would miss exactly the
+        // transition a `pull_request` readiness item depends on (031).
+        live.evidence_ok.hash(&mut hasher);
         if let Some(details) = &live.details {
             (details.behind_base, details.failed_checks.len()).hash(&mut hasher);
             for comment in &details.comments {
@@ -627,15 +711,20 @@ async fn still_enabled(store: &Store, expected: &ForgeIntegration) -> Result<boo
 }
 
 /// Whether the request `row` wants a review session of its own: an open
-/// request out of draft, in a repository whose integration names a
-/// `review_model`, that asks for my review — or one of mine whose review the
-/// user asked Ariadne for (029). The author of the task that opened a
-/// request of mine keeps it in its own session (005).
+/// request out of draft, that asks for my review on a repository whose
+/// integration names a `review_model`, or whose own row was given a pin by
+/// an explicit manual start (029) — or one of mine whose review the user
+/// asked Ariadne for. The author of the task that opened a request of mine
+/// keeps it in its own session (005).
 pub(crate) fn wants_session(row: &PullRequest, integration: &ForgeIntegration) -> bool {
     // A request that asks for my review runs on the repository's review
-    // pin; one of mine runs on the pin the user picked when asking.
+    // pin, or on one asked directly on the row where the repository has
+    // none; one of mine runs on the pin the user picked when asking.
     let pinned = match row.role.as_str() {
-        "reviewer" => row.review_requested && integration.review_model.is_some(),
+        "reviewer" => {
+            row.review_requested
+                && (integration.review_model.is_some() || row.review_model.is_some())
+        }
         _ => row.review_asked && row.review_model.is_some(),
     };
     pinned && row.state == "open" && integration.enabled && !row.draft

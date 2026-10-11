@@ -1,7 +1,7 @@
 ---
 id: pull-requests
 status: current
-updated: 2026-10-10
+updated: 2026-10-11
 areas: [store, api, daemon, cli, ui]
 commits: []
 tests:
@@ -57,14 +57,15 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
    GitLab accepts `/merge_requests/<number>` and `/-/merge_requests/<number>`, including subgroup paths.
    A different repository or host does not match.
 2. Nothing the forge holds is stored: a stored title, check or comment goes stale the moment somebody pushes.
-   A `pull_requests` row (`PullRequestRow`) is Ariadne's bookkeeping of a request it works on: `id`, `repository_id`, `number`, `url`, `role`, `origin_task_id`, `ready`, the told marks (rule 18), `reviewed_sha`, `review_asked` and its pin and skills, and `summary_comment_id` (029). The row holds no other column, and there is no comments table.
+   A `pull_requests` row (`PullRequestRow`) is Ariadne's bookkeeping of a request it works on: `id`, `repository_id`, `number`, `url`, `role`, `origin_task_id`, `ready`, `ready_head_sha` (the head the `ready` claim was confirmed on, 031 rule 13), the told marks (rule 18), `reviewed_sha`, `review_asked` and its pin and skills, and `summary_comment_id` (029). The row holds no other column, and there is no comments table.
    `role` is `author` when the request's author is the integration login, ignoring case, else `reviewer`.
    An upsert keeps the existing id and creation time, and the first origin task.
-3. A row exists while Ariadne works on the request, and only then:
+3. A row exists while Ariadne works on the request, or while a human still
+   might start it working by hand, and only then:
    - the request a task opened: `open_pull_request` writes it, with the task as origin (030 rule 10);
-   - a request that asks for the user's review, out of draft, on a repository whose integration names a `review_model`: the first fetch that finds it writes it (029);
+   - a request that asks for the user's review, out of draft: the first fetch that finds it writes it, whether or not the repository's integration names a `review_model` — one that does not starts no session on its own, but the row is what lets a human start one by hand (029, 031);
    - a request of the user's they asked Ariadne to review: the ask writes it (029).
-   A request nobody works on has no row, whatever the lists hold.
+   A request nobody works on, and nobody could start work on by asking, has no row, whatever the lists hold.
 4. What the forge says of a request Ariadne works on is read on every fetch and held in memory alone (`forge::live::LivePulls`, by row id): the request's own read, whether it asks for the user's review, and, while it is open, its details.
    The scheduler and the routes join the row to that read (`PullRequest`, the view). A daemon that restarts holds nothing until its first fetch, which runs at once; until a request has been read, the scheduler does nothing for it.
 5. A repository fetch lists every open request of the repository, and the ones that ask for the login's review; the two lists are read from the forge at the same time.
@@ -137,9 +138,9 @@ and its idle handling under [030](030-workflows.md), rule 10.
     No agent tool resolves a thread. A review session resolves a thread it opened, once a push fixed it (029); every other thread is the keeping agent's to resolve.
 16. A reply posts through the forge CLI: `gh api .../pulls/<n>/comments/<id>/replies` on the thread's first review comment, else `gh pr comment`; GitLab adds a note to the discussion.
     A review session's reply is marked `from_review`. The repository is fetched again, which reads the reply back.
-17. A report with `ready: true` on a change raises `waiting_user` on the keeping agent's session. `ready: false` on a change clears it. A repeat raises nothing.
+17. A report with `ready: true` or `ready: false` is stored and raises nothing of its own on any session (031): the `pull_request` attention producer reads the forge's own evidence against the claim instead of trusting it. A `ready: true` report also names `head_sha`, the head it was confirmed on (029 rule 15); it is stored as `ready_head_sha` and is rejected before storage when it is missing or fails the same hex-sha check `reviewed_sha` does. A request a task keeps accepts a `ready` report from the current column agent alone, never from a review session that also answers for the same row (a request of mine a task keeps can also carry an Ariadne self-review asked on it, 029) — read by seat (`Seat::Agent`), not merely by which session answers for the row.
     The state is the forge's to say: no session reports it.
-    Accept comments, replies, and reports only from the current column agent or the review session (029).
+    Accept comments, replies, and reports only from the current column agent or the review session (029), subject to the `ready`-specific restriction above.
     Another session gets 403. A report or reply with no session gets 403. The user reads comments freely.
 18. `complete_step` on the `pr` column is accepted once the forge, read at the call, says its request merged (030 rule 5). A close is told to the agent, which fails the task.
 
@@ -174,7 +175,7 @@ All routes appear in OpenAPI, under the rules of [012](012-http-api-events-and-u
 | `GET /v1/pull-requests/{id}/comments/{comment_id}` | One comment, read off the forge now. |
 | `POST /v1/pull-requests/{id}/comments/{comment_id}/reply` | Post a reply through the forge CLI. Return 201. |
 | `POST /v1/pull-requests/{id}/comments/{comment_id}/resolve` | Resolve, from the review session, a thread it opened (029). Return 200. |
-| `POST /v1/pull-requests/{id}/report` | Take `ready`, and `reviewed_sha` (029), from the request's own session. |
+| `POST /v1/pull-requests/{id}/report` | Take `ready`, `head_sha` (required with `ready: true`), and `reviewed_sha` (029), from the request's own session. |
 | `GET /v1/sessions?pull_request=` | List the sessions of one request (012). |
 
 There is no route that adds or removes a request.
@@ -213,8 +214,8 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `store.rs::a_pull_request_row_keeps_its_identity_and_origin_and_its_sessions_outlive_it`.
 - Comment marks are claimed once, released whole, keep the review's mark, and go with their row:
   `store.rs::comment_marks_are_claimed_once_released_whole_and_keep_the_review_mark`.
-- The list is read live, a request nobody works on has no row, and nothing adds or removes one:
-  `pull_requests.rs::the_list_is_read_live_and_nothing_is_stored_for_a_request_nobody_works_on`.
+- The list is read live, a request of the user's own nobody asked Ariadne to review has no row, a request that asks for the user's review is tracked whether or not the repository pins a `review_model`, and nothing adds or removes a row by hand:
+  `pull_requests.rs::the_list_is_read_live_and_tracks_only_a_request_that_asks_for_my_review`.
 - A detail read asks the forge for its parts together:
   `pull_requests.rs::a_detail_read_asks_the_forge_for_its_parts_together`.
 - A review request on a repository with a review pin has a row while it is reviewed and none once it merged:
@@ -294,8 +295,8 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `prompts.rs::tests::the_pull_request_texts_fill_every_placeholder_they_name`.
 - Each change is told once, and a green check is news again when it fails again:
   `news.rs::tests::each_change_is_told_once`, `::a_quiet_request_is_no_news`.
-- A ready report moves once:
-  `store.rs::a_pull_request_reports_ready_once`.
+- A ready report moves once, per head:
+  `store.rs::a_pull_request_reports_ready_once_per_head`.
 - The agent seat lists the request's tools beside its task tools:
   `mcp.rs::tests::the_agent_seat_lists_its_step_tools_and_nothing_of_a_review`.
 - Its request tools find the request its task opened, then call its routes, and say to open one where there is none:
@@ -307,9 +308,10 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `defaults.rs::tests::the_pr_babysit_skill_replies_only_to_requested_changes`.
 - `session ls` titles a request session with its title and URL:
   `session.rs::tests::a_pull_request_session_shows_the_request_title_and_url`.
-- `ariadne attention` lists a request ready to merge by its title:
-  `attention.rs::tests::a_session_is_reported_for_the_reason_the_ui_would_give`,
-  `board.rs::tests::a_pull_request_ready_to_merge_is_listed_by_its_title`.
+- A ready report raises no row of its own on `ariadne attention`: that is
+  the `pull_request` attention producer's own item, confirmed against the
+  forge's evidence, not a bare flag on the session (031):
+  `board.rs::tests::a_pull_request_sessions_own_waiting_user_raises_no_row_of_its_own_on_this_board`.
 - The Pull requests screen row opens its session and shows the unanswered count:
   `pull-requests-page.test.tsx::opens a request's session panel from its row and shows its unanswered comments`.
 - A session event of a request refetches that request:

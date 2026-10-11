@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use crate::common::forge::{StubForgeCli, answer, stub_forge_cli};
 use crate::common::{Harness, QUIET, TIMEOUT, as_session, eventually, harness, post_json, sh};
 use ariadne_api::SESSION_HEADER;
-use ariadne_core::{AttentionReason, SessionStatus};
+use ariadne_core::SessionStatus;
 use ariadne_daemon::forge::poll::Mode;
 use ariadne_store::{AgentSession, SessionFilter};
 
@@ -400,10 +400,16 @@ async fn a_repository_with_no_review_model_starts_no_review() {
     let repo = repository(&h, &path, None).await;
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     h.state.forge_poll.wake(&repo);
-    // Prove that the missing review model creates no review row.
+    // The request still gets a row — nobody else will ever start a review
+    // for it, so a human still has something to start by hand (029) — but
+    // the missing review model starts no session of its own.
+    let id = the_request(&h).await;
     tokio::time::sleep(QUIET).await;
     h.flush_scheduler().await;
-    assert!(no_rows(&h).await, "nothing reviews it, so it is no work");
+    assert!(
+        sessions(&h, &id).await.is_empty(),
+        "nothing reviews it on its own, so it is no automatic work"
+    );
 }
 
 /// A push moves the worktree to the new head and hands the session one
@@ -813,11 +819,13 @@ async fn a_review_resolves_the_thread_of_its_own_fixed_finding_and_no_other() {
     assert_eq!(mutations, 1, "their thread stays open");
 }
 
-/// A reported `reviewed_sha` is stored and raises `waiting_user` for my
-/// approval. The same sha again raises nothing; a later sha raises it
-/// again.
+/// A reported `reviewed_sha` is stored, but raises nothing of its own on
+/// the session: a pr-reviewer session finishing its review must notify
+/// nobody (029), and the `pull_request` attention producer never reads a
+/// `waiting_user` flag to decide anything. The same sha again, and a later
+/// one, both leave the session's attention alone.
 #[tokio::test]
-async fn a_reviewed_sha_raises_waiting_user_and_a_later_one_raises_it_again() {
+async fn a_reviewed_sha_is_stored_and_raises_no_waiting_user() {
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, first) = checkout(&h);
@@ -836,13 +844,9 @@ async fn a_reviewed_sha_raises_waiting_user_and_a_later_one_raises_it_again() {
     let _: Value = h.json(report(&first), StatusCode::OK).await;
     let row = h.store.get_pull_request(&id).await.unwrap();
     assert_eq!(row.reviewed_sha.as_deref(), Some(first.as_str()));
-    assert_eq!(
-        h.attention(&session).await,
-        Some(AttentionReason::WaitingUser)
-    );
+    assert_eq!(h.attention(&session).await, None);
 
-    // The user read it; the same sha again raises nothing.
-    h.store.clear_session_attention(&session.id).await.unwrap();
+    // The same sha again raises nothing either.
     let _: Value = h.json(report(&first), StatusCode::OK).await;
     assert_eq!(
         h.attention(&session).await,
@@ -854,8 +858,8 @@ async fn a_reviewed_sha_raises_waiting_user_and_a_later_one_raises_it_again() {
     let _: Value = h.json(report(&second), StatusCode::OK).await;
     assert_eq!(
         h.attention(&session).await,
-        Some(AttentionReason::WaitingUser),
-        "a later sha raises it again"
+        None,
+        "a later sha raises nothing either"
     );
     h.error(report("not a sha"), StatusCode::BAD_REQUEST).await;
 }
@@ -1198,10 +1202,11 @@ async fn a_request_of_mine_is_reviewed_once_asked_and_its_review_is_a_comment() 
     );
 }
 
-/// Asking needs a model the catalog holds, and a request that asks for my
-/// review takes no asking: it has a review session of its own already.
+/// Asking needs a model the catalog holds. A request that asks for my
+/// review, on a repository with no review pin of its own, takes the same
+/// asking (029): nothing else will ever start a session for it.
 #[tokio::test]
-async fn asking_needs_a_model_and_a_request_of_mine() {
+async fn asking_needs_a_model_and_takes_an_unpinned_review_request() {
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, head) = checkout(&h);
@@ -1241,8 +1246,9 @@ async fn asking_needs_a_model_and_a_request_of_mine() {
         "a refusal starts no work"
     );
 
-    // A request that asks for my review is reviewed on the repository's
-    // pin, and takes no asking.
+    // A request that asks for my review, on a repository with no review
+    // pin, takes a manual ask the same way a request of mine does: nobody
+    // else is going to start it (029).
     let mut theirs = script(&Shown::open(&head));
     theirs.as_array_mut().unwrap().insert(
         0,
@@ -1257,6 +1263,44 @@ async fn asking_needs_a_model_and_a_request_of_mine() {
         ),
     );
     stub.reprogram(theirs);
+    let dto: Value = h
+        .json(ask(json!({"asked": true, "model": PIN})), StatusCode::OK)
+        .await;
+    let id = dto["id"].as_str().unwrap().to_string();
+    assert_eq!(dto["role"], "reviewer");
+    assert_eq!(dto["review_asked"], true);
+    assert_eq!(dto["review_model"], PIN);
+
+    // The scheduler runs well before the next forge refresh could ever
+    // confirm the request still asks for my review: the row must survive
+    // that gap, and a reviewer session must actually start on the pin just
+    // chosen, not be read as a request that stopped asking and deleted
+    // (`scheduler::pull_requests::end_review`) before the fetch ever ran.
+    let session = idle_session(&h, &id).await;
+    assert_eq!(session.model, PIN);
+    assert_eq!(
+        h.store.get_pull_request(&id).await.unwrap().id,
+        id,
+        "the row survives the scheduler pass"
+    );
+
+    // The repository then pins one of its own: the row already has a
+    // review of its own, and takes no second asking.
+    h.store
+        .set_forge_integration(ariadne_store::SetForgeIntegration {
+            repository_id: repo.clone(),
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+            review_model: Some(PIN.into()),
+            review_effort: None,
+        })
+        .await
+        .unwrap();
     h.error(
         ask(json!({"asked": true, "model": PIN})),
         StatusCode::CONFLICT,

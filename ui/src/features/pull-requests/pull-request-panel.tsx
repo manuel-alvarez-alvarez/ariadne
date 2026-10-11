@@ -197,6 +197,12 @@ function useReviewOpening(pullRequestId: string | null, open: (sessionId: string
  * The title, the actions on the request, and its state in pills: open,
  * merged or closed, the checks, the review decision, and an Ariadne review
  * while one is asked.
+ *
+ * A request of the user's own starts and stops an Ariadne review freely.
+ * One that asks for the user's review gets the same action only where the
+ * repository names no `review_model` of its own (029): one that does
+ * already runs a review session automatically, and this button would only
+ * ask for a second, redundant one the daemon refuses.
  */
 function PullRequestHeader({
   pull,
@@ -211,12 +217,16 @@ function PullRequestHeader({
   const checks = CHECKS[pull.checks]
   const review = REVIEW[pull.review_decision]
   const mine = pull.role === "author"
+  const repositories = useQuery(repositoriesQueryOptions())
+  const repository = repositories.data?.find((each) => each.id === pull.repository_id)
+  const repositoryPinned = Boolean(repository?.forge?.review_model)
+  const manualStart = pull.role === "reviewer" && pull.review_requested && !repositoryPinned
   return (
     <>
       <PanelHeader
         title={`#${pull.number} ${pull.title}`}
         actions={
-          mine && pull.state === "open" ? (
+          (mine || manualStart) && pull.state === "open" ? (
             pull.review_asked ? (
               <Button
                 variant="outline"

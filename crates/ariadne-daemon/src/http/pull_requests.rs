@@ -15,7 +15,6 @@ use ariadne_api::pull_requests::{
     PullRequestDto, PullRequestListQuery, PullRequestMatchDto, ReplyCommentRequest,
     ReportPullRequestRequest, SubmitReviewRequest,
 };
-use ariadne_core::AttentionReason;
 use ariadne_store::{
     AgentSession, ForgeIntegration, PullRequest, PullRequestComment, PullRequestFilter,
     PullRequestRow,
@@ -46,20 +45,78 @@ fn client(state: &AppState, forge: &ForgeIntegration) -> ForgeClient {
     ForgeClient::for_repository(&state.launcher.cfg, forge)
 }
 
+/// Tell a client watching the stream that this request's readiness
+/// evidence actually moved, through this direct, route-level read rather
+/// than the poll's own cycle: publishing on every call here, success or
+/// not, would have an event-triggered panel re-read of this very route
+/// republish forever even where nothing changed, so this names only an
+/// actual transition between the fingerprints `before` and `after`
+/// bracket — taken from [`live::LivePulls::set_fingerprinted`] or
+/// [`live::LivePulls::mark_evidence_failed_fingerprinted`], both read and
+/// written under the one lock each holds, so the pair compared here is
+/// the one a single mutation actually bridged rather than a snapshot
+/// taken before some slow network await, which a second call racing the
+/// first past that same await could already have moved past. `before`
+/// is `None` where nothing was cached before this read — the row's
+/// first — which is a transition too: `attention::items` skips a row
+/// `LivePulls` holds nothing of yet (`live::of_row`), so the very first
+/// successful read can create a readiness or review-start item out of
+/// one that, a moment ago, could not exist at all, and an existing
+/// watcher never told of that has no way to learn of it on its own
+/// under `WakeOnly`. Only `before == Some(after)` — the read changed
+/// nothing a watcher could already see — stays silent. The poll's own
+/// dedup is invalidated the same moment a transition fires, so the next
+/// poll-driven fetch is compared against nothing rather than a hash
+/// taken before it, and reads it as a change too.
+fn publish_evidence_transition(
+    state: &AppState,
+    row: &PullRequestRow,
+    before: Option<u64>,
+    after: u64,
+) {
+    if before != Some(after) {
+        state.forge_poll.invalidate_pulls_dedup(&row.repository_id);
+        state.events.pull_requests_changed(&row.repository_id);
+    }
+}
+
 /// Read a request Ariadne works on off the forge now, and leave the read
 /// where the fetch leaves its own (026): what a session asks for is never an
 /// earlier read.
 async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullRequest> {
     let forge = integration(state, &row.repository_id).await?;
-    let details = client(state, &forge)
+    let details = match client(state, &forge)
         .details(
             &slug(&forge),
             row.number,
             crate::timeouts::Timeouts::default().forge_details,
         )
         .await
-        .map_err(forge_error)?;
+    {
+        Ok(details) => details,
+        Err(error) => {
+            // No new read to leave standing in its place: the cache's own
+            // evidence, where it holds any, is no longer confirmed
+            // current, the same as a failed detail fetch through the
+            // poll's own path leaves it (`forge::live::LivePulls::set_pull_evidence_failed`).
+            if let Some((before, after)) = state
+                .launcher
+                .live
+                .mark_evidence_failed_fingerprinted(&row.id)
+            {
+                publish_evidence_transition(state, &row, Some(before), after);
+            }
+            return Err(forge_error(error));
+        }
+    };
     if details.pull.number != row.number {
+        if let Some((before, after)) = state
+            .launcher
+            .live
+            .mark_evidence_failed_fingerprinted(&row.id)
+        {
+            publish_evidence_transition(state, &row, Some(before), after);
+        }
         return Err(forge_error(
             "the forge returned another request number".into(),
         ));
@@ -72,7 +129,8 @@ async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullReques
         .live
         .get(&row.id)
         .map_or(row.role == "reviewer", |l| l.review_requested);
-    state.launcher.live.set(
+    let head_sha = details.pull.head_sha.clone();
+    let (before, after) = state.launcher.live.set_fingerprinted(
         &row.id,
         Live {
             pull: details.pull,
@@ -81,9 +139,12 @@ async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullReques
                 comments: details.comments,
                 failed_checks: details.failed_checks,
                 behind_base: details.behind_base,
+                head_sha,
             }),
+            evidence_ok: true,
         },
     );
+    publish_evidence_transition(state, &row, before, after);
     live::of_row(&state.store, &state.launcher.live, row)
         .await?
         .ok_or_else(|| ApiError::conflict("the request could not be read off the forge"))
@@ -156,11 +217,14 @@ pub(super) async fn list(
                 // Ariadne works on it: the list's read beside the details the
                 // last detail read found.
                 Some(row) => {
-                    let details = state.launcher.live.get(&row.id).and_then(|l| l.details);
+                    let cached = state.launcher.live.get(&row.id);
+                    let details = cached.as_ref().and_then(|l| l.details.clone());
+                    let evidence_ok = cached.is_none_or(|l| l.evidence_ok);
                     let read = Live {
                         pull,
                         review_requested: asks,
                         details,
+                        evidence_ok,
                     };
                     let marks = state.store.pull_request_comment_marks(&row.id).await?;
                     let view = live::view(row, &read, &marks, &login);
@@ -548,9 +612,16 @@ pub(super) async fn resolve(
     Ok(Json(pull_request_comment_dto(comment)))
 }
 
-/// What the request's session says of it: `ready` once every required
-/// approval and check reads green, which raises `waiting_user` on the
-/// session, and the head a review session posted its review on.
+/// What the request's session says of it: `ready` once the babysitting task
+/// believes every required approval and check reads green, on the head
+/// (`head_sha`, required with `ready: true`) it actually confirmed that
+/// against; and the head a review session posted its review on
+/// (`reviewed_sha`). Neither raises `waiting_user` on the session by
+/// itself (029): the claim alone is not confirmed evidence, and a
+/// pr-reviewer session finishing its own review must notify nobody — the
+/// `pull_request` attention producer reads the forge's own evidence
+/// against this claim, for the head it names, and raises its own item
+/// once it actually backs the claim up.
 #[utoipa::path(post, path = "/v1/pull-requests/{id}/report", tag = "pull-requests",
     params(("id" = String, Path)),
     request_body = ReportPullRequestRequest,
@@ -564,19 +635,46 @@ pub(super) async fn report(
     let mut row = state.store.get_pull_request(&id).await?;
     let session = own_session(&state, &headers, &row).await?;
     if let Some(ready) = req.ready {
-        let (next, moved) = state.store.set_pull_request_ready(&row.id, ready).await?;
-        row = next;
-        if moved && ready {
-            state
-                .store
-                .set_session_attention(&session.id, AttentionReason::WaitingUser)
-                .await?;
-        } else if moved && session.attention_reason() == Some(AttentionReason::WaitingUser) {
-            state.store.clear_session_attention(&session.id).await?;
+        // `ready` is the babysitting task's own claim (031): a row it
+        // keeps answers through its own column agent alone
+        // (`Seat::Agent`), never through a reviewer session that also
+        // happens to answer for the same row — a request of mine a task
+        // keeps can also carry an Ariadne self-review asked on it, and
+        // that reviewer seat's own claim must never pass as the
+        // babysitter's.
+        if row.origin_task_id.is_some() && session.seat() != Some(ariadne_core::Seat::Agent) {
+            return Err(ApiError::forbidden(
+                "only the task that keeps this request may report it ready",
+            ));
         }
+        // The head this report answers for is the one the session itself
+        // confirmed, never looked up again here: a push landing between
+        // the session's own read and this call must still be judged
+        // against what the session actually saw, not whatever the
+        // daemon's cache has moved on to since (031) — reading the cache
+        // instead would let a push the session never saw pass as though
+        // it had.
+        let head_sha: Option<&str> = match (ready, req.head_sha.as_deref()) {
+            (true, Some(sha)) if is_sha(sha) => Some(sha),
+            (true, Some(sha)) => {
+                return Err(ApiError::bad_request(format!("{sha} is no commit sha")));
+            }
+            (true, None) => {
+                return Err(ApiError::bad_request(
+                    "a ready report names the head it was confirmed on",
+                ));
+            }
+            (false, _) => None,
+        };
+        let (next, _moved) = state
+            .store
+            .set_pull_request_ready(&row.id, ready, head_sha)
+            .await?;
+        row = next;
     }
-    // A review posted on a new head is the user's to act on: the approval
-    // is theirs to give (029). The same sha again raises nothing.
+    // A review posted on a new head is kept for the record (029); the
+    // user's approval is theirs to give in their own time, and this alone
+    // asks nothing of them.
     if let Some(sha) = req.reviewed_sha.as_deref() {
         if row.role != "reviewer" && !row.review_asked {
             return Err(ApiError::bad_request(
@@ -586,17 +684,8 @@ pub(super) async fn report(
         if !is_sha(sha) {
             return Err(ApiError::bad_request(format!("{sha} is no commit sha")));
         }
-        let (next, moved) = state.store.set_pull_request_reviewed(&row.id, sha).await?;
+        let (next, _moved) = state.store.set_pull_request_reviewed(&row.id, sha).await?;
         row = next;
-        if moved {
-            if session.attention_reason() == Some(AttentionReason::WaitingUser) {
-                state.store.clear_session_attention(&session.id).await?;
-            }
-            state
-                .store
-                .set_session_attention(&session.id, AttentionReason::WaitingUser)
-                .await?;
-        }
     }
     state.notify_scheduler_pull_request(&row.id);
     let pull = read_held(&state, row).await?;
@@ -872,13 +961,17 @@ async fn hold_review_comments(
     Ok(())
 }
 
-/// Ask Ariadne to review a request of the user's own on the model the user
-/// picks, or stop asking (029): a review session runs on that pin while the
-/// request is open and out of draft, and posts each round as a comment in
-/// the user's name. Asking starts Ariadne's work on the request; stopping
-/// ends it, where no task keeps the request. A request that asks for the
-/// user's review has a review already, on the repository's review pin, and
-/// takes no asking.
+/// Ask Ariadne to review a request on the model the user picks, or stop
+/// asking (029): a review session runs on that pin while the request is
+/// open and out of draft. A request of the user's own posts each round as
+/// a comment in the user's name; one that asks for the user's review on a
+/// repository with no review pin of its own gets the manual start the
+/// `pull_request` attention producer offers when nobody is assigned to it,
+/// and posts as any other review Ariadne runs on it would (029). Asking
+/// starts Ariadne's work on the request; stopping ends it, where no task
+/// keeps the request. A request that asks for the user's review on a
+/// repository that already pins one has a review already, and takes no
+/// asking.
 #[utoipa::path(put, path = "/v1/repositories/{id}/pull-requests/{number}/ariadne-review", tag = "pull-requests",
     params(("id" = String, Path), ("number" = i64, Path)),
     request_body = AskReviewRequest,
@@ -898,16 +991,22 @@ pub(super) async fn ask_review(
             "the forge returned another request number".into(),
         ));
     }
-    if pulls::role(&pull.author_login, &forge) != "author" {
-        return Err(ApiError::conflict(
-            "Ariadne reviews a request that asks for your review on its own: ask only on a \
-             request of yours",
-        ));
-    }
+    let role = pulls::role(&pull.author_login, &forge);
     let row = state.store.pull_request_by_number(&id, number).await?;
     let pin = match req.asked {
         false => None,
         true => {
+            // A request of mine asks on any pin; a request that asks for
+            // my review asks only where the repository names none of its
+            // own (029): one that already does has a review of its own on
+            // that pin, and an ask here would run a second session beside
+            // it.
+            if role == "reviewer" && forge.review_model.is_some() {
+                return Err(ApiError::conflict(
+                    "the request already has a review of its own, on the repository's review \
+                     pin",
+                ));
+            }
             if pull.state != "open" {
                 return Err(ApiError::conflict(format!(
                     "the request is {}: Ariadne reviews an open request",
@@ -955,7 +1054,6 @@ pub(super) async fn ask_review(
         }
         // Nothing works on it, so there is no asking to stop.
         (None, None) => {
-            let role = pulls::role(&pull.author_login, &forge);
             return Ok(Json(forge_pull_dto(&id, pull, role, false)));
         }
     };
@@ -966,7 +1064,20 @@ pub(super) async fn ask_review(
             pin.as_ref().map(|(pin, skills)| (pin, skills.as_slice())),
         )
         .await?;
-    state.launcher.live.set_pull(&row.id, pull.clone(), false);
+    // A request of mine never asks for my own review, so `false` names it
+    // correctly; a request that asks for mine is exactly this call's own
+    // premise (rule 10: asking it takes the same ask a request of mine
+    // does) — reading it any other way here would read as "no longer
+    // asks" the moment this write lands, through either a stale `false`
+    // this row never actually held or one a row fresh off this very call
+    // never got the chance to hold yet. `review_pass` would then read
+    // `wants_session` false and `end_review` would delete the row as
+    // `done`, before the next fetch could correct it.
+    let review_requested = role == "reviewer";
+    state
+        .launcher
+        .live
+        .set_pull(&row.id, pull.clone(), review_requested);
     // The session is the scheduler's to start, and the details its news is
     // read from the fetch's.
     state.forge_poll.wake(&row.repository_id);

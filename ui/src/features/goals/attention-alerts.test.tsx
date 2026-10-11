@@ -20,7 +20,7 @@ import type { QueryClient } from "@tanstack/react-query"
 import { fireEvent, screen, waitFor } from "@testing-library/react"
 import { toast } from "sonner"
 import { beforeEach, expect, it, vi } from "vitest"
-import type { SessionDto } from "@/api"
+import type { AttentionItemDto, SessionDto } from "@/api"
 
 import { Toaster } from "@/components/ui/sonner"
 import { aGoal, aSession, aSessionPage, aTask } from "@/test/fixtures"
@@ -45,6 +45,23 @@ const BLOCKED: SessionDto = aSession({
 
 /** What the daemon answers right now; a test moves it and re-asks. */
 let sessions: SessionDto[]
+/** The `pull_request` (or any other) producer's own items right now. */
+let recoveryItems: AttentionItemDto[]
+
+/** A `pull_request` producer item, as `GET /v1/attention` answers one. */
+function aPullRequestItem(overrides: Partial<AttentionItemDto> = {}): AttentionItemDto {
+  return {
+    id: "pull_request:review_start:pull-1",
+    producer: "pull_request",
+    reason: "configuration",
+    summary: "acme/widgets#1 Fix widgets asks for your review, and no agent is assigned to it.",
+    required_action: "Start a review yourself, on a model you pick.",
+    since: "2026-01-01T03:00:00Z",
+    affected: [{ kind: "pull_request", id: "pull-1", label: "acme/widgets#1 Fix widgets" }],
+    target: { kind: "pull_request", pull_request_id: "pull-1" },
+    ...overrides,
+  }
+}
 
 function stubDaemon() {
   daemonFetch.mockImplementation((input: Request | string | URL) => {
@@ -57,7 +74,7 @@ function stubDaemon() {
         : url.pathname === "/v1/tasks"
           ? [TASK]
           : url.pathname === "/v1/attention"
-            ? { items: [], complete: true }
+            ? { items: recoveryItems, complete: true }
             : aSessionPage(sessions)
     return Promise.resolve(jsonResponse(body))
   })
@@ -69,6 +86,7 @@ beforeEach(() => {
   // read as news that never happened.
   toast.dismiss()
   sessions = []
+  recoveryItems = []
   document.title = "Ariadne Desktop"
   // The toaster asks the browser whether motion is welcome; jsdom has no
   // opinion and no `matchMedia` to hold one.
@@ -99,6 +117,12 @@ function renderAlerts(route: string) {
 /** What the stream would have delivered: a different answer, re-asked for. */
 async function arrives(queryClient: QueryClient, next: SessionDto[]) {
   sessions = next
+  await queryClient.invalidateQueries()
+}
+
+/** The same, for the `pull_request` (or any other) producer's own items. */
+async function attentionArrives(queryClient: QueryClient, next: AttentionItemDto[]) {
+  recoveryItems = next
   await queryClient.invalidateQueries()
 }
 
@@ -194,4 +218,94 @@ it("counts the same list on the sidebar entry, and nothing when it is empty", as
 
   rerender(<AttentionBadge />)
   expect(screen.queryByText("0")).toBeNull()
+})
+
+// A `pull_request` producer item renders through the same shared extension
+// point every other recovery item does: its own headline, not the task or
+// session fallback, which would otherwise read every one of these as
+// "Failed".
+it("raises a toast titled for an unassigned review request, naming the request and its action", async () => {
+  const { queryClient } = renderAlerts("/profiles")
+  await settled(queryClient)
+
+  await attentionArrives(queryClient, [aPullRequestItem()])
+
+  expect(await screen.findByText("Review needed")).not.toBeNull()
+  expect(
+    screen.getByText(
+      "acme/widgets#1 Fix widgets asks for your review, and no agent is assigned to it.",
+    ),
+  ).not.toBeNull()
+  await waitFor(() => expect(document.title).toBe("(1) Ariadne"))
+})
+
+it("titles a readiness item as ready to merge", async () => {
+  const { queryClient } = renderAlerts("/profiles")
+  await settled(queryClient)
+
+  await attentionArrives(queryClient, [
+    aPullRequestItem({
+      id: "pull_request:ready:pull-1",
+      reason: "unknown",
+      summary:
+        "acme/widgets#1 Fix widgets is approved, every check passes, and the forge reports it clear to merge.",
+      required_action: "Merge it yourself: Ariadne gives no approval.",
+    }),
+  ])
+
+  expect(await screen.findByText("Ready to merge")).not.toBeNull()
+})
+
+// A completed automated review (a pr-reviewer session's own `waiting_user`,
+// which the daemon no longer raises at all — see `session-display.tsx`) is
+// not a producer item, and must raise no notification, no badge and no
+// attention row of its own.
+it("raises no notification or badge for a session with no recovery item behind it", async () => {
+  const reviewer: SessionDto = {
+    ...BLOCKED,
+    id: "01JSESS0000000000000000003",
+    task_id: null,
+    seat: "reviewer",
+    pull_request_id: "pull-1",
+    attention_reason: "waiting_user",
+  }
+  const { queryClient } = renderAlerts("/profiles")
+  await settled(queryClient)
+
+  await arrives(queryClient, [reviewer])
+
+  await waitFor(() => expect(document.title).toBe("Ariadne Desktop"))
+  expect(screen.queryByText("Ready to merge")).toBeNull()
+  expect(screen.queryByText("Review needed")).toBeNull()
+})
+
+// Repeated reads of the same still-open item — a poll, a reconnect — raise
+// no second toast; withdrawing it raises none either; and a later,
+// different readiness transition on the same request raises its own,
+// separate toast.
+it("raises one toast per readiness transition, none for a repeat, and none for a withdrawal", async () => {
+  const { queryClient } = renderAlerts("/profiles")
+  await settled(queryClient)
+
+  await attentionArrives(queryClient, [aPullRequestItem()])
+  expect(await screen.findByText("Review needed")).not.toBeNull()
+
+  // The same item again: no second toast.
+  await attentionArrives(queryClient, [aPullRequestItem()])
+  await waitFor(() => expect(screen.getAllByText("Review needed")).toHaveLength(1))
+
+  // Withdrawn: no toast of its own, and the title falls quiet.
+  await attentionArrives(queryClient, [])
+  await waitFor(() => expect(document.title).toBe("Ariadne Desktop"))
+
+  // A later, different transition — the request is now ready to merge —
+  // raises its own toast.
+  await attentionArrives(queryClient, [
+    aPullRequestItem({
+      id: "pull_request:ready:pull-1",
+      reason: "unknown",
+      required_action: "Merge it yourself: Ariadne gives no approval.",
+    }),
+  ])
+  expect(await screen.findByText("Ready to merge")).not.toBeNull()
 })
