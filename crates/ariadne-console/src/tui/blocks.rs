@@ -49,7 +49,7 @@ const BODY_INDENT: &str = "    ";
 /// right now — `None` everywhere else, including once it is in the scrollback.
 /// `whole` is the console's fold state: folded draws a tool's output, a
 /// diff and a daemon prompt to their usual limit, and whole draws every line
-/// of them (Ctrl-O). A thought and a question to the user are always whole.
+/// of them (Ctrl-O). A thought is always whole.
 pub(super) fn block(
     item: &TranscriptItem,
     width: usize,
@@ -298,18 +298,6 @@ fn call(tool: &Tool, started_at: &str, width: usize, whole: bool) -> Vec<Line<'s
         .as_deref()
         .and_then(|ended_at| elapsed(started_at, ended_at));
     let mut body = Vec::new();
-    // A question to the user is what the call is for: whole, never folded.
-    if let Some(question) = tool.user_question() {
-        body.extend(
-            markdown::render(question, width.saturating_sub(BODY_INDENT.width()))
-                .into_iter()
-                .map(|line| {
-                    let mut spans = vec![Span::raw(BODY_INDENT)];
-                    spans.extend(line.spans);
-                    Line::from(spans)
-                }),
-        );
-    }
     if let Some(output) = &tool.output {
         body.extend(folded(
             output,
@@ -1429,38 +1417,6 @@ mod tests {
                 .add_modifier
                 .contains(Modifier::BOLD | Modifier::DIM),
             "bold stays bold, and dim"
-        );
-    }
-
-    /// The question an agent puts to the user through `request_user_input`
-    /// is drawn under its call, whole and as markdown.
-    #[test]
-    fn a_question_to_the_user_draws_whole_under_its_call() {
-        let question =
-            "Plan review: **Task 1** writes every skill.\n\nWrite yes to start, or name a change.";
-        let (shown, terminal) = drawn(&[event(
-            "post_tool_use",
-            "asked",
-            json!({"tool_name": "mcp__ariadne__request_user_input",
-                   "tool_input": {"summary": question},
-                   "acp": {"toolCallId": "ask", "kind": "other", "status": "completed",
-                           "content": [{"type": "content",
-                                        "content": {"type": "text", "text": "{\"id\": \"01R\"}"}}]}}),
-        )]);
-
-        assert!(
-            shown.contains("Plan review: Task 1 writes every skill."),
-            "{shown}"
-        );
-        assert!(
-            shown.contains("Write yes to start, or name a change."),
-            "{shown}"
-        );
-        assert!(
-            !style_at(terminal.backend().buffer(), "Write yes")
-                .add_modifier
-                .contains(Modifier::DIM),
-            "the question is in the terminal's own foreground"
         );
     }
 

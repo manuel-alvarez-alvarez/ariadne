@@ -1,7 +1,7 @@
 ---
 id: mcp-tool-surface
 status: current
-updated: 2026-10-10
+updated: 2026-10-11
 areas: [mcp, cli]
 commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -44,7 +44,10 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    orchestrator then waits; a column's agent works alone, and asks only where
    the task cannot go on without the answer, and a pull request reviewer
    where the request cannot. The rule names no channel — the seat's own
-   playbook already says how to ask.
+   playbook already says how to ask. Every seat is told to write the whole
+   question in its reply before it calls `request_user_input`: the console
+   draws the call as any other, and its `summary` is one line for the Needs
+   attention list (031).
 4. Tools are filtered by seat both in the listing and on the call, so a tool a
    seat may not use is one it never sees. There are three seats
    (`McpSeat`): `Orchestrator`, `Agent` and `PullRequestReviewer`.
@@ -170,7 +173,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 - Every session is told how Ariadne is reached
   (`mcp.rs::every_session_is_told_how_ariadne_is_reached`), only the
   orchestrator is told to ask, and a column's agent is told to work alone
-  and ask only where the task cannot go on without the answer
+  and ask only where the task cannot go on without the answer, and every
+  seat is told to write the whole question in its reply first
   (`::only_the_orchestrator_is_told_to_ask`), and no session is told of a
   conversation (`::no_session_is_told_of_a_conversation`).
 - Every session is told to load a deferred tool before it calls it

@@ -183,6 +183,8 @@ pub(super) struct SendMessageReq {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub(super) struct UserRequestReq {
+    /// One line for the Needs attention list. Write the whole question in
+    /// your reply before this call.
     pub summary: String,
 }
 
@@ -412,7 +414,7 @@ fn roll_call(agents: &[serde_json::Value]) -> String {
 #[tool_router(vis = "pub(super)")]
 impl AriadneMcp {
     #[tool(
-        description = "Ask the user a question that blocks your work. The Needs attention list opens your console. End your turn after this call."
+        description = "Ask the user a question that blocks your work. First write the whole question in your reply: the user reads it in your console. Give `summary` one line for the Needs attention list, which opens your console. End your turn after this call."
     )]
     async fn request_user_input(
         &self,
