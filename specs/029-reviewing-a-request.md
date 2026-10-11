@@ -10,6 +10,8 @@ tests:
   - crates/ariadne-daemon/tests/it/workflow_pull_request.rs
   - crates/ariadne-daemon/tests/it/attention.rs
   - crates/ariadne-daemon/src/forge/news.rs
+  - crates/ariadne-daemon/src/forge/github/reviews.rs
+  - crates/ariadne-daemon/src/forge/pulls.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-store/src/defaults.rs
@@ -178,8 +180,9 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     - GitHub: one `gh api repos/<owner>/<name>/pulls/<n>/reviews` call with
       `REQUEST_CHANGES` or `COMMENT`, the head as `commit_id`, every inline
       comment and no body; a forge whose own answer says the review lacks a
-      body takes it again with one line that points at the summary. A forge
-      that refuses answers 502 with its own reason — GitHub's
+      body takes it again with a body that is the hidden review mark alone,
+      `<!-- ariadne:review -->`, so the retry still shows the reader nothing.
+      A forge that refuses answers 502 with its own reason — GitHub's
       `{"message", "errors"}` beside the CLI's line — so the session can act
       on it, and the skill says the failure rather than posting another way. The daemon then
       reads the review's comments back. The summary is an issue comment,
@@ -197,7 +200,12 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     reads them back, and answers them with 201. On a request of
     the user's own a `from_review` comment counts as another login's: it is
     told once to the task's author, as "by the Ariadne review", and waits
-    on it until the author replies (026 rules 12 to 16). The other way, a
+    on it until the author replies (026 rules 12 to 16) — but for the
+    round's own summary, the one `from_review` comment posted to the
+    conversation thread rather than to a line
+    (`forge/pulls.rs::CONVERSATION`): it only restates findings the author
+    was already told as inline comments, so a new or edited round of it is
+    never news of its own (`forge/news.rs`). The other way, a
     comment under the login that no review posted — the author's answer,
     or the user's — in a thread a review opened is the review session's
     news, so the answer to a finding reaches its reviewer. On a request of the user's
@@ -299,6 +307,16 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   `pull_request_reviews.rs::a_detail_read_before_any_fetch_keeps_a_review_request_asking`.
   A review stopped and asked again edits its summary, found by its mark:
   `pull_request_reviews.rs::a_request_of_mine_is_reviewed_once_asked_and_its_review_is_a_comment`.
+- A review GitHub refuses for having no body is retried with a body that is
+  the hidden review mark alone, never a line of visible text:
+  `github/reviews.rs::tests::a_review_refused_for_its_body_is_retried_with_no_visible_text`.
+  That retried body, with no text before the mark, still reads back as the
+  review's own:
+  `pulls.rs::tests::the_review_mark_alone_reads_back_as_signed_with_no_text`.
+- A new or edited round of the review's own summary is no news of its own to
+  the task's author, though an inline finding the same round posts still is:
+  `news.rs::tests::a_review_summary_wakes_no_keeping_agent`,
+  `news.rs::tests::an_inline_finding_beside_a_summary_is_still_news`.
 - Back-to-back pushes each reach an idle review session on the next
   reconcile, with no wait for the news to settle:
   `pull_request_reviews.rs::a_push_reaches_an_idle_session_without_a_wait`.

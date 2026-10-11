@@ -469,8 +469,11 @@ semantics remain with 009.
     - the conversation side — read live off `forge::live::waiting_threads`
       on this item's own call rather than off the row's own cached
       `unanswered_comments`, which still counts every comment the
-      login's own side has not answered (029 rule 13's own "news"
-      reading) — must hold no open thread once this item first excludes
+      login's own side has not answered, including the review's own
+      summary (`is_mine`'s own "other side" reading, 029 rule 13) — though
+      `forge/news.rs` excludes that same summary from the news itself,
+      since its findings were already told as inline comments — must
+      hold no open thread once this item first excludes
       the one comment that reading would otherwise block forever: the
       review's own summary, the single `issue_comment` the login itself
       posts to the conversation thread (`forge/pulls.rs::CONVERSATION`).
