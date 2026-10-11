@@ -56,7 +56,9 @@ pub(super) fn attention_for_event(
         // arrives, before the answer is known, so it marks the wait and not
         // its outcome; `permission.replied` follows with the answer, and
         // clears it.
-        "permission_request" => Some(A::WaitingPermission),
+        "permission_request" if payload.get("waiting") == Some(&serde_json::Value::Bool(true)) => {
+            Some(A::WaitingPermission)
+        }
         _ => None,
     }
 }
@@ -311,6 +313,7 @@ mod tests {
             "session_id": "stub-session",
             "tool_name": "Bash",
             "tool_input": {"command": "touch /tmp/probe"},
+            "waiting": true,
             "options": [{"optionId": "yes", "name": "Allow", "kind": "allow_once"}],
         })
     }
@@ -347,8 +350,13 @@ mod tests {
             "session.error",
             "session_end",
         ] {
+            let payload = if kind == "permission_request" {
+                json!({"waiting": true})
+            } else {
+                json!({})
+            };
             let acted_on =
-                status_for_event(kind).is_some() || attention_for_event(kind, &json!({})).is_some();
+                status_for_event(kind).is_some() || attention_for_event(kind, &payload).is_some();
             assert!(acted_on, "{kind} is reported but ingested as a no-op");
         }
         // Not among them: a compaction the agent ran by itself, which the
@@ -420,17 +428,29 @@ mod tests {
     /// attention the event raises.
     #[test]
     fn a_wait_on_the_user_is_raised_and_never_reads_as_liveness() {
-        for (kind, expected) in [
-            ("permission_request", AttentionReason::WaitingPermission),
-            ("session.error", AttentionReason::AgentError),
+        for (kind, payload, expected) in [
+            (
+                "permission_request",
+                json!({"waiting": true}),
+                AttentionReason::WaitingPermission,
+            ),
+            ("session.error", json!({}), AttentionReason::AgentError),
         ] {
             assert_eq!(
-                attention_for_event(kind, &json!({})),
+                attention_for_event(kind, &payload),
                 Some(expected),
                 "{kind}"
             );
             assert_eq!(status_for_event(kind), None, "{kind}");
         }
+    }
+
+    #[test]
+    fn an_automatic_permission_request_raises_no_attention() {
+        assert_eq!(
+            attention_for_event("permission_request", &json!({"waiting": false})),
+            None
+        );
     }
 
     /// What takes the flag back down: the answer hands the agent control

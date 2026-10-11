@@ -2526,6 +2526,39 @@
         }
       }
     },
+    "/v1/sessions/{id}/agent-requests": {
+      "post": {
+        "tags": [
+          "sessions"
+        ],
+        "operationId": "create",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAgentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/sessions/{id}/console": {
       "get": {
         "tags": [
@@ -2827,6 +2860,37 @@
             "description": ""
           },
           "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/sessions/{session_id}/agent-requests/{request_id}": {
+      "post": {
+        "tags": [
+          "sessions"
+        ],
+        "operationId": "withdraw",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
             "description": ""
           }
         }
@@ -4989,6 +5053,19 @@
           }
         },
         "additionalProperties": false
+      },
+      "CreateAgentRequest": {
+        "type": "object",
+        "description": "An explicit request from an agent for a human answer.",
+        "required": [
+          "summary"
+        ],
+        "properties": {
+          "summary": {
+            "type": "string",
+            "description": "The question or decision the human must answer."
+          }
+        }
       },
       "CreateGoalRequest": {
         "type": "object",

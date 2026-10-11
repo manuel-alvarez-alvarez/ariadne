@@ -2,6 +2,7 @@
 
 pub use events::ingest_event;
 
+mod agent_requests;
 mod attention;
 mod caller;
 mod catalog;
@@ -158,6 +159,7 @@ impl AppState {
         sessions::list, sessions::create, sessions::resume_outside,
         sessions::get, sessions::kill, sessions::resume, sessions::switch,
         console::snapshot, console::stream, console::input, console::cancel,
+        agent_requests::create, agent_requests::withdraw,
         terminal::terminal,
         events::list, stream::stream,
         models::list,
@@ -176,6 +178,7 @@ impl AppState {
         ariadne_api::attention::AttentionProducer, ariadne_api::attention::AttentionCause,
         ariadne_api::attention::AttentionSubjectDto,
         ariadne_api::attention::AttentionSubjectKind, ariadne_api::attention::AttentionTarget,
+        ariadne_api::attention::CreateAgentRequest,
     )),
     tags(
         (name = "system", description = "Daemon health and metadata"),
@@ -351,6 +354,14 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{id}/console", get(console::snapshot))
         .route("/v1/sessions/{id}/console/stream", get(console::stream))
         .route("/v1/sessions/{id}/console/input", post(console::input))
+        .route(
+            "/v1/sessions/{id}/agent-requests",
+            post(agent_requests::create),
+        )
+        .route(
+            "/v1/sessions/{session_id}/agent-requests/{request_id}",
+            post(agent_requests::withdraw),
+        )
         .route("/v1/sessions/{id}/console/cancel", post(console::cancel))
         .route(
             "/v1/sessions/{id}/console/terminal",

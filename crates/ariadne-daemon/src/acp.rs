@@ -2127,6 +2127,7 @@ impl RuntimeIncoming {
             payload[key] = value;
         }
         let receiver = waiting.then(|| self.begin_permission());
+        payload["waiting"] = json!(waiting);
         self.end_text().await;
         self.sink.emit("permission_request", payload.clone()).await;
         let (selected, decided_by, console_choice) = match receiver {

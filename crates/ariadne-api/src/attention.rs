@@ -122,3 +122,10 @@ pub struct AttentionListDto {
     /// producers found.
     pub complete: bool,
 }
+
+/// An explicit request from an agent for a human answer.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct CreateAgentRequest {
+    /// The question or decision the human must answer.
+    pub summary: String,
+}
