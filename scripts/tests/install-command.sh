@@ -84,6 +84,37 @@ case "$tool" in
             printf '# >>> ariadne >>>\n# completion fixture\n# <<< ariadne <<<\n' >> "$HOME/.${4}rc"
         fi
         ;;
+    launchctl)
+        case "$1" in
+            bootout) ;;
+            print)
+                # Keeps the label in print for TEST_PRINT_POLLS calls, then
+                # reports it gone - a bootout that returned before launchd
+                # actually dropped the service.
+                n=0
+                [ -f "$TEST_ROOT/launchctl-print-calls" ] \
+                    && n="$(cat "$TEST_ROOT/launchctl-print-calls")"
+                n=$((n + 1))
+                printf '%s' "$n" > "$TEST_ROOT/launchctl-print-calls"
+                [ "$n" -le "${TEST_PRINT_POLLS:-2}" ]
+                ;;
+            bootstrap)
+                # Fails the first call the real way - "Bootstrap failed: 5:
+                # Input/output error" - then succeeds, as it does once the
+                # old job has actually cleared.
+                n=0
+                [ -f "$TEST_ROOT/launchctl-bootstrap-calls" ] \
+                    && n="$(cat "$TEST_ROOT/launchctl-bootstrap-calls")"
+                n=$((n + 1))
+                printf '%s' "$n" > "$TEST_ROOT/launchctl-bootstrap-calls"
+                if [ "$n" -eq 1 ]; then
+                    echo "Bootstrap failed: 5: Input/output error" >&2
+                    exit 5
+                fi
+                ;;
+            *) exit 1 ;;
+        esac
+        ;;
     ariadned|ariadne-desktop|systemctl|sleep|gtk-update-icon-cache|update-desktop-database) ;;
     *) exit 1 ;;
 esac

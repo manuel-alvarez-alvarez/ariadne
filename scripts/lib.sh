@@ -121,16 +121,35 @@ ui_strip_block() {
     mv "$file.ariadne-tmp" "$file"
 }
 
+# Poll $@ once a second until it fails, or until ~30s have passed. Used where
+# something needs a moment to go away - launchd dropping a service, a killed
+# process exiting - and the install has to go on either way: a stop that
+# never finishes is not a reason to fail it.
+ui_wait_until_gone() {
+    local _i
+    for _i in $(seq 1 30); do
+        "$@" > /dev/null 2>&1 || return 0
+        sleep 1
+    done
+    return 0
+}
+
 # Stop whatever daemon is running: the registered service, plus one started by
 # hand from its pid file. With `unregister`, the service is also disabled and
 # its unit file deleted - what the uninstaller wants, where the installer only
 # wants the binaries free to be replaced.
+#
+# `launchctl bootout` and a plain `kill` both return before the process is
+# actually gone, so each is followed by a wait - a `bootstrap` or a start
+# right behind either one can otherwise land on a label or a pid that has not
+# finished clearing.
 ui_stop_daemon() {
-    local mode="${1:-}"
+    local mode="${1:-}" pid
     case "$OS" in
         Darwin)
             run_logged launchctl bootout "gui/$(id -u)/$ARIADNE_PLIST_LABEL" || true
             if [ "$mode" = unregister ]; then rm -f "$ARIADNE_PLIST"; fi
+            ui_wait_until_gone launchctl print "gui/$(id -u)/$ARIADNE_PLIST_LABEL"
             ;;
         Linux)
             if [ "$mode" = unregister ]; then
@@ -143,7 +162,9 @@ ui_stop_daemon() {
             ;;
     esac
     if [ -f "$ARIADNE_HOME/ariadned.pid" ]; then
-        kill "$(cat "$ARIADNE_HOME/ariadned.pid")" 2>/dev/null || true
+        pid="$(cat "$ARIADNE_HOME/ariadned.pid")"
+        kill "$pid" 2>/dev/null || true
+        ui_wait_until_gone kill -0 "$pid"
     fi
     return 0
 }

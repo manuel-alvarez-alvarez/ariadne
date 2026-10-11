@@ -415,9 +415,9 @@ fi
 
 # --- stop whatever is currently running ------------------------------------------
 # The service stays registered: this only frees the binaries to be replaced.
+# ui_stop_daemon already waits for launchd (or the killed pid) to clear.
 step_begin
 ui_stop_daemon
-sleep 1
 step_ok
 
 # --- binaries --------------------------------------------------------------------
@@ -639,8 +639,20 @@ if [ "$WITH_SERVICE" = 1 ]; then
 </dict>
 </plist>
 EOF
-            run_logged launchctl bootstrap "gui/$(id -u)" "$ARIADNE_PLIST" \
-                || ui_die "launchctl bootstrap failed"
+            # A bootout just issued (above, or from a previous run already
+            # idle) can still be unwinding the old job under the same label;
+            # bootstrap then fails with "Bootstrap failed: 5: Input/output
+            # error" even though ui_stop_daemon already waited for it. Retry
+            # rather than fail the install on what is only ever a losing race.
+            BOOTSTRAP_OK=0
+            for _ in $(seq 1 5); do
+                if run_logged launchctl bootstrap "gui/$(id -u)" "$ARIADNE_PLIST"; then
+                    BOOTSTRAP_OK=1
+                    break
+                fi
+                sleep 1
+            done
+            [ "$BOOTSTRAP_OK" = 1 ] || ui_die "launchctl bootstrap failed"
             ;;
         Linux)
             mkdir -p "$(dirname "$ARIADNE_UNIT")"

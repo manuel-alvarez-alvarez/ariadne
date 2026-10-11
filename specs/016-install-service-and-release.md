@@ -11,6 +11,7 @@ tests:
   - scripts/install.sh
   - scripts/tests/install-linux.sh
   - scripts/tests/install-sign-macos.sh
+  - scripts/tests/install-service-macos.sh
   - scripts/tests/make-signing-cert-scenarios.sh
   - .github/workflows/release-please.yml
 ---
@@ -116,6 +117,13 @@ Out: what the daemon does once running (009, 012).
     `ariadne`, `ariadned` and the Ariadne Desktop app with that identity when
     it is in the login keychain, and still produces a complete, unsigned
     build when it is not.
+14. `ui_stop_daemon` waits for launchd to drop a label it just told to
+    bootout, and for a pid-file daemon it just killed to exit — each up to
+    ~30s, going on regardless so a wait that times out never fails the
+    install: `launchctl bootout` and a plain `kill` both return before the
+    old process is actually gone. `install.sh` retries a `launchctl
+    bootstrap` that loses that race, up to 5 times, and calls `ui_die` only
+    once the last try has also failed.
 
 ## Acceptance criteria
 
@@ -156,6 +164,11 @@ Out: what the daemon does once running (009, 012).
   with that identity when it is in the login keychain, and skips with a step
   note - never failing the install - when it is not
   (`scripts/tests/install-sign-macos.sh`: `present`, `missing`).
+- An upgrade whose old launchd job is slow to drop, and whose first
+  `launchctl bootstrap` loses the race against it, still ends with the
+  service registered: `ui_stop_daemon` waits out the slow `print`, and
+  `install.sh` retries the failed `bootstrap`, rather than either one
+  calling `ui_die` (`scripts/tests/install-service-macos.sh`).
 
 ## Known gap
 
