@@ -115,9 +115,10 @@ fn review_start_item(
 ///   counts a review's own summary too, posted under the login as a plain
 ///   `issue_comment` on the conversation thread (`forge/pulls.rs::CONVERSATION`)
 ///   and never resolved, since it names no diff-anchored thread at all —
-///   `is_mine` reads it as the other side's (029 rule 13, so a task author
-///   is told of it as news) rather than as nothing to answer, and a
-///   summary carries nothing to answer. The babysitting skill never
+///   `is_mine` reads it as the other side's (029 rule 13), though
+///   `forge/news.rs` never tells it as news, since its findings were
+///   already told as inline comments — rather than as nothing to answer,
+///   and a summary carries nothing to answer. The babysitting skill never
 ///   replies to a comment that asks for no change, so a summary with no
 ///   finding must never need an invented reply just to clear this item;
 /// - no *resolvable* review thread the forge still shows unresolved,
@@ -196,19 +197,16 @@ async fn readiness_item(
     }
     // The conversation side, read fresh rather than off `unanswered_comments`:
     // that field counts a review's own summary as the other side's input
-    // (`forge/live.rs::is_mine`, 029 rule 13), since a task author is told
-    // of it as news the same way a genuine finding is. A summary carries
-    // nothing to answer, so this item excludes it — the one comment the
-    // login posts, from a review, to the conversation thread — rather than
-    // waiting on a reply the babysitting skill is never meant to write.
+    // (`forge/live.rs::is_mine`, 029 rule 13), though `forge/news.rs` never
+    // tells it as news, since its findings were already told as inline
+    // comments. A summary carries nothing to answer, so this item excludes
+    // it — the one comment the login posts, from a review, to the
+    // conversation thread — rather than waiting on a reply the babysitting
+    // skill is never meant to write.
     let login = live::login_of(store, &pull.repository_id).await?;
     let actionable: Vec<_> = comments
         .iter()
-        .filter(|c| {
-            !(c.thread_id == crate::forge::pulls::CONVERSATION
-                && c.from_review
-                && c.author_login.eq_ignore_ascii_case(&login))
-        })
+        .filter(|c| !live::is_review_summary(c, &login))
         .cloned()
         .collect();
     if !live::waiting_threads(&actionable, &pull.role, &login).is_empty() {

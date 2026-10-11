@@ -10,7 +10,7 @@ workflow develop-review-pr
     skills: code-review
     rank: frontier
   pr[Pull request]
-    Push the branch, open the request and keep it until a human merges or closes it.
+    Push the branch, open the request and keep it until it merges or closes.
     skills: pr-babysit
     rank: balanced
     gate: request-merged

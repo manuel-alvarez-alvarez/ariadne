@@ -83,14 +83,13 @@ pub(crate) mod render {
             TranscriptItem::PermissionQuestion {
                 meta,
                 question,
-                tool,
                 options,
                 answer,
                 ai_note,
+                ..
             } => permission_block(
                 meta,
                 question,
-                tool.user_question(),
                 options,
                 ai_note.as_deref(),
                 answer.as_deref(),
@@ -254,7 +253,6 @@ pub(crate) mod render {
     fn permission_block(
         meta: &ItemMeta,
         question: &str,
-        asked: Option<&str>,
         options: &[PermissionOption],
         ai_note: Option<&str>,
         answer: Option<&str>,
@@ -265,11 +263,6 @@ pub(crate) mod render {
             header(meta, "PERMISSION", PERMISSION, color),
             question
         );
-        // A question an agent puts to the user is printed whole, under the
-        // call that asks it.
-        for line in asked.into_iter().flat_map(str::lines) {
-            out.push_str(&format!("  {line}\n"));
-        }
         if let Some(note) = ai_note {
             out.push_str(&format!("  {note}\n"));
         }
@@ -518,7 +511,6 @@ pub(crate) mod render {
             let TranscriptItem::PermissionQuestion {
                 meta,
                 question,
-                tool,
                 options,
                 ai_note,
                 ..
@@ -532,9 +524,6 @@ pub(crate) mod render {
                 header(&meta, "PERMISSION", PERMISSION, self.color),
                 question
             ));
-            for line in tool.user_question().into_iter().flat_map(str::lines) {
-                out.push_str(&format!("  {line}\n"));
-            }
             if let Some(note) = ai_note {
                 out.push_str(&format!("  {note}\n"));
             }
@@ -648,32 +637,6 @@ mod tests {
         assert!(output.contains("all tests passed"), "{output}");
         assert!(output.contains("answer: Allow"), "{output}");
         assert!(!output.contains('…'), "nothing is truncated: {output}");
-    }
-
-    /// The question an agent puts to the user through `request_user_input`
-    /// is printed whole under its permission line, in the logs and the
-    /// stream alike.
-    #[test]
-    fn a_question_to_the_user_is_printed_whole() {
-        let question =
-            "Plan review: **Task 1** writes every skill.\n\nWrite yes to start, or name a change.";
-        let events = [event(
-            "ask",
-            "permission_request",
-            json!({
-                "tool_name": "mcp__ariadne__request_user_input",
-                "tool_input": {"summary": question},
-                "options": [{"optionId": "yes", "name": "Allow"}]
-            }),
-        )];
-        let expected = "  Plan review: **Task 1** writes every skill.\n  \n  Write yes to start, or name a change.\n";
-
-        let output = render::transcript(&fold(&events), Some(80), false);
-        assert!(output.contains(expected), "{output}");
-
-        let mut renderer = render::StreamRenderer::new(None, false);
-        let streamed = renderer.event(&events[0], &Filters::default());
-        assert!(streamed.contains(expected), "{streamed}");
     }
 
     #[test]

@@ -153,10 +153,13 @@ API call carrying every inline comment; on GitLab, which has no review
 verdict of its own, one discussion per comment.
 
 The review keeps **one summary comment** on the request, and every round
-rewrites it rather than adding another: the commit range it has reviewed,
-where it stands — **Changes requested** while a P0 is open, **Changes
-recommended** while a P1 or P2 is, or **No findings** — and each open
-finding by priority and title, saying nothing of what the reviewer did.
+rewrites it rather than adding another: a title, "## Review summary: all
+changes from `<base>` to `<head>`", the commit range it has reviewed, a
+prose paragraph on where it stands, and a recommendation — **Request
+changes** while a P0 is open, **Changes recommended** while a P1 or P2 is,
+or **No findings: this PR is ready to be merged.** — naming each open
+finding by priority and title, and nothing of what the reviewer did. It
+carries no trailer.
 
 On a later round the reviewer posts nothing more in a thread nobody has
 answered: it waits for the answer. Once a commit fixes the defect, it

@@ -158,7 +158,7 @@ a turn ends. Nothing is shown there before the session has spent a token.
 Every fold below is one press of Ctrl-O away. It switches the pane between
 folded, which is where each attach starts, and whole, which draws every line
 of a tool's output, a diff and a daemon prompt; press it again to fold them
-back. A thought and a question the agent asks you are always whole. A reconnect keeps whichever the attach had. A block that
+back. A thought is always whole. A reconnect keeps whichever the attach had. A block that
 leaves for the scrollback while the pane is whole keeps every line there too,
 since a block already in the scrollback cannot be drawn again. A block that
 is part-way into the scrollback keeps the fold its first lines had, and
@@ -355,10 +355,10 @@ when a script or a one-line response is enough. When a session is waiting on a
 permission request, the console shows the call it asks about — its head line,
 the rest of the command or the diff under it — and then its choices; pick one
 with the arrow keys or its number key. The rest of the command draws in your
-terminal's own foreground, not dimmed. When the agent asks you a question
-through `request_user_input`, the question takes the place of the tool's
-name: its markdown, whole, in your terminal's own foreground, and it stays
-whole once answered. See [Permission modes](permissions.md).
+terminal's own foreground, not dimmed. See [Permission modes](permissions.md).
+When an agent asks you a question, it writes the whole question in its
+reply in the console first, then calls `request_user_input`, whose one-line
+summary is what the Needs attention list shows.
 
 ```
 ─ permission ───────────────────────────────────

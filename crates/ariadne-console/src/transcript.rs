@@ -212,18 +212,6 @@ impl Tool {
         }
     }
 
-    /// The question an agent asks the user through Ariadne's
-    /// `request_user_input` tool (013): its `summary`, which is markdown.
-    /// An agent names the tool with its server in front, such as
-    /// `mcp__ariadne__request_user_input`.
-    pub fn user_question(&self) -> Option<&str> {
-        self.name
-            .ends_with("request_user_input")
-            .then(|| self.input.get("summary")?.as_str())
-            .flatten()
-            .filter(|summary| !summary.trim().is_empty())
-    }
-
     /// Whether `update` is a later event of this call.
     fn is_same(&self, update: &Self) -> bool {
         (!update.id.is_empty() && self.id == update.id)

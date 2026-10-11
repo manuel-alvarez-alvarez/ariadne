@@ -357,6 +357,19 @@ fn is_mine(comment: &PullRequestComment, role: &str, login: &str) -> bool {
     comment.author_login.eq_ignore_ascii_case(login) && !(comment.from_review && role == "author")
 }
 
+/// Whether `comment` is the review's own summary (029): the one comment it
+/// posts to the conversation thread, under the integration's own `login`,
+/// rather than to a line of the diff. `forge/news.rs` reads this to leave
+/// it out of the news, since its findings are already told as inline
+/// comments; `attention::pull_requests::readiness_item` reads it to leave
+/// it out of what a reply must still answer, since a summary carries
+/// nothing to answer.
+pub(crate) fn is_review_summary(comment: &PullRequestComment, login: &str) -> bool {
+    comment.thread_id == CONVERSATION
+        && comment.from_review
+        && comment.author_login.eq_ignore_ascii_case(login)
+}
+
 /// The comments with `answered` worked out (026): a later comment of the
 /// same thread on the login's own side answers it.
 pub fn answered(

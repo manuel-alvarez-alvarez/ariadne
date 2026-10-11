@@ -98,9 +98,14 @@ pub(crate) fn signature(body: &str) -> Signature {
         Some(rest) => (rest, true),
         None => (rest, false),
     };
-    // `signed` leaves a blank line between the text and the marks.
-    let Some(text) = rest.strip_suffix("\n\n") else {
-        return unsigned;
+    // `signed` leaves a blank line between the text and the marks, but a
+    // retry that carries no text of its own (`REVIEW_MARK` alone) leaves
+    // nothing before the mark at all: empty text needs no blank line to
+    // its left.
+    let text = match rest.strip_suffix("\n\n") {
+        Some(text) => text,
+        None if rest.is_empty() => rest,
+        None => return unsigned,
     };
     Signature {
         text: text.to_string(),
@@ -236,5 +241,22 @@ mod tests {
             assert!(!read.review && !read.summary, "{body}");
             assert_eq!(read.text, body);
         }
+    }
+
+    /// The retry a refused review takes carries the mark alone, no blank
+    /// line before it: it still reads back as the review's, with no text
+    /// of its own, rather than as an unsigned reply that quotes the mark
+    /// (029).
+    #[test]
+    fn the_review_mark_alone_reads_back_as_signed_with_no_text() {
+        let read = signature(REVIEW_MARK);
+        assert_eq!(
+            read,
+            Signature {
+                text: String::new(),
+                review: true,
+                summary: false,
+            }
+        );
     }
 }

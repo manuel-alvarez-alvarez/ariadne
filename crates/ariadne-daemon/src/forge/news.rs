@@ -11,8 +11,13 @@
 //!
 //! A request the user reviews hears of less (029): a push to its head, and
 //! a reply in a thread its session opened.
+//!
+//! A round of the review's own summary is never news of its own (031): its
+//! findings were already told as inline comments, so the babysitter is
+//! woken for them, never for the comment that only restates them.
 use ariadne_store::{PullRequest, PullRequestComment, PullRequestTold, Store};
 
+use super::live::is_review_summary;
 use super::pulls::FailedCheck;
 
 /// The news of one request: a line per item, and what to mark told once
@@ -42,15 +47,19 @@ impl News {
     }
 }
 
-/// The news of `pull`, given the comments its session has not been told of.
-pub fn of(pull: &PullRequest, untold: &[PullRequestComment]) -> News {
+/// The news of `pull`, given the comments its session has not been told of,
+/// for a session signed in as `login`.
+pub fn of(pull: &PullRequest, untold: &[PullRequestComment], login: &str) -> News {
     // A request the user reviews is told of a push and of the replies in
     // its own threads alone (029): its checks and its state are the
     // author's to watch.
     if pull.role == "reviewer" {
         return of_review(pull, untold);
     }
-    let mut lines = comment_lines(untold);
+    // The review's own summary restates findings the babysitter was already
+    // told of as inline comments (031): a new or edited round of it is
+    // never news of its own.
+    let mut lines = comment_lines(untold.iter().filter(|c| !is_review_summary(c, login)));
     let before = told_before(pull);
     let told_checks = before.checks.clone();
     let failed: Vec<FailedCheck> = serde_json::from_str(&pull.failed_checks).unwrap_or_default();
@@ -130,9 +139,9 @@ fn of_review(pull: &PullRequest, untold: &[PullRequestComment]) -> News {
 }
 
 /// One line per comment a session has not been told of, naming its id.
-fn comment_lines(untold: &[PullRequestComment]) -> Vec<String> {
+fn comment_lines<'a>(untold: impl IntoIterator<Item = &'a PullRequestComment>) -> Vec<String> {
     untold
-        .iter()
+        .into_iter()
         .map(|comment| {
             let what = match comment.kind.as_str() {
                 "review" => "Review",
@@ -199,7 +208,7 @@ pub async fn untold(
         return Ok(of_review(pull, &answers));
     }
     let untold = super::live::untold(&comments, &pull.role, login, pull.role == "reviewer");
-    Ok(of(pull, &untold))
+    Ok(of(pull, &untold, login))
 }
 
 /// The first line of a comment, cut short: the session reads the whole of
@@ -220,6 +229,7 @@ fn first_line(body: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::forge::pulls::CONVERSATION;
 
     fn pull() -> PullRequest {
         PullRequest {
@@ -289,7 +299,7 @@ mod tests {
     /// base.
     #[test]
     fn a_quiet_request_is_no_news() {
-        assert!(of(&pull(), &[]).is_empty());
+        assert!(of(&pull(), &[], "me").is_empty());
     }
 
     /// Each kind of change is told once: what the news marks told is
@@ -305,7 +315,7 @@ mod tests {
             state: "merged".into(),
             ..pull()
         };
-        let news = of(&changed, &[]);
+        let news = of(&changed, &[], "me");
         assert_eq!(
             news.lines,
             [
@@ -316,13 +326,13 @@ mod tests {
             ]
         );
         let mut changed = told(&changed, &news);
-        assert!(of(&changed, &[]).is_empty(), "nothing is told twice");
+        assert!(of(&changed, &[], "me").is_empty(), "nothing is told twice");
 
         // A check that turns green and a head that catches up are no news,
         // but they leave the mark, so their next turn is news again.
         changed.failed_checks = "[]".into();
         changed.behind_base = false;
-        let green = of(&changed, &[]);
+        let green = of(&changed, &[], "me");
         assert!(green.is_empty());
         let recovered = green.recovered().expect("a mark to persist");
         assert!(recovered.checks.is_empty());
@@ -335,7 +345,7 @@ mod tests {
             ..changed
         };
         assert_eq!(
-            of(&changed, &[]).lines,
+            of(&changed, &[], "me").lines,
             [
                 "- Check lint turned to failure",
                 "- The head is behind main."
@@ -357,7 +367,7 @@ mod tests {
             review_decision: "changes_requested".into(),
             ..pull()
         };
-        let news = of(&pushed, &[]);
+        let news = of(&pushed, &[], "me");
         assert_eq!(
             news.lines,
             [
@@ -366,7 +376,7 @@ mod tests {
             ]
         );
         assert!(
-            of(&told(&pushed, &news), &[]).is_empty(),
+            of(&told(&pushed, &news), &[], "me").is_empty(),
             "a push is told once"
         );
 
@@ -374,7 +384,7 @@ mod tests {
             told_head_sha: None,
             ..pushed
         };
-        let news = of(&unbriefed, &[]);
+        let news = of(&unbriefed, &[], "me");
         assert!(news.is_empty(), "a head no session was told of is no news");
         assert_eq!(news.recovered().map(|t| t.head_sha.as_str()), Some("def"));
     }
@@ -390,7 +400,7 @@ mod tests {
             checks: "pending".into(),
             ..pull()
         };
-        let news = of(&approved, &[]);
+        let news = of(&approved, &[], "me");
         assert_eq!(
             news.lines,
             [
@@ -402,12 +412,72 @@ mod tests {
             checks: "success".into(),
             ..told(&approved, &news)
         };
-        let news = of(&green, &[]);
+        let news = of(&green, &[], "me");
         assert_eq!(news.lines, ["- The checks now read success."]);
         let pending = PullRequest {
             checks: "pending".into(),
             ..told(&green, &news)
         };
-        assert_eq!(of(&pending, &[]).lines, ["- The checks now read pending."]);
+        assert_eq!(
+            of(&pending, &[], "me").lines,
+            ["- The checks now read pending."]
+        );
+    }
+
+    /// A comment of the request: `thread` groups it, `from_review` marks it
+    /// the review's own, and `login` is who the forge shows as its author.
+    fn comment(id: &str, thread: &str, login: &str, from_review: bool) -> PullRequestComment {
+        PullRequestComment {
+            id: id.into(),
+            pull_request_id: "01pr".into(),
+            forge_id: id.into(),
+            thread_id: thread.into(),
+            kind: "issue_comment".into(),
+            author_login: login.into(),
+            author_is_bot: false,
+            body: "a finding".into(),
+            path: None,
+            line: None,
+            in_reply_to: None,
+            created_at: "2026-10-02T00:00:00Z".into(),
+            answered: false,
+            resolved: false,
+            told_at: None,
+            from_review,
+        }
+    }
+
+    /// A new or edited round of the review's own summary wakes the
+    /// babysitter for nothing: it only restates findings already told as
+    /// inline comments, so it is no news of its own (031).
+    #[test]
+    fn a_review_summary_wakes_no_keeping_agent() {
+        let summary = comment("ic-301", CONVERSATION, "me", true);
+        let news = of(&pull(), std::slice::from_ref(&summary), "me");
+        assert!(news.is_empty(), "the summary alone is no news");
+        // It is still told, so a round with no other news never leaves it
+        // standing as untold forever.
+        assert_eq!(news.comment_ids, [summary.id]);
+    }
+
+    /// An inline finding the same round posts is still news the babysitter
+    /// must answer, whatever its summary does beside it.
+    #[test]
+    fn an_inline_finding_beside_a_summary_is_still_news() {
+        let finding = PullRequestComment {
+            path: Some("src/lib.rs".into()),
+            line: Some(3),
+            kind: "review_comment".into(),
+            ..comment("501", "501", "me", true)
+        };
+        let summary = comment("ic-301", CONVERSATION, "me", true);
+        let news = of(&pull(), &[finding.clone(), summary.clone()], "me");
+        assert_eq!(news.lines.len(), 1, "{:?}", news.lines);
+        assert!(
+            news.lines[0].contains("by the Ariadne review"),
+            "{:?}",
+            news.lines
+        );
+        assert_eq!(news.comment_ids, [finding.id, summary.id]);
     }
 }

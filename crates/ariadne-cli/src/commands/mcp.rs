@@ -260,13 +260,13 @@ fn json_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
 fn ask_rule(seat: &McpSeat) -> &'static str {
     match seat {
         McpSeat::Orchestrator => {
-            "Call `request_user_input` for each user question. Do not use it for agent questions. Then wait."
+            "Call `request_user_input` for each user question. Write the whole question in your reply first. Do not use it for agent questions. Then wait."
         }
         McpSeat::Agent => {
-            "Call `request_user_input` only where the task cannot continue without a user answer. Do not use it for agent questions."
+            "Call `request_user_input` only where the task cannot continue without a user answer. Write the whole question in your reply first. Do not use it for agent questions."
         }
         McpSeat::PullRequestReviewer => {
-            "Call `request_user_input` only where the request cannot continue without a user answer. Do not use it for agent questions."
+            "Call `request_user_input` only where the request cannot continue without a user answer. Write the whole question in your reply first. Do not use it for agent questions."
         }
     }
 }
@@ -748,6 +748,10 @@ pub(crate) mod tests {
             assert!(
                 !instructions.contains("Nobody answers a question, so do not ask"),
                 "{seat:?}: {instructions}"
+            );
+            assert!(
+                instructions.contains("Write the whole question in your reply first."),
+                "{seat:?}: the user reads the question in the console: {instructions}"
             );
         }
 
