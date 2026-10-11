@@ -20,7 +20,7 @@ use ariadne_store::{
 use crate::acp::{AcpLaunch, AcpRuntime};
 use crate::acp_discovery::AgentRegistry;
 use crate::agents::{
-    SpawnCtx, SpawnPlan, handoff_text, plan_resume, plan_spawn, prompts, write_skills,
+    SpawnCtx, SpawnPlan, handoff_text, link_skills, plan_resume, plan_spawn, prompts,
 };
 use crate::branch::BranchWatchers;
 use crate::config::Config;
@@ -181,26 +181,15 @@ impl Launcher {
         let extra_flags = self.store.agent_flags(agent_of(&session.model)).await?;
         let seat = session.seat().context("a staffed session needs a seat")?;
         let run_dir = self.run_dir(&session.id);
-        // Written before the adapter plans anything, and by the same call that
-        // renders the index, so what the prompt names is what is on disk.
-        let skills_dir = match skills.is_empty() {
-            true => None,
-            false => {
-                let documents: Vec<(String, String)> = skills
-                    .iter()
-                    .map(|skill| {
-                        (
-                            skill.name.clone(),
-                            ariadne_store::defaults::skill_text(skill.document_text()),
-                        )
-                    })
-                    .collect();
-                Some(write_skills(&run_dir, &documents)?)
-            }
-        };
+        // Linked before the adapter plans anything, and by the same call that
+        // renders the index, so what the prompt names resolves through it.
+        // Linked on every launch, staffed with a skill or not: the agent can
+        // still open any skill the link carries, and a resume never keeps a
+        // stale link behind an empty staffing.
+        let skills_dir = link_skills(&run_dir, &self.cfg.skills_dir)?;
         let system_prompt = match session.pull_request_id {
-            Some(_) => prompts::pull_request_system_prompt(&skills, skills_dir.as_deref()),
-            None => prompts::system_prompt(seat, &skills, skills_dir.as_deref()),
+            Some(_) => prompts::pull_request_system_prompt(&skills, Some(&skills_dir)),
+            None => prompts::system_prompt(seat, &skills, Some(&skills_dir)),
         };
         if session.goal_id.is_none() && session.pull_request_id.is_none() {
             anyhow::bail!("a staffed session needs a goal");
@@ -225,7 +214,7 @@ impl Launcher {
             socket_path: self.cfg.socket_path.clone(),
             cli_bin: self.cfg.cli_bin.clone(),
             system_prompt,
-            skills_dir,
+            skills_dir: Some(skills_dir),
             initial_prompt,
             model,
             effort: session.effort.clone(),
@@ -1390,9 +1379,9 @@ impl Launcher {
 }
 
 /// A review session: its worktree detached at the request's head, its row,
-/// and its agent (029). The daemon staffs it on the repository's
-/// `review_model`; no goal, task or orchestrator is behind it. A request of
-/// the user's own has none: its task's `pr` column keeps it (030).
+/// and its agent (029). The daemon staffs it on the pin asked directly on
+/// the row; no goal, task or orchestrator is behind it. A request of the
+/// user's own has none: its task's `pr` column keeps it (030).
 impl Launcher {
     /// Where a request's worktree is cut: one per request, named by its id.
     fn pull_request_worktree_path(&self, pull_request_id: &str) -> PathBuf {

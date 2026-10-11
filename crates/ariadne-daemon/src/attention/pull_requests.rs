@@ -41,7 +41,7 @@ pub(crate) async fn items(store: &Store, launcher: &Launcher) -> Result<Vec<Atte
             .unwrap_or_else(|| pull.repository_id.clone());
         match pull.role.as_str() {
             "reviewer" => {
-                if let Some(item) = review_start_item(&pull, integration.as_ref(), &repo) {
+                if let Some(item) = review_start_item(&pull, &repo) {
                     items.push(item);
                 }
             }
@@ -70,23 +70,14 @@ fn subject(pull: &PullRequest, repo: &str) -> AttentionSubjectDto {
     }
 }
 
-/// A request that asks for my review, out of draft and open, nobody will
-/// ever start a session for: neither the repository's own review pin nor a
-/// pin asked directly on the row (029's `wants_session`) names a model. A
-/// request automatic recovery gave up starting is left to `recovery`'s own
-/// item, which already names the same request and the same fix — raising a
+/// A request that asks for my review, out of draft and open, with no
+/// asked review of its own: nothing starts a session for it on its own
+/// (029's `wants_session`), so a human has to start one by hand. A request
+/// automatic recovery gave up starting is left to `recovery`'s own item,
+/// which already names the same request and the same fix — raising a
 /// second here would be two items for one blocker.
-fn review_start_item(
-    pull: &PullRequest,
-    integration: Option<&ariadne_store::ForgeIntegration>,
-    repo: &str,
-) -> Option<AttentionItemDto> {
-    if !pull.review_requested || pull.reviewer_given_up_at.is_some() {
-        return None;
-    }
-    let pinned =
-        integration.is_some_and(|i| i.review_model.is_some()) || pull.review_model.is_some();
-    if pinned {
+fn review_start_item(pull: &PullRequest, repo: &str) -> Option<AttentionItemDto> {
+    if !pull.review_requested || pull.review_asked || pull.reviewer_given_up_at.is_some() {
         return None;
     }
     Some(AttentionItemDto {
@@ -115,9 +106,10 @@ fn review_start_item(
 ///   counts a review's own summary too, posted under the login as a plain
 ///   `issue_comment` on the conversation thread (`forge/pulls.rs::CONVERSATION`)
 ///   and never resolved, since it names no diff-anchored thread at all —
-///   `is_mine` reads it as the other side's (029 rule 13, so a task author
-///   is told of it as news) rather than as nothing to answer, and a
-///   summary carries nothing to answer. The babysitting skill never
+///   `is_mine` reads it as the other side's (029 rule 13), though
+///   `forge/news.rs` never tells it as news, since its findings were
+///   already told as inline comments — rather than as nothing to answer,
+///   and a summary carries nothing to answer. The babysitting skill never
 ///   replies to a comment that asks for no change, so a summary with no
 ///   finding must never need an invented reply just to clear this item;
 /// - no *resolvable* review thread the forge still shows unresolved,
@@ -196,19 +188,16 @@ async fn readiness_item(
     }
     // The conversation side, read fresh rather than off `unanswered_comments`:
     // that field counts a review's own summary as the other side's input
-    // (`forge/live.rs::is_mine`, 029 rule 13), since a task author is told
-    // of it as news the same way a genuine finding is. A summary carries
-    // nothing to answer, so this item excludes it — the one comment the
-    // login posts, from a review, to the conversation thread — rather than
-    // waiting on a reply the babysitting skill is never meant to write.
+    // (`forge/live.rs::is_mine`, 029 rule 13), though `forge/news.rs` never
+    // tells it as news, since its findings were already told as inline
+    // comments. A summary carries nothing to answer, so this item excludes
+    // it — the one comment the login posts, from a review, to the
+    // conversation thread — rather than waiting on a reply the babysitting
+    // skill is never meant to write.
     let login = live::login_of(store, &pull.repository_id).await?;
     let actionable: Vec<_> = comments
         .iter()
-        .filter(|c| {
-            !(c.thread_id == crate::forge::pulls::CONVERSATION
-                && c.from_review
-                && c.author_login.eq_ignore_ascii_case(&login))
-        })
+        .filter(|c| !live::is_review_summary(c, &login))
         .cloned()
         .collect();
     if !live::waiting_threads(&actionable, &pull.role, &login).is_empty() {

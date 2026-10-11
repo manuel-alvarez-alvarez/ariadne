@@ -1,11 +1,11 @@
 ---
 name: pr-babysit
-description: Open and keep the task request until a human merges or closes it. Answer comments, fix checks, and keep the branch current.
+description: Open and keep the task request until it merges or closes. Answer comments, fix checks, and keep the branch current.
 ---
 
 # PR babysit
 
-Keep this task until a human merges or closes its request. Ariadne reads the
+Keep this task until the request merges or closes. Ariadne reads the
 request and sends you its news. Handle the news, then end your turn.
 
 ## Steps
@@ -40,15 +40,17 @@ request and sends you its news. Handle the news, then end your turn.
 
 ## Rules
 
-- Let a human merge the request.
+- Never merge the request yourself.
 - Leave every thread open.
-- Reply only in an existing thread that asks for a change.
+- Reply only in the thread of the defect.
 - Do not reply to a comment that asks for no change.
 - Post no thanks, praise, or acknowledgement.
 - Open no new thread.
-- Post no top-level comment.
+- Post no summary, no top-level comment, and no comment outside a thread.
 - Commit only the changes that a comment or a failed check asks for.
 - Add no other change.
+- Write no trailer in a pull request body, a reply, or a commit: no
+  "Generated with", no `Co-Authored-By`, no tool name.
 - Use only your session's tools to read or write the request. Report a tool
   failure and do not use another path to post.
 - Do not wait on a timer or check the request on your own.
@@ -56,5 +58,5 @@ request and sends you its news. Handle the news, then end your turn.
 
 ## Done
 
-Reply only in existing threads that ask for a change. Push each fix after its
-tests and lint pass. Report the current approvals and checks. End your turn.
+Reply only in the thread of the defect. Push each fix after its tests and
+lint pass. Report the current approvals and checks. End your turn.

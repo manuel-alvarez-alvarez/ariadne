@@ -48,7 +48,7 @@ const PARSED_STEPS = [
     id: "review",
     title: "Review",
     description:
-      "Run the whole suite and judge the change against the task and the repository rules.",
+      "Judge the change against the task and the repository rules. Fail the step with the changes to make.",
     skills: ["code-review"],
     rank: "frontier" as const,
     gate: null,
@@ -56,7 +56,7 @@ const PARSED_STEPS = [
   {
     id: "merge",
     title: "Merge",
-    description: "Rebase onto the base branch, run the whole suite, squash, fast-forward and push.",
+    description: "Rebase onto the base branch, squash, fast-forward and push.",
     skills: ["merge"],
     rank: "fast" as const,
     gate: "merged",
@@ -230,7 +230,7 @@ describe("the document", () => {
   })
 
   it("follows the name until the document is touched, so nobody types it twice", async () => {
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     renderDialog()
 
     await user.type(within(dialog()).getByLabelText("Name"), "release-flow")
@@ -241,7 +241,7 @@ describe("the document", () => {
   })
 
   it("stops following the name once the document itself is edited", async () => {
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     renderDialog()
 
     const editor = screen.getByRole("textbox", { name: "Document" })
@@ -256,7 +256,7 @@ describe("the document", () => {
 
 describe("creating", () => {
   it("refuses a workflow with no name, before the daemon is asked", async () => {
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     renderDialog()
 
     await user.click(within(dialog()).getByRole("button", { name: "Create workflow" }))
@@ -268,7 +268,7 @@ describe("creating", () => {
   })
 
   it("sends the name and the live document, and hands the new workflow back", async () => {
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     const { onCreated, onOpenChange } = renderDialog()
 
     await user.type(within(dialog()).getByLabelText("Name"), "  release-flow  ")
@@ -285,7 +285,7 @@ describe("creating", () => {
   })
 
   it("puts a name already taken on the name field", async () => {
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     stubDaemon()
     daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(String(input), init)
@@ -299,7 +299,8 @@ describe("creating", () => {
     })
     const { onOpenChange } = renderDialog()
 
-    await user.type(within(dialog()).getByLabelText("Name"), "develop-review-merge")
+    await user.click(within(dialog()).getByLabelText("Name"))
+    await user.paste("develop-review-merge")
     await user.click(within(dialog()).getByRole("button", { name: "Create workflow" }))
 
     expect(
@@ -311,7 +312,7 @@ describe("creating", () => {
 
 describe("closing with unsaved work", () => {
   it("asks before dropping a document edited by hand", async () => {
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     renderDialog()
 
     const editor = screen.getByRole("textbox", { name: "Document" })

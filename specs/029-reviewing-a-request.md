@@ -10,6 +10,8 @@ tests:
   - crates/ariadne-daemon/tests/it/workflow_pull_request.rs
   - crates/ariadne-daemon/tests/it/attention.rs
   - crates/ariadne-daemon/src/forge/news.rs
+  - crates/ariadne-daemon/src/forge/github/reviews.rs
+  - crates/ariadne-daemon/src/forge/pulls.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-store/src/defaults.rs
@@ -24,10 +26,10 @@ tests:
 
 # Reviewing a request
 
-Every open request where the user is a requested reviewer gets a session of
-its own, and so does a request of the user's own whose review they asked
-Ariadne for. The daemon wakes it with the request and with each push. It
-posts one review in the user's name, and the approval stays the user's.
+A request where the user is a requested reviewer, or one of the user's own,
+gets a review session once the user asks Ariadne for one — never on its
+own. The daemon wakes it with the request and with each push. It posts one
+review in the user's name, and the approval stays the user's.
 
 ## Scope
 
@@ -43,20 +45,18 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 ## Behavior
 
 1. A request that asks for the user's review, out of draft, gets a row with
-   role `reviewer` on the first fetch that finds it (026 rule 3), whether or
-   not its repository's integration names a `review_model`: the row is what
-   lets a human still start one by hand where nothing else will (031's
-   `pull_request` producer). That row wants one live session while the
-   request is `open`, not a draft, still asks for the user's review, and
-   either the repository's integration names a `review_model` or the row
-   itself was given one directly (rule 10a). The daemon staffs it on that
-   pin — the repository's own, or the row's own where the repository names
-   none — with seat `reviewer` and the `pr-reviewer` skill (017). A row with
-   role `author` wants one where `review_asked` holds: the user asked
-   Ariadne to review a request of their own (rule 10). That session runs on
-   the pin the user picked, `pull_requests.review_model` and
+   role `reviewer` on the first fetch that finds it (026 rule 3): the row is
+   what lets a human start one by hand, which is the only way one ever
+   starts (031's `pull_request` producer). That row wants one live session
+   while the request is `open`, not a draft, still asks for the user's
+   review, and was asked for directly on its own row (rule 10a). The daemon
+   staffs it on that pin with seat `reviewer` and the `pr-reviewer` skill
+   (017). A row with role `author` wants one where `review_asked` holds: the
+   user asked Ariadne to review a request of their own (rule 10). That
+   session runs on the pin the user picked, `pull_requests.review_model` and
    `review_effort`, and loads `pr-reviewer` and the skills they picked,
-   `review_skills`; the repository's `review_model` has no part in it.
+   `review_skills`. No repository setting ever starts a review: asking,
+   through rule 10, is the one way in, for either role.
 2. A draft starts nothing. When the request leaves draft, the next fetch
    starts the session. A request that goes back to draft ends it.
 3. Whether the request still asks for the user's review is read on every
@@ -122,21 +122,20 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     stored. It answers the request, and wakes the fetch and the scheduler.
     A request of the user's own has its row written with role `author`
     where asking is the first thing to give it one. A request that asks for
-    the user's review is refused with 409 only where its repository already
-    pins a `review_model` of its own: that row already has a review of its
-    own, on the repository's pin, and this ask would run a second, redundant
-    one beside it. A repository with no pin of its own takes the ask on a
-    request that asks for the user's review exactly as it takes one on a
-    request of the user's own: nothing else is ever going to start that
-    session (031's `pull_request` producer is what tells a human this one
-    wants it). Asking on an ended request is refused with 409. `asked:
-    false` clears the pin and the skills and takes the session down.
+    the user's review takes the ask exactly as a request of the user's own
+    does: nothing else is ever going to start that session, on either role
+    (031's `pull_request` producer is what tells a human this one wants
+    it). Asking a second time on a request that already has one moves its
+    pin and its skills onto the new ask, rather than refusing it. Asking on
+    an ended request is refused with 409. `asked: false` clears the pin and
+    the skills and takes the session down.
 10a. `pr review <repo> <number> --model AGENT:MODEL [--effort E] [--skill
     S]... [--attach]` and `pr review <repo> <number> --stop` call this route
     from the CLI (014), on a request of the user's own or on one that asks
-    for the user's review alike: `--model` left out takes the repository's
-    own `review_model` and `review_effort` where it has one, and `--attach`
-    waits for the review session this starts and opens its console.
+    for the user's review alike: `--model` is required with no `--stop`,
+    since there is no repository pin to fall back to any more, and names
+    the flag when it is missing. `--attach` waits for the review session
+    this starts and opens its console.
 
 ## Tools and routes
 
@@ -154,8 +153,10 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     or `P2`). One call is one round of the review. `comments` are the
     round's new findings, each one inline comment on the line of its
     defect, posted as `**[P0] Title**`, a blank line, then its body: what
-    goes wrong and how to fix it. `body` is required: the review's whole
-    summary as it stands, tied to no line. The review keeps one summary
+    goes wrong and how to fix it, with a trailer an agent's skill appends
+    stripped first (026 rule 16). `body` is required: the review's whole
+    summary as it stands, tied to no line, stripped of such a trailer too.
+    The review keeps one summary
     comment on the request (`pull_requests.summary_comment_id`):
     the first round posts it, and every later round replaces its
     text, so the request carries one summary however many rounds ran. A
@@ -178,8 +179,9 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     - GitHub: one `gh api repos/<owner>/<name>/pulls/<n>/reviews` call with
       `REQUEST_CHANGES` or `COMMENT`, the head as `commit_id`, every inline
       comment and no body; a forge whose own answer says the review lacks a
-      body takes it again with one line that points at the summary. A forge
-      that refuses answers 502 with its own reason — GitHub's
+      body takes it again with a body that is the hidden review mark alone,
+      `<!-- ariadne:review -->`, so the retry still shows the reader nothing.
+      A forge that refuses answers 502 with its own reason — GitHub's
       `{"message", "errors"}` beside the CLI's line — so the session can act
       on it, and the skill says the failure rather than posting another way. The daemon then
       reads the review's comments back. The summary is an issue comment,
@@ -197,7 +199,12 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     reads them back, and answers them with 201. On a request of
     the user's own a `from_review` comment counts as another login's: it is
     told once to the task's author, as "by the Ariadne review", and waits
-    on it until the author replies (026 rules 12 to 16). The other way, a
+    on it until the author replies (026 rules 12 to 16) — but for the
+    round's own summary, the one `from_review` comment posted to the
+    conversation thread rather than to a line
+    (`forge/pulls.rs::CONVERSATION`): it only restates findings the author
+    was already told as inline comments, so a new or edited round of it is
+    never news of its own (`forge/news.rs`). The other way, a
     comment under the login that no review posted — the author's answer,
     or the user's — in a thread a review opened is the review session's
     news, so the answer to a finding reaches its reviewer. On a request of the user's
@@ -244,8 +251,10 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     otherwise. P0 breaks behavior, data or security and must change before
     the request lands; P1 is a defect or a missing proof that will bite; P2
     is worth fixing. It writes the review body as the whole summary of the
-    review as it stands, in three parts, with no file, no line and nothing
-    of what it did:
+    review as it stands, in four parts, with no file, no line, no trailer
+    and nothing of what it did:
+    - a title, "## Review summary: all changes from `<base>` to `<head>`",
+      naming the request's own base and head branches;
     - a header, one line per commit the round reviewed, each a short sha
       and its subject, read with `git log <base>..HEAD` in the worktree on
       the first round, or `git log <reviewed_sha>..HEAD` later, and the
@@ -256,7 +265,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     - a recommendation of one line: "Request changes" and the blocking P0
       findings while one is open; "Changes recommended" and what to fix
       before it lands while a P1 or P2 is open and no P0 is; else "No
-      findings: ready for a human to approve".
+      findings: this PR is ready to be merged."
     Each new finding is one inline comment with a title, the failure and a
     fix. On a later round it posts nothing more in a thread nobody answered
     since its last entry: it waits for the answer. A thread a commit fixed
@@ -297,6 +306,19 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   `pull_request_reviews.rs::a_detail_read_before_any_fetch_keeps_a_review_request_asking`.
   A review stopped and asked again edits its summary, found by its mark:
   `pull_request_reviews.rs::a_request_of_mine_is_reviewed_once_asked_and_its_review_is_a_comment`.
+- A review GitHub refuses for having no body is retried with a body that is
+  the hidden review mark alone, never a line of visible text:
+  `github/reviews.rs::tests::a_review_refused_for_its_body_is_retried_with_no_visible_text`.
+  That retried body, with no text before the mark, still reads back as the
+  review's own:
+  `pulls.rs::tests::the_review_mark_alone_reads_back_as_signed_with_no_text`.
+- A trailer an agent's skill appends to the round's summary or a finding's
+  body is stripped before either is signed:
+  `pull_request_reviews.rs::a_review_strips_a_trailing_trailer_from_its_summary_and_its_findings`.
+- A new or edited round of the review's own summary is no news of its own to
+  the task's author, though an inline finding the same round posts still is:
+  `news.rs::tests::a_review_summary_wakes_no_keeping_agent`,
+  `news.rs::tests::an_inline_finding_beside_a_summary_is_still_news`.
 - Back-to-back pushes each reach an idle review session on the next
   reconcile, with no wait for the news to settle:
   `pull_request_reviews.rs::a_push_reaches_an_idle_session_without_a_wait`.
@@ -307,10 +329,10 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   `kept_requests.rs::an_ariadne_review_of_a_kept_request_reaches_its_pr_agent`.
 - A draft is no work and gets no row until it leaves draft:
   `pull_request_reviews.rs::a_draft_starts_no_review_until_it_leaves_draft`.
-- A repository with no `review_model` of its own starts no session for a
-  request that asks for the user's review, though the row it needs to
-  offer a manual start still exists:
-  `pull_request_reviews.rs::a_repository_with_no_review_model_starts_no_review`.
+- A review-requested pull request starts no session until the user asks: the
+  row it needs to offer a manual start still exists, and asking is what
+  starts the session:
+  `pull_request_reviews.rs::a_review_requested_pull_request_starts_no_session_until_asked`.
 - A push moves the worktree and hands one prompt that names the last
   `reviewed_sha`; the same head again hands nothing:
   `pull_request_reviews.rs::a_push_moves_the_worktree_and_is_told_once_with_the_last_reviewed_sha`,
@@ -363,10 +385,8 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   `pull_request_reviews.rs::a_request_of_mine_is_reviewed_once_asked_and_its_review_is_a_comment`.
 - Asking needs a model the catalog holds and skills a task agent is staffed
   on, and a refusal starts no work. Asking is taken, not refused, on a
-  request that asks for my review where the repository pins none of its
-  own, the same as on a request of mine; asking the same request again
-  once the repository pins one of its own is refused:
-  `pull_request_reviews.rs::asking_needs_a_model_and_takes_an_unpinned_review_request`.
+  request that asks for my review, the same as on a request of mine:
+  `pull_request_reviews.rs::asking_needs_a_model_and_takes_a_review_request_of_anothers`.
 - A review's findings are inline comments titled `[Pn] Title`; a change
   request with no P0 inline and a comment with no title are refused:
   `pull_request_reviews.rs::a_review_posts_its_findings_by_priority_and_an_approval_is_refused`.
@@ -375,24 +395,22 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   nothing else picked to start with — closes the dialog and opens the new
   review session's console in the panel once the daemon starts it, stops it,
   and offers it on no other:
-  `pull-request-panel.test.tsx::starts an Ariadne review of a request of mine on the model and skills picked, opens its console, and stops it`,
-  `::offers no Ariadne review on a request that asks for my review when the repository already pins one`. A review
-  resumed on its last session opens that console the same way:
+  `pull-request-panel.test.tsx::starts an Ariadne review of a request of mine on the model and skills picked, opens its console, and stops it`.
+  A review resumed on its last session opens that console the same way:
   `::opens the console of a review resumed on the same session`. A request
-  that asks for the user's review, on a repository with no pin of its own,
-  offers the same manual start as a request of the user's own:
-  `::offers a manual Start review on a request that asks for my review when the repository pins none`.
+  that asks for the user's review offers the same manual start as a
+  request of the user's own, on every repository:
+  `::offers a manual Start review on every request that asks for my review`.
 - Neither a posted review nor a `ready` report raises a row, a toast or a
   badge of its own: a pull request session's own `waiting_user` carries no
   reason this board, the strip or the sessions screen's filter reads any
   more
   (`attention/board.rs::a_pull_request_sessions_own_waiting_user_raises_no_row_of_its_own_on_this_board`).
-- `ariadne pr review` sends the pin it is given or the repository's own, is
-  refused with no pin at all, and `--stop` sends `asked: false` alone and
+- `ariadne pr review` sends the pin it is given, is refused naming `--model`
+  with no model and no `--stop`, and `--stop` sends `asked: false` alone and
   conflicts with every asking flag:
   `pr.rs::tests::pr_review_sends_the_ask_body_with_its_pin_and_the_stop_body_alone`,
-  `::pr_review_with_no_model_uses_the_repositorys_own_review_pin`,
-  `::pr_review_with_no_model_and_no_repository_pin_is_refused`,
+  `::pr_review_with_no_model_and_no_stop_is_refused`,
   `::pr_review_refuses_stop_combined_with_an_asking_flag_and_a_bare_default_model`.
 
 ## Sources

@@ -22,12 +22,12 @@ workflow develop-review-merge
     rank: balanced
     gate: committed
   review[Review]
-    Run the whole suite and judge the change against the task and the repository rules.
+    Judge the change against the task and the repository rules.
     Fail the step with the changes to make.
     skills: code-review
     rank: frontier
   merge[Merge]
-    Rebase onto the base branch, run the whole suite, squash, fast-forward and push.
+    Rebase onto the base branch, squash, fast-forward and push.
     skills: merge
     rank: fast
     gate: merged
@@ -55,12 +55,12 @@ workflow develop-review-merge
 ## The two shipped workflows
 
 `develop-review-merge` — the document shown above — lands a task on the
-base branch itself: its `merge` column rebases the task, runs the suite,
-squashes, fast-forwards and pushes.
+base branch itself: its `merge` column rebases the task, squashes,
+fast-forwards and pushes.
 
 `develop-review-pr` shares its first two columns, and ends at a pull
 request instead: its `pr` column pushes the branch, opens the request, and
-keeps it until a human merges or closes it.
+keeps it until it merges or closes.
 
 ```
 workflow develop-review-pr
@@ -70,12 +70,12 @@ workflow develop-review-pr
     rank: balanced
     gate: committed
   review[Review]
-    Run the whole suite and judge the change against the task and the repository rules.
+    Judge the change against the task and the repository rules.
     Fail the step with the changes to make.
     skills: code-review
     rank: frontier
   pr[Pull request]
-    Push the branch, open the request and keep it until a human merges or closes it.
+    Push the branch, open the request and keep it until it merges or closes.
     skills: pr-babysit
     rank: balanced
     gate: request-merged

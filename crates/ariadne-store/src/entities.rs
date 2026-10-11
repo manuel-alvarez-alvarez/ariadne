@@ -347,9 +347,6 @@ pub struct ForgeIntegration {
     pub enabled: bool,
     /// The account the forge CLI is signed in as, stored on enable.
     pub login: Option<String>,
-    /// The pin of the session that reviews a request. None starts none.
-    pub review_model: Option<String>,
-    pub review_effort: Option<String>,
     pub webhook_id: Option<i64>,
     pub webhook_secret: Option<String>,
     pub webhook_url: Option<String>,
@@ -647,9 +644,9 @@ pub struct TaskTransition {
 /// A pull request Ariadne works on (026), as the database keeps it: the
 /// daemon's own bookkeeping of it, and nothing the forge holds. A row
 /// exists while Ariadne works on the request — the request a task opened,
-/// one that asks for the user's review on a repository with a review pin, or
-/// one of the user's they asked Ariadne to review — and goes once the
-/// request merged or closed and its work was taken down. What the request
+/// one that asks for the user's review, or one of the user's they asked
+/// Ariadne to review — and goes once the request merged or closed and its
+/// work was taken down. What the request
 /// says — its title, its branches, its checks, its comments — is read off
 /// the forge on every fetch and held in memory alone ([`PullRequestLive`]).
 #[derive(Debug, Clone, sqlx::FromRow)]

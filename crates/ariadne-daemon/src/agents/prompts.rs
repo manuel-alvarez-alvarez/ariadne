@@ -65,9 +65,9 @@ pub(crate) fn render(template: &str, values: &[(&str, &str)]) -> String {
 /// System layer: what the seat owes, and then the index of the skills this
 /// agent was staffed with.
 ///
-/// `skills_dir` is where the documents were written
-/// ([`write_skills`](super::write_skills)); each line names the file, so an
-/// agent opens the one it needs itself.
+/// `skills_dir` is where the run directory's `skills` folder is linked
+/// ([`link_skills`](super::link_skills)); each line names the file under
+/// that link, so an agent opens the one it needs itself.
 pub(crate) fn system_prompt(seat: Seat, skills: &[Skill], skills_dir: Option<&Path>) -> String {
     with_skills(default_system_prompt(seat), skills, skills_dir)
 }

@@ -630,6 +630,10 @@ if [ "$WITH_SERVICE" = 1 ]; then
     <key>SoftResourceLimits</key>
     <dict><key>NumberOfFiles</key><integer>4096</integer></dict>
     <key>ThrottleInterval</key><integer>10</integer>
+    <!-- With no ProcessType, launchd throttles the job and everything it
+         starts to the utility level, which keeps the agents' builds and
+         tests on the efficiency cores. Interactive is what an app gets. -->
+    <key>ProcessType</key><string>Interactive</string>
     <key>StandardOutPath</key><string>$ARIADNE_HOME/ariadned.log</string>
     <key>StandardErrorPath</key><string>$ARIADNE_HOME/ariadned.log</string>
 </dict>

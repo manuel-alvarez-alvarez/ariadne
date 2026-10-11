@@ -2164,7 +2164,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "Ask Ariadne to review a request on the model the user picks, or stop\nasking (029): a review session runs on that pin while the request is\nopen and out of draft. A request of the user's own posts each round as\na comment in the user's name; one that asks for the user's review on a\nrepository with no review pin of its own gets the manual start the\n`pull_request` attention producer offers when nobody is assigned to it,\nand posts as any other review Ariadne runs on it would (029). Asking\nstarts Ariadne's work on the request; stopping ends it, where no task\nkeeps the request. A request that asks for the user's review on a\nrepository that already pins one has a review already, and takes no\nasking.",
+        "summary": "Ask Ariadne to review a request on the model the user picks, or stop\nasking (029): a review session runs on that pin while the request is\nopen and out of draft. A request of the user's own posts each round as\na comment in the user's name; one that asks for the user's review gets\nthe manual start the `pull_request` attention producer offers when\nnobody is assigned to it, and posts as any other review Ariadne runs on\nit would (029). Asking starts Ariadne's work on the request; stopping\nends it, where no task keeps the request. Every review starts this way:\nnothing starts one on its own.",
         "operationId": "ask_review",
         "parameters": [
           {
@@ -5994,19 +5994,6 @@
             "type": "string",
             "description": "The remote it was read off, `origin` where there is one."
           },
-          "review_effort": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "review_model": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The pin of the session that reviews a request; null starts none."
-          },
           "webhook": {
             "$ref": "#/components/schemas/WebhookDto"
           }
@@ -6066,23 +6053,11 @@
       },
       "ForgeUpdate": {
         "type": "object",
-        "description": "A change to the forge integration; absent fields stay unchanged. A model\nwritten empty clears that role's pin and its effort.",
+        "description": "A change to the forge integration; absent fields stay unchanged.",
         "properties": {
           "enabled": {
             "type": [
               "boolean",
-              "null"
-            ]
-          },
-          "review_effort": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "review_model": {
-            "type": [
-              "string",
               "null"
             ]
           }
@@ -7200,7 +7175,7 @@
       },
       "PullRequestDto": {
         "type": "object",
-        "description": "A pull request as the forge holds it now, read live (026), with what\nAriadne keeps of it where Ariadne works on it: the request a task opened,\none that asks for the user's review on a repository with a review pin,\nor one of the user's they asked Ariadne to review.",
+        "description": "A pull request as the forge holds it now, read live (026), with what\nAriadne keeps of it where Ariadne works on it: the request a task opened,\none that asks for the user's review, or one of the user's they asked\nAriadne to review.",
         "required": [
           "repository_id",
           "number",

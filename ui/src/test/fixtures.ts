@@ -284,8 +284,6 @@ export function aForge(overrides: Partial<ForgeDto> = {}): ForgeDto {
     remote: "origin",
     enabled: false,
     login: null,
-    review_model: null,
-    review_effort: null,
     ...overrides,
   }
 }

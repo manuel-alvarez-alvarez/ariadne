@@ -632,8 +632,6 @@ async fn startup_checks_a_stored_hook_without_creating_another_and_fetches_once(
                 remote: "origin".into(),
                 enabled: true,
                 login: Some("me".into()),
-                review_model: None,
-                review_effort: None,
             }),
         )
         .await

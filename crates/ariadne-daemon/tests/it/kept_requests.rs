@@ -51,6 +51,7 @@ fn script(state: &str, comments: &[Value], check_runs: Value) -> Value {
         &[],
         comments,
         &json!({"check_runs": check_runs}).to_string(),
+        "[]",
         &threads.to_string(),
     )
 }
@@ -63,6 +64,7 @@ fn script_of(
     listed: &[Value],
     comments: &[Value],
     check_runs: &str,
+    reviews: &str,
     threads: &str,
 ) -> Value {
     let read = read.to_string();
@@ -101,7 +103,7 @@ fn script_of(
             r#"{"id": 301, "created_at": "2026-10-02T00:00:00Z"}"#
         ),
         answer(&["api", "repos/acme/widgets/issues/1/comments"], 0, "[]"),
-        answer(&["api", "repos/acme/widgets/pulls/1/reviews"], 0, "[]"),
+        answer(&["api", "repos/acme/widgets/pulls/1/reviews"], 0, reviews),
         answer(
             &["api", "repos/acme/widgets/pulls/1/comments/101/replies"],
             0,
@@ -140,7 +142,20 @@ struct Kept {
     bare: PathBuf,
 }
 
-async fn kept_request(script: Value) -> Kept {
+/// A task of a `develop-review-pr` goal, walked to its `pr` column, its
+/// branch pushed: the request is not open yet, so its agent may open one
+/// with any body a test wants.
+struct ReadyToOpen {
+    h: Harness,
+    stub: StubForgeCli,
+    task: Task,
+    agent: AgentSession,
+    repo: String,
+    path: PathBuf,
+    bare: PathBuf,
+}
+
+async fn ready_to_open(script: Value) -> ReadyToOpen {
     let stub = stub_forge_cli(script);
     let h = harness()
         .scheduler()
@@ -169,6 +184,28 @@ async fn kept_request(script: Value) -> Kept {
         .await;
     let agent = h.step_session(&task, "pr").await;
     sh(&worktree, "git push -q origin HEAD");
+    let repo = cast.repo.id.clone();
+    ReadyToOpen {
+        h,
+        stub,
+        task,
+        agent,
+        repo,
+        path,
+        bare,
+    }
+}
+
+async fn kept_request(script: Value) -> Kept {
+    let ReadyToOpen {
+        h,
+        stub,
+        task,
+        agent,
+        repo,
+        path,
+        bare,
+    } = ready_to_open(script).await;
     let opened: TaskDto = h
         .json(
             as_session(
@@ -187,7 +224,6 @@ async fn kept_request(script: Value) -> Kept {
         .unwrap()
         .expect("the ledger holds the task's request")
         .id;
-    let repo = cast.repo.id.clone();
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     eventually(
         TIMEOUT,
@@ -497,6 +533,96 @@ async fn the_pr_agent_replies_and_reports_and_no_other_session_may() {
         )
         .await;
     assert_eq!(dto["id"], id);
+}
+
+/// `open_pull_request`'s body reaches the forge without a trailer an
+/// agent's skill appends: the daemon strips it before the request ever
+/// opens.
+#[tokio::test]
+async fn open_pull_request_strips_a_trailing_trailer_from_the_body() {
+    let ReadyToOpen {
+        h,
+        stub,
+        task,
+        agent,
+        ..
+    } = ready_to_open(quiet_script()).await;
+    let body = "Fixes widgets.\n\n\
+                🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\
+                Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>";
+    let opened: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/pull-request", task.id),
+                &agent.id,
+                json!({"title": "Fix widgets", "body": body}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(opened.pr_url.as_deref(), Some(URL));
+    let call = stub
+        .invocations()
+        .into_iter()
+        .find(|i| {
+            i.args
+                .starts_with(&["pr".to_string(), "create".to_string()])
+        })
+        .expect("the open call");
+    let sent = call
+        .args
+        .iter()
+        .position(|a| a == "--body")
+        .map(|at| call.args[at + 1].clone())
+        .expect("a --body argument");
+    assert_eq!(sent, "Fixes widgets.");
+}
+
+/// A review body posted on the conversation, with no path and no line, is
+/// no defect's own thread: the `pr` agent's reply to it through
+/// `reply_comment` is refused, and no gh call follows it.
+#[tokio::test]
+async fn the_pr_agent_may_not_reply_to_a_top_level_comment() {
+    let threads =
+        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
+    let reviews = json!([{"id": 501, "user": {"login": "alice"}, "body": "Looks fine overall.",
+        "submitted_at": "2026-10-02T00:00:00Z"}]);
+    let Kept {
+        h, stub, agent, id, ..
+    } = kept_request(script_of(
+        pull("OPEN", "abc"),
+        &[],
+        &[],
+        &json!({"check_runs": []}).to_string(),
+        &reviews.to_string(),
+        &threads.to_string(),
+    ))
+    .await;
+    let mut stored: Vec<Value> = Vec::new();
+    eventually(TIMEOUT, "the review body to be stored", async || {
+        stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+        stored.iter().any(|c| c["kind"] == "review")
+    })
+    .await;
+    let top_level = stored.iter().find(|c| c["kind"] == "review").unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let before = stub.invocations().len();
+    h.error(
+        as_session(
+            &format!("/v1/pull-requests/{id}/comments/{top_level}/reply"),
+            &agent.id,
+            json!({"body": "Thanks!"}),
+        ),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+    assert_eq!(
+        stub.invocations().len(),
+        before,
+        "a refused reply calls the forge CLI no further"
+    );
 }
 
 /// A whole script, every detail entry keyed on `head`: what the initial
@@ -1025,6 +1151,7 @@ async fn a_merge_ends_the_task_on_its_own_merge_commit_once_the_local_base_holds
         &[],
         &[],
         r#"{"check_runs": []}"#,
+        "[]",
         r#"{"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}}"#,
     ));
     h.state.forge_poll.wake(&repo);
@@ -1356,6 +1483,7 @@ async fn the_detail_fetch_reads_every_page_of_threads_and_check_runs() {
         &[],
         &comments,
         &check_runs,
+        "[]",
         &threads,
     ))
     .await;
@@ -1394,6 +1522,7 @@ async fn a_closed_request_i_review_deletes_no_branch() {
         std::slice::from_ref(&read),
         &[],
         r#"{"check_runs": []}"#,
+        "[]",
         &threads.to_string(),
     ));
     let h = harness().scheduler().forge_cli(&stub).await;
@@ -1406,28 +1535,25 @@ async fn a_closed_request_i_review_deletes_no_branch() {
         .json(
             post_json(
                 "/v1/repositories",
-                json!({"path": path, "forge": {"enabled": true, "review_model": "stub:review-model"}}),
+                json!({"path": path, "forge": {"enabled": true}}),
             ),
             StatusCode::CREATED,
         )
         .await;
     let repo = created["id"].as_str().unwrap().to_string();
-    let mut rows = Vec::new();
-    eventually(
-        TIMEOUT,
-        "Ariadne to start reviewing the request",
-        async || {
-            rows = h
-                .store
-                .list_pull_requests(ariadne_store::PullRequestFilter::default())
-                .await
-                .unwrap();
-            rows.len() == 1
-        },
-    )
-    .await;
-    assert_eq!(rows[0].role, "reviewer");
-    let id = rows[0].id.clone();
+    let ask = Request::builder()
+        .method("PUT")
+        .uri(format!(
+            "/v1/repositories/{repo}/pull-requests/1/ariadne-review"
+        ))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"asked": true, "model": "stub:review-model"}).to_string(),
+        ))
+        .unwrap();
+    let dto: Value = h.json(ask, StatusCode::OK).await;
+    assert_eq!(dto["role"], "reviewer");
+    let id = dto["id"].as_str().unwrap().to_string();
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
 
     read["state"] = json!("CLOSED");
@@ -1436,6 +1562,7 @@ async fn a_closed_request_i_review_deletes_no_branch() {
         &[],
         &[],
         r#"{"check_runs": []}"#,
+        "[]",
         &threads.to_string(),
     ));
     h.state.forge_poll.wake(&repo);

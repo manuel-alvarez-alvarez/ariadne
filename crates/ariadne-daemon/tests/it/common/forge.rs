@@ -219,9 +219,9 @@ pub(crate) fn seed_live(
     );
 }
 
-/// An enabled GitHub integration for `repository_id`, with no review pin:
-/// what a readiness item's own integration-enabled check needs to pass at
-/// all, and what a test proving the disabled case flips off afterwards.
+/// An enabled GitHub integration for `repository_id`: what a readiness
+/// item's own integration-enabled check needs to pass at all, and what a
+/// test proving the disabled case flips off afterwards.
 pub(crate) async fn enable_integration(h: &super::Harness, repository_id: &str, login: &str) {
     h.store
         .set_forge_integration(ariadne_store::SetForgeIntegration {
@@ -233,8 +233,6 @@ pub(crate) async fn enable_integration(h: &super::Harness, repository_id: &str, 
             remote: "origin".into(),
             enabled: true,
             login: Some(login.into()),
-            review_model: None,
-            review_effort: None,
         })
         .await
         .unwrap();

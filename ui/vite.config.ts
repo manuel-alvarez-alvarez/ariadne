@@ -35,5 +35,10 @@ export default defineConfig({
     // extra to disk.
     reporters: process.env.CI ? ["default", "junit"] : ["default"],
     outputFile: process.env.CI ? { junit: "./junit.xml" } : undefined,
+    // Capped rather than left at the host's own core count: a worker per
+    // core is what turns one slow neighbour process on a shared machine
+    // into dozens of starved workers each missing their own test's timeout,
+    // not just the one test actually doing the colliding work.
+    maxWorkers: 4,
   },
 })

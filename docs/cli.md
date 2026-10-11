@@ -495,19 +495,17 @@ stands, next to the rest of the daemon's environment.
 ## Pull requests, issues and the forge
 
 ```sh
-ariadne repo add ~/projects/api --forge on \
-    --review-model claude-acp:<model-id> --review-effort balanced
+ariadne repo add ~/projects/api --forge on
 ariadne repo update <repo-id> --forge off
 ```
 
 `repo add` and `repo update` take `--forge on` or `--forge off` to work with
 the forge a repository's remote is on, once `gh` or `glab` is signed in to
-its host. `--review-model` and `--review-effort` pin the session that
-reviews a request asking for your review; a model is `AGENT:MODEL`, or `""`
-to clear the pin, and an effort is any effort or `default`. No `--forge`
-flag sends no change to it. A request a task opens needs no pin: the agent
-of the task's `pr` column keeps it. See [The forge integration](forge.md)
-for what each session does.
+its host. No `--forge` flag sends no change to it. There is no repository
+setting that pins a review: every review's model and effort are picked on
+the request itself, by `pr review` below. A request a task opens needs no
+pin either way: the agent of the task's `pr` column keeps it. See [The
+forge integration](forge.md) for what each session does.
 
 ```sh
 ariadne pr ls --repo <repo-id>
@@ -538,9 +536,8 @@ one.
 
 `ariadne pr review <repo> <number> --model AGENT:MODEL [--effort E] [--skill
 S]... [--attach]` asks Ariadne to review a request of your own (029):
-`--model` is required unless the repository already carries its own
-`review_model` (`repo update --review-model`), which then supplies the pin
-and its effort. `--skill` loads another skill beside `pr-reviewer`, which
+`--model` is required with no `--stop`, since there is no repository
+setting to fall back to. `--skill` loads another skill beside `pr-reviewer`, which
 every review loads anyway; repeat it for more than one. `--attach` waits for
 the review session to start and opens its console, the way `session new
 --attach` does. `ariadne pr review <repo> <number> --stop` stops Ariadne's
@@ -679,7 +676,7 @@ the built-in help screen.
 | `models` | `ls [--agent AGENT]`, `show MODEL`, `enable MODEL`, `disable MODEL`, `rank MODEL RANK\|--clear`. |
 | `skill` | `ls`, `get NAME`, `inspect NAME`, `create NAME [--file FILE]`, `set NAME [--file FILE]`, `reset NAME [-y]`, `rm NAME [-y]`. |
 | `workflow` | `ls`, `show NAME`, `check [--file FILE]`, `create NAME [--file FILE]`, `update NAME [--file FILE]`, `reset NAME [-y]`, `rm NAME [-y]`. |
-| `repo` | `ls`, `inspect ID`, `add PATH`, `update ID`, `rm ID [-y]`. Add and update use `--branch`, `--description`, `--permission-mode auto\|ask\|learn\|ai`, `--workflow`, `--forge on\|off`, `--review-model`, and `--review-effort`; update also uses `--path`. |
+| `repo` | `ls`, `inspect ID`, `add PATH`, `update ID`, `rm ID [-y]`. Add and update use `--branch`, `--description`, `--permission-mode auto\|ask\|learn\|ai`, `--workflow`, and `--forge on\|off`; update also uses `--path`. |
 | `goal` | `create --model AGENT:MODEL [--title] [-d\|--description] [--from-issue] [--repo]... [--effort] [--workflow]`; `ls [--status STATUS,...] [-a] [--watch]`; `inspect`, `complete`, `cancel [-y]`, `rm [-y]`, and `attach` take an ID. |
 | `task` | `create GOAL --title TEXT --agent STEP[:SKILLS]=MODEL[@EFFORT] [--description] [--depends-on]... [--repo]`; `update ID` accepts `--title`, `--description`, repeatable `--agent` and `--depends-on`, or `--clear-depends-on`; `ls` accepts `--goal`, repeatable `--status`, `-a`, `--step`, and `--watch`; `inspect`, `messages [--full]`, `history`, `cancel [-y]`, `retry`, `diff`, `attach [--seat] [--step]`, and `logs [--seat] [-f] [--tail] [--since] [--kind]...` take an ID. |
 | `session` | `ls` accepts `--kind`, `--agent`, `--task`, `--goal`, `--pull-request`, repeatable `--status`, `--seat`, `--attention`, `--dir`, `--since`, `--until`, `--search`, `--limit`, `--cursor`, `--refresh`, `-a`, and `--watch`; `new --model AGENT:MODEL [--effort] [--dir] [--attach]`; `switch ID --model AGENT:MODEL [--effort]`; `inspect ID`; `send ID TEXT`; `logs ID [-f] [--tail] [--since] [--kind]...`; `resume ID`; `kill ID [-y]`. |

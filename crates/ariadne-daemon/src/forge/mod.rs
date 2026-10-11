@@ -232,8 +232,6 @@ pub fn merged(
         remote: detected.remote.clone(),
         enabled: false,
         login: None,
-        review_model: None,
-        review_effort: None,
     };
     let Some(current) = current else {
         return Some(fresh);
@@ -245,8 +243,6 @@ pub fn merged(
     Some(SetForgeIntegration {
         enabled: same && current.enabled,
         login: current.login.clone().filter(|_| same),
-        review_model: current.review_model.clone(),
-        review_effort: current.review_effort.clone(),
         ..fresh
     })
 }
@@ -262,8 +258,6 @@ fn stored(row: &ForgeIntegration) -> SetForgeIntegration {
         remote: row.remote.clone(),
         enabled: row.enabled,
         login: row.login.clone(),
-        review_model: row.review_model.clone(),
-        review_effort: row.review_effort.clone(),
     }
 }
 
@@ -1043,8 +1037,6 @@ exit \"$(cat \"$dir/exit\")\"\n";
             remote: "origin".into(),
             enabled: true,
             login: Some("me".into()),
-            review_model: None,
-            review_effort: None,
             detected_at: String::new(),
             updated_at: String::new(),
         };

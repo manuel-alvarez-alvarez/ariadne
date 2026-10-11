@@ -4,8 +4,8 @@ use utoipa::{IntoParams, ToSchema};
 
 /// A pull request as the forge holds it now, read live (026), with what
 /// Ariadne keeps of it where Ariadne works on it: the request a task opened,
-/// one that asks for the user's review on a repository with a review pin,
-/// or one of the user's they asked Ariadne to review.
+/// one that asks for the user's review, or one of the user's they asked
+/// Ariadne to review.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PullRequestDto {
     /// Ariadne's id of the request while it works on it; null on a request

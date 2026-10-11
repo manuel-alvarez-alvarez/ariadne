@@ -18,10 +18,11 @@
 
 use crate::common;
 
-use crate::common::{post_json, sh};
-use ariadne_core::{PromptKind, Seat};
+use crate::common::{post_json, sh, test_pin};
+use ariadne_core::{GoalStatus, PromptKind, Seat};
 use ariadne_daemon::scheduler::QUIET_NUDGE_SECS;
 use ariadne_store::defaults::default_prompt_text;
+use ariadne_store::{NewGoal, NewTask, NewTaskAgent, NewWorkflow};
 use axum::http::StatusCode;
 use serde_json::json;
 
@@ -251,6 +252,65 @@ async fn a_started_column_agent_is_briefed_from_the_builtin_template() {
         written,
         ariadne_store::defaults::skill_text(shipped),
         "the shipped document, written whole for the agent to open"
+    );
+}
+
+/// A column staffed with no skill at all still gets the shared skills link:
+/// the index names none of it, but the launch still creates the configured
+/// link so the agent can open any skill the home copy carries.
+#[tokio::test]
+async fn an_unstaffed_columns_agent_still_gets_the_shared_skills_link() {
+    let h = harness().scheduler().await;
+    let path = h.git_repo("bare-repo");
+    let repo = h.repository(&path).await;
+    h.store
+        .create_workflow(NewWorkflow {
+            name: "bare".into(),
+            document: "workflow bare\n build[Build]\n".into(),
+        })
+        .await
+        .unwrap();
+    let goal = h
+        .store
+        .create_goal(NewGoal {
+            title: "Run it bare".into(),
+            description: "No skill at all.".into(),
+            issue_url: None,
+            repository_ids: vec![repo.id.clone()],
+            pin: test_pin(),
+            workflow: Some("bare".into()),
+        })
+        .await
+        .unwrap();
+    let task = h
+        .store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id,
+            title: "Build".into(),
+            description: "Do the work.".into(),
+            agents: vec![NewTaskAgent::new("build", Vec::<String>::new(), test_pin())],
+            depends_on: vec![],
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_goal_status(&goal.id, GoalStatus::Active)
+        .await
+        .unwrap();
+    h.notify(&task.id);
+
+    let session = h.step_session(&task, "build").await;
+    let launch = h.launch_file(&session.id).unwrap();
+    assert!(
+        !launch.system_prompt.contains("Your skills."),
+        "no index line for a column that stages no skill: {}",
+        launch.system_prompt
+    );
+    let skills = h.launcher.cfg.run_dir.join(&session.id).join("skills");
+    assert!(
+        std::fs::symlink_metadata(&skills).is_ok(),
+        "the launch still creates the configured link even with empty staffing"
     );
 }
 

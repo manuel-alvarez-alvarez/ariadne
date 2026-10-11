@@ -183,17 +183,234 @@ fn the_configured_flags_are_passed_once_and_the_adapter_adds_none() {
     );
 }
 
-/// A skill the agent no longer loads is gone from the run dir, not left there
-/// for it to read.
+/// A launch links the run dir's `skills` folder onto the shared home copy,
+/// so a document read through it is the text the home copy holds. macOS and
+/// Linux always get a symlink; the supported outcome on Windows (a symlink,
+/// or the copy fallback) is proven separately, since the two cannot both
+/// hold in one process.
 #[test]
-fn a_dropped_skill_leaves_nothing_behind() {
+fn a_launch_links_the_run_dirs_skills_folder_to_the_home_copy() {
     let dir = tempfile::tempdir().unwrap();
-    let both = [
-        ("coding".to_string(), "one".to_string()),
-        ("testing".to_string(), "two".to_string()),
-    ];
-    ariadne_daemon::agents::write_skills(dir.path(), &both).unwrap();
-    ariadne_daemon::agents::write_skills(dir.path(), &both[..1]).unwrap();
-    assert!(dir.path().join("skills").join("coding").exists());
-    assert!(!dir.path().join("skills").join("testing").exists());
+    let skills_dir = dir.path().join("home-skills");
+    std::fs::create_dir_all(skills_dir.join("coding")).unwrap();
+    std::fs::write(
+        skills_dir.join("coding").join("SKILL.md"),
+        "the coding skill",
+    )
+    .unwrap();
+
+    let run_dir = dir.path().join("run");
+    let root = ariadne_daemon::agents::link_skills(&run_dir, &skills_dir).unwrap();
+
+    assert_eq!(root, run_dir.join("skills"));
+    #[cfg(unix)]
+    {
+        assert!(
+            std::fs::symlink_metadata(&root).unwrap().is_symlink(),
+            "on macOS and Linux the run dir's skills folder is always a symlink"
+        );
+        assert_eq!(
+            std::fs::read_link(&root).unwrap(),
+            std::fs::canonicalize(&skills_dir).unwrap(),
+            "the link's target is skills_dir resolved absolute"
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(root.join("coding").join("SKILL.md")).unwrap(),
+        "the coding skill",
+        "a document read through the link is the text under skills_dir"
+    );
+}
+
+/// A relative `skills_dir`, as `config.toml` may give it, still links to its
+/// real target: a symlink's relative target is read against the link's own
+/// directory, so writing the configured value in unresolved would point the
+/// run dir's `skills` folder at itself rather than at the home copy.
+#[test]
+fn a_relative_skills_dir_still_links_to_its_real_target() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(home.join("shared-skills").join("coding")).unwrap();
+    std::fs::write(
+        home.join("shared-skills").join("coding").join("SKILL.md"),
+        "the coding skill",
+    )
+    .unwrap();
+    // Nextest runs every test in its own process, so changing the working
+    // directory here reaches no other test.
+    std::env::set_current_dir(&home).unwrap();
+
+    let run_dir = dir.path().join("elsewhere").join("run");
+    let root = ariadne_daemon::agents::link_skills(&run_dir, std::path::Path::new("shared-skills"))
+        .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(root.join("coding").join("SKILL.md")).unwrap(),
+        "the coding skill",
+        "a relative skills_dir still resolves to its real target"
+    );
+}
+
+/// A second launch of the same session relinks rather than erroring on the
+/// entry the first launch left, and never reaches through a stale link to
+/// touch the home copy it pointed at.
+#[test]
+fn a_second_launch_replaces_the_link_and_leaves_the_home_copy_whole() {
+    let dir = tempfile::tempdir().unwrap();
+    let first_skills = dir.path().join("first-skills");
+    let second_skills = dir.path().join("second-skills");
+    for (skills, text) in [(&first_skills, "first"), (&second_skills, "second")] {
+        std::fs::create_dir_all(skills.join("coding")).unwrap();
+        std::fs::write(skills.join("coding").join("SKILL.md"), text).unwrap();
+    }
+
+    let run_dir = dir.path().join("run");
+    ariadne_daemon::agents::link_skills(&run_dir, &first_skills).unwrap();
+    let root = ariadne_daemon::agents::link_skills(&run_dir, &second_skills).unwrap();
+
+    #[cfg(unix)]
+    assert_eq!(
+        std::fs::read_link(&root).unwrap(),
+        std::fs::canonicalize(&second_skills).unwrap(),
+        "the link now points at the second launch's target"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("coding").join("SKILL.md")).unwrap(),
+        "second",
+        "the second launch's target replaced the first's, on every OS"
+    );
+    assert_eq!(
+        std::fs::read_to_string(first_skills.join("coding").join("SKILL.md")).unwrap(),
+        "first",
+        "the home copy the first launch pointed at is untouched"
+    );
+}
+
+/// A stale regular file at the run dir's `skills` path is cleared before
+/// relinking.
+#[test]
+fn a_stale_file_at_the_skills_path_is_cleared_before_relinking() {
+    let dir = tempfile::tempdir().unwrap();
+    let skills_dir = dir.path().join("home-skills");
+    std::fs::create_dir_all(skills_dir.join("coding")).unwrap();
+    std::fs::write(
+        skills_dir.join("coding").join("SKILL.md"),
+        "the coding skill",
+    )
+    .unwrap();
+
+    let run_dir = dir.path().join("run");
+    std::fs::create_dir_all(&run_dir).unwrap();
+    std::fs::write(run_dir.join("skills"), "stale").unwrap();
+
+    let root = ariadne_daemon::agents::link_skills(&run_dir, &skills_dir).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(root.join("coding").join("SKILL.md")).unwrap(),
+        "the coding skill"
+    );
+}
+
+/// A stale real directory at the run dir's `skills` path — what the Windows
+/// copy fallback leaves behind — is cleared before relinking too.
+#[test]
+fn a_stale_directory_at_the_skills_path_is_cleared_before_relinking() {
+    let dir = tempfile::tempdir().unwrap();
+    let skills_dir = dir.path().join("home-skills");
+    std::fs::create_dir_all(skills_dir.join("coding")).unwrap();
+    std::fs::write(
+        skills_dir.join("coding").join("SKILL.md"),
+        "the coding skill",
+    )
+    .unwrap();
+
+    let run_dir = dir.path().join("run");
+    std::fs::create_dir_all(run_dir.join("skills").join("leftover")).unwrap();
+    std::fs::write(
+        run_dir.join("skills").join("leftover").join("SKILL.md"),
+        "stale",
+    )
+    .unwrap();
+
+    let root = ariadne_daemon::agents::link_skills(&run_dir, &skills_dir).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(root.join("coding").join("SKILL.md")).unwrap(),
+        "the coding skill"
+    );
+}
+
+/// A dangling symlink at the run dir's `skills` path — its target gone — is
+/// removed as a link rather than failing the relink.
+#[cfg(unix)]
+#[test]
+fn a_dangling_symlink_at_the_skills_path_is_cleared_before_relinking() {
+    let dir = tempfile::tempdir().unwrap();
+    let skills_dir = dir.path().join("home-skills");
+    std::fs::create_dir_all(skills_dir.join("coding")).unwrap();
+    std::fs::write(
+        skills_dir.join("coding").join("SKILL.md"),
+        "the coding skill",
+    )
+    .unwrap();
+
+    let run_dir = dir.path().join("run");
+    std::fs::create_dir_all(&run_dir).unwrap();
+    std::os::unix::fs::symlink(dir.path().join("nowhere"), run_dir.join("skills")).unwrap();
+
+    let root = ariadne_daemon::agents::link_skills(&run_dir, &skills_dir).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(root.join("coding").join("SKILL.md")).unwrap(),
+        "the coding skill"
+    );
+}
+
+/// The copy fallback, exercised directly on every OS: every skill's
+/// `SKILL.md` under the home copy reaches the run dir as a real file.
+#[test]
+fn the_copy_fallback_copies_every_skills_md_into_the_run_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let skills_dir = dir.path().join("home-skills");
+    std::fs::create_dir_all(skills_dir.join("coding")).unwrap();
+    std::fs::write(skills_dir.join("coding").join("SKILL.md"), "one").unwrap();
+    std::fs::create_dir_all(skills_dir.join("testing")).unwrap();
+    std::fs::write(skills_dir.join("testing").join("SKILL.md"), "two").unwrap();
+
+    let dest = dir.path().join("run").join("skills");
+    ariadne_daemon::agents::copy_skills_dir(&skills_dir, &dest).unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(dest.join("coding").join("SKILL.md")).unwrap(),
+        "one"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dest.join("testing").join("SKILL.md")).unwrap(),
+        "two"
+    );
+}
+
+/// The copy fallback copies the whole tree, not just each `SKILL.md`: a
+/// script a document references beside it reaches the run dir too.
+#[test]
+fn the_copy_fallback_copies_nested_files_a_skill_document_references() {
+    let dir = tempfile::tempdir().unwrap();
+    let skills_dir = dir.path().join("home-skills");
+    std::fs::create_dir_all(skills_dir.join("coding").join("scripts")).unwrap();
+    std::fs::write(
+        skills_dir.join("coding").join("SKILL.md"),
+        "the coding skill",
+    )
+    .unwrap();
+    std::fs::write(
+        skills_dir.join("coding").join("scripts").join("helper.py"),
+        "print('help')",
+    )
+    .unwrap();
+
+    let dest = dir.path().join("run").join("skills");
+    ariadne_daemon::agents::copy_skills_dir(&skills_dir, &dest).unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(dest.join("coding").join("scripts").join("helper.py")).unwrap(),
+        "print('help')",
+        "a nested file the document references reaches the run dir too"
+    );
 }

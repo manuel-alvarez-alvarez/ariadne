@@ -296,12 +296,12 @@ mod tests {
     rank: balanced
     gate: committed
   review[Review]
-    Run the whole suite and judge the change against the task and the repository rules.
+    Judge the change against the task and the repository rules.
     Fail the step with the changes to make.
     skills: code-review
     rank: frontier
   merge[Merge]
-    Rebase onto the base branch, run the whole suite, squash, fast-forward and push.
+    Rebase onto the base branch, squash, fast-forward and push.
     skills: merge
     rank: fast
     gate: merged
@@ -327,8 +327,8 @@ mod tests {
         let review = &workflow.steps[1];
         assert_eq!(
             review.description,
-            "Run the whole suite and judge the change against the task and the repository \
-             rules. Fail the step with the changes to make."
+            "Judge the change against the task and the repository rules. Fail the step with \
+             the changes to make."
         );
         assert_eq!(review.rank, Some(ModelRank::Frontier));
         assert_eq!(review.gate, None);
@@ -347,12 +347,12 @@ mod tests {
     rank: balanced
     gate: committed
   review[Review]
-    Run the whole suite and judge the change against the task and the repository rules.
+    Judge the change against the task and the repository rules.
     Fail the step with the changes to make.
     skills: code-review
     rank: frontier
   pr[Pull request]
-    Push the branch, open the request and keep it until a human merges or closes it.
+    Push the branch, open the request and keep it until it merges or closes.
     skills: pr-babysit
     rank: balanced
     gate: request-merged

@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 use super::Github;
 use super::details::{issue_comment_id, review_comment_id};
-use crate::forge::pulls::{ReviewDraft, split_slug};
+use crate::forge::pulls::{REVIEW_MARK, ReviewDraft, split_slug};
 use ariadne_store::NewPullRequestComment;
 
 #[derive(Deserialize)]
@@ -37,10 +37,6 @@ struct PostedComment {
     created_at: String,
 }
 
-/// What a GitHub review that takes no body without one carries: the state
-/// of the review is in its summary comment.
-const POINTER: &str = "The review's state is in its summary comment.";
-
 #[derive(Deserialize)]
 struct Comment {
     id: i64,
@@ -52,7 +48,8 @@ impl Github {
     /// repos/<owner>/<name>/pulls/<n>/reviews`, with no body of its own,
     /// then read back the comments it holds, so each is stored under the id
     /// the forge gave it. A forge that refuses a review with no body gets it
-    /// again with a line that points at the summary.
+    /// again with a body that is the hidden review mark alone, so the retry
+    /// still shows the reader nothing.
     pub(crate) async fn submit_review(
         &self,
         repo: &str,
@@ -101,7 +98,7 @@ impl Github {
         };
         let output = match post(None).await {
             Err(refusal) if refusal.answer().is_some_and(|a| refused_for_its_body(&a)) => {
-                post(Some(POINTER))
+                post(Some(REVIEW_MARK))
                     .await
                     .map_err(|refusal| refusal.to_string())?
             }
@@ -260,7 +257,11 @@ fn refused_for_its_body(answer: &serde_json::Value) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::refused_for_its_body;
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::Duration;
+
+    use super::{Github, REVIEW_MARK, ReviewDraft, refused_for_its_body};
+    use crate::forge::Cli;
 
     /// A review is posted again with a body only where GitHub's own answer
     /// says the body is what it lacks, whatever its spacing or key order.
@@ -276,5 +277,64 @@ mod tests {
         assert!(refused_for_its_body(&parse(
             r#"{"errors": [{"resource": "PullRequestReview", "field": "body", "code": "missing_field"}], "message": "Validation Failed"}"#
         )));
+    }
+
+    /// A `gh` stub that refuses the first `pulls/<n>/reviews` POST for
+    /// having no body, as GitHub does for `REQUEST_CHANGES`, and answers
+    /// the retry; it keeps each call's standard input beside it, numbered,
+    /// so the test reads what the retry actually sent.
+    const STUB: &str = r#"#!/usr/bin/env python3
+import os, sys
+here = os.path.dirname(os.path.abspath(sys.argv[0]))
+count_file = os.path.join(here, "count")
+count = int(open(count_file).read()) if os.path.exists(count_file) else 0
+open(count_file, "w").write(str(count + 1))
+open(os.path.join(here, f"input-{count}"), "w").write(sys.stdin.read())
+if count == 0:
+    sys.stdout.write('{"message":"Validation Failed","errors":["Body is required"]}')
+    sys.exit(1)
+sys.stdout.write('{"id": 77, "submitted_at": "2026-10-02T00:00:00Z"}')
+"#;
+
+    fn fake_gh(dir: &std::path::Path) -> String {
+        let path = dir.join("gh");
+        std::fs::write(&path, STUB).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path.display().to_string()
+    }
+
+    /// The retry a review refused for its body takes posts no visible text
+    /// (031): its body is the hidden review mark alone, never a line a
+    /// reader would see pointing at the summary comment too.
+    #[tokio::test]
+    async fn a_review_refused_for_its_body_is_retried_with_no_visible_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let github = Github::new(Cli {
+            configured: Some(fake_gh(dir.path())),
+            program: "gh",
+            timeout: Duration::from_secs(5),
+        });
+        let posted = github
+            .submit_review(
+                "github.com/acme/widgets",
+                1,
+                &ReviewDraft {
+                    request_changes: true,
+                    head_sha: "abc".into(),
+                    comments: vec![],
+                },
+                "me",
+            )
+            .await
+            .unwrap();
+        assert!(posted.is_empty());
+        let input = |n: u32| -> serde_json::Value {
+            serde_json::from_str(
+                &std::fs::read_to_string(dir.path().join(format!("input-{n}"))).unwrap(),
+            )
+            .unwrap()
+        };
+        assert_eq!(input(0).get("body"), None, "the first try carries no body");
+        assert_eq!(input(1)["body"], REVIEW_MARK);
     }
 }

@@ -1258,7 +1258,10 @@ async fn the_orchestrator_reads_the_workflow_and_agents_load_their_own_skills() 
     assert!(launch.system_prompt.contains("- code-review:"));
     assert!(!launch.system_prompt.contains("- coding:"));
     assert!(skills.join("code-review/SKILL.md").is_file());
-    assert!(!skills.join("coding/SKILL.md").exists());
+    assert!(
+        skills.join("coding/SKILL.md").is_file(),
+        "the link carries every skill; only the index names the staffed ones"
+    );
 }
 
 #[tokio::test]
