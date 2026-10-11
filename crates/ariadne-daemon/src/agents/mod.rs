@@ -48,10 +48,12 @@ pub struct SpawnCtx {
     /// skills it loads.
     pub system_prompt: String,
     /// Where this agent's skill documents are, one `<name>/SKILL.md` under it.
-    /// The launcher writes them ([`write_skills`]) before the adapter plans
-    /// anything, so the index in the system prompt and the files on disk are
-    /// the same list, and an adapter only has to point its CLI at the
-    /// directory. `None` for an agent that loads no skill.
+    /// The launcher links it to the shared home copy ([`link_skills`]) before
+    /// the adapter plans anything, so the path the system prompt's index
+    /// names resolves to the document, and an adapter only has to point its
+    /// CLI at the directory. The launcher always links it, staffed with a
+    /// skill or not; `None` is only a hand-built context that names no
+    /// directory at all, as a hermetic test does.
     pub skills_dir: Option<PathBuf>,
     /// Task/goal briefing delivered as the first user prompt.
     pub initial_prompt: String,
@@ -69,30 +71,93 @@ pub struct SpawnCtx {
     pub extra_flags: Vec<String>,
 }
 
-/// Write an agent's skills into its run dir, one `SKILL.md` per skill, and
-/// answer with the directory holding them.
+/// Link an agent's run-dir `skills` folder onto the daemon's shared home
+/// copy ([`sync_skills`]), and answer with the directory the link resolves
+/// to.
 ///
-/// The layout is `<name>/SKILL.md`, frontmatter and body. An ACP agent has no
-/// way to be pointed at a skill directory, so the index in the system prompt
-/// names these paths, and the agent opens the file itself.
+/// The home copy holds `<name>/SKILL.md` for every skill the store knows, so
+/// an agent that opens a path under the link reads the home copy's current
+/// text — including a skill reworded since the task was staffed, the same
+/// way every other default text reaches the next launch.
 ///
-/// Rewritten on every launch rather than cached, so a skill reworded since the
-/// task was staffed reaches the next launch of the agent that loads it — the
-/// same way every other default text does.
-pub fn write_skills(run_dir: &Path, skills: &[(String, String)]) -> Result<PathBuf> {
+/// Relinked on every launch rather than left alone, so a second launch of a
+/// session never reads a stale target. On macOS and Linux this is always a
+/// symlink; on Windows it is a symlink where the platform grants one, or
+/// else a copy of the whole home folder ([`copy_skills_dir`]).
+///
+/// `skills_dir` is resolved to an absolute path first: a symlink's relative
+/// target is read against the link's own directory, not against wherever a
+/// relative `skills_dir` in `config.toml` was resolved from, so writing it
+/// in unchanged would point every session's link somewhere under its own
+/// run directory instead of at the home copy.
+pub fn link_skills(run_dir: &Path, skills_dir: &Path) -> Result<PathBuf> {
     let root = run_dir.join("skills");
-    // Cleared first: a skill an agent no longer loads must not be left behind
-    // for it to read.
-    if root.exists() {
-        std::fs::remove_dir_all(&root).with_context(|| format!("clearing {}", root.display()))?;
-    }
-    for (name, document) in skills {
-        let dir = root.join(name);
-        std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
-        std::fs::write(dir.join("SKILL.md"), document)
-            .with_context(|| format!("writing the {name} skill"))?;
-    }
+    clear_skills_entry(&root)?;
+    std::fs::create_dir_all(run_dir).with_context(|| format!("creating {}", run_dir.display()))?;
+    let skills_dir = std::fs::canonicalize(skills_dir)
+        .with_context(|| format!("resolving {}", skills_dir.display()))?;
+    link_or_copy(&skills_dir, &root)?;
     Ok(root)
+}
+
+#[cfg(unix)]
+fn link_or_copy(skills_dir: &Path, root: &Path) -> Result<()> {
+    std::os::unix::fs::symlink(skills_dir, root)
+        .with_context(|| format!("linking {} to {}", root.display(), skills_dir.display()))
+}
+
+#[cfg(windows)]
+fn link_or_copy(skills_dir: &Path, root: &Path) -> Result<()> {
+    if std::os::windows::fs::symlink_dir(skills_dir, root).is_ok() {
+        return Ok(());
+    }
+    copy_skills_dir(skills_dir, root)
+}
+
+/// Clear a stale `skills` entry in the run dir before relinking it.
+///
+/// A link is removed as a link — never walked through to delete the shared
+/// copy it points at. A real directory or file, left behind by the Windows
+/// copy fallback or by anything else that wrote there, is removed outright.
+fn clear_skills_entry(root: &Path) -> Result<()> {
+    let meta = match std::fs::symlink_metadata(root) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", root.display())),
+    };
+    if meta.is_symlink() {
+        std::fs::remove_file(root)
+            .or_else(|_| std::fs::remove_dir(root))
+            .with_context(|| format!("removing the link at {}", root.display()))
+    } else if meta.is_dir() {
+        std::fs::remove_dir_all(root).with_context(|| format!("clearing {}", root.display()))
+    } else {
+        std::fs::remove_file(root).with_context(|| format!("clearing {}", root.display()))
+    }
+}
+
+/// Copy the whole `skills_dir` tree into `dest`, for a Windows account the
+/// platform refuses a directory symlink: an unprivileged one without
+/// Developer Mode. Every file a skill's document names — a script beside
+/// its `SKILL.md`, say — reaches the run dir the same way the document does.
+pub fn copy_skills_dir(skills_dir: &Path, dest: &Path) -> Result<()> {
+    std::fs::create_dir_all(dest).with_context(|| format!("creating {}", dest.display()))?;
+    for entry in std::fs::read_dir(skills_dir)
+        .with_context(|| format!("reading {}", skills_dir.display()))?
+    {
+        let entry = entry.with_context(|| format!("reading {}", skills_dir.display()))?;
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("reading {}", entry.path().display()))?;
+        let target = dest.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_skills_dir(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), &target)
+                .with_context(|| format!("copying {}", entry.path().display()))?;
+        }
+    }
+    Ok(())
 }
 
 /// Serializes a skill mutation with the sync that follows it.

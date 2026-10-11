@@ -167,11 +167,15 @@ skill says (017).
     agent that is told nothing.
 14. A briefing has no size limit on its way to the agent: it travels in the
     launch file and the protocol, never on a command line.
-15. The skill documents of the agent are written into its run directory
-    before the launch is planned, one `<name>/SKILL.md` under `skills/`, and
-    never into the worktree. The index in the system prompt names each one by
-    that path (006). A skill the agent no longer holds is removed by the same
-    write.
+15. Before the launch is planned, the agent's run directory gets a `skills`
+    folder linked onto the daemon's shared home copy (017), never a copy of
+    its own and never anything under the worktree. On macOS and Linux this is
+    a symlink; on Windows it is a symlink where the platform grants one, or
+    else a copy of the whole home folder. The index in the system prompt
+    names each skill the agent was staffed with by its path under that link
+    (006), though the agent can open any skill the link carries. A second
+    launch of the same session replaces the link or copy, leaving the home
+    copy untouched.
 16. A resume is gated on discovery: an agent whose cached capabilities lack
     `session_load` is refused as not resumable, and no process starts.
 17. A session with no agent session id is not revived, and the next launch of
@@ -285,8 +289,12 @@ skill says (017).
   (`resume.rs::a_briefing_of_any_size_reaches_the_agent_whole`).
 - The skill documents are on disk where the index names them
   (`skill_documents.rs::an_orchestrator_session_indexes_the_orchestration_skill`),
-  and a dropped skill leaves nothing behind
-  (`adapters.rs::a_dropped_skill_leaves_nothing_behind`).
+  a launch links the run directory's `skills` folder to the home copy
+  (`adapters.rs::a_launch_links_the_run_dirs_skills_folder_to_the_home_copy`),
+  a second launch replaces that link without touching the home copy
+  (`adapters.rs::a_second_launch_replaces_the_link_and_leaves_the_home_copy_whole`),
+  and the Windows copy fallback copies every skill's document
+  (`adapters.rs::the_copy_fallback_copies_every_skills_md_into_the_run_dir`).
 - A session of an agent without `session_load` is refused as not resumable
   (`acp_runtime.rs::a_session_of_an_agent_without_session_load_is_not_resumable`).
 - A session without an agent session id is not revived

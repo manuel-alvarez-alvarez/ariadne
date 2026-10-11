@@ -174,8 +174,9 @@ async fn an_orchestrator_session_indexes_the_orchestration_skill() {
 }
 
 /// The playbook is editable like any shipped skill, and an edit reaches the
-/// next launch rather than the ones already running: the document written for
-/// a fresh orchestrator session is what the store holds at that moment.
+/// next launch rather than the ones already running: the document a fresh
+/// orchestrator session's link resolves to is what the home copy holds at
+/// that moment.
 #[tokio::test]
 async fn an_edited_orchestration_skill_reaches_the_next_launch() {
     let h = harness().await;
@@ -187,6 +188,12 @@ async fn an_edited_orchestration_skill_reaches_the_next_launch() {
     const EDITED: &str = "---\nname: orchestration\ndescription: our playbook\n---\nAsk twice.\n";
     h.store
         .set_skill_document(ORCHESTRATION_SKILL, EDITED)
+        .await
+        .unwrap();
+    // A direct store edit, unlike the `PUT /v1/skills/:name` route, does not
+    // sync the home copy itself; the daemon call it bypasses is what a real
+    // edit goes through.
+    ariadne_daemon::agents::sync_skills(&h.store, &h.launcher.cfg.skills_dir)
         .await
         .unwrap();
 
@@ -263,7 +270,10 @@ async fn a_columns_agent_loads_its_staffed_skills_and_the_pr_column_loads_pr_bab
         std::fs::read_to_string(&document).expect("the document on disk"),
         skill_text(default_skill_document(PR_BABYSIT_SKILL).unwrap())
     );
-    assert!(!skill_file(&h, &pr, "coding").exists());
+    assert!(
+        skill_file(&h, &pr, "coding").is_file(),
+        "the link carries every skill the home copy holds, staffed or not"
+    );
 }
 
 /// `pull-request` left the catalog: opening a request is the daemon's own
@@ -273,8 +283,8 @@ async fn a_columns_agent_loads_its_staffed_skills_and_the_pr_column_loads_pr_bab
 /// An old staffing on it is the kept-row case any dropped skill leaves
 /// ([`crate::common::Harness::stage_dropped_skill`]): the row stays because
 /// the agent still names it, and it reads as empty since nothing ships
-/// under the name any more, so the copy written to the agent's run
-/// directory is blank.
+/// under the name any more, so the document the home copy holds for it, and
+/// the run directory's link resolves to, is blank.
 #[tokio::test]
 async fn an_old_staffing_on_pull_request_reads_as_empty() {
     let h = harness().scheduler().await;

@@ -73,8 +73,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    No skill divides a task into slices or small commits.
 4. The skill index is one line per skill — its name, the summary its
    frontmatter states, and the path of its document in the run directory — and
-   the instruction to read a document before doing the work it covers. The
-   document itself stays on disk, so a broad set of skills costs an agent a
+   the instruction to read a document before doing the work it covers. That
+   path resolves through the run directory's `skills` folder, linked onto the
+   daemon's shared home copy (017), so a broad set of skills costs an agent a
    few lines rather than a few pages. How each CLI is pointed at those files
    is 007.
 5. The lifecycle briefings are Ariadne's own constants, read from the code on
@@ -228,4 +229,4 @@ they describe (003, 030) — what a skill is (017), and the switch itself
 switch),
 `crates/ariadne-core/src/lib.rs` (`PromptKind`, placeholder validation),
 `crates/ariadne-cli/src/commands/mcp.rs` (session rules),
-`crates/ariadne-daemon/src/agents/mod.rs` (`write_skills`).
+`crates/ariadne-daemon/src/agents/mod.rs` (`link_skills`).
