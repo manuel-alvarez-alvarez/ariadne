@@ -1065,6 +1065,10 @@ mod tests {
             text.contains("Push `<base>` before you call `complete_step`."),
             "the merge skill does not say why the push comes first"
         );
+        assert!(
+            text.contains("Write no trailer in the squash commit"),
+            "the merge skill does not ban a trailer on its squash commit"
+        );
         for (name, text) in all_defaults().into_iter().chain(all_skills()) {
             for command in ["gh pr merge", "glab mr merge"] {
                 assert!(!text.contains(command), "the {name} names {command}");
@@ -1132,15 +1136,16 @@ mod tests {
     fn the_pr_babysit_skill_replies_only_to_requested_changes() {
         let doc = unwrapped(default_skill_document(PR_BABYSIT_SKILL).unwrap());
         for rule in [
-            "Reply only in an existing thread that asks for a change.",
+            "Reply only in the thread of the defect.",
             "State the change and the commit.",
             "State why you did not make the change.",
             "Do not reply to a comment that asks for no change.",
             "Post no thanks, praise, or acknowledgement.",
             "Open no new thread.",
-            "Post no top-level comment.",
+            "Post no summary, no top-level comment, and no comment outside a thread.",
             "Commit only the changes that a comment or a failed check asks for.",
             "Add no other change.",
+            "Write no trailer in a pull request body, a reply, or a commit",
         ] {
             assert!(doc.contains(rule), "the pr-babysit skill has no {rule}");
         }
@@ -1164,11 +1169,11 @@ mod tests {
                 "the pr-reviewer skill names {gone}"
             );
         }
-        // The only "approve" names a human's approval, never the agent's own.
+        // Nothing in the skill names the agent's own approval.
         assert_eq!(
             words.iter().filter(|word| *word == "approve").count(),
-            1,
-            "the pr-reviewer skill approves on its own, or names it more than once"
+            0,
+            "the pr-reviewer skill approves on its own"
         );
         let doc = unwrapped(doc);
         for priority in ["P0: ", "P1: ", "P2: "] {
@@ -1195,16 +1200,17 @@ mod tests {
             "`reply_comment` once",
             "in the foreground",
             // The summary is one comment, rewritten whole every round as a
-            // header of the reviewed commits, a prose verdict on the change
-            // and its risk, and a recommendation; it is nothing of the work,
-            // and each finding sits on its own line of code.
+            // title, a header of the reviewed commits, a prose verdict on
+            // the change and its risk, and a recommendation; it is nothing
+            // of the work, and each finding sits on its own line of code.
             "Ariadne keeps one summary comment",
+            "## Review summary: all changes from `<base>` to `<head>`",
             "Header: one line per commit the round reviewed",
             "Summary: one short paragraph of prose, not bullets",
             "Recommendation: one line",
             "\"Request changes\"",
             "\"Changes recommended\"",
-            "\"No findings: ready for a human to approve\"",
+            "\"No findings: this PR is ready to be merged.\"",
             "Name no file or line, and nothing of what you did",
             "only the new comments",
             // A thread nobody answered waits; an answered one is replied to
@@ -1214,6 +1220,7 @@ mod tests {
             "then `resolve_thread` on",
             "Resolve only a thread you opened",
             "one inline comment on the line of the defect",
+            "Write no trailer in the summary, a reply, or a comment",
             "End your turn when the review is posted.",
             "## Do not tell yourself",
             "## Done",
@@ -1223,7 +1230,7 @@ mod tests {
         assert_eq!(SkillSeat::of(PR_REVIEWER_SKILL), SkillSeat::PullRequest);
     }
 
-    /// The three parts of the summary (029 rule 17) stand in order, and
+    /// The four parts of the summary (029 rule 17) stand in order, and
     /// `get_pull_request` and `get_diff` answer no commit list: the header
     /// names its own source, local history, so a request of several commits
     /// still gets one line per commit.
@@ -1231,14 +1238,17 @@ mod tests {
     fn the_pr_reviewer_skill_writes_its_summary_as_a_header_then_prose_then_a_recommendation() {
         let doc =
             unwrapped(default_skill_document(PR_REVIEWER_SKILL).expect("the pr-reviewer skill"));
+        let title_at = doc
+            .find("## Review summary: all changes from")
+            .expect("the skill has no summary title");
         let header_at = doc.find("Header:").expect("the skill has no Header:");
         let summary_at = doc.find("Summary:").expect("the skill has no Summary:");
         let recommendation_at = doc
             .find("Recommendation:")
             .expect("the skill has no Recommendation:");
         assert!(
-            header_at < summary_at && summary_at < recommendation_at,
-            "the parts are not Header, then Summary, then Recommendation"
+            title_at < header_at && header_at < summary_at && summary_at < recommendation_at,
+            "the parts are not Title, then Header, then Summary, then Recommendation"
         );
         let header = &doc[header_at..summary_at];
         for phrase in [
@@ -1278,8 +1288,8 @@ mod tests {
 
     /// Each recommendation line is tied to the priority that earns it (029
     /// rule 17): a P0 blocks the request, a P1 or P2 with no P0 open asks
-    /// for a fix before it lands, and nothing open asks for no more than a
-    /// human's approval.
+    /// for a fix before it lands, and nothing open says the request is
+    /// ready to merge.
     #[test]
     fn the_pr_reviewer_skill_recommends_by_the_open_findings_priority() {
         let doc =
@@ -1291,7 +1301,7 @@ mod tests {
         for phrase in [
             "A P0 is open: say \"Request changes\", and name the P0 findings that block it",
             "A P1 or P2 is open, with no P0: say \"Changes recommended\", and name what to fix before it lands",
-            "Nothing is open: say \"No findings: ready for a human to approve\"",
+            "Nothing is open: say \"No findings: this PR is ready to be merged.\"",
         ] {
             assert!(
                 recommendation.contains(phrase),
@@ -1857,15 +1867,15 @@ mod tests {
             "code-review" => 4100,
             "coding" => 5400,
             // Seven steps, one per kind of news and the report, and the two
-            // rules no other skill has: leave every thread to a human, and
-            // reach the forge only through the session's tools.
-            PR_BABYSIT_SKILL => 2700,
+            // rules no other skill has: leave every thread open, and reach
+            // the forge only through the session's tools.
+            PR_BABYSIT_SKILL => 2900,
             // Eleven steps: the read, the checks, the hunt, the three
             // priorities, one inline comment per finding with its title and
-            // its fix, the summary of three parts with no line in any of
+            // its fix, the summary of four parts with no line in any of
             // them, the one review, the report and the later round, which
             // resolves each thread a push fixed.
-            PR_REVIEWER_SKILL => 4500,
+            PR_REVIEWER_SKILL => 4700,
             _ => 2400,
         };
 

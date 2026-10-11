@@ -35,6 +35,8 @@ is what `git remote -v` names, if it names one.
   worktree you ran it from.
 - Never force a push to `<base>`.
 - A moved base is not a conflict. Fetch it again and start over.
+- Write no trailer in the squash commit: no "Generated with", no
+  `Co-Authored-By`, no tool name.
 
 ## Done
 

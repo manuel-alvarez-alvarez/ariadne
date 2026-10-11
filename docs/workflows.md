@@ -60,7 +60,7 @@ squashes, fast-forwards and pushes.
 
 `develop-review-pr` shares its first two columns, and ends at a pull
 request instead: its `pr` column pushes the branch, opens the request, and
-keeps it until a human merges or closes it.
+keeps it until it merges or closes.
 
 ```
 workflow develop-review-pr
@@ -75,7 +75,7 @@ workflow develop-review-pr
     skills: code-review
     rank: frontier
   pr[Pull request]
-    Push the branch, open the request and keep it until a human merges or closes it.
+    Push the branch, open the request and keep it until it merges or closes.
     skills: pr-babysit
     rank: balanced
     gate: request-merged

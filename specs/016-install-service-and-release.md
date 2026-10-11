@@ -1,7 +1,7 @@
 ---
 id: install-service-and-release
 status: current
-updated: 2026-10-10
+updated: 2026-10-11
 areas: [daemon, install, scripts, store]
 commits: [affda30b, 7ac6b2e3, 60905e41, b0ab8333, 1bbd6251, d5d971a5, 03f9c8b7]
 tests:
@@ -94,6 +94,11 @@ Out: what the daemon does once running (009, 012).
     reports an unlimited hard limit. The installed launchd and systemd
     services set the same soft limit, so reinstalling also protects an older
     daemon binary.
+13. The launchd service is installed with `ProcessType` `Interactive`. A
+    job without one is throttled to the utility level, which every agent the
+    daemon starts inherits and cannot leave, so its builds and tests run on
+    the efficiency cores. The systemd service needs no setting: a user
+    service runs at the same weight as the user's own session.
 12. `scripts/make-signing-cert.sh` creates the self-signed "Ariadne Code
     Signing" identity, Darwin only: a key and a code-signing certificate made
     with `openssl`, imported into the login keychain with `security import`
@@ -135,6 +140,8 @@ Out: what the daemon does once running (009, 012).
   (`resource.rs::daemon_start_raises_its_soft_open_file_limit`), and both
   installed service definitions set the same limit
   (`resource.rs::installer_services_raise_the_open_file_limit`).
+- The launchd service runs as interactive work
+  (`resource.rs::the_launchd_service_runs_as_interactive_work`).
 - `scripts/make-signing-cert.sh` creates the self-signed "Ariadne Code
   Signing" identity. A second run, finding a valid one, exports it again
   rather than replacing it; `--force` replaces it regardless, and a

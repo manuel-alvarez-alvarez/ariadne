@@ -108,4 +108,17 @@ mod tests {
             "the systemd service has no descriptor limit"
         );
     }
+
+    /// launchd throttles a job with no `ProcessType` to the utility level,
+    /// and every process the daemon starts inherits it: the agents' builds
+    /// and tests then run on the efficiency cores. Only the job itself can
+    /// lift it, so the service is installed as `Interactive`.
+    #[test]
+    fn the_launchd_service_runs_as_interactive_work() {
+        let installer = include_str!("../../../scripts/install.sh");
+        assert!(
+            installer.contains("<key>ProcessType</key><string>Interactive</string>"),
+            "the launchd service runs its agents at the utility level"
+        );
+    }
 }

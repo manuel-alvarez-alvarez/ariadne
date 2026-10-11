@@ -8,6 +8,7 @@ tests:
   - crates/ariadne-daemon/src/forge/mod.rs
   - crates/ariadne-daemon/src/forge/news.rs
   - crates/ariadne-daemon/src/forge/live.rs
+  - crates/ariadne-daemon/src/forge/pulls.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
   - crates/ariadne-daemon/tests/it/pull_requests.rs
   - crates/ariadne-daemon/tests/it/kept_requests.rs
@@ -138,6 +139,8 @@ and its idle handling under [030](030-workflows.md), rule 10.
     No agent tool resolves a thread. A review session resolves a thread it opened, once a push fixed it (029); every other thread is the keeping agent's to resolve.
 16. A reply posts through the forge CLI: `gh api .../pulls/<n>/comments/<id>/replies` on the thread's first review comment, else `gh pr comment`; GitLab adds a note to the discussion.
     A review session's reply is marked `from_review`. The repository is fetched again, which reads the reply back.
+    The current column agent's own reply through `reply_comment` only answers an inline review comment, the thread of the defect: a reply of its own to the conversation is refused with 400. A review session keeps its own reach, into the conversation and a defect's thread alike (029).
+    No body the daemon posts on a request's behalf — this reply, `open_pull_request`'s own body, and a review's summary and findings (029) — carries a trailer an agent's skill appends: a `Generated with` footer, a `Co-Authored-By`, or a tool's `Signed-off-by`, and the blank line before it, are stripped before the post.
 17. A report with `ready: true` or `ready: false` is stored and raises nothing of its own on any session (031): the `pull_request` attention producer reads the forge's own evidence against the claim instead of trusting it. A `ready: true` report also names `head_sha`, the head it was confirmed on (029 rule 15); it is stored as `ready_head_sha` and is rejected before storage when it is missing or fails the same hex-sha check `reviewed_sha` does. A request a task keeps accepts a `ready` report from the current column agent alone, never from a review session that also answers for the same row (a request of mine a task keeps can also carry an Ariadne self-review asked on it, 029) — read by seat (`Seat::Agent`), not merely by which session answers for the row.
     The state is the forge's to say: no session reports it.
     Accept comments, replies, and reports only from the current column agent or the review session (029), subject to the `ready`-specific restriction above.
@@ -275,6 +278,13 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `workflow_pull_request.rs::the_pr_column_opens_the_request_once_and_keeps_it`.
 - The agent replies and reports; another session and no session get 403:
   `kept_requests.rs::the_pr_agent_replies_and_reports_and_no_other_session_may`.
+- A reply from the keeping agent outside an inline review comment gets 400 and makes no forge call:
+  `kept_requests.rs::the_pr_agent_may_not_reply_to_a_top_level_comment`.
+- A trailer is stripped from the body of `open_pull_request`:
+  `kept_requests.rs::open_pull_request_strips_a_trailing_trailer_from_the_body`.
+- A trailing trailer and the blank line before it are stripped, and text with no trailer is left whole:
+  `forge/pulls.rs::tests::strip_trailers_takes_off_a_trailing_trailer_and_the_blank_line_before_it`,
+  `::strip_trailers_leaves_text_with_no_trailer_whole`.
 - The step stays on the `pr` column and its completion is refused until a merge, which is told to the agent; a quiet agent is then finished by the daemon and the row goes:
   `workflow_pull_request.rs::a_quiet_pr_agent_is_finished_after_the_merge`.
 - A close is told to the agent and finishes nothing:
