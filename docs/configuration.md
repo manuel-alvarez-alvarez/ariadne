@@ -7,6 +7,7 @@ socket_path = "/Users/me/.ariadne/ariadne.sock"   # (default: <home>/ariadne.soc
 db_path = "/Users/me/.ariadne/ariadne.db"         # (default: <home>/ariadne.db)
 worktree_root = "/Users/me/.ariadne/worktrees"    # (default: <home>/worktrees)
 run_dir = "/Users/me/.ariadne/run"                # (default: <home>/run)
+skills_dir = "/Users/me/.ariadne/skills"          # (default: <home>/skills)
 tcp_listen = "127.0.0.1:7676"     # enables the TCP listener (for web/desktop UIs)
                                    # (default: unix socket only, no TCP listener)
 log_filter = "info,ariadne_daemon=debug"

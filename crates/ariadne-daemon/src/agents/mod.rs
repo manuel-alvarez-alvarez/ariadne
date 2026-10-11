@@ -12,6 +12,7 @@ use anyhow::{Context, Result};
 
 use ariadne_core::Seat;
 use ariadne_core::acp::LaunchConfig;
+use ariadne_store::Store;
 
 pub use acp::{plan_resume, plan_spawn};
 #[allow(unused_imports)] // the session-switch task wires handoff_text to its endpoint
@@ -92,6 +93,52 @@ pub fn write_skills(run_dir: &Path, skills: &[(String, String)]) -> Result<PathB
             .with_context(|| format!("writing the {name} skill"))?;
     }
     Ok(root)
+}
+
+/// Serializes a skill mutation with the sync that follows it.
+///
+/// Two concurrent mutations each call the store, then `sync_skills`. Without
+/// a shared lock, one call's directory removal can run between the other
+/// call's store read and its write, deleting a skill the store still holds.
+/// Holding this lock across a mutation and its sync rules that out: the two
+/// pairs run one after the other, never interleaved.
+pub static SKILLS_SYNC_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+/// Rewrite the shared home copy of every skill the store holds.
+///
+/// A directory under `skills_dir` belongs to a skill only when its name is in
+/// the store. Files directly under the root are left alone, and the root
+/// itself is never removed.
+pub async fn sync_skills(store: &Store, skills_dir: &Path) -> Result<()> {
+    let skills = store.list_skills().await?;
+    std::fs::create_dir_all(skills_dir)
+        .with_context(|| format!("creating {}", skills_dir.display()))?;
+
+    let names: std::collections::HashSet<_> =
+        skills.iter().map(|skill| skill.name.as_str()).collect();
+    for entry in std::fs::read_dir(skills_dir)
+        .with_context(|| format!("reading {}", skills_dir.display()))?
+    {
+        let entry = entry.with_context(|| format!("reading {}", skills_dir.display()))?;
+        if entry
+            .file_type()
+            .with_context(|| format!("reading {}", entry.path().display()))?
+            .is_dir()
+            && !names.contains(entry.file_name().to_string_lossy().as_ref())
+        {
+            std::fs::remove_dir_all(entry.path())
+                .with_context(|| format!("removing {}", entry.path().display()))?;
+        }
+    }
+
+    for skill in skills {
+        let dir = skills_dir.join(&skill.name);
+        std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+        std::fs::write(dir.join("SKILL.md"), skill.document_text())
+            .with_context(|| format!("writing the {} skill", skill.name))?;
+    }
+    Ok(())
 }
 
 /// A fully planned launch of one ACP agent.

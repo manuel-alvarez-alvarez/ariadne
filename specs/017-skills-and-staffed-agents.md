@@ -8,6 +8,7 @@ tests:
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-store/src/defaults.rs
   - crates/ariadne-daemon/tests/it/skill_documents.rs
+  - crates/ariadne-daemon/tests/it/home_skills.rs
   - crates/ariadne-daemon/tests/it/workflow_steps.rs
   - crates/ariadne-daemon/tests/it/prompts.rs
   - crates/ariadne-daemon/tests/it/workflow_pull_request.rs
@@ -138,6 +139,13 @@ written into the system prompt (006), and the lifecycle the seats sit in
 14. A review session (029) is staffed by the daemon on the repository's
     `review_model` and `review_effort` (025), and loads `pr-reviewer` the
     way a column agent loads its skills; no orchestrator staffs it.
+15. The daemon keeps one shared copy of every store skill under
+    `<home>/skills` by default, or `skills_dir` when configured. Every sync
+    writes each document as `<skills_dir>/<name>/SKILL.md`, including
+    `orchestration` and `pr-reviewer`, and removes folders for names the
+    store no longer has without removing `skills_dir` itself. It syncs after
+    the store seeds shipped skills at startup and after every skill create,
+    document set, reset or delete.
 
 ## Acceptance criteria
 
@@ -220,6 +228,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
   any more
   (`skill_documents.rs::an_old_staffing_on_pull_request_reads_as_empty`,
   `store.rs::an_old_staffing_on_pull_request_keeps_its_row_and_reads_as_empty`).
+- The home copy starts with every skill's current document, follows creates,
+  edits and resets, and removes deleted and stale folders while retaining the
+  other skill folders (`home_skills.rs::the_home_skill_copy_tracks_the_catalog_and_its_documents`).
 
 ## Sources
 

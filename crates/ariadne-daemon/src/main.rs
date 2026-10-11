@@ -35,6 +35,8 @@ unknown key stops the daemon rather than being ignored):
   worktree_root            where task worktrees are created (default: <home>/worktrees)
   run_dir                  per-session run files: ACP launch files, skills
                            (default: <home>/run)
+  skills_dir               shared copy of every skill document
+                           (default: <home>/skills)
   tcp_listen               extra TCP listener for web/desktop UIs, e.g.
                            \"127.0.0.1:7676\" (default: unix socket only)
   webhook_listen           signed webhook listener (default: 127.0.0.1:0)
@@ -113,6 +115,7 @@ async fn main() -> Result<()> {
     let store = ariadne_store::Store::open(&config.db_path)
         .await
         .with_context(|| format!("opening database {}", config.db_path.display()))?;
+    ariadne_daemon::agents::sync_skills(&store, &config.skills_dir).await?;
 
     // The daemon's own `PATH`, which is the one its agents are started from:
     // a service carries the `PATH` its service file was written with, not the

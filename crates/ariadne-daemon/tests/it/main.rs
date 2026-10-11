@@ -31,6 +31,7 @@ mod forge_integration;
 mod goal_completion;
 mod goal_delete;
 mod goal_repositories;
+mod home_skills;
 mod issues;
 mod learned_permissions;
 mod logs;
