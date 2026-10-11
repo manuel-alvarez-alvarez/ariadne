@@ -673,7 +673,7 @@ async fn a_fetch_publishes_issues_changed_only_when_the_open_issues_moved() {
 /// so this is what tells it to read again. The same requests are no news.
 #[tokio::test]
 async fn a_fetch_publishes_pull_requests_changed_only_when_the_requests_moved() {
-    use crate::common::{QUIET, next_event};
+    use crate::common::{QUIET, TIMEOUT, eventually, next_event};
     use ariadne_api::stream::DomainEvent;
     use ariadne_daemon::forge::poll::Mode;
     let stub = stub_forge_cli(script(
@@ -685,6 +685,22 @@ async fn a_fetch_publishes_pull_requests_changed_only_when_the_requests_moved() 
     let id = enabled_repository(&h, None).await;
     let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == id);
     next_event(&mut events, moved).await;
+    let rows = || async {
+        h.store
+            .list_pull_requests(ariadne_store::PullRequestFilter::default())
+            .await
+            .unwrap()
+    };
+    eventually(TIMEOUT, "the request's first live read", async || {
+        rows().await.first().is_some_and(|pull| {
+            h.launcher
+                .live
+                .get(&pull.id)
+                .is_some_and(|live| live.evidence_ok)
+        })
+    })
+    .await;
+    h.state.forge_poll.set_mode(&id, Mode::WakeOnly);
     // The first fetch both inserts the request's row — a review request
     // is tracked whether or not the repository has a review pin (029) —
     // and latches the listed/requested state `pulls_moved` watches, each
@@ -694,7 +710,6 @@ async fn a_fetch_publishes_pull_requests_changed_only_when_the_requests_moved() 
         .await
         .is_ok()
     {}
-    h.state.forge_poll.set_mode(&id, Mode::WakeOnly);
     h.state.forge_poll.wake(&id);
     assert!(
         tokio::time::timeout(QUIET, next_event(&mut events, moved))
@@ -715,7 +730,7 @@ async fn a_fetch_publishes_pull_requests_changed_only_when_the_requests_moved() 
 /// `pull_request` attention producer's readiness item depends on (031).
 #[tokio::test]
 async fn a_mergeability_only_transition_publishes_pull_requests_changed() {
-    use crate::common::{QUIET, next_event};
+    use crate::common::{QUIET, TIMEOUT, eventually, next_event};
     use ariadne_api::stream::DomainEvent;
     use ariadne_daemon::forge::poll::Mode;
     let mut unknown = github_pull(1, "other");
@@ -726,8 +741,26 @@ async fn a_mergeability_only_transition_publishes_pull_requests_changed() {
     let id = enabled_repository(&h, None).await;
     let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == id);
     next_event(&mut events, moved).await;
-    let _ = tokio::time::timeout(QUIET, next_event(&mut events, moved)).await;
+    let rows = || async {
+        h.store
+            .list_pull_requests(ariadne_store::PullRequestFilter::default())
+            .await
+            .unwrap()
+    };
+    eventually(TIMEOUT, "the request's first live read", async || {
+        rows().await.first().is_some_and(|pull| {
+            h.launcher
+                .live
+                .get(&pull.id)
+                .is_some_and(|live| live.evidence_ok)
+        })
+    })
+    .await;
     h.state.forge_poll.set_mode(&id, Mode::WakeOnly);
+    while tokio::time::timeout(QUIET, next_event(&mut events, moved))
+        .await
+        .is_ok()
+    {}
     h.state.forge_poll.wake(&id);
     assert!(
         tokio::time::timeout(QUIET, next_event(&mut events, moved))
