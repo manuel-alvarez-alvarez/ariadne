@@ -30,7 +30,8 @@ release workflows drive, the release token, and what to do when it expires.
 - Every check `ci.yml` runs matches a command named in
   [`crates/AGENTS.md`](../crates/AGENTS.md) or
   [`ui/AGENTS.md`](../ui/AGENTS.md). A step that runs something neither file
-  names is either undocumented there or redundant here.
+  names is either undocumented there or redundant here. The pre-push hook
+  mirrors `ci.yml`, so a check added to one is added to the other.
 - The project version changes only through `release-please-config.json` (and
   the manifest it points at): nobody edits a version field, `CHANGELOG.md` or
   a tag by hand. See [`RELEASING.md`](RELEASING.md) for what one bump touches.

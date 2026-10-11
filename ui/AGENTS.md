@@ -13,16 +13,27 @@ npm run typecheck              # the project's types, always whole
 npm run check:unused           # dependency, export and source reachability
 ```
 
-Before a commit on `main`, run the whole suite: `npm test`, `npm run
-typecheck`, `npm run lint` and `npm run check:unused` — `npm run check` runs
-all four at once.
+The pre-commit hook (`.githooks/pre-commit`) runs, for a staged file under
+`ui/` (outside `ui/src-tauri`): `npx biome check <staged files>` and `npm run
+typecheck`, both from inside `ui/` (`npm ci` first when `ui/node_modules` is
+missing). For a staged file under `ui/src-tauri`: `cargo fmt --all -- --check`
+from inside `ui/src-tauri`.
 
-Touching `ui/src-tauri`: CI runs `cargo fmt --all -- --check` and
-`cargo check`, both from inside `ui/src-tauri` — it is excluded from the root
-cargo workspace (see [Layout](#layout)), so [`crates/AGENTS.md`](../crates/AGENTS.md)'s
-cargo commands never reach it. One root-level step does reach it: `cargo
-machete .`, run from the repository root, reads source and descends into
+The pre-push hook (`.githooks/pre-push`) runs the whole suite for a push that
+touches `ui/`: `npm run check` in `ui/` (`npm ci` first when
+`ui/node_modules` is missing) — that is `npm test`, `npm run typecheck`, `npm
+run lint` and `npm run check:unused` together. For a push that touches
+`ui/src-tauri`: `cargo fmt --all -- --check` and `cargo check`, both from
+inside `ui/src-tauri`.
+
+`ui/src-tauri` is excluded from the root cargo workspace (see
+[Layout](#layout)), so [`crates/AGENTS.md`](../crates/AGENTS.md)'s cargo
+commands never reach it. One root-level step does reach it: `cargo machete
+.`, run from the repository root, reads source and descends into
 `ui/src-tauri` too.
+
+See the root [`AGENTS.md`](../AGENTS.md#checks) for installing the hooks and
+running one by hand.
 
 The suite needs no daemon and no agent. The daemon is a stubbed `fetch`, a
 stubbed `EventSource` and a stubbed `WebSocket` (`src/test/`), and a session's
