@@ -1,7 +1,7 @@
 ---
 id: prompts-and-simplified-technical-english
 status: current
-updated: 2026-10-10
+updated: 2026-10-11
 areas: [prompts, store, core, mcp, daemon]
 commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
@@ -61,11 +61,11 @@ they describe (003, 030) — what a skill is (017), and the switch itself
 3. The skills that own a step state its checks: an agent runs the tests and the lint
    of the crates and packages its step changed once, before the commit. After
    the commit, it leaves `git status` empty and the repository's generate
-   step unchanged. No run of the whole suite is the develop column's own: the
-   `code-review` skill runs it once before each verdict, and the `merge`
-   skill runs it once after the rebase and before the fast-forward (030). A
-   skill scopes the step it owns to what the change touched and names no
-   other column's run, so the documents cannot disagree about who runs what.
+   step unchanged. The develop and review columns run the checks of what
+   changed. The repository's hooks run its whole suite at a push. The merge
+   skill pushes before it fast-forwards (030). A skill scopes the step it owns
+   to what the change touched and names no other column's run, so the
+   documents cannot disagree about who runs what.
    The same text states how the branch is committed: one commit for the
    task, one more commit for each answer to a review, and no amend of a
    pushed commit. A skill carries only the commit of the step it owns:
@@ -153,16 +153,17 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   MCP session rules state whether a seat works alone or waits on the user,
   and when it may ask anyway
   (`mcp.rs::only_the_orchestrator_is_told_to_ask`).
-- The `agent` seat text moves the task with the two step calls and states
-  the division of the checks
-  (`defaults.rs::the_agent_seat_text_moves_the_task_with_the_two_step_calls`),
-  the `merge` skill carries the one run of the whole suite between the
-  rebase and the fast-forward
-  (`::the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself`),
-  with a squash onto the merge base and a guard before the fast-forward
-  (`::a_late_squash_keeps_what_another_landing_put_on_the_base_branch`), and
-  no shipped skill sends a develop agent to the whole suite
-  (`::a_skill_scopes_its_own_checks_to_what_the_task_changed`).
+- The develop and review skills run the checks of what changed, and no
+  shipped skill names a whole suite
+  (`defaults.rs::a_skill_scopes_its_own_checks_to_what_the_task_changed`,
+  `::the_review_skill_starts_its_checks_before_the_read_and_ends_on_a_step_call`).
+  The repository hooks run its whole suite at a push. The merge skill pushes
+  before it fast-forwards, with a squash onto the merge base and a guard
+  before the push
+  (`::the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself`,
+  `::a_late_squash_keeps_what_another_landing_put_on_the_base_branch`).
+- The `agent` seat text bans `--no-verify` and `-n` for commits and pushes.
+  No skill repeats the rule (`defaults.rs::each_rule_is_stated_in_exactly_one_briefing`).
 - The seat text and the two skills that name a commit make the task one
   commit and amend nothing that is pushed
   (`defaults.rs::a_task_is_one_commit_and_nothing_amends_a_pushed_one`).
