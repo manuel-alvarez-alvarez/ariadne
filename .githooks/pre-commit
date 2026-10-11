@@ -104,5 +104,7 @@ fi
 
 for f in "${shellcheck_files[@]:-}"; do
     [ -z "$f" ] && continue
-    githooks_run shellcheck "$f"
+    # -x: a script checked alone still follows what it sources (install.sh
+    # and uninstall.sh both source lib.sh), the same as checking them together.
+    githooks_run shellcheck -x "$f"
 done
