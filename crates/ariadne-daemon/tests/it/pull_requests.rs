@@ -865,16 +865,26 @@ async fn an_outer_list_failure_publishes_pull_requests_changed() {
 /// (`GET /v1/pull-requests/{id}`) rather than the poll's own cycle: a
 /// failed detail read there leaves the cache's evidence no less
 /// unconfirmed, through `read_now`'s own path, which the poll's worker
-/// never runs. A later read that succeeds again restores it.
+/// never runs, and publishes `pull_requests_changed` on the transition —
+/// the same event a watcher relies on, since nothing here ever wakes the
+/// poll worker. A later read that succeeds again restores it and
+/// publishes the recovery the same way. Held in `WakeOnly` throughout:
+/// a timer tick racing one of these direct reads would confuse which of
+/// the two actually produced a given publish. Repeating the same
+/// outcome — two failures, or two successes — in a row publishes once,
+/// not on every call: an event-triggered panel re-read of this very
+/// route must never republish forever over a state that never moved.
 #[tokio::test]
 async fn a_route_level_read_failure_withdraws_the_rows_evidence() {
-    use crate::common::{TIMEOUT, eventually};
+    use crate::common::{QUIET, TIMEOUT, eventually, next_event};
+    use ariadne_api::stream::DomainEvent;
+    use ariadne_daemon::forge::poll::Mode;
     let stub = stub_forge_cli(script(
         vec![github_pull(2, "other")],
         github_pull(2, "other"),
     ));
     let h = harness().scheduler().forge_cli(&stub).await;
-    enabled_repository(&h, Some(PIN)).await;
+    let repo_id = enabled_repository(&h, Some(PIN)).await;
     let rows = || async {
         h.store
             .list_pull_requests(ariadne_store::PullRequestFilter::default())
@@ -891,6 +901,9 @@ async fn a_route_level_read_failure_withdraws_the_rows_evidence() {
     })
     .await;
     assert!(h.launcher.live.get(&id).unwrap().evidence_ok);
+    h.state.forge_poll.set_mode(&repo_id, Mode::WakeOnly);
+    let mut events = h.bus.subscribe();
+    let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == repo_id);
 
     let mut failed = script(vec![github_pull(2, "other")], github_pull(2, "other"));
     for entry in failed.as_array_mut().unwrap() {
@@ -911,6 +924,21 @@ async fn a_route_level_read_failure_withdraws_the_rows_evidence() {
         !h.launcher.live.get(&id).unwrap().evidence_ok,
         "a direct read failure through the route withdraws the cached evidence"
     );
+    next_event(&mut events, moved).await;
+
+    // The same failure again changes nothing: no second publish.
+    let _ = h
+        .error(
+            get(&format!("/v1/pull-requests/{id}")),
+            StatusCode::BAD_GATEWAY,
+        )
+        .await;
+    assert!(
+        tokio::time::timeout(QUIET, next_event(&mut events, moved))
+            .await
+            .is_err(),
+        "a repeated, unchanged failure publishes nothing more"
+    );
 
     stub.reprogram(script(
         vec![github_pull(2, "other")],
@@ -920,5 +948,15 @@ async fn a_route_level_read_failure_withdraws_the_rows_evidence() {
     assert!(
         h.launcher.live.get(&id).unwrap().evidence_ok,
         "a read that succeeds again restores it"
+    );
+    next_event(&mut events, moved).await;
+
+    // The same success again changes nothing: no second publish.
+    let _: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
+    assert!(
+        tokio::time::timeout(QUIET, next_event(&mut events, moved))
+            .await
+            .is_err(),
+        "a repeated, unchanged success publishes nothing more"
     );
 }

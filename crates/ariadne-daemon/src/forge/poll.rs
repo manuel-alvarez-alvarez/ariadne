@@ -37,6 +37,13 @@ pub struct ForgePoll {
     /// Where a changed request is reported, once the scheduler is up: it
     /// is what starts, tells and ends the request's session (026).
     scheduler: Waker,
+    /// The same map a worker's own `Handoff` hashes requests against
+    /// (`pulls_moved`), shared rather than copied: a direct, route-level
+    /// read outside the poll's own cycle (`http::pull_requests::read_now`)
+    /// can change the very evidence that hash covers, and dropping this
+    /// repository's entry here is how the next poll-driven fetch is kept
+    /// from comparing that change against a hash taken before it.
+    pulls_seen: Arc<std::sync::Mutex<HashMap<String, u64>>>,
 }
 
 /// The scheduler's event sender, shared by the handle and every worker.
@@ -108,6 +115,19 @@ impl ForgePoll {
             .commands
             .send(Command::Mode(repository_id.into(), mode));
     }
+
+    /// Drop this repository's dedup hash, the same way an outer list
+    /// failure does on the poll's own side: the next call to
+    /// `pulls_moved`, whichever path triggers it, is compared against
+    /// nothing rather than against a hash taken before a direct,
+    /// route-level read changed the evidence it covers, so that read's
+    /// own transition is never read back as "no different from before".
+    pub(crate) fn invalidate_pulls_dedup(&self, repository_id: &str) {
+        self.pulls_seen
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(repository_id);
+    }
 }
 
 /// Start the fetches: `every` is the fallback timer, and `details` bounds one
@@ -121,12 +141,13 @@ pub fn start(
     details: Duration,
 ) -> ForgePoll {
     let scheduler: Waker = Arc::default();
+    let pulls_seen: Arc<std::sync::Mutex<HashMap<String, u64>>> = Arc::default();
     let handoff = Handoff {
         details,
         scheduler: scheduler.clone(),
         bus: events.clone(),
         issues_seen: Arc::default(),
-        pulls_seen: Arc::default(),
+        pulls_seen: pulls_seen.clone(),
         live,
     };
     let webhook_url = crate::webhooks::WebhookUrl::new(cfg.webhook_public_url.clone());
@@ -178,6 +199,7 @@ pub fn start(
         commands,
         webhook_url,
         scheduler,
+        pulls_seen,
     }
 }
 

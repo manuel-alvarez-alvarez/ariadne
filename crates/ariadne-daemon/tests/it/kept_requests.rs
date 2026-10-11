@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use crate::common::forge::{StubForgeCli, answer, stub_forge_cli};
 use crate::common::{
-    Harness, QUIET, TIMEOUT, as_session, eventually, harness, post_json, sh, with_forge,
+    Harness, QUIET, TIMEOUT, as_session, eventually, harness, next_event, post_json, sh, with_forge,
 };
 use ariadne_api::SESSION_HEADER;
 use ariadne_api::tasks::TaskDto;
@@ -652,6 +652,122 @@ async fn a_direct_read_failure_withdraws_the_rows_evidence() {
         h.launcher.live.get(&id).is_some_and(|l| l.evidence_ok)
     })
     .await;
+}
+
+/// `script_for_head`, with the request's own read fully approved, every
+/// check green, and the forge reporting the head clear to merge: what a
+/// babysat request's readiness item needs beside its own `ready` report.
+fn script_ready_for_head(head: &str) -> Value {
+    let mut ready = pull("OPEN", head);
+    ready["reviewDecision"] = json!("APPROVED");
+    ready["mergeStateStatus"] = json!("CLEAN");
+    ready["statusCheckRollup"] = json!([{"conclusion": "SUCCESS", "status": "COMPLETED"}]);
+    let threads =
+        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
+    json!([
+        answer(&["auth", "status"], 0, ""),
+        answer(&["api", "user"], 0, "me"),
+        answer(&["pr", "create"], 0, URL),
+        answer(&["pr", "list"], 0, "[]"),
+        answer(&["pr", "view"], 0, &ready.to_string()),
+        answer(&["api", "repos/acme/widgets/pulls/1/comments"], 0, "[]"),
+        answer(&["api", "repos/acme/widgets/issues/1/comments"], 0, "[]"),
+        answer(&["api", "repos/acme/widgets/pulls/1/reviews"], 0, "[]"),
+        answer(&["api", "graphql"], 0, &threads.to_string()),
+        answer(
+            &[
+                "api",
+                &format!("repos/acme/widgets/commits/{head}/check-runs")
+            ],
+            0,
+            r#"{"check_runs": []}"#
+        ),
+        answer(
+            &["api", &format!("repos/acme/widgets/compare/main...{head}")],
+            0,
+            r#"{"behind_by": 0}"#
+        ),
+    ])
+}
+
+/// `script_ready_for_head`, with the one entry whose args start with
+/// `failing` made to fail outright.
+fn script_ready_for_head_with(head: &str, failing: &[&str]) -> Value {
+    let Value::Array(mut entries) = script_ready_for_head(head) else {
+        unreachable!()
+    };
+    for entry in &mut entries {
+        if entry["args"] == json!(failing) {
+            entry["exit"] = json!(1);
+            entry["stdout"] = json!("boom");
+        }
+    }
+    Value::Array(entries)
+}
+
+/// A direct, route-level read through `GET /v1/pull-requests/{id}` moves
+/// the readiness item itself, not only `evidence_ok`: a failed read there
+/// withdraws it from a fresh `attention::collect`, and publishes
+/// `pull_requests_changed`, the one thing that reaches an existing
+/// watcher — a `WakeOnly` poll worker, left untouched throughout, could
+/// never repair that disagreement on its own. The recovery brings the
+/// item back and publishes the same way.
+#[tokio::test]
+async fn a_route_level_read_failure_withdraws_the_readiness_item_and_its_recovery_restores_it() {
+    use ariadne_api::stream::DomainEvent;
+    let head = "a".repeat(40);
+    let Kept {
+        h,
+        stub,
+        agent,
+        id,
+        repo,
+        ..
+    } = kept_request(script_ready_for_head(&head)).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    fetch_again(&h, &stub, &repo).await;
+
+    let _: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/report"),
+                &agent.id,
+                json!({"ready": true, "head_sha": head}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    let items = || async {
+        ariadne_daemon::attention::collect(&h.store, &h.launcher)
+            .await
+            .items
+    };
+    eventually(TIMEOUT, "the readiness item", async || {
+        !items().await.is_empty()
+    })
+    .await;
+
+    let mut events = h.bus.subscribe();
+    let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == repo);
+
+    stub.reprogram(script_ready_for_head_with(&head, &["pr", "view"]));
+    let error = h
+        .error(
+            crate::common::get(&format!("/v1/pull-requests/{id}")),
+            StatusCode::BAD_GATEWAY,
+        )
+        .await;
+    assert!(!error.error.message.is_empty());
+    next_event(&mut events, moved).await;
+    assert!(
+        items().await.is_empty(),
+        "a fresh attention read withholds the item once the route's own read failed"
+    );
+
+    stub.reprogram(script_ready_for_head(&head));
+    let _: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
+    next_event(&mut events, moved).await;
+    assert!(!items().await.is_empty(), "the recovery restores it");
 }
 
 /// A push lands, through the real forge fetch path, between the agent's

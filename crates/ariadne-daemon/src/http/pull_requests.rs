@@ -45,11 +45,34 @@ fn client(state: &AppState, forge: &ForgeIntegration) -> ForgeClient {
     ForgeClient::for_repository(&state.launcher.cfg, forge)
 }
 
+/// Tell a client watching the stream that this request's readiness
+/// evidence actually moved, through this direct, route-level read rather
+/// than the poll's own cycle: publishing on every call here, success or
+/// not, would have an event-triggered panel re-read of this very route
+/// republish forever even where nothing changed, so this names only an
+/// actual transition against `before` — `None` (nothing cached before
+/// this read) is never one, since nothing was shown stale in the first
+/// place. The poll's own dedup is invalidated the same moment, so the
+/// next poll-driven fetch is compared against nothing rather than a hash
+/// taken before this transition, and reads it as a change too.
+fn publish_evidence_transition(
+    state: &AppState,
+    row: &PullRequestRow,
+    before: Option<bool>,
+    after: bool,
+) {
+    if before.is_some_and(|was| was != after) {
+        state.forge_poll.invalidate_pulls_dedup(&row.repository_id);
+        state.events.pull_requests_changed(&row.repository_id);
+    }
+}
+
 /// Read a request Ariadne works on off the forge now, and leave the read
 /// where the fetch leaves its own (026): what a session asks for is never an
 /// earlier read.
 async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullRequest> {
     let forge = integration(state, &row.repository_id).await?;
+    let before = state.launcher.live.get(&row.id).map(|l| l.evidence_ok);
     let details = match client(state, &forge)
         .details(
             &slug(&forge),
@@ -65,11 +88,13 @@ async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullReques
             // current, the same as a failed detail fetch through the
             // poll's own path leaves it (`forge::live::LivePulls::set_pull_evidence_failed`).
             state.launcher.live.mark_evidence_failed(&row.id);
+            publish_evidence_transition(state, &row, before, false);
             return Err(forge_error(error));
         }
     };
     if details.pull.number != row.number {
         state.launcher.live.mark_evidence_failed(&row.id);
+        publish_evidence_transition(state, &row, before, false);
         return Err(forge_error(
             "the forge returned another request number".into(),
         ));
@@ -97,6 +122,7 @@ async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullReques
             evidence_ok: true,
         },
     );
+    publish_evidence_transition(state, &row, before, true);
     live::of_row(&state.store, &state.launcher.live, row)
         .await?
         .ok_or_else(|| ApiError::conflict("the request could not be read off the forge"))

@@ -445,45 +445,63 @@ its eligibility rules.
     whether or not it is pinned, so that moment is also the moment nobody
     was yet assigned to it.
 13. A readiness item (`AttentionCause::Unknown`) is raised for an `author`
-    row a task keeps (`origin_task_id`) once every one of four pieces of
+    row a task keeps (`origin_task_id`) once every one of three pieces of
     the forge's own evidence for the request's current head holds
     together: `review_decision == "approved"` (a current approval, not an
     Ariadne review's own summary, which the forge never counts as one —
     029 rule 14 refuses an approval from any review route this daemon
-    runs), `unanswered_comments == 0` (no open conversation-side comment
-    the login's own side has not answered — 029 rule 13's own "news"
-    reading), `checks == "success"` (every check green) and `mergeable ==
+    runs), `checks == "success"` (every check green) and `mergeable ==
     "clean"` (rule 14 — the forge's own confirmation the head can be
-    merged now, not merely inferred from the checks rollup). Beside those
-    four, every *resolvable* review thread must actually be resolved on
-    the forge, whoever opened it: read by `kind == "review_comment"`
-    rather than by who posted it (`from_review`), so a human's own
-    unresolved finding blocks exactly as an Ariadne one does, and a
-    review's own summary — posted as a plain `issue_comment`, never a
-    resolvable thread at all — is never read as one that blocks forever.
-    A reply alone answers a thread for `unanswered_comments`'s own
-    routing purposes without resolving it; only an explicit resolve on
-    the forge clears it here. The comment evidence itself must also be
-    both successfully refreshed (`Live::evidence_ok`, set `false` by a
-    failed detail fetch and left `false` until the next one succeeds,
-    whether or not the head moved too) and current for this head
+    merged now, not merely inferred from the checks rollup). Beside
+    those three, the comment evidence itself must hold two ways:
+    - every *resolvable* review thread must actually be resolved on the
+      forge, whoever opened it: read by `kind == "review_comment"`
+      rather than by who posted it (`from_review`), so a human's own
+      unresolved finding blocks exactly as an Ariadne one does, and a
+      review's own summary — posted as a plain `issue_comment`, never a
+      resolvable thread at all — is never read as one that blocks
+      forever. A reply alone answers a thread for routing purposes
+      without resolving it; only an explicit resolve on the forge
+      clears it here;
+    - the conversation side — read live off `forge::live::waiting_threads`
+      on this item's own call rather than off the row's own cached
+      `unanswered_comments`, which still counts every comment the
+      login's own side has not answered (029 rule 13's own "news"
+      reading) — must hold no open thread once this item first excludes
+      the one comment that reading would otherwise block forever: the
+      review's own summary, the single `issue_comment` the login itself
+      posts to the conversation thread (`forge/pulls.rs::CONVERSATION`).
+      A summary carries nothing to answer, and the babysitting skill
+      never replies to a comment that asks for no change, so this item
+      must never wait on an invented reply to clear it; a genuine human
+      comment sharing that same thread still blocks, excluded by
+      neither its thread nor its login.
+
+    The comment evidence itself must also be both successfully
+    refreshed (`Live::evidence_ok`, set `false` by a failed fetch and
+    left `false` until the next one succeeds, whether that failure was
+    a detail fetch, the outer list call, an initial listless lookup, or
+    a route-level read off a single request, and whether or not the
+    head moved too) and current for this head
     (`Live::Details::head_sha == pull.head_sha`): either short, a failed
-    or stale refresh must never be read as "no open comment". The
-    babysitting task's own `ready` report (`POST
-    /pull-requests/{id}/report`, 029 rule 15) is read beside all of this
-    as a further condition, never in their place, and is itself bound to
-    the head the agent actually read: the report names the `head_sha` it
-    confirmed readiness on, and the item withholds unless that bound head
-    (`PullRequestRow::ready_head_sha`) still matches the request's current
-    head — `ready` alone, or the forge conditions without a report naming
-    the current head, raises nothing. A request no task keeps — asked for
-    ad hoc, through the same report route a reviewer session also answers
-    to (029 rule 11) — raises nothing either, whatever its `ready` flag
-    says: only the babysitting task's own claim is read, never a bare
-    flag on a row nothing manages (029, "Only the babysitter raises
-    readiness attention for a request it manages"). Every field above is
-    the live state of the request's current head, read fresh on every
-    call to this producer rather than latched anywhere: a later commit, a
+    or stale refresh must never be read as "no open comment"
+    (`forge::live::LivePulls::mark_evidence_failed`,
+    `::set_pull_evidence_failed`). The babysitting task's own `ready`
+    report (`POST /pull-requests/{id}/report`, 029 rule 15) is read
+    beside all of this as a further condition, never in their place,
+    and is itself bound to the head the agent actually read: the report
+    names the `head_sha` it confirmed readiness on, and the item
+    withholds unless that bound head (`PullRequestRow::ready_head_sha`)
+    still matches the request's current head — `ready` alone, or the
+    forge conditions without a report naming the current head, raises
+    nothing. A request no task keeps — asked for ad hoc, through the
+    same report route a reviewer session also answers to (029 rule 11)
+    — raises nothing either, whatever its `ready` flag says: only the
+    babysitting task's own claim is read, never a bare flag on a row
+    nothing manages (029, "Only the babysitter raises readiness
+    attention for a request it manages"). Every field above is the live
+    state of the request's current head, read fresh on every call to
+    this producer rather than latched anywhere: a later commit, a
     reopened comment, an approval the forge no longer counts (dismissed,
     or superseded by a new push), or a failed evidence refresh drops the
     item on the very next read, with nothing of its own to invalidate.
@@ -492,7 +510,18 @@ its eligibility rules.
     (`Store::set_pull_request_ready`) and cleared the moment it moves back
     — not `updated_at`, which a fetch bumps on every poll whether or not
     anything about readiness changed, the same trap rule 4's own `since`
-    values avoid for a task's `failed` transition.
+    values avoid for a task's `failed` transition. Every path that
+    invalidates the comment evidence — the poll's own outer list call,
+    its initial listless lookup, its detail fetch, and a direct,
+    route-level read off a single request outside the poll's own cycle
+    (`crates/ariadne-daemon/src/http/pull_requests.rs::read_now`) —
+    publishes `pull_requests_changed` on the transition, so a client
+    watching the stream re-reads this item rather than holding a
+    withdrawn one, or a restored one, on an older read
+    (`pull_requests.rs::an_outer_list_failure_withdraws_the_rows_evidence`,
+    `::a_direct_read_failure_withdraws_the_rows_evidence`,
+    `::an_outer_list_failure_publishes_pull_requests_changed`,
+    `::a_route_level_read_failure_withdraws_the_rows_evidence_and_publishes_its_recovery`).
 14. `mergeable` is read off the forge's own mergeability for the head,
     never derived from `checks` or `review_decision`, and read by each
     state's own documented meaning rather than guessed from its name:
