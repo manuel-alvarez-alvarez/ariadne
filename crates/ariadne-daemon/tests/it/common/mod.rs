@@ -1171,7 +1171,8 @@ impl Harness {
     /// Straight SQL: `set_agent_skills` refuses a name nothing answers to, so
     /// the only way to reach the state an old database carries — a staffing
     /// on a skill the catalog has since dropped — is to write the rows a
-    /// database of that era would already hold.
+    /// database of that era would already hold. Synced afterward, the way a
+    /// real daemon syncs the home copy on every start.
     pub(crate) async fn stage_dropped_skill(&self, agent_id: &str, name: &str, ordinal: i64) {
         sqlx::query(
             "INSERT INTO skills (name, document, builtin, created_at, updated_at)
@@ -1190,6 +1191,9 @@ impl Harness {
         .execute(&self.db)
         .await
         .unwrap();
+        ariadne_daemon::agents::sync_skills(&self.store, &self.launcher.cfg.skills_dir)
+            .await
+            .unwrap();
     }
 
     /// Every fact of `kind` in the stats ledger, oldest first, as
