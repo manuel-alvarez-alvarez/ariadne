@@ -768,9 +768,16 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * What the request's session says of it: `ready` once every required
-         *     approval and check reads green, which raises `waiting_user` on the
-         *     session, and the head a review session posted its review on.
+         * What the request's session says of it: `ready` once the babysitting task
+         *     believes every required approval and check reads green, on the head
+         *     (`head_sha`, required with `ready: true`) it actually confirmed that
+         *     against; and the head a review session posted its review on
+         *     (`reviewed_sha`). Neither raises `waiting_user` on the session by
+         *     itself (029): the claim alone is not confirmed evidence, and a
+         *     pr-reviewer session finishing its own review must notify nobody — the
+         *     `pull_request` attention producer reads the forge's own evidence
+         *     against this claim, for the head it names, and raises its own item
+         *     once it actually backs the claim up.
          */
         post: operations["pull-requests_report"];
         delete?: never;
@@ -920,13 +927,17 @@ export interface paths {
         };
         get?: never;
         /**
-         * Ask Ariadne to review a request of the user's own on the model the user
-         *     picks, or stop asking (029): a review session runs on that pin while the
-         *     request is open and out of draft, and posts each round as a comment in
-         *     the user's name. Asking starts Ariadne's work on the request; stopping
-         *     ends it, where no task keeps the request. A request that asks for the
-         *     user's review has a review already, on the repository's review pin, and
-         *     takes no asking.
+         * Ask Ariadne to review a request on the model the user picks, or stop
+         *     asking (029): a review session runs on that pin while the request is
+         *     open and out of draft. A request of the user's own posts each round as
+         *     a comment in the user's name; one that asks for the user's review on a
+         *     repository with no review pin of its own gets the manual start the
+         *     `pull_request` attention producer offers when nobody is assigned to it,
+         *     and posts as any other review Ariadne runs on it would (029). Asking
+         *     starts Ariadne's work on the request; stopping ends it, where no task
+         *     keeps the request. A request that asks for the user's review on a
+         *     repository that already pins one has a review already, and takes no
+         *     asking.
          */
         put: operations["pull-requests_ask_review"];
         post?: never;
@@ -2028,7 +2039,7 @@ export interface components {
          * @description What an item is about: an entity whose work the blocker touches.
          * @enum {string}
          */
-        AttentionSubjectKind: "goal" | "task" | "session" | "repository";
+        AttentionSubjectKind: "goal" | "task" | "session" | "repository" | "pull_request";
         /**
          * @description Where opening an item takes a client. Opening a target never resolves
          *     the item on its own — only the thing the item names doing so does.
@@ -3027,6 +3038,11 @@ export interface components {
              *     nobody works on, which the forge alone holds.
              */
             id?: string | null;
+            /**
+             * @description The forge's own mergeability for the head now: `clean`, `blocked`,
+             *     `dirty` or `unknown` where the forge has not finished computing it.
+             */
+            mergeable?: string;
             /** Format: int64 */
             number: number;
             opened_at: string;
@@ -3107,6 +3123,16 @@ export interface components {
          *     says of it.
          */
         ReportPullRequestRequest: {
+            /**
+             * @description The head the session actually confirmed `ready` against — read off
+             *     its own last `get_pull_request` call, never looked up again here.
+             *     Required wherever `ready` is `true`: a push landing between that
+             *     read and this call must still be judged against the head the
+             *     session confirmed, not whatever the daemon's own cache has moved
+             *     on to since, or a push the session never actually saw could pass
+             *     as though it had (031).
+             */
+            head_sha?: string | null;
             /** @description Every required approval and check reads green. */
             ready?: boolean | null;
             /** @description The head a reviewer session posted its review on (029). */

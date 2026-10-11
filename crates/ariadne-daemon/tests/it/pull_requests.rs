@@ -97,10 +97,13 @@ fn script(list: Vec<Value>, view: Value) -> Value {
 
 /// The open requests are read live off the forge: every one, mine, or the
 /// ones that ask for my review, and one of them whole, its checks and
-/// comments read with it. Ariadne works on none of them, so the database
-/// holds none, and nothing adds or removes one by hand.
+/// comments read with it. A request of mine Ariadne was not asked to
+/// review stays untracked; a request that asks for my review gets a row
+/// even on a repository with no review pin (029), so a human still has
+/// something to start by hand — but nothing starts its session, and
+/// nothing adds or removes a row here by hand.
 #[tokio::test]
-async fn the_list_is_read_live_and_nothing_is_stored_for_a_request_nobody_works_on() {
+async fn the_list_is_read_live_and_tracks_only_a_request_that_asks_for_my_review() {
     use crate::common::{TIMEOUT, eventually};
     let stub = stub_forge_cli(script(
         vec![github_pull(1, "me"), github_pull(2, "other")],
@@ -117,7 +120,10 @@ async fn the_list_is_read_live_and_nothing_is_stored_for_a_request_nobody_works_
 
     let rows: Vec<Value> = h.get("/v1/pull-requests").await;
     assert_eq!(rows.len(), 2);
-    assert!(rows.iter().all(|r| r["id"].is_null()), "{rows:?}");
+    let mine_row = rows.iter().find(|r| r["number"] == 1).unwrap();
+    assert!(mine_row["id"].is_null(), "{mine_row:?}");
+    let asked_row = rows.iter().find(|r| r["number"] == 2).unwrap();
+    assert!(!asked_row["id"].is_null(), "{asked_row:?}");
     let mine: Vec<Value> = h.get("/v1/pull-requests?role=author").await;
     assert_eq!(mine.len(), 1);
     assert_eq!(mine[0]["number"], 1);
@@ -134,23 +140,29 @@ async fn the_list_is_read_live_and_nothing_is_stored_for_a_request_nobody_works_
         .await;
     assert_eq!(one["title"], "Fix widgets");
     assert_eq!(one["unanswered_comments"], 0);
-    assert!(one["id"].is_null());
+    assert!(!one["id"].is_null());
 
+    // Search excludes a request of mine (`author`) outright; the one that
+    // asks for my review is tracked now, so the search says so.
     let matches: Vec<Value> = h
         .get(&format!(
             "/v1/repositories/{id}/pull-requests/search?q=widgets"
         ))
         .await;
-    assert!(matches.iter().all(|m| m["tracked"] == false), "{matches:?}");
+    assert!(matches.iter().all(|m| m["tracked"] == true), "{matches:?}");
 
-    assert!(
-        h.store
-            .list_pull_requests(ariadne_store::PullRequestFilter::default())
-            .await
-            .unwrap()
-            .is_empty(),
-        "nobody works on either: nothing is stored"
+    let stored = h
+        .store
+        .list_pull_requests(ariadne_store::PullRequestFilter::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        stored.len(),
+        1,
+        "only the request that asks for my review is tracked: {stored:?}"
     );
+    assert_eq!(stored[0].number, 2);
+    assert_eq!(stored[0].role, "reviewer");
     for request in [
         post_json(
             "/v1/pull-requests",
@@ -673,6 +685,15 @@ async fn a_fetch_publishes_pull_requests_changed_only_when_the_requests_moved() 
     let id = enabled_repository(&h, None).await;
     let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == id);
     next_event(&mut events, moved).await;
+    // The first fetch both inserts the request's row — a review request
+    // is tracked whether or not the repository has a review pin (029) —
+    // and latches the listed/requested state `pulls_moved` watches, each
+    // publishing its own event; drain the second before the quiet check
+    // below, which is about a later, unchanged fetch, not this first one.
+    while tokio::time::timeout(QUIET, next_event(&mut events, moved))
+        .await
+        .is_ok()
+    {}
     h.state.forge_poll.set_mode(&id, Mode::WakeOnly);
     h.state.forge_poll.wake(&id);
     assert!(
@@ -686,4 +707,259 @@ async fn a_fetch_publishes_pull_requests_changed_only_when_the_requests_moved() 
     stub.reprogram(script(vec![renamed.clone()], renamed));
     h.state.forge_poll.wake(&id);
     next_event(&mut events, moved).await;
+}
+
+/// A mergeability-only transition — every other hashed field unchanged —
+/// still publishes `pull_requests_changed`: a client watching only the
+/// hashed fields for news would otherwise miss exactly the change the
+/// `pull_request` attention producer's readiness item depends on (031).
+#[tokio::test]
+async fn a_mergeability_only_transition_publishes_pull_requests_changed() {
+    use crate::common::{QUIET, next_event};
+    use ariadne_api::stream::DomainEvent;
+    use ariadne_daemon::forge::poll::Mode;
+    let mut unknown = github_pull(1, "other");
+    unknown["mergeStateStatus"] = json!("UNKNOWN");
+    let stub = stub_forge_cli(script(vec![unknown.clone()], unknown.clone()));
+    let h = harness().forge_cli(&stub).await;
+    let mut events = h.bus.subscribe();
+    let id = enabled_repository(&h, None).await;
+    let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == id);
+    next_event(&mut events, moved).await;
+    let _ = tokio::time::timeout(QUIET, next_event(&mut events, moved)).await;
+    h.state.forge_poll.set_mode(&id, Mode::WakeOnly);
+    h.state.forge_poll.wake(&id);
+    assert!(
+        tokio::time::timeout(QUIET, next_event(&mut events, moved))
+            .await
+            .is_err(),
+        "the same requests are no news"
+    );
+
+    // Mergeability alone moves, UNKNOWN to CLEAN: every other hashed field
+    // — number, state, draft, title, head, checks, review decision,
+    // updated time — reads exactly as it did.
+    let mut clean = unknown.clone();
+    clean["mergeStateStatus"] = json!("CLEAN");
+    stub.reprogram(script(vec![clean.clone()], clean.clone()));
+    h.state.forge_poll.wake(&id);
+    next_event(&mut events, moved).await;
+    let _ = tokio::time::timeout(QUIET, next_event(&mut events, moved)).await;
+
+    // And the other direction, CLEAN to BLOCKED.
+    let mut blocked = clean.clone();
+    blocked["mergeStateStatus"] = json!("BLOCKED");
+    stub.reprogram(script(vec![blocked.clone()], blocked.clone()));
+    h.state.forge_poll.wake(&id);
+    next_event(&mut events, moved).await;
+
+    // An unchanged fetch after that is no news either.
+    h.state.forge_poll.wake(&id);
+    assert!(
+        tokio::time::timeout(QUIET, next_event(&mut events, moved))
+            .await
+            .is_err(),
+        "the same requests are no news"
+    );
+}
+
+/// A detail fetch that fails at the very same head the last one succeeded
+/// on still publishes `pull_requests_changed`: every hashed field of the
+/// request itself reads exactly as it did, but `Live::evidence_ok` flips,
+/// and a client watching only the other fields would otherwise miss
+/// exactly the transition a `pull_request` readiness item depends on
+/// (031). The next fetch that succeeds again, still on that head,
+/// publishes the recovery the same way; an unchanged fetch after that is
+/// no news either.
+#[tokio::test]
+async fn an_evidence_refresh_failure_and_recovery_at_the_same_head_publish_pull_requests_changed() {
+    use crate::common::{QUIET, next_event};
+    use ariadne_api::stream::DomainEvent;
+    use ariadne_daemon::forge::poll::Mode;
+    let full = script(vec![github_pull(1, "other")], github_pull(1, "other"));
+    let stub = stub_forge_cli(full.clone());
+    let h = harness().forge_cli(&stub).await;
+    let mut events = h.bus.subscribe();
+    let id = enabled_repository(&h, None).await;
+    let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == id);
+    next_event(&mut events, moved).await;
+    let _ = tokio::time::timeout(QUIET, next_event(&mut events, moved)).await;
+    h.state.forge_poll.set_mode(&id, Mode::WakeOnly);
+
+    // The next fetch finds the request's own read unchanged, but its
+    // detail entries gone: the comment evidence fails to refresh.
+    let failed = json!([
+        answer(&["auth", "status"], 0, ""),
+        answer(&["api", "user"], 0, "me"),
+        answer(
+            &["pr", "list"],
+            0,
+            &serde_json::to_string(&vec![github_pull(1, "other")]).unwrap()
+        ),
+        answer(&["pr", "view"], 0, &github_pull(1, "other").to_string()),
+        answer(
+            &["api", "repos/acme/widgets/issues?state=open&per_page=100"],
+            0,
+            "[]"
+        ),
+    ]);
+    stub.reprogram(failed);
+    h.state.forge_poll.wake(&id);
+    next_event(&mut events, moved).await;
+
+    // The fetch after that succeeds again, on the same head: the
+    // recovery is published too.
+    stub.reprogram(full);
+    h.state.forge_poll.wake(&id);
+    next_event(&mut events, moved).await;
+    let _ = tokio::time::timeout(QUIET, next_event(&mut events, moved)).await;
+
+    // An unchanged fetch after that is no news either.
+    h.state.forge_poll.wake(&id);
+    assert!(
+        tokio::time::timeout(QUIET, next_event(&mut events, moved))
+            .await
+            .is_err(),
+        "the same requests are no news"
+    );
+}
+
+/// A failure of the outer list call itself — `fetch`'s own `Err` branch,
+/// before any row is ever read — still publishes `pull_requests_changed`
+/// for every row it invalidates: the whole round failing before a row's
+/// own read ever ran is no less a reason for a client to read the
+/// request's evidence again than a detail fetch failing is. The next
+/// fetch that succeeds again publishes the recovery the same way.
+#[tokio::test]
+async fn an_outer_list_failure_publishes_pull_requests_changed() {
+    use crate::common::{QUIET, next_event};
+    use ariadne_api::stream::DomainEvent;
+    use ariadne_daemon::forge::poll::Mode;
+    let full = script(vec![github_pull(1, "other")], github_pull(1, "other"));
+    let stub = stub_forge_cli(full.clone());
+    let h = harness().forge_cli(&stub).await;
+    let mut events = h.bus.subscribe();
+    let id = enabled_repository(&h, None).await;
+    let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == id);
+    next_event(&mut events, moved).await;
+    let _ = tokio::time::timeout(QUIET, next_event(&mut events, moved)).await;
+    h.state.forge_poll.set_mode(&id, Mode::WakeOnly);
+
+    // The next fetch fails before any row is ever read: the outer list
+    // call itself is gone.
+    let mut failed = full.clone();
+    for entry in failed.as_array_mut().unwrap() {
+        if entry["args"] == json!(["pr", "list"]) {
+            entry["exit"] = json!(1);
+            entry["stdout"] = json!("boom");
+        }
+    }
+    stub.reprogram(failed);
+    h.state.forge_poll.wake(&id);
+    next_event(&mut events, moved).await;
+
+    // The fetch after that succeeds again: the recovery is published too.
+    stub.reprogram(full);
+    h.state.forge_poll.wake(&id);
+    next_event(&mut events, moved).await;
+}
+
+/// A read, off the forge now, through the HTTP route itself
+/// (`GET /v1/pull-requests/{id}`) rather than the poll's own cycle: a
+/// failed detail read there leaves the cache's evidence no less
+/// unconfirmed, through `read_now`'s own path, which the poll's worker
+/// never runs, and publishes `pull_requests_changed` on the transition —
+/// the same event a watcher relies on, since nothing here ever wakes the
+/// poll worker. A later read that succeeds again restores it and
+/// publishes the recovery the same way. Held in `WakeOnly` throughout:
+/// a timer tick racing one of these direct reads would confuse which of
+/// the two actually produced a given publish. Repeating the same
+/// outcome — two failures, or two successes — in a row publishes once,
+/// not on every call: an event-triggered panel re-read of this very
+/// route must never republish forever over a state that never moved.
+#[tokio::test]
+async fn a_route_level_read_failure_withdraws_the_rows_evidence() {
+    use crate::common::{QUIET, TIMEOUT, eventually, next_event};
+    use ariadne_api::stream::DomainEvent;
+    use ariadne_daemon::forge::poll::Mode;
+    let stub = stub_forge_cli(script(
+        vec![github_pull(2, "other")],
+        github_pull(2, "other"),
+    ));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let repo_id = enabled_repository(&h, Some(PIN)).await;
+    let rows = || async {
+        h.store
+            .list_pull_requests(ariadne_store::PullRequestFilter::default())
+            .await
+            .unwrap()
+    };
+    eventually(TIMEOUT, "the review request's row", async || {
+        rows().await.len() == 1
+    })
+    .await;
+    let id = rows().await.pop().unwrap().id;
+    eventually(TIMEOUT, "the row's first live read", async || {
+        h.launcher.live.get(&id).is_some()
+    })
+    .await;
+    assert!(h.launcher.live.get(&id).unwrap().evidence_ok);
+    h.state.forge_poll.set_mode(&repo_id, Mode::WakeOnly);
+    let mut events = h.bus.subscribe();
+    let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == repo_id);
+
+    let mut failed = script(vec![github_pull(2, "other")], github_pull(2, "other"));
+    for entry in failed.as_array_mut().unwrap() {
+        if entry["args"] == json!(["pr", "view"]) {
+            entry["exit"] = json!(1);
+            entry["stdout"] = json!("boom");
+        }
+    }
+    stub.reprogram(failed);
+    let error = h
+        .error(
+            get(&format!("/v1/pull-requests/{id}")),
+            StatusCode::BAD_GATEWAY,
+        )
+        .await;
+    assert!(!error.error.message.is_empty());
+    assert!(
+        !h.launcher.live.get(&id).unwrap().evidence_ok,
+        "a direct read failure through the route withdraws the cached evidence"
+    );
+    next_event(&mut events, moved).await;
+
+    // The same failure again changes nothing: no second publish.
+    let _ = h
+        .error(
+            get(&format!("/v1/pull-requests/{id}")),
+            StatusCode::BAD_GATEWAY,
+        )
+        .await;
+    assert!(
+        tokio::time::timeout(QUIET, next_event(&mut events, moved))
+            .await
+            .is_err(),
+        "a repeated, unchanged failure publishes nothing more"
+    );
+
+    stub.reprogram(script(
+        vec![github_pull(2, "other")],
+        github_pull(2, "other"),
+    ));
+    let _: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
+    assert!(
+        h.launcher.live.get(&id).unwrap().evidence_ok,
+        "a read that succeeds again restores it"
+    );
+    next_event(&mut events, moved).await;
+
+    // The same success again changes nothing: no second publish.
+    let _: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
+    assert!(
+        tokio::time::timeout(QUIET, next_event(&mut events, moved))
+            .await
+            .is_err(),
+        "a repeated, unchanged success publishes nothing more"
+    );
 }

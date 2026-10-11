@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use ariadne_core::{AttentionReason, GoalStatus, SessionStatus, TaskStatus};
+use ariadne_core::{GoalStatus, SessionStatus, TaskStatus};
 use ariadne_daemon::forge::poll::Mode;
 use ariadne_store::{
     AgentSession, NewGoal, NewTask, NewTaskAgent, NewWorkflow, SessionFilter, Task,
@@ -346,11 +346,11 @@ async fn the_pr_column_opens_the_request_once_and_keeps_it() {
         as_session(
             &format!("/v1/pull-requests/{id}/report"),
             &agent.id,
-            json!({"ready": ready}),
+            json!({"ready": ready, "head_sha": "a".repeat(40)}),
         )
     };
     let _: Value = h.json(report(true), StatusCode::OK).await;
-    assert_eq!(h.attention(agent).await, Some(AttentionReason::WaitingUser));
+    assert_eq!(h.attention(agent).await, None);
     let _: Value = h.json(report(false), StatusCode::OK).await;
     assert_eq!(h.attention(agent).await, None);
     let complete = || {

@@ -710,6 +710,17 @@ pub struct PullRequestRow {
     /// reason, as `Goal::orchestrator_given_up_wedged`. Meaningless while
     /// `reviewer_given_up_at` is `None`.
     pub reviewer_given_up_wedged: bool,
+    /// When `ready` last moved from false to true: the babysitting task's
+    /// own claim that the request is ready to merge, read as the
+    /// `pull_request` attention producer's `since` for the readiness item
+    /// it raises once the forge's own evidence backs that claim up.
+    /// Cleared the moment `ready` moves back to false, so a later claim
+    /// gets its own, fresh `since` rather than the first one's.
+    pub ready_confirmed_at: Option<String>,
+    /// The head the babysitting task reported `ready` on. A later commit
+    /// moves the live head past it, which the `pull_request` attention
+    /// producer reads as the claim's own revision gone stale.
+    pub ready_head_sha: Option<String>,
 }
 
 /// What the forge says of a request, as the last read found it: held in
@@ -730,6 +741,9 @@ pub struct PullRequestLive {
     /// The rolled-up checks: `pending`, `success`, `failure` or `none`.
     pub checks: String,
     pub review_decision: String,
+    /// The forge's own mergeability of the head now: `clean`, `blocked`,
+    /// `dirty` or `unknown`.
+    pub mergeable: String,
     pub opened_at: String,
     /// When the forge last saw the request move.
     pub forge_updated_at: String,
@@ -765,6 +779,7 @@ pub struct PullRequest {
     pub base_branch: String,
     pub checks: String,
     pub review_decision: String,
+    pub mergeable: String,
     pub unanswered_comments: i64,
     pub origin_task_id: Option<String>,
     pub opened_at: String,
@@ -792,6 +807,8 @@ pub struct PullRequest {
     pub review_skills_json: String,
     pub reviewer_given_up_at: Option<String>,
     pub reviewer_given_up_wedged: bool,
+    pub ready_confirmed_at: Option<String>,
+    pub ready_head_sha: Option<String>,
 }
 
 impl PullRequest {
@@ -813,6 +830,7 @@ impl PullRequest {
             base_branch: live.base_branch,
             checks: live.checks,
             review_decision: live.review_decision,
+            mergeable: live.mergeable,
             unanswered_comments: live.unanswered_comments,
             origin_task_id: row.origin_task_id,
             opened_at: live.opened_at,
@@ -840,6 +858,8 @@ impl PullRequest {
             review_skills_json: row.review_skills_json,
             reviewer_given_up_at: row.reviewer_given_up_at,
             reviewer_given_up_wedged: row.reviewer_given_up_wedged,
+            ready_confirmed_at: row.ready_confirmed_at,
+            ready_head_sha: row.ready_head_sha,
         }
     }
 

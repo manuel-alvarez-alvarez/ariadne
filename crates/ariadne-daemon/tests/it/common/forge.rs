@@ -207,12 +207,230 @@ pub(crate) fn seed_live(
                 base_branch: "main".into(),
                 checks: "none".into(),
                 review_decision: "none".into(),
+                mergeable: "clean".into(),
                 opened_at: "2026-10-01T00:00:00Z".into(),
                 updated_at: "2026-10-01T00:00:00Z".into(),
                 merge_sha: None,
             },
             review_requested,
             details: Some(ariadne_daemon::forge::live::Details::default()),
+            evidence_ok: true,
+        },
+    );
+}
+
+/// An enabled GitHub integration for `repository_id`, with no review pin:
+/// what a readiness item's own integration-enabled check needs to pass at
+/// all, and what a test proving the disabled case flips off afterwards.
+pub(crate) async fn enable_integration(h: &super::Harness, repository_id: &str, login: &str) {
+    h.store
+        .set_forge_integration(ariadne_store::SetForgeIntegration {
+            repository_id: repository_id.into(),
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some(login.into()),
+            review_model: None,
+            review_effort: None,
+        })
+        .await
+        .unwrap();
+}
+
+/// What `seed_review_evidence` holds for one scripted read: the forge's own
+/// evidence a readiness item reads against the babysitting task's own
+/// `ready` claim, every field named rather than defaulted, so a test states
+/// exactly which piece of evidence it is proving withholds the item.
+pub(crate) struct ReviewEvidence<'a> {
+    pub checks: &'a str,
+    pub review_decision: &'a str,
+    pub mergeable: &'a str,
+    /// The request's own current head.
+    pub head_sha: &'a str,
+    /// The head the comment evidence below was actually read at; `None`
+    /// keeps it the same as `head_sha` (comments current for this head).
+    /// `Some` of a different head simulates a failed detail refresh that
+    /// left an older read's own comments standing while `head_sha` itself
+    /// already moved (`forge::live::LivePulls::set_pull`).
+    pub details_head_sha: Option<&'a str>,
+    pub comments: Vec<ariadne_store::NewPullRequestComment>,
+    /// Whether the last attempt to refresh the comment evidence actually
+    /// succeeded (`Live::evidence_ok`); `false` simulates a failed detail
+    /// fetch at the same head, which a head comparison alone cannot catch.
+    pub evidence_ok: bool,
+}
+
+/// A review comment nobody has answered or resolved: `unanswered_comments`
+/// counts it, and so does the stricter resolved-thread check.
+pub(crate) fn open_review_comment() -> ariadne_store::NewPullRequestComment {
+    ariadne_store::NewPullRequestComment {
+        forge_id: "rc-1".into(),
+        thread_id: "T1".into(),
+        kind: "review_comment".into(),
+        author_login: "someone".into(),
+        author_is_bot: false,
+        body: "What about this case?".into(),
+        path: Some("src/lib.rs".into()),
+        line: Some(1),
+        in_reply_to: None,
+        created_at: "2026-10-01T00:00:00Z".into(),
+        resolved: false,
+        from_review: false,
+    }
+}
+
+/// A genuine human question on the conversation thread, from neither the
+/// login nor a review: no later reply of the login's own side answers it,
+/// so it stays a real, open ask a readiness item must still block on, the
+/// same thread a review's own summary also posts to.
+pub(crate) fn open_conversation_comment() -> ariadne_store::NewPullRequestComment {
+    ariadne_store::NewPullRequestComment {
+        forge_id: "ic-1".into(),
+        thread_id: "conversation".into(),
+        kind: "issue_comment".into(),
+        author_login: "someone".into(),
+        author_is_bot: false,
+        body: "Why does this change the retry budget too?".into(),
+        path: None,
+        line: None,
+        in_reply_to: None,
+        created_at: "2026-10-01T00:00:00Z".into(),
+        resolved: false,
+        from_review: false,
+    }
+}
+
+/// A review thread's opening finding, replied to by the integration
+/// login's own side — which `waiting_threads` reads as "answered", zeroing
+/// `unanswered_comments` — but never marked resolved on the forge: the
+/// trap `forge/live.rs::waiting_threads` leaves standing, which readiness
+/// must read through to the thread's own `resolved` flag instead,
+/// whoever opened the thread. `from_ariadne` picks which: an Ariadne
+/// review's own finding (`from_review: true`, posted under `login`) or a
+/// human reviewer's own finding (`from_review: false`, posted under
+/// `"someone"`) — a readiness item must block on either the same way.
+pub(crate) fn answered_but_unresolved_review_comment(
+    login: &str,
+    from_ariadne: bool,
+) -> Vec<ariadne_store::NewPullRequestComment> {
+    let finding_author = if from_ariadne { login } else { "someone" };
+    vec![
+        ariadne_store::NewPullRequestComment {
+            forge_id: "rc-1".into(),
+            thread_id: "T1".into(),
+            kind: "review_comment".into(),
+            author_login: finding_author.into(),
+            author_is_bot: false,
+            body: "[P1] Missing a test".into(),
+            path: Some("src/lib.rs".into()),
+            line: Some(1),
+            in_reply_to: None,
+            created_at: "2026-10-01T00:00:00Z".into(),
+            resolved: false,
+            from_review: from_ariadne,
+        },
+        ariadne_store::NewPullRequestComment {
+            forge_id: "rc-2".into(),
+            thread_id: "T1".into(),
+            kind: "review_comment".into(),
+            author_login: login.into(),
+            author_is_bot: false,
+            body: "Added it.".into(),
+            path: Some("src/lib.rs".into()),
+            line: Some(1),
+            in_reply_to: Some("rc-1".into()),
+            created_at: "2026-10-02T00:00:00Z".into(),
+            resolved: false,
+            from_review: false,
+        },
+    ]
+}
+
+/// A completed Ariadne review exactly as `submit_review` leaves it, with
+/// nobody ever answering it: one summary comment — posted as a plain
+/// `issue_comment`, `from_review: true`, and never itself marked `resolved`
+/// on the forge, since it names no diff-anchored thread at all, and never
+/// answered either, since a summary carries nothing to answer — beside one
+/// finding whose thread the forge *does* show resolved. The babysitting
+/// skill never replies to a comment that asks for no change (`SKILL.md`),
+/// so no fixture here may add a reply on the skill's behalf just to settle
+/// the summary: a readiness item must read the summary itself as closing
+/// nothing open, the same way it reads a resolved finding's thread.
+pub(crate) fn completed_review_with_a_resolved_finding(
+    login: &str,
+) -> Vec<ariadne_store::NewPullRequestComment> {
+    vec![
+        ariadne_store::NewPullRequestComment {
+            forge_id: "ic-301".into(),
+            thread_id: "conversation".into(),
+            kind: "issue_comment".into(),
+            author_login: login.into(),
+            author_is_bot: false,
+            body: "No findings: ready for a human to approve".into(),
+            path: None,
+            line: None,
+            in_reply_to: None,
+            created_at: "2026-10-01T00:00:00Z".into(),
+            resolved: false,
+            from_review: true,
+        },
+        ariadne_store::NewPullRequestComment {
+            forge_id: "rc-1".into(),
+            thread_id: "T1".into(),
+            kind: "review_comment".into(),
+            author_login: login.into(),
+            author_is_bot: false,
+            body: "[P1] Missing a test".into(),
+            path: Some("src/lib.rs".into()),
+            line: Some(1),
+            in_reply_to: None,
+            created_at: "2026-10-01T00:00:00Z".into(),
+            resolved: true,
+            from_review: true,
+        },
+    ]
+}
+
+pub(crate) fn seed_review_evidence(
+    h: &super::Harness,
+    row: &ariadne_store::PullRequestRow,
+    evidence: ReviewEvidence,
+) {
+    h.launcher.live.set(
+        &row.id,
+        ariadne_daemon::forge::live::Live {
+            pull: ariadne_daemon::forge::pulls::ForgePullRequest {
+                number: row.number,
+                url: row.url.clone(),
+                title: format!("Fix widgets {}", row.number),
+                body: String::new(),
+                author_login: "me".into(),
+                state: "open".into(),
+                draft: false,
+                head_branch: "fix".into(),
+                head_sha: evidence.head_sha.into(),
+                head_repo: None,
+                base_branch: "main".into(),
+                checks: evidence.checks.into(),
+                review_decision: evidence.review_decision.into(),
+                mergeable: evidence.mergeable.into(),
+                opened_at: "2026-10-01T00:00:00Z".into(),
+                updated_at: "2026-10-01T00:00:00Z".into(),
+                merge_sha: None,
+            },
+            review_requested: false,
+            details: Some(ariadne_daemon::forge::live::Details {
+                comments: evidence.comments,
+                head_sha: evidence
+                    .details_head_sha
+                    .unwrap_or(evidence.head_sha)
+                    .into(),
+                ..Default::default()
+            }),
+            evidence_ok: evidence.evidence_ok,
         },
     );
 }

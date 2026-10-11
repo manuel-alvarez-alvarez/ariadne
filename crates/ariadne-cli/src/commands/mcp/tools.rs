@@ -228,6 +228,9 @@ pub(super) struct ReportPullRequestReq {
     /// True once every required approval and check reads green. False when
     /// a later change turns one back.
     pub ready: Option<bool>,
+    /// The head sha you read every approval and check against, from your
+    /// own last `get_pull_request` call. Required with `ready: true`.
+    pub head_sha: Option<String>,
     /// The head sha your posted review is on.
     pub reviewed_sha: Option<String>,
 }
@@ -814,7 +817,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Report your pull request. Set `ready` to true once every required approval and check reads green, and to false on a change back. Set `reviewed_sha` after you post a review."
+        description = "Report your pull request. Set `ready` to true once every required approval and check reads green. Name `head_sha`, the head you read them on. Set `ready` to false on a change back. Set `reviewed_sha` after you post a review."
     )]
     async fn report_pull_request(
         &self,
@@ -826,11 +829,18 @@ impl AriadneMcp {
                 None,
             ));
         }
+        if req.ready == Some(true) && req.head_sha.is_none() {
+            return Err(McpError::invalid_params(
+                "`ready: true` names the head you confirmed it on, as `head_sha`",
+                None,
+            ));
+        }
         json_result(
             self.post(
                 &self.pull_request_path("/report").await?,
                 &ReportPullRequestRequest {
                     ready: req.ready,
+                    head_sha: req.head_sha,
                     reviewed_sha: req.reviewed_sha,
                 },
             )
@@ -1025,6 +1035,7 @@ mod tests {
         .expect("reply");
         mcp.report_pull_request(Parameters(ReportPullRequestReq {
             ready: Some(true),
+            head_sha: Some("abc".into()),
             reviewed_sha: None,
         }))
         .await
@@ -1065,7 +1076,7 @@ mod tests {
         let report: serde_json::Value = serde_json::from_str(&seen[9].body).expect("json");
         assert_eq!(
             report,
-            serde_json::json!({"ready": true, "reviewed_sha": null})
+            serde_json::json!({"ready": true, "head_sha": "abc", "reviewed_sha": null})
         );
     }
 
@@ -1121,6 +1132,7 @@ mod tests {
         .expect("post the review");
         mcp.report_pull_request(Parameters(ReportPullRequestReq {
             ready: None,
+            head_sha: None,
             reviewed_sha: Some("abc".into()),
         }))
         .await

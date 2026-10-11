@@ -11,11 +11,11 @@ use serde_json::{Value, json};
 
 use crate::common::forge::{StubForgeCli, answer, stub_forge_cli};
 use crate::common::{
-    Harness, QUIET, TIMEOUT, as_session, eventually, harness, post_json, sh, with_forge,
+    Harness, QUIET, TIMEOUT, as_session, eventually, harness, next_event, post_json, sh, with_forge,
 };
 use ariadne_api::SESSION_HEADER;
 use ariadne_api::tasks::TaskDto;
-use ariadne_core::{AttentionReason, SessionStatus, TaskStatus};
+use ariadne_core::{SessionStatus, TaskStatus};
 use ariadne_daemon::forge::poll::Mode;
 use ariadne_daemon::scheduler::SchedEvent;
 use ariadne_store::defaults::PULL_REQUEST_WORKFLOW;
@@ -328,9 +328,10 @@ async fn the_news_of_its_request_reaches_the_pr_agent_once() {
 
 /// The `pr` agent replies through the forge's reply command, stored as my
 /// comment in the thread, which answers it; the agent resolves no thread.
-/// Its `ready: true` raises `waiting_user` on its own session once, and
-/// `ready: false` takes it down. Any other session is refused, and so is a
-/// call that comes from no session.
+/// Its `ready: true` is stored but raises nothing of its own on the
+/// session (029): the `pull_request` attention producer reads the forge's
+/// own evidence against the claim instead. Any other session is refused,
+/// and so is a call that comes from no session.
 #[tokio::test]
 async fn the_pr_agent_replies_and_reports_and_no_other_session_may() {
     let comments = [review_comment(101, "alice", None, "2026-10-02T00:00:00Z")];
@@ -406,15 +407,12 @@ async fn the_pr_agent_replies_and_reports_and_no_other_session_may() {
         as_session(
             &format!("/v1/pull-requests/{id}/report"),
             &agent.id,
-            json!({"ready": ready}),
+            json!({"ready": ready, "head_sha": "a".repeat(40)}),
         )
     };
     let dto: Value = h.json(report(true), StatusCode::OK).await;
     assert_eq!(dto["ready"], true);
-    assert_eq!(
-        h.attention(&agent).await,
-        Some(AttentionReason::WaitingUser)
-    );
+    assert_eq!(h.attention(&agent).await, None);
     let _: Value = h.json(report(false), StatusCode::OK).await;
     assert_eq!(h.attention(&agent).await, None);
 
@@ -441,6 +439,539 @@ async fn the_pr_agent_replies_and_reports_and_no_other_session_may() {
         StatusCode::FORBIDDEN,
     )
     .await;
+
+    // An Ariadne self-review of the same request (029) also answers for
+    // it — `own_session` lets it call `/report` at all — but its own
+    // `ready` claim must never pass as the babysitting `pr` agent's
+    // (031): only the task's own column agent reports this row ready.
+    h.store
+        .set_pull_request_review_asked(
+            &id,
+            Some((
+                &ariadne_store::AgentPin {
+                    model: "stub:model".into(),
+                    effort: None,
+                },
+                &[],
+            )),
+        )
+        .await
+        .unwrap();
+    let reviewer = h
+        .store
+        .create_session(ariadne_store::NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: Some(ariadne_core::Seat::Reviewer),
+            task_agent_id: None,
+            model: "stub:model".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: Some(id.clone()),
+        })
+        .await
+        .unwrap();
+    h.error(
+        as_session(
+            &format!("/v1/pull-requests/{id}/report"),
+            &reviewer.id,
+            json!({"ready": true}),
+        ),
+        StatusCode::FORBIDDEN,
+    )
+    .await;
+    assert!(
+        !h.store.get_pull_request(&id).await.unwrap().ready,
+        "the reviewer's claim never lands"
+    );
+    // Its own `reviewed_sha` still goes through: that is legitimately
+    // its own report to make.
+    let dto: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/report"),
+                &reviewer.id,
+                json!({"reviewed_sha": "0".repeat(40)}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(dto["id"], id);
+}
+
+/// A whole script, every detail entry keyed on `head`: what the initial
+/// open and a later push each need, parameterized on the one thing that
+/// actually changes between them.
+fn script_for_head(head: &str) -> Value {
+    let threads =
+        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
+    json!([
+        answer(&["auth", "status"], 0, ""),
+        answer(&["api", "user"], 0, "me"),
+        answer(&["pr", "create"], 0, URL),
+        answer(&["pr", "list"], 0, "[]"),
+        answer(&["pr", "view"], 0, &pull("OPEN", head).to_string()),
+        answer(&["api", "repos/acme/widgets/pulls/1/comments"], 0, "[]"),
+        answer(&["api", "repos/acme/widgets/issues/1/comments"], 0, "[]"),
+        answer(&["api", "repos/acme/widgets/pulls/1/reviews"], 0, "[]"),
+        answer(&["api", "graphql"], 0, &threads.to_string()),
+        answer(
+            &[
+                "api",
+                &format!("repos/acme/widgets/commits/{head}/check-runs")
+            ],
+            0,
+            r#"{"check_runs": []}"#
+        ),
+        answer(
+            &["api", &format!("repos/acme/widgets/compare/main...{head}")],
+            0,
+            r#"{"behind_by": 0}"#
+        ),
+    ])
+}
+
+/// `script_for_head`, with the one entry whose args start with `failing`
+/// made to fail outright: what an outer list call or an initial, listless
+/// read failing looks like to the stub, everything else of the fetch
+/// answering exactly as it would have.
+fn script_for_head_with(head: &str, failing: &[&str]) -> Value {
+    let Value::Array(mut entries) = script_for_head(head) else {
+        unreachable!()
+    };
+    for entry in &mut entries {
+        if entry["args"] == json!(failing) {
+            entry["exit"] = json!(1);
+            entry["stdout"] = json!("boom");
+        }
+    }
+    Value::Array(entries)
+}
+
+/// A detail fetch that fails at the very same head the last one succeeded
+/// on, through the real forge fetch path — `read_row`'s own `Err` branch —
+/// marks the comment evidence `evidence_ok: false`; the next fetch that
+/// actually succeeds again, still on that same head, marks it `true` once
+/// more. Neither move is visible to a head comparison alone, since the
+/// head itself never moves (031).
+#[tokio::test]
+async fn evidence_ok_tracks_a_real_fetchs_own_success_and_failure_at_the_same_head() {
+    let head = "a".repeat(40);
+    let Kept {
+        h, stub, id, repo, ..
+    } = kept_request(script_for_head(&head)).await;
+    assert!(h.launcher.live.get(&id).unwrap().evidence_ok);
+
+    // The next fetch fails to read the comment evidence at all — the
+    // detail entries themselves are gone — though the request's own read
+    // still succeeds, on the exact same head.
+    stub.reprogram(json!([
+        answer(&["auth", "status"], 0, ""),
+        answer(&["api", "user"], 0, "me"),
+        answer(&["pr", "create"], 0, URL),
+        answer(&["pr", "list"], 0, "[]"),
+        answer(&["pr", "view"], 0, &pull("OPEN", &head).to_string()),
+    ]));
+    h.state.forge_poll.wake(&repo);
+    eventually(TIMEOUT, "evidence_ok to drop", async || {
+        h.launcher.live.get(&id).is_some_and(|l| !l.evidence_ok)
+    })
+    .await;
+    assert_eq!(
+        h.launcher.live.get(&id).map(|l| l.pull.head_sha),
+        Some(head.clone()),
+        "the head itself never moved"
+    );
+
+    // A later fetch succeeds again, on the same head: evidence_ok
+    // recovers.
+    stub.reprogram(script_for_head(&head));
+    fetch_again(&h, &stub, &repo).await;
+    eventually(TIMEOUT, "evidence_ok to recover", async || {
+        h.launcher.live.get(&id).is_some_and(|l| l.evidence_ok)
+    })
+    .await;
+}
+
+/// A failure of the outer list itself — `fetch`'s own `Err` branch,
+/// before any row is ever read — withdraws every row it already holds
+/// cached evidence for, through the real forge fetch path, the same way
+/// a detail fetch failing does: a row's evidence is no less unconfirmed
+/// for the whole round having failed before its own read ever ran. A
+/// later fetch that succeeds again restores it.
+#[tokio::test]
+async fn an_outer_list_failure_withdraws_the_rows_evidence() {
+    let head = "a".repeat(40);
+    let Kept {
+        h, stub, id, repo, ..
+    } = kept_request(script_for_head(&head)).await;
+    assert!(h.launcher.live.get(&id).unwrap().evidence_ok);
+
+    stub.reprogram(script_for_head_with(&head, &["pr", "list"]));
+    h.state.forge_poll.wake(&repo);
+    eventually(
+        TIMEOUT,
+        "evidence_ok to drop on an outer list failure",
+        async || h.launcher.live.get(&id).is_some_and(|l| !l.evidence_ok),
+    )
+    .await;
+
+    stub.reprogram(script_for_head(&head));
+    fetch_again(&h, &stub, &repo).await;
+    eventually(TIMEOUT, "evidence_ok to recover", async || {
+        h.launcher.live.get(&id).is_some_and(|l| l.evidence_ok)
+    })
+    .await;
+}
+
+/// A failure of the initial, listless read itself — `read_row`'s own
+/// lookup for a request the list missed, before `set_pull_evidence_failed`
+/// ever runs — withdraws its evidence through the real forge fetch path
+/// the same way a failed detail fetch does. A later fetch that succeeds
+/// again restores it.
+#[tokio::test]
+async fn a_direct_read_failure_withdraws_the_rows_evidence() {
+    let head = "a".repeat(40);
+    let Kept {
+        h, stub, id, repo, ..
+    } = kept_request(script_for_head(&head)).await;
+    assert!(h.launcher.live.get(&id).unwrap().evidence_ok);
+
+    stub.reprogram(script_for_head_with(&head, &["pr", "view"]));
+    h.state.forge_poll.wake(&repo);
+    eventually(
+        TIMEOUT,
+        "evidence_ok to drop on a direct read failure",
+        async || h.launcher.live.get(&id).is_some_and(|l| !l.evidence_ok),
+    )
+    .await;
+
+    stub.reprogram(script_for_head(&head));
+    fetch_again(&h, &stub, &repo).await;
+    eventually(TIMEOUT, "evidence_ok to recover", async || {
+        h.launcher.live.get(&id).is_some_and(|l| l.evidence_ok)
+    })
+    .await;
+}
+
+/// The request's own read, fully approved, every check green, and the
+/// forge reporting the head clear to merge: what a babysat request's
+/// readiness item needs beside its own `ready` report.
+fn ready_pull(head: &str) -> Value {
+    let mut ready = pull("OPEN", head);
+    ready["reviewDecision"] = json!("APPROVED");
+    ready["mergeStateStatus"] = json!("CLEAN");
+    ready["statusCheckRollup"] = json!([{"conclusion": "SUCCESS", "status": "COMPLETED"}]);
+    ready
+}
+
+/// `script_for_head`, with the request's own read given as `read` rather
+/// than built in: every other entry — the comments, the reviews, the
+/// threads, the checks and the comparison — stays the one a ready
+/// request needs, so only what `read` itself says about the request can
+/// differ between two scripts built this way.
+fn script_with_read(head: &str, read: &Value) -> Value {
+    let threads =
+        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
+    json!([
+        answer(&["auth", "status"], 0, ""),
+        answer(&["api", "user"], 0, "me"),
+        answer(&["pr", "create"], 0, URL),
+        answer(&["pr", "list"], 0, "[]"),
+        answer(&["pr", "view"], 0, &read.to_string()),
+        answer(&["api", "repos/acme/widgets/pulls/1/comments"], 0, "[]"),
+        answer(&["api", "repos/acme/widgets/issues/1/comments"], 0, "[]"),
+        answer(&["api", "repos/acme/widgets/pulls/1/reviews"], 0, "[]"),
+        answer(&["api", "graphql"], 0, &threads.to_string()),
+        answer(
+            &[
+                "api",
+                &format!("repos/acme/widgets/commits/{head}/check-runs")
+            ],
+            0,
+            r#"{"check_runs": []}"#
+        ),
+        answer(
+            &["api", &format!("repos/acme/widgets/compare/main...{head}")],
+            0,
+            r#"{"behind_by": 0}"#
+        ),
+    ])
+}
+
+/// `script_for_head`, with the request's own read fully approved, every
+/// check green, and the forge reporting the head clear to merge: what a
+/// babysat request's readiness item needs beside its own `ready` report.
+fn script_ready_for_head(head: &str) -> Value {
+    script_with_read(head, &ready_pull(head))
+}
+
+/// `script_ready_for_head`, with the one entry whose args start with
+/// `failing` made to fail outright.
+fn script_ready_for_head_with(head: &str, failing: &[&str]) -> Value {
+    let Value::Array(mut entries) = script_ready_for_head(head) else {
+        unreachable!()
+    };
+    for entry in &mut entries {
+        if entry["args"] == json!(failing) {
+            entry["exit"] = json!(1);
+            entry["stdout"] = json!("boom");
+        }
+    }
+    Value::Array(entries)
+}
+
+/// A direct, route-level read through `GET /v1/pull-requests/{id}` moves
+/// the readiness item itself, not only `evidence_ok`: a failed read there
+/// withdraws it from a fresh `attention::collect`, and publishes
+/// `pull_requests_changed`, the one thing that reaches an existing
+/// watcher — a `WakeOnly` poll worker, left untouched throughout, could
+/// never repair that disagreement on its own. The recovery brings the
+/// item back and publishes the same way.
+#[tokio::test]
+async fn a_route_level_read_failure_withdraws_the_readiness_item_and_its_recovery_restores_it() {
+    use ariadne_api::stream::DomainEvent;
+    let head = "a".repeat(40);
+    let Kept {
+        h,
+        stub,
+        agent,
+        id,
+        repo,
+        ..
+    } = kept_request(script_ready_for_head(&head)).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    fetch_again(&h, &stub, &repo).await;
+
+    let _: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/report"),
+                &agent.id,
+                json!({"ready": true, "head_sha": head}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    let items = || async {
+        ariadne_daemon::attention::collect(&h.store, &h.launcher)
+            .await
+            .items
+    };
+    eventually(TIMEOUT, "the readiness item", async || {
+        !items().await.is_empty()
+    })
+    .await;
+
+    let mut events = h.bus.subscribe();
+    let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == repo);
+
+    stub.reprogram(script_ready_for_head_with(&head, &["pr", "view"]));
+    let error = h
+        .error(
+            crate::common::get(&format!("/v1/pull-requests/{id}")),
+            StatusCode::BAD_GATEWAY,
+        )
+        .await;
+    assert!(!error.error.message.is_empty());
+    next_event(&mut events, moved).await;
+    assert!(
+        items().await.is_empty(),
+        "a fresh attention read withholds the item once the route's own read failed"
+    );
+
+    stub.reprogram(script_ready_for_head(&head));
+    let _: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
+    next_event(&mut events, moved).await;
+    assert!(!items().await.is_empty(), "the recovery restores it");
+}
+
+/// A direct, route-level read that succeeds outright, same as the one
+/// before it, but reads the approval dismissed: `evidence_ok` stays
+/// `true` on both reads, so comparing only that flag would miss this
+/// transition entirely. Comparing the fingerprint of everything the
+/// readiness item depends on catches it all the same, withdraws the
+/// item, and publishes `pull_requests_changed` — held in `WakeOnly`
+/// throughout, so nothing but this direct read could have told anyone.
+#[tokio::test]
+async fn a_successful_route_level_read_withdraws_the_readiness_item_when_approval_is_dismissed() {
+    use ariadne_api::stream::DomainEvent;
+    let head = "a".repeat(40);
+    let Kept {
+        h,
+        stub,
+        agent,
+        id,
+        repo,
+        ..
+    } = kept_request(script_ready_for_head(&head)).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    fetch_again(&h, &stub, &repo).await;
+
+    let _: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/report"),
+                &agent.id,
+                json!({"ready": true, "head_sha": head}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    let items = || async {
+        ariadne_daemon::attention::collect(&h.store, &h.launcher)
+            .await
+            .items
+    };
+    eventually(TIMEOUT, "the readiness item", async || {
+        !items().await.is_empty()
+    })
+    .await;
+
+    let mut events = h.bus.subscribe();
+    let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == repo);
+
+    let mut dismissed = ready_pull(&head);
+    dismissed["reviewDecision"] = json!("");
+    stub.reprogram(script_with_read(&head, &dismissed));
+    let _: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
+    assert!(
+        h.launcher.live.get(&id).unwrap().evidence_ok,
+        "the read succeeded outright; evidence_ok never moved"
+    );
+    next_event(&mut events, moved).await;
+    assert!(
+        items().await.is_empty(),
+        "the dismissed approval withdraws the item although evidence_ok stayed true throughout"
+    );
+}
+
+/// A direct, route-level read that is this request's very first —
+/// `LivePulls` holds nothing of it yet, the way a restart or an outer
+/// list failure before the poll's own first read would leave it, while
+/// the store's own `ready` claim already stands — still publishes once
+/// it creates the readiness item out of nothing: `attention::items`
+/// skips a row the cache holds no evidence for at all (`live::of_row`),
+/// so the very first successful read can turn an absent item into a
+/// present one, which an existing watcher has no way to learn of on its
+/// own under `WakeOnly`. A repeated, identical read after that publishes
+/// nothing more.
+#[tokio::test]
+async fn a_first_successful_route_level_read_creates_the_readiness_item_and_publishes_it() {
+    use ariadne_api::stream::DomainEvent;
+    let head = "a".repeat(40);
+    let Kept {
+        h,
+        stub,
+        agent,
+        id,
+        repo,
+        ..
+    } = kept_request(script_ready_for_head(&head)).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    fetch_again(&h, &stub, &repo).await;
+
+    let _: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/report"),
+                &agent.id,
+                json!({"ready": true, "head_sha": head}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    let items = || async {
+        ariadne_daemon::attention::collect(&h.store, &h.launcher)
+            .await
+            .items
+    };
+    eventually(TIMEOUT, "the readiness item", async || {
+        !items().await.is_empty()
+    })
+    .await;
+
+    // A restart, or an outer list failure before the poll's own first
+    // read, leaves the cache holding nothing of this row, though the
+    // store's own `ready` claim stands untouched.
+    h.launcher.live.remove(&id);
+    assert!(
+        items().await.is_empty(),
+        "a fresh attention read sees no item with nothing cached"
+    );
+
+    let mut events = h.bus.subscribe();
+    let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == repo);
+
+    let _: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
+    next_event(&mut events, moved).await;
+    assert!(
+        !items().await.is_empty(),
+        "the first successful read creates the item"
+    );
+
+    // The same read again changes nothing: no second publish.
+    let _: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
+    assert!(
+        tokio::time::timeout(QUIET, next_event(&mut events, moved))
+            .await
+            .is_err(),
+        "a repeated, unchanged read publishes nothing more"
+    );
+}
+
+/// A push lands, through the real forge fetch path, between the agent's
+/// own read of the request and its `ready` report: the report must still
+/// bind to the head the agent actually read, not to whatever the daemon's
+/// own cache has moved on to by the time the call lands (031). Confirming
+/// readiness for a revision the agent never actually inspected would let
+/// a stale confirmation pass for a push it never saw.
+#[tokio::test]
+async fn a_ready_report_binds_the_head_the_agent_actually_read_not_a_later_push() {
+    let old_head = "a".repeat(40);
+    let new_head = "b".repeat(40);
+    let Kept {
+        h,
+        stub,
+        agent,
+        id,
+        repo,
+        ..
+    } = kept_request(script_for_head(&old_head)).await;
+    // The agent's own read: the request is on the old head.
+    assert_eq!(
+        h.launcher.live.get(&id).map(|l| l.pull.head_sha),
+        Some(old_head.clone())
+    );
+
+    // A push lands before the agent gets to report: the next fetch reads
+    // the request whole, on its new head.
+    stub.reprogram(script_for_head(&new_head));
+    fetch_again(&h, &stub, &repo).await;
+    eventually(TIMEOUT, "the cache to read the pushed head", async || {
+        h.launcher.live.get(&id).map(|l| l.pull.head_sha) == Some(new_head.clone())
+    })
+    .await;
+
+    // The agent reports ready on the head it actually read — the old
+    // one, never the pushed one it never saw.
+    let dto: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/report"),
+                &agent.id,
+                json!({"ready": true, "head_sha": old_head}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(dto["ready"], true);
+    let row = h.store.get_pull_request(&id).await.unwrap();
+    assert_eq!(
+        row.ready_head_sha.as_deref(),
+        Some(old_head.as_str()),
+        "the report binds to the head the agent read, not the cache's current one"
+    );
 }
 
 /// A merge done on the forge while the `pr` agent is down ends the task on

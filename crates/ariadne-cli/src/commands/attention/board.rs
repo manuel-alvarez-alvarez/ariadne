@@ -224,7 +224,7 @@ mod tests {
     /// A pull request session ready to merge is listed under the pull
     /// requests, by the request's title.
     #[test]
-    fn a_pull_request_ready_to_merge_is_listed_by_its_title() {
+    fn a_pull_request_sessions_own_waiting_user_raises_no_row_of_its_own_on_this_board() {
         let session = SessionEntryDto {
             goal_id: None,
             task_id: None,
@@ -233,11 +233,11 @@ mod tests {
             ..flagged("01PRS", "01GOAL", AttentionReason::WaitingUser)
         };
         let attention = group(Vec::new(), Vec::new(), vec![session], false);
-        assert_eq!(heading(&attention.goals[0]), "Pull requests");
-        let rows = rows(&attention.goals[0], &HashMap::new(), chrono::Utc::now());
-        assert_eq!(rows[0][0], "01PRS");
-        assert_eq!(rows[0][1], "pull request Fix widgets");
-        assert_eq!(rows[0][2], "ready to merge");
+        assert_eq!(
+            attention.count, 0,
+            "the pull_request attention producer reads the forge's own \
+             evidence against the request's claim instead (029)"
+        );
     }
 
     #[test]

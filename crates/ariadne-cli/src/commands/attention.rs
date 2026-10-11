@@ -46,12 +46,6 @@ enum Reason {
     WaitingPermission,
     WaitingInput,
     WaitingUser,
-    /// A pull request session's `waiting_user` (026): every approval and
-    /// check of the request reads green, and the merge is the user's.
-    ReadyToMerge,
-    /// A reviewer pull request session's `waiting_user` (029): its review
-    /// is posted, and the approval is the user's to give.
-    ReviewPosted,
     AgentError,
     Disconnected,
     Exhausted,
@@ -66,8 +60,6 @@ impl Reason {
             Reason::WaitingPermission => "waiting for permission",
             Reason::WaitingInput => "waiting for input",
             Reason::WaitingUser => "waiting for you",
-            Reason::ReadyToMerge => "ready to merge",
-            Reason::ReviewPosted => "review posted, approve yourself",
             Reason::AgentError => "agent error",
             Reason::Disconnected => "disconnected",
             Reason::Exhausted => "exhausted",
@@ -123,16 +115,15 @@ pub(crate) fn reason_label(reason: AttentionReason) -> &'static str {
 /// whether it is still worth a person's time is `GET /v1/attention`'s own
 /// call, not a flag read here. A `quota` item carries the session's own
 /// subject already (`recovery_items_section`), so folding it into this
-/// board's rows would say the same thing twice.
+/// board's rows would say the same thing twice. A pull request session's
+/// `waiting_user` is the same (029): the `pull_request` attention
+/// producer reads the forge's own evidence against the request's claim,
+/// rather than this board re-deriving a reason from the bare flag a review
+/// posted or a ready report alone used to raise.
 fn session_reason(session: &SessionEntryDto) -> Option<Reason> {
     match session.attention_reason {
         Some(AttentionReason::Exhausted) => None,
-        Some(AttentionReason::WaitingUser) if session.pull_request_id.is_some() => {
-            match session.seat {
-                Some(ariadne_core::Seat::Reviewer) => Some(Reason::ReviewPosted),
-                _ => Some(Reason::ReadyToMerge),
-            }
-        }
+        Some(AttentionReason::WaitingUser) if session.pull_request_id.is_some() => None,
         reason => reason.map(Into::into),
     }
 }
@@ -557,27 +548,23 @@ pub(crate) mod tests {
             None
         );
 
-        // A pull request session waiting on the user has a request that is
-        // the user's to merge.
-        let ready = SessionEntryDto {
+        // A pull request session's own `waiting_user` raises nothing of
+        // its own any more: the `pull_request` attention producer reads
+        // the forge's own evidence against the request's claim instead
+        // (029), rather than this board re-deriving a reason from the bare
+        // flag.
+        let pull_request_session = SessionEntryDto {
             goal_id: None,
             task_id: None,
             pull_request_id: Some("01PR".into()),
             ..flagged("01S", "01GA", AttentionReason::WaitingUser)
         };
-        assert_eq!(session_reason(&ready), Some(Reason::ReadyToMerge));
-        assert_eq!(Reason::ReadyToMerge.label(), "ready to merge");
-        // A reviewer session waiting on the user has posted its review, and
-        // the approval is the user's to give (029).
-        let reviewed = SessionEntryDto {
+        assert_eq!(session_reason(&pull_request_session), None);
+        let reviewer_session = SessionEntryDto {
             seat: Some(ariadne_core::Seat::Reviewer),
-            ..ready
+            ..pull_request_session
         };
-        assert_eq!(session_reason(&reviewed), Some(Reason::ReviewPosted));
-        assert_eq!(
-            Reason::ReviewPosted.label(),
-            "review posted, approve yourself"
-        );
+        assert_eq!(session_reason(&reviewer_session), None);
 
         // Dead with nothing owed to it — the daemon deliberately raises no
         // flag for a reviewer that exited after voting — so it is not here.

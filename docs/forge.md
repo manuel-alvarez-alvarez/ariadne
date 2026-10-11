@@ -103,29 +103,38 @@ too, and nobody keeps it.
 
 ## What a `pr-reviewer` session does
 
-A request that asks for your review, once it leaves draft, gets a session
-of its own, staffed on the review pin, in a worktree detached at the
-request's head rather than a branch of its own. The daemon wakes it with the
-request, then at the next reconcile after a later push or a reply in a
-thread it opened — told at once, with no wait for activity to settle. A push
-also waits for the session to go idle before the worktree moves to the new
-head; a reply alone moves no worktree, so it needs no idle session.
+A request that asks for your review, once it leaves draft, on a repository
+whose own review pin names a model, gets a session of its own, staffed on
+that pin, in a worktree detached at the request's head rather than a branch
+of its own. The daemon wakes it with the request, then at the next
+reconcile after a later push or a reply in a thread it opened — told at
+once, with no wait for activity to settle. A push also waits for the
+session to go idle before the worktree moves to the new head; a reply alone
+moves no worktree, so it needs no idle session.
 
-You can ask for the same on a request of your own: open it in the desktop
-app's Pull requests tab and press **Start review** in its panel. The dialog
-asks what the reviewer runs on — a model and an effort, not the
-repository's review pin — and which skills it loads: `pr-reviewer`, its
-own playbook, is always on and is all it starts with; any other skill can
-join it. The
+A repository with no review pin of its own starts nothing automatically for
+a request that asks for your review — but the request is still tracked, and
+Needs attention offers **Review needed**, naming the repository and the
+request: nothing else is ever going to start a session for it, so you start
+one by hand. You can ask for the same on a request of your own, too: open
+either kind of request in the desktop app's Pull requests tab and press
+**Start review** in its panel. The dialog asks what the reviewer runs on —
+a model and an effort, not the repository's review pin — and which skills
+it loads: `pr-reviewer`, its own playbook, is always on and is all it starts
+with; any other skill can join it. The
 same is `PUT /v1/repositories/<repo-id>/pull-requests/<number>/ariadne-review` with `{"asked": true,
-"model": "<agent:model>", "effort": "<effort>", "skills": [...]}`. That
-session hears of pushes alone — the comments are the keeping agent's news —
-and its review is always posted as a comment, since no forge takes a change
-request from a request's own author. Starting it closes the dialog and, once the daemon
-has the agent up, opens that session's console in the panel. **Stop
-review** takes it down. The
-panel's Sessions tab lists the review session, and the task's keeping agent
-where a task opened the request; picking one opens its console in the panel.
+"model": "<agent:model>", "effort": "<effort>", "skills": [...]}` — refused
+with 409 only where the repository already pins a review model of its own,
+since that request already has a review running on it. On a request of
+yours that session hears of pushes alone — the comments are the keeping
+agent's news; on an incoming request it hears of pushes and replies, the
+same as the automatically staffed kind — and its review is always posted as
+a comment where the request is your own, since no forge takes a change
+request from a request's own author. Starting it closes the dialog and,
+once the daemon has the agent up, opens that session's console in the
+panel. **Stop review** takes it down. The panel's Sessions tab lists the
+review session, and the task's keeping agent where a task opened the
+request; picking one opens its console in the panel.
 
 It posts its findings at one of three priorities:
 
@@ -166,15 +175,27 @@ thread a session resolves is a review thread it opened itself: on a later
 round, once a push fixed that finding, it replies and resolves it. Every
 thread anyone else opened stays yours to resolve.
 
-## Readiness and review flags on `ariadne attention`
+## Needs attention: an unassigned review and a confirmed-ready request
 
-An agent that just reported its request ready shows in `ariadne attention`
-and the desktop app's attention strip as waiting on you — every required
-approval and check reads green, and the merge is yours. A review session that has just posted shows
-as "review posted, approve yourself" in the CLI and **Review posted,
-approve yourself** in the desktop app — the review needs nothing further,
-but your approval does. Either flag opens that session's console, the same
-as any other row on `ariadne attention`.
+Neither a posted review nor a `pr` agent's own ready report notifies you by
+itself: a `pr-reviewer` session finishing its review raises nothing, and a
+`ready` report is a claim, not confirmed evidence. Two things reach Needs
+attention instead, in `ariadne attention` and the desktop app's attention
+strip, each naming the request's title, its repository, the one action that
+clears it and how long it has waited, and each linking to the request's own
+panel:
+
+- **Review needed** — a request that asks for your review, on a repository
+  with no review pin of its own: see the previous section for starting one
+  by hand.
+- **Ready to merge** — a request a `pr` agent keeps, once its own `ready`
+  report is actually backed up by the forge's own evidence for the request's
+  current head: a current approval, every review thread actually resolved —
+  a reply alone is not enough — every check green, and the forge's own
+  confirmation the head can be merged now. A later push, a reopened comment
+  or an approval the forge no longer counts drops the item until the agent
+  reports ready again, on the new head. The merge itself is still always
+  yours: Ariadne gives no approval.
 
 ## Webhooks: a delivery wakes the daemon, the daemon wakes the agent
 

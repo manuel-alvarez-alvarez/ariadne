@@ -325,6 +325,18 @@ CREATE TABLE pull_requests (
     -- own spawn-retry exhaustion — the same distinction, and for the same
     -- reason, as `goals.orchestrator_given_up_wedged`.
     reviewer_given_up_wedged INTEGER NOT NULL DEFAULT 0,
+    -- When `ready` last moved from false to true: the `pull_request`
+    -- attention producer's own `since` for the readiness item it raises,
+    -- distinct from `updated_at`, which every fetch moves regardless of
+    -- `ready`. Cleared the moment `ready` moves back to false.
+    ready_confirmed_at    TEXT,
+    -- The head the babysitting task reported `ready` on, stamped beside
+    -- `ready_confirmed_at`: the head `pull_requests`'s own live read
+    -- carried at that exact report, read fresh every time rather than
+    -- latched once. A later commit moves the live head past this one, and
+    -- the readiness item reads that mismatch as the claim's own revision
+    -- gone stale, whatever the forge's own approval or checks still say.
+    ready_head_sha        TEXT,
     UNIQUE (repository_id, number)
 );
 

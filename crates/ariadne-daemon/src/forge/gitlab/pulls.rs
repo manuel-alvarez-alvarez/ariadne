@@ -92,6 +92,20 @@ impl Pull {
                 _ => "none",
             }
             .into(),
+            // GitLab's own `detailed_merge_status` (029): `mergeable` is
+            // the only status that says the head can be merged now; an
+            // unevaluated status, or a read naming none at all — an
+            // older GitLab, or a CLI version this field is absent from —
+            // is the forge still computing it, or simply not telling us,
+            // never read as clean. Every other named status — failing
+            // checks, unresolved discussions, missing approval, a denied
+            // policy and the like — blocks a merge right now.
+            mergeable: match self.detailed_merge_status.as_str() {
+                "mergeable" => "clean",
+                "" | "unchecked" | "checking" | "preparing" | "ci_still_running" => "unknown",
+                _ => "blocked",
+            }
+            .into(),
             updated_at: self.updated_at.unwrap_or_else(|| self.created_at.clone()),
             opened_at: self.created_at,
             merge_sha,
@@ -228,5 +242,73 @@ impl Gitlab {
             .into();
         }
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Pull;
+    use serde_json::json;
+
+    /// An `mr list`/`mr view` read, provider-shaped, with
+    /// `detailed_merge_status` the one field under test — GitLab's own
+    /// named statuses (GitLab REST API, merge request detailed merge
+    /// status), not a guess from the name alone.
+    fn provider_shaped(detailed_merge_status: &str) -> Pull {
+        serde_json::from_value(json!({
+            "iid": 7,
+            "project_id": 1,
+            "source_project_id": 2,
+            "web_url": "https://gitlab.com/group/sub/widgets/-/merge_requests/7",
+            "title": "Fix widgets",
+            "author": {"username": "someone"},
+            "state": "opened",
+            "draft": false,
+            "source_branch": "fix",
+            "target_branch": "main",
+            "sha": "abc123",
+            "detailed_merge_status": detailed_merge_status,
+            "created_at": "2026-10-01T00:00:00Z",
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn mergeable_reads_every_detailed_merge_status_by_its_documented_meaning() {
+        for (status, expected) in [
+            ("mergeable", "clean"),
+            ("unchecked", "unknown"),
+            ("checking", "unknown"),
+            ("preparing", "unknown"),
+            ("ci_still_running", "unknown"),
+            ("not_approved", "blocked"),
+            ("requested_changes", "blocked"),
+            ("discussions_not_resolved", "blocked"),
+            ("broken_status", "blocked"),
+        ] {
+            let pull = provider_shaped(status);
+            assert_eq!(Pull::normalized(pull).mergeable, expected, "{status}");
+        }
+    }
+
+    /// A read naming none at all — an older GitLab, or a field this CLI
+    /// version does not answer — is unknown mergeability, never a guessed
+    /// `clean`.
+    #[test]
+    fn a_read_naming_no_detailed_merge_status_is_unknown() {
+        let value = json!({
+            "iid": 7,
+            "project_id": 1,
+            "web_url": "https://gitlab.com/group/sub/widgets/-/merge_requests/7",
+            "title": "Fix widgets",
+            "author": {"username": "someone"},
+            "state": "opened",
+            "source_branch": "fix",
+            "target_branch": "main",
+            "sha": "abc123",
+            "created_at": "2026-10-01T00:00:00Z",
+        });
+        let pull: Pull = serde_json::from_value(value).unwrap();
+        assert_eq!(Pull::normalized(pull).mergeable, "unknown");
     }
 }

@@ -5342,16 +5342,43 @@ async fn comment_marks_are_claimed_once_released_whole_and_keep_the_review_mark(
 }
 
 /// The ready flag a session reports moves the row, and a repeated ready
-/// report says nothing moved.
+/// report on the same head says nothing moved. A later report of `true` on
+/// a different head moves the row again, even though `ready` itself was
+/// never reported `false` in between (031): the babysitting task may
+/// re-confirm readiness on a new head without an intervening `false`, and
+/// the stored head must move with it.
 #[tokio::test]
-async fn a_pull_request_reports_ready_once() {
+async fn a_pull_request_reports_ready_once_per_head() {
     let (store, _dir, row) = store_with_my_pull_request().await;
-    let (ready, moved) = store.set_pull_request_ready(&row.id, true).await.unwrap();
+    let (ready, moved) = store
+        .set_pull_request_ready(&row.id, true, Some("abc"))
+        .await
+        .unwrap();
     assert!(ready.ready && moved);
-    let (_, moved) = store.set_pull_request_ready(&row.id, true).await.unwrap();
-    assert!(!moved, "a repeat moves nothing");
-    let (ready, moved) = store.set_pull_request_ready(&row.id, false).await.unwrap();
+    assert_eq!(ready.ready_head_sha.as_deref(), Some("abc"));
+    let confirmed_at = ready.ready_confirmed_at.clone();
+    let (_, moved) = store
+        .set_pull_request_ready(&row.id, true, Some("abc"))
+        .await
+        .unwrap();
+    assert!(!moved, "a repeat on the same head moves nothing");
+    let (ready, moved) = store
+        .set_pull_request_ready(&row.id, true, Some("def"))
+        .await
+        .unwrap();
+    assert!(moved, "a later head moves it again");
+    assert_eq!(ready.ready_head_sha.as_deref(), Some("def"));
+    assert_eq!(
+        ready.ready_confirmed_at, confirmed_at,
+        "ready never moved from false, so its own since stays the first one's"
+    );
+    let (ready, moved) = store
+        .set_pull_request_ready(&row.id, false, None)
+        .await
+        .unwrap();
     assert!(!ready.ready && moved);
+    assert_eq!(ready.ready_head_sha, None);
+    assert_eq!(ready.ready_confirmed_at, None);
 }
 
 /// A reviewer row keeps the head its session last reviewed, and says once

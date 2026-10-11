@@ -308,8 +308,8 @@ impl super::Scheduler {
         if launched {
             // Whatever the user is owed comes back up with the agent
             // ([`Self::keep_waiting_user`]): starting the agent again is the
-            // recovery for the agent, and no answer at all to a person who
-            // still has a request to merge.
+            // recovery for the agent, and no answer at all to a message
+            // still waiting on them.
             self.keep_waiting_user(&session, None).await?;
             let resume = if sessions.iter().any(|s| s.id == session.id) {
                 resume
@@ -433,50 +433,27 @@ impl super::Scheduler {
     /// Put back on the agent that came up what a human still owes its work.
     ///
     /// `waiting_user` is nobody's flag but the user's: it says a person owes
-    /// this task something — a message written to them, a request that is
-    /// theirs to merge — and putting the agent underneath back on its feet
-    /// answers none of it. Both ways of doing that lose it all the same: a
-    /// resume revives the row through `restart_session`, which drops its
-    /// attention with everything else, and a spawn that had to start afresh
-    /// leaves the flag on a row nobody looks at any more
-    /// (`clear_superseded_attention`). So it goes back on the session that
-    /// came up.
+    /// this task something — a message written to them — and putting the
+    /// agent underneath back on its feet answers none of it. Both ways of
+    /// doing that lose it all the same: a resume revives the row through
+    /// `restart_session`, which drops its attention with everything else,
+    /// and a spawn that had to start afresh leaves the flag on a row nobody
+    /// looks at any more (`clear_superseded_attention`). So it goes back on
+    /// the session that came up. `carried` is what the row that went down
+    /// was flagged with, for the caller that has that row.
     ///
-    /// Two ways to know it is owed, and either is enough. `carried` is what
-    /// the row that went down was flagged with, for the caller that has that
-    /// row. The task is the other, and the one that answers where the flag
-    /// was already lost: a task whose open request last read ready to merge
-    /// has handed the merge to a human (030), and no restart of its agent
-    /// merges it for them.
+    /// A request that last read ready to merge is deliberately not read
+    /// here any more: whether it still is is the `pull_request` attention
+    /// producer's own call, read fresh off the forge's own evidence every
+    /// time (031) rather than this session's bare `ready` flag, which on
+    /// its own says nothing about a current approval, an open review
+    /// comment, a failing check or an unconfirmed mergeability.
     pub(super) async fn keep_waiting_user(
         &self,
         back: &AgentSession,
         carried: Option<AttentionReason>,
     ) -> anyhow::Result<()> {
-        let mut owed = carried.is_some_and(|reason| reason.is_for_the_user());
-        if !owed
-            && back.seat() == Some(Seat::Agent)
-            && let Some(task_id) = back.task_id.as_deref()
-        {
-            let task = self.store.get_task(task_id).await?;
-            if task.status() == TaskStatus::InProgress {
-                owed = self
-                    .store
-                    .pull_request_of_task(task_id)
-                    .await?
-                    // A row is a request Ariadne still works on: open, or ended
-                    // with its work not taken down yet; the forge says which.
-                    .is_some_and(|pull| {
-                        pull.ready
-                            && self
-                                .launcher
-                                .live
-                                .get(&pull.id)
-                                .is_none_or(|live| live.pull.state == "open")
-                    });
-            }
-        }
-        if owed {
+        if carried.is_some_and(|reason| reason.is_for_the_user()) {
             info!(session = %back.id, seat = ?back.seat, "the agent is back on its feet and the user is still owed, raising it again");
             self.store
                 .set_session_attention(&back.id, AttentionReason::WaitingUser)

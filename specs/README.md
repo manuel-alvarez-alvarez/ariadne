@@ -39,6 +39,6 @@ test that proves it. Conventions for writing and changing one are in
 | 026 | [Pull requests](026-pull-requests.md) | request identity, three births, fetch modes, ledger, the request session and its news, CLI, and screen |
 | 027 | [Webhooks and tunnel](027-webhooks-and-tunnel.md) | separate signed ingress, hook lifecycle, public URL handle, fetch modes, and the tunnel with its switch |
 | 028 | [Issues and goals](028-issues-and-goals.md) | live forge issues and goals created from them |
-| 029 | [Reviewing a request](029-reviewing-a-request.md) | the reviewer session on a request that asks for the user's review, its detached worktree, its news, one review by priority, and no approval |
+| 029 | [Reviewing a request](029-reviewing-a-request.md) | the reviewer session on a request that asks for the user's review, its detached worktree, its news, one review by priority, asking by hand on an unpinned repository, and no approval |
 | 030 | [Workflows](030-workflows.md) | the workflow every goal runs on: the document, the catalog, the routes, one agent per column, step moves and gates, and the `pr` column |
-| 031 | [Needs attention](031-needs-attention.md) | the shared item shape, `GET /v1/attention`, the producer registry, and the recovery producer: quota, resource and configuration blockers |
+| 031 | [Needs attention](031-needs-attention.md) | the shared item shape, `GET /v1/attention`, the producer registry, the recovery producer, and the pull-request producer: an unassigned review request and a confirmed-ready request to merge |
