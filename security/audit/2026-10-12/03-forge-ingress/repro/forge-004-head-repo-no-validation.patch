@@ -1,0 +1,79 @@
+diff --git a/crates/ariadne-daemon/src/gitwt.rs b/crates/ariadne-daemon/src/gitwt.rs
+index 81d84f49..cdf7fb70 100644
+--- a/crates/ariadne-daemon/src/gitwt.rs
++++ b/crates/ariadne-daemon/src/gitwt.rs
+@@ -446,3 +446,74 @@ impl GitManager {
+         self.git(repo, &["diff", &before, commit]).await
+     }
+ }
++
++#[cfg(test)]
++mod forge_004_reproduction {
++    //! FORGE-004 reproduction (temporary, not part of the application's
++    //! test suite): `fetch_head_of` applies no validation at all to
++    //! `from` — not a host check, not even a check that it looks like a
++    //! URL. `launcher.rs::review_worktree` passes `pull.head_repo`
++    //! straight through to it whenever the local checkout lacks the
++    //! request's head commit, with no `Remote::parse`/host-matching step
++    //! anywhere in that path (unlike `keeper_remote`, which does call
++    //! `Remote::rewrite` and only falls back to the raw string on a parse
++    //! failure). `head_repo` itself is taken verbatim from the forge
++    //! API's own field (`github/pulls.rs::normalized`,
++    //! `gitlab/pulls.rs::normalized`) with no host check either. This
++    //! test proves the absence of a guard using a harmless local
++    //! "stand-in fork" — a second local repository, not a real external
++    //! host — rather than attempting any network connection.
++    use super::GitManager;
++    use std::process::Command;
++
++    fn sh(dir: &std::path::Path, cmd: &str) -> String {
++        let out = Command::new("sh")
++            .arg("-c")
++            .arg(cmd)
++            .current_dir(dir)
++            .output()
++            .unwrap();
++        assert!(
++            out.status.success(),
++            "{cmd}: {}",
++            String::from_utf8_lossy(&out.stderr)
++        );
++        String::from_utf8_lossy(&out.stdout).trim().to_string()
++    }
++
++    #[tokio::test]
++    async fn fetch_head_of_accepts_any_string_as_from_with_no_host_or_scheme_check() {
++        let tmp = tempfile::tempdir().unwrap();
++        // The victim: the registered checkout `review_worktree` would run
++        // this fetch inside.
++        let victim = tmp.path().join("victim");
++        std::fs::create_dir(&victim).unwrap();
++        sh(&victim, "git init -q -b main");
++        sh(&victim, "git -c user.email=a@a -c user.name=a commit -q --allow-empty -m init");
++
++        // The "fork": stands in for a forge response's `head_repo`. It is
++        // not a GitHub/GitLab URL at all, not even a URL scheme — proving
++        // `fetch_head_of` does not require, or check, either.
++        let fork = tmp.path().join("attacker-controlled-fork");
++        std::fs::create_dir(&fork).unwrap();
++        sh(&fork, "git init -q -b evil-branch");
++        sh(&fork, "git -c user.email=e@e -c user.name=e commit -q --allow-empty -m attacker-commit");
++        let attacker_commit = sh(&fork, "git rev-parse HEAD");
++
++        let git = GitManager;
++        // This is the exact call `review_worktree` makes, with `from` set
++        // to the raw string a forge response's `head_repo` would carry —
++        // here, deliberately, something that is not a URL, to show the
++        // function imposes no shape requirement on it at all.
++        git.fetch_head_of(&victim, &fork.display().to_string(), "evil-branch")
++            .await
++            .expect("fetch_head_of accepted an arbitrary local path with no host check");
++
++        let fetched = sh(&victim, "git rev-parse FETCH_HEAD");
++        assert_eq!(
++            fetched, attacker_commit,
++            "the victim checkout's FETCH_HEAD now holds the stand-in fork's own commit, \
++             fetched from a string that named no host at all"
++        );
++    }
++}
