@@ -50,7 +50,8 @@ turn.
 - Never merge the request. Never amend, rebase or force a push.
 - Commit only what a comment or a failed check asks for.
 - Leave every thread open.
-- Post no new thread, summary or top-level comment.
+- Post no new thread, summary or top-level comment, except step 3's
+  reply.
 - Read and write the request only with your session's tools. When a tool
   fails, report it and post nothing another way.
 

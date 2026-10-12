@@ -1276,7 +1276,7 @@ mod tests {
             "Else reply `Not changed: <why>.`",
             "Commit only what a comment or a failed check asks for.",
             "Leave every thread open.",
-            "Post no new thread, summary or top-level comment.",
+            "Post no new thread, summary or top-level comment, except step 3's reply.",
         ] {
             assert!(doc.contains(rule), "the pr-babysit skill has no {rule}");
         }
