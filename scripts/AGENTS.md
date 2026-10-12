@@ -28,6 +28,20 @@ in the root [`AGENTS.md`](../AGENTS.md).
   repository root, so the hooks under `.githooks/` run; a repeat run that
   finds the setting already there changes nothing. See the root
   [`AGENTS.md`](../AGENTS.md#checks).
+- `release-notes.sh` — run as `scripts/release-notes.sh TAG BODY_FILE
+  CHECKSUMS_FILE...` by `release.yml`'s `notes` job, after every target has
+  built. Prints, to stdout, an install section and an asset table (one row
+  per line of every checksums file: a download link, the target and the
+  SHA-256 digest) and a compare link to the previous tag when one is known
+  from `BODY_FILE` or from `git`, wrapped in a pair of HTML comment markers,
+  followed by `BODY_FILE`'s own release-please notes unchanged. Idempotent:
+  a re-run on its own output replaces only what is between the markers,
+  never stacking a second header. Reads `BODY_FILE` as `\r\n` or `\n`, and
+  refuses a body that holds one marker but not the other rather than
+  guessing at it. owner/repo for the asset links comes from the `origin`
+  remote, the same way `install.sh` resolves a release repository
+  (including its check that the parsed owner and name are non-empty),
+  falling back to `GITHUB_REPOSITORY`.
 - `tests/install-command.sh` — the stand-in for every external tool
   (`gh`, `git`, `tar`, `ldconfig`, `systemctl`, `security`, `codesign`,
   `launchctl`, …) the installer boundary tests put on `PATH`, driven by the
@@ -112,8 +126,8 @@ shellcheck .githooks/*
 case above, since it exercises the systemd and GNOME paths `ci.yml` does not
 cover. `tests/install-sign-macos.sh`, `tests/install-service-macos.sh` and
 `tests/make-signing-cert-scenarios.sh` are the same, on macOS, for each of
-their cases. `tests/githooks.sh` is the same, for each of its cases, on any
-OS. `tests/install-command.sh`,
+their cases. `tests/githooks.sh` and `tests/release-notes.sh` are the same,
+for each of their cases, on any OS. `tests/install-command.sh`,
 `tests/make-signing-cert-command.sh` and `tests/githooks-command.sh` need no
 direct invocation; the scenario scripts put them on `PATH` for the tools they
 stand in for.

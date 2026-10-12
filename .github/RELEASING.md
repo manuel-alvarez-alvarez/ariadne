@@ -17,7 +17,13 @@ does all three from the commit history.
    the `release: published` event. A release event runs on the tag rather than
    on `main`, which is what makes the build provenance attestation name the
    tag as the origin of the assets; a rerun started by hand should pick the tag
-   in the ref dropdown for the same reason, and warns if it does not.
+   in the ref dropdown for the same reason, and warns if it does not. Once
+   every target has built, that workflow's `notes` job downloads the
+   `checksums-*.txt` assets and rewrites the Release body with
+   `scripts/release-notes.sh`: a short install section, a table of every
+   asset with a download link, target and SHA-256 digest, and a compare link
+   to the previous tag when one is known, all ahead of the changelog entry
+   release-please wrote, which stays unchanged below them.
 4. Not merging it costs nothing — commits accumulate into the same PR.
 
 ## Commit messages
