@@ -52,6 +52,15 @@ testing real attestation verification would require publishing a new
 release — corrected by actually running one, read-only, against this
 repository's existing `v0.11.0` release; see RELEASE-002).
 
+A third round added one more thing, at the orchestrator's separate request:
+an investigation of the `.githooks/pre-push` test failure the second
+review's check run reported
+(`kept_requests::the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side`),
+against the unchanged application baseline. See "Pre-existing
+`.githooks/pre-push` failure" below — it is intermittent, not caused by
+this audit's diff, and not a RELEASE finding; it is recorded and a
+follow-up is proposed, not fixed here.
+
 ## Question
 
 Can untrusted changes or substituted release inputs compromise published
@@ -1164,6 +1173,100 @@ starting the fix.
 - Everything under "Rejected hypotheses": confident in each rejection as
   corrected above, with a specific counter-observation or primary-source
   citation for each.
+
+## Pre-existing `.githooks/pre-push` failure — investigated, not a RELEASE finding
+
+The second review's required-hook run (`.githooks/pre-push --all`, log at
+`/var/folders/d9/l1r5tzbs0plbdrhx7_hfkbnm0000gn/T/release-review2-rmi90jsr/pre-push.log`)
+reported `cargo nextest run --workspace --profile ci` failing one test:
+`kept_requests::the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side`
+(`crates/ariadne-daemon/tests/it/kept_requests.rs:687`), with
+`assertion left == right failed ... left: 16, right: 14`, among 1925 passed
+and 11 slow. The orchestrator asked this task to investigate it against the
+unchanged application baseline with a bounded, targeted run, keep the
+original failure and log on record, follow the repository's own rule for a
+failure that disappears on retry, and report a cause and a follow-up
+proposal rather than fix it here. This section is that record. It is kept
+separate from the RELEASE-001–004 findings above: it is a test-suite
+reliability observation, not a security finding, and not evidence bearing
+on the release/install question this task answers.
+
+**The application baseline is confirmed unchanged.** `git status --porcelain`
+is clean at this task's commit, and `git diff --stat
+a17283486d5fe89591edfff08832712936d73030 -- crates/` is empty: this audit's
+commits touch only `security/audit/.../08-release-and-install/`, never
+`crates/`. The failure is not something this task's changes could have
+caused.
+
+**Diagnostic runs performed (all logged outside the worktree, under
+`/tmp/release-flake-check/`):**
+
+1. The single named test, run alone (`cargo nextest run -p ariadne-daemon
+   -E 'test(the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side)'`):
+   **passed**, in 0.87s.
+2. The same single test, run 15 times in a row while 8 CPU-bound busy loops
+   (each `(while kill -0 $$ 2>/dev/null; do :; done) &`, tied to the
+   invoking shell and killed explicitly afterward, per the root
+   `AGENTS.md`'s own busy-loop technique) competed for the machine's 16
+   cores: **15/15 passed.** Raw CPU contention alone does not reproduce it.
+3. The full `ariadne-daemon` crate's integration suite (965 tests, the same
+   `ci` profile `pre-push` uses, one thread per core), run three times in a
+   row with no change to any file in between:
+   - Run 1: **1 failed** — the exact same test, the exact same assertion,
+     the exact same `left: 16, right: 14`.
+   - Run 2: **1 failed** — but a *different* test,
+     `switch_stats::an_exhausted_session_that_auto_switches_writes_one_switch_fact`
+     (`crates/ariadne-daemon/tests/it/switch_stats.rs:219`,
+     `assertion left == right failed ... left: 0, right: 1`).
+   - Run 3: **965/965 passed**, no failures at all.
+
+**Characterization.** This is the repository's own definition of a failure
+that disappears on retry (`crates/AGENTS.md`'s "What a reviewer flags":
+"A test that passed only on a second run"), and the prescribed response —
+proving it under the bounded busy loop — was followed (step 2 above) and
+held. What the busy loop did *not* reproduce is what the full-crate runs
+did: this looks like intermittent timing sensitivity that depends on
+running concurrently with hundreds of *other* daemon integration tests
+specifically (shared sockets, file descriptors, or scheduler jitter across
+many real daemon processes at once), not on raw CPU pressure, and it is not
+confined to one test — two different tests failed on two different runs,
+with a third run clean. That pattern points at a class of flakiness in the
+suite's concurrency handling under full-crate load, not a single localized
+bug newly introduced anywhere.
+
+**A concrete, low-risk starting point for `kept_requests.rs`, offered as a
+follow-up proposal, not applied here.** `kept_requests.rs:625-633` already
+defines a `replies` helper that filters `stub.invocations()` down to only
+the `pr comment` calls the test actually cares about, and the test's first
+assertion (`:647`) uses it correctly:
+`assert_eq!(replies(&stub), before + 1, "one gh call replies")`. But the
+`before` snapshot at `:662` and the two later assertions at `:673` and
+`:688` use the *unfiltered* `stub.invocations().len()` instead. The test's
+own doc comment (`:581-585`) describes the property under test as "no
+`gh pr comment` call follows a refusal" — specifically about reply calls,
+not about every forge call the daemon might make for any reason (a comment
+right above, `:649-652`, independently confirms a background poll of the
+forge reads the stub during this same window). If that background poll's
+own cycle happens to add any non-`pr comment` invocation inside the
+snapshot-to-assertion window — more likely under the scheduler pressure of
+hundreds of concurrent daemon tests — the unfiltered count moves for a
+reason the test was never trying to assert against, and the assertion
+fails on a true negative. Using `replies(&stub)` instead of
+`stub.invocations().len()` at `:662`, `:673` and `:688` would make the
+test's three assertions consistent with its own first one and with its own
+stated intent, and is a plausible fix for at least this one test's
+instance of the pattern — offered here as a follow-up task's starting
+point, not implemented in this audit (which touches no application or test
+code, per this task's own constraints).
+
+**Recommendation to the orchestrator.** Treat this as pre-existing,
+unrelated to this audit's diff, and already present at the examined
+application commit. It does not block this report's own acceptance
+criteria (the report's own checks — `shellcheck`, `bash -n`, both
+reproduction scripts — are unaffected and pass). A dedicated follow-up task
+against `ariadne-daemon`'s integration-test concurrency handling, starting
+from the `kept_requests.rs` instance above, is the right size and owner for
+fixing it — not this audit.
 
 ## What was not checked (coverage gaps)
 
