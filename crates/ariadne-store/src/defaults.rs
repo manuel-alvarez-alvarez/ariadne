@@ -1272,7 +1272,9 @@ mod tests {
     /// gives every approval and lands every request: the skill never
     /// approves on its own, and names no merge, sleep, poll or forge CLI.
     /// It names the three priorities, asks for changes only where a P0
-    /// stands, and resolves a thread of its own once a push fixed it.
+    /// stands, resolves a thread of its own once a push fixed it, settles
+    /// a declined or a still-open one without a second warning, and
+    /// suggests a fix where the edit is small and local.
     #[test]
     fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
         let doc = default_skill_document(PR_REVIEWER_SKILL).expect("the pr-reviewer skill");
@@ -1317,24 +1319,30 @@ mod tests {
             "`reply_comment` once",
             "Run the checks once.",
             "On a later round, call `list_comments` first.",
-            "Settle each thread you opened before you hunt new defects.",
+            "Settle each thread you opened before you hunt new defects",
             // The summary is one comment, rewritten whole every round as a
-            // title, a header of the reviewed commits, a prose verdict on
-            // the change and its risk, and a recommendation; it is nothing
-            // of the work, and each finding sits on its own line of code.
+            // title, a prose verdict on the change and its risk, a table of
+            // the open findings and a recommendation; it is nothing of the
+            // work, and each finding sits on its own line of code.
             "Ariadne keeps one summary comment",
             "## Review summary",
-            "Header: one line per commit the round reviewed",
             "Summary: one short paragraph of prose, not bullets",
+            "Table: `| Priority | Finding | Status |`.",
+            "Status is `open`, `declined` or `fixed`",
             "Recommendation: one line",
             "\"Request changes\"",
             "\"Changes recommended\"",
             "\"No findings: this PR is ready to be merged.\"",
             "Name no file or line, and nothing of what you did",
             "only the new comments",
-            // A thread nobody answered waits; an answered one is replied to
-            // once, and resolved where it is fixed.
-            "not answered: post nothing in it. Wait for an answer.",
+            // An unanswered thread waits; a declined fix is marked so and
+            // left open; a claimed fix that is not one is said once.
+            "Not answered: post nothing. Wait for an answer.",
+            "Any other answered reply, a `Not changed:` or any other, that",
+            "leaves the defect in place: post nothing. Mark its row",
+            "Still there: <why>",
+            "Never post `Still there` twice in one thread",
+            "```suggestion block",
             "Never post a second comment for a defect",
             "then `resolve_thread` on",
             "Resolve only a thread you opened",
@@ -1344,60 +1352,59 @@ mod tests {
         ] {
             assert!(doc.contains(step), "the pr-reviewer skill has no {step}");
         }
+        assert!(
+            !doc.contains("git log"),
+            "the pr-reviewer skill still reads a commit list"
+        );
         assert_eq!(SkillSeat::of(PR_REVIEWER_SKILL), SkillSeat::PullRequest);
     }
 
-    /// The four parts of the summary (029 rule 17) stand in order, and
-    /// `get_pull_request` and `get_diff` answer no commit list: the header
-    /// names its own source, local history, so a request of several commits
-    /// still gets one line per commit.
+    /// The four parts of the summary (029 rule 17) stand in order: a title,
+    /// a prose verdict naming no finding, a table of the open findings, and
+    /// a recommendation. `get_pull_request` and `get_diff` answer no commit
+    /// list, and the summary states no header of commits or sha range.
     #[test]
-    fn the_pr_reviewer_skill_writes_its_summary_as_a_header_then_prose_then_a_recommendation() {
+    fn the_pr_reviewer_skill_writes_its_summary_in_four_ordered_parts() {
         let doc =
             unwrapped(default_skill_document(PR_REVIEWER_SKILL).expect("the pr-reviewer skill"));
         let title_at = doc
             .find("## Review summary")
             .expect("the skill has no summary title");
-        let header_at = doc.find("Header:").expect("the skill has no Header:");
         let summary_at = doc.find("Summary:").expect("the skill has no Summary:");
+        let table_at = doc.find("Table:").expect("the skill has no Table:");
         let recommendation_at = doc
             .find("Recommendation:")
             .expect("the skill has no Recommendation:");
         assert!(
-            title_at < header_at && header_at < summary_at && summary_at < recommendation_at,
-            "the parts are not Title, then Header, then Summary, then Recommendation"
+            title_at < summary_at && summary_at < table_at && table_at < recommendation_at,
+            "the parts are not Title, then Summary, then Table, then Recommendation"
         );
-        let header = &doc[header_at..summary_at];
+        let table = &doc[table_at..recommendation_at];
         for phrase in [
-            "read with `git log`",
-            "short sha",
-            "subject",
-            "`git log <base>..HEAD` on the first round",
-            "`git log <reviewed_sha>..HEAD` later",
-            "End the header with one line: `<base>..<head>` as short shas.",
+            "`| Priority | Finding | Status |`",
+            "One row per open thread",
+            "plus one `fixed` row for each thread this round resolved",
+            "Status is `open`, `declined` or `fixed`",
         ] {
-            assert!(header.contains(phrase), "the header lacks {phrase}");
+            assert!(table.contains(phrase), "the table lacks {phrase}");
         }
     }
 
     /// The prose summary names what the change does, where its risk sits
-    /// and how serious it is, and names every open finding in that prose
-    /// rather than as a bullet (029 rule 17).
+    /// and how serious it is, and names no finding, file or line: a
+    /// finding is named in the table that follows it instead (029 rule 17).
     #[test]
     fn the_pr_reviewer_skill_summarizes_the_change_and_its_risk_in_prose() {
         let doc =
             unwrapped(default_skill_document(PR_REVIEWER_SKILL).expect("the pr-reviewer skill"));
         let summary_at = doc.find("Summary:").expect("the skill has no Summary:");
-        let recommendation_at = doc
-            .find("Recommendation:")
-            .expect("the skill has no Recommendation:");
-        let summary = &doc[summary_at..recommendation_at];
+        let table_at = doc.find("Table:").expect("the skill has no Table:");
+        let summary = &doc[summary_at..table_at];
         for phrase in [
             "one short paragraph of prose, not bullets",
             "where its risk sits",
             "how serious it is",
-            "Name each",
-            "priority and title in the prose",
+            "Name no finding, file or line in it",
         ] {
             assert!(summary.contains(phrase), "the summary lacks {phrase}");
         }
@@ -1417,6 +1424,7 @@ mod tests {
         let recommendation = &doc[recommendation_at..];
         for phrase in [
             "A P0 is open: say \"Request changes\", and name the P0 findings that block it",
+            "A declined P0 still counts as open",
             "A P1 or P2 is open, with no P0: say \"Changes recommended\". Name what to fix before it lands",
             "Nothing is open: say \"No findings: this PR is ready to be merged.\"",
         ] {

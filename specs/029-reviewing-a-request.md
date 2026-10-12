@@ -253,24 +253,31 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     is worth fixing. It writes the review body as the whole summary of the
     review as it stands, in four parts, with no file, no line, no trailer
     and nothing of what it did:
-    - a title, "## Review summary" — the range it covers is the header's,
-      not the title's, so the title stays one short line;
-    - a header, one line per commit the round reviewed, each a short sha
-      and its subject, read with `git log <base>..HEAD` in the worktree on
-      the first round, or `git log <reviewed_sha>..HEAD` later, ending on
-      one line of the base-to-head range, `<base>..<head>` as short shas;
-    - a prose summary, not bullets, of what the change does and what the
-      open findings mean for it, naming each open finding's priority and
-      title;
+    - a title, "## Review summary";
+    - a prose summary, not bullets, one short paragraph of what the change
+      does, where its risk sits and how serious it is, naming no finding,
+      no file and no line;
+    - a table, `| Priority | Finding | Status |` — status `open`,
+      `declined` or `fixed` — one row per finding whose thread is still
+      open, plus one `fixed` row for each thread the round resolved;
     - a recommendation of one line: "Request changes" and the blocking P0
-      findings while one is open; "Changes recommended" and what to fix
-      before it lands while a P1 or P2 is open and no P0 is; else "No
-      findings: this PR is ready to be merged."
+      findings while one is open — a declined P0 still counts as open —
+      "Changes recommended" and what to fix before it lands while a P1 or
+      P2 is open and no P0 is; else "No findings: this PR is ready to be
+      merged."
     Each new finding is one inline comment with a title, the failure and a
-    fix. On a later round it posts nothing more in a thread nobody answered
-    since its last entry: it waits for the answer. A thread a commit fixed
-    gets one reply and is resolved; an answered thread whose defect is
-    still there gets one reply that says so and why.
+    fix; where the fix replaces the commented line alone, a ```suggestion
+    block under the fix holds the new text of that one line, and a fix
+    across lines, across files, or one a test must prove stays prose. On a
+    later round it settles each thread it opened before it hunts, reading
+    the author's reply: where the defect is actually gone at the head it
+    gets one reply, `Fixed in <sha>.`, and is resolved; where the last
+    reply claims a fix (`Fixed in <sha>: ...`) and the defect survives, it
+    gets one reply, `Still there: <why>.`, never posted twice in the same
+    thread; any other answered reply that leaves the defect in place —
+    `Not changed: ...` or any other — gets nothing back, and its row
+    turns `declined`, left open for the user; a thread nobody has
+    answered gets nothing; it waits.
 18. A review posted, or a request reported ready, notifies nobody by
     itself: the approval and the merge stay the user's to give in their own
     time, and only the `pull_request` attention producer's own readiness
@@ -366,16 +373,20 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 - The skill is within its caps, names the three priorities, names
   `request_changes` only beside P0, resolves a thread a push fixed, and
   approves on its own no more than it names merge, sleep, poll, `gh` or
-  `glab`:
+  `glab`. On a later round a `Not changed:` reply gets no reply back and
+  turns its row `declined`; a claimed fix the defect survives gets one
+  `Still there: <why>.` reply, never a second one in the same thread; and
+  a small local fix carries a `suggestion` block:
   `defaults.rs::tests::the_pr_reviewer_skill_ranks_its_findings_and_never_approves`,
   `::skill_size_caps_hold`.
-- The summary is a header read from local history, then a prose paragraph,
-  then a recommendation, in that order:
-  `defaults.rs::tests::the_pr_reviewer_skill_writes_its_summary_as_a_header_then_prose_then_a_recommendation`.
+- The summary is a title, then a prose paragraph, then a table of the
+  open findings, then a recommendation, in that order:
+  `defaults.rs::tests::the_pr_reviewer_skill_writes_its_summary_in_four_ordered_parts`.
   The prose names what the change does and where and how serious its risk
-  is, and names every open finding in it, not as a bullet:
+  is, and names no finding, file or line in it:
   `defaults.rs::tests::the_pr_reviewer_skill_summarizes_the_change_and_its_risk_in_prose`.
-  Each recommendation line is tied to the priority that earns it:
+  Each recommendation line is tied to the priority that earns it, and a
+  declined P0 still blocks it:
   `defaults.rs::tests::the_pr_reviewer_skill_recommends_by_the_open_findings_priority`.
 - A request of mine is no work and gets no review until the user asks; the
   ask starts the work, and the review runs on the pin and with the skills
