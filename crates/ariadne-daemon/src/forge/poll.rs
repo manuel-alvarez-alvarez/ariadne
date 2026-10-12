@@ -513,6 +513,10 @@ async fn read_row(
     listed: Option<pulls::ForgePullRequest>,
     asks: bool,
 ) -> Result<(), String> {
+    // Captured before any of this read's own, slower network calls, so
+    // the detail read below knows which local addition, if any, is newer
+    // than this read's own snapshot (`LivePulls::generation`).
+    let since = handoff.live.generation(&row.id);
     let read = match listed {
         Some(pull) => pull,
         None => match client.pull_request(slug, row.number).await {
@@ -542,6 +546,7 @@ async fn read_row(
                 &row.id,
                 details.pull,
                 requested,
+                since,
                 Details {
                     comments: details.comments,
                     failed_checks: details.failed_checks,

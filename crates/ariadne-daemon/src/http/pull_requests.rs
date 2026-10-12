@@ -107,6 +107,10 @@ fn publish_evidence_transition(
 /// where the fetch leaves its own (026): what a session asks for is never an
 /// earlier read.
 async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullRequest> {
+    // Captured before this read's own, slower network calls, so the
+    // merge below knows which local addition, if any, is newer than this
+    // read's own snapshot (`forge::live::LivePulls::generation`).
+    let since = state.launcher.live.generation(&row.id);
     let forge = integration(state, &row.repository_id).await?;
     let details = match client(state, &forge)
         .details(
@@ -157,6 +161,7 @@ async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullReques
         &row.id,
         details.pull,
         review_requested,
+        since,
         Details {
             comments: details.comments,
             failed_checks: details.failed_checks,
@@ -240,12 +245,7 @@ pub(super) async fn list(
                     let cached = state.launcher.live.get(&row.id);
                     let details = cached.as_ref().and_then(|l| l.details.clone());
                     let evidence_ok = cached.is_none_or(|l| l.evidence_ok);
-                    let read = Live {
-                        pull,
-                        review_requested: asks,
-                        details,
-                        evidence_ok,
-                    };
+                    let read = Live::new(pull, asks, details, evidence_ok);
                     let marks = state.store.pull_request_comment_marks(&row.id).await?;
                     let view = live::view(row, &read, &marks, &login);
                     pull_request_dto_of(&state.store, view).await?

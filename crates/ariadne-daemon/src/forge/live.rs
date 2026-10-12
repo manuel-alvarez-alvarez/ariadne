@@ -46,6 +46,39 @@ pub struct Live {
     /// (`set_pull`) — leaves it exactly as it found it: that call has
     /// nothing to say about whether the evidence is still good.
     pub evidence_ok: bool,
+    /// Bumped on every `add_comments`: a detail read that captured a
+    /// lower number before it started its own, slower fetch could not
+    /// have seen what a bump past it later added.
+    generation: u64,
+    /// Which locally-added comment, by forge id, a bump of `generation`
+    /// added, and which bump: a fresh read's merge carries one forward
+    /// only across a read whose own captured generation sat before that
+    /// bump, since that read's silence on it then says nothing of the
+    /// forge deleting it. One confirmed by a fresh read on its own terms
+    /// is dropped here: the forge has it now, so this cache no longer
+    /// has to carry it forward itself.
+    local_additions: HashMap<String, u64>,
+}
+
+impl Live {
+    /// A read with no local addition of its own this cache does not
+    /// already know about: for a caller outside this module building one
+    /// fresh, never itself merged into an existing entry.
+    pub fn new(
+        pull: ForgePullRequest,
+        review_requested: bool,
+        details: Option<Details>,
+        evidence_ok: bool,
+    ) -> Self {
+        Live {
+            pull,
+            review_requested,
+            details,
+            evidence_ok,
+            generation: 0,
+            local_additions: HashMap::new(),
+        }
+    }
 }
 
 /// What a detail read finds of a request beyond its own read: its
@@ -87,6 +120,19 @@ impl LivePulls {
             .insert(id.to_string(), live);
     }
 
+    /// The generation this cache stands at for `id`, 0 where it holds
+    /// none yet: a detail read captures this before it starts its own,
+    /// slower fetch, so the `set_details` it later calls knows which
+    /// local addition, if any, is newer than this read's own snapshot.
+    pub fn generation(&self, id: &str) -> u64 {
+        self.0
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(id)
+            .map(|live| live.generation)
+            .unwrap_or(0)
+    }
+
     /// [`Self::set`], answering the attention fingerprint
     /// ([`attention_fingerprint`]) of whatever this call itself just
     /// replaced, and of `new` — both read and written under the one
@@ -115,10 +161,17 @@ impl LivePulls {
             .0
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let (details, evidence_ok) = held
+        let (details, evidence_ok, generation, local_additions) = held
             .get(id)
-            .map(|live| (live.details.clone(), live.evidence_ok))
-            .unwrap_or((None, true));
+            .map(|live| {
+                (
+                    live.details.clone(),
+                    live.evidence_ok,
+                    live.generation,
+                    live.local_additions.clone(),
+                )
+            })
+            .unwrap_or((None, true, 0, HashMap::new()));
         held.insert(
             id.to_string(),
             Live {
@@ -126,6 +179,8 @@ impl LivePulls {
                 review_requested,
                 details,
                 evidence_ok,
+                generation,
+                local_additions,
             },
         );
     }
@@ -147,7 +202,16 @@ impl LivePulls {
             .0
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let details = held.get(id).and_then(|live| live.details.clone());
+        let (details, generation, local_additions) = held
+            .get(id)
+            .map(|live| {
+                (
+                    live.details.clone(),
+                    live.generation,
+                    live.local_additions.clone(),
+                )
+            })
+            .unwrap_or((None, 0, HashMap::new()));
         held.insert(
             id.to_string(),
             Live {
@@ -155,19 +219,29 @@ impl LivePulls {
                 review_requested,
                 details,
                 evidence_ok: false,
+                generation,
+                local_additions,
             },
         );
     }
 
     /// Hold what Ariadne itself just posted on the request beside the last
     /// read, as the forge now holds it: the next fetch reads it back, and
-    /// until then the request's sessions find it all the same.
+    /// until then the request's sessions find it all the same. Bumps the
+    /// generation and marks each comment with it, so a `set_details`
+    /// whose own read started before this write knows to carry it
+    /// forward rather than read its absence as the forge deleting it.
     pub fn add_comments(&self, id: &str, posted: &[NewPullRequestComment]) {
         let mut held = self
             .0
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(live) = held.get_mut(id) {
+            for comment in posted {
+                live.generation += 1;
+                live.local_additions
+                    .insert(comment.forge_id.clone(), live.generation);
+            }
             let details = live.details.get_or_insert_with(Details::default);
             for comment in posted {
                 details.comments.retain(|c| c.forge_id != comment.forge_id);
@@ -177,23 +251,26 @@ impl LivePulls {
     }
 
     /// Keep a fresh detail read, its comments carrying forward any this
-    /// cache already held that the read's own comments do not: a poll, or
-    /// a route's own `read_now`, started before a reply posted, and so
-    /// missed it, would otherwise overwrite `add_comments`' own write
-    /// with its older answer, were this call taken as whole instead of
-    /// merged with what stood before it.
+    /// cache already held that the read's own comments do not, and that
+    /// were added after `since` — the generation this cache stood at
+    /// when the read's own, slower fetch began ([`Self::generation`]): a
+    /// comment missing from before that generation is gone from the
+    /// forge, not merely missed by a read that started too early to see
+    /// it.
     pub fn set_details(
         &self,
         id: &str,
         pull: ForgePullRequest,
         review_requested: bool,
+        since: u64,
         details: Details,
     ) {
         let mut held = self
             .0
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let details = merged_details(held.get(id), details);
+        let (details, generation, local_additions) =
+            merge_fresh_details(held.get(id), since, details);
         held.insert(
             id.to_string(),
             Live {
@@ -201,6 +278,8 @@ impl LivePulls {
                 review_requested,
                 details: Some(details),
                 evidence_ok: true,
+                generation,
+                local_additions,
             },
         );
     }
@@ -212,6 +291,7 @@ impl LivePulls {
         id: &str,
         pull: ForgePullRequest,
         review_requested: bool,
+        since: u64,
         details: Details,
     ) -> (Option<u64>, u64) {
         let mut held = self
@@ -219,11 +299,14 @@ impl LivePulls {
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let before = held.get(id).map(attention_fingerprint);
-        let details = merged_details(held.get(id), details);
+        let (details, generation, local_additions) =
+            merge_fresh_details(held.get(id), since, details);
         let new = Live {
             pull,
             review_requested,
             details: Some(details),
+            generation,
+            local_additions,
             evidence_ok: true,
         };
         let after = attention_fingerprint(&new);
@@ -280,24 +363,49 @@ impl LivePulls {
     }
 }
 
-/// A fresh detail read's comments, with any comment `previous` held that
-/// they do not carry pushed back onto the end: the only way a comment
-/// `add_comments` just wrote is missing from a fresh read is that the read
-/// started before the write, so dropping it would be losing a reply this
-/// cache already knows the forge holds.
-fn merged_details(previous: Option<&Live>, mut details: Details) -> Details {
-    if let Some(previous) = previous.and_then(|live| live.details.as_ref()) {
-        for comment in &previous.comments {
-            if !details
+/// A fresh detail read's comments, merged with whatever `previous` already
+/// held: one missing from the fresh read is carried forward only where
+/// `previous` marks it added after `since`, the generation the read's own
+/// snapshot started at — `add_comments` wrote it after this read could
+/// have seen it, so its absence here says nothing of the forge deleting
+/// it. One missing and not so marked, or confirmed by the fresh read on
+/// its own terms, is a local addition this cache no longer has to carry:
+/// dropped from what is kept, and from what is tracked after the merge
+/// too, the way the review a forge user actually deleted would be.
+/// Answers the merged comments, and the generation and the
+/// still-unconfirmed local additions to carry into the entry this read
+/// writes.
+fn merge_fresh_details(
+    previous: Option<&Live>,
+    since: u64,
+    mut details: Details,
+) -> (Details, u64, HashMap<String, u64>) {
+    let Some(previous) = previous else {
+        return (details, 0, HashMap::new());
+    };
+    let mut local_additions = previous.local_additions.clone();
+    if let Some(prev_details) = previous.details.as_ref() {
+        for comment in &prev_details.comments {
+            let in_fresh_read = details
                 .comments
                 .iter()
-                .any(|c| c.forge_id == comment.forge_id)
-            {
-                details.comments.push(comment.clone());
+                .any(|c| c.forge_id == comment.forge_id);
+            if in_fresh_read {
+                local_additions.remove(&comment.forge_id);
+                continue;
+            }
+            let added_after_since = local_additions
+                .get(&comment.forge_id)
+                .is_some_and(|&generation| generation > since);
+            match added_after_since {
+                true => details.comments.push(comment.clone()),
+                false => {
+                    local_additions.remove(&comment.forge_id);
+                }
             }
         }
     }
-    details
+    (details, previous.generation, local_additions)
 }
 
 /// A fingerprint of everything about one read the `pull_request`
@@ -757,6 +865,8 @@ mod tests {
                 head_sha: "abc".into(),
             }),
             evidence_ok,
+            generation: 0,
+            local_additions: HashMap::new(),
         }
     }
 

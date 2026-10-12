@@ -771,12 +771,26 @@ async fn two_replies_racing_for_one_comment_post_it_once() {
     assert_eq!(replies(), 1, "only the winner calls the forge CLI");
 }
 
-/// A poll's detail read, scripted with no word of a reply the agent just
-/// posted, does not erase it from the live cache: the merge in
-/// `LivePulls::set_details` carries it forward, so the once check still
-/// refuses a second reply to the same comment after the poll runs.
+/// Counts of a detail fetch's own `issues/1/comments` read: the
+/// conversation side of a request, the one the reply below answers on.
+fn conversation_reads(stub: &StubForgeCli) -> usize {
+    stub.invocations()
+        .iter()
+        .filter(|i| {
+            i.args.get(1).map(String::as_str) == Some("repos/acme/widgets/issues/1/comments")
+                && !i.args.contains(&"POST".to_string())
+        })
+        .count()
+}
+
+/// A poll's detail read that began before a reply posted, and so reads
+/// the conversation with no word of it, does not erase it once that read
+/// finishes after the reply: `LivePulls::set_details` carries forward
+/// only a local addition newer than the generation the read itself
+/// captured, and the reply is exactly that. The once check still refuses
+/// a second reply to the same comment once the poll's stale read lands.
 #[tokio::test]
-async fn a_stale_poll_does_not_erase_a_posted_reply() {
+async fn a_poll_that_began_before_a_reply_does_not_erase_it() {
     let threads =
         json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
     let reviews = json!([
@@ -785,7 +799,9 @@ async fn a_stale_poll_does_not_erase_a_posted_reply() {
         {"id": 501, "user": {"login": "alice"}, "body": "Looks fine overall.",
          "submitted_at": "2026-10-02T00:01:00Z"},
     ]);
-    let script = script_of(
+    let gate_dir = tempfile::tempdir().unwrap();
+    let gate = gate_dir.path().join("go");
+    let mut script = script_of(
         pull("OPEN", "abc"),
         &[],
         &[],
@@ -815,6 +831,27 @@ async fn a_stale_poll_does_not_erase_a_posted_reply() {
         .unwrap()
         .to_string();
 
+    // Only now does a detail read's own conversation call wait on the
+    // gate: the setup fetch above, before this, ran free of it.
+    for entry in script.as_array_mut().unwrap() {
+        if entry["args"] == json!(["api", "repos/acme/widgets/issues/1/comments"]) {
+            entry["wait_for"] = json!(gate.display().to_string());
+        }
+    }
+    stub.reprogram(script.clone());
+
+    // The poll's own detail read reaches, and is held on, its
+    // conversation read before the reply below posts: its own snapshot
+    // of "since" is taken before the reply exists.
+    let before = conversation_reads(&stub);
+    h.state.forge_poll.wake(&repo);
+    eventually(
+        TIMEOUT,
+        "the poll's conversation read to reach the forge",
+        async || conversation_reads(&stub) > before,
+    )
+    .await;
+
     let reply: Value = h
         .json(
             as_session(
@@ -826,15 +863,31 @@ async fn a_stale_poll_does_not_erase_a_posted_reply() {
         )
         .await;
 
-    // The stub's own comments answer never heard of the reply: a poll run
-    // now reads exactly what the request looked like before it.
-    fetch_again(&h, &stub, &repo).await;
-
-    let after: Vec<Value> = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
-    assert!(
-        after.iter().any(|c| c["id"] == reply["id"]),
-        "the poll's read kept the reply, rather than erasing it"
-    );
+    // Let the poll's held, stale read land now that the reply exists.
+    // The cache is read directly, not through the comments route: that
+    // route always reads the forge again, which would race this same
+    // generation check a second time, on a since this call captures only
+    // after the reply, rather than prove what the poll's own read did
+    // with it.
+    std::fs::write(&gate, "go").unwrap();
+    let reply_forge_id = reply["id"].as_str().unwrap().to_string();
+    eventually(
+        TIMEOUT,
+        "the poll's stale read to leave the reply standing",
+        async || {
+            h.launcher
+                .live
+                .get(&id)
+                .and_then(|live| live.details)
+                .is_some_and(|details| {
+                    details
+                        .comments
+                        .iter()
+                        .any(|c| c.forge_id == reply_forge_id)
+                })
+        },
+    )
+    .await;
 
     h.error(
         as_session(
@@ -843,6 +896,65 @@ async fn a_stale_poll_does_not_erase_a_posted_reply() {
             json!({"body": "Again."}),
         ),
         StatusCode::BAD_REQUEST,
+    )
+    .await;
+}
+
+/// A comment a read once found, gone from a later read that started no
+/// earlier than that first one, is dropped rather than carried forward:
+/// the forge no longer holds it, and `LivePulls::set_details` only
+/// protects a local addition newer than a read's own starting
+/// generation, never a comment the forge itself once reported and now
+/// does not.
+#[tokio::test]
+async fn a_comment_gone_from_a_later_read_is_dropped() {
+    let threads =
+        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
+    let reviews = json!([
+        {"id": 502, "user": {"login": "me"}, "body": "Thanks for the look.",
+         "submitted_at": "2026-10-02T00:00:00Z"},
+        {"id": 501, "user": {"login": "alice"}, "body": "Looks fine overall.",
+         "submitted_at": "2026-10-02T00:01:00Z"},
+    ]);
+    let mut script = script_of(
+        pull("OPEN", "abc"),
+        &[],
+        &[],
+        &json!({"check_runs": []}).to_string(),
+        &reviews.to_string(),
+        &threads.to_string(),
+    );
+    let Kept {
+        h, stub, id, repo, ..
+    } = kept_request(script.clone()).await;
+    let mut stored: Vec<Value> = Vec::new();
+    eventually(TIMEOUT, "both review bodies to be stored", async || {
+        stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+        stored.iter().filter(|c| c["kind"] == "review").count() == 2
+    })
+    .await;
+    assert!(stored.iter().any(|c| c["author_login"] == "alice"));
+
+    // Alice deleted her review body: the forge no longer answers with it.
+    let reviews_without_alice = json!([
+        {"id": 502, "user": {"login": "me"}, "body": "Thanks for the look.",
+         "submitted_at": "2026-10-02T00:00:00Z"},
+    ]);
+    for entry in script.as_array_mut().unwrap() {
+        if entry["args"] == json!(["api", "repos/acme/widgets/pulls/1/reviews"]) {
+            entry["stdout"] = json!(reviews_without_alice.to_string());
+        }
+    }
+    stub.reprogram(script.clone());
+    fetch_again(&h, &stub, &repo).await;
+
+    eventually(
+        TIMEOUT,
+        "alice's deleted review to leave the comments",
+        async || {
+            let after: Vec<Value> = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+            !after.iter().any(|c| c["author_login"] == "alice")
+        },
     )
     .await;
 }
