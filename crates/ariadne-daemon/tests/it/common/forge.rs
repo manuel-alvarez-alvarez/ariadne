@@ -219,8 +219,8 @@ pub(crate) fn seed_live(
 ) {
     h.launcher.live.set(
         &row.id,
-        ariadne_daemon::forge::live::Live {
-            pull: ariadne_daemon::forge::pulls::ForgePullRequest {
+        ariadne_daemon::forge::live::Live::new(
+            ariadne_daemon::forge::pulls::ForgePullRequest {
                 number: row.number,
                 url: row.url.clone(),
                 title: format!("Fix widgets {}", row.number),
@@ -240,9 +240,9 @@ pub(crate) fn seed_live(
                 merge_sha: None,
             },
             review_requested,
-            details: Some(ariadne_daemon::forge::live::Details::default()),
-            evidence_ok: true,
-        },
+            Some(ariadne_daemon::forge::live::Details::default()),
+            true,
+        ),
     );
 }
 
@@ -426,8 +426,8 @@ pub(crate) fn seed_review_evidence(
 ) {
     h.launcher.live.set(
         &row.id,
-        ariadne_daemon::forge::live::Live {
-            pull: ariadne_daemon::forge::pulls::ForgePullRequest {
+        ariadne_daemon::forge::live::Live::new(
+            ariadne_daemon::forge::pulls::ForgePullRequest {
                 number: row.number,
                 url: row.url.clone(),
                 title: format!("Fix widgets {}", row.number),
@@ -446,8 +446,8 @@ pub(crate) fn seed_review_evidence(
                 updated_at: "2026-10-01T00:00:00Z".into(),
                 merge_sha: None,
             },
-            review_requested: false,
-            details: Some(ariadne_daemon::forge::live::Details {
+            false,
+            Some(ariadne_daemon::forge::live::Details {
                 comments: evidence.comments,
                 head_sha: evidence
                     .details_head_sha
@@ -455,7 +455,7 @@ pub(crate) fn seed_review_evidence(
                     .into(),
                 ..Default::default()
             }),
-            evidence_ok: evidence.evidence_ok,
-        },
+            evidence.evidence_ok,
+        ),
     );
 }

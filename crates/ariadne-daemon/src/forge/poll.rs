@@ -513,6 +513,10 @@ async fn read_row(
     listed: Option<pulls::ForgePullRequest>,
     asks: bool,
 ) -> Result<(), String> {
+    // Captured before any of this read's own, slower network calls, so
+    // the detail read below knows which local addition, if any, is newer
+    // than this read's own snapshot (`LivePulls::generation`).
+    let since = handoff.live.generation(&row.id);
     let read = match listed {
         Some(pull) => pull,
         None => match client.pull_request(slug, row.number).await {
@@ -538,18 +542,16 @@ async fn read_row(
     match client.details(slug, row.number, handoff.details).await {
         Ok(details) if details.pull.number == row.number => {
             let head_sha = details.pull.head_sha.clone();
-            handoff.live.set(
+            handoff.live.set_details(
                 &row.id,
-                Live {
-                    pull: details.pull,
-                    review_requested: requested,
-                    details: Some(Details {
-                        comments: details.comments,
-                        failed_checks: details.failed_checks,
-                        behind_base: details.behind_base,
-                        head_sha,
-                    }),
-                    evidence_ok: true,
+                details.pull,
+                requested,
+                since,
+                Details {
+                    comments: details.comments,
+                    failed_checks: details.failed_checks,
+                    behind_base: details.behind_base,
+                    head_sha,
                 },
             );
             Ok(())
