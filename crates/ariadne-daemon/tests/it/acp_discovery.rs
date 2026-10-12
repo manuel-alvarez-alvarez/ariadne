@@ -1140,12 +1140,13 @@ async fn a_legacy_opencode_acp_probe_also_deletes_its_catalog_session() {
     let agents: Vec<Value> = h.get("/v1/acp-agents").await;
     assert_eq!(agents[0]["status"], "ready", "{agents:#?}");
     let messages = agent.messages();
-    let delete = messages
+    let deletes: Vec<&Value> = messages
         .iter()
-        .find(|message| message["method"] == "cli/session/delete")
-        .unwrap_or_else(|| panic!("no delete call among {messages:#?}"));
+        .filter(|message| message["method"] == "cli/session/delete")
+        .collect();
+    assert_eq!(deletes.len(), 1, "{messages:#?}");
     assert_eq!(
-        delete["args"],
+        deletes[0]["args"],
         json!(["session", "delete", "legacy-catalog-session"])
     );
 }
@@ -1303,7 +1304,7 @@ async fn real_opencode_metadata_listing_creates_no_session() {
     let stdout = child.stdout.take().expect("opencode's stdout");
 
     let listed = tokio::time::timeout(
-        Duration::from_secs(20),
+        TIMEOUT,
         agent_client_protocol::Client
             .builder()
             .name("ariadne-discovery-check")
