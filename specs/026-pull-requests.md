@@ -1,7 +1,7 @@
 ---
 id: pull-requests
 status: current
-updated: 2026-10-12
+updated: 2026-10-13
 areas: [store, api, daemon, cli, ui]
 commits: []
 tests:
@@ -11,6 +11,7 @@ tests:
   - crates/ariadne-daemon/src/forge/pulls.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
   - crates/ariadne-daemon/tests/it/pull_requests.rs
+  - crates/ariadne-daemon/tests/it/forge_rate_limit.rs
   - crates/ariadne-daemon/tests/it/kept_requests.rs
   - crates/ariadne-daemon/tests/it/workflow_pull_request.rs
   - crates/ariadne-daemon/tests/it/scheduler_attention.rs
@@ -74,11 +75,15 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
 5. A repository fetch lists every open request of the repository, and the ones that ask for the login's review; the two lists are read from the forge at the same time.
    It starts the work on each review request rule 3 names, then reads each row of the repository: the list's read where the list holds it, else a read of its own — a merged or closed request, or one the list misses.
    A row that asks for review keeps asking while the list of review requests holds it; one it no longer holds, and that asked on the last read, is asked of the forge's timeline (029 rule 3).
-6. `ForgePoll::wake(repository_id)` schedules one fetch immediately.
+6. `ForgePoll::wake(repository_id)` schedules one fetch.
    Each repository has one worker, so fetches of that repository never overlap.
    Wakes during a fetch coalesce into one following fetch.
+   A wake outside a fetch waits out `Timeouts::forge_wake_debounce` of quiet before it fetches, folding every further wake inside that window into the same one fetch: a burst of webhook deliveries for one push costs one fetch, not one per delivery.
    `set_mode(repository_id, Mode::Timer)` enables the fallback timer.
    `Timeouts::forge_poll` defaults to 5 minutes.
+   A fetch that fails for a reason other than a rate limit, in `Mode::Timer`, doubles the wait before the next timer fetch, up to `Timeouts::forge_poll_backoff_cap` (1 hour by default); a fetch that works resets it to `Timeouts::forge_poll`.
+   A wake still fetches at once (after the debounce above), whatever the current wait.
+   A fetch that answers a forge rate limit pauses the worker in either mode until the forge's own reset time, read with no quota of its own (`ForgeClient::rate_limit_reset`), or `Timeouts::forge_rate_limit_pause` (15 minutes by default) from now where that read fails; every wake inside the pause folds into the one fetch that runs once it ends. `fetch_error` reads `rate limited until <RFC 3339 time>` while paused (`forge::poll::FORGE_RATE_LIMITED`), and null once a fetch works.
    Each fetch also reads the repository's open issues, and publishes `issues_changed` with the repository id where they moved since that worker's last read (028).
    `Mode::WakeOnly` has no timer fetches; only explicit wakes fetch.
    Enabled integrations start with one immediate fetch.
@@ -244,6 +249,19 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `pull_requests.rs::timer_wake_only_and_disable_control_repository_fetches`.
 - Wakes coalesce without concurrent fetches:
   `pull_requests.rs::wakes_during_a_fetch_coalesce_into_one_following_fetch`.
+- A rate-limited fetch pauses the worker until the forge's reset time in
+  either mode, a wake inside the pause fetches nothing, one fetch runs at
+  the end, `fetch_error` reads the pause and then clears, and it does not
+  run a signed-out confirmation after a rate-limit refusal:
+  `forge_rate_limit.rs::a_rate_limited_fetch_pauses_the_worker_and_fetches_once_after_wakes_inside_it`.
+  The later of GitHub's REST and GraphQL reset times is recorded:
+  `forge_rate_limit.rs::a_rate_limited_fetch_reads_the_forges_own_later_reset_time`.
+  A failed fetch that is not a rate limit doubles the timer wait up to the
+  cap, resets on success, and a wake still fetches at once:
+  `forge_rate_limit.rs::a_failed_fetch_in_timer_mode_backs_off_and_a_wake_still_fetches_at_once`.
+  Wakes inside the debounce window fold into one fetch:
+  `forge_rate_limit.rs::three_wakes_inside_the_debounce_window_cause_one_fetch`.
+  `forge/mod.rs::tests::a_refusal_is_rate_limited_on_either_forges_own_words`.
 - GitLab reads fork clone URLs, checks, approvals, and reviewer roles; search matches number, author, or title:
   `pull_requests.rs::gitlab_requests_keep_fork_checks_review_and_search_by_author_or_number`.
 - A fetch publishes `issues_changed` and `pull_requests_changed` only when they moved:

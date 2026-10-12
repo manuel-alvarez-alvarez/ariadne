@@ -1,0 +1,271 @@
+//! A poll worker backs off, pauses, and folds wakes at the forge boundary
+//! (026 rule 6).
+use crate::common::forge::stub_forge_cli;
+use crate::common::{QUIET, RUNS_OUT, TIMEOUT, eventually, harness, next_event, with_forge};
+use ariadne_api::stream::DomainEvent;
+use ariadne_daemon::bus::BusEvent;
+use ariadne_daemon::forge::poll::{FORGE_RATE_LIMITED, Mode};
+use ariadne_daemon::timeouts::Timeouts;
+use serde_json::json;
+use std::time::Duration;
+use tokio::sync::broadcast::Receiver;
+
+async fn enabled_repository(h: &crate::common::Harness) -> ariadne_store::Repository {
+    let path = h.git_repo("repo");
+    let repo = h.repository(&path).await;
+    with_forge(h, &repo).await;
+    repo
+}
+
+fn called(stub: &crate::common::forge::StubForgeCli, prefix: &[&str]) -> bool {
+    stub.invocations().iter().any(|call| {
+        call.args.len() >= prefix.len()
+            && call
+                .args
+                .iter()
+                .map(String::as_str)
+                .zip(prefix)
+                .all(|(actual, expected)| actual == *expected)
+    })
+}
+
+async fn next_fetch_error(events: &mut Receiver<BusEvent>, repository_id: &str, text: &str) {
+    next_event(events, |event| {
+        matches!(
+            &event.event,
+            DomainEvent::RepositoryUpdated(repository)
+                if repository.id == repository_id
+                    && repository
+                        .forge
+                        .as_ref()
+                        .and_then(|forge| forge.webhook.fetch_error.as_deref())
+                        .is_some_and(|error| error.contains(text))
+        )
+    })
+    .await;
+}
+
+async fn next_fetch_error_clear(events: &mut Receiver<BusEvent>, repository_id: &str) {
+    next_event(events, |event| {
+        matches!(
+            &event.event,
+            DomainEvent::RepositoryUpdated(repository)
+                if repository.id == repository_id
+                    && repository
+                        .forge
+                        .as_ref()
+                        .is_some_and(|forge| forge.webhook.fetch_error.is_none())
+        )
+    })
+    .await;
+}
+
+/// Listen for the short interval during which a completed fetch would be
+/// wrong. This is a `QUIET` listen, rather than a clock the test sleeps
+/// through: a changed count fails immediately.
+async fn quiet_fetches(
+    stub: &crate::common::forge::StubForgeCli,
+    expected: usize,
+    within: Duration,
+) {
+    assert!(
+        tokio::time::timeout(within, async {
+            loop {
+                assert_eq!(stub.fetches(), expected, "a fetch finished too early");
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .is_err(),
+        "a fetch finished during the quiet listen"
+    );
+}
+
+async fn wait_for_fetches(stub: &crate::common::forge::StubForgeCli, expected: usize) {
+    eventually(TIMEOUT, "the expected forge fetch", async || {
+        stub.fetches() == expected
+    })
+    .await;
+}
+
+/// A `pr list` rate-limit refusal pauses the worker. Wakes inside the pause
+/// are held until its end, when exactly one successful fetch clears the
+/// stored, user-visible error. A rate limit does not spend another forge
+/// call on the reactive signed-out check.
+#[tokio::test]
+async fn a_rate_limited_fetch_pauses_the_worker_and_fetches_once_after_wakes_inside_it() {
+    let stub = stub_forge_cli(json!([
+        {"args": ["api", "rate_limit"], "exit": 1, "stderr": "gh: Not Found (HTTP 404)"},
+        {"args": ["pr", "list"], "exit": 1,
+         "stderr": "gh: API rate limit exceeded for user ID 1. (HTTP 403)"},
+    ]));
+    let h = harness()
+        .forge_cli(&stub)
+        .timeouts(Timeouts {
+            forge_rate_limit_pause: RUNS_OUT * 3,
+            ..Default::default()
+        })
+        .await;
+    let mut events = h.bus.subscribe();
+    let repo = enabled_repository(&h).await;
+
+    next_fetch_error(&mut events, &repo.id, FORGE_RATE_LIMITED).await;
+    assert!(called(&stub, &["api", "rate_limit"]));
+    assert!(
+        !called(&stub, &["api", "user"]),
+        "a rate limit is already classified; do not check whether the CLI is signed out"
+    );
+
+    // Any early fetch would now succeed, so the quiet listen proves the
+    // wakes stayed inside the pause instead of becoming their own fetches.
+    stub.reprogram(json!([
+        {"args": ["pr", "list"], "exit": 0, "stdout": "[]"},
+        {"args": ["api", "repos/acme/widgets/issues?state=open&per_page=100"],
+         "exit": 0, "stdout": "[]"},
+    ]));
+    h.state.forge_poll.wake(&repo.id);
+    h.state.forge_poll.wake(&repo.id);
+    quiet_fetches(&stub, 0, QUIET).await;
+
+    wait_for_fetches(&stub, 1).await;
+    next_fetch_error_clear(&mut events, &repo.id).await;
+    quiet_fetches(&stub, 1, QUIET).await;
+}
+
+/// A successful GitHub rate-limit read records the later REST/GraphQL reset
+/// time, rather than falling back to a local duration or resuming at the
+/// first resource that happens to reset.
+#[tokio::test]
+async fn a_rate_limited_fetch_reads_the_forges_own_later_reset_time() {
+    let core = 4_102_444_800_i64;
+    let graphql = core + 1800;
+    let stub = stub_forge_cli(json!([
+        {"args": ["api", "rate_limit"], "exit": 0,
+         "stdout": json!({"resources": {
+             "core": {"reset": core}, "graphql": {"reset": graphql}
+         }}).to_string()},
+        {"args": ["pr", "list"], "exit": 1,
+         "stderr": "gh: API rate limit exceeded for user ID 1. (HTTP 403)"},
+    ]));
+    let h = harness().forge_cli(&stub).await;
+    let mut events = h.bus.subscribe();
+    let repo = enabled_repository(&h).await;
+    let expected = format!(
+        "{FORGE_RATE_LIMITED} {}",
+        chrono::DateTime::from_timestamp(graphql, 0)
+            .unwrap()
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+    );
+
+    next_fetch_error(&mut events, &repo.id, &expected).await;
+    assert!(called(&stub, &["api", "rate_limit"]));
+    quiet_fetches(&stub, 0, QUIET).await;
+}
+
+/// In timer mode a plain failure waits twice as long before trying again,
+/// stops growing at its cap, resets after success, and a wake overrides the
+/// pending timer. Error updates are the observable boundary for failed
+/// fetches; successful rounds are counted by the forge stub itself.
+#[tokio::test]
+async fn a_failed_fetch_in_timer_mode_backs_off_and_a_wake_still_fetches_at_once() {
+    let poll = RUNS_OUT * 2;
+    let cap = poll * 2;
+    let stub = stub_forge_cli(json!([
+        {"args": ["api", "user"], "exit": 0, "stdout": "me"},
+        {"args": ["pr", "list"], "exit": 1, "stderr": "gh: first failure (HTTP 500)"},
+    ]));
+    let h = harness()
+        .forge_cli(&stub)
+        .timeouts(Timeouts {
+            forge_poll: poll,
+            forge_poll_backoff_cap: cap,
+            forge_wake_debounce: Duration::ZERO,
+            ..Default::default()
+        })
+        .await;
+    let mut events = h.bus.subscribe();
+    let repo = enabled_repository(&h).await;
+    next_fetch_error(&mut events, &repo.id, "first failure").await;
+    assert!(called(&stub, &["api", "user"]));
+
+    // The normal timer would run after `poll`; halfway between that and the
+    // doubled wait, its distinct error must not have been stored yet.
+    stub.reprogram(json!([
+        {"args": ["api", "user"], "exit": 0, "stdout": "me"},
+        {"args": ["pr", "list"], "exit": 1, "stderr": "gh: second failure (HTTP 500)"},
+    ]));
+    assert!(
+        tokio::time::timeout(
+            poll + poll / 2,
+            next_fetch_error(&mut events, &repo.id, "second failure")
+        )
+        .await
+        .is_err(),
+        "a failed timer fetch must wait twice as long"
+    );
+    next_fetch_error(&mut events, &repo.id, "second failure").await;
+
+    // The second failure stays at the cap. If it doubled again, its success
+    // would miss this cap-sized listen.
+    stub.reprogram(json!([
+        {"args": ["pr", "list"], "exit": 0, "stdout": "[]"},
+        {"args": ["api", "repos/acme/widgets/issues?state=open&per_page=100"],
+         "exit": 0, "stdout": "[]"},
+    ]));
+    tokio::time::timeout(cap + QUIET, wait_for_fetches(&stub, 1))
+        .await
+        .expect("the capped timer fetch must complete");
+    next_fetch_error_clear(&mut events, &repo.id).await;
+
+    // The successful fetch resets the timer to its ordinary interval.
+    // Leaving the forge successful makes the next completed fetch prove it
+    // did not keep the cap-sized backoff.
+    tokio::time::timeout(poll + QUIET, wait_for_fetches(&stub, 2))
+        .await
+        .expect("the first success must reset the timer backoff");
+
+    // A wake during the next timer wait ignores that wait and fetches now.
+    stub.reprogram(json!([
+        {"args": ["api", "user"], "exit": 0, "stdout": "me"},
+        {"args": ["pr", "list"], "exit": 1, "stderr": "gh: wake failure (HTTP 500)"},
+    ]));
+    h.state.forge_poll.wake(&repo.id);
+    next_fetch_error(&mut events, &repo.id, "wake failure").await;
+    stub.reprogram(json!([
+        {"args": ["pr", "list"], "exit": 0, "stdout": "[]"},
+        {"args": ["api", "repos/acme/widgets/issues?state=open&per_page=100"],
+         "exit": 0, "stdout": "[]"},
+    ]));
+    h.state.forge_poll.wake(&repo.id);
+    tokio::time::timeout(QUIET, wait_for_fetches(&stub, 3))
+        .await
+        .expect("a wake must fetch before the timer runs out");
+    next_fetch_error_clear(&mut events, &repo.id).await;
+}
+
+/// Three wakes during the configured quiet period become one fetch.
+#[tokio::test]
+async fn three_wakes_inside_the_debounce_window_cause_one_fetch() {
+    let stub = stub_forge_cli(json!([
+        {"args": ["pr", "list"], "exit": 0, "stdout": "[]"},
+        {"args": ["api", "repos/acme/widgets/issues?state=open&per_page=100"],
+         "exit": 0, "stdout": "[]"},
+    ]));
+    let h = harness()
+        .forge_cli(&stub)
+        .timeouts(Timeouts {
+            forge_wake_debounce: QUIET * 2,
+            ..Default::default()
+        })
+        .await;
+    let repo = enabled_repository(&h).await;
+    h.state.forge_poll.set_mode(&repo.id, Mode::WakeOnly);
+    wait_for_fetches(&stub, 1).await;
+
+    for _ in 0..3 {
+        h.state.forge_poll.wake(&repo.id);
+    }
+    quiet_fetches(&stub, 1, QUIET).await;
+    wait_for_fetches(&stub, 2).await;
+    quiet_fetches(&stub, 2, QUIET).await;
+}

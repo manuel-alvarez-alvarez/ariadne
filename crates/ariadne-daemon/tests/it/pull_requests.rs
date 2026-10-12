@@ -482,8 +482,7 @@ async fn startup_fetches_enabled_repositories_and_reads_a_missing_row_as_merged(
         h.launcher.cfg.clone(),
         &h.bus,
         live.clone(),
-        h.timeouts.forge_poll,
-        h.timeouts.forge_details,
+        h.timeouts,
     );
     // Replace the only public handle, which shuts down the old manager.
     // The router also holds a clone, so drop its state before replacement.

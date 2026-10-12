@@ -650,8 +650,10 @@ async fn startup_checks_a_stored_hook_without_creating_another_and_fetches_once(
         std::sync::Arc::new(cfg),
         &bus,
         ariadne_daemon::forge::live::LivePulls::default(),
-        crate::common::RUNS_OUT,
-        ariadne_daemon::timeouts::Timeouts::default().forge_details,
+        ariadne_daemon::timeouts::Timeouts {
+            forge_poll: crate::common::RUNS_OUT,
+            ..Default::default()
+        },
     );
     eventually(TIMEOUT, "startup fetch", async || fetches(&stub) == 1).await;
     quiet(&stub, 1).await;

@@ -42,4 +42,24 @@ impl Github {
             false => Ok(login),
         }
     }
+
+    /// `gh api rate_limit --hostname <host>`, which spends none of the
+    /// limit itself: the later of the `core` (REST) and `graphql` reset
+    /// times, since one repository fetch can draw on both. `None` where
+    /// the call failed or either reset could not be read.
+    pub(crate) async fn rate_limit_reset(
+        &self,
+        host: &str,
+    ) -> Option<chrono::DateTime<chrono::Utc>> {
+        let answer = self
+            .cli
+            .answer(&["api", "rate_limit", "--hostname", host])
+            .await
+            .ok()?;
+        let body: serde_json::Value = serde_json::from_str(&answer).ok()?;
+        let resources = body.get("resources")?;
+        let reset_of = |key: &str| -> Option<i64> { resources.get(key)?.get("reset")?.as_i64() };
+        let reset = reset_of("core")?.max(reset_of("graphql")?);
+        chrono::DateTime::from_timestamp(reset, 0)
+    }
 }

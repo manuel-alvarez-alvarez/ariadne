@@ -20,6 +20,7 @@ use std::process::Output;
 use std::time::Duration;
 
 use ariadne_api::issues::IssueDto;
+use chrono::{DateTime, Utc};
 use tracing::warn;
 
 pub use ariadne_core::ForgeKind;
@@ -553,6 +554,27 @@ impl ForgeClient {
             .is_some_and(|refusal| refusal.ran() && refusal.is_unauthorized())
     }
 
+    /// Whether the forge confirmed the CLI is signed out after this fetch
+    /// failure. A rate-limit answer is already conclusive and must pause the
+    /// poll rather than spending another forge call on a sign-in check.
+    pub(crate) async fn confirmed_signed_out_after(&self, host: &str, failure: &str) -> bool {
+        !Refusal::of(failure).is_rate_limited() && self.confirmed_signed_out(host).await
+    }
+
+    /// When the forge's rate limit resets, read with no quota of its own
+    /// (GitHub's `gh api rate_limit`) — the later of the REST and GraphQL
+    /// reset times, since one repository fetch can draw on both. `None`
+    /// where the read itself failed, or the forge offers no such read
+    /// (GitLab): the caller falls back to
+    /// [`crate::timeouts::Timeouts::forge_rate_limit_pause`] from now
+    /// (`forge/poll.rs::worker`).
+    pub(crate) async fn rate_limit_reset(&self, host: &str) -> Option<DateTime<Utc>> {
+        match self {
+            ForgeClient::Github(cli) => cli.rate_limit_reset(host).await,
+            ForgeClient::Gitlab(_) => None,
+        }
+    }
+
     /// The account the CLI is signed in to `host` as.
     pub async fn whoami(&self, host: &str) -> Result<String, String> {
         match self {
@@ -735,6 +757,20 @@ pub(crate) struct Refusal {
 }
 
 impl Refusal {
+    /// A refusal as only its own final words, for a reactive classification
+    /// after the fact: the fetch path that answers [`Self::is_rate_limited`]
+    /// here (`forge/poll.rs::worker`) already turned its own `Refusal` into
+    /// a plain stored error before the worker ever saw it.
+    pub(crate) fn of(said: impl Into<String>) -> Refusal {
+        let said = said.into();
+        Refusal {
+            said: Some(said.clone()),
+            answer: None,
+            executed: true,
+            message: said,
+        }
+    }
+
     /// Whether the forge answered that what the call named is not there:
     /// `gh` and `glab` both say "404" for it. A server error, a timeout or a
     /// lost answer is no proof the thing is gone.
@@ -768,6 +804,21 @@ impl Refusal {
         self.said
             .as_deref()
             .is_some_and(|said| said.contains("HTTP 401") || said.contains("Bad credentials"))
+    }
+
+    /// Whether the forge answered that its rate limit was hit: GitHub's
+    /// primary and secondary rate limiting both say "rate limit" — in the
+    /// REST (`gh api`) and GraphQL (`gh api graphql`) answers alike, the
+    /// secondary wording being a superset of the primary's — and GitLab
+    /// answers `429`. Read for positive evidence, the same convention
+    /// [`Self::is_missing`] and [`Self::is_unauthorized`] already follow.
+    pub(crate) fn is_rate_limited(&self) -> bool {
+        self.said.as_deref().is_some_and(|said| {
+            let said = said.to_ascii_lowercase();
+            said.contains("rate limit")
+                || said.contains("http 429")
+                || said.contains("429 too many requests")
+        })
     }
 
     /// The forge's own answer as JSON, where it gave one.
@@ -1048,6 +1099,37 @@ exit \"$(cat \"$dir/exit\")\"\n";
         assert!(!refusal(None).is_missing(), "a timeout is no 404");
         assert!(refusal(Some("gh: Not Found (HTTP 404)")).is_missing());
         assert!(refusal(Some("404 Not Found")).is_missing());
+    }
+
+    /// GitHub's primary limit, its secondary limit, and GitLab's `429` all
+    /// read as a rate limit; a 404 and a timeout read as none of them.
+    #[test]
+    fn a_refusal_is_rate_limited_on_either_forges_own_words() {
+        let refusal = |said: Option<&str>| Refusal {
+            said: said.map(str::to_string),
+            answer: None,
+            executed: said.is_some(),
+            message: "`gh pr list`".into(),
+        };
+        assert!(
+            refusal(Some(
+                "gh: API rate limit exceeded for user ID 1. (HTTP 403)"
+            ))
+            .is_rate_limited()
+        );
+        assert!(
+            refusal(Some(
+                "gh: You have exceeded a secondary rate limit. Please wait a few \
+                 minutes before you try again. (HTTP 403)"
+            ))
+            .is_rate_limited()
+        );
+        assert!(refusal(Some("glab: 429 Too Many Requests")).is_rate_limited());
+        assert!(!refusal(Some("gh: Not Found (HTTP 404)")).is_rate_limited());
+        assert!(
+            !refusal(None).is_rate_limited(),
+            "a timeout is no rate limit"
+        );
     }
 
     #[test]

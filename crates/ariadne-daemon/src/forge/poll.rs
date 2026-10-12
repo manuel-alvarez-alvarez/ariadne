@@ -1,15 +1,19 @@
 //! Timer fallback and explicit repository wakes. Each repository has one worker.
 use super::live::{Details, Live, LivePulls};
-use super::{ForgeClient, pulls};
-use crate::{bus::EventBus, config::Config, scheduler::SchedEvent, webhooks::Public};
+use super::{ForgeClient, Refusal, pulls};
+use crate::{
+    bus::EventBus, config::Config, scheduler::SchedEvent, timeouts::Timeouts, webhooks::Public,
+};
 use ariadne_api::stream::DomainEvent;
 use ariadne_store::{ForgeIntegration, PullRequest, PullRequestFilter, PullRequestRow, Store};
+use chrono::{DateTime, SecondsFormat, Utc};
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, OnceLock},
     time::Duration,
 };
 use tokio::sync::{Notify, mpsc, oneshot, watch};
+use tokio::time::{Instant, sleep_until};
 use tracing::warn;
 
 /// Prefixed onto a fetch's stored error once the forge CLI's own sign-in
@@ -18,6 +22,11 @@ use tracing::warn;
 /// fetch error is an `access` cause rather than a transient one
 /// (`crate::attention::recovery`).
 pub const FORGE_SIGNED_OUT: &str = "the forge CLI is not signed in";
+
+/// Prefixed onto a fetch's stored error, with the forge's own reset time
+/// appended in RFC 3339, while a rate limit pauses the worker: the
+/// deterministic words a test, and the desktop, read it by.
+pub const FORGE_RATE_LIMITED: &str = "rate limited until";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -130,20 +139,19 @@ impl ForgePoll {
     }
 }
 
-/// Start the fetches: `every` is the fallback timer, and `details` bounds one
-/// detail fetch of a request (`Timeouts::forge_details`).
+/// Start the fetches: `timeouts.forge_poll` is the fallback timer, and
+/// `timeouts.forge_details` bounds one detail fetch of a request.
 pub fn start(
     store: Store,
     cfg: Arc<Config>,
     events: &EventBus,
     live: LivePulls,
-    every: Duration,
-    details: Duration,
+    timeouts: Timeouts,
 ) -> ForgePoll {
     let scheduler: Waker = Arc::default();
     let pulls_seen: Arc<std::sync::Mutex<HashMap<String, u64>>> = Arc::default();
     let handoff = Handoff {
-        details,
+        details: timeouts.forge_details,
         scheduler: scheduler.clone(),
         bus: events.clone(),
         issues_seen: Arc::default(),
@@ -157,39 +165,39 @@ pub fn start(
     tokio::spawn(async move {
         let mut workers = HashMap::new();
         let mut public_url = urls.borrow_and_update().clone();
-        reconcile(&store, &cfg, every, &mut workers, &public_url, &handoff).await;
+        reconcile(&store, &cfg, timeouts, &mut workers, &public_url, &handoff).await;
         loop {
             tokio::select! {
                 changed = urls.changed() => {
                     if changed.is_err() { break; }
                     public_url = urls.borrow_and_update().clone();
-                    reconcile(&store, &cfg, every, &mut workers, &public_url, &handoff).await;
+                    reconcile(&store, &cfg, timeouts, &mut workers, &public_url, &handoff).await;
                 },
                 command = requests.recv() => match command {
                     None => break,
                     Some(Command::Changed(id, done)) => {
-                        sync(&store, &cfg, every, &mut workers, &id, &public_url, &handoff).await;
+                        sync(&store, &cfg, timeouts, &mut workers, &id, &public_url, &handoff).await;
                         let _ = done.send(());
                     }
                     Some(Command::Wake(id)) => {
                         let existed = workers.contains_key(&id);
-                        sync(&store, &cfg, every, &mut workers, &id, &public_url, &handoff).await;
+                        sync(&store, &cfg, timeouts, &mut workers, &id, &public_url, &handoff).await;
                         if existed && let Some(worker) = workers.get(&id) { worker.wake.notify_one(); }
                     }
                     Some(Command::Mode(id, mode)) => {
-                        sync(&store, &cfg, every, &mut workers, &id, &public_url, &handoff).await;
+                        sync(&store, &cfg, timeouts, &mut workers, &id, &public_url, &handoff).await;
                         if let Some(worker) = workers.get(&id) { worker.mode.send_replace(mode); }
                     }
                 },
                 event = events.recv() => match event {
                     Ok(event) => match event.event {
                         DomainEvent::RepositoryCreated(repo) | DomainEvent::RepositoryUpdated(repo) => {
-                            sync(&store, &cfg, every, &mut workers, &repo.id, &public_url, &handoff).await;
+                            sync(&store, &cfg, timeouts, &mut workers, &repo.id, &public_url, &handoff).await;
                         }
                         DomainEvent::RepositoryDeleted(repo) => { workers.remove(&repo.id); }
                         _ => {}
                     },
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => reconcile(&store, &cfg, every, &mut workers, &public_url, &handoff).await,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => reconcile(&store, &cfg, timeouts, &mut workers, &public_url, &handoff).await,
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
             }
@@ -206,7 +214,7 @@ pub fn start(
 async fn reconcile(
     store: &Store,
     cfg: &Arc<Config>,
-    every: Duration,
+    timeouts: Timeouts,
     workers: &mut HashMap<String, Worker>,
     public_url: &Public,
     handoff: &Handoff,
@@ -216,7 +224,7 @@ async fn reconcile(
             let ids: HashSet<_> = repositories.iter().map(|r| r.id.clone()).collect();
             workers.retain(|id, _| ids.contains(id));
             for repo in repositories {
-                sync(store, cfg, every, workers, &repo.id, public_url, handoff).await;
+                sync(store, cfg, timeouts, workers, &repo.id, public_url, handoff).await;
             }
         }
         Err(error) => warn!(%error, "cannot reconcile forge fetches"),
@@ -226,7 +234,7 @@ async fn reconcile(
 async fn sync(
     store: &Store,
     cfg: &Arc<Config>,
-    every: Duration,
+    timeouts: Timeouts,
     workers: &mut HashMap<String, Worker>,
     id: &str,
     public_url: &Public,
@@ -323,7 +331,7 @@ async fn sync(
             cfg.clone(),
             handoff.clone(),
             id.into(),
-            every,
+            timeouts,
             wake.clone(),
             changes,
         ));
@@ -345,14 +353,46 @@ async fn worker(
     cfg: Arc<Config>,
     handoff: Handoff,
     id: String,
-    every: Duration,
+    timeouts: Timeouts,
     wake: Arc<Notify>,
     mut mode: watch::Receiver<Mode>,
 ) {
+    let mut backoff = timeouts.forge_poll;
     loop {
         let fetched = fetch(&store, &cfg, &handoff, &id).await;
+        if let Err(error) = &fetched
+            && Refusal::of(error.clone()).is_rate_limited()
+        {
+            warn!(%error, repository = id, "cannot fetch pull requests: rate limited");
+            let until = rate_limit_pause(&store, &cfg, &id, &timeouts).await;
+            let message = format!(
+                "{FORGE_RATE_LIMITED} {}",
+                until.to_rfc3339_opts(SecondsFormat::Secs, true)
+            );
+            if let Err(error) = store.set_forge_fetch_error(&id, Some(&message)).await {
+                warn!(%error, repository = id, "cannot record how the fetch went");
+            }
+            // The timer and the mode are both beside the point while the
+            // forge itself says to wait: every wake until `until` folds
+            // into the one fetch that runs once it passes.
+            let deadline = Instant::now() + (until - Utc::now()).to_std().unwrap_or_default();
+            loop {
+                tokio::select! {
+                    _ = sleep_until(deadline) => break,
+                    _ = wake.notified() => continue,
+                }
+            }
+            continue;
+        }
         if let Err(error) = &fetched {
             warn!(%error, repository = id, "cannot fetch pull requests");
+            if *mode.borrow() == Mode::Timer {
+                backoff = backoff
+                    .saturating_mul(2)
+                    .min(timeouts.forge_poll_backoff_cap);
+            }
+        } else {
+            backoff = timeouts.forge_poll;
         }
         // What says polling works, where no hook is live (026).
         if let Err(error) = store
@@ -364,12 +404,49 @@ async fn worker(
         loop {
             let timer = *mode.borrow_and_update() == Mode::Timer;
             tokio::select! {
-                _ = wake.notified() => break,
-                _ = tokio::time::sleep(every), if timer => break,
+                _ = wake.notified() => {
+                    debounce(&wake, timeouts.forge_wake_debounce).await;
+                    break;
+                },
+                _ = tokio::time::sleep(backoff), if timer => break,
                 changed = mode.changed() => if changed.is_err() { return; },
             }
         }
     }
+}
+
+/// Wait out `window` of quiet after a wake, folding every wake inside it
+/// into the one fetch that follows: a burst of webhook deliveries for one
+/// push costs one fetch, not one per delivery.
+async fn debounce(wake: &Notify, window: Duration) {
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(window) => break,
+            _ = wake.notified() => continue,
+        }
+    }
+}
+
+/// When a rate-limited repository's worker may fetch again: the forge's
+/// own reset time, read with no quota of its own
+/// (`ForgeClient::rate_limit_reset`), else `Timeouts::forge_rate_limit_pause`
+/// from now, where the integration cannot be read, or the forge offers no
+/// such read.
+async fn rate_limit_pause(
+    store: &Store,
+    cfg: &Config,
+    id: &str,
+    timeouts: &Timeouts,
+) -> DateTime<Utc> {
+    let fallback = Utc::now() + timeouts.forge_rate_limit_pause;
+    let Ok(Some(integration)) = store.forge_integration(id).await else {
+        return fallback;
+    };
+    let client = ForgeClient::for_repository(cfg, &integration);
+    client
+        .rate_limit_reset(&integration.host)
+        .await
+        .unwrap_or(fallback)
 }
 
 async fn fetch(store: &Store, cfg: &Config, handoff: &Handoff, id: &str) -> Result<(), String> {
@@ -405,7 +482,10 @@ async fn fetch(store: &Store, cfg: &Config, handoff: &Handoff, id: &str) -> Resu
         // sign in when the real cause is, say, the CLI not being
         // installed at all (which `configuration` already names).
         Err(error) => {
-            let failure = match client.confirmed_signed_out(&integration.host).await {
+            let failure = match client
+                .confirmed_signed_out_after(&integration.host, &error)
+                .await
+            {
                 true => format!("{FORGE_SIGNED_OUT}: {error}"),
                 false => error,
             };
