@@ -427,7 +427,7 @@ semantics remain with 009.
     and each request targets its session console.
     Opening a request also records one `agent_request` event in the
     session's own stream, with the `request_id` and the `hint`, so a console
-    shows the wait under the question it stands for; the daemon's one-line
+    shows the wait right above the question that follows it; the daemon's one-line
     summary of it is `waiting for you · <hint>`, and the event moves neither
     the session's status nor its attention flag (012 rule 9) — the pending
     row is what this list reads. A repeat of a pending hint records no
@@ -607,14 +607,15 @@ semantics remain with 009.
   (`attention.rs::a_request_records_its_hint_in_the_sessions_console_once`);
   the event reads as `waiting for you · <hint>` and moves neither status nor
   attention (`classify.rs::an_agent_request_event_reads_as_its_hint_and_moves_nothing`).
-- The console draws the event as a waiting note under the agent's text
+- The console draws the event as a waiting note above the question the agent
+  then writes
   (`ariadne-console::transcript::tests::an_agent_request_reads_as_a_waiting_note_with_its_hint`),
   and a permission on an Ariadne tool allowed by the daemon itself leaves no
   block while one a person answered, one the daemon denied or cancelled, or
   one on any other tool, keeps its
   (`::an_automatic_permission_on_an_ariadne_tool_leaves_no_block`).
 - The tool is `wait_for_user` with a `hint`, listed to every seat, and every
-  seat's session rules say to ask in the reply first
+  seat's session rules say to call it first and then ask in the reply
   (`mcp.rs::every_seat_has_the_tools_its_playbook_names_and_no_others`,
   `mcp.rs::only_the_orchestrator_is_told_to_ask`).
 - Answering or withdrawing one request preserves independent requests,
