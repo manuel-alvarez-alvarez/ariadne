@@ -25,7 +25,15 @@ pub(crate) struct StubForgeCli {
     log: PathBuf,
     finished: PathBuf,
     pid_file: PathBuf,
+    fetches: Fetches,
     _dir: tempfile::TempDir,
+}
+
+/// Which completed forge operation [`StubForgeCli::fetches`] counts.
+#[derive(Clone, Copy)]
+enum Fetches {
+    Repository,
+    PullRequestView,
 }
 
 /// One run of the stub, as it logged it.
@@ -68,18 +76,30 @@ impl StubForgeCli {
             .unwrap_or(0)
     }
 
-    /// How many of the poll's fetches have made their last call. The
-    /// listing of the open issues is the call a fetch ends on, so a fetch
-    /// counts once that listing has been answered, and one still on an
-    /// earlier call does not. Wait for this before reprogramming the stub
-    /// after a wake: a fetch still under way answers the rest of its calls
-    /// from the new script, and what it then publishes is neither the old
-    /// situation nor the new one. The listing is told from a request's
-    /// issue comments, read earlier in the fetch, by its query string. The
-    /// poll runs its calls one after another, so a listing that is the
-    /// last call logged, and not yet answered, is the one fetch still
-    /// under way.
+    /// How many selected forge reads have completed. The default counts
+    /// repository fetches by their final open-issues listing. A test can
+    /// select `pr view` calls instead with [`Self::pull_request_views_as_fetches`].
+    ///
+    /// Wait for the default count before reprogramming the stub after a
+    /// wake: a fetch still under way answers the rest of its calls from the
+    /// new script, and what it then publishes is neither the old situation
+    /// nor the new one. The poll runs its calls in order, so an unanswered
+    /// final issues listing is the one fetch still under way.
     pub(crate) fn fetches(&self) -> usize {
+        match self.fetches {
+            Fetches::Repository => self.repository_fetches(),
+            Fetches::PullRequestView => self.completed_pull_request_views(),
+        }
+    }
+
+    /// Count completed `pr view` calls as fetches instead of repository
+    /// fetches. The default keeps the repository-fetch count unchanged.
+    pub(crate) fn pull_request_views_as_fetches(mut self) -> Self {
+        self.fetches = Fetches::PullRequestView;
+        self
+    }
+
+    fn repository_fetches(&self) -> usize {
         let calls = self.invocations();
         let issues_read = |call: &Invocation| {
             call.args.first().is_some_and(|arg| arg == "api")
@@ -88,6 +108,17 @@ impl StubForgeCli {
         let reads = calls.iter().filter(|call| issues_read(call)).count();
         let last_pending = calls.last().is_some_and(issues_read) && self.completed() < calls.len();
         reads - usize::from(last_pending)
+    }
+
+    fn completed_pull_request_views(&self) -> usize {
+        self.invocations()
+            .into_iter()
+            .take(self.completed())
+            .filter(|call| {
+                call.args.first().is_some_and(|arg| arg == "pr")
+                    && call.args.get(1).is_some_and(|arg| arg == "view")
+            })
+            .count()
     }
 
     /// Answer from `script` from now on.
@@ -145,6 +176,7 @@ pub(crate) fn stub_forge_cli(script: Value) -> StubForgeCli {
         log: dir.path().join("forge-calls.jsonl"),
         finished: dir.path().join("forge-finished.jsonl"),
         pid_file: dir.path().join("forge-pid"),
+        fetches: Fetches::Repository,
         script_file,
         _dir: dir,
     }

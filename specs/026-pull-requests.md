@@ -1,7 +1,7 @@
 ---
 id: pull-requests
 status: current
-updated: 2026-10-12
+updated: 2026-10-13
 areas: [store, api, daemon, cli, ui]
 commits: []
 tests:
@@ -165,7 +165,7 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     A deletion that fails keeps the row: the next change of the request tries it again, and the tick after 60 seconds, and so does a restarted daemon.
     A task that ends while the last read says its request is open reads the forge again first: a step completion reads it at the call, so a merge no fetch has read yet still has its work taken down. A request still open lets go of it too, unless the user asked Ariadne to review it.
     An author request with no live task to keep it — one opened by no task, or whose task ended — and still asked for by hand reads the forge for its end on the next change of the request at once, and otherwise no more than once every 60 seconds: a read that finds it still open costs the same wait a failed one does, rather than running on every scheduler tick:
-    `pull_request_keep_retry.rs::an_open_kept_request_with_no_task_is_read_once_per_wait`.
+    `pull_request_keep_retry.rs::an_open_kept_request_is_read_once_per_wait`.
 20. With the integration disabled, nothing reads the forge for its requests: each review session ends and its worktree goes, and Ariadne stops working on every request but a task's. Nobody merged or closed anything, so nothing is told.
     A task's row stays, and the next fetch with the integration on reads it again.
 21. Nothing adds or removes a request by hand, from the desktop or the CLI: Ariadne starts and stops working on requests on its own.
@@ -235,6 +235,11 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `pull_requests.rs::the_list_is_read_live_and_tracks_only_a_request_that_asks_for_my_review`.
 - A detail read asks the forge for its parts together:
   `pull_requests.rs::a_detail_read_asks_the_forge_for_its_parts_together`.
+- An open author request kept by hand reads the forge once per cleanup wait,
+  a request change reads inside that wait, and a failed read starts its own
+  wait: `pull_request_keep_retry.rs::an_open_kept_request_is_read_once_per_wait`,
+  `::a_changed_open_kept_request_is_read_inside_the_wait`,
+  `::a_failed_kept_request_read_waits_before_its_retry`.
 - A review request has a row while it is reviewed and none once it merged:
   `pull_requests.rs::a_review_request_has_a_row_while_it_is_reviewed_and_none_once_it_merged`.
 - A request of mine has a row once a task opened it, and not before:

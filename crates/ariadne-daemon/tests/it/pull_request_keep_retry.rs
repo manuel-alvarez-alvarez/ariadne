@@ -1,16 +1,8 @@
-//! An author request with no live task to keep it, asked for by hand (032),
-//! stays open past that ask: `keep_pass` probes the forge with `read_ended`
-//! to tell whether it ended. That probe waits `CLEANUP_RETRY`
-//! (`crate::scheduler::pull_requests`) between tries, the same as a failed
-//! cleanup, rather than running on every scheduler tick (026).
-//!
-//! The row here asks for both a review and a babysit, neither on a model:
-//! `wants_session` and `wants_babysit_session` are both false, so neither
-//! ever starts a session — the review's own `done` needs no review asked,
-//! and the babysit's own needs role `reviewer`, and neither holds. With no
-//! session ever up, nothing but `keep_pass`'s own probe, and a direct wake
-//! of the row, ever reads the forge, which keeps this test's count of
-//! `gh pr view` calls free of anything but the probe under test.
+//! An open author request with no live task can still be kept by manual
+//! review or babysit asks (029, 032). Its `keep_pass` probe of the forge waits
+//! `CLEANUP_RETRY` between reads (026), while a request change bypasses that
+//! tick-only wait.
+
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -21,17 +13,11 @@ use ariadne_daemon::scheduler::SchedEvent;
 use ariadne_daemon::timeouts::Timeouts;
 use ariadne_store::{NewPullRequest, PullRequestRow};
 
-/// How often the scheduler's full reconcile tick runs, sped up so several
-/// ticks land well inside [`QUIET`] and well inside the 60-second
-/// cleanup-retry wait.
-const SWEEPS_SOON: Duration = Duration::from_millis(100);
-
 const URL: &str = "https://github.com/acme/widgets/pull/1";
 const HEAD_SHA: &str = "abc123";
 
-/// What the stub forge answers for the request's own read: `pr view` exits
-/// with `pr_view_exit`, so a test can make the scheduler's own probe of it
-/// fail.
+/// The stub response for `read_ended`. A failing response proves the error
+/// path stores the retry wait independently of an open response.
 fn script(pr_view_exit: i32) -> Value {
     let read = json!({"number": 1, "url": URL,
         "title": "Fix widgets", "author": {"login": "me"}, "state": "OPEN", "isDraft": false,
@@ -42,20 +28,8 @@ fn script(pr_view_exit: i32) -> Value {
     json!([answer(&["pr", "view"], pr_view_exit, &read.to_string())])
 }
 
-/// How many times the scheduler has read the request with `gh pr view`.
-fn pr_view_calls(stub: &StubForgeCli) -> usize {
-    stub.invocations()
-        .iter()
-        .filter(|i| {
-            i.args.first().map(String::as_str) == Some("pr")
-                && i.args.get(1).map(String::as_str) == Some("view")
-        })
-        .count()
-}
-
-/// A row Ariadne works on, asked for a review and a babysit by hand but on
-/// no model, open, with nothing to keep it a task's: the one row
-/// `keep_pass`'s own probe for its end ever touches.
+/// An author request with no task and manual review and babysit asks. Neither
+/// ask has a model, so no request session can issue its own forge reads.
 async fn asked_row(h: &Harness, repository_id: &str) -> PullRequestRow {
     let (row, _) = h
         .store
@@ -81,6 +55,28 @@ async fn asked_row(h: &Harness, repository_id: &str) -> PullRequestRow {
     row
 }
 
+/// Make a scheduler and request that count completed `pr view` calls through
+/// the stub's `fetches` interface. Each test owns a new scheduler, so its
+/// retry map starts empty.
+async fn kept_request(
+    pr_view_exit: i32,
+    full_reconcile: Duration,
+) -> (Harness, StubForgeCli, PullRequestRow) {
+    let stub = stub_forge_cli(script(pr_view_exit)).pull_request_views_as_fetches();
+    let h = harness()
+        .scheduler()
+        .timeouts(Timeouts {
+            full_reconcile,
+            ..Timeouts::default()
+        })
+        .forge_cli(&stub)
+        .await;
+    let repo = h.repository(&h.at("widgets")).await;
+    enable_integration(&h, &repo.id, "me").await;
+    let row = asked_row(&h, &repo.id).await;
+    (h, stub, row)
+}
+
 /// Wake the scheduler about one request and wait for that pass to end.
 async fn pass_over(h: &Harness, pull_request_id: &str) {
     h.sched
@@ -91,68 +87,62 @@ async fn pass_over(h: &Harness, pull_request_id: &str) {
     h.flush_scheduler().await;
 }
 
-/// An author request of mine, opened by no task, asked for a review and a
-/// babysit by hand on no model: `keep_pass`'s own probe for its end costs
-/// one `gh pr view` call, then none for the wait, across several scheduler
-/// ticks; a change of the request still reads at once, inside the wait; and
-/// a failed probe costs one call the same way, not one a tick.
-#[tokio::test]
-async fn an_open_kept_request_with_no_task_is_read_once_per_wait() {
-    let stub = stub_forge_cli(script(0));
-    let timeouts = Timeouts {
-        full_reconcile: SWEEPS_SOON,
-        ..Timeouts::default()
-    };
-    let h = harness()
-        .scheduler()
-        .timeouts(timeouts)
-        .forge_cli(&stub)
-        .await;
-    let repo = h.repository(&h.at("widgets")).await;
-    enable_integration(&h, &repo.id, "me").await;
-    let row = asked_row(&h, &repo.id).await;
+/// Listen for a fetch that must not happen. `full_reconcile` runs every 100
+/// milliseconds in the tick tests, so this watches several scheduler ticks.
+async fn fetches_stay_quiet(stub: &StubForgeCli, count: usize) {
+    assert!(
+        tokio::time::timeout(QUIET, async {
+            loop {
+                assert_eq!(stub.fetches(), count, "the scheduler read the forge again");
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .is_err(),
+        "the scheduler read the forge again"
+    );
+}
 
-    // The scheduler's own tick finds the new row on its own, with no event
-    // of this test's to wake it: that first read is the probe under test,
-    // so nothing here wakes it directly ahead of it.
+/// An open read waits before later scheduler ticks read the request again.
+#[tokio::test]
+async fn an_open_kept_request_is_read_once_per_wait() {
+    let (_h, stub, _row) = kept_request(0, Duration::from_millis(100)).await;
+
+    eventually(TIMEOUT, "the first tick reads the request", async || {
+        stub.fetches() == 1
+    })
+    .await;
+
+    fetches_stay_quiet(&stub, 1).await;
+}
+
+/// A request change bypasses the tick-only retry wait.
+#[tokio::test]
+async fn a_changed_open_kept_request_is_read_inside_the_wait() {
+    let (h, stub, row) = kept_request(0, Duration::from_secs(60)).await;
+
+    pass_over(&h, &row.id).await;
+    assert_eq!(stub.fetches(), 1, "the first pass reads the request once");
+
+    pass_over(&h, &row.id).await;
+    assert_eq!(
+        stub.fetches(),
+        2,
+        "the request change reads the forge at once"
+    );
+}
+
+/// A failed read starts its own retry wait before later scheduler ticks run.
+#[tokio::test]
+async fn a_failed_kept_request_read_waits_before_its_retry() {
+    let (_h, stub, _row) = kept_request(1, Duration::from_millis(100)).await;
+
     eventually(
         TIMEOUT,
-        "the scheduler's own first read of the request",
-        async || pr_view_calls(&stub) >= 1,
+        "the first tick fails to read the request",
+        async || stub.fetches() == 1,
     )
     .await;
-    let baseline = pr_view_calls(&stub);
-    assert_eq!(baseline, 1, "the tick reads the request once");
 
-    tokio::time::sleep(QUIET).await;
-    assert_eq!(
-        pr_view_calls(&stub),
-        baseline,
-        "an open read waits before the scheduler reads the request again"
-    );
-
-    // A change of the request reads the forge at once, inside the wait.
-    pass_over(&h, &row.id).await;
-    assert_eq!(
-        pr_view_calls(&stub),
-        baseline + 1,
-        "a change of the request is read at once"
-    );
-
-    // A failed read still costs one call, then none for the wait.
-    stub.reprogram(script(1));
-    pass_over(&h, &row.id).await;
-    let after_failure = pr_view_calls(&stub);
-    assert_eq!(
-        after_failure,
-        baseline + 2,
-        "the failing read itself still runs once"
-    );
-
-    tokio::time::sleep(QUIET).await;
-    assert_eq!(
-        pr_view_calls(&stub),
-        after_failure,
-        "a failed read waits before the scheduler tries it again"
-    );
+    fetches_stay_quiet(&stub, 1).await;
 }
