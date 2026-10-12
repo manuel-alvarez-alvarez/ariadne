@@ -35,3 +35,9 @@ export const ARIADNE_REVIEWING = {
   label: "Ariadne reviewing",
   tone: "bg-status-review-soft text-status-review-fg",
 }
+
+/** The pill a keeper session wears while it babysits the request by hand. */
+export const ARIADNE_BABYSITTING = {
+  label: "Ariadne babysitting",
+  tone: "bg-status-review-soft text-status-review-fg",
+}

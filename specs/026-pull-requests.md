@@ -204,14 +204,14 @@ The command and screen follow [014](014-command-line-interface.md) and [015](015
 The sidebar's Forge entry opens the Forge screen, titled "Forge", whose two tabs are Pull requests (`#/forge/pull-requests`, where `#/forge` lands) and Issues (028).
 Pull requests lists the open requests, read live. A three-way choice narrows them: All (every open request), Mine (`role=author`), and Review requests (`role=reviewer&requested=true`).
 A text box narrows the rows to the words of their number, title, description, author or head branch, and a repository picker to one enabled repository. Every filter is kept in the URL.
-A row shows the linked number and title with a Draft or Ariadne reviewing pill, and under it the repository, "by you" or the author, and the head and base branches; then pills for the checks and the review decision, the unanswered comments, a link to the session, and the update age.
+A row shows the linked number and title with a Draft, Ariadne reviewing or Ariadne babysitting pill, and under it the repository, "by you" or the author, and the head and base branches; then pills for the checks and the review decision, the unanswered comments, a link to the session, and the update age.
 A row holds no button: a click on it, or Enter on it, opens the request's panel.
 The header offers Refresh only while a repository in view is not pushed live: the tunnel is off, the tunnel or its hook is down, or the last fetch failed. With every webhook live the events bring each change and there is no Refresh.
 A row opens the floating pane through `?pr=<repository>:<number>` and `paths.pullRequest`: a request is named by its repository and number, which every request has, and not by Ariadne's id, which only the requests it works on have.
-The panel reads the request off the forge by its repository and number. Its header carries the number and title, pills for the state, the checks, the review decision and an Ariadne review, Ariadne's id where it works on it, and when it opened and moved.
-Under it are the facts by name — a link to the request on the forge, the repository, the author, the branches, the head, the unanswered comments, the base, what Ariadne does with it, the task that keeps it and each failed check linked to its run — then two tabs: Description, the body rendered as Markdown, and Sessions, the request's review sessions and the task's keeping agent.
+The panel reads the request off the forge by its repository and number. Its header carries the number and title, pills for the state, the checks, the review decision, an Ariadne review and Ariadne babysitting, Ariadne's id where it works on it, and when it opened and moved.
+Under it are the facts by name — a link to the request on the forge, the repository, the author, the branches, the head, the unanswered comments, the base, what Ariadne does with it, the task that keeps it and each failed check linked to its run — then two tabs: Description, the body rendered as Markdown, and Sessions, the request's review and keeper sessions and the task's keeping agent.
 Picking a session drills into it in the panel, as `?session=` beside `?pr=`, with a way back to the request.
-The panel offers Start review and Stop review on a request of the user's own (029). Nothing on the screen adds or removes a request.
+The panel offers Start review and Stop review on a request of the user's own or one that asks for their review (029), and, on a request of the user's own that no task keeps, Start babysit and Stop babysit (032). Nothing on the screen adds or removes a request.
 `pull_requests_changed` invalidates every pull request key; no screen polls.
 A row and the panel link to the request's session. The panel shows the failed checks and `behind_base`.
 A session with a `pull_request_id` shows the request's title and a link to its URL in the sessions table Context column and the session panel.
@@ -278,6 +278,13 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 - The panel reads the request by its repository and number, its facts by name, renders the description, links the forge and each failed check, lists the review sessions, and removes nothing:
   `pull-request-panel.test.tsx::reads its facts by name, renders its description, links the forge, and removes nothing`,
   `::links each failed check to its run, and lists the request's review sessions`.
+- Start babysit and Stop babysit run a keeper session on the model and skills picked, open its console, and offer themselves on a request of mine that no task keeps alone:
+  `pull-request-panel.test.tsx::starts Ariadne babysitting of a request of mine on the model and skills picked, opens its console, and stops it`,
+  `::offers Start babysit on a request of mine that no task keeps, and on no other request`,
+  `::offers no Start babysit on a request that asks for my review`,
+  `::offers no Start babysit on a request of mine a task already keeps`.
+- A row shows the Ariadne babysitting pill while a keeper session babysits it by hand:
+  `pull-requests-page.test.tsx::shows the Ariadne babysitting pill on a row a keeper session babysits by hand`.
 - Opening a task or session replaces the request panel and preserves list filters:
   `paths.test.ts::pull request panel navigation`.
 - A new comment by another login is told once by id to the `pr` agent of the task that opened the request; a failed check is told by name; the request has no session of its own:

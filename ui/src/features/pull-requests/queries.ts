@@ -93,3 +93,37 @@ export function useAskReview() {
     },
   })
 }
+
+/**
+ * `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-babysit` — ask
+ * Ariadne to keep a request of the user's own by hand, or stop asking
+ * (032). Asking starts a keeper session on it; the request comes back and
+ * lands in the cache.
+ */
+export function useAskBabysit() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      repository_id,
+      number,
+      ...body
+    }: {
+      repository_id: string
+      number: number
+      asked: boolean
+      model?: string
+      effort?: string
+      skills?: string[]
+    }) =>
+      unwrap(
+        api().PUT("/v1/repositories/{id}/pull-requests/{number}/ariadne-babysit", {
+          params: { path: { id: repository_id, number } },
+          body,
+        }),
+      ),
+    onSuccess: (pull) => {
+      client.setQueryData(qk.pullRequests.detail(pullRequestKey(pull)), pull)
+      void client.invalidateQueries({ queryKey: qk.pullRequests.lists() })
+    },
+  })
+}

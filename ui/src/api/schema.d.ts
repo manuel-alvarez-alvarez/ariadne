@@ -918,6 +918,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/repositories/{id}/pull-requests/{number}/ariadne-babysit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Ask Ariadne to keep a request of the user's own by hand on the model
+         *     the user picks, or stop asking (032): a keeper session runs on that pin
+         *     while the request is open, beside a task's own keeper where one
+         *     opened it, or alone where none did. Refused on a request that is not
+         *     open, one by another login, or one a task already keeps: those are
+         *     never Ariadne's to babysit by hand. Asking starts Ariadne's work on the
+         *     request; stopping ends the keeper session, where no task and no review
+         *     still keeps the row.
+         */
+        put: operations["pull-requests_ask_babysit"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/repositories/{id}/pull-requests/{number}/ariadne-review": {
         parameters: {
             query?: never;
@@ -1875,6 +1901,27 @@ export interface components {
             thresholds_default: boolean;
             /** @description Whether the checkpoints of the last good install are on disk. */
             weights_present: boolean;
+        };
+        /**
+         * @description Body of
+         *     `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-babysit`:
+         *     whether Ariadne keeps a request of the user's own by hand (032), the
+         *     same shape as [`AskReviewRequest`].
+         */
+        AskBabysitRequest: {
+            asked: boolean;
+            /** @description The effort that model runs at; none for the agent's own. */
+            effort?: string | null;
+            /**
+             * @description The model the keeper session runs on, `agent:model`: required to
+             *     ask, and checked against the catalog as any pin is.
+             */
+            model?: string | null;
+            /**
+             * @description The skills the keeper session loads beside `pr-babysit`; skills a
+             *     task agent is staffed on.
+             */
+            skills?: string[];
         };
         /**
          * @description Body of `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-review`:
@@ -3014,6 +3061,16 @@ export interface components {
          */
         PullRequestDto: {
             author_login: string;
+            /**
+             * @description Whether the user asked Ariadne to keep this request of their own by
+             *     hand (032).
+             */
+            babysit_asked?: boolean;
+            babysit_effort?: string | null;
+            /** @description The pin the user picked for that keeper session. */
+            babysit_model?: string | null;
+            /** @description The skills that keeper session loads beside `pr-babysit`. */
+            babysit_skills?: string[];
             base_branch: string;
             /** @description Whether the base branch has commits the head does not. */
             behind_base?: boolean;
@@ -3061,8 +3118,8 @@ export interface components {
             /** @description `author` for a request of the user's, `reviewer` for any other. */
             role: string;
             /**
-             * @description The newest session on this request, if any: its review session
-             *     (029), or the author of the task that opened it (005).
+             * @description The newest session on this request, if any: its review or keeper
+             *     session (029, 032), or the author of the task that opened it (005).
              */
             session_id?: string | null;
             /** @description `open`, `merged` or `closed`. */
@@ -3197,7 +3254,7 @@ export interface components {
          *     only what the state machine and the launcher need to know about it.
          * @enum {string}
          */
-        Seat: "orchestrator" | "agent" | "reviewer";
+        Seat: "orchestrator" | "agent" | "reviewer" | "keeper";
         /**
          * @description Body of `POST /v1/tasks/{id}/messages` and `POST /v1/goals/{id}/messages`.
          *
@@ -5689,6 +5746,56 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["PullRequestDto"];
                 };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_ask_babysit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskBabysitRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             409: {
                 headers: {

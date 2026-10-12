@@ -7,7 +7,7 @@
       "name": "Apache-2.0",
       "identifier": "Apache-2.0"
     },
-    "version": "0.10.0"
+    "version": "0.11.0"
   },
   "paths": {
     "/v1/acp-agents": {
@@ -2149,6 +2149,68 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": ""
+          },
+          "502": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/repositories/{id}/pull-requests/{number}/ariadne-babysit": {
+      "put": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "Ask Ariadne to keep a request of the user's own by hand on the model\nthe user picks, or stop asking (032): a keeper session runs on that pin\nwhile the request is open, beside a task's own keeper where one\nopened it, or alone where none did. Refused on a request that is not\nopen, one by another login, or one a task already keeps: those are\nnever Ariadne's to babysit by hand. Asking starts Ariadne's work on the\nrequest; stopping ends the keeper session, where no task and no review\nstill keeps the row.",
+        "operationId": "ask_babysit",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskBabysitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullRequestDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
           },
           "409": {
             "description": ""
@@ -4606,6 +4668,40 @@
             "description": "Whether the checkpoints of the last good install are on disk."
           }
         }
+      },
+      "AskBabysitRequest": {
+        "type": "object",
+        "description": "Body of\n`PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-babysit`:\nwhether Ariadne keeps a request of the user's own by hand (032), the\nsame shape as [`AskReviewRequest`].",
+        "required": [
+          "asked"
+        ],
+        "properties": {
+          "asked": {
+            "type": "boolean"
+          },
+          "effort": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The effort that model runs at; none for the agent's own."
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The model the keeper session runs on, `agent:model`: required to\nask, and checked against the catalog as any pin is."
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The skills the keeper session loads beside `pr-babysit`; skills a\ntask agent is staffed on."
+          }
+        },
+        "additionalProperties": false
       },
       "AskReviewRequest": {
         "type": "object",
@@ -7197,6 +7293,30 @@
           "author_login": {
             "type": "string"
           },
+          "babysit_asked": {
+            "type": "boolean",
+            "description": "Whether the user asked Ariadne to keep this request of their own by\nhand (032)."
+          },
+          "babysit_effort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "babysit_model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The pin the user picked for that keeper session."
+          },
+          "babysit_skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The skills that keeper session loads beside `pr-babysit`."
+          },
           "base_branch": {
             "type": "string"
           },
@@ -7306,7 +7426,7 @@
               "string",
               "null"
             ],
-            "description": "The newest session on this request, if any: its review session\n(029), or the author of the task that opened it (005)."
+            "description": "The newest session on this request, if any: its review or keeper\nsession (029, 032), or the author of the task that opened it (005)."
           },
           "state": {
             "type": "string",
@@ -7568,7 +7688,8 @@
         "enum": [
           "orchestrator",
           "agent",
-          "reviewer"
+          "reviewer",
+          "keeper"
         ]
       },
       "SendMessageRequest": {

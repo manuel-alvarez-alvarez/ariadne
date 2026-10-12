@@ -193,6 +193,17 @@ A request of yours that no task opened can be kept by hand: call `PUT
 request a task opened, or one by another login, cannot be babysat this
 way: asking is refused with 409.
 
+Ask the same way from the desktop app: open a request of yours that no
+task keeps in the Pull requests tab and press **Start babysit** in its
+panel, beside Start review. The dialog asks the model and the effort the
+keeper runs on, and which skills it loads beside `pr-babysit`, its own
+playbook, always on; any other skill can join it. Starting it closes the
+dialog and, once the daemon has the keeper session up, opens that
+session's console in the panel, the same way starting a review does. An
+**Ariadne babysitting** pill marks the row and the panel while one runs,
+beside Ariadne reviewing. **Stop babysit** takes it down. The panel's
+Sessions tab lists the keeper session beside a review's.
+
 The keeper session loads `pr-babysit` — the same skill a task's `pr`
 column stages — and any other skill you pick. Its worktree is a local
 branch of its own, `ariadne/keep-<id>`, cut from the request's head, never
@@ -330,15 +341,17 @@ lists every open request of your enabled repositories. **All**, **Mine**
 and **Review requests** narrow it; a repository picker and a text box —
 the number, title, description, author or branch — narrow it further, and
 every filter stays in the address. A row shows its checks and review
-decision as pills, "by you" on a request of yours, and **Ariadne
-reviewing** while Ariadne reviews one of yours. A row holds no button: a
+decision as pills, "by you" on a request of yours, **Ariadne reviewing**
+while Ariadne reviews one of yours, and **Ariadne babysitting** while a
+keeper session babysits one of yours by hand. A row holds no button: a
 click on it opens the request's panel — its state and checks, its facts with
 links to the forge and to each failed check, its description rendered, and
-its sessions — where **Start review** and **Stop review** are. The list and
-the panel are read live off the forge, and read again on their own as each
-fetch finds a change. While a repository in view polls, or its webhook is down,
-**Refresh** asks for a fetch now; with every webhook live there is nothing
-to refresh, and the button is gone.
+its sessions — where **Start review** and **Stop review** are, and, on a
+request of yours that no task keeps, **Start babysit** and **Stop
+babysit**. The list and the panel are read live off the forge, and read
+again on their own as each fetch finds a change. While a repository in
+view polls, or its webhook is down, **Refresh** asks for a fetch now; with
+every webhook live there is nothing to refresh, and the button is gone.
 
 ```sh
 ariadne pr ls --repo <repo-id>

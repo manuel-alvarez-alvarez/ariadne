@@ -44,6 +44,17 @@ it("renders rows, updates from an event, and opens the floating panel", async ()
   expect(await screen.findByText("Unanswered comments")).toBeTruthy()
 })
 
+it("shows the Ariadne babysitting pill on a row a keeper session babysits by hand", async () => {
+  const row = { ...pull, role: "author", author_login: "me", babysit_asked: true }
+  daemonFetch.mockImplementation(async (input) => {
+    const path = new URL((input as Request).url).pathname
+    if (path === "/v1/pull-requests") return jsonResponse([row])
+    return jsonResponse([])
+  })
+  renderScreen(<PullRequestsPage />, { route: "/forge/pull-requests" })
+  expect(await screen.findByText("Ariadne babysitting")).toBeTruthy()
+})
+
 it("lists every open request by default, narrows to mine or to review requests, and adds none by hand", async () => {
   const requests: Request[] = []
   daemonFetch.mockImplementation(async (input) => {
