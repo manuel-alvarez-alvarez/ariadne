@@ -691,6 +691,86 @@ async fn the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side()
     );
 }
 
+/// Two replies racing for the same conversation body: both pass the once
+/// check before either reaches the forge, but the pull request's reply
+/// lock serializes them, so the second rereads the first's answer instead
+/// of racing it. One `gh pr comment` call posts; the other is refused.
+#[tokio::test]
+async fn two_replies_racing_for_one_comment_post_it_once() {
+    let threads =
+        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
+    let reviews = json!([
+        {"id": 502, "user": {"login": "me"}, "body": "Thanks for the look.",
+         "submitted_at": "2026-10-02T00:00:00Z"},
+        {"id": 501, "user": {"login": "alice"}, "body": "Looks fine overall.",
+         "submitted_at": "2026-10-02T00:01:00Z"},
+    ]);
+    let gate_dir = tempfile::tempdir().unwrap();
+    let gate = gate_dir.path().join("go");
+    let mut script = script_of(
+        pull("OPEN", "abc"),
+        &[],
+        &[],
+        &json!({"check_runs": []}).to_string(),
+        &reviews.to_string(),
+        &threads.to_string(),
+    );
+    for entry in script.as_array_mut().unwrap() {
+        if entry["args"] == json!(["pr", "comment"]) {
+            entry["wait_for"] = json!(gate.display().to_string());
+        }
+    }
+    let Kept {
+        h, stub, agent, id, ..
+    } = kept_request(script.clone()).await;
+    let mut stored: Vec<Value> = Vec::new();
+    eventually(TIMEOUT, "both review bodies to be stored", async || {
+        stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+        stored.iter().filter(|c| c["kind"] == "review").count() == 2
+    })
+    .await;
+    let other_side = stored
+        .iter()
+        .find(|c| c["author_login"] == "alice")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let replies = || {
+        stub.invocations()
+            .into_iter()
+            .filter(|i| {
+                i.args.first().map(String::as_str) == Some("pr")
+                    && i.args.get(1).map(String::as_str) == Some("comment")
+            })
+            .count()
+    };
+    let reply = |body: &str| {
+        h.send(as_session(
+            &format!("/v1/pull-requests/{id}/comments/{other_side}/reply"),
+            &agent.id,
+            json!({"body": body}),
+        ))
+    };
+    let release_when_called = async {
+        eventually(TIMEOUT, "the first reply to reach the forge", async || {
+            replies() >= 1
+        })
+        .await;
+        std::fs::write(&gate, "go").unwrap();
+    };
+    let ((a, _), (b, _), ()) = tokio::join!(reply("First."), reply("Second."), release_when_called);
+    let mut statuses = [a, b];
+    statuses.sort();
+    assert_eq!(
+        statuses,
+        [StatusCode::CREATED, StatusCode::BAD_REQUEST],
+        "the lock serializes the two, so only one is answered"
+    );
+    assert_eq!(replies(), 1, "only the winner calls the forge CLI");
+}
+
 /// A whole script, every detail entry keyed on `head`: what the initial
 /// open and a later push each need, parameterized on the one thing that
 /// actually changes between them.

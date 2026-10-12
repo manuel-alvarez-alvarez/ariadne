@@ -24,7 +24,30 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use serde::Deserialize;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use utoipa::IntoParams;
+
+/// One lock per pull request a reply posts to, lazily made on first use and
+/// kept for the daemon's life.
+#[derive(Clone, Default)]
+pub struct ReplyLocks(Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>);
+
+impl ReplyLocks {
+    /// Hold this pull request's reply lock until the guard drops: the once
+    /// check a reply makes, and the forge call and the store write that
+    /// follow it, run under it as one step.
+    async fn hold(&self, pull_request_id: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        let lock = self
+            .0
+            .lock()
+            .expect("reply locks")
+            .entry(pull_request_id.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone();
+        lock.lock_owned().await
+    }
+}
 
 fn forge_error(error: String) -> ApiError {
     ApiError::new(StatusCode::BAD_GATEWAY, "forge_error", error)
@@ -497,6 +520,10 @@ pub(super) async fn reply(
     if body.is_empty() {
         return Err(ApiError::bad_request("a reply needs a body"));
     }
+    // Held through the once check below, the forge call and the store
+    // write, so a second reply racing this one for the same comment waits
+    // here and then reads this reply's answer, not the state before it.
+    let _reply_lock = state.reply_locks.hold(&row.id).await;
     let pull = read_held(&state, row).await?;
     let comment = find_comment(&state, &pull, &comment_id).await?;
     let forge = integration(&state, &pull.repository_id).await?;
