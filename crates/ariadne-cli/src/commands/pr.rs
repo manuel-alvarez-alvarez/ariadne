@@ -97,6 +97,30 @@ pub(crate) enum PrCommand {
         #[arg(long, conflicts_with_all = ["model", "effort", "skills", "attach"])]
         stop: bool,
     },
+    /// Ask Ariadne to keep a request of your own by hand, or stop (032)
+    Babysit {
+        /// The repository, by id or path
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::repo_ids))]
+        repo: String,
+        /// The request's number
+        number: i64,
+        /// What the keeper session runs on: AGENT:MODEL — required with no
+        /// `--stop`, since every keeper session starts manually
+        #[arg(long, value_name = "MODEL", value_parser = parse_review_model, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
+        model: Option<String>,
+        /// The reasoning effort that model is run at
+        #[arg(long, value_name = "EFFORT", value_parser = parse_effort, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::efforts))]
+        effort: Option<String>,
+        /// A skill the keeper session loads beside `pr-babysit`; repeatable
+        #[arg(long = "skill", value_name = "SKILL", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::skill_names))]
+        skills: Vec<String>,
+        /// Open the keeper session's console once it starts
+        #[arg(long)]
+        attach: bool,
+        /// Stop Ariadne's keeper session on the request
+        #[arg(long, conflicts_with_all = ["model", "effort", "skills", "attach"])]
+        stop: bool,
+    },
 }
 
 /// `pr review --model`: the same spelling every `--model` takes, with
@@ -137,6 +161,39 @@ fn review_skills_label(skills: &[String]) -> String {
     }
 }
 
+/// The skills a keeper session loads beside `pr-babysit`, or a dash where
+/// it loads none of its own.
+fn babysit_skills_label(skills: &[String]) -> String {
+    match skills.is_empty() {
+        true => "-".into(),
+        false => skills.join(", "),
+    }
+}
+
+/// What Ariadne does with a request, for `pr ls`'s `ariadne` column: keeps
+/// it for a task (030), reviews it — out of a review request or a
+/// self-review asked by hand (029) — babysits it by hand (032), both of
+/// the last two together, or nothing.
+fn ariadne_label(r: &PullRequestDto) -> String {
+    if r.origin_task_id.is_some() {
+        return "keeps".to_string();
+    }
+    let mut parts: Vec<&str> = Vec::new();
+    // A row of another's request is tracked only because it asks for my
+    // review; a row of mine is tracked because the user asked Ariadne's
+    // own self-review. Either way that is what "reviews" names.
+    if r.id.is_some() && (r.role != "author" || r.review_asked) {
+        parts.push("reviews");
+    }
+    if r.babysit_asked {
+        parts.push("babysits");
+    }
+    match parts.is_empty() {
+        true => "-".to_string(),
+        false => parts.join(", "),
+    }
+}
+
 /// What `pr inspect` prints: a hand-written block in a reading order, the
 /// body last after a `---` line, the way `goal inspect` prints a
 /// description.
@@ -165,6 +222,12 @@ fn inspect_rows(row: &PullRequestDto) -> Vec<(&'static str, Kv)> {
             "review skills",
             review_skills_label(&row.review_skills).into(),
         ),
+        ("ariadne babysit", yes_no(row.babysit_asked, "no").into()),
+        ("babysit model", dash(row.babysit_model.as_deref()).into()),
+        (
+            "babysit skills",
+            babysit_skills_label(&row.babysit_skills).into(),
+        ),
         ("session", Kv::id(dash(row.session_id.as_deref()))),
         ("kept by", Kv::id(dash(row.origin_task_id.as_deref()))),
         ("url", row.url.clone().into()),
@@ -191,13 +254,7 @@ fn ls_row(r: &PullRequestDto) -> Vec<String> {
         r.title.clone(),
         branches_label(&r.head_branch, &r.base_branch),
         author_label(r),
-        // What Ariadne does with it: keeps it for a task, reviews it, or
-        // nothing.
-        match (&r.origin_task_id, r.id.is_some()) {
-            (Some(_), _) => "keeps".to_string(),
-            (None, true) => "reviews".to_string(),
-            (None, false) => "-".to_string(),
-        },
+        ariadne_label(r),
         r.draft.to_string(),
         r.checks.clone(),
         r.review_decision.clone(),
@@ -318,6 +375,33 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
                 println!("{}", ok_id_line(view().color, view().quiet, verb, &id))
             })
         }
+        PrCommand::Babysit {
+            repo,
+            number,
+            model,
+            effort,
+            skills,
+            attach,
+            stop,
+        } => {
+            let repo_id = resolve::id(client, Kind::Repo, &repo).await?;
+            let request = babysit_request(stop, model, effort, skills)?;
+            let pull: PullRequestDto = client
+                .put_json(&babysit_path(&repo_id, number), &request)
+                .await?;
+            if attach {
+                let pull_request_id = pull.id.clone().ok_or_else(|| {
+                    anyhow::anyhow!("the request carries no id to attach a keeper session to")
+                })?;
+                let session_id = wait_for_keeper_session(client, &pull_request_id).await?;
+                return crate::commands::console::attach(client, &session_id).await;
+            }
+            let id = pull.id.clone().unwrap_or_else(|| pull.number.to_string());
+            let verb = if stop { "stopped" } else { "asked" };
+            print(format, &pull, || {
+                println!("{}", ok_id_line(view().color, view().quiet, verb, &id))
+            })
+        }
     }
 }
 
@@ -346,6 +430,27 @@ fn review_path(repo_id: &str, number: i64) -> String {
     format!("/v1/repositories/{repo_id}/pull-requests/{number}/ariadne-review")
 }
 
+/// The body `pr babysit` sends, the same shape `review_request` builds
+/// (032).
+fn babysit_request(
+    stop: bool,
+    model: Option<String>,
+    effort: Option<String>,
+    skills: Vec<String>,
+) -> Result<serde_json::Value> {
+    if stop {
+        return Ok(json!({"asked": false}));
+    }
+    let model = model.ok_or_else(|| {
+        Failure::usage("no --model was given: a keeper session needs one, as agent:model").err()
+    })?;
+    Ok(json!({"asked": true, "model": model, "effort": effort, "skills": skills}))
+}
+
+fn babysit_path(repo_id: &str, number: i64) -> String {
+    format!("/v1/repositories/{repo_id}/pull-requests/{number}/ariadne-babysit")
+}
+
 /// `pr review --attach`: polls `GET /v1/sessions?pull_request=` until the
 /// scheduler has started, or resumed, the review session it just woke, the
 /// way `session new --attach` waits for none at all — a review session
@@ -357,6 +462,13 @@ fn review_path(repo_id: &str, number: i64) -> String {
 /// one — this poll would then attach to a console already gone rather than
 /// waiting for the one the ask on this line started.
 async fn wait_for_review_session(client: &Client, pull_request_id: &str) -> Result<String> {
+    poll_review_session(client, pull_request_id, ATTACH_TIMEOUT, ATTACH_POLL).await
+}
+
+/// `pr babysit --attach`: the same poll `wait_for_review_session` runs,
+/// since both wait for the one live session the scheduler starts on a
+/// request Ariadne has just been asked to work on (032).
+async fn wait_for_keeper_session(client: &Client, pull_request_id: &str) -> Result<String> {
     poll_review_session(client, pull_request_id, ATTACH_TIMEOUT, ATTACH_POLL).await
 }
 
@@ -576,6 +688,31 @@ mod tests {
         );
     }
 
+    /// `pr babysit --stop` is its own request too, and conflicts with every
+    /// asking flag the same way `pr review --stop` does (032).
+    #[test]
+    fn pr_babysit_refuses_stop_combined_with_an_asking_flag_and_a_bare_default_model() {
+        #[derive(clap::Parser)]
+        struct Pr {
+            #[command(subcommand)]
+            command: PrCommand,
+        }
+        let parse = |argv: &[&str]| <Pr as clap::Parser>::try_parse_from(argv);
+        assert!(parse(&["pr", "babysit", "repo-1", "42", "--model", "stub:m"]).is_ok());
+        assert!(parse(&["pr", "babysit", "repo-1", "42", "--stop"]).is_ok());
+        assert!(
+            parse(&[
+                "pr", "babysit", "repo-1", "42", "--stop", "--model", "stub:m"
+            ])
+            .is_err()
+        );
+        assert!(parse(&["pr", "babysit", "repo-1", "42", "--stop", "--attach"]).is_err());
+        assert!(
+            parse(&["pr", "babysit", "repo-1", "42", "--model", "default"]).is_err(),
+            "a keeper session pins a model of its own, never \"whatever the agent runs\""
+        );
+    }
+
     /// `pr review --model a:m --effort high --skill code-review` sends the
     /// pin whole, and `--stop` sends `{asked: false}` with no pin and no
     /// skills: two different requests on the one route.
@@ -659,6 +796,105 @@ mod tests {
         let err = run(
             &client,
             PrCommand::Review {
+                repo: "repo-1".into(),
+                number: 42,
+                model: None,
+                effort: None,
+                skills: Vec::new(),
+                attach: false,
+                stop: false,
+            },
+            Format::Json,
+        )
+        .await
+        .unwrap_err();
+        server.abort();
+
+        assert!(err.to_string().contains("--model"), "{err}");
+    }
+
+    /// `pr babysit --model a:m --effort high --skill coding` sends the pin
+    /// whole, and `--stop` sends `{asked: false}` with no pin and no
+    /// skills (032): the same two-request shape `pr review` sends, on its
+    /// own route.
+    #[tokio::test]
+    async fn pr_babysit_sends_the_ask_body_with_its_pin_and_the_stop_body_alone() {
+        let calls: Calls = Arc::default();
+        let app = Router::new()
+            .route("/v1/repositories", get(answer))
+            .route(
+                "/v1/repositories/repo-1/pull-requests/42/ariadne-babysit",
+                put(answer),
+            )
+            .with_state(calls.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = Client::tcp(format!("http://{}", listener.local_addr().unwrap()));
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        run(
+            &client,
+            PrCommand::Babysit {
+                repo: "repo-1".into(),
+                number: 42,
+                model: Some("stub:test-model".into()),
+                effort: Some("high".into()),
+                skills: vec!["coding".into()],
+                attach: false,
+                stop: false,
+            },
+            Format::Json,
+        )
+        .await
+        .unwrap();
+        run(
+            &client,
+            PrCommand::Babysit {
+                repo: "repo-1".into(),
+                number: 42,
+                model: None,
+                effort: None,
+                skills: Vec::new(),
+                attach: false,
+                stop: true,
+            },
+            Format::Json,
+        )
+        .await
+        .unwrap();
+        server.abort();
+
+        let bodies: Vec<_> = calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(method, path, _)| method == "PUT" && path.ends_with("/ariadne-babysit"))
+            .map(|(_, _, body)| body.clone())
+            .collect();
+        assert_eq!(
+            bodies,
+            [
+                json!({
+                    "asked": true, "model": "stub:test-model", "effort": "high",
+                    "skills": ["coding"],
+                }),
+                json!({"asked": false}),
+            ]
+        );
+    }
+
+    /// `pr babysit` with no `--model` and no `--stop` is refused — naming
+    /// the flag — the same way `pr review` is (032).
+    #[tokio::test]
+    async fn pr_babysit_with_no_model_and_no_stop_is_refused() {
+        let repo = crate::commands::fixtures::repository("repo-1", "/work/widgets", "main");
+        let app = repo_router(repo);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = Client::tcp(format!("http://{}", listener.local_addr().unwrap()));
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let err = run(
+            &client,
+            PrCommand::Babysit {
                 repo: "repo-1".into(),
                 number: 42,
                 model: None,
@@ -811,6 +1047,9 @@ mod tests {
         pull.review_asked = true;
         pull.review_model = Some("stub:review-model".into());
         pull.review_skills = vec!["code-review".into()];
+        pull.babysit_asked = true;
+        pull.babysit_model = Some("stub:babysit-model".into());
+        pull.babysit_skills = vec!["coding".into()];
         pull.body = "What this changes.".into();
 
         let rows = inspect_rows(&pull);
@@ -832,6 +1071,9 @@ mod tests {
                 "ariadne review",
                 "review model",
                 "review skills",
+                "ariadne babysit",
+                "babysit model",
+                "babysit skills",
                 "session",
                 "kept by",
                 "url",
@@ -860,5 +1102,33 @@ mod tests {
         let at = |header: &str| COLUMNS.iter().position(|c| c.header == header).unwrap();
         assert_eq!(cells[at("branches")], "fix → main");
         assert_eq!(cells[at("session")], "01SESS");
+    }
+
+    /// The `ariadne` column names every way Ariadne works a request: a
+    /// task's own keeping beats everything else, a review and a keeper
+    /// session asked by hand on the same row both show, and nothing shows
+    /// a dash (030, 029, 032).
+    #[test]
+    fn pr_ls_names_babysitting_beside_a_review_in_the_ariadne_column() {
+        let mut pull: PullRequestDto = serde_json::from_value(row()).unwrap();
+        assert_eq!(ariadne_label(&pull), "-", "untracked, nothing to show");
+
+        pull.id = Some("01pr".into());
+        pull.role = "author".into();
+        pull.babysit_asked = true;
+        assert_eq!(ariadne_label(&pull), "babysits");
+
+        pull.review_asked = true;
+        assert_eq!(ariadne_label(&pull), "reviews, babysits");
+
+        pull.babysit_asked = false;
+        assert_eq!(ariadne_label(&pull), "reviews");
+
+        pull.origin_task_id = Some("01task".into());
+        assert_eq!(
+            ariadne_label(&pull),
+            "keeps",
+            "a task's own keeping wins over every other label"
+        );
     }
 }

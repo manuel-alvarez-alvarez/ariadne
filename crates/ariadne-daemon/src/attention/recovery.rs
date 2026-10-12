@@ -257,6 +257,7 @@ async fn quota_items(store: &Store, launcher: &Launcher) -> Result<Vec<Attention
         let label = match (&session.task_id, session.seat()) {
             (Some(task_id), _) => format!("{task_id} ({} switch(es))", block.switches),
             (None, Some(Seat::Reviewer)) => format!("reviewer ({} switch(es))", block.switches),
+            (None, Some(Seat::Keeper)) => format!("keeper ({} switch(es))", block.switches),
             _ => format!("orchestrator ({} switch(es))", block.switches),
         };
         let group = groups

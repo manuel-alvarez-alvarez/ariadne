@@ -89,10 +89,11 @@ pub async fn work_is_active(store: &Store, session: &AgentSession) -> bool {
                 .map(|g| g.status()),
             Ok(GoalStatus::Planning | GoalStatus::Active)
         ),
-        // A pull request session works for its request while Ariadne does
-        // (029): what it raises is owed until a human merged or closed the
-        // request, which takes the request's row away.
-        Some(Seat::Reviewer) => match &session.pull_request_id {
+        // A pull request session, reviewer's or keeper's, works for its
+        // request while Ariadne does (029, 032): what it raises is owed
+        // until a human merged or closed the request, which takes the
+        // request's row away.
+        Some(Seat::Reviewer | Seat::Keeper) => match &session.pull_request_id {
             Some(pull_request_id) => store.get_pull_request(pull_request_id).await.is_ok(),
             None => false,
         },
@@ -133,7 +134,7 @@ pub(crate) async fn work_is_active_checked(store: &Store, session: &AgentSession
                 GoalStatus::Planning | GoalStatus::Active
             )
         }
-        Some(Seat::Reviewer) => match &session.pull_request_id {
+        Some(Seat::Reviewer | Seat::Keeper) => match &session.pull_request_id {
             // A gone request is this seat's own legitimate "not active"
             // (the request merged or closed); any other error is the
             // store's to answer for, and propagates.

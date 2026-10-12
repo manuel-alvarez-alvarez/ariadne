@@ -1,0 +1,379 @@
+//! A request of the user's own that no task opened gets a keeper session
+//! once asked for by hand (032): on the worktree and local branch named
+//! above, told of the author's news once, accepting its `ready` report,
+//! and taken down with its worktree and its branch once the request ends
+//! or asking stops.
+use std::path::{Path, PathBuf};
+
+use axum::body::Body;
+use axum::http::StatusCode;
+use serde_json::{Value, json};
+
+use crate::common::forge::{answer, stub_forge_cli};
+use crate::common::{Harness, TIMEOUT, as_session, eventually, harness, post_json, put_json, sh};
+use ariadne_core::{Seat, SessionStatus};
+use ariadne_daemon::forge::poll::Mode;
+use ariadne_store::{AgentSession, SessionFilter};
+
+const PIN: &str = "stub:babysit-model";
+
+/// How the stub forge shows one request of mine: its state, and the
+/// comments on its conversation, oldest first.
+struct Shown<'a> {
+    author: &'a str,
+    state: &'a str,
+    head: &'a str,
+    comments: Value,
+}
+
+impl Shown<'_> {
+    fn open(head: &str) -> Shown<'_> {
+        Shown {
+            author: "me",
+            state: "OPEN",
+            head,
+            comments: json!([]),
+        }
+    }
+}
+
+/// What the stub forge answers for one request of mine, read for the
+/// scheduler's own detail fetch.
+fn script(shown: &Shown) -> Value {
+    let read = json!({"number": 1, "url": "https://github.com/acme/widgets/pull/1",
+        "title": "Add widgets", "author": {"login": shown.author}, "state": shown.state,
+        "isDraft": false, "headRefName": "fix", "headRefOid": shown.head,
+        "headRepository": {"url": "https://github.com/acme/widgets"},
+        "baseRefName": "main", "statusCheckRollup": [], "reviewDecision": "",
+        "createdAt": "2026-10-01T00:00:00Z"});
+    let listed = match shown.state == "OPEN" {
+        true => json!([read]),
+        false => json!([]),
+    };
+    let threads =
+        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
+    json!([
+        answer(&["api", "repos/acme/widgets/issues/1/timeline"], 0, "[]"),
+        answer(&["auth", "status"], 0, ""),
+        answer(&["api", "user"], 0, "me"),
+        answer(&["pr", "list"], 0, &listed.to_string()),
+        answer(&["pr", "view"], 0, &read.to_string()),
+        answer(
+            &["api", "repos/acme/widgets/issues/1/comments"],
+            0,
+            &shown.comments.to_string()
+        ),
+        answer(&["api", "repos/acme/widgets/pulls/1/comments"], 0, "[]"),
+        answer(&["api", "repos/acme/widgets/pulls/1/reviews"], 0, "[]"),
+        answer(&["api", "graphql"], 0, &threads.to_string()),
+        answer(
+            &[
+                "api",
+                &format!("repos/acme/widgets/commits/{}/check-runs", shown.head)
+            ],
+            0,
+            r#"{"check_runs": []}"#
+        ),
+        answer(
+            &[
+                "api",
+                &format!("repos/acme/widgets/compare/main...{}", shown.head)
+            ],
+            0,
+            r#"{"behind_by": 0}"#
+        ),
+    ])
+}
+
+/// A checkout of `acme/widgets` whose branch `fix` holds one commit on top
+/// of `main`.
+fn checkout(h: &Harness) -> (PathBuf, String) {
+    let path = h.git_repo("widgets");
+    sh(
+        &path,
+        "git remote add origin https://github.com/acme/widgets.git && \
+         git checkout -q -b fix && echo a > a.txt && git add a.txt && \
+         git -c user.email=t@t -c user.name=t commit -qm a && git checkout -q main",
+    );
+    let head = sh(&path, "git rev-parse fix");
+    (path, head)
+}
+
+/// The repository registered with its integration on.
+async fn repository(h: &Harness, path: &Path) -> String {
+    let repo: Value = h
+        .json(
+            post_json(
+                "/v1/repositories",
+                json!({"path": path, "forge": {"enabled": true}}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    repo["id"].as_str().unwrap().to_string()
+}
+
+/// Ask Ariadne to babysit request `number` on `model` (032).
+fn babysit(repo: &str, number: i64, body: Value) -> axum::http::Request<Body> {
+    put_json(
+        &format!("/v1/repositories/{repo}/pull-requests/{number}/ariadne-babysit"),
+        body,
+    )
+}
+
+async fn sessions(h: &Harness, pull_request_id: &str) -> Vec<AgentSession> {
+    h.store
+        .list_sessions(SessionFilter {
+            pull_request_id: Some(pull_request_id.to_string()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+}
+
+/// The live keeper session of a request, once its briefing turn has ended.
+async fn idle_keeper(h: &Harness, pull_request_id: &str) -> AgentSession {
+    let mut found = None;
+    eventually(TIMEOUT, "the keeper session to be idle", async || {
+        found = sessions(h, pull_request_id).await.into_iter().find(|s| {
+            s.seat() == Some(Seat::Keeper)
+                && s.status() == SessionStatus::Idle
+                && s.launched_at.is_some()
+        });
+        found.is_some()
+    })
+    .await;
+    found.unwrap()
+}
+
+/// Asking Ariadne to babysit a request of mine starts a keeper session on
+/// the pin picked, loading `pr-babysit`, in a worktree on a local branch
+/// named after the request — distinct from a reviewer's own, detached
+/// worktree. The author's news, a comment by another login, reaches it
+/// once; its `ready` report is accepted; and the merge ends it, taking its
+/// worktree and its branch down with it.
+#[tokio::test]
+async fn asking_keeps_a_request_of_mine_by_hand_until_the_merge() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    // Nobody works on a request of mine until there is a reason to: no
+    // task opened it, nobody asked for a review of it, and nobody has
+    // asked to babysit it yet.
+    let mut rows: Vec<Value> = Vec::new();
+    eventually(TIMEOUT, "the request to be listed", async || {
+        rows = h.get("/v1/pull-requests").await;
+        rows.len() == 1
+    })
+    .await;
+    assert!(rows[0]["id"].is_null(), "nobody works on it yet");
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    h.flush_scheduler().await;
+
+    let asked: Value = h
+        .json(
+            babysit(
+                &repo,
+                1,
+                json!({"asked": true, "model": PIN, "skills": ["coding"]}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(asked["babysit_asked"], true);
+    assert_eq!(asked["babysit_model"], PIN);
+    assert_eq!(asked["babysit_skills"], json!(["coding"]));
+    // Asking starts Ariadne's work on the request.
+    let id = asked["id"].as_str().expect("a row").to_string();
+    assert_eq!(h.store.get_pull_request(&id).await.unwrap().role, "author");
+
+    let session = idle_keeper(&h, &id).await;
+    assert_eq!(session.model, PIN);
+    let launch = h.launch_file(&session.id).expect("a launch file");
+    assert!(
+        launch.system_prompt.contains("- pr-babysit: "),
+        "{}",
+        launch.system_prompt
+    );
+    let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
+    assert!(
+        worktree
+            .display()
+            .to_string()
+            .ends_with(&format!("pr-{id}-keep")),
+        "{}",
+        worktree.display()
+    );
+    assert_eq!(
+        sh(&worktree, "git rev-parse --abbrev-ref HEAD"),
+        format!("ariadne/keep-{id}"),
+        "the keeper works on its own branch, not a detached head"
+    );
+    assert_eq!(sh(&worktree, "git rev-parse HEAD"), head);
+
+    // A comment by another login is the author's news, told once.
+    stub.reprogram(script(&Shown {
+        comments: json!([
+            {"id": 301, "user": {"login": "alice"}, "body": "Looks good but one nit.",
+             "created_at": "2026-10-02T00:00:00Z"}
+        ]),
+        ..Shown::open(&head)
+    }));
+    h.state.forge_poll.wake(&repo);
+    eventually(TIMEOUT, "the news to reach the keeper", async || {
+        h.prompts_to(&session)
+            .last()
+            .is_some_and(|news| news.contains("ic-301"))
+    })
+    .await;
+    let news = h.prompts_to(&session).pop().unwrap();
+    assert!(news.contains("alice"), "{news}");
+
+    // The keeper reports the request ready, on the head it read.
+    let reported: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/report"),
+                &session.id,
+                json!({"ready": true, "head_sha": head}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(reported["ready"], true);
+
+    // The merge takes the keeper session, its worktree and its branch
+    // down: nothing keeps the row any more, since no task opened it and
+    // no review was ever asked of it.
+    stub.reprogram(script(&Shown {
+        state: "MERGED",
+        ..Shown::open(&head)
+    }));
+    h.state.forge_poll.wake(&repo);
+    eventually(
+        TIMEOUT,
+        "the keeper session to end, its worktree to go and its branch with it",
+        async || {
+            !h.session_status(&session).await.is_live()
+                && !worktree.exists()
+                && sh(&path, "git branch --list ariadne/keep-*").is_empty()
+        },
+    )
+    .await;
+    eventually(TIMEOUT, "Ariadne to stop working on it", async || {
+        h.store.get_pull_request(&id).await.is_err()
+    })
+    .await;
+}
+
+/// Asking needs a model the catalog holds, and a skill a task agent is
+/// staffed on. A refusal starts no work. Only a request of the user's own
+/// that no task opened can be asked for: a request by another login, or
+/// one a task already keeps, is refused with 409.
+#[tokio::test]
+async fn asking_is_refused_with_no_model_an_unknown_one_an_untaskable_skill_or_the_wrong_request() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+
+    h.error(
+        babysit(&repo, 1, json!({"asked": true})),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+    h.error(
+        babysit(&repo, 1, json!({"asked": true, "model": "nosuch:model"})),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+    h.error(
+        babysit(
+            &repo,
+            1,
+            json!({"asked": true, "model": PIN, "skills": ["orchestration"]}),
+        ),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+    assert!(
+        h.store
+            .list_pull_requests(ariadne_store::PullRequestFilter::default())
+            .await
+            .unwrap()
+            .is_empty(),
+        "a refusal starts no work"
+    );
+
+    // A request not open is refused once asking actually starts work.
+    stub.reprogram(script(&Shown {
+        state: "CLOSED",
+        ..Shown::open(&head)
+    }));
+    h.error(
+        babysit(&repo, 1, json!({"asked": true, "model": PIN})),
+        StatusCode::CONFLICT,
+    )
+    .await;
+
+    // A request by another login is never Ariadne's to babysit by hand.
+    stub.reprogram(script(&Shown {
+        author: "other",
+        ..Shown::open(&head)
+    }));
+    h.error(
+        babysit(&repo, 1, json!({"asked": true, "model": PIN})),
+        StatusCode::CONFLICT,
+    )
+    .await;
+
+    // A request a task already keeps is refused too: `origin_task_id` on
+    // its row is enough to prove it, with no need to drive a whole task
+    // through its own workflow just to set it.
+    stub.reprogram(script(&Shown::open(&head)));
+    let goal = h
+        .store
+        .create_goal(ariadne_store::NewGoal {
+            workflow: None,
+            title: "Widgets".into(),
+            description: "d".into(),
+            issue_url: None,
+            repository_ids: vec![repo.clone()],
+            pin: ariadne_store::AgentPin {
+                model: "stub:m".into(),
+                effort: None,
+            },
+        })
+        .await
+        .unwrap();
+    let task = h
+        .store
+        .create_task(ariadne_store::NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.clone(),
+            title: "Fix widgets".into(),
+            description: "d".into(),
+            agents: Vec::new(),
+            depends_on: Vec::new(),
+        })
+        .await
+        .unwrap();
+    h.store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "author".into(),
+            origin_task_id: Some(task.id),
+        })
+        .await
+        .unwrap();
+    h.error(
+        babysit(&repo, 1, json!({"asked": true, "model": PIN})),
+        StatusCode::CONFLICT,
+    )
+    .await;
+}

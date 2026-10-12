@@ -79,7 +79,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    its skills, and what `complete_step`, `fail_step` and `fail_task` are for,
    with the ban on `--no-verify` and `-n`. What a column does — build,
    review, merge, keep a request — is its skill's to say. The `reviewer` seat
-   text is the pull request review session's (029).
+   text is the pull request review session's (029), and the `keeper` seat
+   text is the session's that keeps a request of the user's own asked for
+   by hand (032).
 4. The skill index is one line per skill — its name, the summary its
    frontmatter states, and the path of its document in the run directory — and
    the instruction to read a document before doing the work it covers. That

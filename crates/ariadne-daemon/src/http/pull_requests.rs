@@ -11,9 +11,9 @@ use crate::forge::live::{self, Details, Live};
 use crate::forge::pulls::{CONVERSATION, DraftComment, ReviewDraft};
 use crate::forge::{ForgeClient, PullRequestRef, pulls};
 use ariadne_api::pull_requests::{
-    AskReviewRequest, PullRequestCommentDto, PullRequestCommentQuery, PullRequestDiffQuery,
-    PullRequestDto, PullRequestListQuery, PullRequestMatchDto, ReplyCommentRequest,
-    ReportPullRequestRequest, SubmitReviewRequest,
+    AskBabysitRequest, AskReviewRequest, PullRequestCommentDto, PullRequestCommentQuery,
+    PullRequestDiffQuery, PullRequestDto, PullRequestListQuery, PullRequestMatchDto,
+    ReplyCommentRequest, ReportPullRequestRequest, SubmitReviewRequest,
 };
 use ariadne_store::{
     AgentSession, ForgeIntegration, PullRequest, PullRequestComment, PullRequestFilter,
@@ -489,8 +489,11 @@ pub(super) async fn reply(
 ) -> ApiResult<(StatusCode, Json<PullRequestCommentDto>)> {
     let row = state.store.get_pull_request(&id).await?;
     let session = own_session(&state, &headers, &row).await?;
-    // A review session's reply is the review's, as its findings are.
-    let from_review = session.pull_request_id.as_deref() == Some(row.id.as_str());
+    // A review session's reply is the review's, as its findings are. A
+    // keeper session also carries `pull_request_id`, but it is not a
+    // review: its reply is the keeping agent's own, as a task's column
+    // agent's is.
+    let from_review = session.seat() == Some(ariadne_core::Seat::Reviewer);
     // The forge never sees a trailer an agent's skill appends; a body of
     // nothing else is empty, same as a body given empty.
     let body = pulls::strip_trailers(req.body.trim());
@@ -590,7 +593,7 @@ pub(super) async fn resolve(
 ) -> ApiResult<Json<PullRequestCommentDto>> {
     let row = state.store.get_pull_request(&id).await?;
     let session = own_session(&state, &headers, &row).await?;
-    if session.pull_request_id.as_deref() != Some(row.id.as_str()) {
+    if session.seat() != Some(ariadne_core::Seat::Reviewer) {
         return Err(ApiError::forbidden(format!(
             "only the review session of pull request {} resolves a thread",
             row.id
@@ -646,16 +649,24 @@ pub(super) async fn report(
     let mut row = state.store.get_pull_request(&id).await?;
     let session = own_session(&state, &headers, &row).await?;
     if let Some(ready) = req.ready {
-        // `ready` is the babysitting task's own claim (031): a row it
+        // `ready` is the keeping agent's own claim (031): a row a task
         // keeps answers through its own column agent alone
-        // (`Seat::Agent`), never through a reviewer session that also
-        // happens to answer for the same row — a request of mine a task
-        // keeps can also carry an Ariadne self-review asked on it, and
+        // (`Seat::Agent`), and one kept by hand through its keeper alone
+        // (`Seat::Keeper`, 032) — never through a reviewer session that
+        // also happens to answer for the same row, since a request of
+        // mine can also carry an Ariadne self-review asked on it, and
         // that reviewer seat's own claim must never pass as the
-        // babysitter's.
-        if row.origin_task_id.is_some() && session.seat() != Some(ariadne_core::Seat::Agent) {
+        // keeper's.
+        let keeper_seat = match row.origin_task_id {
+            Some(_) => ariadne_core::Seat::Agent,
+            None if row.babysit_asked => ariadne_core::Seat::Keeper,
+            None => ariadne_core::Seat::Agent,
+        };
+        if (row.origin_task_id.is_some() || row.babysit_asked)
+            && session.seat() != Some(keeper_seat)
+        {
             return Err(ApiError::forbidden(
-                "only the task that keeps this request may report it ready",
+                "only the request's keeper may report it ready",
             ));
         }
         // The head this report answers for is the one the session itself
@@ -1083,6 +1094,112 @@ pub(super) async fn ask_review(
         .set_pull(&row.id, pull.clone(), review_requested);
     // The session is the scheduler's to start, and the details its news is
     // read from the fetch's.
+    state.forge_poll.wake(&row.repository_id);
+    state.notify_scheduler_pull_request(&row.id);
+    let view = read_held(&state, row).await?;
+    Ok(Json(pull_request_dto_of(&state.store, view).await?))
+}
+
+/// Ask Ariadne to keep a request of the user's own by hand on the model
+/// the user picks, or stop asking (032): a keeper session runs on that pin
+/// while the request is open, beside a task's own keeper where one
+/// opened it, or alone where none did. Refused on a request that is not
+/// open, one by another login, or one a task already keeps: those are
+/// never Ariadne's to babysit by hand. Asking starts Ariadne's work on the
+/// request; stopping ends the keeper session, where no task and no review
+/// still keeps the row.
+#[utoipa::path(put, path = "/v1/repositories/{id}/pull-requests/{number}/ariadne-babysit", tag = "pull-requests",
+    params(("id" = String, Path), ("number" = i64, Path)),
+    request_body = AskBabysitRequest,
+    responses((status = 200, body = PullRequestDto), (status = 400), (status = 404), (status = 409), (status = 502)))]
+pub(super) async fn ask_babysit(
+    State(state): State<AppState>,
+    Path((id, number)): Path<(String, i64)>,
+    Json(req): Json<AskBabysitRequest>,
+) -> ApiResult<Json<PullRequestDto>> {
+    let forge = integration(&state, &id).await?;
+    let pull = client(&state, &forge)
+        .pull_request(&slug(&forge), number)
+        .await
+        .map_err(forge_error)?;
+    if pull.number != number {
+        return Err(forge_error(
+            "the forge returned another request number".into(),
+        ));
+    }
+    let role = pulls::role(&pull.author_login, &forge);
+    if role != "author" {
+        return Err(ApiError::conflict(
+            "the request is not the user's own: Ariadne keeps only a request of mine by hand",
+        ));
+    }
+    let row = state.store.pull_request_by_number(&id, number).await?;
+    if row.as_ref().is_some_and(|row| row.origin_task_id.is_some()) {
+        return Err(ApiError::conflict("a task already keeps this request"));
+    }
+    let pin = match req.asked {
+        false => None,
+        true => {
+            if pull.state != "open" {
+                return Err(ApiError::conflict(format!(
+                    "the request is {}: Ariadne keeps an open request",
+                    pull.state
+                )));
+            }
+            let Some(model) = req.model.as_deref().filter(|m| !m.trim().is_empty()) else {
+                return Err(ApiError::bad_request(
+                    "a keeper session runs on a model: pick one, as agent:model",
+                ));
+            };
+            let pin = super::pins::chosen(
+                &state.store,
+                &state.agent_registry,
+                Some(model),
+                req.effort.as_deref(),
+            )
+            .await?;
+            // Each a skill a task agent is staffed on (017); `pr-babysit`
+            // is loaded anyway, so it is not stored twice.
+            let mut skills: Vec<String> = Vec::new();
+            for name in &req.skills {
+                if name == ariadne_store::defaults::PR_BABYSIT_SKILL || skills.contains(name) {
+                    continue;
+                }
+                let skill = state.store.get_skill(name).await?;
+                if skill.seat() != ariadne_store::SkillSeat::Task {
+                    return Err(ApiError::bad_request(format!(
+                        "skill {name} is no keeper's to load"
+                    )));
+                }
+                skills.push(name.clone());
+            }
+            Some((pin, skills))
+        }
+    };
+    let row = match (row, &pin) {
+        (Some(row), _) => row,
+        // Asking starts the work on the request.
+        (None, Some(_)) => {
+            pulls::start_work(&state.store, &forge, &pull, None)
+                .await
+                .map_err(forge_error)?
+                .0
+        }
+        // Nothing works on it, so there is no asking to stop.
+        (None, None) => {
+            return Ok(Json(forge_pull_dto(&id, pull, role, false)));
+        }
+    };
+    let row = state
+        .store
+        .set_pull_request_babysit_asked(
+            &row.id,
+            pin.as_ref().map(|(pin, skills)| (pin, skills.as_slice())),
+        )
+        .await?;
+    // A request of mine never asks for my own review (role is checked
+    // `author` above), so `false` names it correctly.
+    state.launcher.live.set_pull(&row.id, pull.clone(), false);
     state.forge_poll.wake(&row.repository_id);
     state.notify_scheduler_pull_request(&row.id);
     let view = read_held(&state, row).await?;

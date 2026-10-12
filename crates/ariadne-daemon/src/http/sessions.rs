@@ -275,9 +275,9 @@ pub(super) async fn debug_spawn(
                 .ok_or_else(|| ApiError::bad_request("goal_id required"))?;
             state.launcher.spawn_orchestrator(&goal).await
         }
-        Seat::Agent | Seat::Reviewer => {
+        Seat::Agent | Seat::Reviewer | Seat::Keeper => {
             return Err(ApiError::conflict(
-                "the scheduler starts the current column agent and every review session",
+                "the scheduler starts the current column agent and every review or keeper session",
             ));
         }
     }

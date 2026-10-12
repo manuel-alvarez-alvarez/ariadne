@@ -481,7 +481,8 @@ semantics remain with 009.
     finds it (029 rule 1), which is also the moment nobody was yet
     assigned to it.
 15. A readiness item (`AttentionCause::Unknown`) is raised for an `author`
-    row a task keeps (`origin_task_id`) once every one of three pieces of
+    row a task keeps (`origin_task_id`), or one a keeper session keeps by
+    hand (`babysit_asked`, 032), once every one of three pieces of
     the forge's own evidence for the request's current head holds
     together: `review_decision == "approved"` (a current approval, not an
     Ariadne review's own summary, which the forge never counts as one —
@@ -533,12 +534,12 @@ semantics remain with 009.
     withholds unless that bound head (`PullRequestRow::ready_head_sha`)
     still matches the request's current head — `ready` alone, or the
     forge conditions without a report naming the current head, raises
-    nothing. A request no task keeps — asked for ad hoc, through the
-    same report route a reviewer session also answers to (029 rule 11)
-    — raises nothing either, whatever its `ready` flag says: only the
-    babysitting task's own claim is read, never a bare flag on a row
-    nothing manages (029, "Only the babysitter raises readiness
-    attention for a request it manages"). Every field above is the live
+    nothing. A request neither a task nor a keeper session keeps —
+    asked for ad hoc, through the same report route a reviewer session
+    also answers to (029 rule 11) — raises nothing either, whatever its
+    `ready` flag says: only the keeping agent's own claim is read, never
+    a bare flag on a row nothing manages (029, "Only the keeper raises
+    readiness attention for a request it manages"). Every field above is the live
     state of the request's current head, read fresh on every call to
     this producer rather than latched anywhere: a later commit, a
     reopened comment, an approval the forge no longer counts (dismissed,

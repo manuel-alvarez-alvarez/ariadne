@@ -44,6 +44,7 @@ In: request identity, the rows Ariadne keeps, forge reads, fetch modes, HTTP, ev
 Also in: the agent who keeps a request, its comments and checks, the detail read, the news, the tools, and the cleanup.
 
 Out: webhook delivery, and review sessions, on a request that asks for the user's review or one of theirs they asked Ariadne to review ([029](029-reviewing-a-request.md)).
+Also out: the keeper session on a request of the user's own asked for by hand, and its worktree and branch ([032](032-babysitting-a-request-by-hand.md)).
 Forge detection and integration settings belong to [025](025-forge-integration.md).
 The `pr` column, its gate and how its task ends belong to [030](030-workflows.md).
 
@@ -58,14 +59,15 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
    GitLab accepts `/merge_requests/<number>` and `/-/merge_requests/<number>`, including subgroup paths.
    A different repository or host does not match.
 2. Nothing the forge holds is stored: a stored title, check or comment goes stale the moment somebody pushes.
-   A `pull_requests` row (`PullRequestRow`) is Ariadne's bookkeeping of a request it works on: `id`, `repository_id`, `number`, `url`, `role`, `origin_task_id`, `ready`, `ready_head_sha` (the head the `ready` claim was confirmed on, 031 rule 13), the told marks (rule 18), `reviewed_sha`, `review_asked` and its pin and skills, and `summary_comment_id` (029). The row holds no other column, and there is no comments table.
+   A `pull_requests` row (`PullRequestRow`) is Ariadne's bookkeeping of a request it works on: `id`, `repository_id`, `number`, `url`, `role`, `origin_task_id`, `ready`, `ready_head_sha` (the head the `ready` claim was confirmed on, 031 rule 13), the told marks (rule 18), `reviewed_sha`, `review_asked` and its pin and skills, `babysit_asked` and its pin and skills (032), and `summary_comment_id` (029). The row holds no other column, and there is no comments table.
    `role` is `author` when the request's author is the integration login, ignoring case, else `reviewer`.
    An upsert keeps the existing id and creation time, and the first origin task.
 3. A row exists while Ariadne works on the request, or while a human still
    might start it working by hand, and only then:
    - the request a task opened: `open_pull_request` writes it, with the task as origin (030 rule 10);
    - a request that asks for the user's review, out of draft: the first fetch that finds it writes it — nothing starts a session on it on its own, but the row is what lets a human start one by hand (029, 031);
-   - a request of the user's they asked Ariadne to review: the ask writes it (029).
+   - a request of the user's they asked Ariadne to review: the ask writes it (029);
+   - a request of the user's own, opened by no task, they asked Ariadne to keep by hand: the ask writes it (032).
    A request nobody works on, and nobody could start work on by asking, has no row, whatever the lists hold.
 4. What the forge says of a request Ariadne works on is read on every fetch and held in memory alone (`forge::live::LivePulls`, by row id): the request's own read, whether it asks for the user's review, and, while it is open, its details.
    The scheduler and the routes join the row to that read (`PullRequest`, the view). A daemon that restarts holds nothing until its first fetch, which runs at once; until a request has been read, the scheduler does nothing for it.
@@ -173,6 +175,7 @@ All routes appear in OpenAPI, under the rules of [012](012-http-api-events-and-u
 | `GET /v1/repositories/{id}/pull-requests/{number}` | One request of a repository, read off the forge now with its checks and comments, joined to its row where there is one. What the desktop's panel reads. |
 | `GET /v1/repositories/{id}/pull-requests/search?q=` | Search open requests live by number, title, or author, the user's own left out. Each match says with `tracked` whether Ariadne works on it. |
 | `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-review` | Take `{asked}`: ask Ariadne to review a request of the user's own, which starts its work on it, or stop asking (029). |
+| `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-babysit` | Take `{asked}`: ask Ariadne to keep a request of the user's own, opened by no task, by hand, which starts its work on it, or stop asking (032). |
 | `POST /v1/pull-requests/refresh?repo=` | Wake one repository or every enabled repository. Return 202. |
 | `GET /v1/pull-requests/{id}/comments?unanswered_only=` | The comments, read off the forge now, with their marks; or the threads that wait on the login. |
 | `GET /v1/pull-requests/{id}/comments/{comment_id}` | One comment, read off the forge now. |
@@ -187,11 +190,12 @@ There is no route that adds or removes a request.
 
 The command and screen follow [014](014-command-line-interface.md) and [015](015-desktop-app.md).
 
-- `pr ls [--repo <id|path>] [--mine | --review-requests] [--watch]` lists every open request live, the user's own with `--mine` (`role=author`), or the ones that ask for their review with `--review-requests` (`role=reviewer&requested=true`); the two do not combine. Its author column reads "you" on a request of the user's, its `ariadne` column says whether Ariadne keeps it for a task, reviews it, or does nothing with it, its `branches` column reads `head → base`, and its `session` column links the request's newest session.
+- `pr ls [--repo <id|path>] [--mine | --review-requests] [--watch]` lists every open request live, the user's own with `--mine` (`role=author`), or the ones that ask for their review with `--review-requests` (`role=reviewer&requested=true`); the two do not combine. Its author column reads "you" on a request of the user's, its `ariadne` column says whether Ariadne keeps it for a task, reviews it, babysits it by hand (032), both of the last two together, or nothing, its `branches` column reads `head → base`, and its `session` column links the request's newest session.
 - `pr inspect <repo> <number>` prints every field of one request, read off the forge now, as a hand-written key-value block in a fixed reading order, the body last after a `---` line (014).
 - `pr search --repo <id|path> <query>` searches the forge.
 - `pr refresh [--repo <id|path>]` requests a fetch.
 - `pr review <repo> <number> --model AGENT:MODEL [--effort E] [--skill S]... [--attach]` calls `PUT .../ariadne-review` with `{asked: true, model, effort, skills}` (029): `--model` is required, since there is no repository pin to fall back to any more, and a usage error names it when it is missing. `--attach` waits for the review session to start and opens its console, as `session new --attach` does. `pr review <repo> <number> --stop` sends `{asked: false}` alone, and conflicts with `--model`, `--effort`, `--skill` and `--attach`.
+- `pr babysit <repo> <number> --model AGENT:MODEL [--effort E] [--skill S]... [--attach]` and `pr babysit <repo> <number> --stop` call `PUT .../ariadne-babysit` the same way `pr review` calls its own route (032).
 
 The sidebar's Forge entry opens the Forge screen, titled "Forge", whose two tabs are Pull requests (`#/forge/pull-requests`, where `#/forge` lands) and Issues (028).
 Pull requests lists the open requests, read live. A three-way choice narrows them: All (every open request), Mine (`role=author`), and Review requests (`role=reviewer&requested=true`).

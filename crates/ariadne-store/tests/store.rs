@@ -5459,6 +5459,47 @@ async fn a_reviewed_sha_moves_once() {
     assert!(moved, "a later sha moves it again");
 }
 
+/// Asking to keep a request of mine by hand (032) writes the pin and the
+/// skills; a second ask moves them; `None` clears every one of them.
+#[tokio::test]
+async fn babysitting_a_request_of_mine_writes_its_pin_and_its_skills() {
+    let (store, _dir, row) = store_with_my_pull_request().await;
+    assert!(!row.babysit_asked);
+    let pin = AgentPin {
+        model: "stub:fast".into(),
+        effort: Some("low".into()),
+    };
+    let asked = store
+        .set_pull_request_babysit_asked(&row.id, Some((&pin, &["coding".to_string()])))
+        .await
+        .unwrap();
+    assert!(asked.babysit_asked);
+    assert_eq!(asked.babysit_model.as_deref(), Some("stub:fast"));
+    assert_eq!(asked.babysit_effort.as_deref(), Some("low"));
+    assert_eq!(asked.babysit_skills(), vec!["coding".to_string()]);
+
+    let other_pin = AgentPin {
+        model: "stub:slow".into(),
+        effort: None,
+    };
+    let moved = store
+        .set_pull_request_babysit_asked(&row.id, Some((&other_pin, &[])))
+        .await
+        .unwrap();
+    assert_eq!(moved.babysit_model.as_deref(), Some("stub:slow"));
+    assert_eq!(moved.babysit_effort, None);
+    assert!(moved.babysit_skills().is_empty());
+
+    let stopped = store
+        .set_pull_request_babysit_asked(&row.id, None)
+        .await
+        .unwrap();
+    assert!(!stopped.babysit_asked);
+    assert_eq!(stopped.babysit_model, None);
+    assert_eq!(stopped.babysit_effort, None);
+    assert!(stopped.babysit_skills().is_empty());
+}
+
 /// Every shipped workflow is seeded into a fresh database on the text
 /// Ariadne ships, storing none of it, the same way a skill is.
 #[tokio::test]

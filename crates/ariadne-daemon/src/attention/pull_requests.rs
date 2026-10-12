@@ -45,7 +45,7 @@ pub(crate) async fn items(store: &Store, launcher: &Launcher) -> Result<Vec<Atte
                     items.push(item);
                 }
             }
-            "author" if pull.origin_task_id.is_some() => {
+            "author" if pull.origin_task_id.is_some() || pull.babysit_asked => {
                 let enabled = integration.is_some_and(|i| i.enabled);
                 items.extend(readiness_item(store, launcher, &pull, enabled, &repo).await?);
             }
@@ -141,11 +141,12 @@ fn review_start_item(pull: &PullRequest, repo: &str) -> Option<AttentionItemDto>
 ///
 /// Any one short of this — stale, missing or simply not there yet —
 /// withholds the item rather than claiming readiness on a guess. Raised
-/// only for a request a task keeps (`origin_task_id`): that is the
-/// babysitting task's own request, and only its claim counts (029, "Only
-/// the babysitter raises readiness attention for a request it manages") —
-/// `crates/ariadne-daemon/src/http/pull_requests.rs::report` refuses a
-/// `ready` write from any other session a task-kept row also answers to.
+/// only for a request a task keeps (`origin_task_id`) or one asked for by
+/// hand (`babysit_asked`, 032): that is the keeping agent's own request,
+/// and only its claim counts (029, "Only the keeper raises readiness
+/// attention for a request it manages") — `crates/ariadne-daemon/src/http/pull_requests.rs::report`
+/// refuses a `ready` write from any other session a kept row also answers
+/// to.
 async fn readiness_item(
     store: &Store,
     launcher: &Launcher,

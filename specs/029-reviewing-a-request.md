@@ -215,9 +215,10 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     No route approves or merges.
 15. `report_pull_request` takes `reviewed_sha`, a hex sha, on a reviewer row,
     or on a row of the user's own with `review_asked`, alone, and `ready`,
-    whether the babysitting task believes every required approval and
-    check reads green, together with `head_sha`, the hex sha of the head
-    the task actually read before confirming readiness. A `ready: true`
+    whether the keeping agent believes every required approval and
+    check reads green — a task's column agent, or a keeper session on a
+    request asked for by hand (032) — together with `head_sha`, the hex sha
+    of the head it actually read before confirming readiness. A `ready: true`
     report with no `head_sha`, or one that fails the same hex-sha check as
     `reviewed_sha`, is refused with 400: a readiness claim binds to a
     revision, never floats free of one. `pull_requests.reviewed_sha`,

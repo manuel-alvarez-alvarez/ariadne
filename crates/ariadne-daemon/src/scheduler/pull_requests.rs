@@ -24,7 +24,10 @@ use ariadne_store::{
 
 use crate::acp::NewsDelivery;
 use crate::agents::prompts;
-use crate::forge::{news, poll::wants_session};
+use crate::forge::{
+    news,
+    poll::{wants_babysit_session, wants_session},
+};
 
 use super::{QUIET_NUDGE_SECS, SPAWN_RETRY_BUDGET};
 
@@ -107,12 +110,21 @@ impl super::Scheduler {
         // session beside its keeper's (029), taken down the same way.
         if pull.review_asked
             || self.launcher.pull_request_worktree_exists(&pull.id)
-            || !self.live_pull_request_sessions(&pull.id).await?.is_empty()
+            || !self.live_reviewer_sessions(&pull.id).await?.is_empty()
         {
             self.review_pass(&pull).await?;
         }
-        if pull.origin_task_id.is_none() && !pull.review_asked {
-            // Nobody keeps it and nobody reviews it: nothing to work on.
+        // A request of mine asked for by hand has a keeper session of its
+        // own beside a task's, or on no task at all (032).
+        if pull.babysit_asked
+            || self.launcher.keeper_worktree_exists(&pull.id)
+            || !self.live_keeper_sessions(&pull.id).await?.is_empty()
+        {
+            self.babysit_pass(&pull).await?;
+        }
+        if pull.origin_task_id.is_none() && !pull.review_asked && !pull.babysit_asked {
+            // Nobody keeps it, nobody reviews it and nobody babysits it:
+            // nothing to work on.
             return self.stop_working(&pull.id).await;
         }
         self.keep_pass(&pull).await
@@ -197,8 +209,9 @@ impl super::Scheduler {
                 }
             }
             // Open with nobody to keep it: Ariadne stops working on it, but
-            // for the review the user asked of it, which runs on (029).
-            if !pull.review_asked {
+            // for the review or the keeper session the user asked of it,
+            // which run on (029, 032).
+            if !pull.review_asked && !pull.babysit_asked {
                 return self.stop_working(&pull.id).await;
             }
             return Ok(());
@@ -515,7 +528,7 @@ impl super::Scheduler {
     /// otherwise.
     async fn review_pass(&mut self, pull: &PullRequest) -> anyhow::Result<()> {
         let integration = self.store.forge_integration(&pull.repository_id).await?;
-        let live = self.live_pull_request_sessions(&pull.id).await?;
+        let live = self.live_reviewer_sessions(&pull.id).await?;
         let login = integration
             .as_ref()
             .and_then(|i| i.login.clone())
@@ -617,7 +630,103 @@ impl super::Scheduler {
         info!(pull_request = %pull.id, state = %pull.state, "the request wants no review, taking its work down");
         match self
             .launcher
-            .end_pull_request_sessions(&pull.id, &pull.repository_id)
+            .end_reviewer_sessions(&pull.id, &pull.repository_id)
+            .await
+        {
+            Ok(()) => {
+                self.pull_request_cleanup_retry.remove(&pull.id);
+                if done {
+                    self.stop_working(&pull.id).await?;
+                }
+                Ok(())
+            }
+            Err(e) => {
+                self.pull_request_cleanup_retry
+                    .insert(pull.id.clone(), Instant::now() + CLEANUP_RETRY);
+                Err(e)
+            }
+        }
+    }
+
+    /// A request of mine the user asked Ariadne to keep by hand (032): one
+    /// live keeper session while it is open and still asked for directly on
+    /// its own row; its session and worktree taken down otherwise.
+    async fn babysit_pass(&mut self, pull: &PullRequest) -> anyhow::Result<()> {
+        let integration = self.store.forge_integration(&pull.repository_id).await?;
+        let live = self.live_keeper_sessions(&pull.id).await?;
+        let login = integration
+            .as_ref()
+            .and_then(|i| i.login.clone())
+            .unwrap_or_default();
+        if !integration.is_some_and(|i| wants_babysit_session(pull, &i)) {
+            return self.end_babysit(pull, &live).await;
+        }
+        let running = live
+            .iter()
+            .find(|s| s.seat() == Some(Seat::Keeper) && self.launcher.acp.is_running(&s.id))
+            .cloned();
+        let Some(session) = running else {
+            let pin = AgentPin {
+                model: pull.babysit_model.clone().unwrap_or_default(),
+                effort: pull.babysit_effort.clone(),
+            };
+            return self.start_babysit_session(pull, pin).await;
+        };
+        if matches!(
+            session.status(),
+            SessionStatus::Running | SessionStatus::Idle
+        ) {
+            self.tell_pull_request(&session, pull, &login).await?;
+        }
+        if session.status() == SessionStatus::Running {
+            let repo = self.store.get_repository(&pull.repository_id).await?;
+            let worktree = session.worktree_path.clone().unwrap_or_default();
+            let branch = format!("ariadne/keep-{}", pull.id);
+            let briefing = self.launcher.keeper_briefing_of(
+                pull,
+                &repo,
+                std::path::Path::new(&worktree),
+                &branch,
+            );
+            self.check_session_quiet(&session, SITUATION.to_string(), &briefing)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Start a keeper session, or put the one it had back on its feet.
+    async fn start_babysit_session(
+        &mut self,
+        pull: &PullRequest,
+        pin: AgentPin,
+    ) -> anyhow::Result<()> {
+        let session = self.launcher.resume_keeper_session(pull, pin).await?;
+        info!(pull_request = %pull.id, session = %session.id, "the request's keeper session is up");
+        Ok(())
+    }
+
+    /// A request asked for by hand that wants no keeper session (032):
+    /// merged, closed, or no longer asking. Its session is killed, its
+    /// worktree and local branch removed; Ariadne then stops working on it,
+    /// but for the task that still keeps it or the review still asked of it
+    /// (`pull_request_pass`'s own outer check decides that).
+    async fn end_babysit(
+        &mut self,
+        pull: &PullRequest,
+        live: &[AgentSession],
+    ) -> anyhow::Result<()> {
+        // Unlike a self-review, which only ends on an explicit `asked:
+        // false`, babysitting ends on the merge or the close too: nothing
+        // else keeps a hand-babysat row once this ends, since asking it is
+        // refused wherever a task already keeps the request (032).
+        let done = pull.origin_task_id.is_none() && !pull.review_asked;
+        if live.is_empty() && !self.launcher.keeper_worktree_exists(&pull.id) && !done {
+            return Ok(());
+        }
+        info!(pull_request = %pull.id, state = %pull.state, "the request wants no keeper, taking its work down");
+        match self
+            .launcher
+            .end_keeper_sessions(&pull.id, &pull.repository_id)
             .await
         {
             Ok(()) => {
@@ -644,6 +753,24 @@ impl super::Scheduler {
                 ..Default::default()
             })
             .await?)
+    }
+
+    async fn live_reviewer_sessions(&self, id: &str) -> anyhow::Result<Vec<AgentSession>> {
+        Ok(self
+            .live_pull_request_sessions(id)
+            .await?
+            .into_iter()
+            .filter(|s| s.seat() == Some(Seat::Reviewer))
+            .collect())
+    }
+
+    async fn live_keeper_sessions(&self, id: &str) -> anyhow::Result<Vec<AgentSession>> {
+        Ok(self
+            .live_pull_request_sessions(id)
+            .await?
+            .into_iter()
+            .filter(|s| s.seat() == Some(Seat::Keeper))
+            .collect())
     }
 }
 

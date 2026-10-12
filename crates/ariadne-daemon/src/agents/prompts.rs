@@ -68,14 +68,20 @@ pub(crate) fn system_prompt(seat: Seat, skills: &[Skill], skills_dir: Option<&Pa
     with_skills(default_system_prompt(seat), skills, skills_dir)
 }
 
-/// The system layer of a review session (029): its own seat text, then the
-/// index of its skill, as [`system_prompt`] builds a task seat's.
-pub(crate) fn pull_request_system_prompt(skills: &[Skill], skills_dir: Option<&Path>) -> String {
-    with_skills(
-        ariadne_store::defaults::pull_request_system_prompt(),
-        skills,
-        skills_dir,
-    )
+/// The system layer of a session that sits beside a request (029, 032):
+/// its own seat text, then the index of its skills, as [`system_prompt`]
+/// builds a task seat's. A review session's is the reviewer's own; a
+/// keeper's is the keeper's.
+pub(crate) fn pull_request_system_prompt(
+    seat: Seat,
+    skills: &[Skill],
+    skills_dir: Option<&Path>,
+) -> String {
+    let text = match seat {
+        Seat::Keeper => ariadne_store::defaults::pull_request_keeper_system_prompt(),
+        _ => ariadne_store::defaults::pull_request_system_prompt(),
+    };
+    with_skills(text, skills, skills_dir)
 }
 
 fn with_skills(seat_text: &str, skills: &[Skill], skills_dir: Option<&Path>) -> String {
@@ -281,6 +287,32 @@ pub(crate) fn pull_request_news(template: &str, pull: &PullRequest, news: &[Stri
     render(
         template,
         &[("title", &pull.title), ("news", &news.join("\n"))],
+    )
+}
+
+/// Initial prompt for a keeper session (032): the request, its worktree and
+/// local branch, and the command that pushes a fix to it.
+pub(crate) fn pull_request_keeper_briefing(
+    template: &str,
+    pull: &PullRequest,
+    repo: &Repository,
+    worktree: &str,
+    branch: &str,
+    login: &str,
+    push_command: &str,
+) -> String {
+    render(
+        template,
+        &[
+            ("title", &pull.title),
+            ("url", &pull.url),
+            ("repo_path", &repo.path),
+            ("worktree_path", worktree),
+            ("branch", branch),
+            ("base_branch", &pull.base_branch),
+            ("login", login),
+            ("push_command", push_command),
+        ],
     )
 }
 
@@ -591,6 +623,10 @@ mod tests {
             reviewer_given_up_wedged: false,
             ready_confirmed_at: None,
             ready_head_sha: None,
+            babysit_asked: false,
+            babysit_model: None,
+            babysit_effort: None,
+            babysit_skills_json: "[]".into(),
         };
         for template in [pull_request_briefing_prompt(), pull_request_news_prompt()] {
             let mut rest = template;
@@ -633,6 +669,97 @@ mod tests {
         for text in [review, news] {
             assert!(!text.contains('{'), "{text}");
         }
+    }
+
+    /// The keeper briefing names only the placeholders its builder fills
+    /// in, and the builder fills every one of them (032).
+    #[test]
+    fn the_keeper_briefing_fills_every_placeholder_it_names() {
+        use ariadne_store::defaults::{
+            PULL_REQUEST_KEEPER_PLACEHOLDERS, pull_request_keeper_briefing_prompt,
+        };
+        let template = pull_request_keeper_briefing_prompt();
+        let mut rest = template;
+        while let Some(open) = rest.find('{') {
+            let name = &rest[open + 1..rest[open..].find('}').unwrap() + open];
+            assert!(
+                PULL_REQUEST_KEEPER_PLACEHOLDERS.contains(&name),
+                "{{{name}}} is no placeholder of the keeper briefing"
+            );
+            rest = &rest[open + 1..];
+        }
+        let pull = PullRequest {
+            id: "01pr".into(),
+            repository_id: "01repoxxxxxxxxxxxxxxxxxxxx".into(),
+            number: 7,
+            url: "https://github.com/acme/widgets/pull/7".into(),
+            title: "Fix widgets".into(),
+            author_login: "me".into(),
+            state: "open".into(),
+            draft: false,
+            head_branch: "fix".into(),
+            head_sha: "abc".into(),
+            head_repo: None,
+            base_branch: "main".into(),
+            checks: "none".into(),
+            review_decision: "none".into(),
+            mergeable: "unknown".into(),
+            unanswered_comments: 0,
+            origin_task_id: None,
+            opened_at: String::new(),
+            role: "author".into(),
+            ready: false,
+            forge_updated_at: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            failed_checks: "[]".into(),
+            behind_base: false,
+            told_checks: "[]".into(),
+            told_behind_base: false,
+            told_review_decision: None,
+            told_state: None,
+            told_check_state: None,
+            news_told_at: None,
+            reviewed_sha: None,
+            told_head_sha: None,
+            review_requested: false,
+            review_asked: false,
+            body: String::new(),
+            review_model: None,
+            review_effort: None,
+            review_skills_json: "[]".into(),
+            merge_sha: None,
+            summary_comment_id: None,
+            reviewer_given_up_at: None,
+            reviewer_given_up_wedged: false,
+            ready_confirmed_at: None,
+            ready_head_sha: None,
+            babysit_asked: true,
+            babysit_model: Some("stub:fast".into()),
+            babysit_effort: None,
+            babysit_skills_json: "[]".into(),
+        };
+        let briefing = pull_request_keeper_briefing(
+            template,
+            &pull,
+            &repo(),
+            "/worktrees/pr-01pr-keep",
+            "ariadne/keep-01pr",
+            "me",
+            "git push origin HEAD:fix",
+        );
+        for value in [
+            "Fix widgets",
+            "https://github.com/acme/widgets/pull/7",
+            "/repos/ariadne",
+            "/worktrees/pr-01pr-keep",
+            "ariadne/keep-01pr, onto main",
+            "Your login: me",
+            "git push origin HEAD:fix",
+        ] {
+            assert!(briefing.contains(value), "{value}: {briefing}");
+        }
+        assert!(!briefing.contains('{'), "{briefing}");
     }
 
     /// One kind's rendering: what its briefing produced, and the values it was

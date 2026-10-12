@@ -278,6 +278,10 @@ mod tests {
             reviewer_given_up_wedged: false,
             ready_confirmed_at: None,
             ready_head_sha: None,
+            babysit_asked: false,
+            babysit_model: None,
+            babysit_effort: None,
+            babysit_skills_json: "[]".into(),
         }
     }
 

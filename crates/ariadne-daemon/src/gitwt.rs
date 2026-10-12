@@ -102,6 +102,23 @@ impl GitManager {
         Ok(())
     }
 
+    /// Create a worktree on a fresh local `branch` cut at `at`, for a
+    /// session that keeps a request of the user's own by hand (032): unlike
+    /// [`Self::add_detached_worktree`] this worktree commits and pushes, so
+    /// it needs a branch of its own rather than a detached head.
+    pub async fn add_worktree_at(
+        &self,
+        repo: &Path,
+        worktree: &Path,
+        branch: &str,
+        at: &str,
+    ) -> Result<()> {
+        let wt = worktree.display().to_string();
+        self.git(repo, &["worktree", "add", "-b", branch, &wt, at])
+            .await?;
+        Ok(())
+    }
+
     /// Move a detached worktree to a new detached position, e.g. the head of
     /// a request on its next push (029).
     ///

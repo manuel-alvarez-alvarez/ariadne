@@ -27,6 +27,10 @@ pub(crate) enum McpSeat {
     /// request that asks for the user's review. It sits on no task, and the
     /// seat word exists only beside a request.
     PullRequestReviewer,
+    /// The keeper seat of a pull request session (032): a session with
+    /// `ARIADNE_PULL_REQUEST_ID` set and seat `keeper`, which keeps a
+    /// request of the user's own asked for by hand. It sits on no task.
+    PullRequestKeeper,
 }
 
 impl McpSeat {
@@ -35,6 +39,7 @@ impl McpSeat {
             McpSeat::Orchestrator => "orchestrator",
             McpSeat::Agent => "agent",
             McpSeat::PullRequestReviewer => "pull request reviewer",
+            McpSeat::PullRequestKeeper => "pull request keeper",
         }
     }
 
@@ -95,6 +100,19 @@ impl McpSeat {
                 "reply_comment",
                 "resolve_thread",
                 "submit_review",
+                "report_pull_request",
+            ],
+            // No task tool and no message tool: the user reaches the
+            // session through its console. It resolves no thread and
+            // submits no review: those are a review session's own (029).
+            McpSeat::PullRequestKeeper => &[
+                "wait_for_user",
+                "withdraw_wait_for_user",
+                "get_pull_request",
+                "get_diff",
+                "list_comments",
+                "get_comment",
+                "reply_comment",
                 "report_pull_request",
             ],
         }
@@ -269,7 +287,7 @@ fn ask_rule(seat: &McpSeat) -> &'static str {
         McpSeat::Agent => {
             "Ask the user only where the task cannot continue without a user answer. Call `wait_for_user` with a one-line hint first. Then write the question in your reply, not in your thinking. Do not use it for agent questions."
         }
-        McpSeat::PullRequestReviewer => {
+        McpSeat::PullRequestReviewer | McpSeat::PullRequestKeeper => {
             "Ask the user only where the request cannot continue without a user answer. Call `wait_for_user` with a one-line hint first. Then write the question in your reply, not in your thinking. Do not use it for agent questions."
         }
     }
@@ -277,10 +295,11 @@ fn ask_rule(seat: &McpSeat) -> &'static str {
 
 /// The seat a session's environment names: `ARIADNE_SEAT`, read as a seat
 /// of a pull request where `ARIADNE_PULL_REQUEST_ID` is set. A `reviewer`
-/// exists only beside a request: no task has one.
+/// and a `keeper` exist only beside a request: no task has either.
 fn mcp_seat(seat: &str, pull_request: bool) -> Result<McpSeat> {
     Ok(match (seat, pull_request) {
         ("reviewer", true) => McpSeat::PullRequestReviewer,
+        ("keeper", true) => McpSeat::PullRequestKeeper,
         ("orchestrator", false) => McpSeat::Orchestrator,
         ("agent", false) => McpSeat::Agent,
         (other, _) => anyhow::bail!("unknown ARIADNE_SEAT for this session: {other:?}"),
@@ -345,11 +364,14 @@ Write no trailer anywhere: no `Co-Authored-By`, no "Generated with", no tool nam
 /// the store's seat text, picked by the seat (006). A review session's is
 /// the pull request reviewer's own (029).
 fn seat_text(seat: &McpSeat) -> &'static str {
-    use ariadne_store::defaults::{default_system_prompt, pull_request_system_prompt};
+    use ariadne_store::defaults::{
+        default_system_prompt, pull_request_keeper_system_prompt, pull_request_system_prompt,
+    };
     match seat {
         McpSeat::Orchestrator => default_system_prompt(ariadne_core::Seat::Orchestrator),
         McpSeat::Agent => default_system_prompt(ariadne_core::Seat::Agent),
         McpSeat::PullRequestReviewer => pull_request_system_prompt(),
+        McpSeat::PullRequestKeeper => pull_request_keeper_system_prompt(),
     }
 }
 
@@ -450,10 +472,11 @@ pub(crate) async fn serve() -> Result<()> {
 pub(crate) mod tests {
     use super::*;
 
-    const SEATS: [McpSeat; 3] = [
+    const SEATS: [McpSeat; 4] = [
         McpSeat::Orchestrator,
         McpSeat::Agent,
         McpSeat::PullRequestReviewer,
+        McpSeat::PullRequestKeeper,
     ];
 
     /// What the launcher's skill index opens with.
@@ -466,11 +489,15 @@ pub(crate) mod tests {
             McpSeat::Orchestrator => "orchestration",
             McpSeat::Agent => "coding",
             McpSeat::PullRequestReviewer => "pr-reviewer",
+            McpSeat::PullRequestKeeper => "pr-babysit",
         }
     }
 
     pub(crate) fn server_at(seat: McpSeat, client: Client) -> AriadneMcp {
-        let pull_request = seat == McpSeat::PullRequestReviewer;
+        let pull_request = matches!(
+            seat,
+            McpSeat::PullRequestReviewer | McpSeat::PullRequestKeeper
+        );
         let step = (seat == McpSeat::Agent).then(|| "develop".into());
         let skill_index = format!("{SKILL_INDEX_HEADER}\n- {}: Do the work.", skill_of(&seat));
         AriadneMcp {
@@ -551,6 +578,19 @@ pub(crate) mod tests {
                     "reply_comment",
                     "resolve_thread",
                     "submit_review",
+                    "report_pull_request",
+                ][..],
+            ),
+            (
+                McpSeat::PullRequestKeeper,
+                &[
+                    "wait_for_user",
+                    "withdraw_wait_for_user",
+                    "get_pull_request",
+                    "get_diff",
+                    "list_comments",
+                    "get_comment",
+                    "reply_comment",
                     "report_pull_request",
                 ][..],
             ),
@@ -707,7 +747,70 @@ pub(crate) mod tests {
         assert!(instructions.contains("pull request 01PR"), "{instructions}");
     }
 
-    /// The tools of the three seats together, deduplicated and sorted.
+    /// A keeper pull request session (032) is listed six tools: the
+    /// request, its diff, its comments, one comment and a reply, and the
+    /// report. It has no task tool, no message tool, and nothing it is
+    /// listed resolves a thread or submits a review: those are the
+    /// reviewer seat's alone.
+    #[test]
+    fn the_pull_request_keeper_seat_lists_its_tools_and_no_task_or_message_tool() {
+        assert_eq!(
+            mcp_seat("keeper", true).unwrap(),
+            McpSeat::PullRequestKeeper
+        );
+        assert!(
+            mcp_seat("keeper", false).is_err(),
+            "keeper exists only beside a request"
+        );
+        let mcp = server_at(
+            McpSeat::PullRequestKeeper,
+            Client::resolve(Some("http://127.0.0.1:1"), None),
+        );
+        let mut listed: Vec<String> = mcp
+            .listed_tools()
+            .into_iter()
+            .map(|t| t.name.to_string())
+            .collect();
+        listed.sort();
+        assert_eq!(
+            listed,
+            [
+                "get_comment",
+                "get_diff",
+                "get_pull_request",
+                "list_comments",
+                "reply_comment",
+                "report_pull_request",
+                "wait_for_user",
+                "withdraw_wait_for_user",
+            ],
+            "the pull request keeper is listed six tools"
+        );
+        for tool in [
+            "get_task",
+            "complete_step",
+            "fail_step",
+            "fail_task",
+            "open_pull_request",
+            "resolve_thread",
+            "submit_review",
+            "send_message",
+            "read_messages",
+        ] {
+            assert!(!mcp.allows(tool), "{tool} is not its tool");
+        }
+        for word in ["approve", "merge"] {
+            assert!(listed.iter().all(|name| !name.contains(word)), "{word}");
+        }
+        let instructions = mcp.get_info().instructions.expect("instructions");
+        assert!(
+            instructions.contains("pull request keeper session"),
+            "{instructions}"
+        );
+        assert!(instructions.contains("pull request 01PR"), "{instructions}");
+    }
+
+    /// The tools of the four seats together, deduplicated and sorted.
     fn distinct_tools() -> Vec<&'static str> {
         let mut tools: Vec<&str> = SEATS
             .iter()
@@ -883,7 +986,9 @@ pub(crate) mod tests {
     /// after the session rules (006).
     #[test]
     fn each_seat_is_told_its_seat_text_and_its_skill_index_after_the_rules() {
-        use ariadne_store::defaults::{default_system_prompt, pull_request_system_prompt};
+        use ariadne_store::defaults::{
+            default_system_prompt, pull_request_keeper_system_prompt, pull_request_system_prompt,
+        };
         for (seat, text) in [
             (
                 McpSeat::Orchestrator,
@@ -894,6 +999,10 @@ pub(crate) mod tests {
                 default_system_prompt(ariadne_core::Seat::Agent),
             ),
             (McpSeat::PullRequestReviewer, pull_request_system_prompt()),
+            (
+                McpSeat::PullRequestKeeper,
+                pull_request_keeper_system_prompt(),
+            ),
         ] {
             let mcp = server_at(
                 seat.clone(),
@@ -930,7 +1039,9 @@ pub(crate) mod tests {
     fn each_shared_rule_is_written_in_its_owner_alone() {
         use ariadne_store::defaults::{
             BUILTIN_SKILLS, default_prompt_text, default_system_prompt, exhausted_switch_notice,
-            pull_request_briefing_prompt, pull_request_news_prompt, pull_request_system_prompt,
+            pull_request_briefing_prompt, pull_request_keeper_briefing_prompt,
+            pull_request_keeper_system_prompt, pull_request_news_prompt,
+            pull_request_system_prompt,
         };
         let mut texts: Vec<(String, String)> = Vec::new();
         for seat in SEATS {
@@ -949,6 +1060,14 @@ pub(crate) mod tests {
             ("pull request seat text", pull_request_system_prompt()),
             ("pull request briefing", pull_request_briefing_prompt()),
             ("pull request news", pull_request_news_prompt()),
+            (
+                "pull request keeper seat text",
+                pull_request_keeper_system_prompt(),
+            ),
+            (
+                "pull request keeper briefing",
+                pull_request_keeper_briefing_prompt(),
+            ),
             ("switch notice", exhausted_switch_notice()),
         ] {
             texts.push((name.into(), text.into()));
