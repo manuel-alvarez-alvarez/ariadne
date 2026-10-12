@@ -771,6 +771,82 @@ async fn two_replies_racing_for_one_comment_post_it_once() {
     assert_eq!(replies(), 1, "only the winner calls the forge CLI");
 }
 
+/// A poll's detail read, scripted with no word of a reply the agent just
+/// posted, does not erase it from the live cache: the merge in
+/// `LivePulls::set_details` carries it forward, so the once check still
+/// refuses a second reply to the same comment after the poll runs.
+#[tokio::test]
+async fn a_stale_poll_does_not_erase_a_posted_reply() {
+    let threads =
+        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
+    let reviews = json!([
+        {"id": 502, "user": {"login": "me"}, "body": "Thanks for the look.",
+         "submitted_at": "2026-10-02T00:00:00Z"},
+        {"id": 501, "user": {"login": "alice"}, "body": "Looks fine overall.",
+         "submitted_at": "2026-10-02T00:01:00Z"},
+    ]);
+    let script = script_of(
+        pull("OPEN", "abc"),
+        &[],
+        &[],
+        &json!({"check_runs": []}).to_string(),
+        &reviews.to_string(),
+        &threads.to_string(),
+    );
+    let Kept {
+        h,
+        stub,
+        agent,
+        id,
+        repo,
+        ..
+    } = kept_request(script.clone()).await;
+    let mut stored: Vec<Value> = Vec::new();
+    eventually(TIMEOUT, "both review bodies to be stored", async || {
+        stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+        stored.iter().filter(|c| c["kind"] == "review").count() == 2
+    })
+    .await;
+    let other_side = stored
+        .iter()
+        .find(|c| c["author_login"] == "alice")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let reply: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/comments/{other_side}/reply"),
+                &agent.id,
+                json!({"body": "Thanks!"}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+
+    // The stub's own comments answer never heard of the reply: a poll run
+    // now reads exactly what the request looked like before it.
+    fetch_again(&h, &stub, &repo).await;
+
+    let after: Vec<Value> = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+    assert!(
+        after.iter().any(|c| c["id"] == reply["id"]),
+        "the poll's read kept the reply, rather than erasing it"
+    );
+
+    h.error(
+        as_session(
+            &format!("/v1/pull-requests/{id}/comments/{other_side}/reply"),
+            &agent.id,
+            json!({"body": "Again."}),
+        ),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+}
+
 /// A whole script, every detail entry keyed on `head`: what the initial
 /// open and a later push each need, parameterized on the one thing that
 /// actually changes between them.

@@ -153,18 +153,15 @@ async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullReques
         .get(&row.id)
         .map_or(row.role == "reviewer", |l| l.review_requested);
     let head_sha = details.pull.head_sha.clone();
-    let (before, after) = state.launcher.live.set_fingerprinted(
+    let (before, after) = state.launcher.live.set_details_fingerprinted(
         &row.id,
-        Live {
-            pull: details.pull,
-            review_requested,
-            details: Some(Details {
-                comments: details.comments,
-                failed_checks: details.failed_checks,
-                behind_base: details.behind_base,
-                head_sha,
-            }),
-            evidence_ok: true,
+        details.pull,
+        review_requested,
+        Details {
+            comments: details.comments,
+            failed_checks: details.failed_checks,
+            behind_base: details.behind_base,
+            head_sha,
         },
     );
     publish_evidence_transition(state, &row, before, after);

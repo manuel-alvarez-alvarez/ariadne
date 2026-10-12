@@ -176,6 +176,61 @@ impl LivePulls {
         }
     }
 
+    /// Keep a fresh detail read, its comments carrying forward any this
+    /// cache already held that the read's own comments do not: a poll, or
+    /// a route's own `read_now`, started before a reply posted, and so
+    /// missed it, would otherwise overwrite `add_comments`' own write
+    /// with its older answer, were this call taken as whole instead of
+    /// merged with what stood before it.
+    pub fn set_details(
+        &self,
+        id: &str,
+        pull: ForgePullRequest,
+        review_requested: bool,
+        details: Details,
+    ) {
+        let mut held = self
+            .0
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let details = merged_details(held.get(id), details);
+        held.insert(
+            id.to_string(),
+            Live {
+                pull,
+                review_requested,
+                details: Some(details),
+                evidence_ok: true,
+            },
+        );
+    }
+
+    /// [`Self::set_details`], fingerprinted the same way
+    /// [`Self::set_fingerprinted`] is.
+    pub fn set_details_fingerprinted(
+        &self,
+        id: &str,
+        pull: ForgePullRequest,
+        review_requested: bool,
+        details: Details,
+    ) -> (Option<u64>, u64) {
+        let mut held = self
+            .0
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let before = held.get(id).map(attention_fingerprint);
+        let details = merged_details(held.get(id), details);
+        let new = Live {
+            pull,
+            review_requested,
+            details: Some(details),
+            evidence_ok: true,
+        };
+        let after = attention_fingerprint(&new);
+        held.insert(id.to_string(), new);
+        (before, after)
+    }
+
     /// Flip `evidence_ok` false on an already-cached read, for a failure
     /// that has no new read of its own to leave standing in its place —
     /// the outer list call, or an initial, listless lookup, failing
@@ -223,6 +278,26 @@ impl LivePulls {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(id);
     }
+}
+
+/// A fresh detail read's comments, with any comment `previous` held that
+/// they do not carry pushed back onto the end: the only way a comment
+/// `add_comments` just wrote is missing from a fresh read is that the read
+/// started before the write, so dropping it would be losing a reply this
+/// cache already knows the forge holds.
+fn merged_details(previous: Option<&Live>, mut details: Details) -> Details {
+    if let Some(previous) = previous.and_then(|live| live.details.as_ref()) {
+        for comment in &previous.comments {
+            if !details
+                .comments
+                .iter()
+                .any(|c| c.forge_id == comment.forge_id)
+            {
+                details.comments.push(comment.clone());
+            }
+        }
+    }
+    details
 }
 
 /// A fingerprint of everything about one read the `pull_request`
