@@ -67,29 +67,36 @@ with the `pr-babysit` skill the column stages. Opening it needs the
 integration on: with it off, `open_pull_request` is refused with 409
 `forge_disabled`, since nothing would read the request for the agent.
 
-The agent never polls. The daemon reads the forge and prompts its own
-session each time the request has news — a new comment, a check that
-turned to failure or back to green, a base branch ahead of the head, a
-changed review decision, a merge, or a close — and leaves an idle agent
-alone in between.
+The agent never polls: that rule sits in the session rules of its seat, not
+in the skill. The daemon reads the forge and prompts its own session each
+time the request has news — a new comment, a check that turned to failure
+or back to green, a base branch ahead of the head, a changed review
+decision, a merge, or a close — and leaves an idle agent alone in between.
+A session that starts with the request already open — after a restart —
+skips straight to reading that news instead of opening the request again.
 
-The agent **replies once in every thread that asks for a change** — saying
-what it changed, or why the code stays — and posts nothing to a comment
-that asks for no change. It also replies once to each of your comments in
-the conversation. It cannot reply twice to the same comment. It cannot
-reply to its own earlier words there. It **resolves no thread**: resolving
-a thread, once its reply satisfies you, is yours to do. A change a comment
-or a failed check asks for goes onto the branch as a new commit, with the
-changed tests and lint run again, before it is pushed. A moved base branch
-is merged in rather than rebased onto, and the branch is never amended,
-rebased or force-pushed. It reports the request ready once every required
-approval and check reads green, and takes the readiness back down the
-moment a later change turns one back. Once you merge the request, the
-agent brings the base branch up to date and completes the column, which
-finishes the task when nothing follows it, or hands on to the next column;
-a request closed unmerged fails the task. Should the agent fall quiet once
-it has read the merge, the daemon advances or finishes the task itself and
-stops the agent.
+The agent **answers each inline review comment once, in the shape it
+calls for**: a requested change goes onto the branch as a new commit, with
+the changed tests and lint run again before it is pushed, and the reply
+names the commit or says why the code stays; a question gets one short
+answer; a thanks gets no reply; a follow-up in a thread it already
+answered gets a new answer; and a reviewer reply that keeps a finding
+open gets no second try — you decide what happens next. It also answers,
+once, a comment of yours on the conversation: it cannot reply twice to
+the same one, and it cannot reply to its own earlier words there. A
+finding that carries a suggestion block the agent accepts is applied as
+given, and rewritten only where it fails to compile or pass; one it does
+not accept keeps the code, with a reply that says why. It **resolves no
+thread**: resolving a thread, once its reply satisfies you, is yours to
+do. A moved base branch is merged in rather than rebased onto, and the
+branch is never amended, rebased or force-pushed. It reports the request
+ready once every required approval and check reads green, and takes the
+readiness back down the moment a later change turns one back. Once you
+merge the request, the agent brings the base branch up to date and
+completes the column, which finishes the task when nothing follows it,
+or hands on to the next column; a request closed unmerged fails the
+task. Should the agent fall quiet once it has read the merge, the daemon
+advances or finishes the task itself and stops the agent.
 
 A request of yours that no task opened — one you opened by hand — is listed
 too, and nobody keeps it.

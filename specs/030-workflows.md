@@ -256,20 +256,33 @@ every other wire enum (011).
    (016 rule 9).
 10. The `pr` column of `develop-review-pr` stages `pr-babysit`. Its agent
     pushes the branch and opens the request through `open_pull_request`
-    once; a repeat returns the same URL. The request's news goes to that
-    agent (026): its session is the request DTO's `session_id`, its tools
-    accept that session, and an idle agent waits on the forge without a
-    quiet nudge (009 rule 41). A ready report is stored but raises nothing
-    of its own on that session: the `pull_request` attention producer
-    reads the forge's own evidence against the claim instead (031). The agent makes requested
-    fixes as new commits, runs the changed tests and lint, and pushes. On
-    merge, it brings the remote base into the checkout before completing
-    the step. An open request fails the `request_merged` gate with 409 at
-    `complete_step`; a fresh forge read that says merged lets the step
-    finish. A close is news and finishes nothing: the agent fails the task.
-    The daemon advances a merged request column itself if its agent falls
-    quiet for the quiet nudge, and finishes the task when that column is
-    last; a later column runs when one follows. Cleanup stops every agent,
+    once; a repeat returns the same URL, and a session that starts with
+    the request already open skips straight to reading its news. The
+    request's news goes to that agent (026): its session is the request
+    DTO's `session_id`, its tools accept that session, and an idle agent
+    waits on the forge without a quiet nudge (009 rule 41) — the session
+    rules of its seat say never to check the request on its own instead
+    (006 rule 5). A ready report is stored but raises nothing of its own
+    on that session: the `pull_request` attention producer reads the
+    forge's own evidence against the claim instead (031). The agent
+    answers each inline review comment of the other side once: a
+    requested change as a new commit, with the changed tests and lint run
+    again before the push, named by its commit, or a reason for keeping
+    the code; a question with one short answer; a thanks with no reply; a
+    follow-up in an answered thread with a new answer; and a reviewer
+    reply that keeps a finding open with no second try, since the user
+    decides next. It leaves a comment on the conversation, since
+    `reply_comment` refuses one there with 400 (026 Known gap). A finding
+    carrying a suggestion block the agent accepts is applied rather than
+    rewritten, except where it fails to compile or pass; one it does not
+    accept keeps the code, with a reason. On merge, it brings the
+    remote base into the checkout before completing the step. An open
+    request fails the `request_merged` gate with 409 at `complete_step`;
+    a fresh forge read that says merged lets the step finish. A close is
+    news and finishes nothing: the agent fails the task. The daemon
+    advances a merged request column itself if its agent falls quiet for
+    the quiet nudge, and finishes the task when that column is last; a
+    later column runs when one follows. Cleanup stops every agent,
     removes the worktree and branch, and removes the request row and its
     marks.
 

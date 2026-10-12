@@ -1,7 +1,7 @@
 ---
 id: pull-requests
 status: current
-updated: 2026-10-11
+updated: 2026-10-12
 areas: [store, api, daemon, cli, ui]
 commits: []
 tests:
@@ -93,7 +93,11 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
 ## The agent who keeps a request
 
 The current task-column agent owns an author request, its skill, its fixes,
-and its idle handling under [030](030-workflows.md), rule 10.
+and its idle handling under [030](030-workflows.md), rule 10. It never
+checks the request on its own: Ariadne wakes the session with the
+request's news instead, a rule the session rules of the `agent` and
+`reviewer` seats state once, for every seat that keeps or reviews a
+request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
 
 ## Comments, checks and the detail read
 
@@ -310,10 +314,10 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 - Its request tools find the request its task opened, then call its routes, and say to open one where there is none:
   `tools.rs::tests::the_agents_request_tools_call_the_routes_of_the_request_its_task_opened`,
   `::an_agent_with_no_request_is_told_to_open_one`.
-- The skill is within its caps, names no forge CLI, timer, poll or resolve, opens the request once filling the repository's template or its three sections, and ends the step on the merge:
-  `defaults.rs::tests::the_pr_babysit_skill_opens_the_request_and_ends_the_step_on_the_merge`, `::skill_size_caps_hold`.
-- The skill replies only to requested changes, names a fix commit, gives a reason for no fix, and posts no unrelated reply:
-  `defaults.rs::tests::the_pr_babysit_skill_replies_only_to_requested_changes`.
+- The skill is within its caps, names no forge CLI, timer, poll or resolve, opens the request once filling the repository's template or its three sections, starts on the news steps where one is already open, and ends on the merge or the close:
+  `defaults.rs::tests::the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close`, `::skill_size_caps_hold`.
+- The skill answers each inline review comment once, in one of three shapes, skips a thanks, acts on a follow-up, never retries once a reviewer reply keeps a finding open, leaves a conversation comment, applies an accepted suggestion block, and posts no unrelated reply:
+  `defaults.rs::tests::the_pr_babysit_skill_answers_each_comment_once_in_its_shape`.
 - `session ls` titles a request session with its title and URL:
   `session.rs::tests::a_pull_request_session_shows_the_request_title_and_url`.
 - A ready report raises no row of its own on `ariadne attention`: that is
@@ -329,6 +333,12 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `dispatch.test.ts::reads every request again on pull_requests_changed, which carries none`.
 - The session listing takes `pull_request` in OpenAPI:
   `session_list.rs::the_query_and_the_page_are_in_the_openapi_document`.
+
+## Known gap
+
+`reply_comment` now answers a conversation comment of the other side too
+(rule 16). The `pr-babysit` skill (030 rule 10) does not call it there yet:
+it still leaves a comment on the conversation thread unanswered.
 
 ## Sources
 
