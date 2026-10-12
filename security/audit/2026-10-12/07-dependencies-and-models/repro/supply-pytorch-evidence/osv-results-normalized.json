@@ -255,6 +255,11 @@
     "advisory_ids": []
   },
   {
+    "name": "resolved package count:",
+    "version": "75",
+    "advisory_ids": []
+  },
+  {
     "name": "rich",
     "version": "15.0.0",
     "advisory_ids": []

@@ -1,62 +1,62 @@
-scratch directory: /private/tmp/supply-001-repro.yMTYZ7
+scratch directory: /private/tmp/supply-001-repro.Rl73dB
 
 --- A-unpinned, part 1: build a synthetic upstream and install it unpinned ---
 
 [notice] A new release of pip is available: 26.1.2 -> 26.2.1
-[notice] To update, run: /private/tmp/supply-001-repro.yMTYZ7/venv_unpinned_run1/bin/python3.14 -m pip install --upgrade pip
+[notice] To update, run: /private/tmp/supply-001-repro.Rl73dB/venv_unpinned_run1/bin/python3.14 -m pip install --upgrade pip
 this is what run.sh's 'kev[serve] @ git+https://...kev' does (no @<sha>):
-OK: demo_pkg.__file__ = /private/tmp/supply-001-repro.yMTYZ7/venv_unpinned_run1/lib/python3.14/site-packages/demo_pkg/__init__.py
+OK: demo_pkg.__file__ = /private/tmp/supply-001-repro.Rl73dB/venv_unpinned_run1/lib/python3.14/site-packages/demo_pkg/__init__.py
 OK: demo_pkg.MARKER = benign-v1
 
 --- A-unpinned, part 2: the upstream changes (a maintainer push, or an account takeover, between two runs) ---
 
 [notice] A new release of pip is available: 26.1.2 -> 26.2.1
-[notice] To update, run: /private/tmp/supply-001-repro.yMTYZ7/venv_unpinned_run2/bin/python3.14 -m pip install --upgrade pip
+[notice] To update, run: /private/tmp/supply-001-repro.Rl73dB/venv_unpinned_run2/bin/python3.14 -m pip install --upgrade pip
 a second, otherwise identical, unpinned install:
-OK: demo_pkg.__file__ = /private/tmp/supply-001-repro.yMTYZ7/venv_unpinned_run2/lib/python3.14/site-packages/demo_pkg/__init__.py
+OK: demo_pkg.__file__ = /private/tmp/supply-001-repro.Rl73dB/venv_unpinned_run2/lib/python3.14/site-packages/demo_pkg/__init__.py
 OK: demo_pkg.MARKER = SWAPPED-v2-malicious
 
 --- A-pinned: a separate repo, so the pin never shares state with the unpinned demo above ---
-pinned-demo v1 commit: e54c14a2c042c0356e616b59ca9e4fd7be4a3c5e
-pinned-demo v2 commit (the account/upstream changing after the pin): 6d38286e9cf2f0603b78b6472599d653b02a54b0
+pinned-demo v1 commit: 4e82c573765e2238afc92ebf5c21281f9fcfa1d9
+pinned-demo v2 commit (the account/upstream changing after the pin): eeb5b4f9db4838cf663172e721a5f6e3471e1992
 
 [notice] A new release of pip is available: 26.1.2 -> 26.2.1
-[notice] To update, run: /private/tmp/supply-001-repro.yMTYZ7/venv_pinned/bin/python3.14 -m pip install --upgrade pip
+[notice] To update, run: /private/tmp/supply-001-repro.Rl73dB/venv_pinned/bin/python3.14 -m pip install --upgrade pip
 pinned install, taken before the v2 push:
-OK: demo_pkg2.__file__ = /private/tmp/supply-001-repro.yMTYZ7/venv_pinned/lib/python3.14/site-packages/demo_pkg2/__init__.py
+OK: demo_pkg2.__file__ = /private/tmp/supply-001-repro.Rl73dB/venv_pinned/lib/python3.14/site-packages/demo_pkg2/__init__.py
 OK: demo_pkg2.MARKER = pinned-benign-v1
-recorded commit (direct_url.json): {'commit_id': 'e54c14a2c042c0356e616b59ca9e4fd7be4a3c5e', 'requested_revision': 'e54c14a2c042c0356e616b59ca9e4fd7be4a3c5e', 'vcs': 'git'}
+OK: direct_url.json vcs_info = {'commit_id': '4e82c573765e2238afc92ebf5c21281f9fcfa1d9', 'requested_revision': '4e82c573765e2238afc92ebf5c21281f9fcfa1d9', 'vcs': 'git'}
 
 --- B1: build a benign wheel and record its sha256 (stand-in for a Laya GitHub release asset) ---
 
 [notice] A new release of pip is available: 26.1.2 -> 26.2.1
-[notice] To update, run: /private/tmp/supply-001-repro.yMTYZ7/buildenv/bin/python3.14 -m pip install --upgrade pip
-wheel: /private/tmp/supply-001-repro.yMTYZ7/dist_v1/demo_wheel-1.0.0-py3-none-any.whl
-sha256: 30cff7d6ee7ccdcb87cbcefb13a588ab9b27b05e5a55034104808a5a923e416c
-demo-wheel @ file:///private/tmp/supply-001-repro.yMTYZ7/dist_v1/demo_wheel-1.0.0-py3-none-any.whl --hash=sha256:30cff7d6ee7ccdcb87cbcefb13a588ab9b27b05e5a55034104808a5a923e416c
+[notice] To update, run: /private/tmp/supply-001-repro.Rl73dB/buildenv/bin/python3.14 -m pip install --upgrade pip
+wheel: /private/tmp/supply-001-repro.Rl73dB/dist_v1/demo_wheel-1.0.0-py3-none-any.whl
+sha256: 41ab3ad592b17ef6482971a50ef3cb6b765921231c1db100170eb8ff8883b647
+demo-wheel @ file:///private/tmp/supply-001-repro.Rl73dB/dist_v1/demo_wheel-1.0.0-py3-none-any.whl --hash=sha256:41ab3ad592b17ef6482971a50ef3cb6b765921231c1db100170eb8ff8883b647
 
 --- B2: install with --require-hashes against the correct artifact (expected: succeeds) ---
 
 [notice] A new release of pip is available: 26.1.2 -> 26.2.1
-[notice] To update, run: /private/tmp/supply-001-repro.yMTYZ7/venv_hash_ok/bin/python3.14 -m pip install --upgrade pip
-OK: demo_wheel.__file__ = /private/tmp/supply-001-repro.yMTYZ7/venv_hash_ok/lib/python3.14/site-packages/demo_wheel/__init__.py
+[notice] To update, run: /private/tmp/supply-001-repro.Rl73dB/venv_hash_ok/bin/python3.14 -m pip install --upgrade pip
+OK: demo_wheel.__file__ = /private/tmp/supply-001-repro.Rl73dB/venv_hash_ok/lib/python3.14/site-packages/demo_wheel/__init__.py
 OK: demo_wheel.MARKER = wheel-v1-benign
 
 --- B3: simulate a compromised/re-published release asset at the SAME URL, same requirements.txt ---
 
 --- B4: re-install with the OLD recorded hash against the swapped content (expected: pip refuses) ---
 OK: refused as expected, citing: THESE PACKAGES DO NOT MATCH THE HASHES
-    demo-wheel @ file:///private/tmp/supply-001-repro.yMTYZ7/dist_v1/demo_wheel-1.0.0-py3-none-any.whl from file:///private/tmp/supply-001-repro.yMTYZ7/dist_v1/demo_wheel-1.0.0-py3-none-any.whl (from -r /private/tmp/supply-001-repro.yMTYZ7/requirements.txt (line 1)):
-        Expected sha256 30cff7d6ee7ccdcb87cbcefb13a588ab9b27b05e5a55034104808a5a923e416c
-             Got        ae09591504778b6d40f59fd7ed23f1cbaa26745d4aa2b8864a23b376e45fb020
+    demo-wheel @ file:///private/tmp/supply-001-repro.Rl73dB/dist_v1/demo_wheel-1.0.0-py3-none-any.whl from file:///private/tmp/supply-001-repro.Rl73dB/dist_v1/demo_wheel-1.0.0-py3-none-any.whl (from -r /private/tmp/supply-001-repro.Rl73dB/requirements.txt (line 1)):
+        Expected sha256 41ab3ad592b17ef6482971a50ef3cb6b765921231c1db100170eb8ff8883b647
+             Got        64917c23833cd4d27620774dcde0931a667ee90f0c132a13c5ae0f85a32d8ef8
 
 
 --- C1: --require-hashes on a git+ URL (Kev's install shape) is refused outright, pinned or not ---
 OK: refused as expected, citing: we don't have a way to hash version control repositories
 [notice] A new release of pip is available: 26.1.2 -> 26.2.1
-[notice] To update, run: /private/tmp/supply-001-repro.yMTYZ7/venv_vcs_hash/bin/python3.14 -m pip install --upgrade pip
+[notice] To update, run: /private/tmp/supply-001-repro.Rl73dB/venv_vcs_hash/bin/python3.14 -m pip install --upgrade pip
 ERROR: Can't verify hashes for these requirements because we don't have a way to hash version control repositories:
-    demo-pkg2 @ git+file:/private/tmp/supply-001-repro.yMTYZ7/upstream_pinned.git@e54c14a2c042c0356e616b59ca9e4fd7be4a3c5e from git+file:/private/tmp/supply-001-repro.yMTYZ7/upstream_pinned.git@e54c14a2c042c0356e616b59ca9e4fd7be4a3c5e (from -r /private/tmp/supply-001-repro.yMTYZ7/requirements_vcs.txt (line 1))
+    demo-pkg2 @ git+file:/private/tmp/supply-001-repro.Rl73dB/upstream_pinned.git@4e82c573765e2238afc92ebf5c21281f9fcfa1d9 from git+file:/private/tmp/supply-001-repro.Rl73dB/upstream_pinned.git@4e82c573765e2238afc92ebf5c21281f9fcfa1d9 (from -r /private/tmp/supply-001-repro.Rl73dB/requirements_vcs.txt (line 1))
 
 --- done — every assertion above passed ---
 This confirms: pin the commit for Kev (hash-checking cannot apply to a VCS source;
@@ -65,4 +65,10 @@ requirements support); use a requirements file with --require-hashes and a pinne
 non-latest Laya wheel URL instead of fetching whatever 'releases/latest' currently
 resolves to.
 
-(scratch left at /private/tmp/supply-001-repro.yMTYZ7 for inspection; rm -rf it when done)
+Scope: this proves pip/git's own resolution and hash-checking behavior against
+synthetic stand-ins. It does not exercise bench/ai-permissions/run.sh itself (its
+venv-selection, --rebuild, or per-backend branches), and it does not install the
+real Laya or Kev package — see the main report's SUPPLY-001 for what is and is not
+claimed from this evidence.
+
+(scratch left at /private/tmp/supply-001-repro.Rl73dB for inspection; rm -rf it when done)

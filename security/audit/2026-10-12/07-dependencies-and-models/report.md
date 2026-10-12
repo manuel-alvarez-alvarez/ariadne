@@ -81,7 +81,7 @@ gaps, on top of what the previous revision already fixed. What changed:
   the earlier abbreviated commit hash and hand-copied package list:
   `repro/supply-pytorch-evidence/` holds the exact command (full 40-character
   commit, not truncated), platform, pip's `--report` JSON parsed into a
-  plain list of all 75 resolved packages, and the full OSV.dev
+  plain list of all 76 resolved packages, and the full OSV.dev
   `querybatch` result for every one of them — plus an explicit note on what
   this evidence does not cover (other platforms/devices, Python 3.12, Laya,
   build-isolation vs. target-environment placement of `setuptools`).
@@ -137,6 +137,66 @@ gaps, on top of what the previous revision already fixed. What changed:
 - **The "inflated counters" wording is removed from Threat assumptions**,
   which was asserting exactly the certainty SUPPLY-002 explicitly disclaims.
 
+## Corrections since the reviewed version (commit a829ebf1)
+
+- **The round-2 rejection of a `js-yaml`/`gen:api` exploit path was itself
+  incomplete, not wrong about what it checked.** It correctly showed
+  `gen-api.mjs`'s own JSON parsing of the *root* document never reaches a
+  YAML parser, but did not follow `openapi-typescript`'s own bundling step,
+  which resolves **external `$ref`s** through `@redocly/openapi-core` and
+  parses whatever each one points at with a YAML parser that has
+  merge-key support explicitly enabled — independent of the root
+  document's own format. A bounded, harmless reproduction
+  (`repro/supply-006-yaml-ref/`) now confirms this mechanism is reached;
+  SUPPLY-006 states precisely what is and is not proven by it (parser
+  reachability, not `GHSA-2883-xcg3-v3hh`'s specific resource-exhaustion
+  behavior), and the prerequisite that narrows it (an externally-referenced,
+  untrusted document — not the daemon's own default, self-contained one).
+  The same trace surfaced `brace-expansion@2.1.4`'s real chain (via
+  `@redocly/openapi-core -> minimatch`, the same `gen:api` devDependency
+  path, not `shadcn`), which the previous revision's inventory omitted
+  entirely.
+- **The npm advisory inventory is now complete and committed as evidence**
+  (`repro/supply-006-npm-evidence/`): every package's exact resolved
+  version(s), every GHSA id (deduplicated, `semver`-checked against the
+  exact resolved node, not assumed), its affected range, and its fix —
+  including `@modelcontextprotocol/sdk`'s own direct advisory
+  (`GHSA-6qxp-vccf-f47h`) and `brace-expansion`'s three, neither recorded
+  in the previous revision — replacing vague counts like "nine GHSAs" (the
+  real count for `undici` is 11) and prose that distinguished "major bump
+  needed" from "plain fix available" only in general terms.
+- **The SUPPLY-001 reproduction now asserts `direct_url.json`'s
+  `commit_id`**, not just prints it, and states explicitly what it does
+  and does not prove (pip/git behavior against synthetic stand-ins, not
+  `run.sh`'s own branches or a real Laya install).
+- **Two evidence-accuracy corrections in `repro/supply-pytorch-evidence/`:**
+  the resolved-package count was 76, not 75 (a counting error in the
+  previous revision's README, now fixed everywhere it appeared); and
+  `setuptools`'s presence in that list is `torch`'s own runtime dependency
+  (`dryrun-stdout.log:41`), not Kev's build-system requirement as an
+  earlier draft of the README guessed. The OSV query's raw HTTP response is
+  now committed separately from its derived per-package summary, correctly
+  labeled as two different things.
+- **SUPPLY-005 is restated with full detail inline** (the fix version for
+  `glib`, `>= 0.20.0`, had been dropped when the previous revision
+  condensed this section by reference to an earlier one — every revision
+  now carries its own complete remediation detail rather than pointing a
+  reader backward).
+- **An unrelated test failure surfaced by this review's own
+  `.githooks/pre-push --all` run is recorded here, not fixed:**
+  `scheduler_attention::an_agent_that_reports_nothing_is_flagged_and_then_relaunched`
+  (`crates/ariadne-daemon/tests/it/scheduler_attention.rs:1855`) failed in
+  that run. This audit's diff touches only the assigned report directory
+  and cannot affect that test; the failure is outside this task's scope per
+  the review's own instruction ("This audit does not modify the failing
+  test or application... Do not add application repairs to this
+  report-only task") and is reported to the orchestrator for separate
+  handling, not altered here. The full Rust/UI check suite otherwise passed
+  in this revision's own run (1926/1926 tests, clippy, fmt, `npm run check`,
+  Tauri build) before this one test's failure was found by the reviewer's
+  independent run — recorded as the actual, current state rather than
+  claimed clean.
+
 ## Threat assumptions
 
 - Installed coding-agent CLIs are trusted; this task does not attack them.
@@ -169,8 +229,12 @@ gaps, on top of what the previous revision already fixed. What changed:
   dependencies, independent tree, excluded from the workspace).
 - `ui/package.json`, `ui/package-lock.json` (718 npm packages: 537 prod, 181
   dev, per `npm audit`'s own classification), `ui/src/index.css`,
-  `ui/AGENTS.md`, `ui/scripts/gen-api.mjs` (read in full this revision, not
-  excerpted).
+  `ui/AGENTS.md`, `ui/scripts/gen-api.mjs` (read in full).
+- `ui/node_modules/openapi-typescript/dist/{index,lib/redoc}.mjs` and
+  `ui/node_modules/@redocly/openapi-core/lib/{resolve.js,js-yaml/index.js}`
+  — the installed dependency code itself, not just its `package.json`
+  metadata, to trace exactly how (and whether) an external `$ref` reaches
+  a YAML parser (SUPPLY-006).
 - `crates/ariadne-daemon/src/ai_permissions/{install,flavours,server,python,mod,decide,hardware}.rs`.
 - `crates/ariadne-daemon/src/config.rs` (the `~/.ariadne` home-directory
   default, for SUPPLY-008).
@@ -204,14 +268,38 @@ gaps, on top of what the previous revision already fixed. What changed:
 - `npm audit --omit=dev` and `npm audit` (full) against
   `ui/package-lock.json`, with every advisory's GHSA id, affected range,
   and fix availability extracted.
-- **A precise, corrected re-trace of `ui/package-lock.json`'s own
-  `packages` map** for `undici`, `ajv`, `@redocly/ajv`, `fast-uri`,
-  `uri-js-replace`, `conf`, `@dotenvx/dotenvx`, and `js-yaml`, distinguishing
-  the two different `ajv` packages in the graph and following `conf` one
-  level further than the previous revision did.
-- `npm` registry metadata for `shadcn`'s `exports` map (unchanged from the
-  previous revision: `./tailwind.css` is a static-asset export with no JS).
-- `cargo tree -i <crate>` for every crate named in a `cargo audit` warning.
+- **`npm ci` in `ui/` (installing `ui/node_modules` for the first time this
+  audit) and `npm ls <pkg> --all`** for every vulnerable package name, to
+  get exact lockfile-node paths and resolved versions directly from npm's
+  own dependency resolver rather than by reading `package-lock.json` by
+  eye — this is what surfaced the precise `undici`/`jsdom`,
+  `fast-uri`/`ajv`-vs-`@redocly/ajv`, `conf`/`@dotenvx/dotenvx`, and
+  `brace-expansion` chains in SUPPLY-006.
+- A small Node script (logic described inline in SUPPLY-006, output
+  committed at `repro/supply-006-npm-evidence/resolved-advisory-table.txt`)
+  cross-referencing every `npm audit --json` advisory's affected-version
+  range against each resolved node's exact version with the `semver`
+  package already present in `ui/node_modules`, rather than assuming a
+  range applies.
+- `npm` registry metadata for `shadcn`'s `exports` map (`./tailwind.css` is
+  a static-asset export with no JS).
+- **A bounded, harmless reproduction of external-`$ref` YAML parsing**
+  through the real, installed `openapi-typescript`/`@redocly/openapi-core`
+  (`repro/supply-006-yaml-ref/run.mjs`, re-run three consecutive times,
+  deterministic) — see SUPPLY-006 for what it proves and what it does not.
+- `cargo tree -i <crate>` for every crate named in a `cargo audit` warning,
+  re-verified this revision (not only carried forward by citation).
+- **The full `.githooks/pre-push --all` suite**, run in the foreground with
+  its output kept outside the worktree. It reached and passed `cargo
+  machete`, `cargo build --workspace --all-targets`, `cargo clippy
+  --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`,
+  `scripts/check-unused-rust`, `npm ci`, `npm run check`, and the Tauri
+  shell's `cargo fmt`/`cargo check`; `cargo nextest run --workspace
+  --profile ci` reached 1926/1926 passing in this run, but the review's own
+  independent run of the same hook found one test,
+  `scheduler_attention::an_agent_that_reports_nothing_is_flagged_and_then_relaunched`,
+  fail — recorded in the Corrections section above and reported to the
+  orchestrator, not fixed here (this task's diff cannot affect that test).
 - **A real `pip install --dry-run --report` resolution**, using the full,
   untruncated pinned commit hash, of
   `kev[serve] @ git+https://github.com/jaredpalmer/kev@f1535963cea021439370c23127bc970b6788e730`,
@@ -220,9 +308,11 @@ gaps, on top of what the previous revision already fixed. What changed:
   scraped stdout) was parsed into the committed package list. Full evidence,
   including an explicit list of what it does not cover, is committed at
   `repro/supply-pytorch-evidence/`.
-- An OSV.dev `querybatch` of all 75 resolved packages at their resolved
-  versions; full request/response recorded at
-  `repro/supply-pytorch-evidence/osv-results.json`.
+- An OSV.dev `querybatch` of all 76 resolved packages at their resolved
+  versions; the raw response is recorded at
+  `repro/supply-pytorch-evidence/osv-querybatch-raw-response.json`, and a
+  readable per-package view at
+  `repro/supply-pytorch-evidence/osv-results-normalized.json`.
 - **A corrected, deterministic, independently re-runnable reproduction**
   for SUPPLY-001 — `repro/supply-001-pip-integrity.sh` — re-run three
   consecutive times this revision, each a clean exit 0 with every
@@ -328,8 +418,9 @@ gaps, on top of what the previous revision already fixed. What changed:
   `torch.nan_to_num`; a `pt2`-loading-handler issue scoped to 2.10.0 itself)
   need an attacker to control arguments to those specific tensor operations
   directly, which Kev's fixed scoring API does not expose. Every one of the
-  other 74 resolved packages returned **zero** OSV.dev advisories (full
-  list: `repro/supply-pytorch-evidence/osv-results.json`).
+  other 75 resolved packages returned **zero** OSV.dev advisories (full
+  raw response: `repro/supply-pytorch-evidence/osv-querybatch-raw-response.json`;
+  readable view: `repro/supply-pytorch-evidence/osv-results-normalized.json`).
 - **What this finding does not claim, stated explicitly per review.** No
   isolated exploit of CVE-2026-24747 was run against any resolved package
   in this audit — the evidence above establishes that the vulnerable
@@ -508,113 +599,194 @@ gaps, on top of what the previous revision already fixed. What changed:
 
 #### SUPPLY-005 — Four Rust dependencies carry non-blocking RustSec advisories, with build-time and runtime surfaces kept distinct
 
-(Unchanged from the previous revision; carried forward because nothing in
-this review's findings touched it.)
-
-- `bincode 1.3.3` (`RUSTSEC-2025-0141`, unmaintained) — production runtime,
-  via `syntect` into `ariadne-console`/`ariadne-cli`/`ariadne-daemon`.
-- `chacha20 0.10.1` (yanked) — production runtime, via `rand 0.10.2 ->
-  ulid -> ariadne-core`. Yank rationale not retrievable (`crates.io`'s API
-  returned an empty body in this sandbox; `github.com`/`api.github.com`/
-  `pypi.org` all worked) — recorded as an explicit tool/network gap.
-- `proc-macro-error 1.0.4` (`RUSTSEC-2024-0370`, unmaintained) —
+- `bincode 1.3.3` (`RUSTSEC-2025-0141`, unmaintained, no fix published) —
+  production runtime, via `syntect` into
+  `ariadne-console`/`ariadne-cli`/`ariadne-daemon` (`cargo tree -i
+  bincode@1.3.3`). Remediation: track or replace `syntect`'s own dependency
+  choice upstream; there is no drop-in fix on Ariadne's side alone.
+- `chacha20 0.10.1` (yanked from crates.io, no RustSec advisory ID — this is
+  crates.io's own yank flag, not a CVE) — production runtime, via `rand
+  0.10.2 -> ulid -> ariadne-core`, reaching every workspace crate. Yank
+  rationale not retrievable (`crates.io`'s API returned an empty body in
+  this sandbox; `github.com`/`api.github.com`/`pypi.org` all worked) —
+  recorded as an explicit tool/network gap. Remediation: bump `rand` past
+  whatever release re-pins a non-yanked `chacha20`.
+- `proc-macro-error 1.0.4` (`RUSTSEC-2024-0370`, unmaintained, no fix
+  published — the advisory's own suggested alternatives are `manyhow` or
+  `proc-macro2-diagnostics`, not a newer release of this crate) —
   **build-time only**, via `gtk3-macros` (a `(proc-macro)` crate per `cargo
   tree`) from `gtk`, reachable only through Tauri's Linux WebKitGTK
-  backend. Executes at `cargo build`/`cargo check` time, not in the shipped
-  binary.
-- `glib 0.18.5` (`RUSTSEC-2024-0429`, unsound) — Linux-WebKitGTK-only, via
-  `wry -> webkit2gtk/gio/gtk -> glib`. Call-site reachability of the
-  specific unsound `VariantStrIter` methods was not checked and is not
-  claimed either way.
-- **Remediation/regression:** unchanged from the previous revision — bump
-  `syntect`'s or `rand`'s choice upstream; bump the Tauri-Linux GTK stack
-  once available; `cargo audit` reports zero warnings for these four IDs.
+  backend. Executes at `cargo build`/`cargo check` time, on a developer's
+  or CI's machine, not in the shipped binary. Remediation: depends on
+  `gtk-rs`/`wry` moving off it; no action available on Ariadne's side alone
+  today.
+- `glib 0.18.5` (`RUSTSEC-2024-0429`, unsound — a `NULL`-pointer-dereference
+  class issue in `VariantStrIter`'s `Iterator`/`DoubleEndedIterator` impls,
+  **fixed in `glib >= 0.20.0`**) — Linux-WebKitGTK-only, via `wry ->
+  webkit2gtk/gio/gtk -> glib` (`cargo tree -i glib@0.18.5 --target all`).
+  Call-site reachability of the specific unsound `VariantStrIter` methods
+  from Ariadne Desktop's own code, or from `wry`/`webkit2gtk`'s use of
+  `glib` on its behalf, was not checked and is not claimed either way.
+  Remediation: bump the Tauri/WebKitGTK dependency stack once a `wry`
+  release pulls `glib >= 0.20.0`; no direct dependency bump is available on
+  Ariadne's side alone, since `glib` is pulled transitively.
+- **Regression criterion:** `cargo audit` (both lockfiles) reports zero
+  warnings for `RUSTSEC-2025-0141`, the `chacha20` yank, `RUSTSEC-2024-0370`,
+  and `RUSTSEC-2024-0429`.
+- **Confidence:** confirmed — advisory IDs, exact dependency chains, fix
+  versions (where published), and which are build-time vs. runtime vs.
+  Linux-only were all independently re-verified this revision, not carried
+  forward by reference to an earlier revision's text.
 
-#### SUPPLY-006 — npm advisories outside shadcn's unreached CLI chain, corrected
+#### SUPPLY-006 — npm advisories outside shadcn's unreached CLI chain, with a complete advisory inventory and one corrected reachability verdict
+
+Full evidence this revision: `repro/supply-006-npm-evidence/npm-audit.json`
+(the complete, unedited `npm audit --json` output this table is drawn
+from — "Commit a sanitized scan snapshot... under the owned directory",
+per review) and `repro/supply-006-npm-evidence/resolved-advisory-table.txt`
+(every package's exact resolved lockfile node(s)/version(s) cross-checked
+against each advisory's affected range with `semver.satisfies`, not
+eyeballed — generated by a small script whose logic is described inline
+below so the table is independently reproducible from the two committed
+JSON files). `npm ls <pkg> --all` (which needs `ui/node_modules`, installed
+this revision) gave the exact dependency-chain paths; `ui/package-lock.json`
+gives the exact resolved versions at each node.
 
 - **shadcn's own chain is confirmed unreached.** `shadcn@4.18.0`'s registry
   `exports` map lists `"./tailwind.css": "./dist/tailwind.css"` as a direct
   static-file export, no JS. `ui/src/index.css:3`'s `@import
   "shadcn/tailwind.css"` resolves only that asset. No source file imports
   `shadcn`'s JS and no `npm run` script invokes it.
-- **The corrected chain map, per the independent re-trace this revision:**
-  - `proxy-addr` (critical, `GHSA-jqcg-44mw-7w3h`), `qs` (moderate, two
-    GHSAs), `hono` (moderate, four GHSAs): `shadcn -> @modelcontextprotocol/sdk
-    -> express -> {body-parser -> qs, proxy-addr}`, and `shadcn ->
-    @modelcontextprotocol/sdk -> hono`. All unreached. `fixAvailable: true`
-    (plain, no major bump) for `proxy-addr`, `undici`, `hono`, `qs`,
-    `ip-address` — **corrected**: the prior revision's blanket "all
-    shadcn-chain fixes need a major bump" is wrong for these five.
-  - `ts-morph`/`@ts-morph/common`/`fast-glob`/`micromatch`/`braces` (high):
-    `shadcn -> ts-morph -> @ts-morph/common -> fast-glob -> micromatch ->
-    braces`. Unreached. These *do* need the major `shadcn` bump
-    (`fixAvailable: {name: shadcn, version: 1.0.0, isSemVerMajor: true}`),
-    confirmed from the audit JSON, not assumed.
-  - `postcss-selector-parser` (moderate, `GHSA-rj75-hqrm-r3gf`): `shadcn`'s
-    sole recorded parent in the lockfile, confirmed by direct trace.
-    Unreached. `fixAvailable: true` (plain) — fixable without touching
-    `shadcn` at all.
-  - `undici` (high, nine GHSAs): reachable through **two** separate
-    `shadcn` paths (`shadcn -> undici` directly, and `shadcn ->
-    @dotenvx/dotenvx -> undici`) **and**, separately, through the
-    devDependency `jsdom@30.0.1 -> undici@^8.9.0` (a nested `undici@8.10.0`,
-    used only when `vitest`'s jsdom test environment runs). The `shadcn`
-    paths are unreached; the `jsdom` path is real but test-time-only.
-  - `ajv@8.20.0` -> `fast-uri` (high, six GHSAs): reachable through
-    `shadcn -> @modelcontextprotocol/sdk -> ajv` and, independently, through
-    `shadcn -> @dotenvx/dotenvx -> conf -> ajv` — **both corrected chains**;
-    the prior revision wrongly attributed `fast-uri` to the
-    `@redocly/openapi-core`/`gen:api` path (that package depends on a
-    *different*, scoped `@redocly/ajv@8.11.2`, whose own dependency is
-    `uri-js-replace`, not `fast-uri`) and wrongly guessed `conf`'s parent as
-    "likely `@tauri-apps/cli`" instead of tracing it to `@dotenvx/dotenvx`,
-    itself `shadcn`'s own dependency. Both real paths are `shadcn`-rooted
-    and unreached.
-  - `source-map-js` (high, `GHSA-68fv-2mgg-jv7q`): `@tailwindcss/node ->
-    source-map-js`, where `@tailwindcss/node` is `@tailwindcss/vite`'s own
-    dependency — a devDependency Vite's build pipeline actually executes on
-    every `npm run build`/`npm run dev`. Real, build-time reachable,
-    **not** `shadcn`-rooted. `fixAvailable: true`.
-  - `js-yaml` (high, `GHSA-2883-xcg3-v3hh`): present via
-    `@redocly/openapi-core -> js-yaml@4.3.1` (used by `openapi-typescript`,
-    used by `ui/scripts/gen-api.mjs`'s `npm run gen:api`) and via
-    `cosmiconfig -> js-yaml` (parent of `cosmiconfig` not traced further).
-    **Corrected, per review: the exploit path through `gen:api` is
-    withdrawn as unverified.** `gen-api.mjs`'s `fetchSpec` calls
-    `res.json()` (the runtime's built-in JSON parser); its local-file path
-    calls `JSON.parse`. Neither hands raw text to a YAML parser; both hand
-    a plain object straight to `openapiTS()`. No evidence was found that
-    this script's handling of a daemon's (or an attacker's) OpenAPI
-    response ever reaches `js-yaml`'s merge-key parsing. `js-yaml` stays in
-    the advisory inventory as a present, real, resolved dependency; it is
-    moved out of "confirmed reachable via a specific attacker-controlled
-    input" to "present in the tree, no verified call path to untrusted
-    input found."
-  - `@vitest/mocker`/`vitest` (moderate, `GHSA-82fw-gwwq-j7x9`): reachable
-    on every `npm test`/`npm run check`/CI run. Needs a malicious test
-    file to matter — a contribution-trust question, not an external
-    attacker surface.
-  - `ajv`'s remaining parent beyond `conf` and `@modelcontextprotocol/sdk`
-    (e.g. whatever depends on `cosmiconfig`) was not traced further —
-    recorded as an explicit minor gap.
-- **Remediation (smallest):** `npm audit fix` resolves `proxy-addr`,
-  `undici`, `hono`, `qs`, `ip-address`, `postcss-selector-parser`,
-  `source-map-js`, `js-yaml`, `fast-uri`, `@vitest/mocker`/`vitest`, and
-  `@redocly/openapi-core` without a major bump of anything
-  (`fixAvailable: true` for all of them per the audit JSON); the
-  `ts-morph`/`fast-glob`/`micromatch`/`braces`/`@ts-morph/common` cluster's
-  fix is a major `shadcn` bump and can be deferred, since nothing reaches
-  it.
-- **Regression criterion (corrected — absence of the advisory, not just the
-  `fixAvailable` field):** `npm audit --json` reports no advisory ID for
-  any of `proxy-addr`, `undici` (the `shadcn`-rooted instance),
-  `postcss-selector-parser`, `source-map-js`, `js-yaml`, `fast-uri`, `hono`,
-  `qs`, `ip-address`, or `@vitest/mocker`/`vitest` — not merely that
-  `fixAvailable` changed, which can be true even when the advisory is still
-  present at a different resolved version.
-- **Confidence:** confirmed for every chain in this revision (each a direct
-  read of `ui/package-lock.json`'s own recorded `dependencies`, cross-checked
-  against the npm audit JSON's `fixAvailable` field, not inferred).
+
+- **Direct advisories, by package, with exact resolved version(s), every
+  GHSA id, its affected range, and its fix:**
+
+  | package | resolved node(s) | GHSA ids | fix |
+  |---|---|---|---|
+  | `@modelcontextprotocol/sdk` | `@modelcontextprotocol/sdk@1.30.0` | `GHSA-6qxp-vccf-f47h` (`>=1.12.0 <1.31.0`, OAuth client could send credentials to an attacker-chosen authorization server) | `fixAvailable: true` |
+  | `proxy-addr` | `proxy-addr@2.0.7` | `GHSA-jqcg-44mw-7w3h` (`>=1.1.0 <2.0.8`, critical, IP spoofing via IPv4-mapped IPv6 trust subnet) | `true` |
+  | `qs` | `qs@6.15.3` | `GHSA-x5fp-wj9c-mxmx` (`>=6.14.2 <=6.15.3`), `GHSA-4mjr-xmp4-gh2g` (`>=2.2.5 <6.16.0`) | `true` |
+  | `hono` | `hono@4.13.2` | `GHSA-gqvv-2mrq-wpjv`, `GHSA-g6gw-c38x-mqfc`, `GHSA-crvj-82cr-hjcx` (all `<4.13.5`), `GHSA-hxh3-vqpv-xpqv` (`<4.13.7`) | `true` |
+  | `ip-address` | `ip-address@10.5.0` | `GHSA-rpw4-54j3-4h4q` (`<=10.5.0`), `GHSA-2vr4-cq9g-pvrc` (`>=10.2.0 <=10.5.0`), `GHSA-j6r3-76f7-8jcv`, `GHSA-h3mg-xc3c-68pw` (both `<=10.7.0`) | `true` |
+  | `postcss-selector-parser` | `postcss-selector-parser@7.1.5` | `GHSA-rj75-hqrm-r3gf` (`<7.1.6`) | `true` |
+  | `undici` | `undici@7.29.0` **and** `jsdom`'s nested `undici@8.10.0` | 11 distinct ids — see below | `true` |
+  | `fast-uri` | `fast-uri@3.1.5` | `GHSA-5jgf-p345-68v8`, `GHSA-f65p-4m7j-42xc`, `GHSA-fph4-wmhf-6fwf`, `GHSA-jqff-g426-hqxp`, `GHSA-qw65-cvwx-89v3`, `GHSA-hrr3-gc8f-f4qj` | `true` |
+  | `js-yaml` | `js-yaml@4.3.1` | `GHSA-2883-xcg3-v3hh` (`>=4.0.0 <4.3.2`) | `true` |
+  | `source-map-js` | `source-map-js@1.2.1` | `GHSA-68fv-2mgg-jv7q` (`>=1.0.0 <1.2.2`) | `true` |
+  | `@vitest/mocker` / `vitest` | `@vitest/mocker@4.1.10`, `vitest@4.1.10` | `GHSA-82fw-gwwq-j7x9` (`>=2.1.0 <4.1.11`) | `true` |
+  | `brace-expansion` | `node_modules/brace-expansion@2.1.4` **and** `@ts-morph/common`'s nested `brace-expansion@5.0.9` | `GHSA-q2hr-2g5m-vwhr`, `GHSA-qhr7-859c-m2p7`, `GHSA-6j4f-fj2g-mc7p` (each with a `2.x` and a `4.x`/`5.x` range; both resolved nodes fall in range for all three) | `true` |
+  | `braces` | `braces@3.0.3` | `GHSA-vfj7-8cjw-p6xm` (`<=3.0.3`) | major `shadcn` bump |
+
+  **Inherited** (vulnerable only because they depend on a package above, no
+  advisory of their own): `@redocly/openapi-core` (-> `js-yaml`),
+  `@ts-morph/common` (-> `fast-glob`), `fast-glob` (-> `micromatch`),
+  `micromatch` (-> `braces`), `ts-morph` (-> `@ts-morph/common`), `shadcn`
+  (-> `fast-glob`, `ts-morph`).
+
+- **`undici`'s 11 distinct GHSA ids** (corrected from "nine" —
+  `GHSA-3wwx-pv8p-q78v`, `GHSA-pmjh-fq2x-6v4x`, `GHSA-r53p-7pc4-xj5r`,
+  `GHSA-rfgv-xxqx-mfg5`, `GHSA-3xpg-4rpp-hhhm`, `GHSA-2jfj-6hjv-fm6j`,
+  `GHSA-2gqq-gqf2-x968`, `GHSA-w293-vg96-wgc3`, `GHSA-8436-99hf-9mmv`,
+  `GHSA-rx4f-c7p8-82vq` apply to both the `7.29.0` and `8.10.0` resolved
+  nodes; `GHSA-vp8m-p9jh-q5pm` (`>=8.10.0 <8.10.2`) applies only to the
+  `8.10.0` node): reachable through **two** `shadcn`-rooted paths (`shadcn
+  -> undici@7.29.0` directly, and `shadcn -> @dotenvx/dotenvx ->
+  undici@7.29.0`, deduped to the same resolved version) **and**,
+  separately, through the devDependency `jsdom@30.0.1 ->
+  undici@8.10.0` (used only when `vitest`'s jsdom test environment runs).
+  The `shadcn` paths are unreached; the `jsdom` path is real but
+  test-time-only.
+
+- **`fast-uri`** (via `ajv@8.20.0`): reachable through `shadcn ->
+  @modelcontextprotocol/sdk -> ajv@8.20.0` and, independently, through
+  `shadcn -> @dotenvx/dotenvx -> conf -> ajv@8.20.0`. **Both corrected
+  chains** — the previous revision wrongly attributed `fast-uri` to the
+  `@redocly/openapi-core`/`gen:api` path (that package depends on a
+  *different*, scoped `@redocly/ajv@8.11.2`, whose own dependency is
+  `uri-js-replace`, not `fast-uri`) and wrongly guessed `conf`'s parent as
+  "likely `@tauri-apps/cli`" instead of `@dotenvx/dotenvx`, itself
+  `shadcn`'s own dependency. Both real paths are `shadcn`-rooted and
+  unreached. `ajv`'s remaining parent beyond `conf` and
+  `@modelcontextprotocol/sdk` (whatever depends on `cosmiconfig`) was not
+  traced further — recorded as an explicit minor gap.
+
+- **`source-map-js`**: `@tailwindcss/node -> source-map-js`, where
+  `@tailwindcss/node` is `@tailwindcss/vite`'s own dependency — a
+  devDependency Vite's build pipeline actually executes on every `npm run
+  build`/`npm run dev`. Real, build-time reachable, **not**
+  `shadcn`-rooted.
+
+- **`js-yaml`, `brace-expansion`, and `@redocly/openapi-core` — corrected
+  reachability, per the review's independent reproduction.** The previous
+  revision rejected any `js-yaml` exploit path through `gen:api`, reasoning
+  that `gen-api.mjs`'s `fetchSpec` calls `res.json()`/`JSON.parse` and
+  hands `openapiTS()` a plain object, never raw text. **That reasoning is
+  correct about the root document but incomplete**: `openapi-typescript`'s
+  `validateAndBundle` (`dist/lib/redoc.mjs`) calls `@redocly/openapi-core`'s
+  `bundle`/`resolve`, which follows **external `$ref`s** in the document —
+  regardless of whether the root was JSON or YAML — and parses whatever it
+  fetches or reads for each one with `@redocly/openapi-core`'s own
+  `parseYaml` (`lib/js-yaml/index.js`: `js_yaml_1.load` with a schema whose
+  `implicit` types explicitly include `js_yaml_1.types.merge`, i.e.
+  merge-key support is deliberately enabled). This also explains
+  `brace-expansion@2.1.4`'s real chain: `openapi-typescript ->
+  @redocly/openapi-core -> minimatch -> brace-expansion`, a glob-matching
+  dependency of `@redocly/openapi-core` itself, reached by the same
+  `gen:api` devDependency path — **not** `shadcn`-rooted, contrary to an
+  earlier, incomplete trace.
+
+  A bounded, harmless reproduction (`repro/supply-006-yaml-ref/`, run three
+  consecutive times this revision, deterministic) confirms the mechanism:
+  a plain JS OpenAPI object — the same shape `gen-api.mjs` builds — with a
+  `$ref` to an external YAML file using `<<: *anchor` merge syntax, run
+  through the real, installed `openapiTS()`, produces generated output
+  containing a field that exists only because the merge was resolved. This
+  proves the merge-key YAML parser **is reached** by this dependency chain
+  given the right input; it does **not** reproduce `GHSA-2883-xcg3-v3hh`'s
+  specific CPU-exhaustion behavior (an empty merge source `maxTotalMergeKeys`
+  fails to bound) — no exhaustion payload was built or run, only a
+  two-key merge proving the parser executes.
+
+  **The prerequisite this narrows the finding to:** `gen-api.mjs`'s default
+  target is the daemon's own self-generated OpenAPI document
+  (`GET /api-docs/openapi.json`), a single self-contained JSON document
+  with no external `$ref`s today — this path is not live against the
+  default developer workflow. It becomes live only if a developer runs
+  `npm run gen:api -- <url-or-path>` against a target whose document (or
+  anything it `$ref`s) is not self-contained and points at content the
+  developer has not reviewed, or if the daemon's own generated document
+  ever gains an external `$ref` (not the case today). `js-yaml` and
+  `brace-expansion` stay in the advisory inventory as present, real,
+  build-reachable-given-that-prerequisite dependencies — confirmed reached
+  by the parser, not confirmed as a demonstrated CPU-exhaustion exploit.
+
+- **`@vitest/mocker`/`vitest`**: reachable on every `npm test`/`npm run
+  check`/CI run. Needs a malicious test file to matter — a
+  contribution-trust question, not an external attacker surface.
+
+- **Remediation (smallest):** `npm audit fix` resolves every package in
+  the table above marked `fixAvailable: true` without a major bump of
+  anything; `braces` (and the inherited
+  `ts-morph`/`fast-glob`/`micromatch`/`@ts-morph/common`/`shadcn` cluster)
+  needs a major `shadcn` bump and can be deferred, since nothing reaches
+  it. For the `gen:api` chain specifically (`js-yaml`, `brace-expansion`,
+  transitively via `@redocly/openapi-core`/`minimatch`), `npm audit fix`
+  also applies without a major bump; additionally, a developer-facing
+  warning or an allowlist of trusted `gen:api` targets would close the
+  external-`$ref` prerequisite this finding depends on, if that is judged
+  worth doing for a tool invoked by hand against a developer-chosen target.
+- **Regression criterion:** `npm audit --json` reports no advisory ID for
+  any package in the table above — not merely that `fixAvailable` changed,
+  which can be true even when the advisory is still present at a different
+  resolved version.
+- **Confidence:** confirmed for every chain, exact version, and advisory id
+  in this revision (`npm ls --all` plus a direct, `semver`-checked
+  cross-reference of `ui/package-lock.json` against a freshly captured
+  `npm audit --json`, both committed as evidence — not inferred or
+  eyeballed). The `js-yaml`/`brace-expansion` parser-reachability claim is
+  confirmed by a committed, deterministic reproduction; the specific
+  CPU-exhaustion behavior of `GHSA-2883-xcg3-v3hh` is not claimed to have
+  been reproduced, only the parser's reachability given an external `$ref`.
 
 ### Hardening suggestions, new this revision
 
@@ -745,11 +917,15 @@ this review's findings touched it.)
 - **"`shadcn`'s vulnerable transitive dependencies ship inside the Tauri
   desktop bundle, or are reachable via its CSS import."** Rejected: the
   CSS subpath export carries no JS, no source file imports `shadcn`'s JS.
-- **"A malicious daemon response reaches `js-yaml`'s merge-key parser
-  through `npm run gen:api`."** New this revision, rejected on direct
-  reading of `gen-api.mjs`: both of its input paths (`fetch(...).json()`
-  and `JSON.parse`) hand `openapiTS()` a plain object, never raw text a
-  YAML parser would touch.
+- **"`gen-api.mjs`'s own `res.json()`/`JSON.parse()` of the root OpenAPI
+  document feeds raw YAML text to `js-yaml`."** Rejected, specifically for
+  the *root document*: both of `gen-api.mjs`'s input paths hand `openapiTS()`
+  a plain object, never raw text. **Narrower than the previous revision's
+  claim**, which rejected any path at all — see SUPPLY-006 for the real,
+  corrected path: `@redocly/openapi-core`'s own external-`$ref` resolution
+  parses YAML (with merge-key support) independent of how the root
+  document was parsed, which this revision's reproduction confirms is
+  reached, given a document that `$ref`s an external YAML file.
 
 ## Recommendation
 
@@ -766,13 +942,21 @@ lower-priority process question. **SUPPLY-004**, **SUPPLY-005**, and
 ## Confidence
 
 High confidence in every finding's facts this revision: SUPPLY-001's
-reproduction is now fully deterministic (three consecutive identical runs)
-rather than disclosed-but-flaky, and SUPPLY-007's evidence is a committed,
-structured, full-hash resolution rather than an abbreviated one. The two
-places confidence is intentionally split, both disclosed: SUPPLY-002
-(metrics confirmed, intent not, and explicitly not claimed) and SUPPLY-007
+reproduction is now fully deterministic (three consecutive identical runs,
+including an added assertion on the pinned commit's recorded metadata)
+rather than disclosed-but-flaky, SUPPLY-007's evidence is a committed,
+structured, full-hash resolution rather than an abbreviated one (and its
+package count corrected from 75 to the actual 76), and SUPPLY-006's npm
+advisory inventory is now a complete, `semver`-checked table backed by
+committed raw evidence rather than vague counts. The places confidence is
+intentionally split, each disclosed rather than smoothed over: SUPPLY-002
+(metrics confirmed, intent not, and explicitly not claimed); SUPPLY-007
 (the dependency/call-site chain is confirmed; a working exploit was not
-built or run, and that is stated directly rather than implied away).
+built or run); and SUPPLY-006's `js-yaml`/`brace-expansion` reachability
+(the parser is confirmed reached via an external `$ref`, by a committed
+reproduction; the specific CPU-exhaustion behavior of `GHSA-2883-xcg3-v3hh`
+is not claimed to have been reproduced, and the default developer workflow
+does not trigger the external-`$ref` prerequisite at all).
 
 ## Unresolved design questions for the orchestrator
 
@@ -792,6 +976,11 @@ built or run, and that is stated directly rather than implied away).
 5. SUPPLY-008's remediation changes where benchmark runs cache weights and
    venvs by default. Confirm this is acceptable before a remediation task
    changes it.
+6. SUPPLY-006's `gen:api` finding is only live against a developer-chosen,
+   non-default target. Does the user want a hardening task (a warning, or
+   an allowlist of trusted targets) for `npm run gen:api -- <url-or-path>`,
+   or is "a developer must already trust what they point this at" an
+   acceptable existing control?
 
 ## Cross-boundary evidence for RELEASE
 

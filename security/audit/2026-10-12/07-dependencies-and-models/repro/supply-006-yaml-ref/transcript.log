@@ -1,0 +1,21 @@
+--- generated output ---
+export type paths = Record<string, never>;
+export type webhooks = Record<string, never>;
+export interface components {
+    schemas: {
+        Proof: components["schemas"]["schema"];
+        /** @description from_yaml_merge */
+        schema: string;
+    };
+    responses: never;
+    parameters: never;
+    requestBodies: never;
+    headers: never;
+    pathItems: never;
+}
+export type $defs = Record<string, never>;
+export type operations = Record<string, never>;
+
+
+OK: the generated output contains the field produced only by resolving external.yaml's `<<: *base` merge.
+This confirms @redocly/openapi-core's YAML merge-key parser ran on externally-referenced content — not that GHSA-2883-xcg3-v3hh's CPU-exhaustion behavior was reproduced.

@@ -159,12 +159,19 @@ PIP_CACHE_DIR="$R/cache-pinned" "$R/venv_pinned/bin/pip" install -q \
   "demo-pkg2 @ git+file://$R/upstream_pinned.git@$V1_SHA"
 echo "pinned install, taken before the v2 push:"
 assert_installed_marker "$R/venv_pinned" demo_pkg2 pinned-benign-v1
-echo -n "recorded commit (direct_url.json): "
-(cd "$NEUTRAL" && python3 -I -c "
-import json, glob
-for p in glob.glob('$R/venv_pinned/lib/*/site-packages/demo_pkg2-*.dist-info/direct_url.json'):
-    print(json.load(open(p))['vcs_info'])
-")
+# Assert, not just print: direct_url.json's recorded commit must be the
+# pinned v1 SHA, not whatever HEAD happened to be when pip ran.
+(cd "$NEUTRAL" && V1_SHA="$V1_SHA" python3 -I -c "
+import json, glob, os, sys
+paths = glob.glob('$R/venv_pinned/lib/*/site-packages/demo_pkg2-*.dist-info/direct_url.json')
+if not paths:
+    sys.exit('FAIL: no direct_url.json found under the venv')
+info = json.load(open(paths[0]))['vcs_info']
+expected = os.environ['V1_SHA']
+if info.get('commit_id') != expected or info.get('requested_revision') != expected:
+    sys.exit(f'FAIL: direct_url.json recorded {info!r}, expected commit_id and requested_revision both {expected!r}')
+print('OK: direct_url.json vcs_info =', info)
+") || fail "direct_url.json did not record the pinned commit"
 
 ### Part B: hash-checking catches a substituted release asset #################
 
@@ -221,3 +228,9 @@ echo "a 40-character SHA, as install.rs already does, is the only integrity cont
 echo "requirements support); use a requirements file with --require-hashes and a pinned,"
 echo "non-latest Laya wheel URL instead of fetching whatever 'releases/latest' currently"
 echo "resolves to."
+echo
+echo "Scope: this proves pip/git's own resolution and hash-checking behavior against"
+echo "synthetic stand-ins. It does not exercise bench/ai-permissions/run.sh itself (its"
+echo "venv-selection, --rebuild, or per-backend branches), and it does not install the"
+echo "real Laya or Kev package — see the main report's SUPPLY-001 for what is and is not"
+echo "claimed from this evidence."
