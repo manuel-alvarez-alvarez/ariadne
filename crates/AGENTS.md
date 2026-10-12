@@ -71,6 +71,10 @@ A daemon test does not wait on a clock. Wait for the thing itself:
   constant.
 - For a stub that must hold still, use the `wait_for` and `updates_when` keys
   in its JSON turn script in `tests/it/common/acp.rs`.
+- For a forge fetch that must be over before the stub forge CLI answers
+  differently, wait for `stub.fetches()` in `tests/it/common/forge.rs` to
+  count it. A fetch still under way answers the rest of its calls from the
+  new script, and a `QUIET` listen only bets that it was over.
 - Do not create a new executable for each test: macOS checks each executable
   before it starts, so share one file and link it, as the stub launcher does.
 
