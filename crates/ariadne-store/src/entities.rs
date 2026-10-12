@@ -778,6 +778,38 @@ pub struct PullRequestLive {
     pub unanswered_comments: i64,
 }
 
+/// Who wants a request, as a pass read it (026): the task that opened it,
+/// and the review (029) or the keeper (032) the user asked of it by hand.
+/// What a pass decides to stop working on a request from, and what
+/// `Store::delete_pull_request_unless_asked_since` holds the
+/// row against: an ask that landed since is one the pass never saw.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PullRequestAsks {
+    pub origin_task_id: Option<String>,
+    pub review_asked: bool,
+    pub babysit_asked: bool,
+}
+
+impl From<&PullRequestRow> for PullRequestAsks {
+    fn from(row: &PullRequestRow) -> Self {
+        Self {
+            origin_task_id: row.origin_task_id.clone(),
+            review_asked: row.review_asked,
+            babysit_asked: row.babysit_asked,
+        }
+    }
+}
+
+impl From<&PullRequest> for PullRequestAsks {
+    fn from(pull: &PullRequest) -> Self {
+        Self {
+            origin_task_id: pull.origin_task_id.clone(),
+            review_asked: pull.review_asked,
+            babysit_asked: pull.babysit_asked,
+        }
+    }
+}
+
 /// A request Ariadne works on, as the daemon reads it: its row, and what
 /// the forge says of it now.
 #[derive(Debug, Clone)]

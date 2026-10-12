@@ -1,7 +1,7 @@
 //! The requests Ariadne works on (026): one row each, holding the daemon's
 //! own bookkeeping and nothing the forge holds. The database owns the
 //! repository/number identity.
-use crate::{Change, PullRequestRow, Result, Store, StoreError, not_found, now};
+use crate::{Change, PullRequestAsks, PullRequestRow, Result, Store, StoreError, not_found, now};
 use ariadne_core::id::new_id;
 
 /// A request Ariadne starts to work on: what identifies it, whose it is,
@@ -132,21 +132,70 @@ impl Store {
     /// spend: they are let go of the request rather than deleted with it.
     /// Answers the row as it was, or None where none was left.
     pub async fn delete_pull_request(&self, id: &str) -> Result<Option<PullRequestRow>> {
+        self.delete_pull_request_where(id, None).await
+    }
+
+    /// Stop working on a request as a pass that read `asked` of it decided
+    /// to (026): the row goes only while nobody has asked anything of it
+    /// since. The pass decides on a read taken a few store calls earlier,
+    /// and an ask for a review (029) or a keeper (032), or a task adopting
+    /// the request, that lands in between is what that read missed: deleted
+    /// regardless, the row would take the ask with it, and the next fetch
+    /// would read the request back with nothing asked of it. Refused, the
+    /// row stays as it is, its sessions still on it, and the pass the ask
+    /// itself woke acts on it. None where the row is gone already or asked
+    /// for since — the caller leaves it alone either way.
+    pub async fn delete_pull_request_unless_asked_since(
+        &self,
+        id: &str,
+        asked: &PullRequestAsks,
+    ) -> Result<Option<PullRequestRow>> {
+        self.delete_pull_request_where(id, Some(asked)).await
+    }
+
+    /// The row goes, and its sessions are let go of it, in one write
+    /// transaction — read first against `asked`, where there is one, so a
+    /// row the guard keeps is left whole, its sessions included.
+    async fn delete_pull_request_where(
+        &self,
+        id: &str,
+        asked: Option<&PullRequestAsks>,
+    ) -> Result<Option<PullRequestRow>> {
         let mut tx = self.w().begin().await?;
+        let row: Option<PullRequestRow> = match asked {
+            None => {
+                sqlx::query_as("SELECT * FROM pull_requests WHERE id = ?")
+                    .bind(id)
+                    .fetch_optional(&mut *tx)
+                    .await?
+            }
+            Some(asked) => {
+                sqlx::query_as(
+                    "SELECT * FROM pull_requests WHERE id = ? AND origin_task_id IS ?
+                       AND review_asked = ? AND babysit_asked = ?",
+                )
+                .bind(id)
+                .bind(asked.origin_task_id.as_deref())
+                .bind(asked.review_asked)
+                .bind(asked.babysit_asked)
+                .fetch_optional(&mut *tx)
+                .await?
+            }
+        };
+        let Some(row) = row else {
+            return Ok(None);
+        };
         sqlx::query("UPDATE agent_sessions SET pull_request_id = NULL WHERE pull_request_id = ?")
             .bind(id)
             .execute(&mut *tx)
             .await?;
-        let row: Option<PullRequestRow> =
-            sqlx::query_as("DELETE FROM pull_requests WHERE id = ? RETURNING *")
-                .bind(id)
-                .fetch_optional(&mut *tx)
-                .await?;
+        sqlx::query("DELETE FROM pull_requests WHERE id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
-        if let Some(row) = &row {
-            self.publish(Change::PullRequestsChanged(row.repository_id.clone()));
-        }
-        Ok(row)
+        self.publish(Change::PullRequestsChanged(row.repository_id.clone()));
+        Ok(Some(row))
     }
 
     /// The request a task opened, where Ariadne still works on it.

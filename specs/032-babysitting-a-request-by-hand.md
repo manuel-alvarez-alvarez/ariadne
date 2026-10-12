@@ -103,6 +103,10 @@ reads behind them ([026](026-pull-requests.md)).
     is killed, its worktree and its local branch are removed, and Ariadne
     stops working on the request, unless a review is still asked of it.
     Asking again on a later open request starts a fresh keeper session.
+    An ask that lands while a pass is stopping work on a request of mine
+    nobody asked anything of is not lost: the row goes only as the pass
+    read it (026 rule 19), so the ask stays and the pass it wakes starts
+    the keeper session.
 
 ## Tools and reports
 
