@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::common::forge::{StubForgeCli, answer, stub_forge_cli};
 use crate::common::{
-    Harness, QUIET, TIMEOUT, as_session, eventually, harness, post_json, put_json, sh,
+    Harness, QUIET, TIMEOUT, as_session, eventually, harness, put_json, sh, with_forge,
 };
 use ariadne_core::{Seat, SessionStatus};
 use ariadne_daemon::forge::poll::Mode;
@@ -27,12 +27,14 @@ const PIN: &str = "stub:babysit-model";
 /// the daemon's ordinary five seconds.
 const SWEEPS_SOON: Duration = Duration::from_millis(100);
 
-/// How the stub forge shows one request of mine: its state, and the
-/// comments on its conversation, oldest first.
+/// How the stub forge shows one request of mine: its state, the head
+/// repository it lives in, and the comments on its conversation, oldest
+/// first.
 struct Shown<'a> {
     author: &'a str,
     state: &'a str,
     head: &'a str,
+    head_repo: &'a str,
     comments: Value,
 }
 
@@ -42,6 +44,7 @@ impl Shown<'_> {
             author: "me",
             state: "OPEN",
             head,
+            head_repo: "https://github.com/acme/widgets",
             comments: json!([]),
         }
     }
@@ -53,7 +56,7 @@ fn script(shown: &Shown) -> Value {
     let read = json!({"number": 1, "url": "https://github.com/acme/widgets/pull/1",
         "title": "Add widgets", "author": {"login": shown.author}, "state": shown.state,
         "isDraft": false, "headRefName": "fix", "headRefOid": shown.head,
-        "headRepository": {"url": "https://github.com/acme/widgets"},
+        "headRepository": {"url": shown.head_repo},
         "baseRefName": "main", "statusCheckRollup": [], "reviewDecision": "",
         "createdAt": "2026-10-01T00:00:00Z"});
     let listed = match shown.state == "OPEN" {
@@ -101,26 +104,32 @@ fn checkout(h: &Harness) -> (PathBuf, String) {
     let path = h.git_repo("widgets");
     sh(
         &path,
-        "git remote add origin https://github.com/acme/widgets.git && \
-         git checkout -q -b fix && echo a > a.txt && git add a.txt && \
+        "git checkout -q -b fix && echo a > a.txt && git add a.txt && \
          git -c user.email=t@t -c user.name=t commit -qm a && git checkout -q main",
     );
     let head = sh(&path, "git rev-parse fix");
     (path, head)
 }
 
-/// The repository registered with its integration on.
+/// The repository registered with its integration on, `fix` pushed to its
+/// own bare remote: the forge CLI is stubbed, so only the push and the
+/// `ls-remote` a keeper's teardown runs (032) need a real remote behind
+/// `origin` — and behind the head repository URL the stub always names,
+/// which a keeper's own push and safety check read straight off the
+/// request rather than off `origin` (032).
 async fn repository(h: &Harness, path: &Path) -> String {
-    let repo: Value = h
-        .json(
-            post_json(
-                "/v1/repositories",
-                json!({"path": path, "forge": {"enabled": true}}),
-            ),
-            StatusCode::CREATED,
-        )
-        .await;
-    repo["id"].as_str().unwrap().to_string()
+    let repo = h.repository(path).await;
+    with_forge(h, &repo).await;
+    let remote = h.at("remote.git");
+    sh(
+        path,
+        &format!(
+            "git config 'url.{remote}.insteadOf' https://github.com/acme/widgets.git && \
+             git push -q origin fix",
+            remote = remote.display(),
+        ),
+    );
+    repo.id
 }
 
 /// Ask Ariadne to babysit request `number` on `model` (032).
@@ -330,6 +339,168 @@ async fn asking_keeps_a_request_of_mine_by_hand_until_the_merge() {
         h.store.get_pull_request(&id).await.is_err()
     })
     .await;
+}
+
+/// Stopping before the keeper ever pushes leaves its worktree and its
+/// branch on disk: teardown must not throw away the only copy of a commit
+/// nobody has (032).
+#[tokio::test]
+async fn stopping_before_a_push_preserves_the_keepers_unpublished_commit() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    h.flush_scheduler().await;
+
+    let asked: Value = h
+        .json(
+            babysit(&repo, 1, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    let id = asked["id"].as_str().expect("a row").to_string();
+    let session = idle_keeper(&h, &id).await;
+    let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
+
+    // The keeper commits a fix but never pushes it before the user stops
+    // babysitting.
+    sh(
+        &worktree,
+        "echo b > b.txt && git add b.txt && \
+         git -c user.email=t@t -c user.name=t commit -qm b",
+    );
+    let unpublished = sh(&worktree, "git rev-parse HEAD");
+    assert_ne!(unpublished, head, "the keeper has a commit of its own");
+
+    let stopped: Value = h
+        .json(babysit(&repo, 1, json!({"asked": false})), StatusCode::OK)
+        .await;
+    assert_eq!(stopped["babysit_asked"], false);
+
+    eventually(TIMEOUT, "the keeper session to end", async || {
+        !h.session_status(&session).await.is_live()
+    })
+    .await;
+    eventually(TIMEOUT, "Ariadne to stop working on it", async || {
+        h.store.get_pull_request(&id).await.is_err()
+    })
+    .await;
+    assert!(
+        worktree.exists(),
+        "the worktree holding the unpublished commit is left on disk"
+    );
+    assert_eq!(
+        sh(&worktree, "git rev-parse HEAD"),
+        unpublished,
+        "the commit is still there"
+    );
+    assert!(
+        !sh(&path, "git branch --list ariadne/keep-*").is_empty(),
+        "the branch naming that commit is left too"
+    );
+}
+
+/// A second ask that moves the keeper's model while its session still runs
+/// kills that session and starts a fresh one on the new pin, reusing the
+/// same worktree and local branch rather than cutting them again (032).
+#[tokio::test]
+async fn a_second_ask_that_moves_the_pin_restarts_the_live_keeper() {
+    const PIN2: &str = "stub:babysit-model-2";
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    h.flush_scheduler().await;
+
+    let asked: Value = h
+        .json(
+            babysit(&repo, 1, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    let id = asked["id"].as_str().expect("a row").to_string();
+    let session = idle_keeper(&h, &id).await;
+    let worktree = session.worktree_path.clone().unwrap();
+
+    let moved: Value = h
+        .json(
+            babysit(&repo, 1, json!({"asked": true, "model": PIN2})),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(moved["babysit_model"], PIN2);
+
+    let mut restarted = None;
+    eventually(
+        TIMEOUT,
+        "the keeper to restart on the new pin",
+        async || {
+            restarted = sessions(&h, &id).await.into_iter().find(|s| {
+                s.seat() == Some(Seat::Keeper)
+                    && s.model == PIN2
+                    && s.status() == SessionStatus::Idle
+                    && s.launched_at.is_some()
+            });
+            restarted.is_some()
+        },
+    )
+    .await;
+    let session2 = restarted.unwrap();
+    assert_ne!(session2.id, session.id, "a new session, not the old one");
+    assert!(
+        !h.session_status(&session).await.is_live(),
+        "the old pin's session is gone"
+    );
+    assert_eq!(
+        session2.worktree_path.as_deref(),
+        Some(worktree.as_str()),
+        "the restart reuses the worktree rather than cutting another"
+    );
+    assert_eq!(
+        sh(PathBuf::from(&worktree).as_path(), "git rev-parse HEAD"),
+        head,
+        "no work was lost across the restart"
+    );
+}
+
+/// A keeper pushes a fix onto the request's own head repository, not the
+/// base repository's remote: a fork's head lives away from it, and the
+/// command the briefing names must reach the fork, not `origin` (032).
+#[tokio::test]
+async fn a_keeper_on_a_fork_is_told_to_push_to_the_forks_own_repository() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown {
+        head_repo: "https://github.com/alice/widgets",
+        ..Shown::open(&head)
+    }));
+    let repo = repository(&h, &path).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    h.flush_scheduler().await;
+
+    let asked: Value = h
+        .json(
+            babysit(&repo, 1, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    let id = asked["id"].as_str().expect("a row").to_string();
+    let session = idle_keeper(&h, &id).await;
+
+    let told = h.told(&session.id);
+    assert!(
+        told.contains("git push https://github.com/alice/widgets.git HEAD:fix"),
+        "{told}"
+    );
+    assert!(
+        !told.contains("git push origin"),
+        "a fork's head is not origin's to push to: {told}"
+    );
 }
 
 /// A keeper's agent that comes up and exits at once — a broken binary, a

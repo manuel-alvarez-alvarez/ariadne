@@ -1535,15 +1535,49 @@ impl Launcher {
         Ok((worktree, branch))
     }
 
+    /// Where a keeper pushes a fix to (032): the request's own head
+    /// repository, which a fork keeps away from the repository's own
+    /// remote — the same repository [`Self::keeper_worktree`] fetches the
+    /// head branch from.
+    fn keeper_remote(&self, pull: &PullRequest, repo: &Repository) -> String {
+        pull.head_repo.clone().unwrap_or_else(|| {
+            repo.forge
+                .as_ref()
+                .map_or_else(|| "origin".to_string(), |forge| forge.remote.clone())
+        })
+    }
+
     /// The command a keeper session pushes a fix with (032): its local
-    /// branch onto the request's own head branch, on the repository's
-    /// remote.
+    /// branch onto the request's own head branch, on the request's head
+    /// repository.
     fn keeper_push_command(&self, pull: &PullRequest, repo: &Repository) -> String {
-        let remote = repo
-            .forge
-            .as_ref()
-            .map_or_else(|| "origin".to_string(), |forge| forge.remote.clone());
-        format!("git push {remote} HEAD:{}", pull.head_branch)
+        format!(
+            "git push {} HEAD:{}",
+            self.keeper_remote(pull, repo),
+            pull.head_branch
+        )
+    }
+
+    /// Whether a keeper's local branch is safe for teardown to discard
+    /// (032): its worktree holds no uncommitted change, and its tip is
+    /// already what the request's head repository has for the head
+    /// branch. Unsafe otherwise, since removing the worktree or the branch
+    /// would then throw away the only copy of a change nobody pushed.
+    async fn keeper_work_is_safe_to_discard(
+        &self,
+        repo_path: &Path,
+        worktree: &Path,
+        pull: &PullRequest,
+        repo: &Repository,
+        branch: &str,
+    ) -> Result<bool> {
+        if !self.git.is_clean(worktree).await? {
+            return Ok(false);
+        }
+        let remote = self.keeper_remote(pull, repo);
+        self.git
+            .remote_has_commit(repo_path, &remote, branch, &pull.head_branch)
+            .await
     }
 
     /// Refuse a second live session of `seat` on one request.
@@ -1826,14 +1860,21 @@ impl Launcher {
     /// Kill every session of a request, reviewer's and keeper's alike, and
     /// remove both their worktrees and the keeper's local branch: what
     /// Ariadne takes down when it stops working on a request whole.
+    ///
+    /// `pull` is the request's live read, where the caller has one: the
+    /// keeper's own safety check reads its head branch and repository off
+    /// it. Without one — the forge integration off, so nothing has read
+    /// it — the keeper's worktree and branch are left on disk rather than
+    /// guessed safe.
     pub(crate) async fn end_pull_request_sessions(
         &self,
         pull_request_id: &str,
         repository_id: &str,
+        pull: Option<&PullRequest>,
     ) -> Result<()> {
-        self.end_seated_pull_request_work(pull_request_id, repository_id, Seat::Reviewer)
+        self.end_seated_pull_request_work(pull_request_id, repository_id, Seat::Reviewer, None)
             .await?;
-        self.end_seated_pull_request_work(pull_request_id, repository_id, Seat::Keeper)
+        self.end_seated_pull_request_work(pull_request_id, repository_id, Seat::Keeper, pull)
             .await
     }
 
@@ -1845,30 +1886,39 @@ impl Launcher {
         pull_request_id: &str,
         repository_id: &str,
     ) -> Result<()> {
-        self.end_seated_pull_request_work(pull_request_id, repository_id, Seat::Reviewer)
+        self.end_seated_pull_request_work(pull_request_id, repository_id, Seat::Reviewer, None)
             .await
     }
 
     /// Kill a request's keeper session, remove its worktree and delete its
     /// local branch (032): a reviewer session the same row still carries,
-    /// if any, is left running.
+    /// if any, is left running. `pull` is the request's live read, which
+    /// the keeper's own safety check reads its head branch and repository
+    /// off.
     pub(crate) async fn end_keeper_sessions(
         &self,
         pull_request_id: &str,
         repository_id: &str,
+        pull: &PullRequest,
     ) -> Result<()> {
-        self.end_seated_pull_request_work(pull_request_id, repository_id, Seat::Keeper)
+        self.end_seated_pull_request_work(pull_request_id, repository_id, Seat::Keeper, Some(pull))
             .await
     }
 
     /// Kill every live session of `seat` on a request and remove its
     /// worktree; a keeper's local branch goes with it, since nothing but
     /// the keeper ever commits there.
+    ///
+    /// A keeper's worktree and branch are removed only once its work is
+    /// confirmed safe to discard (032): a failed removal is returned
+    /// rather than swallowed, so the scheduler retries teardown instead of
+    /// deleting the row over a worktree still on disk.
     async fn end_seated_pull_request_work(
         &self,
         pull_request_id: &str,
         repository_id: &str,
         seat: Seat,
+        pull: Option<&PullRequest>,
     ) -> Result<()> {
         let repo = self.store.get_repository(repository_id).await?;
         let repo_path = PathBuf::from(&repo.path);
@@ -1898,16 +1948,37 @@ impl Launcher {
         });
         worktrees.sort();
         worktrees.dedup();
+        let keeper_branch = match seat {
+            Seat::Keeper => Some(self.keeper_branch(pull_request_id)),
+            _ => None,
+        };
+        let mut preserved = false;
         for worktree in worktrees.iter().filter(|w| w.exists()) {
+            if let Some(branch) = &keeper_branch {
+                let safe = match pull {
+                    Some(pull) => {
+                        self.keeper_work_is_safe_to_discard(
+                            &repo_path, worktree, pull, &repo, branch,
+                        )
+                        .await?
+                    }
+                    None => false,
+                };
+                if !safe {
+                    tracing::warn!(pull_request = %pull_request_id, worktree = %worktree.display(), "the keeper's worktree holds work the request's head lacks, leaving it on disk");
+                    preserved = true;
+                    continue;
+                }
+            }
             tracing::info!(pull_request = %pull_request_id, worktree = %worktree.display(), "removing the request's worktree");
-            self.git.remove_worktree(&repo_path, worktree).await.ok();
+            self.git.remove_worktree(&repo_path, worktree).await?;
         }
         self.git.prune_worktrees(&repo_path).await.ok();
-        if seat == Seat::Keeper {
-            let branch = self.keeper_branch(pull_request_id);
-            if self.git.branch_exists(&repo_path, &branch).await? {
-                self.git.delete_branch(&repo_path, &branch).await.ok();
-            }
+        if let Some(branch) = &keeper_branch
+            && !preserved
+            && self.git.branch_exists(&repo_path, branch).await?
+        {
+            self.git.delete_branch(&repo_path, branch).await?;
         }
         Ok(())
     }

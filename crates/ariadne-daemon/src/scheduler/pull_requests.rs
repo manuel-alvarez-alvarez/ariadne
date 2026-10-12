@@ -89,7 +89,7 @@ impl super::Scheduler {
         // request, whose agent keeps it once the integration is on again.
         if !enabled {
             self.launcher
-                .end_pull_request_sessions(&row.id, &row.repository_id)
+                .end_pull_request_sessions(&row.id, &row.repository_id, None)
                 .await?;
             if row.origin_task_id.is_none() {
                 self.stop_working(&row.id).await?;
@@ -503,7 +503,7 @@ impl super::Scheduler {
         // tick after a wait.
         let cleaned = self
             .launcher
-            .end_pull_request_sessions(&pull.id, &pull.repository_id)
+            .end_pull_request_sessions(&pull.id, &pull.repository_id, Some(pull))
             .await;
         match cleaned {
             Ok(()) => self.stop_working(&pull.id).await,
@@ -658,13 +658,22 @@ impl super::Scheduler {
             .iter()
             .find(|s| s.seat() == Some(Seat::Keeper) && self.launcher.acp.is_running(&s.id))
             .cloned();
+        let pin = AgentPin {
+            model: pull.babysit_model.clone().unwrap_or_default(),
+            effort: pull.babysit_effort.clone(),
+        };
         let Some(session) = running else {
-            let pin = AgentPin {
-                model: pull.babysit_model.clone().unwrap_or_default(),
-                effort: pull.babysit_effort.clone(),
-            };
             return self.start_babysit_session(pull, pin).await;
         };
+        // A second ask can move the pin while this session still runs on
+        // the old one (032): kill it and start fresh on the new pin, which
+        // reuses the worktree and the local branch rather than cutting
+        // them again, so its unpushed local work survives the restart.
+        if session.model != pin.model || session.effort != pin.effort {
+            info!(pull_request = %pull.id, session = %session.id, "the keeper's pin changed, restarting it on the new one");
+            self.launcher.kill_session(&session.id).await?;
+            return self.start_babysit_session(pull, pin).await;
+        }
         if matches!(
             session.status(),
             SessionStatus::Running | SessionStatus::Idle
@@ -762,7 +771,7 @@ impl super::Scheduler {
         info!(pull_request = %pull.id, state = %pull.state, "the request wants no keeper, taking its work down");
         match self
             .launcher
-            .end_keeper_sessions(&pull.id, &pull.repository_id)
+            .end_keeper_sessions(&pull.id, &pull.repository_id, pull)
             .await
         {
             Ok(()) => {

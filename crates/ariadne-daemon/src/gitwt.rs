@@ -353,6 +353,37 @@ impl GitManager {
             .is_some_and(|sha| sha == local))
     }
 
+    /// Whether `local_branch`'s tip is also what `remote` has for
+    /// `remote_branch`, read with `git ls-remote` rather than a fetch: a
+    /// keeper's own branch and the request's head branch, which may differ
+    /// in name from a fork (032). Unlike [`Self::remote_has_branch_tip`],
+    /// the local and the remote name need not match.
+    pub(crate) async fn remote_has_commit(
+        &self,
+        repo: &Path,
+        remote: &str,
+        local_branch: &str,
+        remote_branch: &str,
+    ) -> Result<bool> {
+        let local = self.git(repo, &["rev-parse", local_branch]).await?;
+        let refs = self
+            .git(repo, &["ls-remote", "--heads", remote, remote_branch])
+            .await?;
+        Ok(refs
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().next())
+            .is_some_and(|sha| sha == local))
+    }
+
+    /// Whether `worktree` holds no uncommitted change: a keeper's own
+    /// worktree, read before teardown decides its work is safe to discard
+    /// (032).
+    pub(crate) async fn is_clean(&self, worktree: &Path) -> Result<bool> {
+        let status = self.git(worktree, &["status", "--porcelain"]).await?;
+        Ok(status.trim().is_empty())
+    }
+
     /// True when `ancestor` is reachable from `descendant` — the merge
     /// verification used before accepting a merge column's `complete_step`.
     pub async fn is_ancestor(&self, repo: &Path, ancestor: &str, descendant: &str) -> Result<bool> {
