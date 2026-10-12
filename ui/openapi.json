@@ -1294,7 +1294,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "The open requests of the enabled repositories, read live off the forge\n(026): every one, or with `role` and `requested` the user's own or the\nones that ask for their review, each with what Ariadne keeps of it where\nit works on it. With `task`, the request a task opened, which its author\nkeeps (005).",
+        "summary": "The open requests of the enabled repositories, answered from the last\nfetch of each (026): every one, or with `role` and `requested` the\nuser's own or the ones that ask for their review, each with what Ariadne\nkeeps of it where it works on it. A repository with no fetch yet answers\nnone of its requests. With `task`, the request a task opened, which its\nauthor keeps (005).",
         "operationId": "list",
         "parameters": [
           {
@@ -1359,7 +1359,7 @@
               }
             }
           },
-          "502": {
+          "409": {
             "description": ""
           }
         }
@@ -1399,7 +1399,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "A request Ariadne works on, read off the forge now.",
+        "summary": "A request Ariadne works on, as the last fetch found it, or read off the\nforge now where nothing has read it yet (026).",
         "operationId": "get",
         "parameters": [
           {

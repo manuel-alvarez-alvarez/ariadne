@@ -1,6 +1,6 @@
-//! Pull requests, read live off the forge (026), and the requests Ariadne
-//! works on: what the forge holds is never stored, so every route here reads
-//! it, and joins what Ariadne keeps of a request it works on.
+//! Pull requests from each repository's last fetch (026), and the requests
+//! Ariadne works on: fetched lists and reads stay in daemon memory alone, and
+//! routes join them to what Ariadne keeps of a request it works on.
 use super::{
     AppState,
     caller::call_ctx,
@@ -184,12 +184,13 @@ async fn read_held(state: &AppState, row: PullRequestRow) -> ApiResult<PullReque
     }
 }
 
-/// The open requests of the enabled repositories, read live off the forge
-/// (026): every one, or with `role` and `requested` the user's own or the
-/// ones that ask for their review, each with what Ariadne keeps of it where
-/// it works on it. With `task`, the request a task opened, which its author
-/// keeps (005).
-#[utoipa::path(get, path = "/v1/pull-requests", tag = "pull-requests", params(PullRequestListQuery), responses((status = 200, body = [PullRequestDto]), (status = 502)))]
+/// The open requests of the enabled repositories, answered from the last
+/// fetch of each (026): every one, or with `role` and `requested` the
+/// user's own or the ones that ask for their review, each with what Ariadne
+/// keeps of it where it works on it. A repository with no fetch yet answers
+/// none of its requests. With `task`, the request a task opened, which its
+/// author keeps (005).
+#[utoipa::path(get, path = "/v1/pull-requests", tag = "pull-requests", params(PullRequestListQuery), responses((status = 200, body = [PullRequestDto]), (status = 409)))]
 pub(super) async fn list(
     State(state): State<AppState>,
     Query(q): Query<PullRequestListQuery>,
@@ -222,10 +223,17 @@ pub(super) async fn list(
     let mut dtos = Vec::new();
     for forge in forges {
         let login = forge.login.clone().unwrap_or_default();
-        let pulls::Listed { open, requested } = client(&state, &forge)
-            .list_open_pull_requests(&slug(&forge), &login)
-            .await
-            .map_err(forge_error)?;
+        // A repository with no fetch yet holds no list: its requests are
+        // empty rather than read live (026).
+        let pulls::Listed { open, requested } = state
+            .launcher
+            .live
+            .list(&forge.repository_id)
+            .map(|listed| pulls::Listed {
+                open: listed.open,
+                requested: listed.requested,
+            })
+            .unwrap_or_default();
         for pull in open {
             let role = pulls::role(&pull.author_login, &forge);
             let asks = requested.contains(&pull.number);
@@ -258,7 +266,8 @@ pub(super) async fn list(
     Ok(Json(dtos))
 }
 
-/// A request Ariadne works on, read off the forge now.
+/// A request Ariadne works on, as the last fetch found it, or read off the
+/// forge now where nothing has read it yet (026).
 #[utoipa::path(get, path = "/v1/pull-requests/{id}", tag = "pull-requests", params(("id" = String, Path)), responses((status = 200, body = PullRequestDto), (status = 404), (status = 502)))]
 pub(super) async fn get(
     State(state): State<AppState>,
@@ -267,7 +276,7 @@ pub(super) async fn get(
 ) -> ApiResult<Json<PullRequestDto>> {
     let row = state.store.get_pull_request(&id).await?;
     refuse_other_sessions(&state, &headers, &row).await?;
-    let pull = read_now(&state, row).await?;
+    let pull = read_held(&state, row).await?;
     Ok(Json(pull_request_dto_of(&state.store, pull).await?))
 }
 
@@ -352,12 +361,23 @@ pub(super) async fn search(
             ..Default::default()
         })
         .await?;
-    let matches = client(&state, &forge)
-        .search_pull_requests(&slug(&forge), &q.q)
-        .await
-        .map_err(forge_error)?;
+    // Answered from the last fetch's own open list (026): a repository with
+    // no fetch yet matches nothing.
+    let open = state
+        .launcher
+        .live
+        .list(&forge.repository_id)
+        .map(|listed| listed.open)
+        .unwrap_or_default();
+    let query = q.q.trim().trim_start_matches('#').to_lowercase();
     let mut result = Vec::new();
-    for pull in matches {
+    for pull in open {
+        if !(pull.title.to_lowercase().contains(&query)
+            || pull.author_login.to_lowercase().contains(&query)
+            || pull.number.to_string() == query)
+        {
+            continue;
+        }
         let Some(reference) =
             PullRequestRef::parse(&pull.url, &forge).filter(|r| r.number == pull.number)
         else {

@@ -448,6 +448,14 @@ async fn fetch(store: &Store, cfg: &Config, handoff: &Handoff, id: &str) -> Resu
             return Err(failure);
         }
     };
+    // Held before the rows are read, so a concurrent list answers from this
+    // fetch's own lists rather than an older round's (026).
+    handoff.live.set_list(
+        id,
+        listed.clone(),
+        requested.clone(),
+        chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+    );
     // A request that asks for my review, out of draft, is one Ariadne keeps
     // a row of: nothing starts a session of its own (029), but the request
     // still needs its row, so the `pull_request` attention producer can
