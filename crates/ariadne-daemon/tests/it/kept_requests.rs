@@ -579,14 +579,20 @@ async fn open_pull_request_strips_a_trailing_trailer_from_the_body() {
 }
 
 /// A review body posted on the conversation, with no path and no line, is
-/// no defect's own thread: the `pr` agent's reply to it through
-/// `reply_comment` is refused, and no gh call follows it.
+/// the other side's: the `pr` agent's reply to it through `reply_comment`
+/// goes through the forge's `gh pr comment`, once. A second reply to the
+/// same body, and a reply to a body of the agent's own side, are refused,
+/// with no gh call either follows.
 #[tokio::test]
-async fn the_pr_agent_may_not_reply_to_a_top_level_comment() {
+async fn the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side() {
     let threads =
         json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
-    let reviews = json!([{"id": 501, "user": {"login": "alice"}, "body": "Looks fine overall.",
-        "submitted_at": "2026-10-02T00:00:00Z"}]);
+    let reviews = json!([
+        {"id": 502, "user": {"login": "me"}, "body": "Thanks for the look.",
+         "submitted_at": "2026-10-02T00:00:00Z"},
+        {"id": 501, "user": {"login": "alice"}, "body": "Looks fine overall.",
+         "submitted_at": "2026-10-02T00:01:00Z"},
+    ]);
     let Kept {
         h, stub, agent, id, ..
     } = kept_request(script_of(
@@ -599,19 +605,66 @@ async fn the_pr_agent_may_not_reply_to_a_top_level_comment() {
     ))
     .await;
     let mut stored: Vec<Value> = Vec::new();
-    eventually(TIMEOUT, "the review body to be stored", async || {
+    eventually(TIMEOUT, "both review bodies to be stored", async || {
         stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
-        stored.iter().any(|c| c["kind"] == "review")
+        stored.iter().filter(|c| c["kind"] == "review").count() == 2
     })
     .await;
-    let top_level = stored.iter().find(|c| c["kind"] == "review").unwrap()["id"]
+    let other_side = stored
+        .iter()
+        .find(|c| c["author_login"] == "alice")
+        .unwrap()["id"]
         .as_str()
         .unwrap()
         .to_string();
+    let own_side = stored.iter().find(|c| c["author_login"] == "me").unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let replies = |stub: &StubForgeCli| {
+        stub.invocations()
+            .into_iter()
+            .filter(|i| {
+                i.args.first().map(String::as_str) == Some("pr")
+                    && i.args.get(1).map(String::as_str) == Some("comment")
+            })
+            .count()
+    };
+    let before = replies(&stub);
+    let reply: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/comments/{other_side}/reply"),
+                &agent.id,
+                json!({"body": "Thanks!"}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(reply["author_login"], "me");
+    assert_eq!(reply["thread_id"], "conversation");
+    assert_eq!(replies(&stub), before + 1, "one gh call replies");
+
     let before = stub.invocations().len();
     h.error(
         as_session(
-            &format!("/v1/pull-requests/{id}/comments/{top_level}/reply"),
+            &format!("/v1/pull-requests/{id}/comments/{other_side}/reply"),
+            &agent.id,
+            json!({"body": "Again."}),
+        ),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+    assert_eq!(
+        stub.invocations().len(),
+        before,
+        "a second reply to the same body calls the forge CLI no further"
+    );
+
+    h.error(
+        as_session(
+            &format!("/v1/pull-requests/{id}/comments/{own_side}/reply"),
             &agent.id,
             json!({"body": "Thanks!"}),
         ),
@@ -621,7 +674,7 @@ async fn the_pr_agent_may_not_reply_to_a_top_level_comment() {
     assert_eq!(
         stub.invocations().len(),
         before,
-        "a refused reply calls the forge CLI no further"
+        "a reply to the agent's own side's body calls the forge CLI no further"
     );
 }
 

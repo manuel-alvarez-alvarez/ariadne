@@ -75,8 +75,11 @@ alone in between.
 
 The agent **replies once in every thread that asks for a change** — saying
 what it changed, or why the code stays — and posts nothing to a comment
-that asks for no change. It **resolves no thread**: resolving a thread,
-once its reply satisfies you, is yours to do. A change a comment or a
+that asks for no change. It replies the same way to a comment on the
+conversation itself, once for each one of yours it has not answered yet; a
+second reply to the same comment, or a reply to its own earlier words there,
+is refused. It **resolves no thread**: resolving a thread, once its reply
+satisfies you, is yours to do. A change a comment or a
 failed check asks for goes onto the branch as a new commit, with the
 changed tests and lint run again, before it is pushed. A moved base branch
 is merged in rather than rebased onto, and the branch is never amended,

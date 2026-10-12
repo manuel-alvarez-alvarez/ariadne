@@ -499,17 +499,30 @@ pub(super) async fn reply(
     }
     let pull = read_held(&state, row).await?;
     let comment = find_comment(&state, &pull, &comment_id).await?;
-    // The keeping agent answers a defect in its own thread, an inline
-    // review comment, never the conversation: a review session alone
-    // replies there, under its own name (029).
-    if !from_review && comment.kind != "review_comment" {
-        return Err(ApiError::bad_request(
-            "reply only in the thread of the defect: an inline review comment, not the \
-             conversation",
-        ));
-    }
     let forge = integration(&state, &pull.repository_id).await?;
     let login = forge.login.clone().unwrap_or_default();
+    // The keeping agent answers a defect in its own thread, an inline
+    // review comment, under the babysitting task's own column agent
+    // (`Seat::Agent`, the same seat `report`'s `ready` claim requires,
+    // never a reviewer session, per 031); in the conversation it answers
+    // the same way, and only once per comment of the other side — never
+    // its own side's, a `from_review` comment (the review's own summary)
+    // included, and never a comment the login's own side already answered
+    // there. A review session alone keeps its wider reach, under its own
+    // name (029).
+    if !from_review && comment.kind != "review_comment" {
+        let keeping_agent =
+            pull.origin_task_id.is_some() && session.seat() == Some(ariadne_core::Seat::Agent);
+        let unanswered_other_side = !comment.author_login.eq_ignore_ascii_case(&login)
+            && !comment.from_review
+            && !comment.answered;
+        if !keeping_agent || !unanswered_other_side {
+            return Err(ApiError::bad_request(
+                "a conversation reply answers, once, a comment of the other side, from the \
+                 task's own column agent",
+            ));
+        }
+    }
     // A review's reply is signed as the review's (029).
     let sent = match from_review {
         true => pulls::signed(&body, false),
