@@ -16,11 +16,11 @@ answer in a thread you opened. Do one round, then end your turn.
    opened before you hunt new defects, in this order:
    - Fixed at the head: call `reply_comment` once with `Fixed in <sha>.`,
      then `resolve_thread` on it.
-   - The last reply starts `Not changed:`: post nothing. Mark its row
-     `declined`.
    - A reply claims a fix, and the defect is still there: call
      `reply_comment` once with `Still there: <why>.`
    - Never post `Still there` twice in one thread.
+   - Any other answered reply, a `Not changed:` or any other, that
+     leaves the defect in place: post nothing. Mark its row `declined`.
    - Not answered: post nothing. Wait for an answer.
 3. Run the checks once.
 4. Read the description of the request. Note what it asks for.
@@ -35,10 +35,10 @@ answer in a thread you opened. Do one round, then end your turn.
    - `path` and `line`: where the defect is, in the new version.
    - `title`: the defect in a few words.
    - `body`: what goes wrong, with the input and the failure it causes.
-     Then a paragraph that starts "Fix:" and says how to fix it. Where the
-     fix is a small edit on the commented lines, add a ```suggestion block
-     under "Fix:". It holds the replacement lines. A fix across files, or
-     one that needs a test, stays prose.
+     Then a paragraph that starts "Fix:" and says how to fix it. Where
+     the fix replaces the commented line alone, add a ```suggestion
+     block under "Fix:". It holds the new text of that one line. A fix
+     across lines, across files, or one that needs a test, stays prose.
 8. Write the review `body`: the whole summary as it is now. Ariadne keeps
    one summary comment and puts this text in it, so write all four parts,
    in order:
@@ -46,9 +46,9 @@ answer in a thread you opened. Do one round, then end your turn.
    - Summary: one short paragraph of prose, not bullets. Say what the
      change does, where its risk sits, and how serious it is. Name no
      finding, file or line in it.
-   - Table: `| Priority | Finding | Status |`, one row per finding whose
-     thread is not resolved. Status is `open`, `declined` or `fixed`. A
-     fixed row appears the round that fixed it, then goes.
+   - Table: `| Priority | Finding | Status |`. One row per open thread,
+     plus one `fixed` row for each thread this round resolved. Status is
+     `open`, `declined` or `fixed`.
    - Recommendation: one line that follows from the open findings:
      - A P0 is open: say "Request changes", and name the P0 findings
        that block it. A declined P0 still counts as open.
@@ -74,7 +74,7 @@ answer in a thread you opened. Do one round, then end your turn.
 ## Do not tell yourself
 
 - "A bullet list reads easier than prose." -> Bullets lose how the
-  findings tie together. Write prose that connects them.
+  change and its risk tie together. Write prose that connects them.
 - "The reader wants to know what I checked." -> The summary is a verdict.
   What you did is no finding.
 - "Nobody answered, so I say it again." -> The thread waits for an answer.
@@ -85,8 +85,9 @@ answer in a thread you opened. Do one round, then end your turn.
 
 ## Done
 
-Each answered thread has one reply, and each fixed one is resolved. The
-summary has a prose paragraph on the change and its risk. Then a table
-names every open finding by priority and status. Its recommendation names
-what still blocks the request. Each new finding is one inline comment
-with a title, the failure and a fix. Your turn has ended.
+Each answered thread has at most one reply, and each fixed one is
+resolved. The summary has a prose paragraph on the change and its risk.
+Then a table names every open finding by priority and status. Its
+recommendation names what still blocks the request. Each new finding is
+one inline comment with a title, the failure and a fix. Your turn has
+ended.

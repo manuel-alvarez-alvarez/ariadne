@@ -1327,7 +1327,7 @@ mod tests {
             "Ariadne keeps one summary comment",
             "## Review summary",
             "Summary: one short paragraph of prose, not bullets",
-            "Table: `| Priority | Finding | Status |`",
+            "Table: `| Priority | Finding | Status |`.",
             "Status is `open`, `declined` or `fixed`",
             "Recommendation: one line",
             "\"Request changes\"",
@@ -1338,7 +1338,8 @@ mod tests {
             // An unanswered thread waits; a declined fix is marked so and
             // left open; a claimed fix that is not one is said once.
             "Not answered: post nothing. Wait for an answer.",
-            "The last reply starts `Not changed:`: post nothing",
+            "Any other answered reply, a `Not changed:` or any other, that",
+            "leaves the defect in place: post nothing. Mark its row",
             "Still there: <why>",
             "Never post `Still there` twice in one thread",
             "```suggestion block",
@@ -1381,9 +1382,9 @@ mod tests {
         let table = &doc[table_at..recommendation_at];
         for phrase in [
             "`| Priority | Finding | Status |`",
-            "one row per finding whose thread is not resolved",
+            "One row per open thread",
+            "plus one `fixed` row for each thread this round resolved",
             "Status is `open`, `declined` or `fixed`",
-            "A fixed row appears the round that fixed it, then goes",
         ] {
             assert!(table.contains(phrase), "the table lacks {phrase}");
         }

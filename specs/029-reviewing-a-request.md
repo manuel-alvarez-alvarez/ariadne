@@ -257,26 +257,27 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     - a prose summary, not bullets, one short paragraph of what the change
       does, where its risk sits and how serious it is, naming no finding,
       no file and no line;
-    - a table, `| Priority | Finding | Status |`, one row per finding
-      whose thread is not resolved, `open`, `declined` or `fixed`; a fixed
-      row appears on the round that resolved its thread, and is gone from
-      the next;
+    - a table, `| Priority | Finding | Status |` — status `open`,
+      `declined` or `fixed` — one row per finding whose thread is still
+      open, plus one `fixed` row for each thread the round resolved;
     - a recommendation of one line: "Request changes" and the blocking P0
       findings while one is open — a declined P0 still counts as open —
       "Changes recommended" and what to fix before it lands while a P1 or
       P2 is open and no P0 is; else "No findings: this PR is ready to be
       merged."
     Each new finding is one inline comment with a title, the failure and a
-    fix; where the fix is a small edit on the commented lines, a
-    ```suggestion block under the fix holds the replacement, and a fix
-    across files or one a test must prove stays prose. On a later round it
-    settles each thread it opened before it hunts, reading the author's
-    reply: `Fixed in <sha>: ...` where the defect is actually gone at the
-    head gets one reply, `Fixed in <sha>.`, and is resolved; `Not changed:
-    ...` is posted nothing in return, and its row turns `declined`, left
-    open for the user; a reply that claims a fix the defect survives gets
-    one reply, `Still there: <why>.`, never posted twice in the same
-    thread; a thread nobody has answered gets nothing; it waits.
+    fix; where the fix replaces the commented line alone, a ```suggestion
+    block under the fix holds the new text of that one line, and a fix
+    across lines, across files, or one a test must prove stays prose. On a
+    later round it settles each thread it opened before it hunts, reading
+    the author's reply: where the defect is actually gone at the head it
+    gets one reply, `Fixed in <sha>.`, and is resolved; where the last
+    reply claims a fix (`Fixed in <sha>: ...`) and the defect survives, it
+    gets one reply, `Still there: <why>.`, never posted twice in the same
+    thread; any other answered reply that leaves the defect in place —
+    `Not changed: ...` or any other — gets nothing back, and its row
+    turns `declined`, left open for the user; a thread nobody has
+    answered gets nothing; it waits.
 18. A review posted, or a request reported ready, notifies nobody by
     itself: the approval and the merge stay the user's to give in their own
     time, and only the `pull_request` attention producer's own readiness
