@@ -37,7 +37,7 @@ export function ModelPin({
         }
       >
         <MiddleTruncated value={model} title={model} />
-        {effort ? <span className="shrink-0"> @ {effort}</span> : null}
+        {effort ? <span className="shrink-0 whitespace-pre"> @ {effort}</span> : null}
       </TooltipTrigger>
       <TooltipContent className="font-mono">{label}</TooltipContent>
     </Tooltip>

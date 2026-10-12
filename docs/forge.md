@@ -68,27 +68,36 @@ with the `pr-babysit` skill the column stages. Opening it needs the
 integration on: with it off, `open_pull_request` is refused with 409
 `forge_disabled`, since nothing would read the request for the agent.
 
-The agent never polls. The daemon reads the forge and prompts its own
-session each time the request has news — a new comment, a check that
-turned to failure or back to green, a base branch ahead of the head, a
-changed review decision, a merge, or a close — and leaves an idle agent
-alone in between.
+The agent never polls: that rule sits in the session rules of its seat, not
+in the skill. The daemon reads the forge and prompts its own session each
+time the request has news — a new comment, a check that turned to failure
+or back to green, a base branch ahead of the head, a changed review
+decision, a merge, or a close — and leaves an idle agent alone in between.
+A session that starts with the request already open — after a restart —
+skips straight to reading that news instead of opening the request again.
 
-The agent **replies once in every thread that asks for a change** — saying
-what it changed, or why the code stays — and posts nothing to a comment
-that asks for no change. It **resolves no thread**: resolving a thread,
-once its reply satisfies you, is yours to do. A change a comment or a
-failed check asks for goes onto the branch as a new commit, with the
-changed tests and lint run again, before it is pushed. A moved base branch
-is merged in rather than rebased onto, and the branch is never amended,
-rebased or force-pushed. It reports the request ready once every required
-approval and check reads green, and takes the readiness back down the
-moment a later change turns one back. Once you merge the request, the
-agent brings the base branch up to date and completes the column, which
-finishes the task when nothing follows it, or hands on to the next column;
-a request closed unmerged fails the task. Should the agent fall quiet once
-it has read the merge, the daemon advances or finishes the task itself and
-stops the agent.
+The agent **answers each inline review comment once, in the shape it
+calls for**: a requested change goes onto the branch as a new commit, with
+the changed tests and lint run again before it is pushed, and the reply
+names the commit or says why the code stays; a question gets one short
+answer; a thanks gets no reply; a follow-up in a thread it already
+answered gets a new answer; and a reviewer reply that keeps a finding
+open gets no second try — you decide what happens next. A comment on the
+conversation is left unanswered: `reply_comment` reaches no thread there
+yet. A finding that carries a suggestion block the agent accepts is
+applied as given, and rewritten only where it fails to compile or pass;
+one it does not accept keeps the code, with a reply that says why. It
+**resolves no thread**: resolving a thread, once its reply
+satisfies you, is yours to do. A moved base branch is merged in rather
+than rebased onto, and the branch is never amended, rebased or
+force-pushed. It reports the request ready once every required approval
+and check reads green, and takes the readiness back down the moment a
+later change turns one back. Once you merge the request, the agent brings
+the base branch up to date and completes the column, which finishes the
+task when nothing follows it, or hands on to the next column; a request
+closed unmerged fails the task. Should the agent fall quiet once it has
+read the merge, the daemon advances or finishes the task itself and stops
+the agent.
 
 A request of yours that no task opened — one you opened by hand — is listed
 too, and nobody keeps it until you ask Ariadne to babysit it; see [What a
@@ -139,27 +148,40 @@ It posts its findings at one of three priorities:
 Each round posts its new findings as one review — `request_changes` while
 a P0 finding is open, `comment` otherwise — never an approval. Each finding
 is an inline comment of its own on the line of the defect, opening on
-**[P0] Title**, then what goes wrong and how to fix it. A change request
-whose P0 findings are not on their lines is refused. On GitHub that is one
-API call carrying every inline comment; on GitLab, which has no review
-verdict of its own, one discussion per comment.
+**[P0] Title**, then what goes wrong and how to fix it. Where the fix
+replaces the commented line alone, the comment carries a `suggestion`
+block, holding the new text of that one line, the author can apply
+directly; a fix across lines, across files, or one that needs a test,
+stays prose. A change request whose P0 findings are not on their lines is
+refused. On GitHub that is one API call carrying every inline comment; on
+GitLab, which has no review verdict of its own, one discussion per
+comment.
 
 The review keeps **one summary comment** on the request, and every round
-rewrites it rather than adding another: a title, "## Review summary", the
-commit range it has reviewed, a
-prose paragraph on where it stands, and a recommendation — **Request
-changes** while a P0 is open, **Changes recommended** while a P1 or P2 is,
-or **No findings: this PR is ready to be merged.** — naming each open
-finding by priority and title, and nothing of what the reviewer did. It
-carries no trailer.
+rewrites it rather than adding another: a title, "## Review summary", a
+prose paragraph on what the change does, where its risk sits and how
+serious it is, naming no finding, file or line; a table, `| Priority |
+Finding | Status |` with status `open`, `declined` or `fixed`, one row
+per finding whose thread is still open, plus one `fixed` row for each
+thread the round resolved; and a recommendation — **Request changes**
+while a P0 is open (a declined P0 still counts), **Changes recommended**
+while a P1 or P2 is, or **No findings: this PR is ready to be merged.** —
+naming nothing of what the reviewer did. It carries no trailer.
 
-On a later round the reviewer posts nothing more in a thread nobody has
-answered: it waits for the answer. Once a commit fixes the defect, it
-replies so and resolves the thread; once someone answers and the defect is
-still there, it replies once saying so and why. On a request a task's agent
-keeps, the review's findings go to that agent like anyone else's comments,
-though they are posted under your login: it answers each one, and fixes
-what needs fixing.
+On a later round the reviewer settles each thread it opened before it
+hunts for more. The author answers in one of three ways: `Fixed in <sha>:
+...`, `Not changed: <why>.`, or a plain answer to a question. Once the
+defect is actually gone at the head, the reviewer replies `Fixed in
+<sha>.` and resolves the thread, whatever the author wrote. Where the
+last reply claims a fix (`Fixed in <sha>: ...`) but the defect is still
+there, the reviewer replies once, `Still there: <why>.`, and never says it
+again in that thread. Any other answered reply that leaves the defect in
+place — a `Not changed:` reply, or any other — gets no reply back; its row
+turns `declined` and the thread stays open, for the user to settle. A
+thread nobody has answered gets nothing: it waits. On a request a task's
+agent keeps, the review's findings go to that agent like anyone else's
+comments, though they are posted under your login: it answers each one,
+and fixes what needs fixing.
 
 ## What a `pr-babysit` keeper session does
 

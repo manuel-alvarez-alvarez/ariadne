@@ -1255,20 +1255,19 @@ mod tests {
     /// names none of the ways an agent would feed itself: no forge CLI, no
     /// timer, no poll. A human closes a thread and a human merges, so it
     /// names neither the call that resolves one nor a forge merge command.
-    /// The agent opens the request, filling the repository's own template
-    /// or, with none, Why, What changed and How to test, pushes each tested
-    /// fix, completes its step on the merge and fails the task on the
-    /// close. And the turn ends when the news is handled, which is what
-    /// lets the next news start a turn of its own.
+    /// The agent opens the request on a first turn with none open, and
+    /// starts on the news steps where one already is open. It completes
+    /// its step on the merge and fails the task on the close, each ending
+    /// its turn instead where it sits on no task.
     #[test]
-    fn the_pr_babysit_skill_opens_the_request_and_ends_the_step_on_the_merge() {
+    fn the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close() {
         let doc = default_skill_document(PR_BABYSIT_SKILL).expect("the pr-babysit skill");
         let words: Vec<String> = doc
             .split(|c: char| !c.is_ascii_alphanumeric())
             .map(str::to_lowercase)
             .collect();
         for gone in [
-            "gh", "glab", "sleep", "poll", "polling", "resolve", "resolved",
+            "gh", "glab", "sleep", "timer", "poll", "polling", "resolve", "resolved",
         ] {
             assert!(
                 !words.iter().any(|word| word == gone),
@@ -1283,21 +1282,24 @@ mod tests {
         }
         let doc = unwrapped(doc);
         for step in [
-            "On your first turn, do step 1.",
-            "On each later turn, Ariadne sends news: do steps 2 to 7. Then end your turn.",
+            "On your first turn, with no request open, do step 1.",
+            "With one already open, start at step 2.",
+            "On each later turn, Ariadne sends news: do steps 2 to 8. Then end your turn.",
             "`get_pull_request`",
             "`list_comments` with `unanswered_only`",
             "`git merge --no-edit <remote>/<base>`",
             "Push the task branch. Call `open_pull_request`.",
             "repository's commit conventions",
             "Fill its pull request template, or write three full sections: Why, What changed, How to test.",
-            "run the checks of what you changed, and push;",
+            "then run the checks of what you changed. Push it.",
             "Never amend, rebase or force a push.",
             "Call `report_pull_request` only when readiness changes:",
             "`ready: true` with the `head_sha`",
             "`ready: false` when one goes back",
+            "On a merge, where you sit on a task, update `<base>` in the primary checkout:",
             "Call `complete_step` with the merge as the reason.",
-            "call `fail_task`",
+            "Else end your turn: Ariadne ends your session.",
+            "On a close, where you sit on a task, call `fail_task` with the reason.",
             "## Done",
         ] {
             assert!(doc.contains(step), "the pr-babysit skill has no {step}");
@@ -1305,19 +1307,32 @@ mod tests {
         assert_eq!(SkillSeat::of(PR_BABYSIT_SKILL), SkillSeat::PullRequest);
     }
 
-    /// The keeping agent replies only where a thread asks for a change. Its
-    /// reply explains either the new commit or why the agent kept the code.
-    /// It adds no unrelated forge discussion or code change.
+    /// Each inline review comment of the other side gets one reply, in one
+    /// of three shapes: a fix with its commit or a kept line with its
+    /// reason, or a short answer to a question. A thanks gets none, a
+    /// follow-up in an answered thread gets a new answer, and a reviewer
+    /// reply that keeps a finding open gets no second try — the user
+    /// decides. A comment on the conversation is left: `reply_comment`
+    /// reaches no thread there (026 Known gap). A suggestion block the
+    /// agent accepts is applied rather than rewritten; one it does not
+    /// accept gets a kept line instead. No unrelated forge discussion or
+    /// code change is added.
     #[test]
-    fn the_pr_babysit_skill_replies_only_to_requested_changes() {
+    fn the_pr_babysit_skill_answers_each_comment_once_in_its_shape() {
         let doc = unwrapped(default_skill_document(PR_BABYSIT_SKILL).unwrap());
         for rule in [
-            "reply once in the thread with the change and the commit.",
-            "Or reply once in the thread with why you do not make it.",
-            "Post only one reply in a thread that asks for a change.",
-            "Post no new thread, summary, top-level comment or thanks.",
+            "Answer each inline review comment of the other side, once per comment:",
+            "Reply `Fixed in <sha>: <what changed>.` Or reply `Not changed: <why>.`",
+            "A question: give one short answer.",
+            "Thanks or an acknowledgement: reply nothing.",
+            "A follow-up ask in a thread you answered: a new ask. Act on it.",
+            "A reviewer reply that keeps a finding open: no second try. The user decides.",
+            "A comment on the conversation: leave it. The tool reaches no thread there yet.",
+            "A suggestion block you accept: apply it.",
+            "Else reply `Not changed: <why>.`",
             "Commit only what a comment or a failed check asks for.",
             "Leave every thread open.",
+            "Post no new thread, summary or top-level comment.",
         ] {
             assert!(doc.contains(rule), "the pr-babysit skill has no {rule}");
         }
@@ -1327,7 +1342,9 @@ mod tests {
     /// gives every approval and lands every request: the skill never
     /// approves on its own, and names no merge, sleep, poll or forge CLI.
     /// It names the three priorities, asks for changes only where a P0
-    /// stands, and resolves a thread of its own once a push fixed it.
+    /// stands, resolves a thread of its own once a push fixed it, settles
+    /// a declined or a still-open one without a second warning, and
+    /// suggests a fix where the edit is small and local.
     #[test]
     fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
         let doc = default_skill_document(PR_REVIEWER_SKILL).expect("the pr-reviewer skill");
@@ -1372,24 +1389,30 @@ mod tests {
             "`reply_comment` once",
             "Run the checks once.",
             "On a later round, call `list_comments` first.",
-            "Settle each thread you opened before you hunt new defects.",
+            "Settle each thread you opened before you hunt new defects",
             // The summary is one comment, rewritten whole every round as a
-            // title, a header of the reviewed commits, a prose verdict on
-            // the change and its risk, and a recommendation; it is nothing
-            // of the work, and each finding sits on its own line of code.
+            // title, a prose verdict on the change and its risk, a table of
+            // the open findings and a recommendation; it is nothing of the
+            // work, and each finding sits on its own line of code.
             "Ariadne keeps one summary comment",
             "## Review summary",
-            "Header: one line per commit the round reviewed",
             "Summary: one short paragraph of prose, not bullets",
+            "Table: `| Priority | Finding | Status |`.",
+            "Status is `open`, `declined` or `fixed`",
             "Recommendation: one line",
             "\"Request changes\"",
             "\"Changes recommended\"",
             "\"No findings: this PR is ready to be merged.\"",
             "Name no file or line, and nothing of what you did",
             "only the new comments",
-            // A thread nobody answered waits; an answered one is replied to
-            // once, and resolved where it is fixed.
-            "not answered: post nothing in it. Wait for an answer.",
+            // An unanswered thread waits; a declined fix is marked so and
+            // left open; a claimed fix that is not one is said once.
+            "Not answered: post nothing. Wait for an answer.",
+            "Any other answered reply, a `Not changed:` or any other, that",
+            "leaves the defect in place: post nothing. Mark its row",
+            "Still there: <why>",
+            "Never post `Still there` twice in one thread",
+            "```suggestion block",
             "Never post a second comment for a defect",
             "then `resolve_thread` on",
             "Resolve only a thread you opened",
@@ -1399,60 +1422,59 @@ mod tests {
         ] {
             assert!(doc.contains(step), "the pr-reviewer skill has no {step}");
         }
+        assert!(
+            !doc.contains("git log"),
+            "the pr-reviewer skill still reads a commit list"
+        );
         assert_eq!(SkillSeat::of(PR_REVIEWER_SKILL), SkillSeat::PullRequest);
     }
 
-    /// The four parts of the summary (029 rule 17) stand in order, and
-    /// `get_pull_request` and `get_diff` answer no commit list: the header
-    /// names its own source, local history, so a request of several commits
-    /// still gets one line per commit.
+    /// The four parts of the summary (029 rule 17) stand in order: a title,
+    /// a prose verdict naming no finding, a table of the open findings, and
+    /// a recommendation. `get_pull_request` and `get_diff` answer no commit
+    /// list, and the summary states no header of commits or sha range.
     #[test]
-    fn the_pr_reviewer_skill_writes_its_summary_as_a_header_then_prose_then_a_recommendation() {
+    fn the_pr_reviewer_skill_writes_its_summary_in_four_ordered_parts() {
         let doc =
             unwrapped(default_skill_document(PR_REVIEWER_SKILL).expect("the pr-reviewer skill"));
         let title_at = doc
             .find("## Review summary")
             .expect("the skill has no summary title");
-        let header_at = doc.find("Header:").expect("the skill has no Header:");
         let summary_at = doc.find("Summary:").expect("the skill has no Summary:");
+        let table_at = doc.find("Table:").expect("the skill has no Table:");
         let recommendation_at = doc
             .find("Recommendation:")
             .expect("the skill has no Recommendation:");
         assert!(
-            title_at < header_at && header_at < summary_at && summary_at < recommendation_at,
-            "the parts are not Title, then Header, then Summary, then Recommendation"
+            title_at < summary_at && summary_at < table_at && table_at < recommendation_at,
+            "the parts are not Title, then Summary, then Table, then Recommendation"
         );
-        let header = &doc[header_at..summary_at];
+        let table = &doc[table_at..recommendation_at];
         for phrase in [
-            "read with `git log`",
-            "short sha",
-            "subject",
-            "`git log <base>..HEAD` on the first round",
-            "`git log <reviewed_sha>..HEAD` later",
-            "End the header with one line: `<base>..<head>` as short shas.",
+            "`| Priority | Finding | Status |`",
+            "One row per open thread",
+            "plus one `fixed` row for each thread this round resolved",
+            "Status is `open`, `declined` or `fixed`",
         ] {
-            assert!(header.contains(phrase), "the header lacks {phrase}");
+            assert!(table.contains(phrase), "the table lacks {phrase}");
         }
     }
 
     /// The prose summary names what the change does, where its risk sits
-    /// and how serious it is, and names every open finding in that prose
-    /// rather than as a bullet (029 rule 17).
+    /// and how serious it is, and names no finding, file or line: a
+    /// finding is named in the table that follows it instead (029 rule 17).
     #[test]
     fn the_pr_reviewer_skill_summarizes_the_change_and_its_risk_in_prose() {
         let doc =
             unwrapped(default_skill_document(PR_REVIEWER_SKILL).expect("the pr-reviewer skill"));
         let summary_at = doc.find("Summary:").expect("the skill has no Summary:");
-        let recommendation_at = doc
-            .find("Recommendation:")
-            .expect("the skill has no Recommendation:");
-        let summary = &doc[summary_at..recommendation_at];
+        let table_at = doc.find("Table:").expect("the skill has no Table:");
+        let summary = &doc[summary_at..table_at];
         for phrase in [
             "one short paragraph of prose, not bullets",
             "where its risk sits",
             "how serious it is",
-            "Name each",
-            "priority and title in the prose",
+            "Name no finding, file or line in it",
         ] {
             assert!(summary.contains(phrase), "the summary lacks {phrase}");
         }
@@ -1472,6 +1494,7 @@ mod tests {
         let recommendation = &doc[recommendation_at..];
         for phrase in [
             "A P0 is open: say \"Request changes\", and name the P0 findings that block it",
+            "A declined P0 still counts as open",
             "A P1 or P2 is open, with no P0: say \"Changes recommended\". Name what to fix before it lands",
             "Nothing is open: say \"No findings: this PR is ready to be merged.\"",
         ] {
@@ -1911,6 +1934,25 @@ mod tests {
         }
     }
 
+    /// Never polling a request is the session rules' to state too (006 rule
+    /// 5), for the `agent` and `reviewer` seats alone: no shipped skill
+    /// names a timer or a poll of its own.
+    #[test]
+    fn no_skill_names_a_timer_or_a_poll() {
+        for (name, document) in all_skills() {
+            let words: Vec<String> = document
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .map(str::to_lowercase)
+                .collect();
+            for gone in ["timer", "poll", "polling"] {
+                assert!(
+                    !words.iter().any(|word| word == gone),
+                    "the {name} names a {gone}"
+                );
+            }
+        }
+    }
+
     /// `coding` ends its search step on what the agent knows.
     #[test]
     fn the_coding_search_step_ends_on_what_the_agent_knows() {
@@ -1951,21 +1993,27 @@ mod tests {
     ///
     /// `coding` gets 5400, because `testing` merged into it. `code-review`
     /// gets 4100: the review column ends its step on one of the two step
-    /// calls now, which is a step of its own. `orchestration` gets 4600: it
+    /// calls now, which is a step of its own. `pr-babysit` moves from 3400
+    /// to 3500: the reviewer's own skill never writes a literal `Still
+    /// there:` prefix, so the stop names what the reply means instead; a
+    /// reply reaches only an inline thread, so a comment on the
+    /// conversation is named and left; and a suggestion block is applied
+    /// only once the agent has judged and accepted it.
+    /// `orchestration` gets 4600: it
     /// staffs one agent per column on the column's rank, and staffs a
     /// missing column before a retry.
     #[test]
     fn skill_size_caps_hold() {
-        const TOTAL: usize = 42_800;
+        const TOTAL: usize = 42_900;
         let cap = |name: &str| match name {
             ORCHESTRATION_SKILL => 4600,
             "debugging" => 3400,
             "code-review" => 4100,
             "coding" => 5400,
-            // Seven steps, one per kind of news and the report, and the two
-            // rules no other skill has: leave every thread open, and reach
-            // the forge only through the session's tools.
-            PR_BABYSIT_SKILL => 2900,
+            // Eight steps: the open, the read, the three reply shapes and
+            // the two loop stops (a follow-up and a kept-open finding), the
+            // suggestion rule, the checks, the report, and the two endings.
+            PR_BABYSIT_SKILL => 3500,
             // Eleven steps: the read, the checks, the hunt, the three
             // priorities, one inline comment per finding with its title and
             // its fix, the summary of four parts with no line in any of

@@ -101,7 +101,11 @@ they describe (003, 030) — what a skill is (017), and the switch itself
      rules. A skill says only which checks it runs: the checks of what it
      changed. The repository's hooks run its whole suite at a push, and the
      merge skill pushes before it fast-forwards (030);
-   - no trailer in any text: the session rules.
+   - no trailer in any text: the session rules;
+   - never polling a request: the session rules of the `agent` and
+     `reviewer` seats alone, which say that Ariadne wakes the session with
+     the request's news (026, 030) instead. No skill names a timer or a
+     poll.
 6. A skill carries only the commit of the step it owns: `coding` commits the
    task it built, and a return from review adds a new commit on top and
    amends nothing, since the merge column squashes. `refactoring` commits
@@ -188,9 +192,11 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   and when it may ask anyway
   (`mcp.rs::only_the_orchestrator_is_told_to_ask`).
 - Each rule of rule 5 is written in its owner alone
-  (`mcp.rs::each_shared_rule_is_written_in_its_owner_alone`), and no skill
+  (`mcp.rs::each_shared_rule_is_written_in_its_owner_alone`), no skill
   repeats how a check runs
-  (`defaults.rs::the_skills_leave_how_a_check_runs_to_the_session_rules`).
+  (`defaults.rs::the_skills_leave_how_a_check_runs_to_the_session_rules`),
+  and no skill names a timer or a poll
+  (`defaults.rs::no_skill_names_a_timer_or_a_poll`).
 - Each seat's MCP instructions hold its seat text and its skill index after
   the session rules
   (`mcp.rs::each_seat_is_told_its_seat_text_and_its_skill_index_after_the_rules`).
