@@ -159,14 +159,19 @@ comment.
 
 The review keeps **one summary comment** on the request, and every round
 rewrites it rather than adding another: a title, "## Review summary", a
-prose paragraph on what the change does, where its risk sits and how
-serious it is, naming no finding, file or line; a table, `| Priority |
-Finding | Status |` with status `open`, `declined` or `fixed`, one row
-per finding whose thread is still open, plus one `fixed` row for each
-thread the round resolved; and a recommendation — **Request changes**
-while a P0 is open (a declined P0 still counts), **Changes recommended**
-while a P1 or P2 is, or **No findings: this PR is ready to be merged.** —
-naming nothing of what the reviewer did. It carries no trailer.
+prose paragraph of three to six sentences naming the behavior the change
+touches, who sees it, what breaks if the change is wrong, why the risk
+sits where it does, and closing on one sentence of what the verdict
+rests on — such as the checks that pass and the cases tried — naming no
+finding, file or line otherwise; a table, `| Priority | Finding |
+Status |` with status `open`, `declined` or `fixed`, one row per finding
+whose thread is still open, plus one `fixed` row for each thread the
+round resolved, written only where it holds a row — with no open finding
+and no thread fixed this round, there is no table; and a recommendation
+— **Request changes** while a P0 is open (a declined P0 still counts),
+**Changes recommended** while a P1 or P2 is, or **No findings. Nothing
+blocks the request on review.** — naming nothing of the reviewer's work
+beyond that one sentence of evidence. It carries no trailer.
 
 On a later round the reviewer settles each thread it opened before it
 hunts for more. The author answers in one of three ways: `Fixed in <sha>:

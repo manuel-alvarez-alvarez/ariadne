@@ -252,20 +252,28 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     otherwise. P0 breaks behavior, data or security and must change before
     the request lands; P1 is a defect or a missing proof that will bite; P2
     is worth fixing. It writes the review body as the whole summary of the
-    review as it stands, in four parts, with no file, no line, no trailer
-    and nothing of what it did:
+    review as it stands, with no file, no line, no trailer and nothing of
+    its work beyond the summary's one sentence of evidence, in order: a
+    title and a prose summary always, a table where it holds a row, and a
+    recommendation:
     - a title, "## Review summary";
-    - a prose summary, not bullets, one short paragraph of what the change
-      does, where its risk sits and how serious it is, naming no finding,
-      no file and no line;
+    - a prose summary, not bullets, one paragraph of three to six
+      sentences, naming the behavior the change touches, who sees it,
+      what breaks if the change is wrong, and why the risk sits where it
+      does, closed by one sentence of what the verdict rests on — the
+      checks that pass, the cases tried — and naming no finding, no file
+      and no line otherwise;
     - a table, `| Priority | Finding | Status |` — status `open`,
       `declined` or `fixed` — one row per finding whose thread is still
-      open, plus one `fixed` row for each thread the round resolved;
+      open, plus one `fixed` row for each thread the round resolved,
+      written only where it holds at least one row: with no open finding
+      and no thread the round fixed, the table is left out, never a
+      header with no row;
     - a recommendation of one line: "Request changes" and the blocking P0
       findings while one is open — a declined P0 still counts as open —
       "Changes recommended" and what to fix before it lands while a P1 or
-      P2 is open and no P0 is; else "No findings: this PR is ready to be
-      merged."
+      P2 is open and no P0 is; else "No findings. Nothing blocks the
+      request on review."
     Each new finding is one inline comment with a title, the failure and a
     fix; where the fix replaces the commented line alone, a ```suggestion
     block under the fix holds the new text of that one line, and a fix
@@ -381,10 +389,12 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   `defaults.rs::tests::the_pr_reviewer_skill_ranks_its_findings_and_never_approves`,
   `::skill_size_caps_hold`.
 - The summary is a title, then a prose paragraph, then a table of the
-  open findings, then a recommendation, in that order:
+  open findings written only where it holds a row, then a recommendation,
+  in that order:
   `defaults.rs::tests::the_pr_reviewer_skill_writes_its_summary_in_four_ordered_parts`.
-  The prose names what the change does and where and how serious its risk
-  is, and names no finding, file or line in it:
+  The prose names the behavior touched, who sees it, what breaks if the
+  change is wrong, why the risk sits where it does, and closes on what the
+  verdict rests on, naming no finding, file or line otherwise:
   `defaults.rs::tests::the_pr_reviewer_skill_summarizes_the_change_and_its_risk_in_prose`.
   Each recommendation line is tied to the priority that earns it, and a
   declined P0 still blocks it:

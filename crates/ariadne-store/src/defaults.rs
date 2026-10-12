@@ -1390,19 +1390,27 @@ mod tests {
             "On a later round, call `list_comments` first.",
             "Settle each thread you opened before you hunt new defects",
             // The summary is one comment, rewritten whole every round as a
-            // title, a prose verdict on the change and its risk, a table of
-            // the open findings and a recommendation; it is nothing of the
-            // work, and each finding sits on its own line of code.
+            // title, a prose verdict on the change, its risk and what it
+            // rests on, a table of the open findings when one has a row,
+            // and a recommendation; it reports none of the work beyond
+            // that one sentence, and each finding sits on its own line of
+            // code.
             "Ariadne keeps one summary comment",
             "## Review summary",
-            "Summary: one short paragraph of prose, not bullets",
+            "Summary: one paragraph of prose, not bullets, three to six sentences",
+            "Name the behavior the change touches, who sees it, and what breaks",
+            "Say why the risk sits where it does",
+            "End with one sentence on what the verdict rests on",
             "Table: `| Priority | Finding | Status |`.",
             "Status is `open`, `declined` or `fixed`",
+            "Write the table only when it has at least one row",
+            "Never write a header with no row",
             "Recommendation: one line",
             "\"Request changes\"",
             "\"Changes recommended\"",
-            "\"No findings: this PR is ready to be merged.\"",
-            "Name no file or line, and nothing of what you did",
+            "\"No findings. Nothing blocks the request on review.\"",
+            "Name no file or line. Report nothing of your work",
+            "summary's one sentence of evidence",
             "only the new comments",
             // An unanswered thread waits; a declined fix is marked so and
             // left open; a claimed fix that is not one is said once.
@@ -1429,9 +1437,10 @@ mod tests {
     }
 
     /// The four parts of the summary (029 rule 17) stand in order: a title,
-    /// a prose verdict naming no finding, a table of the open findings, and
-    /// a recommendation. `get_pull_request` and `get_diff` answer no commit
-    /// list, and the summary states no header of commits or sha range.
+    /// a prose verdict naming no finding, a table of the open findings
+    /// written only where it has a row, and a recommendation.
+    /// `get_pull_request` and `get_diff` answer no commit list, and the
+    /// summary states no header of commits or sha range.
     #[test]
     fn the_pr_reviewer_skill_writes_its_summary_in_four_ordered_parts() {
         let doc =
@@ -1454,14 +1463,18 @@ mod tests {
             "One row per open thread",
             "plus one `fixed` row for each thread this round resolved",
             "Status is `open`, `declined` or `fixed`",
+            "only when it has at least one row",
+            "write no table",
         ] {
             assert!(table.contains(phrase), "the table lacks {phrase}");
         }
     }
 
-    /// The prose summary names what the change does, where its risk sits
-    /// and how serious it is, and names no finding, file or line: a
-    /// finding is named in the table that follows it instead (029 rule 17).
+    /// The prose summary names the behavior the change touches, who sees
+    /// it, what breaks if the change is wrong, why the risk sits where it
+    /// does, and what the verdict rests on, naming no finding, file or
+    /// line: a finding is named in the table that follows it instead (029
+    /// rule 17).
     #[test]
     fn the_pr_reviewer_skill_summarizes_the_change_and_its_risk_in_prose() {
         let doc =
@@ -1470,9 +1483,12 @@ mod tests {
         let table_at = doc.find("Table:").expect("the skill has no Table:");
         let summary = &doc[summary_at..table_at];
         for phrase in [
-            "one short paragraph of prose, not bullets",
-            "where its risk sits",
-            "how serious it is",
+            "one paragraph of prose, not bullets, three to six sentences",
+            "Name the behavior the change touches, who sees it",
+            "what breaks if the change is wrong",
+            "Say why the risk sits where it does",
+            "what the verdict rests on",
+            "the checks that pass, the cases you tried",
             "Name no finding, file or line in it",
         ] {
             assert!(summary.contains(phrase), "the summary lacks {phrase}");
@@ -1495,7 +1511,7 @@ mod tests {
             "A P0 is open: say \"Request changes\", and name the P0 findings that block it",
             "A declined P0 still counts as open",
             "A P1 or P2 is open, with no P0: say \"Changes recommended\". Name what to fix before it lands",
-            "Nothing is open: say \"No findings: this PR is ready to be merged.\"",
+            "Nothing is open: say \"No findings. Nothing blocks the request on review.\"",
         ] {
             assert!(
                 recommendation.contains(phrase),
@@ -2030,7 +2046,12 @@ mod tests {
     /// only once the agent has judged and accepted it.
     /// `orchestration` gets 4600: it
     /// staffs one agent per column on the column's rank, and staffs a
-    /// missing column before a retry.
+    /// missing column before a retry. `pr-reviewer` moves from 4700 to
+    /// 5200: its summary paragraph now names the behavior the change
+    /// touches, who sees it, what breaks if it is wrong and why the risk
+    /// sits where it does, closed on one sentence of what the verdict
+    /// rests on, and its table is written only where a round has a row
+    /// for it.
     #[test]
     fn skill_size_caps_hold() {
         const TOTAL: usize = 42_900;
@@ -2048,7 +2069,7 @@ mod tests {
             // its fix, the summary of four parts with no line in any of
             // them, the one review, the report and the later round, which
             // resolves each thread a push fixed.
-            PR_REVIEWER_SKILL => 4700,
+            PR_REVIEWER_SKILL => 5200,
             _ => 2400,
         };
 

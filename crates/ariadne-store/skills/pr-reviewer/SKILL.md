@@ -39,23 +39,29 @@ answer in a thread you opened. Do one round, then end your turn.
      the fix replaces the commented line alone, add a ```suggestion
      block under "Fix:". It holds the new text of that one line. A fix
      across lines, across files, or one that needs a test, stays prose.
-8. Write the review `body`: the whole summary as it is now. Ariadne keeps
-   one summary comment and puts this text in it, so write all four parts,
-   in order:
+8. Write the review `body`. Ariadne keeps one summary comment and puts
+   this text in it. Write a title, a summary and a recommendation. Add a
+   table only where it holds a row.
    - Title: "## Review summary".
-   - Summary: one short paragraph of prose, not bullets. Say what the
-     change does, where its risk sits, and how serious it is. Name no
-     finding, file or line in it.
+   - Summary: one paragraph of prose, not bullets, three to six sentences.
+     Name the behavior the change touches, who sees it, and what breaks
+     if the change is wrong. Say why the risk sits where it does. End
+     with one sentence on what the verdict rests on: the checks that
+     pass, the cases you tried. Name no finding, file or line in it.
    - Table: `| Priority | Finding | Status |`. One row per open thread,
      plus one `fixed` row for each thread this round resolved. Status is
-     `open`, `declined` or `fixed`.
+     `open`, `declined` or `fixed`. Write the table only when it has at
+     least one row. With no open thread and no thread fixed this round,
+     write no table. Never write a header with no row.
    - Recommendation: one line that follows from the open findings:
      - A P0 is open: say "Request changes", and name the P0 findings
        that block it. A declined P0 still counts as open.
      - A P1 or P2 is open, with no P0: say "Changes recommended". Name
        what to fix before it lands.
-     - Nothing is open: say "No findings: this PR is ready to be merged."
-   Name no file or line, and nothing of what you did.
+     - Nothing is open: say "No findings. Nothing blocks the request on
+       review."
+   Name no file or line. Report nothing of your work, but for the
+   summary's one sentence of evidence.
 9. Call `submit_review` once, with the body and only the new comments. Set
    `event` to `request_changes` while a P0 is open. Else set it to `comment`.
 10. Call `report_pull_request` with `reviewed_sha` set to the head you
@@ -75,8 +81,8 @@ answer in a thread you opened. Do one round, then end your turn.
 
 - "A bullet list reads easier than prose." -> Bullets lose how the
   change and its risk tie together. Write prose that connects them.
-- "The reader wants to know what I checked." -> The summary is a verdict.
-  What you did is no finding.
+- "The reader wants to know what I checked." -> The paragraph says what
+  the verdict rests on, in one sentence, and no more.
 - "Nobody answered, so I say it again." -> The thread waits for an answer.
 - "It said `Fixed`, so the thread is done." -> Check the defect at the
   head. A claim is not the fix.
@@ -86,8 +92,9 @@ answer in a thread you opened. Do one round, then end your turn.
 ## Done
 
 Each answered thread has at most one reply, and each fixed one is
-resolved. The summary has a prose paragraph on the change and its risk.
-Then a table names every open finding by priority and status. Its
-recommendation names what still blocks the request. Each new finding is
-one inline comment with a title, the failure and a fix. Your turn has
-ended.
+resolved. The summary has a prose paragraph. It names the behavior the
+change touches, where the risk sits and what the verdict rests on. A
+table follows it only when a finding is open or fixed this round, naming
+each by priority and status. Its recommendation names what still blocks
+the request. Each new finding is one inline comment with a title, the
+failure and a fix. Your turn has ended.
