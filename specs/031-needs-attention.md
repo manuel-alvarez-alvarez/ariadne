@@ -434,12 +434,16 @@ semantics remain with 009.
     change publishes `session_updated`.
     The CLI console draws the `agent_request` event as a dim note,
     `waiting for you · <hint>`, under the agent's text. A permission the
-    daemon raised on one of Ariadne's own MCP tools and answered by itself —
+    daemon raised on one of Ariadne's own MCP tools and *allowed* by itself —
     by its mode, the AI permission model or a learned rule, never at the
     console — leaves no permission block in the console: the call's own
     block already says what the agent did, and a frame around every
     `wait_for_user` would read as a question the person never got. One a
-    person answered at the console keeps its block and their choice.
+    person answered at the console keeps its block and their choice; so
+    does one the daemon denied (an AI `deny`, or a learned rule's reject
+    option) or cancelled (`option_id` null), since the call then fails and
+    the answer is the one line that says why — the AI's reason under the
+    question, which 022 promises.
 
 ## The pull-request producer
 
@@ -601,8 +605,9 @@ semantics remain with 009.
   attention (`classify.rs::an_agent_request_event_reads_as_its_hint_and_moves_nothing`).
 - The console draws the event as a waiting note under the agent's text
   (`ariadne-console::transcript::tests::an_agent_request_reads_as_a_waiting_note_with_its_hint`),
-  and a permission on an Ariadne tool answered by the daemon itself leaves no
-  block while one a person answered, or one on any other tool, keeps its
+  and a permission on an Ariadne tool allowed by the daemon itself leaves no
+  block while one a person answered, one the daemon denied or cancelled, or
+  one on any other tool, keeps its
   (`::an_automatic_permission_on_an_ariadne_tool_leaves_no_block`).
 - The tool is `wait_for_user` with a `hint`, listed to every seat, and every
   seat's session rules say to ask in the reply first

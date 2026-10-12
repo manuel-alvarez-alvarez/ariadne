@@ -139,6 +139,9 @@ pub struct PlanEntry {
 pub struct PermissionOption {
     pub id: String,
     pub name: String,
+    /// The ACP kind of the option — `allow_once`, `allow_always`,
+    /// `reject_once`, `reject_always` — where the request named one.
+    pub kind: Option<String>,
 }
 
 /// A file a tool call touches, as the ACP call names it.
@@ -460,15 +463,17 @@ pub fn fold_into(items: &mut Vec<TranscriptItem>, event: &AgentEventDto) {
             )
         })
     {
-        // A permission on one of Ariadne's own tools that nobody at the
-        // console answered — the daemon's mode, the AI model or a learned
-        // rule did — asked the person nothing: the call's own block already
+        // A permission on one of Ariadne's own tools that the daemon allowed
+        // by itself — its mode, the AI model or a learned rule, nobody at the
+        // console — asked the person nothing: the call's own block already
         // says what the agent did, and a frame saying "permission · Allow"
         // around it is noise in the conversation. One a person did answer
-        // stays, as the record of what they chose.
-        if let TranscriptItem::PermissionQuestion { tool, .. } = &items[at]
+        // stays, as the record of what they chose; and so does one the
+        // daemon denied or cancelled, since the call's block then reads as a
+        // failure with no cause, and the answer here is the cause.
+        if let TranscriptItem::PermissionQuestion { tool, options, .. } = &items[at]
             && is_ariadne_tool(&tool.name)
-            && string_at(&event.payload, "/decided_by").as_deref() != Some("console")
+            && daemon_allowed(&event.payload, options)
         {
             items.remove(at);
             return;
@@ -532,6 +537,29 @@ pub fn fold_into(items: &mut Vec<TranscriptItem>, event: &AgentEventDto) {
         };
     }
     items.push(item);
+}
+
+/// Whether a reply is the daemon's own allow: an option chosen without a
+/// person at the console, that is not a denial. A cancel (no option), a
+/// console answer, an AI `deny`, and a chosen option whose kind is a reject
+/// are each something a reader needs to see.
+fn daemon_allowed(payload: &Value, options: &[PermissionOption]) -> bool {
+    let Some(id) = string_at(payload, "/option_id") else {
+        return false;
+    };
+    if string_at(payload, "/decided_by").as_deref() == Some("console")
+        || string_at(payload, "/label").as_deref() == Some("deny")
+    {
+        return false;
+    }
+    match options
+        .iter()
+        .find(|option| option.id == id)
+        .and_then(|option| option.kind.as_deref())
+    {
+        Some(kind) => kind.starts_with("allow"),
+        None => true,
+    }
 }
 
 /// Whether a call is one of Ariadne's own MCP tools, by the name the agent's
@@ -640,7 +668,8 @@ pub fn permission_options(payload: &Value) -> Vec<PermissionOption> {
         .filter_map(|option| {
             let id = string_at(option, "/optionId")?;
             let name = string_at(option, "/name").unwrap_or_else(|| id.clone());
-            Some(PermissionOption { id, name })
+            let kind = string_at(option, "/kind");
+            Some(PermissionOption { id, name, kind })
         })
         .collect()
 }
@@ -922,10 +951,13 @@ mod tests {
         );
     }
 
-    /// A permission on one of Ariadne's own tools that the daemon answered
+    /// A permission on one of Ariadne's own tools that the daemon allowed
     /// by itself leaves no block: the call's block says what happened. One
-    /// a person answered at the console keeps its frame and their choice,
-    /// and a permission on any other tool is untouched either way.
+    /// a person answered at the console keeps its frame and their choice;
+    /// so does one the daemon denied — the AI model's `deny`, or a learned
+    /// rule's reject option — or cancelled, since that answer is the cause
+    /// the call's failure otherwise lacks; and a permission on any other
+    /// tool is untouched either way.
     #[test]
     fn an_automatic_permission_on_an_ariadne_tool_leaves_no_block() {
         let asked = |id: &str, tool: &str| {
@@ -933,9 +965,9 @@ mod tests {
                 id,
                 "permission_request",
                 json!({"tool_name": tool, "waiting": true,
-                       "acp": {"toolCallId": id, "title": tool, "kind": "other",
-                               "options": [{"optionId": "allow-once", "name": "Allow", "kind": "allow_once"},
-                                           {"optionId": "reject-once", "name": "Reject", "kind": "reject_once"}]}}),
+                       "options": [{"optionId": "allow-once", "name": "Allow", "kind": "allow_once"},
+                                   {"optionId": "reject-once", "name": "Reject", "kind": "reject_once"}],
+                       "acp": {"toolCallId": id, "title": tool, "kind": "other"}}),
             )
         };
         let replied = |id: &str, decided_by: &str| {
@@ -978,6 +1010,48 @@ mod tests {
             ),
             "{other:?}"
         );
+
+        let kept_answer = |items: &[TranscriptItem]| match &items[0] {
+            TranscriptItem::PermissionQuestion {
+                answer: Some(answer),
+                ..
+            } => answer.clone(),
+            other => panic!("{other:?}"),
+        };
+        let ai_denied = fold(&[
+            asked("ask-4", "mcp__ariadne__fail_task"),
+            event(
+                "reply-4",
+                "permission.replied",
+                json!({"option_id": "reject-once", "decided_by": "ai", "label": "deny",
+                       "allow_threshold": 0.05, "deny_threshold": 0.65,
+                       "probabilities": {"0": 0.02, "1": 0.9}, "danger": 0.7}),
+            ),
+        ]);
+        assert!(
+            kept_answer(&ai_denied).starts_with("AI denied"),
+            "{ai_denied:?}"
+        );
+
+        let learned_reject = fold(&[
+            asked("ask-5", "mcp__ariadne__fail_task"),
+            event(
+                "reply-5",
+                "permission.replied",
+                json!({"option_id": "reject-once", "decided_by": "learned"}),
+            ),
+        ]);
+        assert_eq!(kept_answer(&learned_reject), "Reject");
+
+        let cancelled = fold(&[
+            asked("ask-6", "mcp__ariadne__wait_for_user"),
+            event(
+                "reply-6",
+                "permission.replied",
+                json!({"option_id": null, "decided_by": "auto"}),
+            ),
+        ]);
+        assert_eq!(kept_answer(&cancelled), "cancelled");
     }
 
     #[test]
