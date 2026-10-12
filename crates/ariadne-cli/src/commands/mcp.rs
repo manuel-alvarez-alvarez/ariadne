@@ -260,13 +260,13 @@ fn json_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
 fn ask_rule(seat: &McpSeat) -> &'static str {
     match seat {
         McpSeat::Orchestrator => {
-            "Ask the user each question in your reply. Then call `wait_for_user` with a one-line hint. Then wait. Do not use it for agent questions."
+            "To ask the user, call `wait_for_user` with a one-line hint first. Then write the question in your reply, not in your thinking: a numbered list of the open points and their options. Then wait. Do not use it for agent questions."
         }
         McpSeat::Agent => {
-            "Ask the user only where the task cannot continue without a user answer. Ask in your reply. Then call `wait_for_user` with a one-line hint. Do not use it for agent questions."
+            "Ask the user only where the task cannot continue without a user answer. Call `wait_for_user` with a one-line hint first. Then write the question in your reply, not in your thinking. Do not use it for agent questions."
         }
         McpSeat::PullRequestReviewer => {
-            "Ask the user only where the request cannot continue without a user answer. Ask in your reply. Then call `wait_for_user` with a one-line hint. Do not use it for agent questions."
+            "Ask the user only where the request cannot continue without a user answer. Call `wait_for_user` with a one-line hint first. Then write the question in your reply, not in your thinking. Do not use it for agent questions."
         }
     }
 }
@@ -736,7 +736,7 @@ pub(crate) mod tests {
             Client::resolve(Some("http://127.0.0.1:1"), None),
         );
         let instructions = orchestrator.get_info().instructions.expect("instructions");
-        assert!(instructions.contains("Ask the user each question in your reply."));
+        assert!(instructions.contains("call `wait_for_user` with a one-line hint first."));
         assert!(instructions.contains("Then wait"));
 
         for seat in SEATS {
@@ -750,8 +750,9 @@ pub(crate) mod tests {
                 "{seat:?}: {instructions}"
             );
             assert!(
-                instructions
-                    .contains("in your reply. Then call `wait_for_user` with a one-line hint."),
+                instructions.contains(
+                    "`wait_for_user` with a one-line hint first. Then write the question in your reply, not in your thinking"
+                ),
                 "{seat:?}: the user reads the question in the console: {instructions}"
             );
         }

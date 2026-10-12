@@ -20,7 +20,7 @@ use axum::http::StatusCode;
 pub(crate) const HINT_MAX_CHARS: usize = 100;
 
 /// The event kind recorded in the session's own stream when a request
-/// opens, so a console shows the wait where the question was asked.
+/// opens, so a console shows the wait right where the question follows it.
 pub(crate) const AGENT_REQUEST_EVENT: &str = "agent_request";
 
 #[utoipa::path(post, path = "/v1/sessions/{id}/agent-requests", tag = "sessions", request_body = CreateAgentRequest, params(("id" = String, Path)), responses((status = 200)))]
@@ -38,11 +38,11 @@ pub(crate) async fn create(
     if hint.lines().count() > 1 || hint.chars().count() > HINT_MAX_CHARS {
         return Err(ApiError::bad_request(format!(
             "the hint is one line of at most {HINT_MAX_CHARS} characters, not the question: \
-             write the question in your reply, then call `wait_for_user` with a short hint"
+             call `wait_for_user` with a short hint, then write the question in your reply"
         )));
     }
     let (row, created) = state.store.create_agent_request(&id, hint).await?;
-    // The wait is shown where the question was asked: one event in the
+    // The wait is shown where the question follows it: one event in the
     // session's own stream, for the row this call opened — a repeat of a
     // pending hint is the same request, and adds no second line.
     if created {

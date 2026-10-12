@@ -184,7 +184,7 @@ pub(super) struct SendMessageReq {
 #[schemars(crate = "rmcp::schemars")]
 pub(super) struct WaitForUserReq {
     /// One short line for the Needs attention list, under 100 characters.
-    /// Not the question: the question is in your reply already.
+    /// Not the question: the question follows, in your reply.
     pub hint: String,
 }
 
@@ -415,7 +415,7 @@ fn roll_call(agents: &[serde_json::Value]) -> String {
 #[tool_router(vis = "pub(super)")]
 impl AriadneMcp {
     #[tool(
-        description = "Flag that you wait for the user. This tool asks nothing: write the whole question in your reply first, where the user reads it in your console. `hint` is one short line for the Needs attention list, which opens your console. End your turn after this call."
+        description = "Flag that you wait for the user. Call it before you ask. This tool asks nothing: `hint` is one short line for the Needs attention list, which opens your console. After this call, write the whole question in your reply, where the user reads it in your console, and end your turn."
     )]
     async fn wait_for_user(
         &self,

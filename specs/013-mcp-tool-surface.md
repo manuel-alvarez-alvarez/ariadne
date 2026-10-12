@@ -44,13 +44,17 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    orchestrator then waits; a column's agent works alone, and asks only where
    the task cannot go on without the answer, and a pull request reviewer
    where the request cannot. The rule names no channel — the seat's own
-   playbook already says how to ask. Every seat is told to ask in its reply,
-   and then to call `wait_for_user` with a one-line hint: the question is
-   turn text, which the console draws as the conversation it is, and the
-   tool asks nothing of its own. Its `hint` is one line for the Needs
-   attention list, and the daemon refuses one that is longer than a line or
-   than 100 characters (031 rule 11), so the question cannot move into the
-   call. `withdraw_wait_for_user` takes the flag down again.
+   playbook already says how to ask. Every seat is told to call
+   `wait_for_user` with a one-line hint first, and then to write the
+   question in its reply, as reply text and not in its thinking: the
+   question is turn text, which the console draws as the conversation it
+   is, and the tool asks nothing of its own. The call comes first because
+   the text an agent writes after its last tool call is the text it writes
+   to the user; what it writes before one tends to stay in its thinking,
+   which one orchestrator's questions did. Its `hint` is one line for the
+   Needs attention list, and the daemon refuses one that is longer than a
+   line or than 100 characters (031 rule 11), so the question cannot move
+   into the call. `withdraw_wait_for_user` takes the flag down again.
 4. Tools are filtered by seat both in the listing and on the call, so a tool a
    seat may not use is one it never sees. There are three seats
    (`McpSeat`): `Orchestrator`, `Agent` and `PullRequestReviewer`.
@@ -177,7 +181,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`mcp.rs::every_session_is_told_how_ariadne_is_reached`), only the
   orchestrator is told to ask, and a column's agent is told to work alone
   and ask only where the task cannot go on without the answer, and every
-  seat is told to write the whole question in its reply first
+  seat is told to call `wait_for_user` first and then write the whole
+  question in its reply
   (`::only_the_orchestrator_is_told_to_ask`), and no session is told of a
   conversation (`::no_session_is_told_of_a_conversation`).
 - Every session is told to load a deferred tool before it calls it

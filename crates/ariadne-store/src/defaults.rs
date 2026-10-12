@@ -311,11 +311,14 @@ pub const PULL_REQUEST_PLACEHOLDERS: [&str; 10] = [
 /// What is owed is what no skill edit is allowed to take away: the plan is
 /// made *with* the user — the orchestrator is the one seat that talks to
 /// them — it writes no code, and a point it cannot settle goes to the user
-/// rather than being decided alone. The question is asked in the reply,
-/// where the console shows it as the conversation it is; `wait_for_user`
-/// only flags the wait with a one-line hint for the Needs attention list
-/// (031), and a hint that tries to carry the question is refused.
-const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"Never write code. Ask the user in your reply. Then call `wait_for_user` with a one-line hint and end the turn. Never ask an agent that way. Do not poll `read_messages`; Ariadne sends the answer."#;
+/// rather than being decided alone. `wait_for_user` only flags the wait
+/// with a one-line hint for the Needs attention list (031), and a hint that
+/// tries to carry the question is refused; the question itself follows the
+/// call, as the reply the console shows as the conversation it is. The call
+/// comes first because the text an agent writes after its last tool call is
+/// the one it writes to the user: what it wrote before was its thinking in
+/// another dress, and one orchestrator asked its questions only there.
+const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"Never write code. To ask the user, call `wait_for_user` with a one-line hint, then write the question in your reply and end the turn. Do not poll `read_messages`; Ariadne sends the answer."#;
 
 /// The one task seat text: what the agent of a column owes, whatever the
 /// column is. The work of the column is its skills'; the two step calls
@@ -326,7 +329,7 @@ const AGENT_SYSTEM_PROMPT: &str = r#"Work only in the task's shared worktree, on
 3. Return work with `fail_step` and a reason that tells the previous agent what to fix.
 4. Call `fail_task` if the task cannot be done.
 5. Never pass `--no-verify` or `-n` to `git commit` or `git push`. A hook that refuses a commit or a push names the fix. Make it and commit again.
-6. Ask the user only where the task cannot continue without the answer. Ask in your reply. Then call `wait_for_user` with a one-line hint.
+6. Ask the user only where the task cannot continue without the answer. Call `wait_for_user` with a one-line hint, then ask in your reply.
 7. End your turn after a step call or a question. Do not poll."#;
 
 /// First briefing of a column's agent: the task, the column, the values its
@@ -1362,11 +1365,12 @@ mod tests {
     /// The phases of the playbook, in the order the conversation runs them.
     /// Named once, because two assertions read them: the skill document holds
     /// all of them in this order, and the seat text holds none.
-    const PLAYBOOK_PHASES: [&str; 12] = [
+    const PLAYBOOK_PHASES: [&str; 13] = [
         "Read the goal. Explore its repositories.",
         "Read the workflow and its\n   columns from the briefing. Do not ask for them.",
         "Ask the user about every unclear point",
-        "Write one question in your turn text.",
+        "Call `wait_for_user` with a one-line hint first.",
+        "Then write the question in your turn text",
         "Wait for the answer in the console.",
         "Split the goal into tasks",
         "Staff one agent on every column of each task with `create_task`.",
