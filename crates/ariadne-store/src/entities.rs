@@ -731,6 +731,9 @@ pub struct PullRequestRow {
     /// list.
     #[sqlx(rename = "babysit_skills")]
     pub babysit_skills_json: String,
+    /// How many times who wants the request was written (026): every ask
+    /// or withdrawal of a review or a keeper, and a task adopting it.
+    pub asks_revision: i64,
 }
 
 impl PullRequestRow {
@@ -776,6 +779,42 @@ pub struct PullRequestLive {
     pub merge_sha: Option<String>,
     /// The threads that wait on the integration login.
     pub unanswered_comments: i64,
+}
+
+/// Who wants a request, as a pass read it (026): the task that opened it,
+/// and the review (029) or the keeper (032) the user asked of it by hand.
+/// What a pass decides to stop working on a request from, and what
+/// `Store::delete_pull_request_unless_asked_since` holds the
+/// row against: an ask that landed since is one the pass never saw.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PullRequestAsks {
+    pub origin_task_id: Option<String>,
+    pub review_asked: bool,
+    pub babysit_asked: bool,
+    /// The row's ask revision at the read: what the delete is guarded on.
+    pub revision: i64,
+}
+
+impl From<&PullRequestRow> for PullRequestAsks {
+    fn from(row: &PullRequestRow) -> Self {
+        Self {
+            origin_task_id: row.origin_task_id.clone(),
+            review_asked: row.review_asked,
+            babysit_asked: row.babysit_asked,
+            revision: row.asks_revision,
+        }
+    }
+}
+
+impl From<&PullRequest> for PullRequestAsks {
+    fn from(pull: &PullRequest) -> Self {
+        Self {
+            origin_task_id: pull.origin_task_id.clone(),
+            review_asked: pull.review_asked,
+            babysit_asked: pull.babysit_asked,
+            revision: pull.asks_revision,
+        }
+    }
 }
 
 /// A request Ariadne works on, as the daemon reads it: its row, and what
@@ -831,6 +870,7 @@ pub struct PullRequest {
     pub babysit_model: Option<String>,
     pub babysit_effort: Option<String>,
     pub babysit_skills_json: String,
+    pub asks_revision: i64,
 }
 
 impl PullRequest {
@@ -886,6 +926,7 @@ impl PullRequest {
             babysit_model: row.babysit_model,
             babysit_effort: row.babysit_effort,
             babysit_skills_json: row.babysit_skills_json,
+            asks_revision: row.asks_revision,
         }
     }
 

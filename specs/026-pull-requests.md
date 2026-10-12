@@ -160,6 +160,7 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     Once the task is over, what is left of the request is taken down: any session or worktree an earlier release started on it.
     The task's own cleanup took its worktree and its branch.
     Then Ariadne stops working on the request: its row and its marks go, so an ended request takes no room. Its sessions stay, with their history and spend, let go of it.
+    The row goes only as the pass read it: a pass decides who wants a request from a read taken a few store calls earlier, and an ask by hand that lands in between — a review (029), a keeper (032) — is one that read never saw. Deleted regardless, the row would take the ask with it, and the next fetch would read the request back with nothing asked of it; so the delete is refused where an ask was written since the read, the row stays whole with its sessions on it, and the pass the ask itself woke acts on it. Every ask or withdrawal of a review or a keeper, and a task adopting the request, moves the row's ask revision, and the delete holds to that revision: an ask taken back and made again, or made again on another pin, reads as the same asks but is still one the read never saw.
     A deletion that fails keeps the row: the next change of the request tries it again, and the tick after 60 seconds, and so does a restarted daemon.
     A task that ends while the last read says its request is open reads the forge again first: a step completion reads it at the call, so a merge no fetch has read yet still has its work taken down. A request still open lets go of it too, unless the user asked Ariadne to review it.
 20. With the integration disabled, nothing reads the forge for its requests: each review session ends and its worktree goes, and Ariadne stops working on every request but a task's. Nobody merged or closed anything, so nothing is told.
@@ -225,6 +226,8 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `store.rs::a_pull_request_row_keeps_its_identity_and_origin_and_its_sessions_outlive_it`.
 - Comment marks are claimed once, released whole, keep the review's mark, and go with their row:
   `store.rs::comment_marks_are_claimed_once_released_whole_and_keep_the_review_mark`.
+- A row is deleted only as the pass read it: an ask that landed since the read, a repeated one included, keeps the row and its sessions, and the row goes once read as it is:
+  `store.rs::deleting_a_request_is_refused_where_an_ask_landed_since_the_read`.
 - The list is read live, a request of the user's own nobody asked Ariadne to review has no row, a request that asks for the user's review is tracked the moment it is seen, and nothing adds or removes a row by hand:
   `pull_requests.rs::the_list_is_read_live_and_tracks_only_a_request_that_asks_for_my_review`.
 - A detail read asks the forge for its parts together:

@@ -19,7 +19,8 @@ use tracing::{info, warn};
 use ariadne_core::workflow::StepGate;
 use ariadne_core::{Actor, Seat, SessionStatus, TaskStatus};
 use ariadne_store::{
-    AgentPin, AgentSession, PullRequest, PullRequestFilter, SessionFilter, StoreError, Task,
+    AgentPin, AgentSession, PullRequest, PullRequestAsks, PullRequestFilter, SessionFilter,
+    StoreError, Task,
 };
 
 use crate::acp::NewsDelivery;
@@ -92,7 +93,7 @@ impl super::Scheduler {
                 .end_pull_request_sessions(&row.id, &row.repository_id, None)
                 .await?;
             if row.origin_task_id.is_none() {
-                self.stop_working(&row.id).await?;
+                self.stop_working(&row.id, (&row).into()).await?;
             }
             return Ok(());
         }
@@ -125,7 +126,7 @@ impl super::Scheduler {
         if pull.origin_task_id.is_none() && !pull.review_asked && !pull.babysit_asked {
             // Nobody keeps it, nobody reviews it and nobody babysits it:
             // nothing to work on.
-            return self.stop_working(&pull.id).await;
+            return self.stop_working(&pull.id, (&pull).into()).await;
         }
         self.keep_pass(&pull).await
     }
@@ -166,9 +167,32 @@ impl super::Scheduler {
 
     /// Stop working on a request (026): its row goes, and what was read of
     /// it is forgotten. Its sessions stay, let go of it.
-    async fn stop_working(&mut self, id: &str) -> anyhow::Result<()> {
-        if self.store.delete_pull_request(id).await?.is_some() {
+    ///
+    /// The row goes only as `asked` — who wanted the request when this pass
+    /// read it — still holds. A pass decides from a view read several store
+    /// calls before this, and an ask by hand that lands in between (029,
+    /// 032) is one the view never saw: deleted regardless, the row would
+    /// take the ask with it, and the next fetch would read the request back
+    /// with nothing asked of it. Refused, everything stays, the read
+    /// included: the pass that ask itself woke reads the row anew and acts
+    /// on it.
+    async fn stop_working(&mut self, id: &str, asked: PullRequestAsks) -> anyhow::Result<()> {
+        if self
+            .store
+            .delete_pull_request_unless_asked_since(id, &asked)
+            .await?
+            .is_some()
+        {
             info!(pull_request = %id, "Ariadne stopped working on the request");
+        } else {
+            match self.store.get_pull_request(id).await {
+                Ok(_) => {
+                    info!(pull_request = %id, "the request was asked for since this pass read it, keeping it");
+                    return Ok(());
+                }
+                Err(StoreError::NotFound { .. }) => {}
+                Err(e) => return Err(e.into()),
+            }
         }
         self.launcher.live.remove(id);
         self.pull_request_cleanup_retry.remove(id);
@@ -213,7 +237,7 @@ impl super::Scheduler {
             // for the review or the keeper session the user asked of it,
             // which run on (029, 032).
             if !pull.review_asked && !pull.babysit_asked {
-                return self.stop_working(&pull.id).await;
+                return self.stop_working(&pull.id, pull.into()).await;
             }
             return Ok(());
         };
@@ -507,7 +531,7 @@ impl super::Scheduler {
             .end_pull_request_sessions(&pull.id, &pull.repository_id, Some(pull))
             .await;
         match cleaned {
-            Ok(()) => self.stop_working(&pull.id).await,
+            Ok(()) => self.stop_working(&pull.id, pull.into()).await,
             Err(e) => {
                 self.pull_request_cleanup_retry
                     .insert(pull.id.clone(), Instant::now() + CLEANUP_RETRY);
@@ -630,7 +654,7 @@ impl super::Scheduler {
             Ok(()) => {
                 self.pull_request_cleanup_retry.remove(&pull.id);
                 if done {
-                    self.stop_working(&pull.id).await?;
+                    self.stop_working(&pull.id, pull.into()).await?;
                 }
                 Ok(())
             }
@@ -790,7 +814,7 @@ impl super::Scheduler {
             Ok(()) => {
                 self.pull_request_cleanup_retry.remove(&pull.id);
                 if done {
-                    self.stop_working(&pull.id).await?;
+                    self.stop_working(&pull.id, pull.into()).await?;
                 }
                 Ok(())
             }
