@@ -1,0 +1,6 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 29.70s
+     Running unittests src/lib.rs (target/debug/deps/ariadne_daemon-bb5c70722dcd0956)
+running 1 test
+PERM-001 MultiEdit reproduction: risk_tags=[] cap=None
+test ai_permissions::derive::tests::perm_001_a_multiedit_s_nested_payload_is_invisible_to_every_check ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 241 filtered out; finished in 0.22s

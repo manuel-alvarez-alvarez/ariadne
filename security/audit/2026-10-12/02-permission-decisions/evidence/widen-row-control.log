@@ -1,0 +1,11 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 18.12s
+────────────
+ Nextest run ID 4ee36570-daa8-4bba-aa94-65db4632ad5e with nextest profile: default
+    Starting 1 test across 2 binaries (970 tests skipped)
+        PASS [   0.754s] (1/1) ariadne-daemon::it acp_console::widening_a_row_to_all_answers_a_second_repository
+  stdout ───
+    running 1 test
+    test acp_console::widening_a_row_to_all_answers_a_second_repository ... ok
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 726 filtered out; finished in 0.74s
+────────────
+     Summary [   0.755s] 1 test run: 1 passed, 970 skipped

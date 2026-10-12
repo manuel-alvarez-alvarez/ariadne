@@ -1,0 +1,14 @@
+33 | struct ModelServer {
+34 |     endpoint: String,
+35 |     requests: Arc<Mutex<Vec<Value>>>,
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.26s
+────────────
+ Nextest run ID 7f22e7aa-b46a-465e-9bec-44b0ac4443bd with nextest profile: default
+    Starting 1 test across 2 binaries (966 tests skipped)
+       START [         ] (1/1) ariadne-daemon::it ai_permissions_decisions::a_cap_changes_a_model_allow_to_a_console_question
+running 1 test
+test ai_permissions_decisions::a_cap_changes_a_model_allow_to_a_console_question ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 725 filtered out; finished in 0.35s
+        PASS [   0.364s] (1/1) ariadne-daemon::it ai_permissions_decisions::a_cap_changes_a_model_allow_to_a_console_question
+────────────
+     Summary [   0.365s] 1 test run: 1 passed, 966 skipped

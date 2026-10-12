@@ -1,0 +1,22 @@
+33 | struct ModelServer {
+34 |     endpoint: String,
+35 |     requests: Arc<Mutex<Vec<Value>>>,
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.29s
+────────────
+ Nextest run ID 47c4abbf-ddbd-4ab6-b4c8-5abd265b94dd with nextest profile: default
+    Starting 2 tests across 2 binaries (965 tests skipped)
+       START [         ] (1/2) ariadne-daemon::it perm_audit_repro::perm_001_ai_mode_auto_allows_an_edit_carrying_a_reviewer_directive
+running 1 test
+PERM-001 reproduction 1 (ai mode, Edit, hostile content): attention=None decided_by=ai label="allow" cap=null risk_tags=[] learned_rows=0
+test perm_audit_repro::perm_001_ai_mode_auto_allows_an_edit_carrying_a_reviewer_directive ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 725 filtered out; finished in 0.38s
+        PASS [   0.389s] (1/2) ariadne-daemon::it perm_audit_repro::perm_001_ai_mode_auto_allows_an_edit_carrying_a_reviewer_directive
+       START [         ] (2/2) ariadne-daemon::it perm_audit_repro::perm_001_learn_mode_remembered_row_reuses_across_hostile_content
+running 1 test
+PERM-001 reproduction 2: benign approval recorded key={"file_path":"README.md"} level=command family=Edit risk_tags=[] target=learn
+PERM-001 reproduction 2: hostile edit attention=None decided_by=learned learned_rows_after=1
+test perm_audit_repro::perm_001_learn_mode_remembered_row_reuses_across_hostile_content ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 725 filtered out; finished in 0.52s
+        PASS [   0.528s] (2/2) ariadne-daemon::it perm_audit_repro::perm_001_learn_mode_remembered_row_reuses_across_hostile_content
+────────────
+     Summary [   0.918s] 2 tests run: 2 passed, 965 skipped

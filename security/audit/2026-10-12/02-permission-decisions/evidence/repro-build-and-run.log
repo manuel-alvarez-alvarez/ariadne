@@ -1,0 +1,11 @@
+33 | struct ModelServer {
+34 |     endpoint: String,
+35 |     requests: Arc<Mutex<Vec<Value>>>,
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.61s
+────────────
+ Nextest run ID 99db908e-8247-4cf8-a215-3660f2a41bbb with nextest profile: default
+    Starting 2 tests across 2 binaries (965 tests skipped)
+        PASS [   0.397s] (1/2) ariadne-daemon::it perm_audit_repro::perm_001_ai_mode_auto_allows_an_edit_carrying_a_reviewer_directive
+        PASS [   0.543s] (2/2) ariadne-daemon::it perm_audit_repro::perm_001_learn_mode_remembered_row_reuses_across_hostile_content
+────────────
+     Summary [   0.544s] 2 tests run: 2 passed, 965 skipped

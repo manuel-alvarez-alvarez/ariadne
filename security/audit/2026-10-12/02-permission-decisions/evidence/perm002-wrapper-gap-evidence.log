@@ -1,0 +1,10 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.78s
+     Running unittests src/lib.rs (target/debug/deps/ariadne_daemon-bb5c70722dcd0956)
+running 3 tests
+PERM-001 MultiEdit reproduction: risk_tags=[] cap=None
+test ai_permissions::derive::tests::perm_001_a_multiedit_s_nested_payload_is_invisible_to_every_check ... ok
+PERM-002: plain=["remote", "credential_access"] known_wrapper(nice)=["credential_access"] unlisted_wrapper(stdbuf)=[]
+test ai_permissions::derive::tests::perm_002_an_unlisted_wrapper_hides_a_credential_read_from_the_anchored_regex ... ok
+PERM-001 Rust-source reproduction: Edit risk_tags=[] cap=None | Bash risk_tags=["reviewer_directive"] cap=Some("reviewer_directive")
+test ai_permissions::derive::tests::perm_001_the_rust_deriver_itself_misses_an_edit_but_catches_the_same_text_in_bash ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 241 filtered out; finished in 0.07s
