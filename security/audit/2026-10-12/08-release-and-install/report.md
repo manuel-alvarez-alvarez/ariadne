@@ -176,6 +176,15 @@ and download -> installed binary and service.
   the downloaded file, in a scratch `/tmp` directory removed immediately
   after) — not a hypothetical read of the manual. Quoted and detailed under
   RELEASE-002.
+- The GitHub Actions runner's own source, to settle exactly which
+  credentials a `run:` step's shell process receives automatically versus
+  only through an explicit workflow `env:` mapping:
+  `https://raw.githubusercontent.com/actions/runner/main/src/Runner.Worker/GitHubContext.cs`
+  (its `_contextEnvAllowlist` excludes `token` by name) and
+  `https://raw.githubusercontent.com/actions/runner/main/src/Runner.Worker/Handlers/ScriptHandler.cs`
+  (sets `ACTIONS_ID_TOKEN_REQUEST_URL`/`ACTIONS_ID_TOKEN_REQUEST_TOKEN`
+  directly on every script step's environment). Fetched and quoted under
+  "Release-flow evidence" below.
 - GitHub's Security Advisory Database, queried directly via
   `gh api "/advisories?ecosystem=actions&per_page=100"` (56 advisories, no
   `Link` pagination header, so this is the complete current set for that
@@ -448,26 +457,30 @@ correction.**
    | `ARIADNE_DESKTOP_ICON` | Basename exactly `$ARIADNE_DESKTOP_ID.png` (`dev.ariadne.ui.png`) — **not** a fixed parent, since the directory encodes the icon's size, read from the PNG at install time by `icon_size()` and otherwise defaulted to `256x256`: accept canonical path matching the pattern `${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/<digits>x<digits>/apps/dev.ariadne.ui.png`, i.e. every component fixed except one `<width>x<height>` directory matched by a digits-x-digits pattern, not a fixed string. |
    | `PURGE` | Not one of the parser's accepted keys at all (per fix 1) — it is a command-line-only flag; a `PURGE=` line in the manifest is simply never read. |
 
-   **Symlink/TOCTOU caveat, stated honestly rather than claimed away.** The
-   prior revision of this proposal said canonicalizing "so a symlink cannot
-   redirect the check after it passes" — that overstates what
-   canonicalization buys. Resolving the path with `realpath`/`readlink -f`
-   *before* the basename/parent check closes the case where the manifest
-   names a symlink that already points somewhere disallowed at check time;
-   it does **not** close the case where the path component is swapped
-   *between* the check and the later `rm`/`rm -rf` — a classic
-   check-then-use race. Removing that race fully needs an atomic,
-   symlink-aware primitive (e.g. opening the target with `O_NOFOLLOW`, or
-   `rm`'s own `-P`-style physical-path behavior where available), which a
-   portable `bash 3.2` script (per `scripts/AGENTS.md`'s own constraint) has
-   no reliable, cross-platform way to do. This revision records that
-   residual race explicitly as an accepted limitation of a shell-script-only
-   fix, rather than claiming it is closed: the race requires the same
-   write-access-to-the-relevant-directory prerequisite RELEASE-001's
-   "Reachability" section already treats as unverified and bounds the
-   finding's severity by, so it does not, on its own, change this finding's
-   severity — but a future implementer should not read "canonicalize" as
-   "race-free."
+   **Symlink/TOCTOU caveat, stated honestly rather than claimed away —
+   corrected a second time.** The prior revision of this proposal said
+   canonicalizing "so a symlink cannot redirect the check after it passes"
+   — that overstates what canonicalization buys. Resolving the path with
+   `realpath`/`readlink -f` *before* the basename/parent check closes the
+   case where the manifest names a symlink that already points somewhere
+   disallowed at check time; it does **not** close the case where a path
+   component is swapped *between* the check and the later `rm`/`rm -rf` —
+   a classic check-then-use race, reachable by an attacker who can write
+   into an ancestor of the path being validated. The prior revision also
+   named two supposed mitigations for this, both wrong: BSD/macOS `rm`'s
+   `-P` flag overwrites a file's contents before unlinking it (a
+   secure-delete behavior) and has nothing to do with symlink or
+   physical-path resolution; and `O_NOFOLLOW` only stops an `open()` call
+   from following a symlink at the *final* path component — it does
+   nothing to stop an **ancestor** directory component of the same path
+   being swapped to a symlink, which is exactly the race this caveat is
+   about. Both are withdrawn rather than corrected, since no portable,
+   `bash 3.2`-expressible primitive this audit found actually closes an
+   ancestor-directory swap race. The honest statement is simply that this
+   residual race is not closed by this remediation, full stop — an open
+   limitation, not a risk the user has reviewed and accepted (no such
+   acceptance has happened; it is an unresolved question, the same way
+   RELEASE-001's end-to-end reachability is, not a settled one).
    - *Acceptance criteria, both directions:*
      - **Rejection (negative) cases:** an `ARIADNE_APP` value that is
        syntactically a valid path but names something other than the
@@ -1002,29 +1015,71 @@ complete rather than finding-shaped:
     and `permissions: {}` (none at all — the PAT does everything) for
     `release-please.yml`. Each is scoped to the single job and repository,
     and expires when the job ends.
-  - **The release-upload token's authority, specifically — corrected.**
-    The prior revision of this report described the `build` job's
-    `GITHUB_TOKEN` as able to "write repository contents (including
-    release assets) and nothing else" at the "Upload the release assets"
-    step (`release.yml:273-277`). That understated it: the job's
-    `permissions:` block (`release.yml:60-63`) grants `contents: write`,
-    `id-token: write` **and** `attestations: write` for the **whole job**,
-    not only at the upload step — any code running at *any* step of that
-    job (including, per the point below, `npm ci`/`tauri build`'s
-    third-party dependency code) has that same token available via the
-    ambient `GITHUB_TOKEN`/OIDC environment for the job's entire duration,
-    not a narrower scope confined to the one step that happens to use it
-    explicitly. So the accurate statement is: this job's ambient
-    credentials can write repository contents, mint OIDC tokens, and write
-    build-provenance attestations — no secrets access, no administration,
-    no workflow-file changes, but a broader set than "contents, and
-    nothing else." `gh release upload ... --clobber` overwrites a
-    same-named asset on that one release; since attestation happens
-    immediately before upload within the same job run
-    (`release.yml:268-277`), a `--clobber`'d asset always carries a
-    matching, freshly-produced attestation **for whatever that job's own
-    steps actually built** — see the next point for what that guarantee
-    does and does not cover.
+  - **The release-upload token's authority, specifically — corrected a
+    second time.** The prior revision said the job's `permissions:` block
+    (`contents: write`, `id-token: write`, `attestations: write`,
+    `release.yml:60-63`) means "any code running at *any* step of that job
+    ... has that same token available via the ambient `GITHUB_TOKEN`/OIDC
+    environment for the job's entire duration." That conflated four
+    distinct things the review asked to be told apart, and was wrong about
+    the one that matters most for the `npm ci`/`tauri build` scenario the
+    next point discusses:
+    - **Permissions** (the `permissions:` block) set the *scope* GitHub
+      will honor if and when a token derived from them is actually used —
+      they are an authorization ceiling, not a delivery mechanism. Granting
+      `contents: write` does not, by itself, put a credential anywhere.
+    - **Action context/input** — a `uses:`-based action step (not a `run:`
+      shell step) can read `${{ github.token }}` through its own
+      `action.yml`-declared input defaults (several first-party actions,
+      including `actions/attest-build-provenance`, default a
+      `github-token`-shaped input to `${{ github.token }}`) without the
+      *workflow* needing to map anything. That is scoped to the action's
+      own process, not exported to any other step's shell.
+    - **Explicitly mapped `GH_TOKEN`/`GITHUB_TOKEN`** — a `run:` step's
+      shell process receives a context value as a literal environment
+      variable only when the workflow's own `env:` (or `with:`) block maps
+      it there. `release.yml:275` does exactly that, and *only* for the
+      "Upload the release assets" step
+      (`env: GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}`); no other `run:` step
+      in the job — including `npm ci` and `npm run tauri build`, the two
+      the next point is about — has any such mapping, so their process
+      environment never contains `GITHUB_TOKEN`/`GH_TOKEN` at all,
+      regardless of the job's `permissions:` scope. This is confirmed from
+      the runner's own source, not inferred: `Runner.Worker/GitHubContext.cs`'s
+      `_contextEnvAllowlist` — the fixed set of `github.*` fields the
+      runner will turn into environment variables for a step —
+      **excludes `token`** by name; `secrets.*` values reach a step's
+      environment only through that step's own explicit `env:`/`with:`
+      mapping, never automatically.
+    - **Separate OIDC request credentials** — this is the one piece that
+      *is* genuinely ambient to every step in the job once `id-token:
+      write` is granted, confirmed in the same runner source:
+      `Runner.Worker/Handlers/ScriptHandler.cs` sets
+      `Environment["ACTIONS_ID_TOKEN_REQUEST_URL"]` and
+      `Environment["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]` directly, for every
+      script step's process, independent of any workflow `env:` mapping.
+      Those two variables are a *request* credential: whoever holds them
+      can ask GitHub's OIDC provider to mint a short-lived JWT for the
+      job's identity (what `attest-build-provenance` itself does) — they
+      are not a REST API token and grant no direct `contents`/`attestations`
+      write access on their own.
+
+    So the accurate statement, for the next point's scenario specifically:
+    code running during `npm ci`/`tauri build` has **no** `GITHUB_TOKEN`/
+    `GH_TOKEN` in its environment (confirmed by the allowlist exclusion
+    above) and **no** direct `contents`/`attestations` API access; what it
+    *does* have, ambiently, is the ability to request an OIDC JWT for the
+    job's identity via the two `ACTIONS_ID_TOKEN_REQUEST_*` variables —
+    narrower than this report's prior two revisions both claimed, in
+    different directions. `gh release upload ... --clobber` overwrites a
+    same-named asset on that one release, using the credential explicitly
+    mapped at `release.yml:275`; since attestation happens immediately
+    before upload within the same job run (`release.yml:268-277`), a
+    `--clobber`'d asset carrying a matching, freshly-produced attestation
+    is simply what a normal, successful run of this workflow produces —
+    not, by itself, a security guarantee of any kind; see the next point
+    for what such a match does and does not establish about the content
+    being attested.
 - **Build execution timing relative to the macOS signing keychain —
   narrowed to what ordering actually establishes.** On the macOS legs of
   `release.yml`'s `build` job, `cargo build --release --locked --package
@@ -1176,7 +1231,8 @@ starting the fix.
 
 ## Pre-existing `.githooks/pre-push` failure — investigated, not a RELEASE finding
 
-The second review's required-hook run (`.githooks/pre-push --all`, log at
+The second review's required-hook run (`.githooks/pre-push`, run against
+this task's branch range rather than `--all`, log at
 `/var/folders/d9/l1r5tzbs0plbdrhx7_hfkbnm0000gn/T/release-review2-rmi90jsr/pre-push.log`)
 reported `cargo nextest run --workspace --profile ci` failing one test:
 `kept_requests::the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side`
@@ -1209,9 +1265,12 @@ caused.
    invoking shell and killed explicitly afterward, per the root
    `AGENTS.md`'s own busy-loop technique) competed for the machine's 16
    cores: **15/15 passed.** Raw CPU contention alone does not reproduce it.
-3. The full `ariadne-daemon` crate's integration suite (965 tests, the same
-   `ci` profile `pre-push` uses, one thread per core), run three times in a
-   row with no change to any file in between:
+3. The full `ariadne-daemon` crate's test suite (965 tests across its two
+   test binaries — `it`, the integration suite, and its other binary are
+   both included by `cargo nextest run -p ariadne-daemon`, not the `it`
+   binary alone — using the same `ci` profile `pre-push` uses, one thread
+   per core), run three times in a row with no change to any file in
+   between:
    - Run 1: **1 failed** — the exact same test, the exact same assertion,
      the exact same `left: 16, right: 14`.
    - Run 2: **1 failed** — but a *different* test,
@@ -1220,44 +1279,104 @@ caused.
      `assertion left == right failed ... left: 0, right: 1`).
    - Run 3: **965/965 passed**, no failures at all.
 
-**Characterization.** This is the repository's own definition of a failure
-that disappears on retry (`crates/AGENTS.md`'s "What a reviewer flags":
-"A test that passed only on a second run"), and the prescribed response —
-proving it under the bounded busy loop — was followed (step 2 above) and
-held. What the busy loop did *not* reproduce is what the full-crate runs
-did: this looks like intermittent timing sensitivity that depends on
-running concurrently with hundreds of *other* daemon integration tests
-specifically (shared sockets, file descriptors, or scheduler jitter across
-many real daemon processes at once), not on raw CPU pressure, and it is not
-confined to one test — two different tests failed on two different runs,
-with a third run clean. That pattern points at a class of flakiness in the
-suite's concurrency handling under full-crate load, not a single localized
-bug newly introduced anywhere.
+**Independent corroboration, kept distinct from this task's own runs.**
+The orchestrator separately reported two other agents' observations,
+consolidated here rather than treated as additional runs of this task's
+own diagnosis:
+- An agent named VIEW independently observed the same two failures this
+  task's own runs 1 and 2 produced — `kept_requests`'s 16-vs-14 and
+  `switch_stats`'s 0-vs-1 — on its own run (log at
+  `/tmp/view-review2-check.log`, outside this task's worktree). This is
+  independent corroboration that both failures are real and reproducible
+  by more than one agent on more than one run, which strengthens "this is
+  a genuine, pre-existing intermittent failure" — it does not, by itself,
+  add a new failure mode or identify a cause beyond what this task's own
+  runs already showed.
+- An agent named DATA reported all 1,926 tests passing at commit
+  `9944c8fa` — a **different commit** than this audit's examined
+  application baseline (`a17283486d5fe89591edfff08832712936d73030`) or any
+  commit on this task's own branch, on conditions (runner, concurrency,
+  load) this report has no visibility into. A clean run on a different
+  revision and unknown runner conditions is not evidence that the failures
+  observed on *this* revision were spurious or are resolved — it is simply
+  one more clean-pass data point, consistent with the intermittency this
+  section already documents (this task's own run 3 was clean too, on the
+  identical revision). It is recorded here as counter-evidence to weigh,
+  not treated as resolving anything: the two sets of runs differ in
+  revision and in runner conditions this report cannot compare directly,
+  so no conclusion is drawn from the difference beyond "intermittent
+  failures are, by definition, not always observed."
 
-**A concrete, low-risk starting point for `kept_requests.rs`, offered as a
-follow-up proposal, not applied here.** `kept_requests.rs:625-633` already
-defines a `replies` helper that filters `stub.invocations()` down to only
-the `pr comment` calls the test actually cares about, and the test's first
-assertion (`:647`) uses it correctly:
-`assert_eq!(replies(&stub), before + 1, "one gh call replies")`. But the
-`before` snapshot at `:662` and the two later assertions at `:673` and
-`:688` use the *unfiltered* `stub.invocations().len()` instead. The test's
-own doc comment (`:581-585`) describes the property under test as "no
-`gh pr comment` call follows a refusal" — specifically about reply calls,
-not about every forge call the daemon might make for any reason (a comment
-right above, `:649-652`, independently confirms a background poll of the
-forge reads the stub during this same window). If that background poll's
-own cycle happens to add any non-`pr comment` invocation inside the
-snapshot-to-assertion window — more likely under the scheduler pressure of
-hundreds of concurrent daemon tests — the unfiltered count moves for a
-reason the test was never trying to assert against, and the assertion
-fails on a true negative. Using `replies(&stub)` instead of
-`stub.invocations().len()` at `:662`, `:673` and `:688` would make the
-test's three assertions consistent with its own first one and with its own
-stated intent, and is a plausible fix for at least this one test's
-instance of the pattern — offered here as a follow-up task's starting
-point, not implemented in this audit (which touches no application or test
-code, per this task's own constraints).
+**Characterization — stated as a bounded observation, not a proven cause.**
+This is the repository's own definition of a failure that disappears on
+retry (`crates/AGENTS.md`'s "What a reviewer flags": "A test that passed
+only on a second run"), and the prescribed response — proving it under the
+bounded busy loop — was followed (step 2 above) and held there. What can be
+said from these five runs, without overreaching: isolated execution and
+raw CPU contention alone did not reproduce a failure (steps 1–2); running
+the full crate's suite did, on two of three attempts, each time a
+*different* test. That is as far as this evidence goes. It is consistent
+with timing sensitivity tied to full-suite concurrency (shared sockets,
+file descriptors, or scheduler jitter across many real daemon processes at
+once) and with CPU pressure specifically *not* being the operative
+variable (step 2 isolated that one factor and it did not reproduce the
+failure) — but five runs do not establish *which* shared resource or
+mechanism is the necessary cause, only that concurrent execution of the
+full suite, and not raw CPU load in isolation, correlates with the
+failures observed. Two different tests failing on two different runs, with
+a third run clean, is consistent with a class of flakiness in the suite's
+concurrency handling rather than a single localized bug — again, a
+pattern consistent with that explanation, not a proof of it.
+
+**Correction: the "filter to `replies()`" idea from the prior revision is
+not a sufficient regression-preserving fix — flagged by the review, with
+counter-evidence this revision did not have.** That idea rested on a
+misquote of the test's own doc comment: `kept_requests.rs:581-585` actually
+says "no `gh` call follows either refusal" — not "no `gh pr comment` call,"
+which is what the prior revision wrote. The broader wording is not
+incidental. `specs/026-pull-requests.md` rule 16 (line 148) states it the
+same way for the daemon itself: "The daemon refuses any other conversation
+reply of the agent with 400, **and makes no forge call**." Its acceptance
+criterion (line 294, naming this exact test) repeats it: "A second reply to
+it gets 400 and makes no forge call. A reply to a comment of its own side
+also gets 400 and makes no forge call." Both are unambiguous that a refused
+reply must trigger *no forge call of any kind* — not merely no `gh pr
+comment` call. Narrowing the assertion to `replies(&stub)` (which filters
+to only `pr comment` invocations, `kept_requests.rs:625-633`) would make
+the test blind to a real regression the spec explicitly forbids: a refused
+reply that mistakenly calls `gh api` (e.g. an errant comment or review
+re-fetch triggered by the refusal path itself, as opposed to the
+background poll's own independent cycle) would pass this narrowed
+assertion merely because that call is not `pr comment`-shaped. **This
+report withdraws that proposal as a fix** and marks it, instead, as what it
+actually was: an incomplete diagnostic observation about where the
+*flakiness* enters (the unfiltered count includes the background poll's
+own calls, which `:649-652`'s comment confirms polls the stub during this
+same window), not a safe replacement for what the assertion needs to keep
+checking.
+
+**Revised follow-up proposal, consistent with the spec's "no forge call"
+requirement.** The fix belongs on the *polling* side, not the assertion's
+scope: separate or control the background poll's own forge activity so the
+test can wait it out before taking its `before` snapshot (or before each
+assertion), the same way `crates/AGENTS.md` already prescribes for this
+exact shape of problem — "For something that must not happen, listen for
+`QUIET`" and "For a forge fetch that must be over before the stub forge CLI
+answers differently, wait for `stub.fetches()`... A `QUIET` listen only
+bets that it was over." Concretely, a follow-up could make the test wait
+for the background poll's own fetch-completion signal (however
+`tests/it/common/forge.rs`'s `stub.fetches()`/`QUIET` machinery already
+exposes that for other tests in this suite) immediately before each
+`before = stub.invocations().len()`/assertion pair, so that no incidental
+poll call can land inside the window — while the assertion itself keeps
+counting *every* invocation, unfiltered, exactly as it does today, so a
+genuine regression (any refusal-triggered forge call, `pr comment` or
+otherwise) still fails the test. This is offered as a follow-up task's
+starting point, not implemented here: this audit touches no application
+or test code, and the acceptance for whatever fix is chosen must be that a
+refusal which erroneously triggers `gh api` (not `gh pr comment`) still
+fails the test — a criterion the previous revision's proposal would not
+have met.
 
 **Recommendation to the orchestrator.** Treat this as pre-existing,
 unrelated to this audit's diff, and already present at the examined
