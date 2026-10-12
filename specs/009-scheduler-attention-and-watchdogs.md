@@ -186,11 +186,14 @@ the ACP runtime that takes a prompt (021).
     window measured from the wake is already over when a slow pass returns:
     the wakes that queued behind it would each run a pass of their own, which
     is the pass per event this removes. For the same reason the loop takes
-    what its channel already holds before it lets a window end: polled in
-    a random order, a window could end while the rest of a burst still sat
-    in the channel — a loop held off the CPU for longer than the window,
-    under exactly that load — and the wakes behind it would cost a pass of
-    their own.
+    its channel in batches: one event, then whatever the channel already
+    holds, and no more. Taken one event per turn, a window could end while
+    the rest of a burst still sat in the channel — a loop held off the CPU
+    for longer than the window, under exactly that load — and the wakes
+    behind it would cost a pass of their own. A batch is bounded by what
+    was queued when it began, and the windows that have ended are settled
+    after each one, so a stream of wakes that never pauses still lets every
+    window end, and the full reconcile tick come round between batches.
 34. A task launch that fails because the daemon reached its open-file limit
     names that limit in the task's failure reason. Attempts after that error
     are at least 30 seconds apart, so adjacent wakes cannot spend the whole
@@ -372,6 +375,9 @@ the ACP runtime that takes a prompt (021).
   and the same holds of the scheduler itself over the pass that starts a
   task's first column
   (`scheduler_attention.rs::a_burst_that_queues_behind_a_slow_reconcile_still_costs_two_reconciles`).
+  A window still ends under a stream of wakes that never lets the channel
+  empty, since a batch takes only what the channel held when it began
+  (`scheduler_attention.rs::a_window_still_ends_under_a_stream_of_wakes_that_never_pauses`).
 - Exhausted sessions prefer another agent at the same rank and keep no pinned
   effort
   (`auto_switch.rs::a_codex_exhaustion_switches_to_another_agent_at_the_same_rank`).
