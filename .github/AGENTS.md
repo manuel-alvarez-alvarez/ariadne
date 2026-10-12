@@ -20,7 +20,11 @@ history rules live in the root [`AGENTS.md`](../AGENTS.md).
   published` (and by hand, against a tag, for a rerun); builds `ariadne`,
   `ariadned` and Ariadne Desktop for each released target, imports the macOS
   signing certificate, signs and verifies the macOS assets, attests their
-  provenance and uploads them to the release.
+  provenance and uploads them to the release. Its `notes` job then runs
+  `scripts/release-notes.sh` against the uploaded checksums files and the
+  release's own current body, and writes the result back with `gh release
+  edit --notes-file`, so the Release page gets install steps and an asset
+  table in front of the changelog release-please wrote.
 
 [`RELEASING.md`](RELEASING.md) is the human explanation of the loop these two
 release workflows drive, the release token, and what to do when it expires.
