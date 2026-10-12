@@ -39,9 +39,9 @@ answer in a thread you opened. Do one round, then end your turn.
      the fix replaces the commented line alone, add a ```suggestion
      block under "Fix:". It holds the new text of that one line. A fix
      across lines, across files, or one that needs a test, stays prose.
-8. Write the review `body`: the whole summary as it is now. Ariadne keeps
-   one summary comment and puts this text in it, so write all four parts,
-   in order:
+8. Write the review `body`. Ariadne keeps one summary comment and puts
+   this text in it. Write a title, a summary and a recommendation. Add a
+   table only where it holds a row.
    - Title: "## Review summary".
    - Summary: one paragraph of prose, not bullets, three to six sentences.
      Name the behavior the change touches, who sees it, and what breaks

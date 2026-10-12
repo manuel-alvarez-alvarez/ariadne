@@ -252,8 +252,10 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     otherwise. P0 breaks behavior, data or security and must change before
     the request lands; P1 is a defect or a missing proof that will bite; P2
     is worth fixing. It writes the review body as the whole summary of the
-    review as it stands, in four parts, with no file, no line, no trailer
-    and nothing of its work beyond the summary's one sentence of evidence:
+    review as it stands, with no file, no line, no trailer and nothing of
+    its work beyond the summary's one sentence of evidence, in order: a
+    title and a prose summary always, a table where it holds a row, and a
+    recommendation:
     - a title, "## Review summary";
     - a prose summary, not bullets, one paragraph of three to six
       sentences, naming the behavior the change touches, who sees it,
