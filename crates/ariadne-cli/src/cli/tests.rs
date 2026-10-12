@@ -206,6 +206,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("pr search", true),
     ("pr refresh", true),
     ("pr review", true),
+    ("pr babysit", true),
     ("repo add", true),
     ("repo inspect", true),
     ("repo ls", true),

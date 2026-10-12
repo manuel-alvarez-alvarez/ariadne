@@ -521,6 +521,8 @@ ariadne pr refresh --repo <repo-id>
 ariadne pr review <repo-id> 42 --model claude-acp:<model-id>
 ariadne pr review <repo-id> 42 --model claude-acp:<model-id> --skill security-review --attach
 ariadne pr review <repo-id> 42 --stop
+ariadne pr babysit <repo-id> 42 --model claude-acp:<model-id>
+ariadne pr babysit <repo-id> 42 --stop
 ```
 
 `ariadne pr ls` lists every open request of your enabled repositories, read
@@ -529,8 +531,9 @@ your own, and `--review-requests` to the ones that ask for your review; the
 two do not combine. `--repo` narrows it to one repository, and `--watch`
 redraws it as requests move. The author column reads "you" on a request of
 yours, and the `ariadne` column says whether Ariadne keeps it for a task,
-reviews it, or does nothing with it; `branches` reads `head → base`, and
-`session` links the request's newest session.
+reviews it, babysits it by hand, both of the last two together, or does
+nothing with it; `branches` reads `head → base`, and `session` links the
+request's newest session.
 `ariadne pr inspect <repo> <number>` prints every field of one request,
 read off the forge now, as a key-value block in a fixed reading order, the
 body last after a `---` line. `ariadne pr search` searches an enabled
@@ -546,9 +549,21 @@ every review loads anyway; repeat it for more than one. `--attach` waits for
 the review session to start and opens its console, the way `session new
 --attach` does. `ariadne pr review <repo> <number> --stop` stops Ariadne's
 review and cannot be combined with `--model`, `--effort`, `--skill` or
-`--attach`. Beside this one way to ask for or stop a review, nothing here
-adds or removes a request: Ariadne starts and stops its other work on one
-on its own (see [The forge integration](forge.md)).
+`--attach`.
+
+`ariadne pr babysit <repo> <number> --model AGENT:MODEL [--effort E]
+[--skill S]... [--attach]` asks Ariadne to keep a request of your own that
+no task opened (032), the same way `pr review` asks for a review:
+`--model` is required with no `--stop`. `--skill` loads another skill
+beside `pr-babysit`, which every keeper session loads anyway. `--attach`
+waits for the keeper session to start and opens its console. `ariadne pr
+babysit <repo> <number> --stop` stops it, and cannot be combined with
+`--model`, `--effort`, `--skill` or `--attach`. Asking is refused on a
+request a task opened or one by another login.
+
+Beside these two ways to ask for or stop a review or a keeper session,
+nothing here adds or removes a request: Ariadne starts and stops its other
+work on one on its own (see [The forge integration](forge.md)).
 
 ```sh
 ariadne issue ls --repo <repo-id>
@@ -686,6 +701,6 @@ the built-in help screen.
 | `session` | `ls` accepts `--kind`, `--agent`, `--task`, `--goal`, `--pull-request`, repeatable `--status`, `--seat`, `--attention`, `--dir`, `--since`, `--until`, `--search`, `--limit`, `--cursor`, `--refresh`, `-a`, and `--watch`; `new --model AGENT:MODEL [--effort] [--dir] [--attach]`; `switch ID --model AGENT:MODEL [--effort]`; `inspect ID`; `send ID TEXT`; `logs ID [-f] [--tail] [--since] [--kind]...`; `resume ID`; `kill ID [-y]`. |
 | `events`, `attention`, `attach` | `events [-f] [--goal] [--task] [--session] [--kind]...`; `attention [--watch]`; `attach ID [--seat orchestrator\|agent\|reviewer] [--agent AGENT]`. |
 | `stats` | `work`, `time`, `spend`, `models`, and `attention`; each accepts `--since` and `--repo`; `models` also accepts `--seat`. |
-| `pr`, `issue`, `forge` | `pr ls [--repo] [--mine\|--review-requests] [--watch]`, `inspect REPO NUMBER`, `search --repo REPO QUERY`, `refresh [--repo]`, `review REPO NUMBER [--model] [--effort] [--skill]... [--attach\|--stop]`; `issue ls --repo REPO [--all]`; `forge tunnel [on\|off]`. |
+| `pr`, `issue`, `forge` | `pr ls [--repo] [--mine\|--review-requests] [--watch]`, `inspect REPO NUMBER`, `search --repo REPO QUERY`, `refresh [--repo]`, `review REPO NUMBER [--model] [--effort] [--skill]... [--attach\|--stop]`, `babysit REPO NUMBER [--model] [--effort] [--skill]... [--attach\|--stop]`; `issue ls --repo REPO [--all]`; `forge tunnel [on\|off]`. |
 | `permissions` | `ai show`, `enable [--wait]`, `disable`, `refresh [--wait]`, `set` with `--allow-threshold`, `--deny-threshold`, `--default-thresholds`, `--flavour`, or `--device`, and `test --tool TEXT --input JSON [--kind] [--option]... [--location]... [--workspace]`; `learned list [--repo]`, `show ID`, `rm ID`, and `scope ID all\|repository`. |
 | `completions`, `mcp` | `completions SHELL [--static]` for bash, elvish, fish, PowerShell, or zsh; `completions install [--shell bash\|zsh\|fish]`; `mcp serve`. |

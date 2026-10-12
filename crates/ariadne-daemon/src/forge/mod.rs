@@ -86,6 +86,37 @@ impl Remote {
             name: name.to_lowercase(),
         })
     }
+
+    /// `url`, with its own repository swapped for `target`'s: the same
+    /// scheme, host, user and port, whichever `url` names, so a fork is
+    /// reached the way the configured remote reaches its own repository
+    /// rather than the HTTPS URL the forge always reports for a head
+    /// (032) — the credentials a private fork needs are the ones already
+    /// set up for the base, not a plain clone URL nobody signed in on.
+    /// None for a `url` [`Self::parse`] itself would refuse.
+    pub fn rewrite(url: &str, target: &Remote) -> Option<String> {
+        let url = url.trim();
+        match url.split_once("://") {
+            Some((scheme, rest)) => {
+                if !matches!(scheme, "https" | "http" | "ssh" | "git" | "git+ssh") {
+                    return None;
+                }
+                let (authority, _) = rest.split_once('/')?;
+                Some(format!(
+                    "{scheme}://{authority}/{}/{}.git",
+                    target.owner, target.name
+                ))
+            }
+            None => {
+                let (authority, path) = url.split_once(':')?;
+                if authority.contains('/') {
+                    return None;
+                }
+                let _ = path;
+                Some(format!("{authority}:{}/{}.git", target.owner, target.name))
+            }
+        }
+    }
 }
 
 /// The only identity of a pull request: its registered repository and number.

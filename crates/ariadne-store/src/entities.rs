@@ -718,6 +718,27 @@ pub struct PullRequestRow {
     /// moves the live head past it, which the `pull_request` attention
     /// producer reads as the claim's own revision gone stale.
     pub ready_head_sha: Option<String>,
+    /// Whether the user asked Ariadne to keep a request of their own by
+    /// hand (032): a keeper session runs on it while it is open, beside the
+    /// task that would otherwise keep it — but a task-opened request never
+    /// carries this, since asking is refused on one.
+    pub babysit_asked: bool,
+    /// The pin the user picked for that keeper session; None where nobody
+    /// asked.
+    pub babysit_model: Option<String>,
+    pub babysit_effort: Option<String>,
+    /// The skills the user picked for it beside `pr-babysit`, as a JSON
+    /// list.
+    #[sqlx(rename = "babysit_skills")]
+    pub babysit_skills_json: String,
+}
+
+impl PullRequestRow {
+    /// The skills the user picked for keeping this request by hand (032),
+    /// beside the `pr-babysit` every keeper session loads.
+    pub fn babysit_skills(&self) -> Vec<String> {
+        serde_json::from_str(&self.babysit_skills_json).unwrap_or_default()
+    }
 }
 
 /// What the forge says of a request, as the last read found it: held in
@@ -806,6 +827,10 @@ pub struct PullRequest {
     pub reviewer_given_up_wedged: bool,
     pub ready_confirmed_at: Option<String>,
     pub ready_head_sha: Option<String>,
+    pub babysit_asked: bool,
+    pub babysit_model: Option<String>,
+    pub babysit_effort: Option<String>,
+    pub babysit_skills_json: String,
 }
 
 impl PullRequest {
@@ -857,6 +882,10 @@ impl PullRequest {
             reviewer_given_up_wedged: row.reviewer_given_up_wedged,
             ready_confirmed_at: row.ready_confirmed_at,
             ready_head_sha: row.ready_head_sha,
+            babysit_asked: row.babysit_asked,
+            babysit_model: row.babysit_model,
+            babysit_effort: row.babysit_effort,
+            babysit_skills_json: row.babysit_skills_json,
         }
     }
 
@@ -864,6 +893,12 @@ impl PullRequest {
     /// (029), beside the `pr-reviewer` every review session loads.
     pub fn review_skills(&self) -> Vec<String> {
         serde_json::from_str(&self.review_skills_json).unwrap_or_default()
+    }
+
+    /// The skills the user picked for keeping a request of their own by
+    /// hand (032), beside the `pr-babysit` every keeper session loads.
+    pub fn babysit_skills(&self) -> Vec<String> {
+        serde_json::from_str(&self.babysit_skills_json).unwrap_or_default()
     }
 }
 

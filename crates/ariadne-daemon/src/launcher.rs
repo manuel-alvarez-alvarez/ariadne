@@ -136,7 +136,10 @@ impl Launcher {
         let seat = session.seat().context("a staffed session needs a seat")?;
         if let Some(pull_request_id) = &session.pull_request_id {
             let pull = self.pull_view(pull_request_id).await?;
-            return self.review_skills(&pull).await;
+            return match seat {
+                Seat::Keeper => self.keeper_skills(&pull).await,
+                _ => self.review_skills(&pull).await,
+            };
         }
         Ok(match seat {
             Seat::Orchestrator => vec![
@@ -144,7 +147,7 @@ impl Launcher {
                     .get_skill(ariadne_store::defaults::ORCHESTRATION_SKILL)
                     .await?,
             ],
-            Seat::Agent | Seat::Reviewer => match &session.task_agent_id {
+            Seat::Agent | Seat::Reviewer | Seat::Keeper => match &session.task_agent_id {
                 Some(id) => self.store.agent_skills(id).await?,
                 None => Vec::new(),
             },
@@ -170,6 +173,24 @@ impl Launcher {
         Ok(skills)
     }
 
+    /// What a keeper session loads (032): `pr-babysit`, the same playbook
+    /// the `pr` column of a task stages (030), and the skills the user
+    /// picked when asking. A skill deleted since is passed over rather
+    /// than failing the launch.
+    async fn keeper_skills(&self, pull: &PullRequest) -> Result<Vec<ariadne_store::Skill>> {
+        let mut skills = vec![
+            self.store
+                .get_skill(ariadne_store::defaults::PR_BABYSIT_SKILL)
+                .await?,
+        ];
+        for name in pull.babysit_skills() {
+            if let Ok(skill) = self.store.get_skill(&name).await {
+                skills.push(skill);
+            }
+        }
+        Ok(skills)
+    }
+
     /// [`Self::spawn_ctx`] with the skills already decided.
     async fn spawn_ctx_with(
         &self,
@@ -188,7 +209,7 @@ impl Launcher {
         // stale link behind an empty staffing.
         let skills_dir = link_skills(&run_dir, &self.cfg.skills_dir)?;
         let system_prompt = match session.pull_request_id {
-            Some(_) => prompts::pull_request_system_prompt(&skills, Some(&skills_dir)),
+            Some(_) => prompts::pull_request_system_prompt(seat, &skills, Some(&skills_dir)),
             None => prompts::system_prompt(seat, &skills, Some(&skills_dir)),
         };
         let skill_index = prompts::skill_index(&skills, Some(&skills_dir));
@@ -1050,7 +1071,9 @@ impl Launcher {
             Some(Seat::Orchestrator) => self.orchestrator_switch(&old).await?,
             Some(_) if old.pull_request_id.is_some() => self.pull_request_switch(&old).await?,
             Some(Seat::Agent) => self.agent_switch(&old).await?,
-            Some(Seat::Reviewer) => anyhow::bail!("a review session works for a request"),
+            Some(Seat::Reviewer | Seat::Keeper) => {
+                anyhow::bail!("a review or keeper session works for a request")
+            }
         };
         let events = self.store.list_session_events(&old.id).await?;
         let handoff = handoff_text(&events, HANDOFF_BUDGET);
@@ -1383,7 +1406,9 @@ impl Launcher {
 /// A review session: its worktree detached at the request's head, its row,
 /// and its agent (029). The daemon staffs it on the pin asked directly on
 /// the row; no goal, task or orchestrator is behind it. A request of the
-/// user's own has none: its task's `pr` column keeps it (030).
+/// user's own has none: its task's `pr` column keeps it (030), unless the
+/// user asked Ariadne to keep it by hand instead, on a keeper session of
+/// its own (032).
 impl Launcher {
     /// Where a request's worktree is cut: one per request, named by its id.
     fn pull_request_worktree_path(&self, pull_request_id: &str) -> PathBuf {
@@ -1393,6 +1418,26 @@ impl Launcher {
     /// Whether a request's worktree is still on disk.
     pub(crate) fn pull_request_worktree_exists(&self, pull_request_id: &str) -> bool {
         self.pull_request_worktree_path(pull_request_id).exists()
+    }
+
+    /// Where a request's keeper worktree is cut (032): one per request,
+    /// distinct from the reviewer's, since the two may run beside each
+    /// other on the same request.
+    fn keeper_worktree_path(&self, pull_request_id: &str) -> PathBuf {
+        self.cfg
+            .worktree_root
+            .join(format!("pr-{pull_request_id}-keep"))
+    }
+
+    /// Whether a request's keeper worktree is still on disk.
+    pub(crate) fn keeper_worktree_exists(&self, pull_request_id: &str) -> bool {
+        self.keeper_worktree_path(pull_request_id).exists()
+    }
+
+    /// The local branch a keeper session commits and pushes on (032): one
+    /// per request, so the worktree beside it is never an orphan.
+    fn keeper_branch(&self, pull_request_id: &str) -> String {
+        format!("ariadne/keep-{pull_request_id}")
     }
 
     /// The worktree of a request the user reviews (029), detached at the
@@ -1446,9 +1491,136 @@ impl Launcher {
         Ok(worktree)
     }
 
-    /// Refuse a second live review session on one request.
-    async fn assert_no_live_pull_request_session(&self, pull_request_id: &str) -> Result<()> {
-        let seat = Seat::Reviewer;
+    /// The worktree of a request the user keeps by hand (032), on a local
+    /// branch cut from the fetched head branch: created on the first spawn
+    /// alone. Unlike [`Self::review_worktree`] this worktree commits and
+    /// pushes, so a later call never moves it back to the head — that
+    /// would throw away work the keeper has not pushed yet.
+    pub(crate) async fn keeper_worktree(
+        &self,
+        pull: &PullRequest,
+        repo: &Repository,
+    ) -> Result<(PathBuf, String)> {
+        let worktree = self.keeper_worktree_path(&pull.id);
+        let branch = self.keeper_branch(&pull.id);
+        if worktree.is_dir() {
+            return Ok((worktree, branch));
+        }
+        let repo_path = PathBuf::from(&repo.path);
+        let at = match self.git.has_commit(&repo_path, &pull.head_sha).await? {
+            true => pull.head_sha.clone(),
+            false => {
+                let from = self.keeper_remote(pull, repo).await?;
+                self.git
+                    .fetch_head_of(&repo_path, &from, &pull.head_branch)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "fetching the head branch {} of pull request {}",
+                            pull.head_branch, pull.id
+                        )
+                    })?;
+                "FETCH_HEAD".to_string()
+            }
+        };
+        std::fs::create_dir_all(&self.cfg.worktree_root)?;
+        self.git.prune_worktrees(&repo_path).await.ok();
+        self.git
+            .add_worktree_at(&repo_path, &worktree, &branch, &at)
+            .await?;
+        Ok((worktree, branch))
+    }
+
+    /// Where a keeper pushes a fix to, and checks its safety against
+    /// (032): the repository's own configured remote, whatever protocol it
+    /// uses, for a head on the same repository — the forge always reports
+    /// that one over HTTPS, which an SSH-only remote cannot push to — or,
+    /// for a genuine fork, that remote's own push URL, with the fork's
+    /// owner and name swapped in for the one it is configured with. A
+    /// fork needs authenticated transport to fetch a private one, same as
+    /// to push to it, and the push URL is the one the user's credentials
+    /// are actually set up for — the fetch URL is often plain HTTPS even
+    /// where the push one is SSH, exactly because fetching never used to
+    /// need to authenticate. Falls back to the forge's own URL where the
+    /// configured remote's own cannot be read or rewritten.
+    async fn keeper_remote(&self, pull: &PullRequest, repo: &Repository) -> Result<String> {
+        let configured = repo
+            .forge
+            .as_ref()
+            .map_or_else(|| "origin".to_string(), |forge| forge.remote.clone());
+        let Some(head_repo) = pull.head_repo.as_deref() else {
+            return Ok(configured);
+        };
+        let Some(forge) = repo.forge.as_ref() else {
+            return Ok(head_repo.to_string());
+        };
+        let Some(parsed) = crate::forge::Remote::parse(head_repo) else {
+            return Ok(head_repo.to_string());
+        };
+        if parsed.host.eq_ignore_ascii_case(&forge.host)
+            && parsed.owner.eq_ignore_ascii_case(&forge.owner)
+            && parsed.name.eq_ignore_ascii_case(&forge.name)
+        {
+            return Ok(configured);
+        }
+        let repo_path = Path::new(&repo.path);
+        Ok(
+            match self.git.remote_push_url(repo_path, &configured).await.ok() {
+                Some(url) => crate::forge::Remote::rewrite(&url, &parsed)
+                    .unwrap_or_else(|| head_repo.to_string()),
+                None => head_repo.to_string(),
+            },
+        )
+    }
+
+    /// The command a keeper session pushes a fix with (032): its local
+    /// branch onto the request's own head branch, on the request's head
+    /// repository.
+    async fn keeper_push_command(&self, pull: &PullRequest, repo: &Repository) -> Result<String> {
+        Ok(format!(
+            "git push {} HEAD:{}",
+            self.keeper_remote(pull, repo).await?,
+            pull.head_branch
+        ))
+    }
+
+    /// Whether a keeper's local branch is safe for teardown to discard
+    /// (032): its tip is already what the request's head repository has
+    /// for the head branch, read with `git ls-remote` rather than a fetch.
+    /// Where the remote carries no such branch any more — a merge that
+    /// deleted it, most often — safe instead where the request is
+    /// actually merged and the local tip is exactly the head the forge
+    /// itself last read for it: an unmerged request whose source
+    /// vanished has nowhere else its commit is known, whatever head the
+    /// forge last read, so teardown must not throw away the only copy of
+    /// it either way.
+    async fn keeper_branch_is_safe_to_discard(
+        &self,
+        repo_path: &Path,
+        pull: &PullRequest,
+        repo: &Repository,
+        branch: &str,
+    ) -> Result<bool> {
+        let local = self.git.branch_tip(repo_path, branch).await?;
+        let remote = self.keeper_remote(pull, repo).await?;
+        Ok(
+            match self
+                .git
+                .remote_branch_tip(repo_path, &remote, &pull.head_branch)
+                .await?
+            {
+                Some(tip) => tip == local,
+                None => pull.state == "merged" && local == pull.head_sha,
+            },
+        )
+    }
+
+    /// Refuse a second live session of `seat` on one request.
+    async fn assert_no_live_pull_request_session(
+        &self,
+        pull_request_id: &str,
+        seat: Seat,
+    ) -> Result<()> {
         for session in self
             .store
             .list_sessions(SessionFilter {
@@ -1479,7 +1651,8 @@ impl Launcher {
         pin: AgentPin,
     ) -> Result<AgentSession> {
         let seat = Seat::Reviewer;
-        self.assert_no_live_pull_request_session(&pull.id).await?;
+        self.assert_no_live_pull_request_session(&pull.id, seat)
+            .await?;
         let repo = self.store.get_repository(&pull.repository_id).await?;
         let worktree = self.review_worktree(pull, &repo).await?;
         let session = self
@@ -1562,7 +1735,8 @@ impl Launcher {
         else {
             return self.spawn_pull_request_session(pull, pin).await;
         };
-        self.assert_no_live_pull_request_session(&pull.id).await?;
+        self.assert_no_live_pull_request_session(&pull.id, seat)
+            .await?;
         let repo = self.store.get_repository(&pull.repository_id).await?;
         let worktree = self.review_worktree(pull, &repo).await?;
         let session = self
@@ -1574,7 +1748,7 @@ impl Launcher {
             .await
     }
 
-    /// The briefing a request's session is started and resumed on.
+    /// The briefing a request's review session is started and resumed on.
     pub(crate) fn pull_request_briefing_of(
         &self,
         pull: &PullRequest,
@@ -1595,22 +1769,208 @@ impl Launcher {
         )
     }
 
-    /// Kill a request's sessions and remove its worktree, and touch no
-    /// branch: what Ariadne takes down when it stops working on a request.
+    /// Start a fresh keeper session on a request of the user's own asked
+    /// for by hand (032): its worktree on a local branch cut from the
+    /// fetched head, a row with no goal, task or staffed agent, titled by
+    /// the request, and an agent on `pin` that loads `pr-babysit` and is
+    /// briefed on the request.
+    pub async fn spawn_keeper_session(
+        &self,
+        pull: &PullRequest,
+        pin: AgentPin,
+    ) -> Result<AgentSession> {
+        let seat = Seat::Keeper;
+        self.assert_no_live_pull_request_session(&pull.id, seat)
+            .await?;
+        let repo = self.store.get_repository(&pull.repository_id).await?;
+        let (worktree, branch) = self.keeper_worktree(pull, &repo).await?;
+        let session = self
+            .store
+            .create_session(NewSession {
+                goal_id: None,
+                task_id: None,
+                seat: Some(seat),
+                task_agent_id: None,
+                model: pin.model,
+                effort: pin.effort,
+                worktree_path: Some(worktree.display().to_string()),
+                pull_request_id: Some(pull.id.clone()),
+            })
+            .await?;
+        self.store
+            .set_session_title_if_unset(&session.id, &pull.title)
+            .await?;
+        let briefing = self
+            .keeper_briefing_of(pull, &repo, &worktree, &branch)
+            .await?;
+        let skills = self.keeper_skills(pull).await?;
+        let ctx = self
+            .spawn_ctx_with(&session, worktree, briefing, skills)
+            .await?;
+        let plan = plan_spawn(&ctx)?;
+        self.launch(&session, plan, &ctx.launch_id).await?;
+        for previous in self
+            .store
+            .list_sessions(SessionFilter {
+                pull_request_id: Some(pull.id.clone()),
+                ..Default::default()
+            })
+            .await?
+        {
+            if previous.id != session.id
+                && previous.seat() == Some(seat)
+                && previous.attention_reason().is_some()
+            {
+                let _ = self.store.clear_session_attention(&previous.id).await;
+            }
+        }
+        self.store
+            .get_session(&session.id)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Put a request's keeper session back on its feet (032), as
+    /// [`Self::resume_pull_request_session`] does a reviewer's.
+    pub(crate) async fn resume_keeper_session(
+        &self,
+        pull: &PullRequest,
+        pin: AgentPin,
+    ) -> Result<AgentSession> {
+        let seat = Seat::Keeper;
+        let previous = self
+            .store
+            .list_sessions(SessionFilter {
+                pull_request_id: Some(pull.id.clone()),
+                ..Default::default()
+            })
+            .await?
+            .into_iter()
+            .rev()
+            .find(|s| s.seat() == Some(seat));
+        let Some((previous, internal)) = previous
+            .filter(|s| !s.died_on_arrival())
+            .filter(|s| s.model == pin.model && s.effort == pin.effort)
+            .and_then(|s| s.internal_session_id.clone().map(|internal| (s, internal)))
+        else {
+            return self.spawn_keeper_session(pull, pin).await;
+        };
+        self.assert_no_live_pull_request_session(&pull.id, seat)
+            .await?;
+        let repo = self.store.get_repository(&pull.repository_id).await?;
+        let (worktree, branch) = self.keeper_worktree(pull, &repo).await?;
+        let session = self
+            .store
+            .restart_session(&previous.id, Some(&worktree.display().to_string()))
+            .await?;
+        let briefing = self
+            .keeper_briefing_of(pull, &repo, &worktree, &branch)
+            .await?;
+        self.launch_resumed(&session, worktree, &internal, &briefing)
+            .await
+    }
+
+    /// The briefing a request's keeper session is started and resumed on
+    /// (032): the request, its worktree and local branch, and the command
+    /// that pushes a fix to it.
+    pub(crate) async fn keeper_briefing_of(
+        &self,
+        pull: &PullRequest,
+        repo: &Repository,
+        worktree: &Path,
+        branch: &str,
+    ) -> Result<String> {
+        let login = repo
+            .forge
+            .as_ref()
+            .and_then(|forge| forge.login.clone())
+            .unwrap_or_default();
+        Ok(prompts::pull_request_keeper_briefing(
+            ariadne_store::defaults::pull_request_keeper_briefing_prompt(),
+            pull,
+            repo,
+            &worktree.display().to_string(),
+            branch,
+            &login,
+            &self.keeper_push_command(pull, repo).await?,
+        ))
+    }
+
+    /// Kill every session of a request, reviewer's and keeper's alike, and
+    /// remove both their worktrees and the keeper's local branch: what
+    /// Ariadne takes down when it stops working on a request whole.
+    ///
+    /// `pull` is the request's live read, where the caller has one: the
+    /// keeper's own safety check reads its head branch and repository off
+    /// it. Without one — the forge integration off, so nothing has read
+    /// it — the keeper's worktree and branch are left on disk rather than
+    /// guessed safe.
     pub(crate) async fn end_pull_request_sessions(
         &self,
         pull_request_id: &str,
         repository_id: &str,
+        pull: Option<&PullRequest>,
+    ) -> Result<()> {
+        self.end_seated_pull_request_work(pull_request_id, repository_id, Seat::Reviewer, None)
+            .await?;
+        self.end_seated_pull_request_work(pull_request_id, repository_id, Seat::Keeper, pull)
+            .await
+    }
+
+    /// Kill a request's reviewer session and remove its worktree alone
+    /// (029): a keeper session the same row still carries, if any, is left
+    /// running.
+    pub(crate) async fn end_reviewer_sessions(
+        &self,
+        pull_request_id: &str,
+        repository_id: &str,
+    ) -> Result<()> {
+        self.end_seated_pull_request_work(pull_request_id, repository_id, Seat::Reviewer, None)
+            .await
+    }
+
+    /// Kill a request's keeper session, remove its worktree and delete its
+    /// local branch (032): a reviewer session the same row still carries,
+    /// if any, is left running. `pull` is the request's live read, which
+    /// the keeper's own safety check reads its head branch and repository
+    /// off.
+    pub(crate) async fn end_keeper_sessions(
+        &self,
+        pull_request_id: &str,
+        repository_id: &str,
+        pull: &PullRequest,
+    ) -> Result<()> {
+        self.end_seated_pull_request_work(pull_request_id, repository_id, Seat::Keeper, Some(pull))
+            .await
+    }
+
+    /// Kill every live session of `seat` on a request and remove its
+    /// worktree; a keeper's local branch goes with it, since nothing but
+    /// the keeper ever commits there.
+    ///
+    /// A keeper's worktree and branch are removed only once its work is
+    /// confirmed safe to discard (032): a failed removal is returned
+    /// rather than swallowed, so the scheduler retries teardown instead of
+    /// deleting the row over a worktree still on disk.
+    async fn end_seated_pull_request_work(
+        &self,
+        pull_request_id: &str,
+        repository_id: &str,
+        seat: Seat,
+        pull: Option<&PullRequest>,
     ) -> Result<()> {
         let repo = self.store.get_repository(repository_id).await?;
         let repo_path = PathBuf::from(&repo.path);
-        let sessions = self
+        let sessions: Vec<AgentSession> = self
             .store
             .list_sessions(SessionFilter {
                 pull_request_id: Some(pull_request_id.to_string()),
                 ..Default::default()
             })
-            .await?;
+            .await?
+            .into_iter()
+            .filter(|s| s.seat() == Some(seat))
+            .collect();
         for session in &sessions {
             if session.status().is_live() || self.acp.is_running(&session.id) {
                 tracing::info!(pull_request = %pull_request_id, session = %session.id, "the request ended, killing its session");
@@ -1621,26 +1981,76 @@ impl Launcher {
             .iter()
             .filter_map(|s| s.worktree_path.as_deref().map(PathBuf::from))
             .collect();
-        worktrees.push(self.pull_request_worktree_path(pull_request_id));
+        worktrees.push(match seat {
+            Seat::Keeper => self.keeper_worktree_path(pull_request_id),
+            _ => self.pull_request_worktree_path(pull_request_id),
+        });
         worktrees.sort();
         worktrees.dedup();
+        let keeper_branch = match seat {
+            Seat::Keeper => Some(self.keeper_branch(pull_request_id)),
+            _ => None,
+        };
+        // Computed once, whether or not a worktree still exists: a branch
+        // nobody checked out any more can still hold a commit the
+        // request's head repository never got, and teardown must not
+        // drop the only reference to it (032).
+        let branch_safe = match &keeper_branch {
+            Some(branch) if self.git.branch_exists(&repo_path, branch).await? => match pull {
+                Some(pull) => {
+                    self.keeper_branch_is_safe_to_discard(&repo_path, pull, &repo, branch)
+                        .await?
+                }
+                None => false,
+            },
+            _ => true,
+        };
+        let mut preserved = false;
         for worktree in worktrees.iter().filter(|w| w.exists()) {
+            if keeper_branch.is_some() {
+                let clean = self.git.is_clean(worktree).await?;
+                if !clean || !branch_safe {
+                    tracing::warn!(pull_request = %pull_request_id, worktree = %worktree.display(), "the keeper's worktree holds work the request's head lacks, leaving it on disk");
+                    preserved = true;
+                    continue;
+                }
+            }
             tracing::info!(pull_request = %pull_request_id, worktree = %worktree.display(), "removing the request's worktree");
-            self.git.remove_worktree(&repo_path, worktree).await.ok();
+            self.git.remove_worktree(&repo_path, worktree).await?;
         }
         self.git.prune_worktrees(&repo_path).await.ok();
+        if let Some(branch) = &keeper_branch
+            && !preserved
+            && branch_safe
+            && self.git.branch_exists(&repo_path, branch).await?
+        {
+            self.git.delete_branch(&repo_path, branch).await?;
+        }
         Ok(())
     }
 
     /// A pull request session's switch: its worktree, its briefing, and no
-    /// resume text — the next news is what it works on.
+    /// resume text — the next news is what it works on. A keeper session
+    /// keeps its own worktree and branch; a reviewer's moves to the head.
     async fn pull_request_switch(&self, old: &AgentSession) -> Result<SwitchPlan> {
         let pull = self
             .pull_view(old.pull_request_id.as_deref().unwrap_or_default())
             .await?;
         let repo = self.store.get_repository(&pull.repository_id).await?;
-        let worktree = self.review_worktree(&pull, &repo).await?;
-        let briefing = self.pull_request_briefing_of(&pull, &repo, &worktree);
+        let (worktree, briefing) = match old.seat() {
+            Some(Seat::Keeper) => {
+                let (worktree, branch) = self.keeper_worktree(&pull, &repo).await?;
+                let briefing = self
+                    .keeper_briefing_of(&pull, &repo, &worktree, &branch)
+                    .await?;
+                (worktree, briefing)
+            }
+            _ => {
+                let worktree = self.review_worktree(&pull, &repo).await?;
+                let briefing = self.pull_request_briefing_of(&pull, &repo, &worktree);
+                (worktree, briefing)
+            }
+        };
         Ok(SwitchPlan {
             worktree: Some(worktree.display().to_string()),
             cwd: worktree,

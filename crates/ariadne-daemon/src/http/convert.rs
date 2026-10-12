@@ -539,11 +539,18 @@ pub(crate) async fn pull_request_dto_of(
         .await?
         .into_iter()
         .rev()
-        .find(|session| {
-            row.role != "author"
-                || (session.seat() == Some(Seat::Agent)
+        .find(|session| match row.origin_task_id {
+            // A task keeps its own request through the agent of its
+            // current column alone; any other session that happens to
+            // share the task is not it.
+            Some(_) if row.role == "author" => {
+                session.seat() == Some(Seat::Agent)
                     && session.task_agent_id.is_some()
-                    && session.task_agent_id.as_deref() == current_agent.as_deref())
+                    && session.task_agent_id.as_deref() == current_agent.as_deref()
+            }
+            // No task: the filter above already scoped the list to this
+            // row's own sessions alone, review's or keeper's.
+            _ => true,
         })
         .map(|session| session.id);
     Ok(pull_request_dto(row, session_id))
@@ -562,6 +569,10 @@ pub(crate) fn pull_request_dto(
         review_model: pull.review_model,
         review_effort: pull.review_effort.clone(),
         review_skills: serde_json::from_str(&pull.review_skills_json).unwrap_or_default(),
+        babysit_asked: pull.babysit_asked,
+        babysit_model: pull.babysit_model,
+        babysit_effort: pull.babysit_effort.clone(),
+        babysit_skills: serde_json::from_str(&pull.babysit_skills_json).unwrap_or_default(),
         review_requested: pull.review_requested,
         body: pull.body,
         session_id,
@@ -626,6 +637,10 @@ pub(crate) fn forge_pull_dto(
         review_model: None,
         review_effort: None,
         review_skills: Vec::new(),
+        babysit_asked: false,
+        babysit_model: None,
+        babysit_effort: None,
+        babysit_skills: Vec::new(),
         session_id: None,
     }
 }

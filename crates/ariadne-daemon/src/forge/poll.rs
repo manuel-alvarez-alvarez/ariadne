@@ -725,6 +725,13 @@ pub(crate) fn wants_session(row: &PullRequest, integration: &ForgeIntegration) -
     asked && row.state == "open" && integration.enabled && !row.draft
 }
 
+/// Whether the request `row` wants a keeper session of its own (032): a
+/// request of the user's own that no task opened, asked for directly on
+/// its own row by an explicit manual start, while it is open.
+pub(crate) fn wants_babysit_session(row: &PullRequest, integration: &ForgeIntegration) -> bool {
+    row.babysit_asked && row.babysit_model.is_some() && row.state == "open" && integration.enabled
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -776,6 +783,10 @@ mod tests {
             reviewer_given_up_wedged: false,
             ready_confirmed_at: None,
             ready_head_sha: None,
+            babysit_asked: false,
+            babysit_model: None,
+            babysit_effort: None,
+            babysit_skills_json: "[]".into(),
         }
     }
 

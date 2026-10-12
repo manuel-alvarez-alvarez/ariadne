@@ -1960,6 +1960,68 @@ async fn a_ready_request_the_forges_own_evidence_backs_up_raises_a_readiness_ite
     );
 }
 
+/// The same readiness item, for a request kept by a keeper session asked
+/// for by hand rather than a task (032): the same forge evidence, read the
+/// same way, raises it just as it does for a task-kept row.
+#[tokio::test]
+async fn a_ready_request_kept_by_hand_raises_the_same_readiness_item() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    crate::common::forge::enable_integration(&h, &cast.repo.id, "ariadne-bot").await;
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: cast.repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "author".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_pull_request_babysit_asked(
+            &pull.id,
+            Some((
+                &AgentPin {
+                    model: test_pin().model,
+                    effort: None,
+                },
+                &[],
+            )),
+        )
+        .await
+        .unwrap();
+    crate::common::forge::seed_review_evidence(
+        &h,
+        &pull,
+        crate::common::forge::ReviewEvidence {
+            checks: "success",
+            review_decision: "approved",
+            mergeable: "clean",
+            head_sha: "abc",
+            details_head_sha: None,
+            evidence_ok: true,
+            comments: Vec::new(),
+        },
+    );
+    h.store
+        .set_pull_request_ready(&pull.id, true, Some("abc"))
+        .await
+        .unwrap();
+
+    let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(list.items.len(), 1, "{:?}", list.items);
+    let item = &list.items[0];
+    assert_eq!(item.producer, AttentionProducer::PullRequest);
+    assert_eq!(
+        item.target,
+        AttentionTarget::PullRequest {
+            pull_request_id: pull.id.clone()
+        }
+    );
+}
+
 /// The same request, with every review thread resolved and no open
 /// comment, but no current approval, raises nothing either: both
 /// conditions — a current approval and resolved comments — must hold

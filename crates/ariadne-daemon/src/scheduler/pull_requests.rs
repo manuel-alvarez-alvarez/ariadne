@@ -24,7 +24,10 @@ use ariadne_store::{
 
 use crate::acp::NewsDelivery;
 use crate::agents::prompts;
-use crate::forge::{news, poll::wants_session};
+use crate::forge::{
+    news,
+    poll::{wants_babysit_session, wants_session},
+};
 
 use super::{QUIET_NUDGE_SECS, SPAWN_RETRY_BUDGET};
 
@@ -86,7 +89,7 @@ impl super::Scheduler {
         // request, whose agent keeps it once the integration is on again.
         if !enabled {
             self.launcher
-                .end_pull_request_sessions(&row.id, &row.repository_id)
+                .end_pull_request_sessions(&row.id, &row.repository_id, None)
                 .await?;
             if row.origin_task_id.is_none() {
                 self.stop_working(&row.id).await?;
@@ -107,12 +110,21 @@ impl super::Scheduler {
         // session beside its keeper's (029), taken down the same way.
         if pull.review_asked
             || self.launcher.pull_request_worktree_exists(&pull.id)
-            || !self.live_pull_request_sessions(&pull.id).await?.is_empty()
+            || !self.live_reviewer_sessions(&pull.id).await?.is_empty()
         {
             self.review_pass(&pull).await?;
         }
-        if pull.origin_task_id.is_none() && !pull.review_asked {
-            // Nobody keeps it and nobody reviews it: nothing to work on.
+        // A request of mine asked for by hand has a keeper session of its
+        // own beside a task's, or on no task at all (032).
+        if pull.babysit_asked
+            || self.launcher.keeper_worktree_exists(&pull.id)
+            || !self.live_keeper_sessions(&pull.id).await?.is_empty()
+        {
+            self.babysit_pass(&pull).await?;
+        }
+        if pull.origin_task_id.is_none() && !pull.review_asked && !pull.babysit_asked {
+            // Nobody keeps it, nobody reviews it and nobody babysits it:
+            // nothing to work on.
             return self.stop_working(&pull.id).await;
         }
         self.keep_pass(&pull).await
@@ -160,6 +172,7 @@ impl super::Scheduler {
         }
         self.launcher.live.remove(id);
         self.pull_request_cleanup_retry.remove(id);
+        self.keeper_skills_applied.remove(id);
         Ok(())
     }
 
@@ -197,8 +210,9 @@ impl super::Scheduler {
                 }
             }
             // Open with nobody to keep it: Ariadne stops working on it, but
-            // for the review the user asked of it, which runs on (029).
-            if !pull.review_asked {
+            // for the review or the keeper session the user asked of it,
+            // which run on (029, 032).
+            if !pull.review_asked && !pull.babysit_asked {
                 return self.stop_working(&pull.id).await;
             }
             return Ok(());
@@ -395,14 +409,7 @@ impl super::Scheduler {
         pull: &PullRequest,
         pin: AgentPin,
     ) -> anyhow::Result<()> {
-        let last = self
-            .store
-            .list_sessions(SessionFilter {
-                pull_request_id: Some(pull.id.clone()),
-                ..Default::default()
-            })
-            .await?
-            .pop();
+        let last = self.last_session_of(&pull.id, Seat::Reviewer).await?;
         if let Some(last) = &last
             && self.spent_on_a_dead_launch(&pull.id, &pull.id, last)
         {
@@ -497,7 +504,7 @@ impl super::Scheduler {
         // tick after a wait.
         let cleaned = self
             .launcher
-            .end_pull_request_sessions(&pull.id, &pull.repository_id)
+            .end_pull_request_sessions(&pull.id, &pull.repository_id, Some(pull))
             .await;
         match cleaned {
             Ok(()) => self.stop_working(&pull.id).await,
@@ -515,7 +522,7 @@ impl super::Scheduler {
     /// otherwise.
     async fn review_pass(&mut self, pull: &PullRequest) -> anyhow::Result<()> {
         let integration = self.store.forge_integration(&pull.repository_id).await?;
-        let live = self.live_pull_request_sessions(&pull.id).await?;
+        let live = self.live_reviewer_sessions(&pull.id).await?;
         let login = integration
             .as_ref()
             .and_then(|i| i.login.clone())
@@ -617,7 +624,167 @@ impl super::Scheduler {
         info!(pull_request = %pull.id, state = %pull.state, "the request wants no review, taking its work down");
         match self
             .launcher
-            .end_pull_request_sessions(&pull.id, &pull.repository_id)
+            .end_reviewer_sessions(&pull.id, &pull.repository_id)
+            .await
+        {
+            Ok(()) => {
+                self.pull_request_cleanup_retry.remove(&pull.id);
+                if done {
+                    self.stop_working(&pull.id).await?;
+                }
+                Ok(())
+            }
+            Err(e) => {
+                self.pull_request_cleanup_retry
+                    .insert(pull.id.clone(), Instant::now() + CLEANUP_RETRY);
+                Err(e)
+            }
+        }
+    }
+
+    /// A request of mine the user asked Ariadne to keep by hand (032): one
+    /// live keeper session while it is open and still asked for directly on
+    /// its own row; its session and worktree taken down otherwise.
+    async fn babysit_pass(&mut self, pull: &PullRequest) -> anyhow::Result<()> {
+        let integration = self.store.forge_integration(&pull.repository_id).await?;
+        let live = self.live_keeper_sessions(&pull.id).await?;
+        let login = integration
+            .as_ref()
+            .and_then(|i| i.login.clone())
+            .unwrap_or_default();
+        if !integration.is_some_and(|i| wants_babysit_session(pull, &i)) {
+            return self.end_babysit(pull, &live).await;
+        }
+        let running = live
+            .iter()
+            .find(|s| s.seat() == Some(Seat::Keeper) && self.launcher.acp.is_running(&s.id))
+            .cloned();
+        let pin = AgentPin {
+            model: pull.babysit_model.clone().unwrap_or_default(),
+            effort: pull.babysit_effort.clone(),
+        };
+        let skills = pull.babysit_skills();
+        let Some(session) = running else {
+            self.keeper_skills_applied
+                .insert(pull.id.clone(), skills.clone());
+            return self.start_babysit_session(pull, pin).await;
+        };
+        // A second ask can move the pin or the skills while this session
+        // still runs on the old ones (032): kill it and start fresh on the
+        // new ones, which reuses the worktree and the local branch rather
+        // than cutting them again, so its unpushed local work survives
+        // the restart. The skills a live session runs are not on its own
+        // row, so they are read off the last ask this map saw rather than
+        // off the session: absent, as right after the daemon restarts, a
+        // session already running is taken to run the current ones.
+        let skills_changed = self
+            .keeper_skills_applied
+            .get(&pull.id)
+            .is_some_and(|applied| *applied != skills);
+        if session.model != pin.model || session.effort != pin.effort || skills_changed {
+            info!(pull_request = %pull.id, session = %session.id, "the keeper's pin changed, restarting it on the new one");
+            self.launcher.kill_session(&session.id).await?;
+            self.keeper_skills_applied
+                .insert(pull.id.clone(), skills.clone());
+            return self.start_babysit_session(pull, pin).await;
+        }
+        self.keeper_skills_applied.insert(pull.id.clone(), skills);
+        if matches!(
+            session.status(),
+            SessionStatus::Running | SessionStatus::Idle
+        ) {
+            self.tell_pull_request(&session, pull, &login).await?;
+        }
+        if session.status() == SessionStatus::Running {
+            let repo = self.store.get_repository(&pull.repository_id).await?;
+            let worktree = session.worktree_path.clone().unwrap_or_default();
+            let branch = format!("ariadne/keep-{}", pull.id);
+            let briefing = self
+                .launcher
+                .keeper_briefing_of(pull, &repo, std::path::Path::new(&worktree), &branch)
+                .await?;
+            self.check_session_quiet(&session, SITUATION.to_string(), &briefing)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Start a keeper session, or put the one it had back on its feet,
+    /// within the spawn-retry budget: the same guard
+    /// `start_pull_request_session` keeps a reviewer under, on a budget
+    /// key of its own (`<id>:keep`) so a dead keeper launch never spends
+    /// the reviewer's count, or the other way round, on a row that asks
+    /// for both.
+    async fn start_babysit_session(
+        &mut self,
+        pull: &PullRequest,
+        pin: AgentPin,
+    ) -> anyhow::Result<()> {
+        let budget = format!("{}:keep", pull.id);
+        let last = self.last_session_of(&pull.id, Seat::Keeper).await?;
+        if let Some(last) = &last
+            && self.spent_on_a_dead_launch(&budget, &budget, last)
+        {
+            *self.spawn_failures.entry(budget.clone()).or_default() += 1;
+        }
+        if self.spawn_failures.get(&budget).copied().unwrap_or(0) >= SPAWN_RETRY_BUDGET {
+            warn!(pull_request = %pull.id, "the keeper session died on arrival too many times, giving up for now");
+            return Ok(());
+        }
+        match self.launcher.resume_keeper_session(pull, pin).await {
+            Ok(session) => {
+                info!(pull_request = %pull.id, session = %session.id, "the request's keeper session is up");
+                Ok(())
+            }
+            Err(e) => {
+                *self.spawn_failures.entry(budget).or_default() += 1;
+                Err(e)
+            }
+        }
+    }
+
+    /// The newest session of `seat` on a request, if any: what the
+    /// spawn-retry budget reads to tell a dead launch from a live one, kept
+    /// seat-scoped since a row can carry a reviewer and a keeper session
+    /// at once (032).
+    async fn last_session_of(
+        &self,
+        pull_request_id: &str,
+        seat: Seat,
+    ) -> anyhow::Result<Option<AgentSession>> {
+        Ok(self
+            .store
+            .list_sessions(SessionFilter {
+                pull_request_id: Some(pull_request_id.to_string()),
+                ..Default::default()
+            })
+            .await?
+            .into_iter()
+            .rfind(|s| s.seat() == Some(seat)))
+    }
+
+    /// A request asked for by hand that wants no keeper session (032):
+    /// merged, closed, or no longer asking. Its session is killed, its
+    /// worktree and local branch removed; Ariadne then stops working on it,
+    /// but for the task that still keeps it or the review still asked of it
+    /// (`pull_request_pass`'s own outer check decides that).
+    async fn end_babysit(
+        &mut self,
+        pull: &PullRequest,
+        live: &[AgentSession],
+    ) -> anyhow::Result<()> {
+        // Unlike a self-review, which only ends on an explicit `asked:
+        // false`, babysitting ends on the merge or the close too: nothing
+        // else keeps a hand-babysat row once this ends, since asking it is
+        // refused wherever a task already keeps the request (032).
+        let done = pull.origin_task_id.is_none() && !pull.review_asked;
+        if live.is_empty() && !self.launcher.keeper_worktree_exists(&pull.id) && !done {
+            return Ok(());
+        }
+        info!(pull_request = %pull.id, state = %pull.state, "the request wants no keeper, taking its work down");
+        match self
+            .launcher
+            .end_keeper_sessions(&pull.id, &pull.repository_id, pull)
             .await
         {
             Ok(()) => {
@@ -644,6 +811,24 @@ impl super::Scheduler {
                 ..Default::default()
             })
             .await?)
+    }
+
+    async fn live_reviewer_sessions(&self, id: &str) -> anyhow::Result<Vec<AgentSession>> {
+        Ok(self
+            .live_pull_request_sessions(id)
+            .await?
+            .into_iter()
+            .filter(|s| s.seat() == Some(Seat::Reviewer))
+            .collect())
+    }
+
+    async fn live_keeper_sessions(&self, id: &str) -> anyhow::Result<Vec<AgentSession>> {
+        Ok(self
+            .live_pull_request_sessions(id)
+            .await?
+            .into_iter()
+            .filter(|s| s.seat() == Some(Seat::Keeper))
+            .collect())
     }
 }
 

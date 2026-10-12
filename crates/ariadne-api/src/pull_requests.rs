@@ -70,8 +70,20 @@ pub struct PullRequestDto {
     /// The skills that review loads beside `pr-reviewer`.
     #[serde(default)]
     pub review_skills: Vec<String>,
-    /// The newest session on this request, if any: its review session
-    /// (029), or the author of the task that opened it (005).
+    /// Whether the user asked Ariadne to keep this request of their own by
+    /// hand (032).
+    #[serde(default)]
+    pub babysit_asked: bool,
+    /// The pin the user picked for that keeper session.
+    #[serde(default)]
+    pub babysit_model: Option<String>,
+    #[serde(default)]
+    pub babysit_effort: Option<String>,
+    /// The skills that keeper session loads beside `pr-babysit`.
+    #[serde(default)]
+    pub babysit_skills: Vec<String>,
+    /// The newest session on this request, if any: its review or keeper
+    /// session (029, 032), or the author of the task that opened it (005).
     #[serde(default)]
     pub session_id: Option<String>,
 }
@@ -205,6 +217,27 @@ pub struct AskReviewRequest {
     pub effort: Option<String>,
     /// The skills the review loads beside `pr-reviewer`, which every review
     /// session loads; skills a task agent is staffed on.
+    #[serde(default)]
+    pub skills: Vec<String>,
+}
+
+/// Body of
+/// `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-babysit`:
+/// whether Ariadne keeps a request of the user's own by hand (032), the
+/// same shape as [`AskReviewRequest`].
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AskBabysitRequest {
+    pub asked: bool,
+    /// The model the keeper session runs on, `agent:model`: required to
+    /// ask, and checked against the catalog as any pin is.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// The effort that model runs at; none for the agent's own.
+    #[serde(default)]
+    pub effort: Option<String>,
+    /// The skills the keeper session loads beside `pr-babysit`; skills a
+    /// task agent is staffed on.
     #[serde(default)]
     pub skills: Vec<String>,
 }

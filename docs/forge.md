@@ -3,9 +3,10 @@
 Ariadne works with the forge a repository's remote is on — GitHub through
 `gh`, GitLab through `glab` — once you enable it. Enabled, a request a
 task's `pr` column opens is kept by that column's agent until a human
-merges it, and a request asking for your review is yours to start
-Ariadne's review of, by hand, whenever you choose; no agent runs a forge
-command itself, and none approves or merges anything.
+merges it, a request asking for your review is yours to start Ariadne's
+review of, by hand, whenever you choose, and a request of your own that no
+task opened is yours to ask Ariadne to keep by hand too; no agent runs a
+forge command itself, and none approves or merges anything.
 
 ## Enabling it
 
@@ -99,7 +100,9 @@ task. Should the agent fall quiet once it has read the merge, the daemon
 advances or finishes the task itself and stops the agent.
 
 A request of yours that no task opened — one you opened by hand — is listed
-too, and nobody keeps it.
+too, and nobody keeps it until you ask Ariadne to babysit it; see [What a
+`pr-babysit` keeper session does](#what-a-pr-babysit-keeper-session-does)
+below.
 
 ## What a `pr-reviewer` session does
 
@@ -180,6 +183,28 @@ agent keeps, the review's findings go to that agent like anyone else's
 comments, though they are posted under your login: it answers each one,
 and fixes what needs fixing.
 
+## What a `pr-babysit` keeper session does
+
+A request of yours that no task opened can be kept by hand: call `PUT
+/v1/repositories/<repo-id>/pull-requests/<number>/ariadne-babysit` with
+`{"asked": true, "model": "<agent:model>", "effort": "<effort>", "skills":
+[...]}`, from the CLI as `ariadne pr babysit <repo-id> <number> --model
+<agent:model>`. `--model` is required, the same way `pr review`'s is. A
+request a task opened, or one by another login, cannot be babysat this
+way: asking is refused with 409.
+
+The keeper session loads `pr-babysit` — the same skill a task's `pr`
+column stages — and any other skill you pick. Its worktree is a local
+branch of its own, `ariadne/keep-<id>`, cut from the request's head, never
+a detached checkout: the keeper commits a fix there and pushes it onto the
+request's own head branch. It hears the same news a task's keeping agent
+does — a new comment, a check that turned to failure or back to green, a
+changed review decision, a merge or a close — replies and fixes the same
+way, and reports the request ready the same way. Unlike a self-review,
+which only ends when you stop asking, babysitting also ends on the merge
+or the close: the session, its worktree and its branch all go.
+`ariadne pr babysit <repo-id> <number> --stop` takes it down early.
+
 ## Nothing approves or merges in your name
 
 No session can post an approval or merge a request — there is no tool for
@@ -201,12 +226,13 @@ panel:
 
 - **Review needed** — a request that asks for your review and has no
   review asked yet: see the previous section for starting one by hand.
-- **Ready to merge** — a request a `pr` agent keeps, once its own `ready`
-  report is actually backed up by the forge's own evidence for the request's
-  current head: a current approval, every review thread actually resolved —
-  a reply alone is not enough — every check green, and the forge's own
-  confirmation the head can be merged now. A later push, a reopened comment
-  or an approval the forge no longer counts drops the item until the agent
+- **Ready to merge** — a request a `pr` agent keeps, or one a keeper
+  session babysits by hand, once its own `ready` report is actually
+  backed up by the forge's own evidence for the request's current head: a
+  current approval, every review thread actually resolved — a reply alone
+  is not enough — every check green, and the forge's own confirmation the
+  head can be merged now. A later push, a reopened comment or an approval
+  the forge no longer counts drops the item until the keeping agent
   reports ready again, on the new head. The merge itself is still always
   yours: Ariadne gives no approval.
 

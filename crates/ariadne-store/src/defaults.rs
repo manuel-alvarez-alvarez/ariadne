@@ -236,12 +236,14 @@ pub fn skill_text(document: &str) -> String {
 /// It says what the seat owes and nothing about the work itself: what an
 /// agent can do comes from the skills it loads, so this text is Ariadne's own
 /// and no row overrides it. A pull request reviewer (029) has a seat text of
-/// its own, [`pull_request_system_prompt`].
+/// its own, [`pull_request_system_prompt`], and so does a request's keeper
+/// (032), [`pull_request_keeper_system_prompt`].
 pub fn default_system_prompt(seat: Seat) -> &'static str {
     match seat {
         Seat::Orchestrator => ORCHESTRATOR_SYSTEM_PROMPT,
         Seat::Agent => AGENT_SYSTEM_PROMPT,
         Seat::Reviewer => PULL_REQUEST_REVIEW_SYSTEM_PROMPT,
+        Seat::Keeper => PULL_REQUEST_KEEPER_SYSTEM_PROMPT,
     }
 }
 
@@ -296,6 +298,34 @@ pub const PULL_REQUEST_PLACEHOLDERS: [&str; 10] = [
     "news",
     "head_sha",
     "reviewed_sha",
+];
+
+/// The system prompt of a session that keeps a request of the user's own
+/// asked for by hand (032): what the seat owes, as [`default_system_prompt`]
+/// says it for the task seats. The work itself is the [`PR_BABYSIT_SKILL`]
+/// document, the same one the `pr` column of a task stages (030).
+pub fn pull_request_keeper_system_prompt() -> &'static str {
+    PULL_REQUEST_KEEPER_SYSTEM_PROMPT
+}
+
+/// The briefing a keeper session starts on: the request, its worktree and
+/// branch, and how to push a fix to it.
+pub fn pull_request_keeper_briefing_prompt() -> &'static str {
+    PULL_REQUEST_KEEPER_BRIEFING
+}
+
+/// The placeholders [`pull_request_keeper_briefing_prompt`] is rendered
+/// with, by the daemon's `prompts` builders. A keeper session is woken with
+/// news on [`pull_request_news_prompt`], the same text a review session is.
+pub const PULL_REQUEST_KEEPER_PLACEHOLDERS: [&str; 8] = [
+    "title",
+    "url",
+    "repo_path",
+    "worktree_path",
+    "branch",
+    "base_branch",
+    "login",
+    "push_command",
 ];
 
 /// Orchestrator seat text: what the seat owes, and no step of the playbook.
@@ -372,6 +402,25 @@ const PULL_REQUEST_NEWS: &str = r#"News on "{title}":
 {news}
 
 Handle each item. Then end your turn."#;
+
+/// Seat text of a session that keeps a request of the user's own asked for
+/// by hand (032).
+const PULL_REQUEST_KEEPER_SYSTEM_PROMPT: &str = r#"You keep one open request of the user's own. Work only in your worktree, on its branch. Commit a fix and push it as the briefing says. Ariadne wakes you with the news. It ends you on the merge or the close. Then end your turn."#;
+
+/// Initial briefing of a keeper session (032): the request, the worktree and
+/// branch it works on, and the command that pushes a fix to the request.
+const PULL_REQUEST_KEEPER_BRIEFING: &str = r#"# Keep pull request: {title}
+
+{url}
+
+## Context
+- Repo: {repo_path}
+- Worktree (your cwd): {worktree_path}
+- Branch: {branch}, onto {base_branch}
+- Your login: {login}
+- Push with: {push_command}
+
+Keep this request."#;
 
 /// Initial briefing of an orchestrator session: the goal, its workflow with
 /// every column, and the repositories it works in.
@@ -605,15 +654,19 @@ mod tests {
             .collect()
     }
 
-    /// The texts of a review session and of a request's news, named for a
-    /// failure.
-    fn pull_request_texts() -> [(String, &'static str); 2] {
+    /// The texts of a review session, of a keeper session and of a
+    /// request's news, named for a failure.
+    fn pull_request_texts() -> [(String, &'static str); 3] {
         [
             (
                 "pull request review briefing".into(),
                 pull_request_briefing_prompt(),
             ),
             ("pull request news".into(), pull_request_news_prompt()),
+            (
+                "pull request keeper briefing".into(),
+                pull_request_keeper_briefing_prompt(),
+            ),
         ]
     }
 
@@ -667,17 +720,19 @@ mod tests {
     fn size_caps_hold() {
         // Three step texts, three orchestrator texts and the message.
         const KIND_TOTAL: usize = 1500;
-        // Every seat text, every kind and the two pull request texts.
+        // Every seat text, every kind and the three pull request texts.
         const GRAND_TOTAL: usize = 3400;
 
         // A cap per seat. The orchestrator's carried its playbook up to
         // 1750; the playbook is the `orchestration` skill now, and 200 holds
         // what is left to the seat text it is. The agent's seven steps fit in
-        // 750, and the pull request reviewer's one paragraph in 400.
+        // 750, and the pull request reviewer's and keeper's one paragraph
+        // each in 400.
         let system_cap = |seat: Seat| match seat {
             Seat::Agent => 750,
             Seat::Orchestrator => 200,
             Seat::Reviewer => 400,
+            Seat::Keeper => 400,
         };
         let cap = |kind: PromptKind| match kind {
             PromptKind::OrchestratorResume | PromptKind::AgentResume => 200,

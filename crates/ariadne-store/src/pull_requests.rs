@@ -263,6 +263,31 @@ impl Store {
         Ok(row)
     }
 
+    /// Ask Ariadne to keep a request of the user's own by hand on `pin`
+    /// with `skills` beside `pr-babysit`, or stop asking with None (032).
+    pub async fn set_pull_request_babysit_asked(
+        &self,
+        id: &str,
+        asked: Option<(&crate::AgentPin, &[String])>,
+    ) -> Result<PullRequestRow> {
+        let skills = asked.map_or_else(Vec::new, |(_, skills)| skills.to_vec());
+        let row: PullRequestRow = sqlx::query_as(
+            "UPDATE pull_requests SET babysit_asked = ?, babysit_model = ?, babysit_effort = ?,
+              babysit_skills = ?, updated_at = ? WHERE id = ? RETURNING *",
+        )
+        .bind(asked.is_some())
+        .bind(asked.map(|(p, _)| p.model.clone()))
+        .bind(asked.and_then(|(p, _)| p.effort.clone()))
+        .bind(serde_json::to_string(&skills).unwrap_or_else(|_| "[]".into()))
+        .bind(now())
+        .bind(id)
+        .fetch_optional(self.w())
+        .await?
+        .ok_or_else(|| not_found("pull_request", id))?;
+        self.publish(Change::PullRequestsChanged(row.repository_id.clone()));
+        Ok(row)
+    }
+
     /// Record the head a reviewer session posted its review on (029).
     /// Answers the row, and whether the sha moved.
     pub async fn set_pull_request_reviewed(

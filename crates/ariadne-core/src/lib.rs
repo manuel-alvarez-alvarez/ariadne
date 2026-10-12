@@ -72,12 +72,16 @@ pub enum Seat {
     /// The session that reviews a pull request the user was asked to review
     /// (029). It sits on no task.
     Reviewer,
+    /// The session that keeps a request of the user's own asked for by hand
+    /// (032). It sits on no goal and no task.
+    Keeper,
 }
 
 wire_enum! { Seat, "seat", [
     Orchestrator = "orchestrator",
     Agent = "agent",
     Reviewer = "reviewer",
+    Keeper = "keeper",
 ]}
 
 /// How the ACP runtime answers a tool permission request.
@@ -180,8 +184,8 @@ impl PromptKind {
     }
 
     /// The prompts a session of `seat` is briefed with, in briefing order.
-    /// A pull request reviewer (029) is briefed with texts of its own, which
-    /// are no lifecycle kind.
+    /// A pull request reviewer (029) and a request's keeper (032) are
+    /// briefed with texts of their own, which are no lifecycle kind.
     pub fn for_seat(seat: Seat) -> &'static [PromptKind] {
         match seat {
             Seat::Agent => &[
@@ -196,7 +200,7 @@ impl PromptKind {
                 PromptKind::GoalAttention,
                 PromptKind::IncomingMessage,
             ],
-            Seat::Reviewer => &[],
+            Seat::Reviewer | Seat::Keeper => &[],
         }
     }
 
@@ -668,18 +672,28 @@ mod tests {
         );
     }
 
-    /// The three seats are the orchestrator of a goal, the agent of a
-    /// column and the reviewer of a pull request, in that order, and each
-    /// one answers to the word the wire spells it with.
+    /// The four seats are the orchestrator of a goal, the agent of a
+    /// column, the reviewer of a pull request and the keeper of one asked
+    /// for by hand, in that order, and each one answers to the word the
+    /// wire spells it with.
     #[test]
-    fn the_seats_are_the_orchestrator_the_agent_and_the_pull_request_reviewer() {
+    fn the_seats_are_the_orchestrator_the_agent_the_pull_request_reviewer_and_the_keeper() {
         use std::str::FromStr;
 
-        assert_eq!(Seat::ALL, [Seat::Orchestrator, Seat::Agent, Seat::Reviewer]);
+        assert_eq!(
+            Seat::ALL,
+            [
+                Seat::Orchestrator,
+                Seat::Agent,
+                Seat::Reviewer,
+                Seat::Keeper
+            ]
+        );
         for (word, seat) in [
             ("orchestrator", Seat::Orchestrator),
             ("agent", Seat::Agent),
             ("reviewer", Seat::Reviewer),
+            ("keeper", Seat::Keeper),
         ] {
             assert_eq!(Seat::from_str(word), Ok(seat));
             assert_eq!(seat.as_str(), word);

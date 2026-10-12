@@ -102,6 +102,28 @@ impl GitManager {
         Ok(())
     }
 
+    /// Create a worktree on a fresh local `branch` cut at `at`, for a
+    /// session that keeps a request of the user's own by hand (032): unlike
+    /// [`Self::add_detached_worktree`] this worktree commits and pushes, so
+    /// it needs a branch of its own rather than a detached head. `-B`
+    /// rather than `-b`: an earlier cleanup that removed the worktree but
+    /// failed to delete the branch (its own error is swallowed, and the
+    /// next ask retries) must not leave this call refusing to recreate
+    /// either, since nothing but a keeper ever commits there — a fresh
+    /// worktree always starts the branch over at the head given here.
+    pub async fn add_worktree_at(
+        &self,
+        repo: &Path,
+        worktree: &Path,
+        branch: &str,
+        at: &str,
+    ) -> Result<()> {
+        let wt = worktree.display().to_string();
+        self.git(repo, &["worktree", "add", "-B", branch, &wt, at])
+            .await?;
+        Ok(())
+    }
+
     /// Move a detached worktree to a new detached position, e.g. the head of
     /// a request on its next push (029).
     ///
@@ -127,6 +149,17 @@ impl GitManager {
     pub(crate) async fn prune_worktrees(&self, repo: &Path) -> Result<()> {
         self.git(repo, &["worktree", "prune"]).await?;
         Ok(())
+    }
+
+    /// The URL a configured remote is pushed to, which a separate
+    /// `pushurl` may set away from the one it is fetched from: a fork's
+    /// own remote is built from this one, whether it is fetched or
+    /// pushed — the keeper needs authenticated transport for either, and
+    /// this is the URL the user's credentials are actually set up for
+    /// (032).
+    pub(crate) async fn remote_push_url(&self, repo: &Path, remote: &str) -> Result<String> {
+        self.git(repo, &["remote", "get-url", "--push", remote])
+            .await
     }
 
     pub async fn branch_exists(&self, repo: &Path, branch: &str) -> Result<bool> {
@@ -329,6 +362,33 @@ impl GitManager {
             .next()
             .and_then(|line| line.split_whitespace().next())
             .is_some_and(|sha| sha == local))
+    }
+
+    /// The tip `remote` has for `branch`, read with `git ls-remote` rather
+    /// than a fetch, None where the remote carries no such branch: one
+    /// deleted after the request it served merged (032).
+    pub(crate) async fn remote_branch_tip(
+        &self,
+        repo: &Path,
+        remote: &str,
+        branch: &str,
+    ) -> Result<Option<String>> {
+        let refs = self
+            .git(repo, &["ls-remote", "--heads", remote, branch])
+            .await?;
+        Ok(refs
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().next())
+            .map(str::to_string))
+    }
+
+    /// Whether `worktree` holds no uncommitted change: a keeper's own
+    /// worktree, read before teardown decides its work is safe to discard
+    /// (032).
+    pub(crate) async fn is_clean(&self, worktree: &Path) -> Result<bool> {
+        let status = self.git(worktree, &["status", "--porcelain"]).await?;
+        Ok(status.trim().is_empty())
     }
 
     /// True when `ancestor` is reachable from `descendant` — the merge

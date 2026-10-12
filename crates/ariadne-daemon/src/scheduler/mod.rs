@@ -182,6 +182,11 @@ pub(crate) struct Scheduler {
     /// Exhausted switches the task's orchestrator has not received yet.
     exhausted_notices: HashMap<String, ExhaustedNotice>,
     pull_request_cleanup_retry: HashMap<String, std::time::Instant>,
+    /// The skills a request's live keeper session last ran with, by pull
+    /// request id: in memory, since nothing but a later ask ever moves
+    /// them, and a session already running them needs no backfill but the
+    /// first pass that sees it (032).
+    keeper_skills_applied: HashMap<String, Vec<String>>,
     /// Held while any session is live, so the machine does not idle-sleep
     /// out from under a working agent.
     sleep: SleepInhibitor,
@@ -211,6 +216,7 @@ pub fn start(
         goal_told: HashMap::new(),
         exhausted_notices: HashMap::new(),
         pull_request_cleanup_retry: HashMap::new(),
+        keeper_skills_applied: HashMap::new(),
         sleep: SleepInhibitor::new(),
         prevent_sleep,
     };

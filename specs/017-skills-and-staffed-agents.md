@@ -45,9 +45,10 @@ written into the system prompt (006), and the lifecycle the seats sit in
    only where it sits. The agent of a develop column, of a review column and
    of a merge column are all `agent`, and differ only in the column they
    staff and the skills they hold.
-3. There are three seats. `orchestrator` belongs to a goal; `agent` belongs
+3. There are four seats. `orchestrator` belongs to a goal; `agent` belongs
    to one column of one task; `reviewer` belongs to a pull request (029,
-   rule 14). A task has one agent per column of its goal's workflow (030):
+   rule 14); `keeper` belongs to a request of the user's own asked for by
+   hand (032). A task has one agent per column of its goal's workflow (030):
    a task agent is written with its column (`step`) and its ordinal, which
    is the column's position in the task's staffing list. Whether a task is
    reviewed, and how it lands, is the workflow's to say, so the orchestrator
@@ -104,9 +105,10 @@ written into the system prompt (006), and the lifecycle the seats sit in
     (`Skill::seat`): `orchestration` is the orchestrator's, `pr-reviewer` is
     loaded by the daemon itself for a review session, and every other skill
     is a column agent's — `pr-babysit` included, which the `pr` column of
-    `develop-review-pr` stages (030). The store refuses a task agent staffed
-    on `orchestration` or `pr-reviewer`, and `list_skills` lists neither
-    (013). The launcher loads the orchestrator's skill from the store for
+    `develop-review-pr` stages (030) and which the daemon also loads for a
+    keeper session on a request asked for by hand (032). The store refuses
+    a task agent staffed on `orchestration` or `pr-reviewer`, and
+    `list_skills` lists neither (013). The launcher loads the orchestrator's skill from the store for
     every orchestrator session — indexed, and reached through the run
     directory's link the way a task agent's skills are (006, 007) — so an
     edit or a reset of it reaches the next launch and changes what a running

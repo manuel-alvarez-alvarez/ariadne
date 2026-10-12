@@ -30,9 +30,9 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    `session/resume` (021). It reads its identity from the environment —
    session, seat, goal and, for a task session, the task and its column — and
    proxies to the daemon's REST API with a session header, so the daemon
-   enforces the scoping itself. A review session (029) carries
-   `ARIADNE_PULL_REQUEST_ID` in place of a goal and a task, and its
-   instructions name the request.
+   enforces the scoping itself. A review session (029) or a keeper session
+   (032) carries `ARIADNE_PULL_REQUEST_ID` in place of a goal and a task,
+   and its instructions name the request.
 2. The server's instructions, which every session receives before its first
    prompt, say what this session is and carry the session rules that hold for
    every seat alike (006). After the rules come the seat's own text, picked
@@ -45,8 +45,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    a trailer; no skill and no tool description repeats either.
 3. Whether anyone answers a question is the one rule picked by seat: the
    orchestrator's user answers in the console; a column's agent works alone, and asks only where
-   the task cannot go on without the answer, and a pull request reviewer
-   where the request cannot. The rule names no channel — the seat's own
+   the task cannot go on without the answer, and a pull request reviewer or
+   keeper where the request cannot. The rule names no channel — the seat's own
    playbook already says how to ask. Every seat is told to call
    `wait_for_user` with a one-line hint first, and then to write the
    question in its reply, as reply text and not in its thinking: the
@@ -59,8 +59,9 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    line or than 100 characters (031 rule 11), so the question cannot move
    into the call. `withdraw_wait_for_user` takes the flag down again.
 4. Tools are filtered by seat both in the listing and on the call, so a tool a
-   seat may not use is one it never sees. There are three seats
-   (`McpSeat`): `Orchestrator`, `Agent` and `PullRequestReviewer`.
+   seat may not use is one it never sees. There are four seats
+   (`McpSeat`): `Orchestrator`, `Agent`, `PullRequestReviewer` and
+   `PullRequestKeeper`.
    - **orchestrator**: `get_task`, `create_task` (staffing the task with
      `agents`, one per column of the goal's workflow, each naming its
      `step`, its `skills` — the column's own where empty — its `model`, and
@@ -116,6 +117,16 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      `McpSeat::PullRequestReviewer`'s list beside its `#[tool]` in
      `tools.rs`; each one calls a route under `/v1/pull-requests/{id}` that
      the daemon accepts from the request's own sessions alone.
+   - **pull request keeper** — a session with `ARIADNE_PULL_REQUEST_ID`
+     set and seat `keeper` (032), on a request of the user's own asked for
+     by hand: `get_pull_request`, `get_diff`, `list_comments`,
+     `get_comment`, `reply_comment` and `report_pull_request` — the same
+     six request tools the agent seat has — beside `wait_for_user` and
+     `withdraw_wait_for_user`. Eight tools, and no task tool and no message
+     tool, the same as the reviewer's: it has no goal, task or staffed
+     agent to write to, and the user reaches it through its console. It
+     resolves no thread and submits no review: those stay the reviewer
+     seat's alone.
 5. A call to a tool outside the seat's list is refused by name rather than
    forwarded.
 6. A tool with no task in scope takes the session's own task, and refuses with
@@ -214,6 +225,9 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`tools.rs::the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request`).
 - A review session's MCP server is told the request and no goal or task
   (`adapters.rs::a_pull_request_session_tells_its_mcp_server_the_request_and_no_goal`).
+- The pull request keeper seat lists its six request tools beside
+  `wait_for_user` and no task or message tool (032)
+  (`mcp.rs::the_pull_request_keeper_seat_lists_its_tools_and_no_task_or_message_tool`).
 - A refused call reaches the agent in the daemon's words
   (`mcp.rs::a_refused_call_reaches_the_agent_in_the_daemons_words`).
 - The skill catalog excludes orchestrator-only skills, and gives a name and a
