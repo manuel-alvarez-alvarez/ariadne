@@ -138,27 +138,40 @@ It posts its findings at one of three priorities:
 Each round posts its new findings as one review — `request_changes` while
 a P0 finding is open, `comment` otherwise — never an approval. Each finding
 is an inline comment of its own on the line of the defect, opening on
-**[P0] Title**, then what goes wrong and how to fix it. A change request
-whose P0 findings are not on their lines is refused. On GitHub that is one
-API call carrying every inline comment; on GitLab, which has no review
-verdict of its own, one discussion per comment.
+**[P0] Title**, then what goes wrong and how to fix it. Where the fix
+replaces the commented line alone, the comment carries a `suggestion`
+block, holding the new text of that one line, the author can apply
+directly; a fix across lines, across files, or one that needs a test,
+stays prose. A change request whose P0 findings are not on their lines is
+refused. On GitHub that is one API call carrying every inline comment; on
+GitLab, which has no review verdict of its own, one discussion per
+comment.
 
 The review keeps **one summary comment** on the request, and every round
-rewrites it rather than adding another: a title, "## Review summary", the
-commit range it has reviewed, a
-prose paragraph on where it stands, and a recommendation — **Request
-changes** while a P0 is open, **Changes recommended** while a P1 or P2 is,
-or **No findings: this PR is ready to be merged.** — naming each open
-finding by priority and title, and nothing of what the reviewer did. It
-carries no trailer.
+rewrites it rather than adding another: a title, "## Review summary", a
+prose paragraph on what the change does, where its risk sits and how
+serious it is, naming no finding, file or line; a table, `| Priority |
+Finding | Status |` with status `open`, `declined` or `fixed`, one row
+per finding whose thread is still open, plus one `fixed` row for each
+thread the round resolved; and a recommendation — **Request changes**
+while a P0 is open (a declined P0 still counts), **Changes recommended**
+while a P1 or P2 is, or **No findings: this PR is ready to be merged.** —
+naming nothing of what the reviewer did. It carries no trailer.
 
-On a later round the reviewer posts nothing more in a thread nobody has
-answered: it waits for the answer. Once a commit fixes the defect, it
-replies so and resolves the thread; once someone answers and the defect is
-still there, it replies once saying so and why. On a request a task's agent
-keeps, the review's findings go to that agent like anyone else's comments,
-though they are posted under your login: it answers each one, and fixes
-what needs fixing.
+On a later round the reviewer settles each thread it opened before it
+hunts for more. The author answers in one of three ways: `Fixed in <sha>:
+...`, `Not changed: <why>.`, or a plain answer to a question. Once the
+defect is actually gone at the head, the reviewer replies `Fixed in
+<sha>.` and resolves the thread, whatever the author wrote. Where the
+last reply claims a fix (`Fixed in <sha>: ...`) but the defect is still
+there, the reviewer replies once, `Still there: <why>.`, and never says it
+again in that thread. Any other answered reply that leaves the defect in
+place — a `Not changed:` reply, or any other — gets no reply back; its row
+turns `declined` and the thread stays open, for the user to settle. A
+thread nobody has answered gets nothing: it waits. On a request a task's
+agent keeps, the review's findings go to that agent like anyone else's
+comments, though they are posted under your login: it answers each one,
+and fixes what needs fixing.
 
 ## Nothing approves or merges in your name
 
