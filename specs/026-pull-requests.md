@@ -316,7 +316,7 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `::an_agent_with_no_request_is_told_to_open_one`.
 - The skill is within its caps, names no forge CLI, timer, poll or resolve, opens the request once filling the repository's template or its three sections, starts on the news steps where one is already open, and ends on the merge or the close:
   `defaults.rs::tests::the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close`, `::skill_size_caps_hold`.
-- The skill answers each inline review comment once, in one of three shapes, skips a thanks, acts on a follow-up, never retries once a reviewer reply keeps a finding open, leaves a conversation comment, applies an accepted suggestion block, and posts no unrelated reply:
+- The skill answers each inline review comment once, in one of three shapes, skips a thanks, acts on a follow-up, never retries once a reviewer reply keeps a finding open, answers a conversation comment the same way, applies an accepted suggestion block, and posts no unrelated reply:
   `defaults.rs::tests::the_pr_babysit_skill_answers_each_comment_once_in_its_shape`.
 - `session ls` titles a request session with its title and URL:
   `session.rs::tests::a_pull_request_session_shows_the_request_title_and_url`.
@@ -333,12 +333,6 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `dispatch.test.ts::reads every request again on pull_requests_changed, which carries none`.
 - The session listing takes `pull_request` in OpenAPI:
   `session_list.rs::the_query_and_the_page_are_in_the_openapi_document`.
-
-## Known gap
-
-`reply_comment` now answers a conversation comment of the other side too
-(rule 16). The `pr-babysit` skill (030 rule 10) does not call it there yet:
-it still leaves a comment on the conversation thread unanswered.
 
 ## Sources
 

@@ -25,8 +25,8 @@ turn.
    - A follow-up ask in a thread you answered: a new ask. Act on it.
    - A reviewer reply that keeps a finding open: no second try. The
      user decides.
-   A comment on the conversation: leave it. The tool reaches no thread
-   there yet.
+   - A comment on the conversation: answer it the same way, once per
+     comment.
 4. A suggestion block you accept: apply it. Write your own code only
    where it does not compile or pass. Else reply `Not changed: <why>.`
 5. Fix each failed check in a new commit. Read its log at its URL. Where
