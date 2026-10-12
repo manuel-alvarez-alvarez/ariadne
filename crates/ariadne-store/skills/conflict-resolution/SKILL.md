@@ -16,7 +16,7 @@ A conflict is two intents that meet in one file. Resolve it by intent.
    Done when you can state each intent in one sentence.
 3. Resolve each hunk. Keep both intents where they fit together.
    Done when no conflict marker is left.
-4. Where two intents clash, keep the one the landing goal wants. Write the
+4. Where two intents clash, keep the one the goal of the task wants. Write the
    trade-off in the commit body.
    Done when the commit body names each intent you dropped.
 5. Run the tests and the lint of the files you resolved.

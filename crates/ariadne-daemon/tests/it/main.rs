@@ -45,6 +45,7 @@ mod repositories;
 mod resume;
 mod scheduler_attention;
 mod scheduler_dependencies;
+mod seat_brief;
 mod session_list;
 mod session_start;
 mod skill_documents;

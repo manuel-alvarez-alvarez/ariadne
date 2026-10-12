@@ -70,14 +70,14 @@ impl super::Scheduler {
             }
             let seat = message.from_actor().map_or("agent", |actor| actor.as_str());
             let task_title = self.sender_task_title(&message).await;
-            let skills = self.sender_skills(&message).await;
+            let column = self.sender_column(&message).await;
             let template = prompts::template_for(PromptKind::IncomingMessage);
             let text = prompts::incoming_message_briefing(
                 template,
                 &message,
                 seat,
                 task_title.as_deref(),
-                &skills,
+                column.as_deref(),
             );
             info!(
                 message = %message.id,
@@ -132,19 +132,14 @@ impl super::Scheduler {
         self.store.get_task(task_id).await.ok().map(|t| t.title)
     }
 
-    /// The skills of the sender's agent, in the order they reach it, for the
-    /// briefing to name: none for a message with no agent of its own, such
-    /// as the orchestrator's or the user's.
-    async fn sender_skills(&self, message: &Message) -> Vec<String> {
-        let Some(agent_id) = &message.from_agent_id else {
-            return Vec::new();
-        };
+    /// The workflow column of the agent that sent `message`, or None for a
+    /// message with no sending agent, such as the orchestrator's.
+    async fn sender_column(&self, message: &Message) -> Option<String> {
+        let agent_id = message.from_agent_id.as_ref()?;
         self.store
-            .agent_skills(agent_id)
+            .get_task_agent(agent_id)
             .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(|s| s.name)
-            .collect()
+            .ok()
+            .map(|agent| agent.step)
     }
 }

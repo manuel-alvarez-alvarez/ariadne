@@ -745,8 +745,9 @@ async fn available_commands_reach_console_streams_and_snapshots_without_storage(
     );
 }
 
-/// A listed slash command reaches the agent unchanged. Every other slash
-/// prompt remains a normal prompt with the system instruction before it.
+/// A listed slash command reaches the agent unchanged, and so does every
+/// later prompt: only the first turn of a launch carries the seat brief, on
+/// an agent that takes it in a turn (006).
 #[tokio::test]
 async fn only_available_slash_commands_skip_the_system_prompt() {
     let agent_dir = tempfile::tempdir().unwrap();
@@ -766,16 +767,14 @@ async fn only_available_slash_commands_skip_the_system_prompt() {
     let cast = acp_cast(&h).await;
     let session = spawned_idle(&h, &cast).await;
 
-    for (index, text) in [
+    let texts = [
         "/compact",
         "/compact now",
         "/foo",
         "/Users/x/notes.md has an error",
         "/compact",
-    ]
-    .into_iter()
-    .enumerate()
-    {
+    ];
+    for (index, text) in texts.into_iter().enumerate() {
         let (status, _) = h.send(post_console_input(&session.id, text)).await;
         assert_eq!(status, StatusCode::NO_CONTENT);
         eventually(TIMEOUT, "the posted prompt to finish", || async {
@@ -786,29 +785,11 @@ async fn only_available_slash_commands_skip_the_system_prompt() {
     }
 
     let prompts = stub.calls_of("session/prompt");
-    for (request, text) in prompts
-        .iter()
-        .skip(1)
-        .take(2)
-        .zip(["/compact", "/compact now"])
-    {
+    for (request, text) in prompts.iter().skip(1).zip(texts) {
         assert_eq!(
             request,
             &json!({"sessionId": "stub-session", "prompt": [{"type": "text", "text": text}]}),
         );
-    }
-    for (request, text) in
-        prompts
-            .iter()
-            .skip(3)
-            .zip(["/foo", "/Users/x/notes.md has an error", "/compact"])
-    {
-        assert_eq!(request["sessionId"], "stub-session");
-        assert_eq!(request["prompt"][0]["type"], "text");
-        let sent = request["prompt"][0]["text"].as_str().unwrap();
-        assert!(sent.ends_with(&format!("\n\n{text}")), "{request}");
-        assert!(!sent.starts_with("\n\n"), "{request}");
-        assert_ne!(sent, text, "{request}");
     }
 }
 
@@ -2005,11 +1986,9 @@ async fn console_input_is_reported_as_its_text_from_the_console() {
     assert_eq!(prompts[0]["payload"]["source"], "daemon");
     assert_eq!(prompts[1]["payload"]["text"], "stream it");
     assert_eq!(prompts[1]["payload"]["source"], "console");
-    assert!(
-        prompts[1]["payload"]["prompt"]
-            .as_str()
-            .unwrap()
-            .ends_with("\n\nstream it"),
+    // A later turn carries its own text alone (006).
+    assert_eq!(
+        prompts[1]["payload"]["prompt"], "stream it",
         "{}",
         prompts[1]
     );

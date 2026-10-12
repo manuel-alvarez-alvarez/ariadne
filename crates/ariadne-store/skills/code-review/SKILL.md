@@ -9,17 +9,9 @@ Judge two axes apart: repository conventions, and task acceptance.
 
 ## Steps
 
-1. For a branch review, run
-   `git checkout --detach <branch>` in the review worktree.
-   Start the tests and lint of the crates and packages the diff changed,
-   once for this verdict. Run them in the foreground with a timeout up to
-   ten minutes.
-   Split a run too long by crate or package. Never poll a background
-   run with a no-op command.
-   Send each check's output to a log file outside the worktree, such as
-   `/tmp/<task>-check.log`. Print only the summary and the failures.
-   For nextest: `cargo nextest run --status-level fail --final-status-level fail 2>&1 | tail -n 40`.
-   For another runner: `| tail -n 40`.
+1. For a branch review, run `git checkout --detach <branch>` in the task
+   worktree. Start the checks of what the diff changed, once for this
+   verdict.
    Done when every check printed its failures.
 2. Pin the review scope. For a second review, read the SHA you judged last
    from your own conversation.
@@ -34,9 +26,8 @@ Judge two axes apart: repository conventions, and task acceptance.
 4. Read the scoped diff and the code around it. Map each changed hunk to
    its purpose.
    Done when every hunk has a stated purpose.
-5. Record each build, test and lint result from its log. Read the log
-   only for the detail of a failure. Do not run a check again before
-   this verdict.
+5. Record each build, test and lint result from its log. Do not run a
+   check again before this verdict.
    Done when every check has a result.
 6. Judge the repository axis. Check the change against documented style,
    naming, structure and code patterns.
@@ -44,11 +35,13 @@ Judge two axes apart: repository conventions, and task acceptance.
 7. Judge the acceptance axis. Check every criterion, its tests and added
    behavior.
    Done when every criterion has a status and scope creep is listed.
-8. Report both axes under separate headings, each with its own verdict.
-   Record `git rev-parse HEAD` as the SHA you judged.
-9. Where both axes pass, call `complete_step` with what you checked. Else
-   call `fail_step` with every finding: file, function, must-fix or
-   optional, and the SHA you judged.
+8. Write the verdict:
+   - both axes, each under its own heading
+   - each finding with its file, function, input and failure
+   - the SHA you judged, from `git rev-parse HEAD`
+   On any must-fix finding, call `fail_step` with the verdict. Else call
+   `complete_step` with the verdict, and list the optional findings in it.
+   An optional finding never fails the step.
 
 ## Repository conventions axis
 
@@ -71,8 +64,8 @@ Judge two axes apart: repository conventions, and task acceptance.
 - Give every finding the input and the failure it causes.
 - Treat a claim without a failure as a question, not a defect.
 - Mark each finding as must-fix or optional.
+- A must-fix finding breaks a criterion or a written repository rule.
 - Judge the change against the task, not your preferred design.
-- Complete the step only when both axes pass.
 - Edit no file: the worktree is the develop column's to change.
 
 ## Do not tell yourself
@@ -83,8 +76,8 @@ Judge two axes apart: repository conventions, and task acceptance.
   wrong behavior.
 - "The task passes, so conventions do not matter." -> A correct feature can
   still damage the repository.
-- "I will note what I did." -> The verdict is the record. Save the breach
-  that repeats.
+- "I will save a note on this review." -> Save to memory only a breach that
+  will come back. The verdict is the record.
 
 ## Done
 

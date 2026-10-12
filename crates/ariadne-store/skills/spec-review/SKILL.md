@@ -21,6 +21,8 @@ into a question.
    Done when each ambiguity has two concrete interpretations.
 5. Write one verdict. Separate blocking questions from later improvements.
    Done when every finding has a weight and a location.
+6. Call `fail_step` with the verdict on a blocking finding, else
+   `complete_step`.
 
 ## What to look for
 

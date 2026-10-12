@@ -1,7 +1,7 @@
 ---
 id: skills-and-staffed-agents
 status: current
-updated: 2026-10-11
+updated: 2026-10-12
 areas: [store, api, cli, ui, daemon, prompts]
 commits: [03f9c8b7, 29e6d84e]
 tests:
@@ -114,17 +114,18 @@ written into the system prompt (006), and the lifecycle the seats sit in
 11. A skill document obeys the STE rules and the size caps of spec 006, the
     same as every other default text. It also obeys the rules the seat texts
     state. No skill divides a task into slices or small commits. `coding`
-    builds the whole task and commits it once, and `refactoring` holds every
-    move in one commit (006). `coding`, `debugging` and `code-review` each
-    state one more rule, in their own words and place: run a check in the
-    foreground and never poll a background one, and send its full output to
-    a log file outside the worktree, so only the summary and the failures
-    reach the agent. `coding` ends its search step when the agent can name
+    builds the whole task and commits it once, adds a new commit on a return
+    from review and never amends, and `refactoring` holds every move in one
+    commit (006). A skill that runs checks says which: the checks of what it
+    changed. How a check runs — in the foreground, never polled, its output
+    in a log outside the worktree — is the session rules' (006, 013), and no
+    skill repeats it. `coding` ends its search step when the agent can name
     each definition it changes and its callers, not when a tool named every
     file it opened. A skill that ends a column ends on `complete_step` or
-    `fail_step` (030): `code-review` completes the step only when both axes
-    pass and edits no file, and `merge` completes it with the base branch's
-    sha.
+    `fail_step` (030): `code-review` fails the step on a must-fix finding,
+    never on an optional one, and edits no file; `merge` completes it with
+    the base branch's sha; each other review skill fails it on a blocking
+    finding.
 
     A skill document holds one text. The launcher links the run directory's
     `skills` folder onto the shared home copy that holds it (15), for the
@@ -198,22 +199,21 @@ written into the system prompt (006), and the lifecycle the seats sit in
   (`skill_documents.rs::an_edited_orchestration_skill_reaches_the_next_launch`).
 - The playbook staffs one agent per column and asks no reviewer question
   (`defaults.rs::the_orchestration_skill_staffs_one_agent_per_column_and_asks_no_reviewer_question`).
-- The playbook switches a struggling agent's session to a model the ladder
-  gives, and tells the user
+- The playbook switches a struggling agent's session to a model one rank
+  up, and tells the user
   (`defaults.rs::the_orchestration_skill_switches_a_struggling_agents_session`).
 - Every shipped skill is named once and describes itself
   (`defaults.rs::every_shipped_skill_is_named_once_and_describes_itself`),
   every document is within its cap (`defaults.rs::skill_size_caps_hold`),
   and every shipped workflow stages shipped skills
   (`::every_shipped_workflow_parses_and_stages_shipped_skills`).
-- `coding`, `debugging` and `code-review` run a check in the
-  foreground and send its output to a log file outside the worktree, rather
-  than poll a background run
-  (`defaults.rs::checks_run_in_the_foreground_and_print_only_failures`).
+- No skill repeats how a check runs: that is the session rules'
+  (`defaults.rs::the_skills_leave_how_a_check_runs_to_the_session_rules`,
+  `mcp.rs::each_shared_rule_is_written_in_its_owner_alone`).
 - `coding` ends its search step on what the agent knows
   (`::the_coding_search_step_ends_on_what_the_agent_knows`).
-- No shipped skill divides a task, and `coding` and `refactoring` each name
-  one commit
+- No shipped skill divides a task, `coding` adds a new commit on a return
+  and never amends, and `refactoring` names one commit
   (`defaults.rs::a_task_is_one_commit_and_nothing_amends_a_pushed_one`).
 - The review skill ends on a step call, and the merge skill lands in order
   (`defaults.rs::the_review_skill_starts_its_checks_before_the_read_and_ends_on_a_step_call`,

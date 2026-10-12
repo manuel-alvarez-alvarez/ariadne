@@ -300,37 +300,32 @@ pub const PULL_REQUEST_PLACEHOLDERS: [&str; 10] = [
 
 /// Orchestrator seat text: what the seat owes, and no step of the playbook.
 ///
-/// The playbook — the ten phases from reading the goal to `complete_goal`,
-/// and the one place `finalize_plan` is explained — is the
+/// The playbook — the phases from reading the goal to `complete_goal`, and
+/// the one place `finalize_plan` is explained — is the
 /// [`ORCHESTRATION_SKILL`] document, which the launcher loads for every
-/// orchestrator session the way a task agent's skills reach it: indexed in
-/// the system prompt, written into the run directory. So the playbook is
+/// orchestrator session the way a task agent's skills reach it: indexed
+/// beside this text, written into the run directory. So the playbook is
 /// editable and resettable like any shipped skill, and this text is
 /// Ariadne's own like the agent's.
 ///
 /// What is owed is what no skill edit is allowed to take away: the plan is
 /// made *with* the user — the orchestrator is the one seat that talks to
 /// them — it writes no code, and a point it cannot settle goes to the user
-/// rather than being decided alone. `wait_for_user` only flags the wait
-/// with a one-line hint for the Needs attention list (031), and a hint that
-/// tries to carry the question is refused; the question itself follows the
-/// call, as the reply the console shows as the conversation it is. The call
-/// comes first because the text an agent writes after its last tool call is
-/// the one it writes to the user: what it wrote before was its thinking in
-/// another dress, and one orchestrator asked its questions only there.
-const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"Never write code. To ask the user, call `wait_for_user` with a one-line hint, then write the question in your reply and end the turn. Do not poll `read_messages`; Ariadne sends the answer."#;
+/// rather than being decided alone. How to ask is the session rules' (013),
+/// which every seat reads, so this text names no tool.
+const ORCHESTRATOR_SYSTEM_PROMPT: &str =
+    r#"Never write code. Plan the goal with the user. Decide no open point alone."#;
 
 /// The one task seat text: what the agent of a column owes, whatever the
-/// column is. The work of the column is its skills'; the two step calls
-/// that move the task on or back are explained here and nowhere else.
-const AGENT_SYSTEM_PROMPT: &str = r#"Work only in the task's shared worktree, on its branch. Work on your current column alone. Read its skills first.
-1. Read the task and the column's instructions.
-2. Complete the step with `complete_step` and a reason that briefs the next agent.
-3. Return work with `fail_step` and a reason that tells the previous agent what to fix.
-4. Call `fail_task` if the task cannot be done.
-5. Never pass `--no-verify` or `-n` to `git commit` or `git push`. A hook that refuses a commit or a push names the fix. Make it and commit again.
-6. Ask the user only where the task cannot continue without the answer. Call `wait_for_user` with a one-line hint, then ask in your reply.
-7. End your turn after a step call or a question. Do not poll."#;
+/// column is. The work of the column is its skills'; what each of the three
+/// calls that move the task is for is said here and nowhere else. When the
+/// turn ends is the call's own description to say, and how to ask the user
+/// is the session rules'.
+const AGENT_SYSTEM_PROMPT: &str = r#"Work only in the task's worktree, on its branch. Work on your current column alone. Read its skills first.
+- Call `complete_step` when the column's work is done.
+- Call `fail_step` when the previous column must fix something.
+- Call `fail_task` when nobody can do the task as written.
+- Never pass `--no-verify` or `-n` to git. A refused hook names the fix. Make it and commit again."#;
 
 /// First briefing of a column's agent: the task, the column, the values its
 /// commands act on, and what the column before it said.
@@ -343,7 +338,8 @@ Branch: {branch}
 Base: {base_branch}
 Repo: {repo_path}
 Previous: {previous_summary}
-Dependencies: {dependencies}"#;
+Dependencies: {dependencies}
+Do this column now."#;
 
 /// What a column's agent is briefed with when the task comes back to its
 /// column: which way it came, and why.
@@ -430,7 +426,7 @@ const GOAL_ATTENTION: &str = r#"The tasks of "{goal_title}" need you:
 
 {tasks}
 
-Read them with `list_tasks`. Retry, cancel or rewrite. Staff every column of a task before you retry it. Call `complete_goal` when done."#;
+Read them with `list_tasks`. Retry, rewrite or cancel each one. Call `complete_goal` when every task is done."#;
 
 /// What one agent said to another, as it reaches the recipient's agent.
 ///
@@ -438,17 +434,27 @@ Read them with `list_tasks`. Retry, cancel or rewrite. Staff every column of a t
 /// runtime hands the message to the agent as a prompt, so it reaches the agent
 /// as a turn rather than as something it has to go and look for.
 ///
-/// The sender is named by its seat, its agent id, the task it is of and its
-/// skills — a goal with several tasks staffed on the same skills would
-/// otherwise leave the reader unable to tell two senders apart, or know
-/// which one to answer. A message with no task, such as the orchestrator's,
-/// is named by its seat alone, and carries no instruction to answer an id
-/// nobody named.
+/// The sender is named by its column, the task it is of and that task's
+/// title. A task staffs one agent per column, so the column names one
+/// sender, and it is the address an answer goes to: `{answer_to}` names it.
+/// A message with no task, such as the orchestrator's, is named by its seat
+/// alone, and `{answer_to}` is empty: there is no address to name.
 const INCOMING_MESSAGE: &str = r#"Message from {from}:
 
 {body}
 
-Answer it where it asks you something. Add nothing else. Go on with your work.{answer_hint}"#;
+Answer only a question{answer_to}. Then go on with your work."#;
+
+/// What the orchestrator is told when an exhausted agent moved to another
+/// model on its own (021): the column, the task, both models, and that the
+/// user hears of it. Rendered by the scheduler that made the switch.
+const EXHAUSTED_SWITCH_NOTICE: &str = r#"The {column} agent of "{task_title}" moved from {old} to {new}. The old model ran out. Tell the user."#;
+
+/// The notice an orchestrator is sent when the scheduler moved an exhausted
+/// agent to another model.
+pub fn exhausted_switch_notice() -> &'static str {
+    EXHAUSTED_SWITCH_NOTICE
+}
 
 /// The two STE rules a text can be held to by reading it.
 ///
@@ -472,25 +478,33 @@ pub mod ste {
     ];
 
     /// The longest a sentence runs. STE holds a procedure to 20 words and a
-    /// description to 25; these texts are both, so 25 is the one number.
-    pub const MAX_WORDS: usize = 25;
+    /// description to 25. Every text here is read as a procedure, and the
+    /// session rules tell the agents 20, so 20 is the one number.
+    pub const MAX_WORDS: usize = 20;
 
     /// The sentences of `text`, as the rules are read on them.
     ///
     /// A line is a statement of its own — a heading, a bullet, a numbered
     /// step — and a line holding several sentences is cut at every `.`, `!`
     /// or `?` that a space or the end of the line follows. The stop inside
-    /// `AGENTS.md` is followed by a letter and cuts nothing; the one after a
-    /// digit is left alone too, so neither the `1.` a step opens on nor a
-    /// `step 1.` it ends on starts a sentence of its own.
+    /// `AGENTS.md` is followed by a letter and cuts nothing, and the `1.` a
+    /// step opens on is left alone. A `step 1.` that ends a sentence ends it.
     pub fn sentences(text: &str) -> Vec<&str> {
         let mut out = Vec::new();
         for line in text.lines() {
             let (mut start, mut previous) = (0, None);
             for (at, ch) in line.char_indices() {
                 let end = at + ch.len_utf8();
+                // A closing quote right after the stop belongs to the
+                // sentence it closes.
+                let end = match line[end..].strip_prefix('"') {
+                    Some(_) => end + 1,
+                    None => end,
+                };
                 if matches!(ch, '.' | '!' | '?')
-                    && !previous.is_some_and(|c: char| c.is_ascii_digit())
+                    && end > start
+                    && !(previous.is_some_and(|c: char| c.is_ascii_digit())
+                        && line[..at].trim().chars().all(|c| c.is_ascii_digit()))
                     && line[end..].chars().next().is_none_or(|c| c == ' ')
                 {
                     out.push(line[start..end].trim());
@@ -502,6 +516,49 @@ pub mod ste {
         }
         out.retain(|sentence| !sentence.is_empty());
         out
+    }
+
+    /// A markdown document with each wrapped sentence on one line again, so
+    /// [`sentences`] reads the sentence and not the fragments a wrap left.
+    ///
+    /// A line continues the one before it where neither is blank, a
+    /// heading or a fence, and it opens no list item of its own. A fenced
+    /// block is left out: it holds an example, not a sentence.
+    #[cfg(test)]
+    pub(crate) fn unwrapped_lines(document: &str) -> String {
+        let opens_item = |line: &str| {
+            line.starts_with("- ")
+                || line
+                    .split_once(". ")
+                    .is_some_and(|(n, _)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+        };
+        let mut lines: Vec<String> = Vec::new();
+        let mut fenced = false;
+        for line in document.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("```") {
+                fenced = !fenced;
+                lines.push(String::new());
+                continue;
+            }
+            if fenced {
+                continue;
+            }
+            let continues = lines
+                .last()
+                .is_some_and(|last| !last.trim().is_empty() && !last.starts_with('#'))
+                && !trimmed.is_empty()
+                && !trimmed.starts_with('#')
+                && !opens_item(trimmed);
+            match lines.last_mut() {
+                Some(last) if continues => {
+                    last.push(' ');
+                    last.push_str(trimmed);
+                }
+                _ => lines.push(line.to_string()),
+            }
+        }
+        lines.join("\n")
     }
 
     /// The first banned word `text` uses, whole and whatever its case.
@@ -541,6 +598,10 @@ mod tests {
                     .map(|kind| (kind.as_str().to_string(), default_prompt_text(kind))),
             )
             .chain(pull_request_texts())
+            .chain([(
+                "exhausted switch notice".to_string(),
+                exhausted_switch_notice(),
+            )])
             .collect()
     }
 
@@ -686,10 +747,25 @@ mod tests {
             ste::sentences("# Head\n1. Run it. Then stop.\n- a bullet"),
             ["# Head", "1. Run it.", "Then stop.", "- a bullet"]
         );
-        // A file name and a step number end no sentence of their own.
+        // A file name and the number a step opens on end no sentence; a
+        // number at the end of a sentence still ends it.
         assert_eq!(
             ste::sentences("Read `AGENTS.md` first. Back to step 1. Then push."),
-            ["Read `AGENTS.md` first.", "Back to step 1. Then push."]
+            ["Read `AGENTS.md` first.", "Back to step 1.", "Then push."]
+        );
+
+        // A sentence a wrap cut in two is read whole again, a list item
+        // stays its own, and a fenced example is left out.
+        assert_eq!(
+            ste::unwrapped_lines(
+                "1. Squash the branch with this:\n   `git commit`.\n2. Push.\n```\nfeat: x\n```"
+            ),
+            "1. Squash the branch with this: `git commit`.\n2. Push.\n\n"
+        );
+        // A closing quote ends with the sentence it closes.
+        assert_eq!(
+            ste::sentences(r#"- "It is done." -> Prove it."#),
+            [r#"- "It is done.""#, "-> Prove it."]
         );
 
         assert_eq!(ste::banned_word("Ensure the tests pass"), Some("ensure"));
@@ -712,12 +788,16 @@ mod tests {
     /// in, and what a rewrite of one is read against.
     #[test]
     fn every_default_text_is_simplified_technical_english() {
+        let skills = all_skills()
+            .into_iter()
+            .map(|(name, text)| (name, ste::unwrapped_lines(text)));
         for (name, text) in all_defaults()
             .into_iter()
-            .chain(all_skills())
             .chain(all_workflows())
+            .map(|(name, text)| (name, text.to_string()))
+            .chain(skills)
         {
-            for sentence in ste::sentences(text) {
+            for sentence in ste::sentences(&text) {
                 let words = sentence.split_whitespace().count();
                 assert!(
                     words <= ste::MAX_WORDS,
@@ -726,7 +806,7 @@ mod tests {
                 );
             }
             assert_eq!(
-                ste::banned_word(text),
+                ste::banned_word(&text),
                 None,
                 "the {name} uses a word STE has no room for"
             );
@@ -781,22 +861,24 @@ mod tests {
         }
     }
 
-    /// The one task seat text names what the two step calls are for, where
-    /// a task is given up, and that the turn ends on a call: the rules no
-    /// column's skill is allowed to take away.
+    /// The one task seat text names what the three calls that move a task
+    /// are for, and the hook rule: the rules no column's skill is allowed to
+    /// take away. When a turn ends is the calls' own descriptions to say.
     #[test]
     fn the_agent_seat_text_moves_the_task_with_the_two_step_calls() {
         let agent = default_system_prompt(Seat::Agent);
         for rule in [
-            "Work only in the task's shared worktree, on its branch.",
+            "Work only in the task's worktree, on its branch.",
             "Work on your current column alone.",
-            "Complete the step with `complete_step` and a reason that briefs the next agent.",
-            "Return work with `fail_step` and a reason that tells the previous agent what to fix.",
-            "Call `fail_task` if the task cannot be done.",
-            "Never pass `--no-verify` or `-n` to `git commit` or `git push`.",
-            "End your turn after a step call or a question. Do not poll.",
+            "Call `complete_step` when the column's work is done.",
+            "Call `fail_step` when the previous column must fix something.",
+            "Call `fail_task` when nobody can do the task as written.",
+            "Never pass `--no-verify` or `-n` to git.",
         ] {
             assert!(agent.contains(rule), "the agent seat text and \"{rule}\"");
+        }
+        for gone in ["End your turn", "Do not poll", "`wait_for_user`"] {
+            assert!(!agent.contains(gone), "the agent seat text and \"{gone}\"");
         }
         // No retired call is briefed anywhere.
         for (name, text) in all_defaults().into_iter().chain(all_skills()) {
@@ -811,13 +893,48 @@ mod tests {
         }
     }
 
+    /// Every text this ticket gave word for word is the text that ships: the
+    /// two seat texts, the last line of a step briefing, an incoming message,
+    /// the end of a goal attention and the switch notice (006).
+    #[test]
+    fn the_agreed_texts_ship_word_for_word() {
+        assert_eq!(
+            default_system_prompt(Seat::Orchestrator),
+            "Never write code. Plan the goal with the user. Decide no open point alone."
+        );
+        assert_eq!(
+            default_system_prompt(Seat::Agent),
+            "Work only in the task's worktree, on its branch. Work on your current column alone. Read its skills first.\n\
+             - Call `complete_step` when the column's work is done.\n\
+             - Call `fail_step` when the previous column must fix something.\n\
+             - Call `fail_task` when nobody can do the task as written.\n\
+             - Never pass `--no-verify` or `-n` to git. A refused hook names the fix. Make it and commit again."
+        );
+        assert!(
+            default_prompt_text(PromptKind::StepBriefing)
+                .ends_with("Dependencies: {dependencies}\nDo this column now.")
+        );
+        assert_eq!(
+            default_prompt_text(PromptKind::IncomingMessage),
+            "Message from {from}:\n\n{body}\n\nAnswer only a question{answer_to}. Then go on with your work."
+        );
+        assert!(default_prompt_text(PromptKind::GoalAttention).ends_with(
+            "Read them with `list_tasks`. Retry, rewrite or cancel each one. Call `complete_goal` when every task is done."
+        ));
+        assert_eq!(
+            exhausted_switch_notice(),
+            "The {column} agent of \"{task_title}\" moved from {old} to {new}. The old model ran out. Tell the user."
+        );
+    }
+
     /// The review column starts scoped checks before it reads the diff and
-    /// task, then ends on one of the two step calls.
+    /// task, then ends on one of the two step calls: a must-fix finding
+    /// fails the step, and an optional one never does.
     #[test]
     fn the_review_skill_starts_its_checks_before_the_read_and_ends_on_a_step_call() {
         let text = unwrapped(default_skill_document("code-review").unwrap());
         let checks = text
-            .find("Start the tests and lint of the crates and packages the diff changed, once for this verdict.")
+            .find("Start the checks of what the diff changed, once for this verdict.")
             .expect("the code-review skill does not start scoped checks once");
         let read = text
             .find("Read the task")
@@ -832,19 +949,24 @@ mod tests {
             "the code-review skill does not bind one check run to one verdict"
         );
         for rule in [
-            "`git checkout --detach <branch>`",
-            "Record `git rev-parse HEAD` as the SHA you judged.",
-            "call `complete_step` with what you checked",
-            "call `fail_step` with every finding",
+            "`git checkout --detach <branch>` in the task worktree",
+            "the SHA you judged, from `git rev-parse HEAD`",
+            "On any must-fix finding, call `fail_step` with the verdict.",
+            "Else call `complete_step` with the verdict, and list the optional findings in it.",
+            "An optional finding never fails the step.",
+            "A must-fix finding breaks a criterion or a written repository rule.",
             "Judge each test by reading its setup, action and assertions",
             "Never change code to see whether a test fails",
             "Edit no file",
             "`git merge-base --is-ancestor <sha> HEAD`",
             "If HEAD is not after that SHA, use `get_diff`",
-            "Complete the step only when both axes pass.",
         ] {
             assert!(text.contains(rule), "the code-review skill and {rule}");
         }
+        assert!(
+            !text.contains("Complete the step only when both axes pass."),
+            "an optional finding fails no step"
+        );
         assert!(
             !text.contains("`read_messages`"),
             "a second review reads the judged SHA from the conversation, not the channel"
@@ -855,9 +977,12 @@ mod tests {
     #[test]
     fn a_skill_scopes_its_own_checks_to_what_the_task_changed() {
         for (name, step) in [
-            ("coding", "run the tests and the lint of what you changed"),
+            ("coding", "Run the checks of what you changed."),
+            ("code-review", "Start the checks of what the diff changed"),
+            ("pr-babysit", "run the checks of what you changed"),
             ("coding", "Run the one test, never the suite around it."),
-            ("debugging", "the tests of the crate you changed are green"),
+            ("debugging", "The tests of the crate you changed are green."),
+            ("debugging", "Run the checks of what you changed."),
             (
                 "conflict-resolution",
                 "Run the tests and the lint of the files you resolved.",
@@ -879,16 +1004,15 @@ mod tests {
         }
     }
 
-    /// A task is one commit, and every text that tells an agent when to
-    /// commit says the same thing.
+    /// A task is built as one commit, and a return from review adds one on
+    /// top: the merge column squashes the branch onto the base.
     ///
-    /// A task is one responsibility: the orchestrator cuts it as one tracer,
-    /// and the merge column squashes the branch onto the base. So a branch
-    /// divided into parts buys nothing and costs the review a diff of
-    /// half-built commits. No skill sends an agent to a slice or to a small
-    /// commit, and the two skills that name the commit name one. The amend
-    /// rule is the `pr-babysit` skill's alone: a pushed request is what an
-    /// amend would rewrite under its readers.
+    /// A task is one responsibility: the orchestrator cuts it as one tracer.
+    /// So a branch divided into parts buys nothing and costs the review a
+    /// diff of half-built commits. No skill sends an agent to a slice or to
+    /// a small commit. The amend rule is the two committing skills' alone:
+    /// `coding`, whose answer to a review is a new commit, and `pr-babysit`,
+    /// whose pushed request an amend would rewrite under its readers.
     #[test]
     fn a_task_is_one_commit_and_nothing_amends_a_pushed_one() {
         for (name, document) in all_skills() {
@@ -899,22 +1023,25 @@ mod tests {
                     "the {name} divides a task into a {divided}"
                 );
             }
-            if name == format!("{PR_BABYSIT_SKILL} skill") {
+            if name == format!("{PR_BABYSIT_SKILL} skill") || name == "coding skill" {
                 continue;
             }
             assert!(
                 !document.contains("amend"),
-                "the {name} repeats the pr-babysit skill's rule about an amend"
+                "the {name} repeats the rule about an amend"
             );
         }
 
         for (name, step) in [
-            ("coding", "Done when the task is one commit on your branch."),
+            (
+                "coding",
+                "On a return from review, add a new commit on top. Never amend. The merge column squashes.",
+            ),
             (
                 "refactoring",
                 "Commit the whole refactor once, after every move is green.",
             ),
-            ("pr-babysit", "Never amend, rebase, or force a push."),
+            ("pr-babysit", "Never amend, rebase or force a push."),
         ] {
             let document = unwrapped(default_skill_document(name).unwrap());
             assert!(
@@ -970,7 +1097,9 @@ mod tests {
                 .step_by(2)
                 .find(|command| command.contains(needle))
                 .unwrap_or_else(|| panic!("the merge skill has no {needle}: {merge}"));
-            command.replace("<base>", "main")
+            command
+                .replace("<upstream>", "main")
+                .replace("<base>", "main")
         };
 
         std::fs::create_dir(&repo).unwrap();
@@ -1032,14 +1161,16 @@ mod tests {
         let text = unwrapped(default_skill_document("merge").unwrap());
         let mut at = 0;
         for step in [
-            "git fetch <remote> <base>",
-            "Fast-forward `<base>` with `--ff-only <remote>/<base>` where the primary checkout sits on `<base>`.",
-            "Rebase the task branch onto `<base>`.",
-            "git reset --soft \"$(git merge-base <base> HEAD)\" && git commit",
-            "git diff --stat <base> HEAD",
+            "`<upstream>` is `<remote>/<base>` where `git remote -v` names a remote, else `<base>`.",
+            "Where a remote exists, run `git fetch <remote> <base>`.",
+            "Rebase the task branch onto `<upstream>`.",
+            "git reset --soft \"$(git merge-base <upstream> HEAD)\" && git commit",
+            "git diff --stat <upstream> HEAD",
             "push `HEAD:<base>` to `<remote>`",
-            "git merge --ff-only <remote>/<base>",
-            "Call `complete_step`. Give it the base branch's sha as `merge_commit`.",
+            "git -C <repo> merge --ff-only <remote>/<base>",
+            "else `git -C <repo> fetch <remote> <base>:<base>`",
+            "With no remote: run the checks the repository names for a landing.",
+            "Call `complete_step` with the sha of `<base>` as `merge_commit`.",
         ] {
             let found = text[at..]
                 .find(step)
@@ -1047,20 +1178,16 @@ mod tests {
             at += found + step.len();
         }
         assert!(
-            text.contains("A refused push is a fix on the task branch."),
+            text.contains("A refused push or a failed check is a fix on the task branch."),
             "the merge skill does not name a refused push as a task-branch fix"
         );
         assert!(
-            text.contains("The repository's hooks run its checks on the push."),
+            text.contains("The hooks run the checks."),
             "the merge skill does not leave the push checks to the repository hooks"
         );
         assert!(
-            text.contains("Else fetch it straight onto `<base>`."),
-            "the merge skill does not update the local base without a primary checkout"
-        );
-        assert!(
-            text.contains("Write no trailer in the squash commit"),
-            "the merge skill does not ban a trailer on its squash commit"
+            text.contains("The primary checkout is the `Repo:` path of your briefing."),
+            "the merge skill does not name the primary checkout"
         );
         for (name, text) in all_defaults().into_iter().chain(all_skills()) {
             for command in ["gh pr merge", "glab mr merge"] {
@@ -1101,19 +1228,21 @@ mod tests {
         }
         let doc = unwrapped(doc);
         for step in [
+            "On your first turn, do step 1.",
+            "On each later turn, Ariadne sends news: do steps 2 to 7. Then end your turn.",
             "`get_pull_request`",
             "`list_comments` with `unanswered_only`",
             "`git merge --no-edit <remote>/<base>`",
-            "Push the task branch plainly. Call `open_pull_request`.",
+            "Push the task branch. Call `open_pull_request`.",
             "repository's commit conventions",
-            "Fill the repository's pull request template if it has one, else write the body with three sections: Why, What changed, How to test.",
-            "Run the tests and lint of what",
-            "Never amend, rebase, or force a push.",
-            "`report_pull_request` with `ready: true`",
-            "`ready: false`",
-            "call `complete_step` with the merge as the",
+            "Fill its pull request template, or write three full sections: Why, What changed, How to test.",
+            "run the checks of what you changed, and push;",
+            "Never amend, rebase or force a push.",
+            "Call `report_pull_request` only when readiness changes:",
+            "`ready: true` with the `head_sha`",
+            "`ready: false` when one goes back",
+            "Call `complete_step` with the merge as the reason.",
             "call `fail_task`",
-            "End your turn when you handle the news.",
             "## Done",
         ] {
             assert!(doc.contains(step), "the pr-babysit skill has no {step}");
@@ -1123,22 +1252,17 @@ mod tests {
 
     /// The keeping agent replies only where a thread asks for a change. Its
     /// reply explains either the new commit or why the agent kept the code.
-    /// It adds no reply to comments that ask for no change, and no unrelated
-    /// forge discussion or code change.
+    /// It adds no unrelated forge discussion or code change.
     #[test]
     fn the_pr_babysit_skill_replies_only_to_requested_changes() {
         let doc = unwrapped(default_skill_document(PR_BABYSIT_SKILL).unwrap());
         for rule in [
-            "Reply only in the thread of the defect.",
-            "State the change and the commit.",
-            "State why you did not make the change.",
-            "Do not reply to a comment that asks for no change.",
-            "Post no thanks, praise, or acknowledgement.",
-            "Open no new thread.",
-            "Post no summary, no top-level comment, and no comment outside a thread.",
-            "Commit only the changes that a comment or a failed check asks for.",
-            "Add no other change.",
-            "Write no trailer in a pull request body, a reply, or a commit",
+            "reply once in the thread with the change and the commit.",
+            "Or reply once in the thread with why you do not make it.",
+            "Post only one reply in a thread that asks for a change.",
+            "Post no new thread, summary, top-level comment or thanks.",
+            "Commit only what a comment or a failed check asks for.",
+            "Leave every thread open.",
         ] {
             assert!(doc.contains(rule), "the pr-babysit skill has no {rule}");
         }
@@ -1191,7 +1315,9 @@ mod tests {
             "`comment`",
             "`report_pull_request` with `reviewed_sha`",
             "`reply_comment` once",
-            "in the foreground",
+            "Run the checks once.",
+            "On a later round, call `list_comments` first.",
+            "Settle each thread you opened before you hunt new defects.",
             // The summary is one comment, rewritten whole every round as a
             // title, a header of the reviewed commits, a prose verdict on
             // the change and its risk, and a recommendation; it is nothing
@@ -1213,8 +1339,6 @@ mod tests {
             "then `resolve_thread` on",
             "Resolve only a thread you opened",
             "one inline comment on the line of the defect",
-            "Write no trailer in the summary, a reply, or a comment",
-            "End your turn when the review is posted.",
             "## Do not tell yourself",
             "## Done",
         ] {
@@ -1250,7 +1374,7 @@ mod tests {
             "subject",
             "`git log <base>..HEAD` on the first round",
             "`git log <reviewed_sha>..HEAD` later",
-            "Keep the full base-to-head range on its own line too",
+            "End the header with one line: `<base>..<head>` as short shas.",
         ] {
             assert!(header.contains(phrase), "the header lacks {phrase}");
         }
@@ -1293,7 +1417,7 @@ mod tests {
         let recommendation = &doc[recommendation_at..];
         for phrase in [
             "A P0 is open: say \"Request changes\", and name the P0 findings that block it",
-            "A P1 or P2 is open, with no P0: say \"Changes recommended\", and name what to fix before it lands",
+            "A P1 or P2 is open, with no P0: say \"Changes recommended\". Name what to fix before it lands",
             "Nothing is open: say \"No findings: this PR is ready to be merged.\"",
         ] {
             assert!(
@@ -1315,10 +1439,10 @@ mod tests {
         // The step calls and hook rule belong to the agent seat text.
         // `finalize_plan` belongs to the orchestration skill.
         for marker in [
-            "Complete the step with `complete_step`",
-            "Return work with `fail_step`",
-            "Never pass `--no-verify` or `-n` to `git commit` or `git push`",
-            "It starts every task and ends planning",
+            "Call `complete_step` when",
+            "Call `fail_step` when",
+            "Never pass `--no-verify` or `-n` to git",
+            "Call it no earlier.",
         ] {
             let places = all_defaults()
                 .into_iter()
@@ -1365,20 +1489,18 @@ mod tests {
     /// The phases of the playbook, in the order the conversation runs them.
     /// Named once, because two assertions read them: the skill document holds
     /// all of them in this order, and the seat text holds none.
-    const PLAYBOOK_PHASES: [&str; 13] = [
-        "Read the goal. Explore its repositories.",
-        "Read the workflow and its\n   columns from the briefing. Do not ask for them.",
-        "Ask the user about every unclear point",
-        "Call `wait_for_user` with a one-line hint first.",
-        "Then write the question in your turn text",
-        "Wait for the answer in the console.",
-        "Split the goal into tasks",
-        "Staff one agent on every column of each task with `create_task`.",
-        "Give each agent one model from `list_models`.",
-        "Mix the agents evenly over the tasks.",
-        "Revise them until they write an explicit yes.",
-        "Call `finalize_plan`",
-        "Stay up for the rest of the goal.",
+    const PLAYBOOK_PHASES: [&str; 11] = [
+        "Read the goal and its columns.",
+        "Ask the user every open point",
+        "Split the goal into tracer tasks.",
+        "Write each ticket in STE",
+        "Staff one agent on every column with `create_task`.",
+        "Give each agent one model from `list_models`, at the column's rank.",
+        "Show the user the tasks and the models.",
+        "Revise until the user writes an explicit yes.",
+        "Call `finalize_plan`.",
+        "Stay up until the goal ends.",
+        "Call `complete_goal` when every task is done.",
     ];
 
     /// The playbook is the `orchestration` skill, so the document read here
@@ -1402,10 +1524,10 @@ mod tests {
     }
 
     /// The workflow is settled before planning starts, not asked about task
-    /// by task: the orchestrator reads it and its columns off its briefing,
-    /// staffs one agent per column, and asks the user nothing a column
-    /// already settles. The reviewer question and the final task are gone
-    /// with the pipeline they belonged to.
+    /// by task: the orchestrator reads its columns off its briefing, staffs
+    /// one agent per column, and asks the user nothing a column already
+    /// settles. The reviewer question and the final task are gone with the
+    /// pipeline they belonged to.
     #[test]
     fn the_orchestration_skill_staffs_one_agent_per_column_and_asks_no_reviewer_question() {
         let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
@@ -1415,7 +1537,6 @@ mod tests {
             "Leave a task unreviewed",
             "final task",
             "feature_branch",
-            "landing",
             "author",
             "reviewer",
         ] {
@@ -1425,13 +1546,10 @@ mod tests {
             );
         }
         for phrase in [
-            "Read the workflow and its columns from the briefing. Do not ask for them.",
-            "Ask nothing a column already settles",
-            "Staff one agent on every column of each task with `create_task`.",
-            "or none to take the column's own.",
-            "Done when every task carries one agent per column.",
-            "It refuses a task with a column nobody staffs.",
-            "Before you retry a failed task, staff every column it lacks with `update_task`.",
+            "The workflow columns in your briefing are settled: do not ask for them.",
+            "Ask nothing a column settles, such as review or landing.",
+            "Staff one agent on every column with `create_task`.",
+            "or none for the column's own.",
             "\"This task needs no review.\" -> The workflow decides; staff its column.",
         ] {
             assert!(
@@ -1443,27 +1561,22 @@ mod tests {
 
     /// A false `depends_on` serializes two tasks that could run together, so
     /// the skill tells the orchestrator to write a shared interface into
-    /// both tickets instead. And the last column already proved the base
-    /// branch, so the orchestrator runs no checks of its own before
-    /// `complete_goal`.
+    /// both tickets instead. And the last column already proved the work, so
+    /// the orchestrator runs no checks of its own before `complete_goal`.
     #[test]
     fn the_orchestration_skill_names_the_contract_rule_and_the_no_checks_rule() {
-        let prompt = default_skill_document(ORCHESTRATION_SKILL).unwrap();
-        assert!(
-            prompt.contains("Name what one task hands to another")
-                && prompt.contains("Add no\n   `depends_on` for it."),
-            "the skill has no contract rule in step 3: {prompt}"
-        );
-        assert!(
-            prompt.contains("Run no checks yourself: the last column proved the\n   base branch"),
-            "the skill has no no-checks rule in step 8: {prompt}"
-        );
-        assert!(
-            prompt.contains("\"The frontend waits for the backend to land.\"")
-                && prompt.contains("Write the contract into")
-                && prompt.contains("Both run now."),
-            "the skill has no do-not-tell-yourself line for the contract rule: {prompt}"
-        );
+        let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
+        for phrase in [
+            "Write each contract between two tasks into both tickets: a route, a response shape, a function, a file.",
+            "Add `depends_on` only where the code cannot compile or run without the other task.",
+            "Run no checks yourself: the last column proved the work.",
+            "\"The frontend waits for the backend to land.\" -> Write the contract into both tickets. Both run now.",
+        ] {
+            assert!(
+                prompt.contains(phrase),
+                "the orchestration skill and \"{phrase}\": {prompt}"
+            );
+        }
     }
 
     /// The seat text carries no playbook step: not one of the phases, and no
@@ -1484,77 +1597,31 @@ mod tests {
         );
     }
 
-    /// A plan is staffed on a mix of agents, and fit comes first.
-    ///
-    /// Every task on one agent is a plan that stands or falls with that
-    /// agent: its rate limit, its outage, its blind spot on a kind of work.
-    /// So the orchestrator is told to spread them — and told in the same
-    /// breath not to spread them onto an agent the task does not suit, which
-    /// is the failure an instruction to mix invites. The telling is the
-    /// `orchestration` skill's, where the playbook lives.
-    #[test]
-    fn the_orchestrator_staffs_a_plan_on_a_mix_of_agents() {
-        let prompt = default_skill_document(ORCHESTRATION_SKILL).unwrap();
-        let mix = prompt
-            .find("Mix the agents evenly over the tasks.")
-            .expect("the orchestrator is not told to mix the agents");
-        let fit = prompt
-            .find("Take only an agent that suits the task.")
-            .expect("the orchestrator is not told to keep the mix suitable");
-        assert!(
-            fit > mix,
-            "the fit has to be the sentence after the mix, or the mix reads as the whole rule"
-        );
-        // Said where the agents are sized, not in a step of its own: which
-        // agent a task runs on is one answer with which model of it.
-        assert!(
-            mix > prompt
-                .find("Give each agent one model from `list_models`")
-                .unwrap(),
-            "the mix is stated before the sizing it is part of"
-        );
-    }
-
     /// The orchestrator staffs each column on the rank the column prefers,
     /// and where a column names none, the lowest rank and the lowest effort
-    /// the task earns.
+    /// that finish the work.
     ///
     /// A model description says what a model can do and nothing about what it
     /// costs, so an orchestrator sized on the description alone staffed a
     /// frontier model on a one-line fix. A workflow column carries the rank
-    /// its work earns, and the user-set ranks are the cost order: the skill
-    /// states them as a ladder from `fast` upward, with `local` off it: a
-    /// local model runs on the user's own machine, so it is a choice the user
-    /// makes rather than a cheaper rung.
+    /// its work earns. `local` is off the ladder: a local model runs on the
+    /// user's own machine, so it is a choice the user makes rather than a
+    /// cheaper rung.
     #[test]
     fn the_orchestrator_staffs_each_column_on_its_rank() {
         // Read on one line, so where the document wraps holds nothing.
         let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
         for sentence in [
-            "Take the column's preferred rank unless you state a reason.",
-            "The ranks make a ladder: `fast`, then `balanced`, then `frontier`.",
-            "Where a column names no rank, take the lowest rank that does the task, and the lowest effort that finishes it.",
-            "Keep `local` off the ladder: staff it only where the user names it.",
-            "Compare a rank with the same rank of another agent.",
-            "Prefer a rank, and size an unranked model from its description.",
-            "Balance power, cost and time.",
-            "Step up a rank or an effort only for a reason you state.",
+            "Give each agent one model from `list_models`, at the column's rank.",
+            "Where a column names no rank, take the lowest rank and effort that finish the work.",
+            "Staff `local` only where the user names it.",
+            "State a reason for each step up.",
         ] {
             assert!(
                 prompt.contains(sentence),
                 "the skill and the staffing rule \"{sentence}\""
             );
         }
-        // The column's rank comes before the ladder: an orchestrator reading
-        // it takes the column's answer first, and the ladder where there is
-        // none.
-        let column = prompt.find("Take the column's preferred rank").unwrap();
-        let rung = |rank: &str| prompt.find(rank).expect(rank);
-        assert!(column < rung("`fast`"));
-        assert!(
-            rung("`fast`") < rung("`balanced`") && rung("`balanced`") < rung("`frontier`"),
-            "the ladder does not run from `fast` upward"
-        );
     }
 
     /// An orchestrator is nudged in the situation its goal stands in, and
@@ -1577,16 +1644,15 @@ mod tests {
         }
     }
 
-    /// A woken orchestrator is told what a retry needs: every column
-    /// staffed, since a task moved onto a workflow can lack one.
+    /// A woken orchestrator is told its three choices for each task, and
+    /// what ends the goal.
     #[test]
-    fn the_goal_attention_names_the_staffing_a_retry_needs() {
+    fn the_goal_attention_names_the_three_choices_and_the_end() {
         let text = default_prompt_text(PromptKind::GoalAttention);
         for rule in [
             "Read them with `list_tasks`.",
-            "Retry, cancel or rewrite.",
-            "Staff every column of a task before you retry it.",
-            "Call `complete_goal` when done.",
+            "Retry, rewrite or cancel each one.",
+            "Call `complete_goal` when every task is done.",
         ] {
             assert!(text.contains(rule), "the goal attention and \"{rule}\"");
         }
@@ -1624,12 +1690,10 @@ mod tests {
     /// orchestrator's to notice and nobody's to act on.
     #[test]
     fn the_orchestration_skill_switches_a_struggling_agents_session() {
-        let prompt = default_skill_document(ORCHESTRATION_SKILL).unwrap();
+        let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
         for phrase in [
-            "an agent that is exhausted, stuck or unsuitable",
-            "call `switch_session`",
-            "Give it a model the ladder gives.",
-            "Tell the user you switched it.",
+            "When an agent is exhausted, stuck or unsuitable, call `switch_session` with a model one rank up.",
+            "Tell the user.",
         ] {
             assert!(
                 prompt.contains(phrase),
@@ -1767,43 +1831,28 @@ mod tests {
     }
 
     /// A background poll of a check was the largest single waste a
-    /// measurement of this week's sessions found: an agent started
+    /// measurement of one week's sessions found: an agent started
     /// `cargo nextest` in the background and re-sent its whole context on
-    /// every no-op turn spent waiting for it. `coding`, `debugging` and
-    /// `code-review` each carry the fix: a check runs in
-    /// the foreground and is never polled, and its full output goes to a
-    /// log file outside the worktree so only the summary and the failures
-    /// reach the agent's context.
-    ///
-    /// Each document is read with its line wrapping taken out first, so a
-    /// rewrap that moves a marker across a line break cannot make a rule
-    /// that is still there read as gone.
+    /// every no-op turn spent waiting for it. The fix — a check in the
+    /// foreground, never polled, its output in a log outside the worktree —
+    /// is the session rules' to state (013), which every seat reads. The
+    /// skills that run checks say only which checks to run.
     #[test]
-    fn checks_run_in_the_foreground_and_print_only_failures() {
-        for name in ["coding", "debugging", "code-review"] {
+    fn the_skills_leave_how_a_check_runs_to_the_session_rules() {
+        for name in ["coding", "debugging", "code-review", "pr-reviewer"] {
             let doc = unwrapped(default_skill_document(name).unwrap());
-            assert!(
-                doc.contains("in the foreground"),
-                "{name} does not run a check in the foreground"
-            );
-            assert!(
-                doc.contains("no-op command"),
-                "{name} does not forbid polling a background run with a no-op command"
-            );
-            assert!(
-                doc.contains("a log file outside the worktree"),
-                "{name} does not send a check's output to a log file outside the worktree"
-            );
-            assert!(
-                doc.contains(
-                    "cargo nextest run --status-level fail --final-status-level fail 2>&1 | tail -n 40"
-                ),
-                "{name} does not print only the summary and the failures of a nextest run"
-            );
-            assert!(
-                doc.contains("the detail of a failure"),
-                "{name} does not scope a log read to the detail of a failure"
-            );
+            for block in [
+                "in the foreground",
+                "no-op command",
+                "outside the worktree",
+                "tail -n 40",
+                "the detail of a failure",
+            ] {
+                assert!(
+                    !doc.contains(block),
+                    "{name} repeats the check block: {block}"
+                );
+            }
         }
     }
 

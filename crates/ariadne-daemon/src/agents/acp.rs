@@ -5,7 +5,8 @@
 //! - Transport: stable ACP v1 on stdio, spoken by the protocol's Rust SDK
 //! - Model and effort: session configuration options with the `model` and
 //!   `thought_level` categories
-//! - System prompt and skills: prepended to every prompt the agent is sent
+//! - System prompt and skills: the MCP server's instructions, and also the
+//!   first turn after a launch or a model switch (006)
 //! - MCP: the stdio server in `session/new`, `session/resume`, or
 //!   `session/load`
 //! - Events: the ACP runtime maps the agent's updates onto the event
@@ -50,7 +51,7 @@ fn plan(
             name: "ariadne".into(),
             command: ctx.cli_bin.clone(),
             args: vec!["mcp".into(), "serve".into()],
-            env: base_env(ctx)
+            env: mcp_env(ctx)
                 .into_iter()
                 .map(|(name, value)| EnvVariable { name, value })
                 .collect(),
@@ -64,6 +65,16 @@ fn plan(
         internal_session_id: resume_session_id.map(str::to_string),
         config,
     })
+}
+
+/// The MCP server's environment: the session's own, and the index of its
+/// skills, which the server puts in its instructions after the seat text.
+fn mcp_env(ctx: &SpawnCtx) -> Vec<(String, String)> {
+    let mut env = base_env(ctx);
+    if !ctx.skill_index.is_empty() {
+        env.push(("ARIADNE_SKILL_INDEX".into(), ctx.skill_index.clone()));
+    }
+    env
 }
 
 /// Write the launch file into the run dir: the record of what the agent was

@@ -162,20 +162,17 @@ async fn a_message_is_handed_to_the_agent_it_was_sent_to() {
         !pasted.contains(&sent.id),
         "the agent is told an id there is nothing to answer on: {pasted}"
     );
-    // Named by its seat, its agent id, the task it is of and its skills: an
-    // agent has no name of its own, and two agents on the same skills would
-    // otherwise be the same sender to the reader.
+    // Named by its column, the task it is of and that task's title: a task
+    // staffs one agent per column, so the column names one sender, and it
+    // is the address the answer goes to.
     assert!(
         pasted.contains(&format!(
-            r#"the agent {} of task {} "{}" (code-review)"#,
-            cast.review().id,
-            cast.task.id,
-            cast.task.title
+            "Message from the review agent of task {} \"{}\":\n\n\
+             The retry loop has no bound and the caller has one.\n\n\
+             Answer only a question, with `send_message` to `review` and task `{}`. \
+             Then go on with your work.",
+            cast.task.id, cast.task.title, cast.task.id
         )),
-        "{pasted}"
-    );
-    assert!(
-        pasted.contains("Answer with send_message to that agent id and task id."),
         "{pasted}"
     );
 
@@ -259,8 +256,8 @@ async fn an_agent_writes_to_the_orchestrator_and_it_reaches_its_agent() {
 }
 
 /// A goal with two tasks staffed on the same skills would leave the
-/// orchestrator unable to tell their agents' relays apart by seat and skills
-/// alone, so each one also names its own task and agent.
+/// orchestrator unable to tell their agents' relays apart by column alone,
+/// so each one also names its own task and that task's title.
 #[tokio::test]
 async fn two_tasks_on_the_same_skills_are_named_apart_in_their_relay_to_the_orchestrator() {
     let h = harness().await;
@@ -337,17 +334,15 @@ async fn two_tasks_on_the_same_skills_are_named_apart_in_their_relay_to_the_orch
     let pasted = h.prompted(&orchestrator);
     assert!(
         pasted.contains(&format!(
-            r#"the agent {} of task {} "{}" (coding)"#,
-            cast.develop().id,
-            cast.task.id,
-            cast.task.title
+            r#"Message from the develop agent of task {} "{}":"#,
+            cast.task.id, cast.task.title
         )),
         "{pasted}"
     );
     assert!(
         pasted.contains(&format!(
-            r#"the agent {} of task {} "{}" (coding)"#,
-            second_author.id, second_task.id, second_task.title
+            r#"Message from the develop agent of task {} "{}":"#,
+            second_task.id, second_task.title
         )),
         "{pasted}"
     );

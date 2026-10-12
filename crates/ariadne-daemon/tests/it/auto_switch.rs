@@ -505,7 +505,7 @@ async fn a_chain_never_revisits_a_model_and_stops_at_the_budget() {
         .control
         .prompts_for(&world.orchestrator.id)
         .into_iter()
-        .filter(|prompt| prompt.contains("switched from model"))
+        .filter(|prompt| prompt.contains("The old model ran out. Tell the user."))
         .count();
     assert_eq!(notices, SPAWN_RETRY_BUDGET as usize);
 }

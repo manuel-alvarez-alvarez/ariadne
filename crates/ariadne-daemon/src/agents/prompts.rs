@@ -63,11 +63,7 @@ pub(crate) fn render(template: &str, values: &[(&str, &str)]) -> String {
 }
 
 /// System layer: what the seat owes, and then the index of the skills this
-/// agent was staffed with.
-///
-/// `skills_dir` is where the run directory's `skills` folder is linked
-/// ([`link_skills`](super::link_skills)); each line names the file under
-/// that link, so an agent opens the one it needs itself.
+/// agent was staffed with ([`skill_index`]).
 pub(crate) fn system_prompt(seat: Seat, skills: &[Skill], skills_dir: Option<&Path>) -> String {
     with_skills(default_system_prompt(seat), skills, skills_dir)
 }
@@ -83,19 +79,33 @@ pub(crate) fn pull_request_system_prompt(skills: &[Skill], skills_dir: Option<&P
 }
 
 fn with_skills(seat_text: &str, skills: &[Skill], skills_dir: Option<&Path>) -> String {
-    let mut prompt = seat_text.trim().to_string();
-    if skills.is_empty() {
-        return prompt;
+    let index = skill_index(skills, skills_dir);
+    match index.is_empty() {
+        true => seat_text.trim().to_string(),
+        false => format!("{}\n\n{index}", seat_text.trim()),
     }
-    prompt.push_str(SKILLS_HEADER);
+}
+
+/// The index of the skills an agent was staffed with: one line per skill,
+/// under [`SKILLS_HEADER`], or nothing for an agent staffed with none. The
+/// MCP server's instructions carry it too (006), after the seat text.
+///
+/// `skills_dir` is where the run directory's `skills` folder is linked
+/// ([`link_skills`](super::link_skills)); each line names the file under
+/// that link, so an agent opens the one it needs itself.
+pub(crate) fn skill_index(skills: &[Skill], skills_dir: Option<&Path>) -> String {
+    if skills.is_empty() {
+        return String::new();
+    }
+    let mut index = SKILLS_HEADER.to_string();
     for skill in skills {
-        prompt.push_str(&format!("\n- {}: {}", skill.name, skill.summary()));
+        index.push_str(&format!("\n- {}: {}", skill.name, skill.summary()));
         if let Some(dir) = skills_dir {
             let path = dir.join(&skill.name).join("SKILL.md");
-            prompt.push_str(&format!(" ({})", path.display()));
+            index.push_str(&format!(" ({})", path.display()));
         }
     }
-    prompt
+    index
 }
 
 /// What the index of an agent's skills opens with.
@@ -105,7 +115,7 @@ fn with_skills(seat_text: &str, skills: &[Skill], skills_dir: Option<&Path>) -> 
 /// is what an agent does with a skill of its own, and it is why a broad
 /// set of skills costs an agent a few lines rather than a few pages.
 const SKILLS_HEADER: &str =
-    "\n\nYour skills. Read the document of a skill before you do the work it covers:";
+    "Your skills. Read the document of a skill before you do the work it covers:";
 
 /// Initial prompt for an orchestrator session.
 ///
@@ -184,42 +194,54 @@ pub(crate) fn goal_attention_briefing(template: &str, goal: &Goal, tasks: &str) 
 }
 
 /// What one agent said to another, as the recipient reads it: who wrote it,
-/// the task and agent id an answer goes to, and what it says.
+/// and where an answer goes.
 ///
-/// `task_title` and `skills` are the sender's, fetched by the scheduler from
-/// the message's own `task_id` and `from_agent_id` — the message carries
-/// neither, since that is store data rather than something it was sent with.
-/// A message with no task, such as the orchestrator's, is named by `seat`
-/// alone, and the briefing adds no instruction to answer an id nobody named.
+/// The sender is named by its column, the task it is of and that task's
+/// title: a task staffs one agent per column, so the column names one
+/// reader, and it is the address `send_message` takes. `task_title` and
+/// `column` are fetched by the scheduler from the message's own `task_id`
+/// and `from_agent_id`. A message with no sending agent, such as the
+/// orchestrator's, is named by `seat` alone, and names no address.
 pub(crate) fn incoming_message_briefing(
     template: &str,
     message: &Message,
     seat: &str,
     task_title: Option<&str>,
-    skills: &[String],
+    column: Option<&str>,
 ) -> String {
-    let from = match (&message.from_agent_id, &message.task_id, task_title) {
-        (Some(agent_id), Some(task_id), Some(title)) => {
-            let skills = if skills.is_empty() {
-                String::new()
-            } else {
-                format!(" ({})", skills.join(", "))
-            };
-            format!(r#"the {seat} {agent_id} of task {task_id} "{title}"{skills}"#)
-        }
-        _ => format!("your {seat}"),
-    };
-    let answer_hint = if message.from_agent_id.is_some() && message.task_id.is_some() {
-        " Answer with send_message to that agent id and task id."
-    } else {
-        ""
+    let (from, answer_to) = match (&message.task_id, task_title, column) {
+        (Some(task_id), Some(title), Some(column)) if message.from_agent_id.is_some() => (
+            format!(r#"the {column} agent of task {task_id} "{title}""#),
+            format!(", with `send_message` to `{column}` and task `{task_id}`"),
+        ),
+        _ => (format!("your {seat}"), String::new()),
     };
     render(
         template,
         &[
             ("from", &from),
             ("body", &message.body),
-            ("answer_hint", answer_hint),
+            ("answer_to", &answer_to),
+        ],
+    )
+}
+
+/// What the orchestrator is told when the scheduler moved the exhausted
+/// agent of `column` on `task_title` from `old` to `new` (021).
+pub(crate) fn exhausted_switch_notice(
+    template: &str,
+    column: &str,
+    task_title: &str,
+    old: &str,
+    new: &str,
+) -> String {
+    render(
+        template,
+        &[
+            ("column", column),
+            ("task_title", task_title),
+            ("old", old),
+            ("new", new),
         ],
     )
 }
@@ -503,7 +525,7 @@ mod tests {
                     &message(),
                     "agent",
                     Some(task.title.as_str()),
-                    &["code-review".to_string()],
+                    Some("review"),
                 ),
             };
             assert!(

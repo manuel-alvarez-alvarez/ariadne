@@ -114,6 +114,9 @@ pub(crate) struct AriadneMcp {
     /// The request a review session reviews. A column's agent finds the
     /// request its task opened through the daemon instead (005).
     pull_request_id: Option<String>,
+    /// The index of the skills this session loads, as the launcher renders
+    /// it (`ARIADNE_SKILL_INDEX`). None where the session loads no skill.
+    skill_index: Option<String>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -138,6 +141,7 @@ impl AriadneMcp {
             task_id: std::env::var("ARIADNE_TASK_ID").ok(),
             step: std::env::var("ARIADNE_STEP").ok(),
             pull_request_id,
+            skill_index: std::env::var("ARIADNE_SKILL_INDEX").ok(),
             tool_router: Self::tool_router(),
         })
     }
@@ -260,7 +264,7 @@ fn json_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
 fn ask_rule(seat: &McpSeat) -> &'static str {
     match seat {
         McpSeat::Orchestrator => {
-            "To ask the user, call `wait_for_user` with a one-line hint first. Then write the question in your reply, not in your thinking: a numbered list of the open points and their options. Then wait. Do not use it for agent questions."
+            "To ask the user, call `wait_for_user` with a one-line hint first. Then write the question in your reply, not in your thinking. Do not use it for agent questions."
         }
         McpSeat::Agent => {
             "Ask the user only where the task cannot continue without a user answer. Call `wait_for_user` with a one-line hint first. Then write the question in your reply, not in your thinking. Do not use it for agent questions."
@@ -310,7 +314,15 @@ fn mcp_seat(seat: &str, pull_request: bool) -> Result<McpSeat> {
 /// a client that defers nothing has nothing to load.
 fn session_rules(seat: &McpSeat) -> String {
     format!(
-        r#"Reach Ariadne only through these tools. A backticked name is a tool. If your client defers these tools, load the ones you need in one tool search before the first call. {} Run a check in the foreground. Never poll it with a no-op command. Never narrate progress. Take as few turns as you can.
+        r#"Reach Ariadne only through these tools. If your client defers them, load the ones you need in one tool search first. {} Never narrate progress. Take as few turns as you can.
+
+Run every check this way:
+- Run it in the foreground, with a timeout up to ten minutes.
+- Split a run that is too long by crate or package.
+- Send its output to a log file outside the worktree, such as `/tmp/<task>-check.log`.
+- Print only the summary and the failures. Use the runner's failures-only flag, and `tail -n 40`.
+- Read the log only for the detail of a failure.
+- Never poll a background run.
 
 Write all text in ASD-STE100 Simplified Technical English (STE):
 - Write one instruction in one sentence.
@@ -320,12 +332,25 @@ Write all text in ASD-STE100 Simplified Technical English (STE):
 - Write a sequence of steps as a list.
 
 STE holds for all you write:
-- your turn text and your visible reasoning
+- your turn text and visible reasoning
 - task titles and descriptions
-- `complete_step`, `fail_step` and `fail_task` reasons
-- commit subjects and bodies, and pull request text"#,
+- step and task reasons
+- commits and pull request text
+Write no trailer anywhere: no `Co-Authored-By`, no "Generated with", no tool name."#,
         ask_rule(seat)
     )
+}
+
+/// What this seat owes, from its first read to the call that ends its turn:
+/// the store's seat text, picked by the seat (006). A review session's is
+/// the pull request reviewer's own (029).
+fn seat_text(seat: &McpSeat) -> &'static str {
+    use ariadne_store::defaults::{default_system_prompt, pull_request_system_prompt};
+    match seat {
+        McpSeat::Orchestrator => default_system_prompt(ariadne_core::Seat::Orchestrator),
+        McpSeat::Agent => default_system_prompt(ariadne_core::Seat::Agent),
+        McpSeat::PullRequestReviewer => pull_request_system_prompt(),
+    }
 }
 
 impl ServerHandler for AriadneMcp {
@@ -337,6 +362,10 @@ impl ServerHandler for AriadneMcp {
     /// They are here instead because this is the one text an agent of any
     /// seat is handed, and because a profile's prompts are the developer's to
     /// edit: what Ariadne *is* should not be something an edit can delete.
+    ///
+    /// After the rules come the seat text and the skill index (006). No
+    /// adapter is proven to keep these in its system prompt, so the runtime
+    /// sends both in a turn too, after a launch and after a model switch.
     fn get_info(&self) -> ServerInfo {
         let mut info = ServerInfo::default();
         let scope = [
@@ -351,15 +380,23 @@ impl ServerHandler for AriadneMcp {
         .flatten()
         .map(|part| format!(", {part}"))
         .collect::<String>();
-        info.instructions = Some(format!(
+        let mut instructions = format!(
             "Ariadne orchestrator tools for this {} session: session {}{}. \
              The tools here are the ones your seat can call. Every call acts as \
-             this session. {}",
+             this session. {}\n\n{}",
             self.seat.as_str(),
             self.session_id,
             scope,
-            session_rules(&self.seat)
-        ));
+            session_rules(&self.seat),
+            seat_text(&self.seat).trim()
+        );
+        if let Some(index) = self.skill_index.as_deref().map(str::trim)
+            && !index.is_empty()
+        {
+            instructions.push_str("\n\n");
+            instructions.push_str(index);
+        }
+        info.instructions = Some(instructions);
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info
     }
@@ -419,9 +456,23 @@ pub(crate) mod tests {
         McpSeat::PullRequestReviewer,
     ];
 
+    /// What the launcher's skill index opens with.
+    const SKILL_INDEX_HEADER: &str =
+        "Your skills. Read the document of a skill before you do the work it covers:";
+
+    /// The one skill a test session of `seat` is indexed with.
+    fn skill_of(seat: &McpSeat) -> &'static str {
+        match seat {
+            McpSeat::Orchestrator => "orchestration",
+            McpSeat::Agent => "coding",
+            McpSeat::PullRequestReviewer => "pr-reviewer",
+        }
+    }
+
     pub(crate) fn server_at(seat: McpSeat, client: Client) -> AriadneMcp {
         let pull_request = seat == McpSeat::PullRequestReviewer;
         let step = (seat == McpSeat::Agent).then(|| "develop".into());
+        let skill_index = format!("{SKILL_INDEX_HEADER}\n- {}: Do the work.", skill_of(&seat));
         AriadneMcp {
             client: std::sync::Arc::new(client),
             seat,
@@ -430,6 +481,7 @@ pub(crate) mod tests {
             task_id: (!pull_request).then(|| "01TASK".into()),
             step,
             pull_request_id: pull_request.then(|| "01PR".into()),
+            skill_index: Some(skill_index),
             tool_router: AriadneMcp::tool_router(),
         }
     }
@@ -679,8 +731,7 @@ pub(crate) mod tests {
             let instructions = mcp.get_info().instructions.expect("instructions");
             assert!(
                 instructions.contains(
-                    "If your client defers these tools, load the ones you need \
-                     in one tool search before the first call."
+                    "If your client defers them, load the ones you need in one tool search first."
                 ),
                 "{seat:?}: {instructions}"
             );
@@ -719,7 +770,10 @@ pub(crate) mod tests {
                 "as few turns as you can",
                 "Write all text in ASD-STE100 Simplified Technical English",
                 "Write no more than 20 words in a sentence",
-                "commit subjects and bodies",
+                "commits and pull request text",
+                "Run it in the foreground, with a timeout up to ten minutes.",
+                "Never poll a background run.",
+                "Write no trailer anywhere",
             ] {
                 assert!(instructions.contains(rule), "{seat:?}: {instructions}");
             }
@@ -737,7 +791,6 @@ pub(crate) mod tests {
         );
         let instructions = orchestrator.get_info().instructions.expect("instructions");
         assert!(instructions.contains("call `wait_for_user` with a one-line hint first."));
-        assert!(instructions.contains("Then wait"));
 
         for seat in SEATS {
             let mcp = server_at(
@@ -809,9 +862,13 @@ pub(crate) mod tests {
     /// told to call a tool it never loaded did not call it. The rule holds
     /// for every tool of every seat, so it is here and in no skill.
     ///
+    /// The cap rises to 1450 for two blocks that moved here from the skills:
+    /// how a check is run, and that no text carries a trailer. Four skills
+    /// carried the check block and seven texts the trailer rule; one copy
+    /// here is shorter than those copies together.
     #[test]
     fn the_shared_rules_stay_small() {
-        const CAP: usize = 1000;
+        const CAP: usize = 1450;
         for seat in SEATS {
             let rules = session_rules(&seat);
             assert!(
@@ -819,6 +876,130 @@ pub(crate) mod tests {
                 "the {seat:?} session rules are {} characters, over their {CAP}",
                 rules.len()
             );
+        }
+    }
+
+    /// Each session's instructions hold its seat text and its skill index,
+    /// after the session rules (006).
+    #[test]
+    fn each_seat_is_told_its_seat_text_and_its_skill_index_after_the_rules() {
+        use ariadne_store::defaults::{default_system_prompt, pull_request_system_prompt};
+        for (seat, text) in [
+            (
+                McpSeat::Orchestrator,
+                default_system_prompt(ariadne_core::Seat::Orchestrator),
+            ),
+            (
+                McpSeat::Agent,
+                default_system_prompt(ariadne_core::Seat::Agent),
+            ),
+            (McpSeat::PullRequestReviewer, pull_request_system_prompt()),
+        ] {
+            let mcp = server_at(
+                seat.clone(),
+                Client::resolve(Some("http://127.0.0.1:1"), None),
+            );
+            let instructions = mcp.get_info().instructions.expect("instructions");
+            let rules = instructions
+                .find(&session_rules(&seat))
+                .expect("the session rules");
+            let seat_at = instructions.find(text).expect("the seat text");
+            let index = format!("{SKILL_INDEX_HEADER}\n- {}: Do the work.", skill_of(&seat));
+            let index_at = instructions.find(&index).expect("the skill index");
+            assert!(
+                rules < seat_at && seat_at < index_at,
+                "{seat:?}: {instructions}"
+            );
+        }
+        // A session that loads no skill is told no index.
+        let mut bare = server_at(
+            McpSeat::Agent,
+            Client::resolve(Some("http://127.0.0.1:1"), None),
+        );
+        bare.skill_index = None;
+        let instructions = bare.get_info().instructions.expect("instructions");
+        assert!(!instructions.contains(SKILL_INDEX_HEADER), "{instructions}");
+    }
+
+    /// Each rule that every seat shares is written in its owner alone (006):
+    /// asking the user in the session rules and the `wait_for_user`
+    /// description, the end of a turn in the descriptions of the calls that
+    /// end one, and the check block and the trailer rule in the session
+    /// rules. Every default text and shipped skill is read beside them.
+    #[test]
+    fn each_shared_rule_is_written_in_its_owner_alone() {
+        use ariadne_store::defaults::{
+            BUILTIN_SKILLS, default_prompt_text, default_system_prompt, exhausted_switch_notice,
+            pull_request_briefing_prompt, pull_request_news_prompt, pull_request_system_prompt,
+        };
+        let mut texts: Vec<(String, String)> = Vec::new();
+        for seat in SEATS {
+            texts.push(("session rules".into(), session_rules(&seat)));
+        }
+        for seat in ariadne_core::Seat::ALL {
+            texts.push((
+                format!("{} seat text", seat.as_str()),
+                default_system_prompt(seat).into(),
+            ));
+        }
+        for kind in ariadne_core::PromptKind::ALL {
+            texts.push((kind.as_str().into(), default_prompt_text(kind).into()));
+        }
+        for (name, text) in [
+            ("pull request seat text", pull_request_system_prompt()),
+            ("pull request briefing", pull_request_briefing_prompt()),
+            ("pull request news", pull_request_news_prompt()),
+            ("switch notice", exhausted_switch_notice()),
+        ] {
+            texts.push((name.into(), text.into()));
+        }
+        for skill in &BUILTIN_SKILLS {
+            texts.push((format!("{} skill", skill.name), skill.document.into()));
+        }
+        for tool in AriadneMcp::tool_router().list_all() {
+            texts.push((
+                format!("{} description", tool.name),
+                tool.description.as_deref().unwrap_or_default().into(),
+            ));
+        }
+        for (rule, markers, owners) in [
+            (
+                "asking the user",
+                &["the question in your reply"][..],
+                &["session rules", "wait_for_user description"][..],
+            ),
+            (
+                "ending the turn",
+                &["End your turn after", "After a question, end your turn"][..],
+                &[
+                    "complete_step description",
+                    "fail_step description",
+                    "send_message description",
+                ][..],
+            ),
+            (
+                "the check block",
+                &[
+                    "in the foreground",
+                    "tail -n 40",
+                    "outside the worktree",
+                    "Never poll",
+                ][..],
+                &["session rules"][..],
+            ),
+            (
+                "no trailer",
+                &["trailer", "Co-Authored-By"][..],
+                &["session rules"][..],
+            ),
+        ] {
+            let places: std::collections::BTreeSet<&str> = texts
+                .iter()
+                .filter(|(_, text)| markers.iter().any(|marker| text.contains(marker)))
+                .map(|(name, _)| name.as_str())
+                .collect();
+            let owners: std::collections::BTreeSet<&str> = owners.iter().copied().collect();
+            assert_eq!(places, owners, "{rule} is written outside its owner");
         }
     }
 

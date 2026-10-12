@@ -24,8 +24,8 @@ shape.
    and the resource use at real size.
    Done when every existing row holds the new shape.
 7. Switch callers to read the new shape.
-8. Contract last. Retire the old shape in a later deploy.
-   Done when search and usage data show no caller remains.
+8. Leave the contract to a later task. Name it in your `complete_step`
+   reason.
 
 ## Rules
 

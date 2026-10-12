@@ -226,7 +226,7 @@ impl PromptKind {
             PromptKind::GoalAttention => &["goal_title", "tasks"],
             // What was said, who said it, the task it is of, and whether to
             // say how to answer.
-            PromptKind::IncomingMessage => &["from", "body", "answer_hint"],
+            PromptKind::IncomingMessage => &["from", "body", "answer_to"],
             PromptKind::StepBriefing => &[
                 "task_title",
                 "task_description",

@@ -1,7 +1,7 @@
 ---
 id: acp-runtime
 status: current
-updated: 2026-10-10
+updated: 2026-10-12
 areas: [daemon]
 commits: [8163676d, e078d730, c47870a8, b8cfd6bb, 21a4d426, 90f6a584, 354c0aaa, 04dd0fed, 47b8acdf, efb3e62a, 7b19d49a, b2c18f4f, 87db0081]
 tests:
@@ -13,6 +13,7 @@ tests:
   - crates/ariadne-daemon/tests/it/auto_switch.rs
   - crates/ariadne-daemon/tests/it/ai_permissions_decisions.rs
   - crates/ariadne-daemon/tests/it/switch.rs
+  - crates/ariadne-daemon/tests/it/seat_brief.rs
   - crates/ariadne-daemon/src/learned_key.rs
   - crates/ariadne-store/tests/store.rs
 ---
@@ -114,11 +115,13 @@ not reject the agent or discard its catalog.
    agent's reason, and the session keeps its old pin
    (`::a_refused_same_agent_option_keeps_the_old_pin`).
    Loose sessions instead retain and record the loaded model (020).
-4. Every prompt the runtime sends is the system prompt, a blank line, and
-   the text of the prompt, except a command. Where text from any source starts
-   with `/` and its first word, without `/`, equals the `name` of a command the
-   agent last offered, the runtime sends the text alone. The first prompt of a
-   launch is the one its launch file carries, if any. `user_prompt_submit`
+4. A prompt the runtime sends is its own text. The first prompt of a launch
+   and the first after a model switch carry the system prompt and a blank
+   line ahead of that text (006 rule 2). A command never carries it: where text from any
+   source starts with `/` and its first word, without `/`, equals the `name`
+   of a command the agent last offered, the runtime sends the text alone,
+   and the brief waits for the next turn. The first prompt of a launch is
+   the one its launch file carries, if any. `user_prompt_submit`
    carries the whole as `prompt`, the text alone as `text`, and a `source`:
    `console` for console input (008), `daemon` for everything the daemon
    itself says.
@@ -356,8 +359,8 @@ not reject the agent or discard its catalog.
 - `ask` keeps the agent's choices and records a one-time row
   (`acp_console.rs::ask_records_the_console_choice_and_never_auto_allows`).
 - A column's agent runs end to end — the handshake in order, the worktree, the
-  `ariadne` MCP server, the model and effort pins, the briefing behind the
-  system prompt as the first prompt, the events in the store, the captured
+  `ariadne` MCP server, the model and effort pins, the briefing as the first
+  prompt, the events in the store, the captured
   agent session id, and the agent still up after the turn
   (`acp_runtime.rs::an_acp_author_runs_on_daemon_stdio`).
 - An orchestrator seat runs the same way, with the ariadne MCP server in
@@ -453,9 +456,13 @@ not reject the agent or discard its catalog.
   input (`::the_model_receives_the_raw_input_and_not_the_learned_key`).
 - Console input reaches the agent and queues behind a running turn
   (`acp_console.rs::posted_input_reaches_the_agent_and_queues_behind_a_running_turn`).
-- An offered command reaches the agent without the system prompt; every other
-  slash prompt keeps that prompt
-  (`acp_console.rs::only_available_slash_commands_skip_the_system_prompt`).
+- An offered command, and every prompt after the first, reaches the agent as
+  its own text alone
+  (`acp_console.rs::only_available_slash_commands_skip_the_system_prompt`,
+  `::console_input_is_reported_as_its_text_from_the_console`). The seat brief
+  rides the first turn and the first after a model switch, on every agent
+  (`seat_brief.rs::an_agent_gets_the_seat_brief_on_the_first_turn_and_after_a_switch`,
+  `::a_claude_agent_gets_the_seat_brief_first_and_each_later_turn_word_for_word`).
 - An unknown session update leaves the session running
   (`acp_runtime.rs::an_unknown_session_update_does_not_fail_the_session`).
 - A scheduler nudge arrives at the agent as a `session/prompt`

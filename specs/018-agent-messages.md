@@ -1,7 +1,7 @@
 ---
 id: agent-messages
 status: current
-updated: 2026-10-09
+updated: 2026-10-12
 areas: [core, store, api, daemon, mcp, cli, ui]
 commits: [1b09ac10]
 tests:
@@ -113,12 +113,13 @@ moves a task through (001), and the wording of the text a message arrives in
 - Agents write to each other without leaving the task and without the step
   moving (`agent_messages.rs::agents_write_to_each_other_without_leaving_the_task`).
 - The message is handed to the recipient's agent as a prompt, names the
-  sender by its seat, its agent id, the task it is of and its skills, says
-  how to answer, carries no id of the message itself, and is stamped
-  delivered once the prompt went out
+  sender by its column, the task it is of and that task's title, says to
+  answer only a question with `send_message` to that column and task,
+  carries no id of the message itself, and is stamped delivered once the
+  prompt went out
   (`agent_messages.rs::a_message_is_handed_to_the_agent_it_was_sent_to`). Two
   tasks staffed on the same skills are still told apart, since each relay
-  also names its own task and agent
+  also names its own task and title
   (`::two_tasks_on_the_same_skills_are_named_apart_in_their_relay_to_the_orchestrator`).
 - An agent can write to the orchestrator, and it reaches the orchestrator's
   agent

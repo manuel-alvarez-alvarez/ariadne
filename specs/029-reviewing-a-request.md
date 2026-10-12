@@ -257,8 +257,8 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
       not the title's, so the title stays one short line;
     - a header, one line per commit the round reviewed, each a short sha
       and its subject, read with `git log <base>..HEAD` in the worktree on
-      the first round, or `git log <reviewed_sha>..HEAD` later, and the
-      full base-to-head range on its own line;
+      the first round, or `git log <reviewed_sha>..HEAD` later, ending on
+      one line of the base-to-head range, `<base>..<head>` as short shas;
     - a prose summary, not bullets, of what the change does and what the
       open findings mean for it, naming each open finding's priority and
       title;

@@ -19,6 +19,7 @@ fn ctx_with_flags(run_dir: PathBuf, extra_flags: Vec<String>) -> SpawnCtx {
         socket_path: PathBuf::from("/tmp/ariadne.sock"),
         cli_bin: "/usr/local/bin/ariadne".into(),
         system_prompt: "SYSTEM PROMPT".into(),
+        skill_index: "SKILL INDEX".into(),
         skills_dir: None,
         initial_prompt: "DO THE TASK".into(),
         model: "test-model".into(),
@@ -39,7 +40,8 @@ fn ctx_with_pin(run_dir: PathBuf, model: &str, effort: Option<&str>) -> SpawnCtx
 
 /// A pull request session works for no goal and no task (026): its MCP
 /// server is told the request it watches, beside the seat, and nothing of a
-/// goal or a task.
+/// goal or a task. It is told the session's skill index too, which it puts
+/// in its instructions after the seat text (006).
 #[test]
 fn a_pull_request_session_tells_its_mcp_server_the_request_and_no_goal() {
     let dir = tempfile::tempdir().unwrap();
@@ -70,6 +72,7 @@ fn a_pull_request_session_tells_its_mcp_server_the_request_and_no_goal() {
     assert_eq!(named("ARIADNE_SEAT"), Some("agent"));
     assert_eq!(named("ARIADNE_GOAL_ID"), None);
     assert_eq!(named("ARIADNE_TASK_ID"), None);
+    assert_eq!(named("ARIADNE_SKILL_INDEX"), Some("SKILL INDEX"));
 }
 
 /// The launch file as the run dir holds it.

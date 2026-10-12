@@ -5,40 +5,34 @@ description: Land a reviewed task on the base branch. Rebase, squash, push and f
 
 # Merge
 
-Land the reviewed task on the base branch, in your worktree. `<remote>`
-is what `git remote -v` names, if it names one.
+Land the reviewed task on the base branch from your worktree. The primary
+checkout is the `Repo:` path of your briefing. `<upstream>` is
+`<remote>/<base>` where `git remote -v` names a remote, else `<base>`.
 
 ## Steps
 
-1. Fetch the base: `git fetch <remote> <base>` where a remote exists.
-   Fast-forward `<base>` with `--ff-only <remote>/<base>` where the primary
-   checkout sits on `<base>`. Else fetch it straight onto `<base>`. With no
-   remote, use the primary checkout's own `<base>`. Take no fetch step.
-2. Rebase the task branch onto `<base>`. Fix every conflict yourself.
-3. Squash the task branch onto its merge base with `<base>`:
-   `git reset --soft "$(git merge-base <base> HEAD)" && git commit`,
-   with a Conventional Commits subject.
-4. Check `git diff --stat <base> HEAD`. It names only files of the
-   task. A wider list means the base moved; start again from step 1.
-5. Where a remote exists, push `HEAD:<base>` to `<remote>` from the task
-   worktree. The repository's hooks run its checks on the push.
-6. Fast-forward `<base>` in the primary checkout with
-   `git merge --ff-only <remote>/<base>`.
-7. With no remote, run the checks the repository instructions name for a
-   landing. Then fast-forward `<base>` in the primary checkout onto the task
-   branch.
-8. Call `complete_step`. Give it the base branch's sha as `merge_commit`.
+1. Where a remote exists, run `git fetch <remote> <base>`.
+2. Rebase the task branch onto `<upstream>`. Resolve every conflict
+   yourself.
+3. Squash the branch into one commit. Give it a Conventional Commits subject:
+   `git reset --soft "$(git merge-base <upstream> HEAD)" && git commit`.
+4. Run `git diff --stat <upstream> HEAD`. It names only files of the task.
+   Done when the list holds no other file.
+5. With a remote: push `HEAD:<base>` to `<remote>`. The hooks run the
+   checks. Then fast-forward `<base>` in the primary checkout:
+   - `git -C <repo> merge --ff-only <remote>/<base>` where `<base>` is checked out there
+   - else `git -C <repo> fetch <remote> <base>:<base>`.
+6. With no remote: run the checks the repository names for a landing. Then
+   fast-forward `<base>` in the primary checkout to the task branch.
+7. Call `complete_step` with the sha of `<base>` as `merge_commit`.
 
 ## Rules
 
-- A refused push is a fix on the task branch. Make it, then start again
-  from step 1.
+- A refused push or a failed check is a fix on the task branch. Make it,
+  then start again from step 1.
 - A rejected non-fast-forward push means the base moved. Start again from
   step 1.
 - Never force a push to `<base>`.
-- A moved base is not a conflict. Fetch it again and start over.
-- Write no trailer in the squash commit: no "Generated with", no
-  `Co-Authored-By`, no tool name.
 
 ## Done
 

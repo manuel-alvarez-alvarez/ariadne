@@ -1,7 +1,7 @@
 ---
 id: prompts-and-simplified-technical-english
 status: current
-updated: 2026-10-11
+updated: 2026-10-12
 areas: [prompts, store, core, mcp, daemon]
 commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
@@ -10,6 +10,8 @@ tests:
   - crates/ariadne-daemon/src/agents/handoff.rs
   - crates/ariadne-daemon/tests/it/prompts.rs
   - crates/ariadne-daemon/tests/it/skill_documents.rs
+  - crates/ariadne-daemon/tests/it/seat_brief.rs
+  - crates/ariadne-cli/src/commands/mcp.rs
   - crates/ariadne-core/src/lib.rs
 ---
 
@@ -20,8 +22,9 @@ the English all of it is written in.
 
 ## Scope
 
-In: the layers of text (system prompt, skill index, lifecycle briefing), what
-each layer states, rendering and placeholder validation, the STE rules, the
+In: the layers of text (MCP instructions, system prompt, skill index,
+lifecycle briefing), what each layer states, which turn carries the system
+prompt on which agent, rendering and placeholder validation, the STE rules, the
 size caps, and the handoff text a session switch hands the new agent in place
 of the conversation it cannot resume.
 
@@ -33,44 +36,50 @@ they describe (003, 030) — what a skill is (017), and the switch itself
 
 1. Text reaches an agent in three layers, and each rule is stated in exactly
    one of them:
-   - the **MCP session rules**, which every session receives before its first
-     prompt, whatever its seat: that Ariadne is reached only through its
-     tools, that a client which defers tools loads the ones it needs in one
-     tool search before the first call, whether a session works alone or
-     waits on the user, when it may ask anyway, how few turns to take, and
-     the English to write in (013);
-   - the **system prompt**, which states what a seat owes from its first read
-     to the call that ends its turn, and then indexes the skills this agent
-     was staffed with (017) — for the orchestrator, the one skill its seat
-     fixes by name;
+   - the **MCP server instructions**, which every session receives before
+     its first prompt, whatever its seat (013). They hold the session rules
+     first: that Ariadne is reached only through its tools, that a client
+     which defers tools loads the ones it needs in one tool search first,
+     when a seat asks the user and how, how few turns to take, how every
+     check runs, the English to write in, and that no text carries a
+     trailer. After the rules come the seat text, picked by the seat, and
+     the index of the skills the session loads (rule 4);
+   - the **system prompt**, which is that seat text and that skill index
+     again: what a seat owes from its first read to the call that ends its
+     work, then the skills this agent was staffed with (017) — for the
+     orchestrator, the one skill its seat fixes by name. It reaches the
+     agent through the MCP instructions and in a turn (rule 2);
    - the **lifecycle briefing**, which carries the values of one goal, task
      or column and whatever is only true of this moment: the column's
      instructions and the summary of the column before it (030), who sent a
      relayed message, the task it names and where to answer it (018).
-2. The system prompt is the code's, one text per seat. Nothing an agent runs
+2. A turn carries its own text alone, except the first turn of a launch and
+   the first turn after a model switch: those carry the system prompt ahead
+   of their own text. A session switch and a relaunch are new launches, so
+   their first turn carries it too. A slash command the agent offers never
+   carries it (021). Every agent takes this path, because none is proven to
+   keep the MCP instructions in its real system prompt through a compaction:
+   - `claude-acp`: claude-agent-acp 0.81.3-preview.1, on claude-agent-sdk
+     0.3.280, passes the MCP servers to the SDK. The SDK hands their
+     instructions to the model as an `mcp_instructions_delta` attachment, a
+     meta message with the user role, not as part of the system prompt;
+   - `codex-acp` and `opencode`: no section of their system prompt that
+     holds the MCP instructions could be shown;
+   - an agent nobody named is one nobody proved.
+   An agent that is proven later can skip the turn copy; until then the MCP
+   instructions are a second copy, not the only one.
+3. The system prompt is the code's, one text per seat. Nothing an agent runs
    under carries a lifecycle text of its own: what makes one agent differ
    from another in the same seat is the skills it holds. No seat text carries
    a playbook step — the orchestrator's phases are the `orchestration` skill
-   (017), and its seat text keeps only what no skill edit may take away: the
-   plan is made with the user, no code is written, a blocked point goes to
-   the user. The `agent` seat text is the one text every column's agent runs
-   under: read the task and the column, do the column's work, and end the step with `complete_step` or
-   `fail_step` (030). What a column does — build, review, merge, keep a
-   request — is its skill's to say. The `reviewer` seat text is the pull
-   request review session's (029).
-3. The skills that own a step state its checks: an agent runs the tests and the lint
-   of the crates and packages its step changed once, before the commit. After
-   the commit, it leaves `git status` empty and the repository's generate
-   step unchanged. The develop and review columns run the checks of what
-   changed. The repository's hooks run its whole suite at a push. The merge
-   skill pushes before it fast-forwards (030). A skill scopes the step it owns
-   to what the change touched and names no other column's run, so the
-   documents cannot disagree about who runs what.
-   The same text states how the branch is committed: one commit for the
-   task, one more commit for each answer to a review, and no amend of a
-   pushed commit. A skill carries only the commit of the step it owns:
-   `coding` commits the task it built, and `refactoring` the moves it made.
-   No skill divides a task into slices or small commits.
+   (017), and its seat text keeps only what no skill edit may take away: no
+   code is written, the plan is made with the user, and no open point is
+   decided alone. The `agent` seat text is the one text every column's agent
+   runs under: work in the task's worktree and on the current column, read
+   its skills, and what `complete_step`, `fail_step` and `fail_task` are for,
+   with the ban on `--no-verify` and `-n`. What a column does — build,
+   review, merge, keep a request — is its skill's to say. The `reviewer` seat
+   text is the pull request review session's (029).
 4. The skill index is one line per skill — its name, the summary its
    frontmatter states, and the path of its document in the run directory — and
    the instruction to read a document before doing the work it covers. That
@@ -78,34 +87,51 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    daemon's shared home copy (017), so a broad set of skills costs an agent a
    few lines rather than a few pages. An agent reads the shared document when
    it opens this path, so a later sync can change what a running agent reads.
+   The launcher hands the index to the MCP server as `ARIADNE_SKILL_INDEX`.
    How each CLI is pointed at those files is 007.
-5. The lifecycle briefings are Ariadne's own constants, read from the code on
+5. A rule every seat shares has one owner, and no other text repeats it:
+   - asking the user: the session rules, picked by seat, with a short form
+     in the `wait_for_user` description;
+   - ending the turn after a call: the `complete_step`, `fail_step` and
+     `send_message` descriptions;
+   - how a check runs — in the foreground, split by crate, logged outside
+     the worktree, its failures alone printed, never polled: the session
+     rules. A skill says only which checks it runs: the checks of what it
+     changed. The repository's hooks run its whole suite at a push, and the
+     merge skill pushes before it fast-forwards (030);
+   - no trailer in any text: the session rules.
+6. A skill carries only the commit of the step it owns: `coding` commits the
+   task it built, and a return from review adds a new commit on top and
+   amends nothing, since the merge column squashes. `refactoring` commits
+   the moves it made, and `pr-babysit` never amends a pushed request. No
+   skill divides a task into slices or small commits.
+7. The lifecycle briefings are Ariadne's own constants, read from the code on
    every launch and every resume. No route reads or writes one, and no row
    holds one. Because nothing is copied into the database, rewording a default
-   reaches every session started after it.
-6. A briefing is rendered by substituting `{name}` tokens. Rendering is
+   reaches every session started after it. The notice an orchestrator gets
+   when the scheduler moved an exhausted agent to another model (021) is one
+   of those constants too.
+8. A briefing is rendered by substituting `{name}` tokens. Rendering is
    lenient by construction: an unknown token, an unclosed brace and an empty
    template all render to something, and none of them fails a spawn.
-7. Each kind declares the placeholders its builder fills in, and a default
+9. Each kind declares the placeholders its builder fills in, and a default
    naming one outside its list fails the suite. Nothing hand-written reaches
    an agent any more — every text is the code's — so the check runs over the
    defaults rather than at a save. The kinds are the orchestrator's briefing,
    resume and attention, `IncomingMessage`, `StepBriefing`, `StepReturn` and
    `AgentResume` (`ariadne_core::PromptKind`).
-8. Default texts, shipped skills, and workflow documents use ASD-STE100 Simplified
-   Technical English with at most 25 words a sentence. MCP session rules use one
-   instruction to a sentence, the imperative for an instruction, the active
-   voice, at most 20 words a sentence, one meaning per word, a list for a
-   sequence of steps.
-9. Tests read sentence length and a
-   list of banned words (`utilise`, `prior to`, `in order to`, `ensure`,
-   `should`, `may`).
-10. After a question, end your turn. Do not poll `read_messages`. Ariadne
-    delivers the answer as a new turn.
+10. Default texts, shipped skills, workflow documents, session rules and tool
+    descriptions use ASD-STE100 Simplified Technical English: one instruction
+    to a sentence, the imperative for an instruction, the active voice, at
+    most 20 words a sentence (`ste::MAX_WORDS`), one meaning per word, a list
+    for a sequence of steps. Tests read sentence length line by line — a
+    skill with each wrapped sentence joined first — and a
+    list of banned words (`utilise`, `prior to`, `in order to`, `ensure`,
+    `should`, `may`).
 11. STE binds what the agents write too — turn text and visible reasoning,
-    task titles and descriptions, step reasons, failure reasons, commit
-    subjects and bodies, and pull request text — and that rule lives in the
-    session rules, where no edit of a skill can remove it.
+    task titles and descriptions, step and task reasons, commits, and pull
+    request text — and that rule lives in the session rules, where no edit
+    of a skill can remove it.
 12. Every default text is capped in size, per text and in total, and the caps
     come down to what a rewrite fits in. Moving a cap is a decision argued in
     the test's own documentation, never a way round a failing assertion. The
@@ -144,9 +170,13 @@ they describe (003, 030) — what a skill is (017), and the switch itself
 - Every default text obeys the two readable STE rules
   (`defaults.rs::every_default_text_is_simplified_technical_english`), and
   the rules are read line by line
-  (`::the_ste_rules_are_read_off_a_text_line_by_line`).
+  (`::the_ste_rules_are_read_off_a_text_line_by_line`). So does every text
+  the MCP server hands an agent
+  (`mcp.rs::every_text_the_server_hands_an_agent_is_simplified_technical_english`).
 - Every default text is within its cap and the totals
   (`defaults.rs::size_caps_hold`).
+- The seat texts and the briefings the agreed text gives ship word for word
+  (`defaults.rs::the_agreed_texts_ship_word_for_word`).
 - A rule is stated in exactly one briefing
   (`defaults.rs::each_rule_is_stated_in_exactly_one_briefing`,
   `::a_seat_rule_is_stated_in_its_own_prompt_alone`), and no default repeats
@@ -155,22 +185,37 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   MCP session rules state whether a seat works alone or waits on the user,
   and when it may ask anyway
   (`mcp.rs::only_the_orchestrator_is_told_to_ask`).
+- Each rule of rule 5 is written in its owner alone
+  (`mcp.rs::each_shared_rule_is_written_in_its_owner_alone`), and no skill
+  repeats how a check runs
+  (`defaults.rs::the_skills_leave_how_a_check_runs_to_the_session_rules`).
+- Each seat's MCP instructions hold its seat text and its skill index after
+  the session rules
+  (`mcp.rs::each_seat_is_told_its_seat_text_and_its_skill_index_after_the_rules`).
+- The first turn and the first turn after a model switch carry the system
+  prompt, and no other turn does: a nudge reaches the agent word for word
+  (`seat_brief.rs::an_agent_gets_the_seat_brief_on_the_first_turn_and_after_a_switch`,
+  `prompts.rs::a_return_and_a_nudge_assemble_word_for_word`). A
+  `claude-acp` agent takes the same path
+  (`seat_brief.rs::a_claude_agent_gets_the_seat_brief_first_and_each_later_turn_word_for_word`).
+- Every shipped skill holds to the STE limit with each wrapped sentence read
+  whole, and a closing quote ends with its sentence
+  (`defaults.rs::the_ste_rules_are_read_off_a_text_line_by_line`).
 - The develop and review skills run the checks of what changed, and no
   shipped skill names a whole suite
   (`defaults.rs::a_skill_scopes_its_own_checks_to_what_the_task_changed`,
   `::the_review_skill_starts_its_checks_before_the_read_and_ends_on_a_step_call`).
-  The repository hooks run its whole suite at a push. The merge skill pushes
-  before it fast-forwards, with a squash onto the merge base and a guard
-  before the push
+  The merge skill pushes before it fast-forwards, with a squash onto the
+  merge base and a guard before the push
   (`::the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself`,
   `::a_late_squash_keeps_what_another_landing_put_on_the_base_branch`).
-- The `agent` seat text bans `--no-verify` and `-n` for commits and pushes.
+- The `agent` seat text names what the three task calls are for and bans
+  `--no-verify` and `-n`, and names no end of a turn
+  (`defaults.rs::the_agent_seat_text_moves_the_task_with_the_two_step_calls`).
   No skill repeats the rule (`defaults.rs::each_rule_is_stated_in_exactly_one_briefing`).
-- The seat text and the two skills that name a commit make the task one
-  commit and amend nothing that is pushed
+- `coding` adds a new commit on a return and amends nothing, and no skill
+  divides a task
   (`defaults.rs::a_task_is_one_commit_and_nothing_amends_a_pushed_one`).
-- The review skill starts its checks before the read and ends on a step call
-  (`defaults.rs::the_review_skill_starts_its_checks_before_the_read_and_ends_on_a_step_call`).
 - Every default names only placeholders its kind can fill in
   (`defaults.rs::every_default_names_only_placeholders_its_kind_can_fill_in`),
   and every allowed placeholder is one a builder actually passes
@@ -230,5 +275,8 @@ they describe (003, 030) — what a skill is (017), and the switch itself
 `crates/ariadne-daemon/src/agents/handoff.rs` (the handoff text of a session
 switch),
 `crates/ariadne-core/src/lib.rs` (`PromptKind`, placeholder validation),
-`crates/ariadne-cli/src/commands/mcp.rs` (session rules),
+`crates/ariadne-cli/src/commands/mcp.rs` (session rules, and the seat text
+and skill index in the instructions),
+`crates/ariadne-daemon/src/acp.rs` (`seat_brief_in_turns`, which turn
+carries the system prompt),
 `crates/ariadne-daemon/src/agents/mod.rs` (`link_skills`).

@@ -1,7 +1,7 @@
 ---
 id: workflows
 status: current
-updated: 2026-10-11
+updated: 2026-10-12
 areas: [core, store, api, daemon, prompts]
 commits: []
 tests:
@@ -112,11 +112,13 @@ every other wire enum (011).
    what a workflow column does. `pr-babysit` is allowed: the `pr` column of
    `develop-review-pr` stages it.
 4. The `merge` skill is shipped alongside the two workflows
-   (`crates/ariadne-store/skills/merge/SKILL.md`): rebase the task branch
-   onto the base, squash onto the merge base, check `git diff --stat`,
-   fast-forward the base branch in the primary checkout, push where a remote
-   exists, then call `complete_step` with the base branch's sha as
-   `merge_commit`. The repository's hooks run the suite at that push. The
+   (`crates/ariadne-store/skills/merge/SKILL.md`): fetch the base where a
+   remote exists, rebase the task branch onto the upstream base, squash onto
+   the merge base, check `git diff --stat`, push where a remote exists, then
+   fast-forward the base branch in the primary checkout — the `Repo:` path
+   of the briefing — and call `complete_step` with the base branch's sha as
+   `merge_commit`. The repository's hooks run the suite at that push; with
+   no remote, the agent runs the checks the repository names for a landing. The
    squash goes onto the merge base rather than the base branch's name,
    since the base can move while the push runs; a `git diff --stat` that
    lists a file the task did not touch, or a fast-forward that fails, says

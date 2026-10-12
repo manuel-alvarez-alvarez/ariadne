@@ -66,7 +66,9 @@ pub(crate) struct QuotaBlock {
 #[derive(Clone)]
 pub(super) struct ExhaustedNotice {
     goal_id: String,
-    task_id: String,
+    /// The column of the agent that moved, and the title of its task.
+    column: String,
+    task_title: String,
     old_model: String,
     new_model: String,
 }
@@ -147,11 +149,19 @@ impl super::Scheduler {
                 if let (Some(goal_id), Some(task_id), Some(Seat::Agent)) =
                     (&session.goal_id, &session.task_id, session.seat())
                 {
+                    let task = self.store.get_task(task_id).await.ok();
+                    let column = match &session.task_agent_id {
+                        Some(id) => self.store.get_task_agent(id).await.ok().map(|a| a.step),
+                        None => None,
+                    }
+                    .or_else(|| task.as_ref().and_then(|task| task.step.clone()))
+                    .unwrap_or_default();
                     self.exhausted_notices.insert(
                         format!("{}:{switches}", session.id),
                         ExhaustedNotice {
                             goal_id: goal_id.clone(),
-                            task_id: task_id.clone(),
+                            column,
+                            task_title: task.map_or_else(|| task_id.clone(), |task| task.title),
                             old_model: session.model.clone(),
                             new_model: model,
                         },
@@ -176,9 +186,12 @@ impl super::Scheduler {
             let Some(orchestrator) = orchestrators.first() else {
                 continue;
             };
-            let text = format!(
-                "Task {} switched from model {} to {} because the old model was exhausted.",
-                notice.task_id, notice.old_model, notice.new_model
+            let text = crate::agents::prompts::exhausted_switch_notice(
+                ariadne_store::defaults::exhausted_switch_notice(),
+                &notice.column,
+                &notice.task_title,
+                &notice.old_model,
+                &notice.new_model,
             );
             if self.hand_prompt(orchestrator, text) {
                 self.exhausted_notices.remove(&old_session);

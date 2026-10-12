@@ -39,6 +39,13 @@ cargo fmt
 scripts/check-unused-rust                 # a library pub item no other file names
 ```
 
+To print only the summary and the failures of a run, add the failures-only
+flags and keep the tail:
+
+```sh
+cargo nextest run --status-level fail --final-status-level fail 2>&1 | tail -n 40
+```
+
 `unreachable_pub` is a workspace lint, so a `pub` item that its crate does not
 export is a warning. It cannot see a `pub` item of a library crate that no
 other crate uses: to rustc, that is the library's interface.

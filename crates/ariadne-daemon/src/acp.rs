@@ -1275,6 +1275,8 @@ impl AcpRuntime {
                         turn_ended.clone(),
                     );
                     rpc.in_flight = in_flight.clone();
+                    rpc.seat_brief = seat_brief_in_turns(&launch.config.system_prompt);
+                    rpc.brief = rpc.seat_brief.clone();
                     protocol_outcome = Some(
                         run_protocol(
                             &mut rpc,
@@ -1747,6 +1749,12 @@ struct Rpc {
     reports: Followers,
     /// The agent message whose prompt is going out.
     in_flight: MessageInFlight,
+    /// The seat text and skill index this launch sends in a turn (006).
+    /// None for a session with no seat.
+    seat_brief: Option<String>,
+    /// The seat brief the next turn carries: set at the launch and again
+    /// after a model switch, and taken by the first turn after either.
+    brief: Option<String>,
 }
 
 impl Rpc {
@@ -1770,6 +1778,8 @@ impl Rpc {
             turn_ended,
             reports,
             in_flight: MessageInFlight::default(),
+            seat_brief: None,
+            brief: None,
         }
     }
 
@@ -2420,17 +2430,9 @@ async fn run_protocol(
             source: PromptSource::Daemon,
             delivery: None,
         };
-        prompt_once(rpc, &session_id, &config.system_prompt, &prompt).await?;
+        prompt_once(rpc, &session_id, &prompt).await?;
     }
-    serve_with_input(
-        rpc,
-        &session_id,
-        &config.system_prompt,
-        prompts,
-        switches,
-        options,
-    )
-    .await
+    serve_with_input(rpc, &session_id, prompts, switches, options).await
 }
 
 /// Serve the agent until it exits: the turn is over, and the agent stays up
@@ -2447,7 +2449,6 @@ async fn run_protocol(
 async fn serve_with_input(
     rpc: &mut Rpc,
     session_id: &str,
-    system_prompt: &str,
     mut prompts: mpsc::UnboundedReceiver<Prompt>,
     mut switches: mpsc::UnboundedReceiver<ConfigSwitch>,
     mut options: Vec<v1::SessionConfigOption>,
@@ -2472,6 +2473,11 @@ async fn serve_with_input(
                             }
                             Ok(())
                         }.await;
+                        // A new model reads the seat brief again, where
+                        // the agent takes it in a turn.
+                        if result.is_ok() {
+                            rpc.brief = rpc.seat_brief.clone();
+                        }
                         let _ = change.done.send(result);
                     }
                     None => switches_open = false,
@@ -2485,7 +2491,7 @@ async fn serve_with_input(
                         }
                         // A failed turn leaves its claim to the driver, which
                         // gives it back where the prompt was never written.
-                        prompt_once(rpc, session_id, system_prompt, &prompt).await?;
+                        prompt_once(rpc, session_id, &prompt).await?;
                         rpc.in_flight.settle();
                         // This exact delivery's own turn just ended — not
                         // merely some turn on this session, which could be
@@ -2879,20 +2885,31 @@ fn category_name(category: &v1::SessionConfigOptionCategory) -> &str {
     }
 }
 
+/// The seat brief a launch sends in a turn: its seat text and skill index,
+/// or None for a session with no seat text.
+///
+/// The MCP server's instructions carry the brief too, but no adapter is
+/// proven to keep them in its real system prompt through a compaction
+/// (006 rule 2). claude-agent-acp hands them to the model as a user-role
+/// attachment, and codex-acp and opencode show no such section. So every
+/// agent gets the brief in a turn.
+fn seat_brief_in_turns(system_prompt: &str) -> Option<String> {
+    (!system_prompt.is_empty()).then(|| system_prompt.to_string())
+}
+
 /// One turn: the prompt out, the turn's chunks as they come — each run of
 /// text stored once the next thing the agent reports arrives — and, once the
 /// response is in, the last run stored, then the `stop`. A turn that fails
 /// stores its last run too, before the error ends the driver.
-async fn prompt_once(
-    rpc: &mut Rpc,
-    session_id: &str,
-    system_prompt: &str,
-    prompt: &Prompt,
-) -> Result<()> {
+///
+/// A turn sends its own text alone. The first turn after a launch or a model
+/// switch carries the seat brief ahead of it; a slash command the agent
+/// offers never carries it.
+async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result<()> {
     let command = rpc.turn.lock().await.is_command(&prompt.text);
-    let full = match command {
-        true => prompt.text.clone(),
-        false => format!("{system_prompt}\n\n{}", prompt.text),
+    let full = match rpc.brief.take_if(|_| !command) {
+        Some(brief) => format!("{brief}\n\n{}", prompt.text),
+        None => prompt.text.clone(),
     };
     {
         let mut turn = rpc.turn.lock().await;

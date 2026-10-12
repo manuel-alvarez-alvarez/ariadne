@@ -197,9 +197,9 @@ async fn a_started_column_agent_is_briefed_from_the_builtin_template() {
             ("dependencies", ""),
         ],
     );
-    // The first prompt of a launch carries the seat text and the skill index
-    // ahead of the briefing, since ACP has no system prompt of its own; the
-    // briefing is what ends it.
+    // The stub keeps no MCP instructions anyone proved, so the first prompt
+    // of a launch carries the seat text and the skill index ahead of the
+    // briefing (006); the briefing is what ends it.
     let prompts = h.prompts_to(&session);
     let first = prompts.first().map(String::as_str).unwrap_or_default();
     assert!(
@@ -338,12 +338,9 @@ async fn a_return_and_a_nudge_assemble_word_for_word() {
             ("reason", REASON),
         ],
     );
-    // The stub records the seat text ahead of every prompt it is sent, so
-    // the briefing is what a prompt ends with.
+    // A later turn carries its own text alone: no seat text, no skill index.
     eventually(TIMEOUT, "the return briefing", || async {
-        h.prompts_to(&develop)
-            .iter()
-            .any(|prompt| prompt.ends_with(&expected))
+        h.prompts_to(&develop).contains(&expected)
     })
     .await;
 
@@ -364,10 +361,8 @@ async fn a_return_and_a_nudge_assemble_word_for_word() {
     )
     .await;
     h.notify(&cast.task.id);
-    eventually(TIMEOUT, "the nudge", || async {
-        h.prompts_to(&develop)
-            .iter()
-            .any(|prompt| prompt.ends_with(&expected))
+    eventually(TIMEOUT, "the nudge, word for word", || async {
+        h.prompts_to(&develop).contains(&expected)
     })
     .await;
 }

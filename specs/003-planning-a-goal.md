@@ -44,7 +44,8 @@ Out: the columns and their gates (030), the model catalog the sizing reads
 3. It asks the user about every unclear point, until nothing about the goal is
    open: `wait_for_user` with a one-line hint for the Needs attention list
    (031 rule 11), then one question in plain turn text — a numbered list of
-   the open points, each with its options — then it waits.
+   the open points, each with its options. How to ask is the session rules'
+   (013); the numbered list is the playbook's.
    The user answers in the session's terminal (`ariadne goal attach`). An
    orchestrator waiting on an answer is not nudged.
 4. It writes one task per unit of work: small, finishable alone, one
@@ -57,20 +58,16 @@ Out: the columns and their gates (030), the model catalog the sizing reads
 6. It staffs one agent on every column of each task (030), and gives every
    agent one model from the catalog (011) — a model is required, so no agent
    is staffed without one. A column's agent runs on the column's skills
-   unless the task names others. Across a plan it spreads the agents evenly
-   over the tasks, and never onto a task the agent does not suit: fit is the
-   first question, and an even mix is the second. For each column it takes a
-   model of the column's preferred rank (030), and it states a reason where
-   it takes another rank; it takes the lowest effort that finishes the step.
-   `local` is staffed only where the user names it. A rank compares with the
-   same rank of another agent, and a model the user left unranked is sized
-   from its description.
+   unless the task names others. For each column it takes a model of the
+   column's preferred rank (030), and it states a reason for each step up.
+   Where a column names no rank, it takes the lowest rank and effort that
+   finish the work. `local` is staffed only where the user names it.
 7. Two things are settled with the user rather than decided alone, because
    each is a judgement about the work and not about the code:
    - what the goal actually asks for (3);
    - what each agent runs on. The orchestrator sizes every one of them from
-     the catalog (011) and shows the user what it chose; the model the user
-     names instead is the one that is staffed.
+     the catalog (011) and shows the user the tasks and the models, and
+     revises them until the user writes an explicit yes.
    Nothing a column settles is asked about: whether a task is reviewed, and
    how it lands, follow from the goal's workflow, settled when the goal was
    created (030).
@@ -101,12 +98,12 @@ Out: the columns and their gates (030), the model catalog the sizing reads
     about anything it needs to know, and the message arrives as a turn
     (018). It acts on what it is told or sends a message back.
 15. It answers with `list_tasks`, and then with `retry_task`, `cancel_task`,
-    `update_task`, `switch_session` (013) or nothing at all. Before it
-    retries a failed task it staffs every column the task lacks with
-    `update_task`, since the retry is refused by the column's name otherwise
-    (001 rule 12). It switches a task's session where the agent reported
-    exhausted, stuck or unsuitable, to a model the ladder gives, and says so
-    to the user.
+    `update_task`, `switch_session` (013) or nothing at all. For each failed
+    task it retries, rewrites or cancels. A retry of a task with a column
+    nobody staffs is refused by the column's name (001 rule 12), and
+    `retry_task` says so. It switches a task's session where the agent is
+    exhausted, stuck or unsuitable, to a model one rank up, and says so to
+    the user.
 16. `complete_goal` ends the goal. Whether the goal is *met* is a judgement
     about the work, so the daemon does not make it — but it refuses the call
     while any task is not terminal, which is the part it can see. The user may
@@ -118,21 +115,19 @@ Out: the columns and their gates (030), the model catalog the sizing reads
 - The playbook asks before it plans and plans before it starts
   (`defaults.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`),
   staffs one agent on every column and asks no reviewer question
-  (`::the_orchestration_skill_staffs_one_agent_per_column_and_asks_no_reviewer_question`),
-  and staffs a plan on a mix of agents rather than on one
-  (`::the_orchestrator_staffs_a_plan_on_a_mix_of_agents`).
-- The playbook takes each column's preferred rank unless it states a reason
-  (`defaults.rs::the_orchestrator_staffs_each_column_on_its_rank`).
+  (`::the_orchestration_skill_staffs_one_agent_per_column_and_asks_no_reviewer_question`).
+- The playbook takes each column's rank, and states a reason for each step
+  up (`defaults.rs::the_orchestrator_staffs_each_column_on_its_rank`).
 - The orchestrator is briefed to end planning with `finalize_plan` and with no
   other plan call
   (`defaults.rs::the_orchestrator_is_briefed_with_finalize_plan_and_no_other_plan_call`).
-- The playbook switches a struggling agent's session to a model the ladder
-  gives, and tells the user
+- The playbook switches a struggling agent's session to a model one rank
+  up, and tells the user
   (`defaults.rs::the_orchestration_skill_switches_a_struggling_agents_session`).
 - The nudge fits the conversation and the goal under way
   (`defaults.rs::the_orchestrator_nudge_fits_the_conversation_and_the_goal_under_way`),
-  and the attention prompt names the staffing a retry needs
-  (`::the_goal_attention_names_the_staffing_a_retry_needs`).
+  and the attention prompt names the three choices for each task and what
+  ends the goal (`::the_goal_attention_names_the_three_choices_and_the_end`).
 - The orchestrator's own texts name no forge
   (`defaults.rs::the_orchestrator_is_told_nothing_of_forges`), its briefing
   names the workflow and its columns

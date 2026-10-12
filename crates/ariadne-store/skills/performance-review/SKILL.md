@@ -21,6 +21,8 @@ beside its measurement.
 5. Report the numbers and trade-offs. Separate measured findings from open
    questions.
    Done when every performance claim cites its measurement.
+6. Call `fail_step` with the verdict on a blocking finding, else
+   `complete_step`.
 
 ## What to look for
 

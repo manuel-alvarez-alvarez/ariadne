@@ -35,13 +35,16 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    instructions name the request.
 2. The server's instructions, which every session receives before its first
    prompt, say what this session is and carry the session rules that hold for
-   every seat alike (006). A client can defer the tools of a server: Claude
-   Code lists only their names until the agent loads one with its tool
-   search. So the rules tell every seat, in words that name no client, to
-   load the tools it needs in one tool search before the first call.
+   every seat alike (006). After the rules come the seat's own text, picked
+   by the seat, and the index of the skills the session loads, which the
+   launcher hands the server as `ARIADNE_SKILL_INDEX` (006). A client can
+   defer the tools of a server: Claude Code lists only their names until the
+   agent loads one with its tool search. So the rules tell every seat, in
+   words that name no client, to load the tools it needs in one tool search
+   first. The rules also say how every check runs, and that no text carries
+   a trailer; no skill and no tool description repeats either.
 3. Whether anyone answers a question is the one rule picked by seat: the
-   orchestrator's user answers in the console, one question at a time, and the
-   orchestrator then waits; a column's agent works alone, and asks only where
+   orchestrator's user answers in the console; a column's agent works alone, and asks only where
    the task cannot go on without the answer, and a pull request reviewer
    where the request cannot. The rule names no channel — the seat's own
    playbook already says how to ask. Every seat is told to call
@@ -187,6 +190,14 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   conversation (`::no_session_is_told_of_a_conversation`).
 - Every session is told to load a deferred tool before it calls it
   (`mcp.rs::every_session_is_told_to_load_a_deferred_tool_before_it_calls_it`).
+- Each seat's instructions hold its seat text and its skill index, after
+  the session rules
+  (`mcp.rs::each_seat_is_told_its_seat_text_and_its_skill_index_after_the_rules`),
+  and the launcher hands the server the index
+  (`adapters.rs::a_pull_request_session_tells_its_mcp_server_the_request_and_no_goal`).
+- Asking the user, the end of a turn, the check block and the trailer rule
+  are each written in their owner alone
+  (`mcp.rs::each_shared_rule_is_written_in_its_owner_alone`).
 - The shared rules stay small (`mcp.rs::the_shared_rules_stay_small`).
 - Every text the server hands an agent — instructions and tool descriptions —
   is Simplified Technical English

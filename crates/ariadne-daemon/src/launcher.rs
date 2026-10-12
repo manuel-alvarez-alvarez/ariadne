@@ -191,6 +191,7 @@ impl Launcher {
             Some(_) => prompts::pull_request_system_prompt(&skills, Some(&skills_dir)),
             None => prompts::system_prompt(seat, &skills, Some(&skills_dir)),
         };
+        let skill_index = prompts::skill_index(&skills, Some(&skills_dir));
         if session.goal_id.is_none() && session.pull_request_id.is_none() {
             anyhow::bail!("a staffed session needs a goal");
         }
@@ -214,6 +215,7 @@ impl Launcher {
             socket_path: self.cfg.socket_path.clone(),
             cli_bin: self.cfg.cli_bin.clone(),
             system_prompt,
+            skill_index,
             skills_dir: Some(skills_dir),
             initial_prompt,
             model,

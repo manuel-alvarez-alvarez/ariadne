@@ -22,6 +22,8 @@ architectural decision.
 5. Write the verdict. Separate blocking concerns from accepted costs and later
    work.
    Done when each concern has one disposition.
+6. Call `fail_step` with the verdict on a blocking finding, else
+   `complete_step`.
 
 ## What to look for
 

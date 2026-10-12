@@ -48,7 +48,6 @@ pub(super) struct AgentReq {
     /// The workflow column this agent works in.
     pub step: String,
     /// What it runs on, `<agent>:<model>` as `list_models` spells it.
-    /// The column prefers a rank. Use it unless you have a reason to move.
     pub model: String,
     /// An `efforts[].id` `list_models` lists for that model. Omit it for the
     /// default effort.
@@ -65,8 +64,7 @@ pub(super) struct AgentReq {
 pub(super) struct CreateTaskReq {
     pub title: String,
     pub description: String,
-    /// The agents that work the workflow columns, one for each column. Use
-    /// the column's preferred rank unless a reason calls for another model.
+    /// The agents that work the workflow columns, one for each column.
     pub agents: Vec<AgentReq>,
     /// Ids of the tasks that must merge before this one starts.
     pub depends_on: Option<Vec<String>>,
@@ -80,11 +78,8 @@ pub(super) struct UpdateTaskReq {
     pub task_id: String,
     pub title: Option<String>,
     pub description: Option<String>,
-    /// The agents that work the workflow columns, one for each column. This
-    /// list replaces the whole staffing list. Use each preferred rank unless
-    /// a reason calls for another model. A model is required, so `default`
-    /// is refused as one; `default` as an effort puts the agent back on the
-    /// default effort.
+    /// Replaces the whole staffing: one agent for each column. A model is
+    /// required; `default` as an effort resets it.
     pub agents: Option<Vec<AgentReq>>,
     /// The ids of the tasks that must merge first. This list replaces the
     /// whole list.
@@ -415,7 +410,7 @@ fn roll_call(agents: &[serde_json::Value]) -> String {
 #[tool_router(vis = "pub(super)")]
 impl AriadneMcp {
     #[tool(
-        description = "Flag that you wait for the user. Call it before you ask. This tool asks nothing: `hint` is one short line for the Needs attention list, which opens your console. After this call, write the whole question in your reply, where the user reads it in your console, and end your turn."
+        description = "Flag that you wait for the user. Call it before you ask. `hint` is one line for the Needs attention list, not the question. Then write the question in your reply and end your turn."
     )]
     async fn wait_for_user(
         &self,
@@ -496,7 +491,7 @@ impl AriadneMcp {
     // ---- orchestrator ----
 
     #[tool(
-        description = "Create one task in the goal. Pass `agents`, one for each column of the workflow. Each column prefers a rank. Use it unless a reason calls for another model."
+        description = "Create one task in the goal. Pass `agents`, one for each column of the workflow."
     )]
     async fn create_task(
         &self,
@@ -520,7 +515,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Edit a task that is pending, ready or failed. `agents` replaces the whole staffing, one for each column. Staff every column a failed task lacks before you retry it."
+        description = "Edit a task that is pending, ready or failed. `agents` replaces the whole staffing, one for each column."
     )]
     async fn update_task(
         &self,
@@ -607,7 +602,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Start a failed task again, from its first column. Rewrite it with `update_task` first where it failed on how it was written. A task with a column nobody staffs is refused: staff it first. A task with an unfinished dependency waits for it; retry it with that dependency, not cancel and recreate."
+        description = "Start a failed task again from its first column. Rewrite it first with `update_task` where its ticket caused the failure. A task with a column nobody staffs is refused. A task waits for each unfinished dependency."
     )]
     async fn retry_task(
         &self,
@@ -689,7 +684,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Open the pull or merge request your task lands by. Ariadne runs the forge CLI and answers the URL. A second call on the same task answers that URL again and opens nothing. Write no trailer in the body."
+        description = "Open the pull or merge request your task lands by. Ariadne runs the forge CLI and answers the URL. A second call on the same task answers that URL again and opens nothing."
     )]
     async fn open_pull_request(
         &self,
@@ -734,7 +729,7 @@ impl AriadneMcp {
     // ---- the request a task opened ----
 
     #[tool(
-        description = "Read your pull request off the forge now: its description, state, branches, checks and failed checks, and whether the head is behind its base. It also gives your worktree, the repository path and your login."
+        description = "Read your pull request off the forge now. It gives its description, state, branches, checks and failed checks, and whether the head is behind its base. It also gives your worktree, the repository path and your login."
     )]
     async fn get_pull_request(
         &self,
@@ -784,7 +779,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Reply once to one comment of your pull request. Ariadne posts the reply on the forge. Write no trailer in it."
+        description = "Reply once to one comment of your pull request. Ariadne posts the reply on the forge."
     )]
     async fn reply_comment(
         &self,
@@ -856,7 +851,7 @@ impl AriadneMcp {
     // ---- pull request reviewer ----
 
     #[tool(
-        description = "Post one round of your review in the name of the user. Give each new finding its file, line and priority. The body replaces the text of your one summary comment. Set `event` to `request_changes` while a P0 is open, else to `comment`. Write no trailer."
+        description = "Post one round of your review in the name of the user. Give each new finding its file, line and priority. The body replaces the text of your one summary comment. Set `event` to `request_changes` while a P0 is open, else to `comment`."
     )]
     async fn submit_review(
         &self,
