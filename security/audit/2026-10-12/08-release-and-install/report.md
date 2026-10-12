@@ -1,5 +1,26 @@
 # Audit: release delivery and local install/service (RELEASE)
 
+## Revision note
+
+This report was returned by review (verdict FAIL, reviewed commit
+`ffc93bde87d843d3a9a798ea35a60dfba5641004`) with five must-fix items. This
+revision: isolates the RELEASE-001 reproduction fully (an earlier version
+could leak into a caller's real `ZDOTDIR`/`XDG_DATA_HOME`); separates
+RELEASE-001's remediation into a non-executing parser *and* a per-field
+deletion-authorization check, since a pure `KEY="VALUE"` parser alone still
+permits deleting an unrelated directory (reproduced below, scenario 0);
+reclassifies RELEASE-001's end-to-end reachability as unverified rather than
+implying a permission-model bypass; corrects the `gh attestation verify`
+proposal and the signing/verification table against the CLI's documented
+flags; adds the previously-missing release-flow evidence (cache scoping,
+checkout credential persistence, manual-dispatch inputs, secret scope, the
+build window during which the macOS signing keychain is unlocked); corrects
+the unconditional fork-token rejection; and promotes the dismissed
+"service-file injection" hypothesis to a new confirmed finding, RELEASE-004,
+with its own reproduction, after the reviewer showed "no shell eval" does
+not mean "no injection" — `launchd`/`systemd` parse the generated files
+themselves.
+
 ## Question
 
 Can untrusted changes or substituted release inputs compromise published
@@ -8,33 +29,40 @@ binaries or installed services?
 Tracer: repository/workflow input -> CI and release build -> signed artifact
 and download -> installed binary and service.
 
-## Examined commit
+## Examined commits
 
-`a17283486d5fe89591edfff08832712936d73030` (the planning reference; the
-merge commit of PR #87, `git rev-parse HEAD` confirms the match), on branch
-`audit-repository-changes-through-release-assvb0`, worktree
-`/Users/malvarez/.ariadne/worktrees/q4r9v3t3/33assvb0-eng`. The repository was
-clean at that commit; nothing in `.github/`, `scripts/`, `.githooks/`,
-`.cargo/`, `.config/`, `release-please-config.json`,
-`.release-please-manifest.json` or `docs/install.md` changed afterward in
-this task.
+- Application commit: `a17283486d5fe89591edfff08832712936d73030` (the
+  planning reference; `git rev-parse HEAD` on the worktree confirms the
+  match), on branch `audit-repository-changes-through-release-assvb0`. The
+  repository was clean at that commit; nothing in `.github/`, `scripts/`,
+  `.githooks/`, `.cargo/`, `.config/`, `release-please-config.json`,
+  `.release-please-manifest.json` or `docs/install.md` changed during this
+  task or its revision.
+- Reviewed commit (this report's prior revision): `ffc93bde87d843d3a9a798ea35a60dfba5641004`.
 
 ## Threat assumptions
 
 - Installed coding-agent CLIs are trusted programs; this audit does not try
   to contain a *deliberately* malicious agent process (that is EXEC's scope).
 - Repository content, forge content, browser content, network responses and
-  other users' files are potentially hostile: a *trusted* agent can still be
-  steered by them (prompt injection) into issuing file writes or shell
-  commands it would not have chosen on its own.
+  other users' files are potentially hostile: a *trusted* agent, or a
+  trusting human copying install instructions from somewhere untrusted, can
+  still be steered into issuing file writes, shell commands, or installer
+  flags it would not have chosen unprompted.
 - Permission guarantees documented for the installer and the daemon
   (`docs/install.md`, `docs/permissions.md`) are checked even though the
   agents running inside Ariadne are trusted.
 - No attack was run against the user's real daemon, repositories, accounts or
-  GitHub. Every reproduction below runs against a disposable `mktemp`
-  directory with stand-in `launchctl`/`systemctl`, never the host's.
+  GitHub. Every reproduction below runs under `env -i` plus an explicit,
+  complete set of home/config/data variables inside a throwaway `mktemp`
+  directory, with stand-in `launchctl`/`systemctl`/`uname`, never the host's
+  real ones.
 - No release was published and no workflow run was triggered; `release.yml`
   and `release-please.yml` were read, not executed.
+- The repository's GitHub visibility was checked, not assumed: `gh repo view
+  --json visibility` reports `"visibility":"PUBLIC"` for
+  `manuel-alvarez-alvarez/ariadne` (the `origin` remote). This matters for
+  one of the corrections below.
 
 ## Coverage
 
@@ -52,49 +80,99 @@ this task.
 - `crates/ariadne-daemon/src/ai_permissions/derive.rs` (the `risk_tags` the
   permission layer derives — `outside_workspace`, `root_or_home_delete`,
   `persistent_change` — to check what, if anything, flags a write outside a
-  task's own worktree)
+  task's own worktree; see the corrected framing in RELEASE-001 below)
 
 ### Read for context, not line-by-line
 - `docs/permissions.md` (the permission-mode table and what `learn` records)
-- `scripts/tests/install-linux.sh`, `install-command.sh` (reused as the
-  pattern for this report's own reproduction harness)
+- `scripts/tests/install-linux.sh`, `install-command.sh` (the pattern this
+  report's own RELEASE-004 reproduction reuses to replay install.sh's
+  generated-file logic without a real build)
 - `.githooks/commit-msg` (conventional-commit gate; out of this task's scope)
+
+### Primary sources consulted for external technical claims
+- `gh attestation verify`'s flag semantics: `https://cli.github.com/manual/gh_attestation_verify`
+  (fetched; quoted under RELEASE-002)
+- `GITHUB_TOKEN` permissions for fork pull requests, and the private-repository
+  exception: `https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax`
+  and `https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository`
+  (fetched; quoted under "Rejected hypotheses")
+- GitHub Actions cache scoping across branches and forks:
+  `https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/caching-dependencies-to-speed-up-workflows`
+  (fetched; quoted under "Release-flow evidence")
+- `actions/checkout`'s `persist-credentials` default:
+  `https://github.com/actions/checkout` (fetched; quoted under "Release-flow
+  evidence")
+- `systemd.syntax(7)`'s comment-line rule and `systemd.service(5)`'s
+  `ExecStartPre=` semantics: `https://man.archlinux.org/man/systemd.syntax.7`,
+  `https://man.archlinux.org/man/systemd.service.5` (fetched; quoted under
+  RELEASE-004). `freedesktop.org`'s own manual pages returned HTTP 403 to
+  this tool; the Arch Linux mirror, which republishes the same upstream
+  systemd man pages verbatim, was used instead and is named as such rather
+  than passed off as the canonical host.
+- GitHub's Security Advisory Database, queried directly via
+  `gh api "/advisories?ecosystem=actions&per_page=100"` (56 advisories, no
+  `Link` pagination header, so this is the complete current set for that
+  ecosystem) — see "Action advisory check" below. The GitHub Advisories *web
+  search* (fetched via a generic URL) was tried first and found unreliable
+  for this purpose (full-text search surfaced unrelated packages — a NuGet
+  mapping library, an unconfirmable npm CVE number — that do not actually
+  name the Actions in question); the authenticated `gh api` call against
+  GitHub's own advisory endpoint is the one this report relies on.
 
 ### Excluded, with reason
 - `ui/src-tauri/` Tauri shell internals — owned by `ui/AGENTS.md`; the
   release-asset staging step that packages it (`release.yml`'s "Stage the
   release assets") is in scope and was reviewed, the Tauri app's own code is
   not.
-- `crates/ariadne-daemon/src/agents/mod.rs` process-spawn path — EXEC's scope
-  per the cross-task contract; read only far enough (one `grep` for a
-  sandboxing primitive) to support the RELEASE-001 prerequisite discussion
-  below, not audited as EXEC would.
-- Dependency advisories for `ui/package-lock.json` / `Cargo.lock` — SUPPLY's
-  scope.
+- `crates/ariadne-daemon/src/agents/mod.rs` process-spawn path and the
+  `ai_permissions` decision pipeline's actual runtime behavior — EXEC's
+  scope per the cross-task contract. This audit read `derive.rs`'s risk-tag
+  logic (static analysis of what gets *labeled*) but did not drive the
+  daemon's permission pipeline end to end, and does not claim to know what
+  `auto` mode does with an `outside_workspace`-tagged request; see
+  RELEASE-001's corrected reachability discussion.
+- Dependency advisories for `ui/package-lock.json` / `Cargo.lock` (npm/cargo
+  ecosystems) — SUPPLY's scope. Only the GitHub Actions ecosystem, which
+  gates the release/install path this task owns, was checked.
 - macOS Gatekeeper/notarization internals beyond what `docs/install.md`
   already states (not notarized, by design) — no further OS-internals
   research was useful to this question.
-- A live run of `release.yml` or `make-signing-cert.sh --set-secrets` —
-  would touch a real GitHub repository's secrets and releases; explicitly
-  out of scope ("Do not exercise attacks against ... external services").
+- A live run of `release.yml`, a real `systemctl --user`/`launchctl`
+  registration, or `make-signing-cert.sh --set-secrets` — would touch a
+  real GitHub repository's secrets/releases or a real host service;
+  explicitly out of scope. RELEASE-004's systemd claim is therefore backed
+  by `systemd.service(5)`/`systemd.syntax(7)`'s documented grammar rather
+  than an executed unit; this is recorded as a limitation, not elided.
 
 ## Findings
 
 ### Confirmed vulnerabilities
 
-#### RELEASE-001 — The install manifest is executed as shell, not read as data; a forged `~/.ariadne/install.env` gets arbitrary code execution and an attacker-chosen `rm -rf`, even under `uninstall.sh --dry-run`
+#### RELEASE-001 — The install manifest is executed as shell, not read as data; a forged `~/.ariadne/install.env` gets arbitrary code execution, an attacker-chosen `rm -rf`, and a forced `--purge`
 
-**Severity: High.** **Confidence: Confirmed (reproduced).**
+**Severity: the sink is High impact. End-to-end reachability from an
+in-scope hostile-input route is unverified — see "Reachability" below; do
+not read this as an unconditional High.**
+**Confidence: sink Confirmed (reproduced four separate ways). Reachability:
+Unverified.**
 
 **Affected files/lines**
 - `scripts/uninstall.sh:69` — `. "$ARIADNE_MANIFEST"` (the main shell, not a
   subshell)
+- `scripts/uninstall.sh:41-50` — `PURGE` is parsed from `--purge` *before*
+  line 69's source; sourcing runs after, in the same shell, so the manifest
+  can simply reassign `PURGE=1` regardless of what was on the command line
 - `scripts/uninstall.sh:108,120` — `rm -f "$ARIADNE_PREFIX/..."` and
   `rm -rf "$ARIADNE_APP"`, using values the manifest set
-- `scripts/uninstall.sh:163` — `rm -rf "$ARIADNE_HOME"` under `--purge`
-  (`ARIADNE_HOME` itself is not manifest-controlled — it comes from the
-  `ARIADNE_HOME` environment variable or `~/.ariadne` — so this line is not
-  part of the forgery surface, but it runs in the same already-sourced shell)
+- `scripts/uninstall.sh:161-165` — `if [ "$PURGE" = 1 ]; then rm -rf
+  "$ARIADNE_HOME"; fi`. `$ARIADNE_HOME` is itself resolved by `ui_locations`
+  *before* the manifest is sourced (from the `ARIADNE_HOME` environment
+  variable or `~/.ariadne`), so a forger does not need to overwrite it —
+  they already know its value, since it is exactly where they had to write
+  `install.env` in the first place. What they get for free is `PURGE`: a
+  forged `PURGE=1` makes this line run on a plain `uninstall.sh`, with no
+  `--purge` on the command line at all, and wipe the daemon's entire data
+  directory (database, worktrees, run dir, logs).
 - `scripts/install.sh:355` — `OLD_PREFIX="$(. "$ARIADNE_MANIFEST" && ...)"`
   (a subshell — isolates the *environment* but not the *side effects* of an
   injected command)
@@ -113,125 +191,340 @@ is printed — including under `--dry-run`, since the source happens at
 `uninstall.sh:69` and the dry-run short-circuit is at `uninstall.sh:90-93`,
 *after* it.
 
-Once the file is sourced, `ARIADNE_PREFIX`, `ARIADNE_APP`,
-`ARIADNE_DESKTOP_ENTRY` and `ARIADNE_DESKTOP_ICON` are whatever the file set
-them to, and the uninstaller unconditionally `rm -f`s/`rm -rf`s those paths
-later in the same run (`uninstall.sh:108,120,135-136`) — no check that they
-sit under `$PREFIX`, `/Applications`, `$HOME/Applications` or
-`$XDG_DATA_HOME`. Given that sourcing is already full code execution, this
-second effect is not an independent escalation, but it is the literal answer
-to the audit's item 6 ("can forged metadata broaden deletion"): yes, to any
-path the forger names, by either mechanism.
+Three distinct effects follow, and they do not all require the same fix:
+1. **Code execution.** Sourcing is sufficient on its own; any line that is
+   not a `KEY="value"` assignment just runs.
+2. **Deletion of an attacker-named path.** Independent of (1): once the file
+   is sourced, `ARIADNE_PREFIX`, `ARIADNE_APP`, `ARIADNE_DESKTOP_ENTRY` and
+   `ARIADNE_DESKTOP_ICON` are whatever the file set them to, and the
+   uninstaller unconditionally `rm -f`s/`rm -rf`s those paths later in the
+   same run — no check that they sit under `$PREFIX`, `/Applications`,
+   `$HOME/Applications` or `$XDG_DATA_HOME`. **This does not need an
+   injected command.** Reproduction scenario 0 below uses a manifest with
+   *only* well-formed assignments — nothing a non-executing parser would
+   reject — and still gets an unrelated directory deleted.
+3. **A forced `--purge`.** Also independent of (1): a bare `PURGE=1`
+   assignment (again, no injected command) reaches the `rm -rf
+   "$ARIADNE_HOME"` at `uninstall.sh:161-165` regardless of the actual
+   command-line flags. Reproduction scenario 3 below confirms this.
 
-**Prerequisite.** The attacker needs write access to
-`$ARIADNE_HOME/install.env` (default `~/.ariadne/install.env`) at some point
-*before* the user next runs `install.sh` or `uninstall.sh` — the payload does
-not need to run at the same time as the write. `mkdir -p "$ARIADNE_HOME"` in
-`install.sh:703` and `ui_locations` do not set an explicit mode, so the
-directory's permissions follow the creating process's umask (typically
-`755` — not group/other-writable on a normally configured machine). So this
-is not remotely exploitable by an unrelated local user under default
-permissions; it requires some other primitive that already lets something
-write inside the invoking user's own `$HOME/.ariadne`.
+**Reachability — corrected.** The prior revision of this report called
+RELEASE-001 "Confirmed" at "High" severity for the whole chain, including
+reaching the write. That overstated it. What the reproductions below prove
+is the **sink**: given a forged manifest, by whatever means, the three
+effects above happen. What they do not prove, and what this audit did not
+establish, is an **in-scope route from hostile input to writing that
+manifest**. Specifically:
+- `mkdir -p "$ARIADNE_HOME"` (`scripts/install.sh:703`, and `ui_locations`)
+  sets no explicit mode, so the directory's permissions follow the creating
+  process's umask — typically `755`, not group/other-writable. This is not
+  remotely exploitable by an unrelated local user under default permissions.
+- This audit observed, by static reading only, that
+  `crates/ariadne-daemon/src/config.rs:111` resolves the daemon's
+  `worktree_root` to `root.join("worktrees")` — i.e. task worktrees
+  (including the one this audit itself ran in) are filesystem
+  subdirectories of `$ARIADNE_HOME` — and that a `grep` across `crates/` for
+  `sandbox|chroot|landlock|seccomp|namespace|jail|bubblewrap|firejail` found
+  no OS-level containment of an agent's child process. **Neither
+  observation is evidence that an agent process can actually write outside
+  its own worktree.** A worktree being a filesystem subdirectory of
+  `$ARIADNE_HOME` says nothing about what permission check, if any, gates a
+  write to a *sibling* path (`$ARIADNE_HOME/install.env`) from a process the
+  daemon spawned — that is a question about the daemon's and the agent CLI's
+  own write-path handling, which this task did not instrument or test. The
+  absence of an OS sandbox is likewise not proof that `auto` mode (the
+  default permission mode) would let such a write through; `auto` is
+  described in `docs/permissions.md` as choosing an allowing option when one
+  exists, and `ai_permissions/derive.rs` separately derives an
+  `outside_workspace` risk tag for a path-escaping action — but this audit
+  did not drive that decision pipeline, and a risk-tag's *existence* is not
+  evidence of what `auto` does with it, nor of same-user process capability
+  translating into an actual permission bypass. Both are open questions,
+  stated as such in "Design questions for the orchestrator" below, not
+  treated as established facts anywhere in this finding.
+- Independent of that open question, this audit did not identify any other
+  in-scope route (a CI/release step, an installer step, a documented
+  permission guarantee) that writes attacker-influenced content to
+  `$ARIADNE_HOME/install.env`. If one exists, it was not found; its absence
+  from this report is a coverage gap, not a claim that none exists.
 
-That primitive is plausible in this project's own threat model, not just
-hypothetically: `crates/ariadne-daemon/src/config.rs:111` resolves the
-daemon's `worktree_root` to `root.join("worktrees")`, i.e. every task
-worktree — including the one this audit itself runs in
-(`/Users/malvarez/.ariadne/worktrees/q4r9v3t3/33assvb0-eng`) — is a
-subdirectory of `$ARIADNE_HOME`. A `grep` across `crates/` for
-`sandbox|chroot|landlock|seccomp|namespace|jail|bubblewrap|firejail` found no
-OS-level containment of an agent's child process (the handful of hits are
-unrelated identifiers, e.g. `ai_permissions` fixtures). `docs/permissions.md`
-confirms the permission layer is a *behavioral* gate on tool calls (`auto`,
-`ask`, `learn`, `ai`), not a filesystem boundary: `auto` — the default mode —
-"selects an allowing option automatically" with no mention of restricting the
-*path* a write or a `Bash` command touches. `ai_permissions/derive.rs` does
-derive an `outside_workspace` risk tag (and `root_or_home_delete`,
-`persistent_change`) for exactly this shape of action, which is evidence the
-project already treats "a write outside the task's own workspace" as
-materially different from one inside it — but by the documented `auto`
-behavior, a risk tag alone does not block the call. **This audit did not
-run the permission layer end to end to confirm whether `auto` mode actually
-lets a tagged `outside_workspace` write through** — that confirmation, and
-the question of whether a trusted-but-prompt-injected agent process can reach
-`$ARIADNE_HOME/install.env` in practice, is EXEC's/the permission layer's
-boundary, not RELEASE's; see "Design questions for the orchestrator" below.
-Independent of that open question, the vulnerability in `install.sh`/
-`uninstall.sh` is real and reproduced on its own terms: **whatever** writes
-the manifest, sourcing it as code is the defect, and it is the one this task
-owns and reports.
+**What this means for severity.** The sink (code execution + deletion +
+forced purge, once the manifest is forged) is Confirmed and High-impact —
+whoever can write that one file gets all three effects, trivially, as shown
+below. Whether that is *reachable* from this audit's hostile-input threat
+model, short of an attacker who already has an unrelated arbitrary-file-write
+primitive against the user's own `$HOME` (at which point `install.env` is
+one of many files that would turn that primitive into code execution — so
+would `~/.bashrc`), is **unverified**. This finding should be read, and
+prioritized, as "fix the sink regardless" rather than "a demonstrated
+privilege escalation."
 
 **Reproduction.** `security/audit/2026-10-12/08-release-and-install/repro-RELEASE-001.sh`,
-self-contained (builds its own `mktemp` `$HOME`, copies `install.sh`/
-`uninstall.sh`/`lib.sh` unmodified, stubs only `launchctl`/`systemctl` so
-nothing touches a real service). Run:
+self-contained: every invocation of `install.sh`/`uninstall.sh` runs under
+`env -i` plus an explicit, complete set of `HOME`/`ARIADNE_HOME`/`ZDOTDIR`/
+`XDG_DATA_HOME`/`XDG_CONFIG_HOME`/`TMPDIR` pointed inside a throwaway
+`mktemp` directory — nothing from the real caller's environment reaches the
+scripts under test, and two "ambient sentinel" files (standing in for the
+caller's *real* `ZDOTDIR/.zshrc` and `XDG_DATA_HOME` desktop entry) are
+checked byte-for-byte unchanged at the end. An earlier version of this
+script omitted `ZDOTDIR`/`XDG_DATA_HOME` from the child environment, which —
+on a caller whose own shell exports either — let `uninstall.sh`'s
+`ui_strip_block`/GNOME-entry removal reach the caller's real dotfiles; the
+review that returned this report demonstrated exactly that hole
+independently. Every assertion below is a hard `exit 1` on failure, not a
+printed note. Run:
 
 ```sh
 bash security/audit/2026-10-12/08-release-and-install/repro-RELEASE-001.sh
 ```
 
 Expected behavior: a manifest is just configuration; `--dry-run` previews
-without changing anything; `ARIADNE_APP` names a path under the installer's
-own footprint.
+without changing anything; `ARIADNE_APP`/`PURGE` only ever reflect what the
+real installer or the command line set; nothing outside the fixture changes.
 
-Observed behavior (sanitized; full run is reproducible verbatim):
+Observed behavior (sanitized; the real run reproduces this verbatim, exit
+code 0):
 ```
+== 0. deletion does not need code execution: a pure KEY="VALUE" manifest is enough ==
+OBSERVED: Unrelated.app was deleted by a manifest containing only well-formed assignments —
+          a parser that refuses to execute the file would still have read ARIADNE_APP and
+          handed it, unchecked, to rm -rf.
+
 == 1. uninstall.sh --dry-run ==
   [3/5] Removing ~/Documents
   ...
   Dry run - nothing was changed.
-OBSERVED: .../PWNED exists — the injected line ran during --dry-run.
+OBSERVED: .../PWNED exists — the injected line ran during --dry-run, which claims "nothing was changed".
 
 == 2. uninstall.sh (the real run) ==
   [3/5] OK   Removing ~/Documents
   ...
 OBSERVED: .../PWNED exists — the injected line ran again.
 OBSERVED: .../home/Documents (the forged ARIADNE_APP) was deleted.
+
+== 3. a forged manifest can also force --purge without the flag ==
+  data      deleted (--purge)
+  [5/5] OK   Deleting ~/.ariadne (database, worktrees, run dirs, logs)
+OBSERVED: .../home2/.ariadne was deleted by a plain 'uninstall.sh' invocation — the forged
+          manifest's PURGE=1 reached scripts/uninstall.sh:161-165 even though --purge was never
+          passed on the command line.
+
+== 4. isolation check ==
+OK: ambient ZDOTDIR/.zshrc is byte-for-byte unchanged.
+OK: ambient XDG_DATA_HOME desktop entry is byte-for-byte unchanged.
+PASS: RELEASE-001 reproduced (code execution, arbitrary deletion, and a forced --purge), fixture isolation held.
 ```
-`--dry-run` claims "nothing was changed" while the forged line has already
-run; the real run both re-runs it and deletes the forged `ARIADNE_APP` path
-verbatim.
 
-**Counter-evidence / what would invalidate this finding.** If
-`$ARIADNE_HOME` is created with a mode that excludes write by anything other
-than the owning process, and nothing ever gets a lower-trust write path into
-it (the open question above resolves to "no agent task, even prompt-injected,
-can write outside its own worktree"), the prerequisite collapses to "the
-attacker already has an arbitrary-file-write primitive against the user's
-own `$HOME`" — at which point sourcing `install.env` adds no capability an
-attacker with that primitive did not already have (they could edit
-`~/.bashrc` instead). The finding would then downgrade from "a vulnerability
-in the installer" to "the installer is one of many ambient files that
-amplify an unrelated file-write bug into immediate code execution," which is
-still worth fixing (defense in depth, and it uniquely also gets a `--dry-run`
-to execute code and a `rm -rf` of an attacker-chosen path) but is not itself
-the root cause.
+**Counter-evidence / what would invalidate this finding.** If no agent task,
+even a prompt-injected one, can ever write outside its own worktree (an
+answer this audit did not obtain — see design question 1), the prerequisite
+for reaching the sink collapses to "the attacker already has an
+arbitrary-file-write primitive against the user's own `$HOME`," at which
+point sourcing `install.env` adds no capability an attacker with that
+primitive did not already have. The sink would then be better described as
+"the installer is one of many ambient files that amplify an unrelated
+file-write bug into code execution and deletion," which is still worth
+fixing (defense in depth, plus the uniquely bad `--dry-run` behavior and the
+forced-`--purge` escalation) but would not itself be the root cause of a
+privilege crossing.
 
-**Remediation (smallest).** Read `install.env` as data, not as code: a
-`KEY="value"` line parser (e.g. a `while IFS='=' read -r key value` loop that
-strips quotes and only accepts the fixed set of keys `install.sh` actually
-writes), or write/read it as a flat `key\tvalue` list consumed with pure
-string operations, never `. "$file"`. Keep the manifest's existing fields
-unchanged; this is a parser swap, not a format change.
+**Remediation — split into two independent fixes, per the review's
+correction.**
 
-**Regression criterion.** A manifest holding a line that is not one of the
-known `KEY="value"` assignments (e.g. a stray shell command, or a key
-`uninstall.sh`/`install.sh` does not recognize) must not run as code and
-must not stop the uninstall from reading the keys that *are* well-formed. A
-test parallel to this report's `repro-RELEASE-001.sh` — assert the sentinel
-file this task used (`PWNED`) is never created, and that `rm -rf` only ever
-runs on a path provably under `$PREFIX`, `/Applications`,
-`$HOME/Applications` or `$XDG_DATA_HOME` — would prove it; a compatibility
-decision for the user is whether `uninstall.sh` should additionally refuse
-(rather than silently drop) a manifest value that fails that path check, see
-below.
+1. **Stop executing the manifest.** Read `install.env` as data: a
+   `KEY="value"` line parser (e.g. a `while IFS='=' read -r key value` loop
+   that strips quotes and only accepts the fixed set of keys `install.sh`
+   actually writes — `ARIADNE_PREFIX`, `ARIADNE_BASH_COMPLETION`,
+   `ARIADNE_ZSH_COMPLETION`, `ARIADNE_PLIST`, `ARIADNE_UNIT`, `ARIADNE_APP`,
+   `ARIADNE_DESKTOP_ENTRY`, `ARIADNE_DESKTOP_ICON`), discarding — not
+   executing — any other line. This closes effect (1) only.
+   - *Acceptance criterion:* a manifest line that is not one of those eight
+     `KEY="value"` assignments never executes (a sentinel file a test
+     places in such a line, as `repro-RELEASE-001.sh` scenario 1/2 do, must
+     never be created), and the well-formed keys that *are* present are
+     still read correctly.
+2. **Authorize deletions independently of parsing.** A value read out of
+   the manifest must not be trusted as a deletion target just because it
+   parsed. For `ARIADNE_APP`/`ARIADNE_DESKTOP_ENTRY`/`ARIADNE_DESKTOP_ICON`
+   (full paths, no fixed suffix today): canonicalize the path (`realpath`/
+   `readlink -f`, so a symlink cannot redirect the check after it passes —
+   the review's note to handle "symlink/traversal handling" explicitly) and
+   require *both* that its basename matches the one name install.sh would
+   actually have produced for the current platform (`"$APP_NAME.app"` on
+   Darwin, literally `ariadne-desktop` on Linux, `$ARIADNE_DESKTOP_ID.desktop`
+   for the GNOME entry) *and* that the canonical path resolves under one of
+   a fixed, small set of roots (`/Applications`, `$HOME/Applications`,
+   `$XDG_DATA_HOME/applications`, `$XDG_DATA_HOME/icons/hicolor`). For
+   `ARIADNE_PREFIX` (legitimately any directory, since `--prefix DIR` is a
+   real flag — "custom-prefix compatibility", per the review): keep the
+   existing fixed basenames (`ariadne`, `ariadned` — already true today,
+   `uninstall.sh:108`) rather than ever reading a full filename out of the
+   manifest for that removal, and additionally require `ARIADNE_PREFIX`
+   itself to be a non-empty absolute path (today an empty or relative value
+   — e.g. from a manifest written with `PREFIX=""` — would make
+   `rm -f "$ARIADNE_PREFIX/ariadne"` resolve relative to the uninstaller's
+   current working directory, a second, narrower instance of the same
+   "trust a manifest path" problem). For `PURGE`: do not let the manifest
+   set it at all — it is a command-line-only flag; reject (or simply never
+   read) a `PURGE=` line from the manifest, rather than treating it as one
+   of the fixed keys in fix (1) above.
+   - *Acceptance criterion:* an `ARIADNE_APP` value that is syntactically a
+     valid path but names something other than the expected app bundle
+     under an allowed root (reproduction scenario 0's `Unrelated.app` is
+     exactly this case) is refused, not deleted; a `PURGE=1` line in the
+     manifest (reproduction scenario 3) has no effect on whether `--purge`
+     runs.
+
+**Compatibility decision needed (design question 2, restated with the
+corrected remediation in mind):** when a manifest value fails the
+authorization check in fix 2, should `uninstall.sh` refuse the whole run
+(safer, but a hand-edited manifest for a legitimate reason — e.g. a user who
+moved `$PREFIX` by hand without re-running `install.sh` — could start
+failing) or skip only that one removal and continue the rest of the
+uninstall (friendlier, but could silently leave a legitimate removal
+undone)? This needs the user's answer.
+
+---
+
+#### RELEASE-004 — `$PREFIX` (and `$PATH`) are interpolated unescaped into the generated `systemd` unit and `launchd` plist; a crafted value injects a new service directive or plist key
+
+**Severity: High.** **Confidence: Confirmed (reproduced: generation of both
+formats proven; the systemd execution consequence is supported by
+`systemd.service(5)`/`systemd.syntax(7)`'s documented grammar, not an
+executed service — see "Limitation" below).**
+
+The prior revision of this report rejected this as a hypothesis, reasoning
+"nothing downstream of `$PREFIX`/the app name is `eval`'d — they are written
+into a `.desktop`/plist file as data, not executed." That reasoning is
+wrong: `launchd` and `systemd` are themselves parsers of the files
+`install.sh` generates. A value that is never passed to a shell can still
+break out of *that parser's* grammar if it is interpolated unescaped, the
+same class of bug as an HTML/SQL injection where "no `eval`" was never the
+relevant guarantee.
+
+**Affected files/lines**
+- `scripts/install.sh:658-673` (Linux): the `systemd --user` unit,
+  `Environment="PATH=$PATH"` and `ExecStart=$PREFIX/ariadned`, both
+  unescaped
+- `scripts/install.sh:612-641` (Darwin): the `launchd` plist,
+  `<array><string>$PREFIX/ariadned</string></array>` and
+  `<key>PATH</key><string>$PATH</string>`, both unescaped
+- `$PREFIX` comes from `--prefix DIR` or the `PREFIX` environment variable
+  (`scripts/install.sh:64,75`); `$PATH` comes from the invoking shell's
+  environment at install time
+
+**What the code does, and the reproduction.** `security/audit/2026-10-12/08-release-and-install/repro-RELEASE-004.sh`
+extracts the *exact* heredoc install.sh writes today, by `sed` line range
+read from the real file at run time (not a hand copy — if a future edit
+moves these lines, the script fails loudly with a clear error rather than
+silently testing stale code), and replays it with a crafted `$PREFIX`:
+
+- **systemd unit:** `PREFIX` = `"$WORK/out/prefix\nExecStartPre=-/usr/bin/touch $WORK/out/UNIT-INJECTED\n#"`.
+  The generated unit file then contains `ExecStartPre=-/usr/bin/touch
+  .../UNIT-INJECTED` as its own line (confirmed with `grep -qxF`), with the
+  trailing `/ariadned` from the template absorbed into a `#`-comment line.
+  `systemd.syntax(7)` (primary source, quoted above): "Empty lines and
+  lines starting with `#` or `;` are ignored" — confirming the injected
+  line is read as a directive, not folded into a comment, and the template's
+  own leftover text is what becomes the harmless comment.
+  `systemd.service(5)` (primary source, quoted above): multiple
+  `ExecStartPre=` lines "are executed one after the other, serially," and
+  "`ExecStart=` commands are only run after all `ExecStartPre=` commands
+  that were not prefixed with a `-` exit successfully" — confirming that,
+  on a live service, the injected command would run (every time the service
+  starts, including the `systemctl --user restart ariadned.service`
+  `install.sh` itself runs at `scripts/install.sh:677`) with the invoking
+  user's privileges.
+- **launchd plist:** `PREFIX` =
+  `/tmp/x</string></array><key>INJECTED</key><string>yes</string><key>Ignored</key><array><string>X`.
+  The generated plist is then **well-formed XML** (not merely corrupted) —
+  chosen deliberately, since a value that produces a *parse error* is a
+  weaker demonstration than one a validating reader accepts. `python3`'s
+  `plistlib.load` parses the result into a dict holding an attacker-named
+  top-level key, `INJECTED: 'yes'`, and a `ProgramArguments` value the
+  installer never intended (`['/tmp/x']` instead of
+  `['$PREFIX_real/ariadned']`).
+
+Both are reproduced in one run:
+```sh
+bash security/audit/2026-10-12/08-release-and-install/repro-RELEASE-004.sh
+```
+Sanitized output (exit code 0):
+```
+OBSERVED: a second, syntactically valid directive (ExecStartPre=...) was injected as its own line.
+          systemd.unit(5) runs every ExecStartPre before ExecStart; had this been a live
+          'systemctl --user restart ariadned.service' ..., that command would have run with
+          the invoking user's privileges, every time the service starts.
+...
+OBSERVED: the parsed plist now has an attacker-named top-level key: INJECTED='yes'
+          ProgramArguments is now: ['/tmp/x'] (not the single ariadned path install.sh intended)
+PASS: RELEASE-004's generation-time injection reproduced for both the systemd unit and the launchd plist.
+```
+
+**Limitation, stated explicitly.** No real `systemd --user` or `launchd` was
+run against either generated file — doing so is out of this audit's scope
+("do not... change the host service"). The claim that the injected
+`ExecStartPre=` line would actually execute rests on the two primary-source
+citations above, not on an observed service start. The plist claim is
+stronger in this respect, since `plistlib` (a real, independent plist
+parser, not this audit's own code) did parse the result and did produce the
+attacker-named key — that half is observed, not only documented.
+
+**Reachability.** This does **not** depend on the open cross-boundary
+question RELEASE-001 does. `$PREFIX` is attacker-influenceable through two
+ordinary, in-scope routes: the `--prefix` flag an operator types (which
+could come from copy-pasted install instructions on a hostile fork's
+README, forum post, or an AI agent's prompt-injected suggestion — all named
+as hostile sources in this audit's threat assumptions), or the `PREFIX`
+environment variable, which an untrusted `.envrc`/dotfile sourced into the
+installing user's shell could set without the user ever typing `--prefix`
+at all. Neither requires any pre-existing write access to `$ARIADNE_HOME`
+or any permission-model bypass. `$PATH` is equally unescaped in the same two
+templates, though it is a weaker vector in practice (a directory name would
+need to itself contain a newline or XML metacharacter to matter, which is
+unusual but not impossible — e.g. a project-local `.envrc`-style PATH
+addition with a crafted directory name).
+
+**Relationship to RELEASE-003.** Related but distinct: RELEASE-004 is about
+the *generated file's structure* being corruptible by an unescaped value;
+RELEASE-003 (below) is about a *syntactically ordinary* `$PATH` entry being
+captured verbatim and later resolved by bare-name lookups. Fixing
+RELEASE-004 (escaping/validating `$PREFIX`/`$PATH` for each target format)
+does not fix RELEASE-003 (a risky-but-well-formed `$PATH` directory still
+gets captured and still gets resolved later); both inputs are shared, but
+the defect and the fix are independent.
+
+**Remediation.** Validate `$PREFIX` before it reaches either template:
+reject (install.sh already rejects other invalid combinations the same
+way, e.g. `--build-from-source` with `--version`) a value containing a
+newline or a NUL byte — no legitimate filesystem path needs one, so refusal
+costs nothing. For `$PATH`, which the installer does not control the
+content of and should not fail an install over, escape rather than reject:
+XML-escape (`&`, `<`, `>`) before interpolating into the plist, and strip or
+reject embedded newlines before interpolating into the systemd unit (`#`/`;`
+mid-value, with no preceding newline, cannot start a new line, so only
+newline rejection is needed for the unit format).
+
+**Regression criterion.** Regenerating the unit/plist from a `$PREFIX`/
+`$PATH` containing a newline or an XML metacharacter produces a file with
+exactly the directives/keys install.sh intended — no second `ExecStartPre=`
+line, no unexpected top-level plist key — verifiable by re-running
+`repro-RELEASE-004.sh` against the fixed script and asserting its
+`grep`/`plistlib` checks now fail to find the injected content (inverting
+today's assertions).
+
+**Design question for the orchestrator (new):** should an invalid `$PREFIX`
+abort the install outright, or should install.sh sanitize it silently (e.g.
+strip disallowed characters) and proceed? Aborting is more honest about
+what happened; silent sanitization is friendlier but could install to a
+path the operator did not expect. This needs the user's answer, the same
+way RELEASE-001's and RELEASE-003's compatibility decisions do.
 
 ---
 
 ### Hardening suggestions
 
-#### RELEASE-002 — `gh attestation verify` is not pinned to the release workflow's identity
+#### RELEASE-002 — `gh attestation verify` is not pinned to the release workflow's identity, and checks neither the expected source ref nor digest
 
 **Severity: Low (no demonstrated exploit under the repo's current
 permissions).** **Confidence: Plausible.**
@@ -240,77 +533,107 @@ permissions).** **Confidence: Plausible.**
 `gh attestation verify "$_asset" --repo "$RELEASE_REPO"`.
 
 This is the **only** check the installer enforces before installing a
-downloaded binary — see "Available vs. enforced" below. It verifies that
-some workflow run in `$RELEASE_REPO`, authenticated via GitHub's OIDC
-`id-token`, produced a Sigstore-backed provenance attestation whose subject
-digest matches the downloaded file. It does **not** pass `--signer-workflow`
-or `--cert-identity`, so it accepts an attestation from *any* workflow in
-that repository that holds `id-token: write` and `attestations: write` —
-not only `.github/workflows/release.yml`. Today that is the only workflow
-with those permissions (`ci.yml` and `release-please.yml` both declare no
-such permissions, and `release-please.yml` additionally sets
-`permissions: {}` and acts under a PAT), and reaching `release.yml`'s build
-job requires either a maintainer-driven release publish or
-`workflow_dispatch`, which itself requires repository write access — so
-there is no demonstrated path for a lower-privileged actor to forge an
-accepted attestation today.
+downloaded binary — see "Available vs. enforced" below.
 
-**Why it matters anyway.** The check is the installer's *only* gate; if a
-future workflow (a bot integration, a second release channel, a careless
-copy-paste) is ever added with `attestations: write` for any reason, it
-silently becomes a second source install.sh will trust, with no change to
-install.sh needed on the attacker's part. Pinning the signer now costs
-nothing and removes that failure mode by construction rather than by
-"nothing else has those permissions today."
+**Correction to the prior revision's proposal.** `gh attestation verify`'s
+manual (`https://cli.github.com/manual/gh_attestation_verify`, fetched;
+quoted here verbatim) documents these identity-restricting flags:
 
-**Remediation.** Add `--signer-workflow .github/workflows/release.yml` (or
-the equivalent `--cert-identity` regex anchored to that workflow path) to
-the `gh attestation verify` call.
+| Flag | What it enforces | Expected value |
+| --- | --- | --- |
+| `--signer-workflow` | "the workflow that signed the attestation matches the provided value" | `[host/]<owner>/<repo>/<path>/<to>/<workflow>` — **repository-qualified**, e.g. `github.com/manuel-alvarez-alvarez/ariadne/.github/workflows/release.yml` or, since `--repo` is already given, `$RELEASE_REPO/.github/workflows/release.yml` |
+| `--cert-identity` | "the certificate's SubjectAlternativeName matches the provided value **exactly**" | an exact string, not a pattern |
+| `-i`, `--cert-identity-regex` | "...matches the provided **regex**" | a regular expression — this, not `--cert-identity`, is the regex-capable flag |
+| `--source-ref` | "the git ref associated with the source repository matches the provided value" | e.g. `refs/tags/v0.3.0` |
+| `--source-digest` | "the digest associated with the source repository matches the provided value" | a commit SHA |
+
+The prior revision proposed `--signer-workflow .github/workflows/release.yml`
+(missing the owner/repo prefix the manual requires) and conflated
+`--cert-identity` with the regex-matching flag. Both are corrected above.
+
+**Why `--source-ref`/`--source-digest` matter, concretely, and why a
+signer-path check alone does not close the gap the review flagged.**
+`release.yml`'s `workflow_dispatch` path lets an operator with repository
+write access rerun the asset build "by hand... against a tag" (the
+workflow's own header comment, `.github/workflows/release.yml:34-40`). The
+checked-out *content* always matches `inputs.tag` (`ref:
+${{ env.TAG }}` at the checkout step, `release.yml:99`), but the *workflow
+run's own ref* — what the attestation's provenance records as "where this
+ran from" — is whatever ref the dispatch itself was started on, which can
+differ from the tag. `release.yml:88-94` already detects and warns about
+exactly this:
+```
+if [ "$REF" != "refs/tags/$TAG" ]; then
+    echo "::warning::this run is on $REF, so $TAG's assets will be attested as built from $REF; rerun it from refs/tags/$TAG"
+fi
+```
+— but only warns; nothing stops the build, the attestation, or the upload.
+Pinning `--signer-workflow` alone would still accept such an asset, since it
+*was* built by `release.yml`, just from the wrong ref. Only `--source-ref
+"refs/tags/$RESOLVED_TAG"` (checked by the installer at verify time, against
+the tag it is actually trying to install) would catch this specific,
+realistic operator-error scenario. This is a process/tooling gap
+(a maintainer's mistake going uncaught by automated verification), not an
+externally-exploitable one — reaching `workflow_dispatch` already requires
+repository write access — so it stays a hardening suggestion, not a
+confirmed vulnerability; but the review is correct that a signer-path check
+alone does not close it, and this revision no longer implies that it would.
+
+**Why no attacker path exists today regardless.** Only `release.yml`'s
+`build` job declares `id-token: write`/`attestations: write`
+(`release.yml:60-63`); `ci.yml` and `release-please.yml` declare neither
+(`release-please.yml` additionally sets `permissions: {}` at the workflow
+level and acts under a PAT, not `GITHUB_TOKEN`). Reaching that job requires
+either a maintainer-driven release publish or `workflow_dispatch`, both of
+which already require repository write access — so there is no demonstrated
+path for a lower-privileged actor to forge an accepted attestation today.
+Pinning the signer now is about not depending on that remaining true forever
+(a future workflow added with those permissions for an unrelated reason
+would otherwise be silently trusted by the installer too).
+
+**Remediation.** Add `--signer-workflow "$RELEASE_REPO/.github/workflows/release.yml"`
+and `--source-ref "refs/tags/$RESOLVED_TAG"` to the `gh attestation verify`
+call in `scripts/install.sh:410`.
 
 **Regression criterion.** An attestation produced by a workflow at a
-different path (a copy of `release.yml` under another name, verified with
-a stand-in `gh` the way `scripts/tests/install-command.sh` already stands in
-for `gh attestation verify`) is rejected; one produced by
-`release.yml` itself still passes.
+different path, or from a ref other than the tag being installed (both
+reproducible with a stand-in `gh`, the way `scripts/tests/install-command.sh`
+already stands in for `gh attestation verify`), is rejected; one produced by
+`release.yml` itself, from the matching tag, still passes.
 
 #### RELEASE-003 — The installing user's live `$PATH` is baked verbatim into the persistent daemon service
 
 **Severity: Low (depends on a pre-existing unsafe `$PATH` at install time;
-not attacker-controlled by this flow alone).** **Confidence: Plausible.**
+not attacker-controlled by this flow alone — see RELEASE-004 for the
+related-but-distinct injection concern over the same inputs).**
+**Confidence: Plausible.**
 
 **Affected:**
 - `scripts/install.sh:625` (Darwin): `<key>PATH</key><string>$PATH</string>`
-  inside the generated `launchd` plist, `scripts/install.sh:611-641`
+  inside the generated `launchd` plist
 - `scripts/install.sh:666` (Linux): `Environment="PATH=$PATH"` inside the
-  generated `systemd --user` unit, `scripts/install.sh:657-679`
+  generated `systemd --user` unit
 
-Both are deliberate, documented behavior (`scripts/install.sh:623-624,
-665`: "launchd services get a bare PATH ... so bake in the installing user's
+Both are deliberate, documented behavior (`scripts/install.sh:623-624,665`:
+"launchd services get a bare PATH ... so bake in the installing user's
 PATH") — `ariadned` needs `tmux`, `git` and agent CLIs resolved the way the
 user's own shell resolves them. The installer copies that `$PATH` with no
 filtering. If the invoking shell's `$PATH` at install time contains a
 relative entry, a world- or group-writable directory, or any directory an
-untrusted party can place a same-named binary into (a known risk with tools
-like `direnv`, local `node_modules/.bin` entries, or a stale project-specific
-PATH export sourced from a dotfile), that entry is captured into a service
-definition that starts at login and persists across shell sessions and
-reboots, independent of whether the live shell's `$PATH` is later cleaned
-up. Every binary the daemon or an agent it spawns resolves by bare name
-(`git`, `cargo`, `npm`, `python3`, `nvidia-smi`, `gh`, `glab` —
+untrusted party can place a same-named binary into, that entry is captured
+into a service definition that starts at login and persists across shell
+sessions and reboots. Every binary the daemon or an agent it spawns resolves
+by bare name (`git`, `cargo`, `npm`, `python3`, `nvidia-smi`, `gh`, `glab` —
 `crates/ariadne-daemon/src/config.rs` resolves several of these from `PATH`
 specifically when no explicit path is configured) is then subject to
 hijacking by whatever that captured entry pointed at, for as long as the
 service runs.
 
-**Remediation.** At minimum, warn (not block — this must stay non-fatal, per
-the installer's own idiom of warning rather than failing on a PATH that
+**Remediation.** At minimum, warn (not block — consistent with the
+installer's own idiom of warning rather than failing on a PATH that
 excludes `$PREFIX`, `scripts/install.sh:769-772`) when a component of
 `$PATH` is relative or world/group-writable, naming the offending entry,
-before baking it into the plist/unit. A stronger fix — filtering such
-entries out of the captured `PATH` rather than only warning — needs the
-user's answer on whether a tool currently resolved only via such an entry
-(e.g. a `direnv`-shimmed interpreter) should keep working after an install;
-see "Compatibility decisions" below.
+before baking it into the plist/unit.
 
 **Regression criterion.** Installing with a `$PATH` containing a
 world-writable directory prints a named warning; the generated plist/unit
@@ -318,46 +641,65 @@ still contains exactly the caller's `$PATH` (so nothing already relying on
 an unusual `$PATH` entry silently breaks) unless the user opts into
 filtering.
 
+**Design question (unchanged from the prior revision, reworded per the
+review's note).** Should a risky `$PATH` entry only ever be warned about, or
+should install.sh offer to filter it out of what gets baked into the
+service definition? This audit does not treat the installer's existing
+warn-don't-block idiom elsewhere as a binding requirement that any fix here
+must also stay non-fatal — that is a real option, not a constraint, and the
+choice needs the user's answer alongside RELEASE-001 question 2 and
+RELEASE-004's new question.
+
 ---
 
 ### Unverified candidates
 
-- **Whether an installed agent task (this audit's own task included) can
-  write outside its own worktree, specifically to `$ARIADNE_HOME` itself.**
-  Evidence gathered (`config.rs`'s `worktree_root`, the absence of any OS
-  sandboxing primitive, `docs/permissions.md`'s description of `auto` as
-  behavioral-only) makes this plausible but this task did not drive the
-  daemon's actual permission pipeline end to end to confirm it. This is the
-  load-bearing prerequisite for RELEASE-001's severity and is flagged to the
-  orchestrator below rather than claimed as proven.
+- **Whether an installed agent task can write outside its own worktree,
+  specifically to `$ARIADNE_HOME` itself.** This is RELEASE-001's load-bearing
+  open question; see that finding's "Reachability" section and design
+  question 1 below. Restated plainly: this audit did not confirm or refute
+  it, and does not treat either the absence of an OS sandbox or the
+  existence of an `outside_workspace` risk tag as evidence either way.
 - **Floating-tag GitHub Actions in `ci.yml`** (`actions/checkout@v5`,
   `dtolnay/rust-toolchain@stable`, `taiki-e/install-action@v2`,
   `Swatinem/rust-cache@v2`, `actions/setup-node@v5`) are a generic
   supply-chain surface (a compromised upstream Action release could run
-  arbitrary code during CI) but this is already documented and deliberately
-  accepted in `.github/AGENTS.md` ("`ci.yml` uses floating tags ... since
-  nothing there is attested"); not re-litigated here, and arguably SUPPLY's
-  territory if it is to be revisited.
-- **`ci.yml` declares no `permissions:` block** while running on
-  `pull_request` (including, implicitly, forks) and executing untrusted
-  build/test code (`cargo build`/`test`/`clippy`, `npm ci`/`test`, which can
-  run arbitrary `build.rs`, proc-macro, postinstall or test code). Considered
-  and rejected as a confirmed vulnerability below.
+  arbitrary code during CI); already documented and deliberately accepted
+  in `.github/AGENTS.md` ("`ci.yml` uses floating tags ... since nothing
+  there is attested"). The advisory check below covers the current state of
+  these specific Actions and the SHA-pinned ones in `release.yml`; it does
+  not re-litigate the pinning policy itself, which is arguably SUPPLY's
+  territory if revisited.
 
 ### Rejected hypotheses
 
 - **"A fork PR's CI run could abuse an implicit write-scoped
-  `GITHUB_TOKEN`."** Rejected. `ci.yml` references no `secrets.*` anywhere,
-  and GitHub hard-codes a read-only `GITHUB_TOKEN` for `pull_request` (not
-  `pull_request_target`) runs triggered by a fork, regardless of the
-  repository's or organization's default token-permission setting. A
-  same-repo branch PR could in principle have a write-scoped token if the
-  org default is write, but a contributor who can open such a PR already has
-  push access, so this grants no privilege they lack. Explicit
-  `permissions: contents: read` at the top of `ci.yml` would still be good
-  practice (defense in depth against a future `pull_request_target` mistake
-  or an org default change) but is not fixing a reachable vulnerability
-  today, so it is listed under "unverified candidates," not as a finding.
+  `GITHUB_TOKEN`."** Rejected, with the prior revision's justification
+  corrected. GitHub's default is a read-only `GITHUB_TOKEN` for
+  `pull_request` (not `pull_request_target`) runs triggered by a fork — but
+  this is **not unconditional**: GitHub documents an exception, "Send write
+  tokens to workflows from pull requests," quoted from
+  `docs.github.com/.../workflow-syntax`: "You can use the `permissions` key
+  to add and remove `read` permissions for forked repositories, but
+  typically you can't grant `write` access. The exception to this behavior
+  is where an admin user has selected the **Send write tokens to workflows
+  from pull requests** option in the GitHub Actions settings." That setting
+  is itself restricted, per
+  `docs.github.com/.../managing-github-actions-settings-for-a-repository`
+  ("Enabling workflows for forks of private repositories"): "Available to
+  private repositories only." This repository's visibility was checked, not
+  assumed (`gh repo view --json visibility` →
+  `{"visibility":"PUBLIC"}`), so the exception does not apply here, and the
+  rejection's conclusion stands for this specific repository — but the
+  general claim "GitHub hard-codes a read-only token for fork PRs, full
+  stop" was inaccurate, and is withdrawn in favor of this conditional
+  version. Separately, `ci.yml` references no `secrets.*` anywhere, and a
+  same-repo-branch PR with a hypothetically write-scoped token would belong
+  to an author who already has push access, so grants no privilege they
+  lack. Explicit `permissions: contents: read` at the top of `ci.yml` would
+  still be good defense-in-depth practice (a safeguard against a future
+  visibility change, a future `pull_request_target` mistake, or an org
+  default change) but is not fixing a reachable vulnerability today.
 - **"The release archives could carry a path-traversal or symlink
   payload that escapes the staging directory on extraction."** Rejected.
   `scripts/install.sh` verifies every file in the staging directory with
@@ -366,24 +708,22 @@ filtering.
   (`scripts/install.sh:427,461,469`), and the attestation subject is a
   content digest, so a tampered archive fails verification rather than
   reaching `tar`. The archives themselves are produced by the trusted
-  `release.yml` build job with fixed, reviewed contents (binaries at the
-  tarball root, or a single `.app`/plain binary + `icon.png`), so there is
-  no untrusted producer of archive entries to test a symlink/traversal
-  payload against, short of a compromised CI run — a different, already
+  `release.yml` build job with fixed, reviewed contents, so there is no
+  untrusted producer of archive entries to test a symlink/traversal payload
+  against, short of a compromised CI run — a different, already
   covered-by-pinning-and-permissions threat, not an extraction-logic bug.
-- **"`install.sh`'s desktop-entry or plist generation is injectable via
-  `$PREFIX` or the app name."** Rejected. `$PREFIX` is operator-supplied
-  (`--prefix`, the installing user's own choice), the app name is a fixed
-  literal, and nothing downstream of them is `eval`'d — they are written
-  into a `.desktop`/plist file as data, not executed.
+- **~~"`install.sh`'s desktop-entry or plist generation is injectable via
+  `$PREFIX` or the app name, rejected because nothing is `eval`'d."~~
+  Withdrawn, not merely corrected — this was wrong, as the review showed.**
+  See RELEASE-004 above, now a confirmed finding of exactly this shape.
 
 ## Available vs. enforced (required distinction)
 
 | Thing | Available | Enforced by `install.sh` before installing |
 | --- | --- | --- |
-| Build provenance attestation | Yes, on every release asset (`release.yml`'s "Attest the release assets" step) | **Yes** — the sole gate, `gh attestation verify "$_asset" --repo "$RELEASE_REPO"` for every file in the staging directory (`scripts/install.sh:409-412`); a failure calls `ui_die`, which exits before any `tar`/`install -m 755`. |
+| Build provenance attestation | Yes, on every release asset (`release.yml`'s "Attest the release assets" step, `release.yml:268-271`) | **Yes** — the sole gate, `gh attestation verify "$_asset" --repo "$RELEASE_REPO"` for every file in the staging directory (`scripts/install.sh:409-412`); a failure calls `ui_die`, which exits before any `tar`/`install -m 755`. Not pinned to the specific signer workflow or source ref — see RELEASE-002. |
 | SHA-256 checksums (`checksums-<target>.txt`, published in the Release body table by `scripts/release-notes.sh`) | Yes, one line per asset, human-readable on the Release page | **No.** `install.sh` never downloads a `checksums-*.txt` file or compares a digest; the table exists for a human to cross-check by hand, not for the script to enforce. |
-| macOS code signature (self-signed "Ariadne Code Signing") | Yes, on release assets built on macOS runners and on local builds that find the identity | **No, for downloaded assets.** `install.sh` runs `codesign --force`/`--verify` only in the `--build-from-source` branch (`scripts/install.sh:366-370,213-219` of that branch); a downloaded asset is never `codesign --verify`'d by the installer, consistent with `docs/install.md`'s own statement that the certificate is "self-signed, not notarized" and exists to keep macOS privacy grants stable across builds, not to gate installation. |
+| macOS code signature (self-signed "Ariadne Code Signing") | **Conditional**, for release assets: only when `APPLE_CERTIFICATE`/`APPLE_CERTIFICATE_PASSWORD`/`APPLE_SIGNING_IDENTITY` are all populated. If any is empty, `release.yml:163-167` prints `::warning::macOS signing secrets are unavailable; releasing unsigned macOS assets` and ships the asset unsigned rather than failing the job — "available" is not "guaranteed." Local `--build-from-source` builds are signed only when `make-signing-cert.sh` has put the identity in the login keychain. | **No, for downloaded assets, under any circumstance.** `install.sh` never calls `codesign --verify` on a downloaded asset. The *only* place `install.sh` touches `codesign` at all is signing (not verifying) a local `--build-from-source` build, at `scripts/install.sh:366-370`. `codesign --verify --deep --strict` exists only in `release.yml:213-219`, where CI verifies its own freshly-signed build *before upload* — that is a CI-side check on what gets published, not something the installer enforces on what gets downloaded. The prior revision of this table cited `install.sh:213-219` for a verify step; that was a transcription error — those line numbers are `release.yml`'s, not `install.sh`'s, and `install.sh` contains no `codesign --verify` call anywhere. |
 | Quarantine clearing | N/A (a side effect, not a check) | `clear_quarantine` runs unconditionally *after* attestation succeeds, never as a substitute for it. |
 
 The documentation (`docs/install.md:100-118`) matches this table: it states
@@ -391,90 +731,236 @@ only that "the installer verifies each file with `gh attestation verify`
 before installing it," and separately that the signing certificate is
 self-signed/not notarized. No doc claims checksum verification is enforced.
 No gap was found between what is documented and what the code enforces; the
-gap, if any, is that the single enforced check (RELEASE-002) is not pinned as
-tightly as it could be.
+gap, if any, is that the single enforced check (RELEASE-002) is not pinned
+as tightly as it could be.
+
+## Release-flow evidence (added per review)
+
+A concise trace of the parts of the release pipeline not covered by a
+specific finding above, so the input-to-sensitive-operation account is
+complete rather than finding-shaped:
+
+- **Cache isolation.** `ci.yml`'s `rust`/`tauri` jobs and `release.yml`'s
+  `build` job both use `Swatinem/rust-cache`, scoped per-OS/per-target key.
+  GitHub's own cache-scoping rules (fetched from
+  `docs.github.com/.../caching-dependencies-to-speed-up-workflows`):
+  "Workflow runs can restore caches created in either the current branch or
+  the default branch... Workflow runs cannot restore caches created for
+  child branches or sibling branches," and a fork PR's run "can also
+  restore caches created in the base branch" (read access to `main`'s
+  cache) but writes from a fork PR's own branch stay scoped to that
+  branch/fork — they are not restorable by `main` or by unrelated PRs. No
+  path was found for a hostile fork PR to poison a cache that a trusted
+  `main` build or `release.yml` (which does not share a cache scope with PR
+  branches at all) would later restore.
+- **Checkout credential persistence.** `release.yml`'s two checkout steps
+  both pass `persist-credentials: false` (`release.yml:100,308`) explicitly
+  — the ambient job token is not left in the local git config for later
+  steps to use. `ci.yml`'s `actions/checkout@v5` steps pass no such option,
+  so the default (`persist-credentials: true`, confirmed from
+  `github.com/actions/checkout`'s own README: "The token is persisted in
+  the local git config. This enables your scripts to run authenticated git
+  commands. The token is removed during post-job cleanup.") applies: the
+  job's `GITHUB_TOKEN` sits in `.git/config` for the rest of the `ci.yml`
+  job, available to anything that job runs (`cargo build`/`test`/`clippy`,
+  `npm ci`/`test`, all of which execute arbitrary third-party build/test
+  code). For a fork PR this token is read-only regardless (see "Rejected
+  hypotheses"); for a same-repo-branch PR, whatever write scope the ambient
+  token has is exposed to that untrusted build-time code for no operational
+  reason (`ci.yml` never runs an authenticated `git` command itself). This
+  is a real gap against least-privilege, though — as with RELEASE-002/003 —
+  not a demonstrated escalation, since a same-repo-branch PR author already
+  has the write access the token would grant. Logged here as release-flow
+  evidence rather than a separate numbered finding, since fixing it is a
+  one-line `persist-credentials: false` addition to `ci.yml` with no
+  separable remediation design of its own.
+- **Manual (`workflow_dispatch`) input.** `release.yml`'s `inputs.tag` is an
+  unvalidated string, used both as the checkout `ref:` and as the
+  `gh release upload`/`gh release edit` target name (`release.yml:82,99,277,299`).
+  Triggering `workflow_dispatch` at all requires `actions: write` on the
+  repository (ordinary write-access collaborators and above) — the same
+  privilege level needed to push a malicious tag in the first place, so this
+  input is not an escalation path for a lower-privileged actor. Its one
+  concrete risk — a maintainer dispatching from the wrong ref, producing an
+  attestation whose recorded source ref does not match the tag it is
+  released under — is exactly the scenario `release.yml:88-94` already
+  warns about and RELEASE-002's `--source-ref` remediation would catch at
+  install time.
+- **Secret availability and scope, accounted for completely:**
+  - `APPLE_CERTIFICATE`/`APPLE_CERTIFICATE_PASSWORD`/`APPLE_SIGNING_IDENTITY`
+    — read only by the macOS legs of `release.yml`'s `build` job
+    (`release.yml:158-181`), conditionally (see the signature row in
+    "Available vs. enforced" above). Rotation and scope are documented in
+    `.github/RELEASING.md`'s "The signing certificate" section; this audit
+    did not re-derive that beyond confirming the three secrets are read in
+    exactly the step that section describes.
+  - `RELEASE_PLEASE_TOKEN` — a fine-grained PAT, per `.github/RELEASING.md`
+    scoped to "Only select repositories → this one," with `Contents:
+    read/write` and `Pull requests: read/write` and nothing else (no
+    `Workflows` permission, so it cannot itself alter a workflow file).
+    Blast radius if leaked: this one repository's contents and PRs, not the
+    account's other repositories.
+  - `GITHUB_TOKEN` — ambient, scoped per job by the `permissions:` block
+    declared for that job: `contents: write`/`id-token: write`/
+    `attestations: write` for `release.yml`'s `build` job
+    (`release.yml:60-63`), `contents: write` only for its `notes` job
+    (`release.yml:296-297`), none declared (workflow default) for `ci.yml`,
+    and `permissions: {}` (none at all — the PAT does everything) for
+    `release-please.yml`. Each is scoped to the single job and repository,
+    and expires when the job ends.
+  - **The release-upload token's authority, specifically:** the "Upload the
+    release assets" step (`release.yml:273-277`) uses the `build` job's own
+    `GITHUB_TOKEN`, which by that job's declared permissions can write
+    repository contents (including release assets) and nothing else — no
+    secrets access, no administration, no workflow-file changes. `gh
+    release upload ... --clobber` overwrites a same-named asset on that one
+    release; since attestation happens immediately before upload within the
+    same job run (`release.yml:268-277`), a `--clobber`'d asset always
+    carries a matching, freshly-produced attestation — a rerun replacing a
+    stale asset is consistent behavior, not a vulnerability.
+- **Build execution while the macOS signing keychain is unlocked.** On the
+  macOS legs of `release.yml`'s `build` job, `cargo build --release
+  --locked --package ariadne-cli --package ariadne-daemon`
+  (`release.yml:153-154`) runs **before** the signing certificate is
+  imported (`release.yml:156-181`) — that build never has keychain access.
+  But `npm ci` (`release.yml:183-185`) and `npm run tauri build --
+  --bundles app` (`release.yml:188-194`) both run **after** the import and
+  **before** the keychain is deleted (`release.yml:279-286`, guarded by
+  `if: always()`), i.e. with the imported "Ariadne Code Signing" identity
+  unlocked and usable by `codesign` for the duration of both steps. Both
+  steps execute code from third-party dependencies (`npm` postinstall
+  scripts; Tauri's own build pipeline, which itself invokes `cargo build`
+  for the Tauri shell). A compromised transitive dependency pulled during
+  that window would have `codesign` access to the release identity for as
+  long as the step ran. Evaluating the actual trustworthiness of those
+  dependencies is SUPPLY's mandate, not re-done here; what this audit adds
+  is the *ordering* fact — which steps run inside that window — since that
+  is release.yml's own structure, squarely RELEASE's to report. No fix is
+  proposed here (reordering would need `npm ci`/`tauri build` to run before
+  cert import, which the `APPLE_SIGNING_IDENTITY` env var Tauri reads to
+  self-sign depends on being available *during* the build — so this is a
+  real structural tension, not a one-line change, and is flagged to the
+  orchestrator as evidence rather than as a numbered finding with its own
+  remediation).
+
+## Action advisory check (per review: evidence, not a pinning-convention substitute)
+
+Queried GitHub's own Security Advisory Database directly:
+```sh
+gh api "/advisories?ecosystem=actions&per_page=100"
+```
+Returned 56 advisories (no `Link` pagination header in the response, so this
+is the complete current set under `ecosystem=actions`, not a truncated
+first page). None of the 56 name any of the Actions this repository's
+workflows use: `actions/checkout`, `dtolnay/rust-toolchain`,
+`taiki-e/install-action`, `Swatinem/rust-cache`, `actions/setup-node`,
+`actions/attest-build-provenance`, `googleapis/release-please-action`,
+`mikepenz/action-junit-report`. This is a real, primary-source negative
+result (as of 2026-10-12), not an absence of effort: an earlier attempt
+using GitHub's web advisory *search* (fetched as a generic URL and
+summarized) surfaced unrelated hits for two of these Actions' names — a
+NuGet library (`GHSA-f5v8-v6q3-q4h6`, "Meridian.Mapping") that merely
+*mentions* `actions/attest-build-provenance` as part of its own verification
+process, and an unlocatable npm CVE number — neither of which actually names
+a vulnerability in the Action itself. That search method was abandoned in
+favor of the authenticated `gh api` call above once it proved unreliable.
+This check does not cover the npm/cargo ecosystems (SUPPLY's scope) or the
+unpinned floating-tag Actions' *future* risk (the pinning-policy question
+already recorded under "Unverified candidates").
 
 ## Design questions for the orchestrator
 
-1. **Cross-boundary (for EXEC / the permission-model owner):** can an agent
-   task's process — in particular one steered by a hostile repository via
-   prompt injection, inside an otherwise-trusted agent CLI — write to a path
-   outside its own worktree, e.g. `$ARIADNE_HOME/install.env` directly?
-   `ai_permissions/derive.rs` already derives an `outside_workspace` risk
-   tag for such an action; `docs/permissions.md` describes `auto` (the
-   default mode) as choosing an allowing option automatically with no stated
-   exception for that tag. If `auto` does let an `outside_workspace`-tagged
-   write through, RELEASE-001's prerequisite is met by this project's own
-   normal operation, not just by an unrelated local-privilege bug, and its
-   severity should be read as reachable rather than merely plausible. This
-   audit did not drive the permission pipeline to confirm this either way,
-   and recommends whichever task owns `ai_permissions`/EXEC confirm it.
-2. **Compatibility decision for RELEASE-001's remediation:** should
-   `uninstall.sh`, on finding an `ARIADNE_APP`/`ARIADNE_PREFIX`/etc. value in
-   the manifest that is not a plausible path under the installer's own
-   footprint (`$PREFIX`, `/Applications`, `$HOME/Applications`,
-   `$XDG_DATA_HOME`), refuse and say so, or silently skip only that one
-   removal and continue the rest of the uninstall? The former is stricter
-   but means a manifest hand-edited for a legitimate reason (a user who
-   moved their own `$PREFIX` by hand, say) could start failing; the latter
-   is friendlier but could silently leave a legitimate removal undone. This
-   needs the user's answer, not an assumption.
+1. **Cross-boundary (for EXEC / the permission-model owner), restated
+   without overclaiming:** can an agent task's process write to a path
+   outside its own worktree, e.g. `$ARIADNE_HOME/install.env` directly? This
+   audit found no OS-level sandbox and noted that `ai_permissions/derive.rs`
+   derives an `outside_workspace` risk tag for such an action, but
+   **neither observation answers the question** — this audit did not drive
+   the daemon's permission pipeline to see what `auto` mode (the default)
+   actually does with a request carrying that tag. RELEASE-001's severity
+   should be read as conditional on this answer, not as already reachable.
+2. **Compatibility decision for RELEASE-001's remediation:** when a
+   manifest value fails the deletion-authorization check (fix 2), should
+   `uninstall.sh` refuse the whole run, or skip only that one removal and
+   continue? See RELEASE-001 above for the tradeoff.
 3. **Compatibility decision for RELEASE-003:** should a risky `$PATH` entry
-   found at install time only be warned about (current idiom elsewhere in
-   the installer, e.g. the `$PREFIX`-not-on-`$PATH` warning at
-   `scripts/install.sh:769-772`), or filtered out of what gets baked into
-   the service definition? Filtering could break a setup that currently
-   relies on such an entry (e.g. a `direnv`-managed interpreter); needs the
-   user's answer.
+   found at install time only be warned about, or filtered out of what gets
+   baked into the service definition? Filtering could break a setup
+   currently relying on such an entry (e.g. a `direnv`-managed interpreter).
+4. **Compatibility decision for RELEASE-004 (new):** should an invalid
+   `$PREFIX` (containing a newline or NUL) abort the install, or should
+   install.sh silently sanitize it and proceed? See RELEASE-004 above.
 
 ## Recommendation
 
-Fix RELEASE-001 first and alone: swap `. "$ARIADNE_MANIFEST"` for a
-`KEY="value"`-only reader in both `install.sh` and `uninstall.sh`. It is a
-small, mechanical change (the manifest's own writer already only ever emits
-that shape), it closes both the code-execution and the broadened-deletion
-paths at once, and `--dry-run` executing attacker-controlled code before
-printing "nothing was changed" is, on its own, a correctness bug independent
-of any question about how the manifest got forged. Treat RELEASE-002 and
-RELEASE-003 as follow-on hardening once question 1 above is answered,
-since that answer changes how urgently RELEASE-001-adjacent defense in depth
-is needed.
+Fix RELEASE-004 and RELEASE-001's two independent halves (parsing, and
+deletion/purge authorization) together — they are the two confirmed
+findings, and RELEASE-004 in particular needs no answer to design question
+1 to be worth fixing now, since its reachability does not depend on it.
+Treat RELEASE-002, RELEASE-003 and the release-flow evidence items (`ci.yml`
+`persist-credentials`) as follow-on hardening. Answering design question 1
+should happen in parallel, since it determines whether RELEASE-001 is
+"fix the sink, which is good practice regardless" or "fix an actively
+reachable privilege crossing" — a prioritization input, not a blocker to
+starting the fix.
 
 ## Confidence
 
-- RELEASE-001: **High** confidence in the vulnerability itself (reproduced
-  twice, against the unmodified scripts). **Medium** confidence in its
-  real-world severity, pending the orchestrator's answer to design question
-  1 above.
+- RELEASE-001: **High** confidence in the sink itself (reproduced five ways:
+  code execution under `--dry-run`, code execution on a real run, deletion
+  from a manifest with *no* injected command at all, a forced `--purge`
+  with no `--purge` flag, and isolation holding throughout). **Low**
+  confidence either way on end-to-end reachability from an in-scope hostile
+  input — explicitly unverified, not merely "unstated."
+- RELEASE-004: **High** confidence in the generation-time injection for
+  both formats (reproduced, with the plist half independently parsed by a
+  real, separate plist implementation). **Medium** confidence in the
+  systemd execution consequence specifically, since it rests on documented
+  grammar rather than an executed service — stated as a limitation, not
+  elided.
 - RELEASE-002, RELEASE-003: **Medium** confidence these are worth fixing as
   hardening; **low** urgency, since neither has a demonstrated exploit path
   under the repository's current configuration.
-- Everything under "Rejected hypotheses": confident in the rejection, each
-  with a specific counter-observation cited above.
+- The release-flow evidence items (cache isolation, checkout credentials,
+  manual inputs, secret scope, the signing-keychain build window): **High**
+  confidence in the facts stated (each is a direct code/doc citation or a
+  primary-source quote); these are evidence, not independently-scored
+  findings.
+- Everything under "Rejected hypotheses": confident in each rejection as
+  corrected above, with a specific counter-observation or primary-source
+  citation for each.
 
 ## What was not checked (coverage gaps)
 
-- This audit ran entirely on macOS (Darwin 25.6.0, the host's own OS); the
-  Linux installer branches (`systemd --user`, GNOME `.desktop`/icon
-  registration, the `libwebkit2gtk-4.1.so.0` probe) were read, and the
-  RELEASE-001 reproduction's logic is OS-independent (it never reaches the
-  OS-specific branches — the forged manifest is sourced, and the deletions
-  it drives, before any launchd/systemd call), but no Linux-specific install
-  behavior was executed. `scripts/tests/install-linux.sh` already covers
-  that surface and was read, not re-run.
+- This audit ran entirely on macOS (Darwin 25.6.0, the host's own OS). Both
+  reproduction scripts exercise the Linux-specific code paths anyway —
+  `repro-RELEASE-001.sh` is OS-independent by construction (the forged
+  manifest is sourced, and the deletions/purge it drives, before any
+  launchd/systemd call), and `repro-RELEASE-004.sh` extracts and replays the
+  Linux unit-generation heredoc directly rather than depending on `uname`
+  reporting Linux — but no Linux-specific *service manager* behavior
+  (`systemctl --user`, GNOME `.desktop`/icon registration, the
+  `libwebkit2gtk-4.1.so.0` probe) was executed against a real Linux host.
+  `scripts/tests/install-linux.sh` already covers that surface and was
+  read, not re-run.
 - No real GitHub release, workflow run, or `gh attestation verify` call
   against GitHub's actual attestation API was exercised — doing so would
   require publishing a release or dispatching a workflow against the real
-  repository, both excluded by scope. RELEASE-002's claim about
-  `gh attestation verify`'s default scoping is based on reading
-  `scripts/install.sh`'s invocation and the documented semantics of the
-  `--signer-workflow`/`--cert-identity` flags, not an observed bypass.
+  repository, both excluded by scope. RELEASE-002's claims about
+  `gh attestation verify`'s flags are based on that command's own published
+  manual (fetched and quoted above), not an observed bypass or an observed
+  successful pinned verification.
+- No real `systemd --user` or `launchd` instance verified RELEASE-004's
+  execution consequence; see that finding's explicit "Limitation."
 - `make-signing-cert.sh` was read but not run (it mutates the login
   keychain's trust settings and needs a one-time interactive macOS
   authentication prompt per its own comments); no defect was found in it
   worth a disposable-keychain reproduction.
-- Dependency advisories for the Action versions pinned/floated across the
-  three workflows were not individually queried against an advisory
-  database; this task treated the repo's own `.github/AGENTS.md` pinning
-  rationale as the record of that decision rather than re-auditing each
-  Action's current CVE status, which is closer to SUPPLY's mandate.
+- Dependency advisories for `ui/package-lock.json`/`Cargo.lock` (npm/cargo
+  ecosystems), and the actual trustworthiness of whatever `npm ci`/`cargo
+  build` pull during the signing-keychain build window described above,
+  were not assessed — SUPPLY's mandate, not re-audited here beyond the
+  ordering fact itself.
+- The daemon's actual `ai_permissions` decision for an `outside_workspace`-
+  tagged request was not exercised end to end — design question 1, left
+  open for EXEC/the permission-model owner.
