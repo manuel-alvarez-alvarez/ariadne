@@ -624,21 +624,15 @@ Out: the daemon endpoints themselves (012).
     sideways to its widest lane. A card whose status shows names the step
     where the status said `in progress`.
 40. The task panel of a stepped task draws one workflow section under its
-    facts, in place of a separate Agents fact and step strip: one framed
-    stepper, a track of nodes along its top — one per column in order, the
-    column's title under each — and under the track the picked column's
-    detail, joined to its node by a caret. A node's state — done, current or
-    pending — is a colour paired with an icon and a text label (a check, a
-    pulsing dot, an empty ring; the label read to assistive technology),
-    never colour alone, and the current node carries `aria-current="step"`.
-    The picked column opens on the current one — the last for a finished
-    task, the first for one not started — and follows the task as it moves
-    until the user picks another, by click or arrow key; the detail is the
-    column's state in words beside its description, its agent's skills,
-    model and effort on one line, and a link to its live session, so
-    inspecting one column never grows the section; there is no author or
-    reviewer fact. The history names a step move by its `from_step` and
-    `to_step` columns.
+    facts, in place of a separate Agents fact and step strip: a track of
+    nodes, one per column in order, and under each node the column's title,
+    its agent's skills, model and effort, and a link to its live session —
+    every column at once, nothing to open, and no column description. A
+    node's state — done, current or pending — is a colour paired with an
+    icon and a text label (a check, a pulsing dot, an empty ring; the label
+    read to assistive technology), never colour alone, and the current node
+    carries `aria-current="step"`. There is no author or reviewer fact. The
+    history names a step move by its `from_step` and `to_step` columns.
 41. The task form shows one row per column of the goal's workflow, prefilled
     with the column's skills, with the column's preferred rank beside the pin
     picker, and sends `agents`, seat `agent` and the column's `step` each, on
@@ -1051,12 +1045,10 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/goals/goal-swimlanes.test.tsx::draws each goal workflow columns`,
   `::draws an in-progress task of a stepless goal in its own column`).
 - The task panel of a stepped task draws one workflow section in place of
-  its old Agents fact and step strip: every column on the track, the detail
-  open on the current one, and another column picked from the keyboard
-  showing its detail in place of the last
+  its old Agents fact and step strip: every column on the track, each with
+  its agent's skills, model and session under its name, and no description
   (`ui/src/features/tasks/task-panel.test.tsx::shows workflow agents by column`,
-  `ui/src/features/tasks/workflow-steps.test.tsx::draws every column on the track and opens on the current one`,
-  `::picks another column from the keyboard, showing its description, skills, model and session in place of the last`).
+  `ui/src/features/tasks/workflow-steps.test.tsx::draws every column on the track with its agent's skills, model and session under it`).
 - A pending task's columns are all pending, an in-progress task's own
   column is current with the ones behind it done, and a finished task's
   columns are all done
