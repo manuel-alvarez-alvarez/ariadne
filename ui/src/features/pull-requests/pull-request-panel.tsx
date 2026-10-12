@@ -25,7 +25,7 @@ import { BotIcon, BotOffIcon, ExternalLinkIcon } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 
-import type { PullRequestDto } from "@/api"
+import type { PullRequestDto, Seat } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
@@ -119,8 +119,8 @@ export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => v
         <>
           <PullRequestHeader
             pull={query.data}
-            onSessionStarted={() => {
-              opened.await()
+            onSessionStarted={(seat) => {
+              opened.await(seat)
               setTab("sessions")
             }}
           />
@@ -157,10 +157,12 @@ export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => v
 /**
  * The session a Start review or Start babysit asked for, opened once it
  * exists: the daemon starts it a moment after the ask (029, 032), so the
- * live sessions of the request then are noted, and the first one live
- * besides them is handed to `open` — a new session, or the last one
- * resumed. The list follows `session_created` on its own; the interval is
- * what holds while the stream is down.
+ * live sessions of the request on that seat, then, are noted, and the
+ * first one live besides them is handed to `open` — a new session, or the
+ * last one resumed. The seat kept apart is what stops a review that resumes
+ * mid-wait from being handed over in place of a keeper, and the reverse.
+ * The list follows `session_created` on its own; the interval is what holds
+ * while the stream is down.
  */
 function useSessionOpening(pullRequestId: string | null, open: (sessionId: string) => void) {
   const [before, setBefore] = useState<string[] | null>(null)
@@ -168,15 +170,17 @@ function useSessionOpening(pullRequestId: string | null, open: (sessionId: strin
   // pass of the effect, on a list read again meanwhile, must not hand the
   // same session over a second time and pull the panel back into it.
   const pending = useRef(false)
+  const seat = useRef<Seat | null>(null)
   const reviews = useQuery({
     ...sessionsQueryOptions({ pull_request: pullRequestId ?? "" }),
     enabled: pullRequestId !== null,
     refetchInterval: before ? 2000 : false,
   })
-  // A review comes up as a new session, or as the last one resumed on the
-  // same pin: either way it is a session live now that was not at the ask.
+  // A review or a keeper comes up as a new session, or as the last one
+  // resumed on the same pin: either way it is a session live now, on the
+  // seat asked for, that was not at the ask.
   const live = (reviews.data ?? [])
-    .filter((session) => isLiveStatus(session.status))
+    .filter((session) => isLiveStatus(session.status) && session.seat === seat.current)
     .map((session) => session.id)
   const ids = live.join(" ")
   useEffect(() => {
@@ -189,9 +193,14 @@ function useSessionOpening(pullRequestId: string | null, open: (sessionId: strin
   }, [before, ids, open])
   return {
     waiting: before !== null,
-    await: () => {
+    await: (expected: Seat) => {
+      seat.current = expected
       pending.current = true
-      setBefore(live)
+      setBefore(
+        (reviews.data ?? [])
+          .filter((session) => isLiveStatus(session.status) && session.seat === expected)
+          .map((session) => session.id),
+      )
     },
   }
 }
@@ -212,7 +221,7 @@ function PullRequestHeader({
 }: {
   pull: PullRequestDto
   /** A review or a babysit was asked for in its dialog, which closed itself. */
-  onSessionStarted: () => void
+  onSessionStarted: (seat: Seat) => void
 }) {
   const ask = useAskReview()
   const babysit = useAskBabysit()
@@ -314,13 +323,13 @@ function PullRequestHeader({
         pull={pull}
         open={starting}
         onOpenChange={setStarting}
-        onStarted={onSessionStarted}
+        onStarted={() => onSessionStarted("reviewer")}
       />
       <StartBabysitDialog
         pull={pull}
         open={babysitting}
         onOpenChange={setBabysitting}
-        onStarted={onSessionStarted}
+        onStarted={() => onSessionStarted("keeper")}
       />
       {ask.error ? (
         <div className="px-4">

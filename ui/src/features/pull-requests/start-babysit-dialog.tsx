@@ -101,7 +101,7 @@ export function StartBabysitDialog({
           <DialogTitle>Start Ariadne babysitting</DialogTitle>
           <DialogDescription>
             A keeper session keeps #{pull.number} open: it answers comments, fixes checks, and
-            pushes to its own branch until the request merges or closes.
+            pushes its fixes onto the request's branch until the request merges or closes.
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-5 py-2">
