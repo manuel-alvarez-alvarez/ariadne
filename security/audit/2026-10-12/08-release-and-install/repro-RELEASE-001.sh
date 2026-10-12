@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Reproduction for RELEASE-001: scripts/uninstall.sh (and scripts/install.sh)
-# source ~/.ariadne/install.env as bash, not as data. Five things, in order:
+# source ~/.ariadne/install.env as bash, not as data. Six things, in order:
 #   0. a manifest with ONLY well-formed KEY="VALUE" assignments (no injected
 #      command at all) still gets an unrelated directory deleted — proving a
 #      non-executing parser alone would not close the deletion half of this.
+#   0b. the same, for ARIADNE_BASH_COMPLETION and ARIADNE_PLIST — two more of
+#      the manifest's full-path fields that reach a bare `rm -f` with no
+#      authorization check at all today, independent of ARIADNE_APP.
 #   1. a manifest holding one extra line runs that line as the invoking user
 #      during `uninstall.sh --dry-run`, which still reports "nothing was
 #      changed".
@@ -11,7 +14,8 @@
 #      path is deleted with rm -rf.
 #   3. a forged PURGE=1 wipes the whole $ARIADNE_HOME on a plain
 #      `uninstall.sh`, with no --purge flag given at all.
-#   4. nothing outside the throwaway $WORK changed while any of the above ran.
+#   4. nothing outside the throwaway $WORK changed, byte-for-byte, while any
+#      of the above ran.
 #
 # Every child process below runs under `env -i` plus an explicit, complete
 # set of home/config/data/log variables pointed inside a throwaway $WORK —
@@ -24,7 +28,25 @@
 # that kind: they sit at the paths the caller's *real* ZDOTDIR/XDG_DATA_HOME
 # would resolve to if this script's isolation ever broke again, and every
 # assertion is a hard failure (set -e plus explicit checks), not a printed
-# note.
+# note. The isolation check compares the sentinels with `cmp`, not a shell
+# string comparison of `$(cat ...)` output — command substitution strips
+# trailing newlines, which would silently miss a trailing-newline-only
+# change; an earlier version of this script had that gap.
+#
+# This script sets no `uname` stand-in and runs on whatever OS the caller is
+# on (`ui_locations`'s `OS="$(uname -s)"` resolves to the real host). On a
+# Darwin host that means `ui_stop_daemon` takes the Darwin branch
+# (`launchctl`) every time below; the `systemctl` stand-in two lines down is
+# never actually invoked on such a run — it is kept only so the script does
+# not fail outright if run on a Linux host instead, not as a claim that this
+# script exercises Linux-specific logic. Nothing in RELEASE-001's own claim
+# depends on which branch runs: sourcing the manifest - so the code
+# execution and the PURGE=1 override both happen - comes before
+# `ui_stop_daemon`'s step even starts (scripts/uninstall.sh:69 vs. the first
+# step at :98-100). The deletions the forged *values* drive (ARIADNE_APP,
+# the completions files) run in later steps, after that first service-stop
+# step, same as a normal uninstall: forging the manifest does not reorder
+# the steps, only what each one does.
 set -Eeuo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")/../../../.." && pwd)"
@@ -62,9 +84,12 @@ cat > "$AMBIENT/zdotdir/.zshrc" <<'EOF'
 # <<< ariadne <<<
 echo "my own .zshrc, untouched by any of this"
 EOF
-AMBIENT_ZSHRC_BEFORE="$(cat "$AMBIENT/zdotdir/.zshrc")"
+# Snapshotted as separate files, compared later with `cmp` — a shell string
+# comparison of `$(cat ...)` output would strip trailing newlines and miss a
+# trailing-newline-only change.
+cp "$AMBIENT/zdotdir/.zshrc" "$WORK/ambient-zshrc-before"
 echo "a real GNOME entry, unrelated to this run" > "$AMBIENT/xdg-data/applications/dev.ariadne.ui.desktop"
-AMBIENT_ENTRY_BEFORE="$(cat "$AMBIENT/xdg-data/applications/dev.ariadne.ui.desktop")"
+cp "$AMBIENT/xdg-data/applications/dev.ariadne.ui.desktop" "$WORK/ambient-entry-before"
 # Exported in *this* shell only, to prove the child never inherits them
 # (env -i strips them regardless of whether a caller's real shell sets the
 # equivalent to something else entirely).
@@ -145,6 +170,42 @@ echo "          a parser that refuses to execute the file would still have read 
 echo "          handed it, unchecked, to rm -rf."
 echo
 
+echo "== 0b. the same is true of ARIADNE_BASH_COMPLETION and ARIADNE_PLIST, independent of ARIADNE_APP =="
+# scripts/uninstall.sh:146 (`rm -f "$ARIADNE_BASH_COMPLETION" "$ARIADNE_ZSH_COMPLETION"`)
+# and scripts/lib.sh:151 (`rm -f "$ARIADNE_PLIST"`, inside ui_stop_daemon) read
+# these two fields out of the manifest and remove them with no authorization
+# check of any kind — not even the single ARIADNE_APP-shaped check this
+# report's remediation proposes. Neither target below is an app; this
+# manifest holds no ARIADNE_APP line at all.
+mkdir -p "$WORK/home4/.ariadne"
+echo "an unrelated file this manifest should never be able to name" > "$WORK/home4/unrelated-completion"
+echo "an unrelated file this manifest should never be able to name" > "$WORK/home4/unrelated-plist"
+cat > "$WORK/home4/.ariadne/install.env" <<EOF
+# Written by scripts/install.sh — read by scripts/uninstall.sh.
+ARIADNE_PREFIX="$WORK/home4/.local/bin"
+ARIADNE_BASH_COMPLETION="$WORK/home4/unrelated-completion"
+ARIADNE_PLIST="$WORK/home4/unrelated-plist"
+EOF
+env -i \
+    PATH="$WORK/bin:/usr/bin:/bin" \
+    HOME="$WORK/home4" \
+    ARIADNE_HOME="$WORK/home4/.ariadne" \
+    ZDOTDIR="$WORK/home4" \
+    XDG_DATA_HOME="$WORK/home4/.local/share" \
+    XDG_CONFIG_HOME="$WORK/home4/.config" \
+    TMPDIR="$WORK/tmp" \
+    NO_COLOR=1 \
+    bash "$WORK/repo/scripts/uninstall.sh"
+echo
+[ ! -e "$WORK/home4/unrelated-completion" ] \
+    || { echo "FAIL: expected unrelated-completion to have been removed via ARIADNE_BASH_COMPLETION."; exit 1; }
+[ ! -e "$WORK/home4/unrelated-plist" ] \
+    || { echo "FAIL: expected unrelated-plist to have been removed via ARIADNE_PLIST."; exit 1; }
+echo "OBSERVED: both unrelated-completion (via ARIADNE_BASH_COMPLETION) and unrelated-plist (via"
+echo "          ARIADNE_PLIST) were removed — two more manifest fields with no authorization check,"
+echo "          not covered by an ARIADNE_APP-only fix."
+echo
+
 echo "== 1. uninstall.sh --dry-run (user is only previewing, nothing should change) =="
 run_isolated "$WORK/repo/scripts/uninstall.sh" --dry-run
 echo
@@ -201,13 +262,14 @@ echo "          manifest's PURGE=1 reached scripts/uninstall.sh:161-165 even tho
 echo "          passed on the command line."
 
 echo
-echo "== 4. isolation check: did anything outside \$WORK change? =="
-[ "$(cat "$AMBIENT/zdotdir/.zshrc")" = "$AMBIENT_ZSHRC_BEFORE" ] \
+echo "== 4. isolation check: did anything outside \$WORK change, byte-for-byte? =="
+cmp -s "$AMBIENT/zdotdir/.zshrc" "$WORK/ambient-zshrc-before" \
     || { echo "FAIL: the ambient ZDOTDIR sentinel .zshrc changed — isolation leaked."; exit 1; }
-echo "OK: ambient ZDOTDIR/.zshrc is byte-for-byte unchanged."
-[ "$(cat "$AMBIENT/xdg-data/applications/dev.ariadne.ui.desktop")" = "$AMBIENT_ENTRY_BEFORE" ] \
+echo "OK: ambient ZDOTDIR/.zshrc is byte-for-byte unchanged (cmp)."
+cmp -s "$AMBIENT/xdg-data/applications/dev.ariadne.ui.desktop" "$WORK/ambient-entry-before" \
     || { echo "FAIL: the ambient XDG_DATA_HOME sentinel desktop entry changed — isolation leaked."; exit 1; }
-echo "OK: ambient XDG_DATA_HOME desktop entry is byte-for-byte unchanged."
+echo "OK: ambient XDG_DATA_HOME desktop entry is byte-for-byte unchanged (cmp)."
 
 echo
-echo "PASS: RELEASE-001 reproduced (code execution, arbitrary deletion, and a forced --purge), fixture isolation held."
+echo "PASS: RELEASE-001 reproduced (code execution, deletion with and without code execution,"
+echo "      unauthorized completions/plist deletion, and a forced --purge), fixture isolation held."
