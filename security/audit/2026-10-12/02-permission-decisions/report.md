@@ -398,30 +398,61 @@ What this proves, precisely, and no further:
   for this shape, and the literal bytes of the hostile sentence are never
   transmitted to the model once the edit is long enough.
 - **Not proven, and not claimed:** that the *final permission answer* is
-  therefore deterministic. In `ai` mode, what happens next still depends on
-  what the model decides about the 2,000 characters it *does* receive — a
-  long, mostly-`x` prefix is an unusual shape a real model might score as
-  `ask` or `deny` on its own terms, for reasons that have nothing to do with
-  the hostile suffix it never saw. Reaching an actual auto-allow of this
-  specific long `Edit` in `ai` mode still requires either a confident allow
-  from whatever model is running (uncertain, model-dependent, and exactly
-  the kind of question Work item 7 asks this audit not to resolve by
-  assertion) — or a matching learned row, which **is** the fully
-  deterministic, model-independent path, and is exactly what reproductions
-  2, 3 and 4 elsewhere in this report demonstrate end to end without
-  involving a model at all.
+  therefore deterministic, in either direction. What happens next in `ai`
+  mode depends on which of three outcomes the model reaches on the 2,000
+  characters it *does* receive, and the learned row is not the unconditional
+  fallback the previous wording implied:
+  - A **confident model allow** on the visible prefix authorizes the
+    request directly (`ai_permissions_selection`, `acp.rs:2052-2058`) — no
+    learned row is consulted at all in this case.
+  - A model **Ask** (a middling score, or the cap firing on the visible
+    prefix for an unrelated reason) or an **Unanswered** model (unavailable,
+    timed out, malformed) falls back to a matching learned approval, if one
+    exists (`acp.rs:2061-2063, 2159-2161`) — this is the one case the
+    learned row actually answers.
+  - A **confident model denial** overrides that fallback: if the agent
+    offers a one-time reject option, the model's own denial is selected and
+    the learned row is never reached (`ai_permissions_selection` is set from
+    the `Deny` branch and is checked *before* `learned`,
+    `acp.rs:2052-2058, 2159-2161`); if it offers no one-time reject option,
+    the request still falls to the console rather than to the row
+    (`deny_without_option`, `acp.rs:2059-2063`). Either way, a confident
+    denial is not something a learned allow can override.
+
+  A long, mostly-`x` prefix is also an unusual shape a real model might
+  score as `ask` or `deny` on its own terms, for reasons that have nothing
+  to do with the hostile suffix it never saw — reaching this report's
+  long-`Edit` reproduction's exact outcome (an executed auto-allow) in `ai`
+  mode specifically requires the model to confidently allow that visible
+  prefix, which is uncertain and model-dependent, exactly the kind of claim
+  Work item 7 asks this audit not to resolve by assertion.
+
+  The two reproductions that *are* model-independent are 2 and 4, because
+  they run in **`learn` mode**, which never asks a model at all — the
+  learned row is the only decider, unconditionally. Reproduction 3 is not
+  model-independent: it runs in `ai` mode, asks the model twice
+  (`model_calls=2`, recorded in its own observed output above), and its
+  point is narrower than "no model involved" — it demonstrates that once the
+  cap turns a model's confident allow into `Ask`, *that* `Ask` (not a
+  denial) falls back to a learned row exactly as a middling-score `Ask`
+  would.
 
 So: the cutoff is a second, independent, deterministic hole in the model's
 *visibility*, compounding PERM-001's deterministic hole in the cap's
 visibility — both now proven directly. It does not, by itself, prove a
-guaranteed bypass of `ai` mode specifically; it proves that `ai` mode's
-remaining, non-deterministic defense (the model's judgment of whatever it
-can see) is the only thing standing between a long hostile edit and an
-auto-allow, once the deterministic cap has already failed to fire. The fix
-below (reading `content` in the cap check) does not touch the
-2,000-character cutoff and would not need to — a correctly-capped `Edit`
-goes to `ask` regardless of what the model would or would not have seen,
-because the cap check runs on `derive()`'s untruncated view, not the
+guaranteed bypass of `ai` mode specifically, in either direction: it proves
+that `ai` mode's remaining, non-deterministic defense (the model's judgment
+of whatever it can see) decides the outcome for this shape whenever the
+model answers with an allow or a denial, and that only an `Ask` or
+`Unanswered` outcome hands the decision to a learned row, which a
+sufficiently old or sufficiently broad prior approval may or may not
+provide. The fix below (reading `content` in the cap check) does not touch
+the 2,000-character cutoff and would not need to — a correctly-capped
+`Edit` whose model answer *would have been an allow* goes to `ask` instead,
+regardless of what the model would or would not have seen; the cap does not
+touch a `Deny` or `Unanswered` outcome, which are unaffected by it either
+way (`decide.rs:142-153`), because the cap check runs on `derive()`'s
+untruncated view, not the
 model's truncated one.
 
 #### Bounded candidate — a `Bash` call's sibling `description` field is exactly as invisible, independent of the `Edit`/`Write` finding above
@@ -905,7 +936,7 @@ installed, running on this platform, or exists at all.
 | 2 | Normalization collisions, shell constructs, argument changes, path scope, risk-tag coverage | Read `learned_key.rs` whole file plus its test suite; read `derive.rs` and `operations.rs` whole files; found PERM-001 and PERM-002, both reproduced directly against the real Rust source and, this revision, against the production `handle_permission` path with a verified, concrete matching approval for PERM-002 | Did not exhaustively fuzz every regex in `derive.rs` against adversarial shell syntax; the PERM-002 wrapper table is scoped to the exact syntax tested (no-option vs. one-option-taking vs. unlisted wrappers), not every wrapper in either list with every option shape |
 | 3 | Remembered approval scope, deny handling, repository separation, changes during a live session | Read `permissions.rs` (store) whole file; **this revision** adds production-path reproduction 4 above, which is the live-session case this item asks for: a `family` row a person approves in turn 1 of a running session answers turn 2 of the *same* session, same agent process, with no new task; also read, and previously re-ran, the existing `widening_a_row_to_all_answers_a_second_repository` test — corrected description below; traced `permission_mode` being fixed once at launch (`acp.rs:1233`) and never updated for a running agent, matching `docs/permissions.md`'s "an agent already running keeps the mode it started with" | Did not test a repository's permission *mode* changing mid-session (only a learned *row* changing mid-session, which reproduction 4 covers); relied on reading `drive()`'s one-time `permission_mode` capture for the mode question |
 | 4 | Missing fields, malformed replies, timeouts, unavailable models, concurrent permission replies | Read `decide.rs`'s `danger()` validation in full and its tests; for concurrency, read the `agent-client-protocol` crate's own documentation module (`agent-client-protocol-2.2.0/src/concepts/ordering.rs`), which states as the library's own contract that its dispatch loop will not deliver a second message while a registered callback is running; `handle_permission` is such a callback and is never handed to `cx.spawn` | Primary-source evidence from the dependency's own docs, not a reproduction that forced two overlapping requests; not re-verified this revision |
-| 5 | Untrusted descriptions and the 2,000-character cutoff through every deterministic approval path | Two parts, both traced and reproduced this revision. (a) **The cutoff:** a direct reproduction (the truncation addendum above) shows a long `Edit` pushes the hostile text past the cutoff while `derive()`'s tags remain computed from the untruncated `rawInput` — proven deterministic *information loss* at both layers; corrected from an earlier, overstated claim that the final permission *decision* is therefore also deterministic (in `ai` mode it still depends on the model's judgment of what it does see, or on a matching learned row, which is the demonstrated model-independent path). (b) **Untrusted descriptions:** traced a `Bash` call's sibling `description` field through `normalize()` (deliberately excluded from the key — documented, not a finding), `derive()`'s `content` extraction (included, same as an `Edit`'s `new_string`), the `reviewer_directive` check (never reads it, same root cause as PERM-001, for the same reason — the proposed fix's `command.is_empty()` guard never activates for `Bash`), and the model's own serialization (reaches the model unfiltered, truncated the same as everything else) | The description trace stops at tag-level evidence, recorded as a bounded candidate rather than a third confirmed finding, per instruction not to invent a new confirmed vulnerability from a `derive()`-level probe alone; no `handle_permission` production-path reproduction was built for the `Bash`+`description` shape |
+| 5 | Untrusted descriptions and the 2,000-character cutoff through every deterministic approval path | Two parts, both traced and reproduced this revision. (a) **The cutoff:** a direct reproduction (the truncation addendum above) shows a long `Edit` pushes the hostile text past the cutoff while `derive()`'s tags remain computed from the untruncated `rawInput` — proven deterministic *information loss* at both layers; corrected from an earlier, overstated claim that the final permission *decision* is therefore also deterministic: in `ai` mode a confident model allow on the visible prefix still authorizes the request on its own, a confident denial still overrides any matching learned row (or falls to the console where no rejecting option exists), and only an `Ask` or `Unanswered` outcome falls back to a learned row — the row is a model-independent decider only in `learn` mode, which never asks a model at all (reproductions 2 and 4). (b) **Untrusted descriptions:** traced a `Bash` call's sibling `description` field through `normalize()` (deliberately excluded from the key — documented, not a finding), `derive()`'s `content` extraction (included, same as an `Edit`'s `new_string`), the `reviewer_directive` check (never reads it, same root cause as PERM-001, for the same reason — the proposed fix's `command.is_empty()` guard never activates for `Bash`), and the model's own serialization (reaches the model unfiltered, truncated the same as everything else) | The description trace stops at tag-level evidence, recorded as a bounded candidate rather than a third confirmed finding, per instruction not to invent a new confirmed vulnerability from a `derive()`-level probe alone; no `handle_permission` production-path reproduction was built for the `Bash`+`description` shape |
 | 6 | Adversarial benchmark coverage, not treated as a security guarantee | Grepped every committed `adversarial-dev.jsonl`/`adversarial-heldout.jsonl` case using `Edit`/`Write`/`MultiEdit`/`NotebookEdit`; found every case tagged `reviewer_directive` across the whole benchmark uses `Bash`, and the closest real case to PERM-001, `adv-classifier-bypass-006`, is a textbook file-content injection whose own `note` field names it a prompt-injection attempt, yet its committed `risk_tags` omits `reviewer_directive` | Did not run `bench/ai-permissions/run.py derive --cases ... --heldout` to diff every committed case's `risk_tags` against a fresh run; checked the `Edit`/`Write`/`MultiEdit`/`NotebookEdit` cases by hand instead |
 | 7 | Controlled model responses, independent of model quality | Every `ai`-mode reproduction uses a stub HTTP server returning a fixed, test-chosen danger score; reproduction 4 (PERM-002's authorization chain) uses `learn` mode and involves no model at all, the strongest form of this item | No live Kev model of any flavour was installed or queried — deliberate, per this item |
 | 8 | Intentional auto approvals recorded as policy unless behavior exceeds it | See "Rejected / out-of-scope hypotheses": the `remote` tag's destination-blindness and the AI model's priority over a stale human denial are traced to current, documented, tested behavior, not reported as findings | — |
