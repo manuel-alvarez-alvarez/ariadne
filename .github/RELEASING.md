@@ -36,6 +36,12 @@ notes nor moves the version.
 [`AGENTS.md`](../AGENTS.md#commit-messages)**, which is what anyone writing a
 commit here reads first; they are written down there and nowhere else.
 
+Release-please puts automatic breaking changes first.
+Its `changelog-sections` array in `release-please-config.json` then adds ✨
+Features, 🐛 Bug fixes, ⚡ Performance, and ⏪ Reverts.
+It hides `docs`, `refactor`, `test`, `chore`, `style`, `build`, and `ci` from
+the release notes.
+
 One thing here is configuration rather than convention: `feat!:` deliberately
 does not jump to 1.0.0 while the project is pre-1.0, which is what
 `bump-minor-pre-major` in `release-please-config.json` buys — drop it when 1.0

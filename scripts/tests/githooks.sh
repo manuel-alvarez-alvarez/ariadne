@@ -21,7 +21,7 @@ export PATH="$TEST_ROOT/bin:$PATH"
 # A synthetic repository with one file per area, and the hooks under test
 # copied in from the real repository.
 setup_repo() {
-    mkdir -p "$TEST_ROOT/repo"/{.githooks,scripts,crates/ariadne-core/src,ui/src,ui/src-tauri,docs,ui/node_modules}
+    mkdir -p "$TEST_ROOT/repo"/{.githooks,scripts/tests,crates/ariadne-core/src,ui/src,ui/src-tauri,docs,ui/node_modules}
     git -C "$TEST_ROOT/repo" init -q -b main
     git -C "$TEST_ROOT/repo" config user.email test@example.com
     git -C "$TEST_ROOT/repo" config user.name "Test"
@@ -30,6 +30,7 @@ setup_repo() {
         "$TEST_ROOT/repo/.githooks/"
     chmod 755 "$TEST_ROOT/repo/.githooks/"*
     cp "$REPO_DIR/scripts/install-githooks.sh" "$TEST_ROOT/repo/scripts/"
+    cp "$REPO_DIR/scripts/tests/release-please-config.sh" "$TEST_ROOT/repo/scripts/tests/"
     chmod 755 "$TEST_ROOT/repo/scripts/install-githooks.sh"
     cp "$REPO_DIR/scripts/tests/githooks-command.sh" "$TEST_ROOT/repo/scripts/check-unused-rust"
     chmod 755 "$TEST_ROOT/repo/scripts/check-unused-rust"
@@ -37,6 +38,9 @@ setup_repo() {
     printf 'export const seeded = 1\n' > "$TEST_ROOT/repo/ui/src/seeded.ts"
     printf 'fn seeded() {}\n' > "$TEST_ROOT/repo/ui/src-tauri/seeded.rs"
     printf '# seeded\n' > "$TEST_ROOT/repo/docs/seeded.md"
+    cat > "$TEST_ROOT/repo/release-please-config.json" <<'EOF'
+{"changelog-sections":[{"type":"perf","section":"⚡ Performance","hidden":false},{"type":"ci","section":"Continuous integration","hidden":true}]}
+EOF
     git -C "$TEST_ROOT/repo" add -A
     git -C "$TEST_ROOT/repo" commit -q -m "chore: seed repository"
 }
@@ -126,6 +130,15 @@ case "$test_case" in
         run_pre_commit_on docs/seeded.md
         [ "$pre_commit_status" = 0 ]
         [ ! -s "$TEST_ROOT/commands" ]
+        ;;
+    release-please-config-commit)
+        setup_repo
+        printf '\n' >> "$TEST_ROOT/repo/release-please-config.json"
+        git -C "$TEST_ROOT/repo" add release-please-config.json
+        rm -f "$TEST_ROOT/commands"
+        "$TEST_ROOT/repo/.githooks/pre-commit" > "$TEST_ROOT/output" 2>&1
+        grep -Fx '+ bash scripts/tests/release-please-config.sh' "$TEST_ROOT/output"
+        grep -Fx 'PASS: release-please-config' "$TEST_ROOT/output"
         ;;
     bad-subject)
         setup_repo

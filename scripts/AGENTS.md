@@ -42,6 +42,10 @@ in the root [`AGENTS.md`](../AGENTS.md).
   remote, the same way `install.sh` resolves a release repository
   (including its check that the parsed owner and name are non-empty),
   falling back to `GITHUB_REPOSITORY`.
+- `tests/release-please-config.sh` — run as `bash
+  scripts/tests/release-please-config.sh`; it builds notes from representative
+  `perf:` and `ci:` commits, proving the first reaches ⚡ Performance and the
+  second remains hidden.
 - `tests/install-command.sh` — the stand-in for every external tool
   (`gh`, `git`, `tar`, `ldconfig`, `systemctl`, `security`, `codesign`,
   `launchctl`, …) the installer boundary tests put on `PATH`, driven by the
@@ -87,7 +91,8 @@ in the root [`AGENTS.md`](../AGENTS.md).
   (`install-githooks.sh` sets `core.hooksPath`, and a worktree reads the same
   value), `rust-commit`, `ui-commit`, `tauri-commit`, `docs-commit` (a staged
   file of each area runs that area's pre-commit commands, and no other
-  area's), `bad-subject` (`commit-msg` refuses a subject that is not a
+  area's), `release-please-config-commit` (a changed config runs the release
+  section test), `bad-subject` (`commit-msg` refuses a subject that is not a
   Conventional Commit and accepts one that is), `rust-push`, `ui-push`,
   `tauri-push` (a pushed range touching one area runs that area's pre-push
   commands, and no other area's), `push-isolation` (a linked-worktree commit

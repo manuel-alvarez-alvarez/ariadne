@@ -21,6 +21,7 @@ run_ui=0
 run_tauri=0
 run_workspace_clippy=0
 run_machete=0
+run_release_please=0
 rust_crates=()
 ui_files=()
 shellcheck_files=()
@@ -39,6 +40,7 @@ if [ "$all" = 1 ]; then
     run_tauri=1
     run_workspace_clippy=1
     run_machete=1
+    run_release_please=1
 else
     while IFS= read -r -d '' f; do
         [ -z "$f" ] && continue
@@ -62,6 +64,7 @@ else
             tauri) run_tauri=1 ;;
         esac
         case "$f" in
+            release-please-config.json) run_release_please=1 ;;
             scripts/*.sh|.githooks/*)
                 shellcheck_files[${#shellcheck_files[@]}]="$f"
                 ;;
@@ -108,3 +111,7 @@ for f in "${shellcheck_files[@]:-}"; do
     # and uninstall.sh both source lib.sh), the same as checking them together.
     githooks_run shellcheck -x "$f"
 done
+
+if [ "$run_release_please" = 1 ]; then
+    githooks_run bash scripts/tests/release-please-config.sh
+fi

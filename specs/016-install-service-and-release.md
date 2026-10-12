@@ -13,7 +13,9 @@ tests:
   - scripts/tests/install-sign-macos.sh
   - scripts/tests/install-service-macos.sh
   - scripts/tests/make-signing-cert-scenarios.sh
+  - scripts/tests/release-please-config.sh
   - scripts/tests/release-notes.sh
+  - scripts/tests/githooks.sh
   - .github/workflows/release-please.yml
 ---
 
@@ -77,6 +79,10 @@ Out: what the daemon does once running (009, 012).
 6. Only conventional commits are seen by release-please; anything else is
    silently ignored, neither moving the version nor appearing in the notes.
    The allowed types live in `AGENTS.md` and nowhere else.
+   Release-please puts automatic breaking changes first.
+   Its `changelog-sections` setting in `release-please-config.json` then adds
+   ✨ Features, 🐛 Bug fixes, ⚡ Performance, and ⏪ Reverts. It hides `docs`,
+   `refactor`, `test`, `chore`, `style`, `build`, and `ci` from the notes.
 7. `feat!:` does not jump to 1.0.0 while the project is pre-1.0.
 8. History is linear: no merge commits. A task branch lands on its base by
    squash or fast-forward, and the commit that lands carries a conventional
@@ -191,6 +197,11 @@ Out: what the daemon does once running (009, 012).
   service registered: `ui_stop_daemon` waits out the slow `print`, and
   `install.sh` retries the failed `bootstrap`, rather than either one
   calling `ui_die` (`scripts/tests/install-service-macos.sh`).
+- `release-please-config.json` defines ✨ Features, 🐛 Bug fixes, ⚡
+  Performance, and ⏪ Reverts in that order. It hides the other allowed
+  commit types from release notes. The pre-commit hook runs its section test
+  when the config changes (`scripts/tests/release-please-config.sh`,
+  `scripts/tests/githooks.sh`: `release-please-config-commit`).
 - `scripts/release-notes.sh` turns a plain changelog body into one with an
   install section and an asset table ahead of it, and a re-run on a body
   that already carries the markers replaces the generated part without
@@ -219,6 +230,7 @@ fails the service step`).
 
 `scripts/install.sh`, `scripts/lib.sh`, `scripts/uninstall.sh`,
 `scripts/make-signing-cert.sh`, `scripts/release-notes.sh`,
+`scripts/tests/release-please-config.sh`,
 `.github/workflows/release.yml`, `.github/RELEASING.md`,
 `crates/ariadne-store/src/lib.rs`,
 `crates/ariadne-store/migrations/0001_init.sql`,
