@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { screen } from "@testing-library/react"
+import { screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { expect, it } from "vitest"
 
@@ -13,7 +13,7 @@ const STEPS = [
   { id: "test", title: "Test", description: "Test the change.", skills: ["testing"] },
 ]
 
-it("lists every column's name and progress, without opening any of them", () => {
+it("draws every column on the track and opens on the current one", () => {
   const task = aTask({
     status: "in_progress",
     step: "build",
@@ -23,48 +23,55 @@ it("lists every column's name and progress, without opening any of them", () => 
     ],
   })
   renderScreen(<WorkflowSteps task={task} steps={STEPS} />)
-  expect(screen.getByText("Build")).toBeTruthy()
-  expect(screen.getByText("Test")).toBeTruthy()
-  expect(screen.getByText("Current")).toBeTruthy()
-  expect(screen.getByText("Pending")).toBeTruthy()
-  expect(screen.queryByText("Build the change.")).toBeNull()
-  expect(screen.queryByText("codex-acp:o3", { exact: false })).toBeNull()
+  const tabs = screen.getAllByRole("tab")
+  expect(tabs.map((tab) => tab.textContent)).toEqual(["BuildCurrent", "TestPending"])
+  expect(screen.getByRole("tab", { name: /Build/ }).getAttribute("aria-current")).toBe("step")
+  expect(screen.getByRole("tab", { name: /Test/ }).getAttribute("aria-current")).toBeNull()
+  // The current column's card is the one open, the other column's stays shut.
+  expect(screen.getByText("Build the change.")).toBeTruthy()
+  expect(screen.getByText("coding")).toBeTruthy()
+  expect(screen.queryByText("Test the change.")).toBeNull()
+  expect(screen.queryByText("testing")).toBeNull()
 })
 
-it("opens one column's description, skills, model and session from the keyboard, leaving the rest closed", async () => {
+it("picks another column from the keyboard, showing its description, skills, model and session in place of the last", async () => {
   const task = aTask({
     status: "in_progress",
     step: "build",
     agents: [
+      { id: "agent-build", step: "build", skills: ["coding"], model: "codex-acp:o3" },
       {
-        id: "agent-build",
-        step: "build",
-        skills: ["coding"],
-        model: "codex-acp:o3",
+        id: "agent-test",
+        step: "test",
+        skills: ["testing"],
+        model: "codex-acp:o4",
         session_id: "01JSESSION000000000000001",
       },
-      { id: "agent-test", step: "test", skills: ["testing"], model: "codex-acp:o3" },
     ],
   })
   renderScreen(<WorkflowSteps task={task} steps={STEPS} />)
   const user = userEvent.setup()
-  const buildTrigger = screen.getByRole("button", { name: /Build/ })
-  buildTrigger.focus()
-  await user.keyboard("{Enter}")
-  expect(await screen.findByText("Build the change.")).toBeTruthy()
-  expect(screen.getByText("coding")).toBeTruthy()
-  expect(screen.getByTitle("codex-acp:o3")).toBeTruthy()
-  expect(screen.getByRole("link", { name: /session/ })).toBeTruthy()
-  expect(screen.queryByText("Test the change.")).toBeNull()
-  expect(screen.queryByText("testing")).toBeNull()
+  screen.getByRole("tab", { name: /Build/ }).focus()
+  await user.keyboard("{ArrowRight}")
+  const card = screen.getByRole("tabpanel")
+  expect(within(card).getByText("Test the change.")).toBeTruthy()
+  expect(within(card).getByText("testing")).toBeTruthy()
+  expect(within(card).getByTitle("codex-acp:o4")).toBeTruthy()
+  expect(within(card).getByRole("link", { name: /session/ })).toBeTruthy()
+  expect(screen.queryByText("Build the change.")).toBeNull()
+  expect(screen.queryByText("coding")).toBeNull()
 })
 
 it("marks every column pending for a task that has not started, in the pending colour", () => {
   const task = aTask({ status: "pending", step: null, agents: [] })
   renderScreen(<WorkflowSteps task={task} steps={STEPS} />)
-  const pending = screen.getAllByText("Pending")
-  expect(pending).toHaveLength(2)
-  for (const badge of pending) expect(badge.className).toContain("text-muted-foreground")
+  for (const tab of screen.getAllByRole("tab")) {
+    expect(tab.getAttribute("data-step-state")).toBe("ahead")
+    expect(within(tab).getByText("Pending")).toBeTruthy()
+  }
+  const card = screen.getByRole("tabpanel")
+  expect(within(card).getByText("Pending").className).toContain("text-muted-foreground")
+  expect(within(card).getByText("none staffed")).toBeTruthy()
 })
 
 it("marks the columns behind the current one done, and the rest ahead, in their own colours", () => {
@@ -77,8 +84,13 @@ it("marks the columns behind the current one done, and the rest ahead, in their 
     ],
   })
   renderScreen(<WorkflowSteps task={task} steps={STEPS} />)
-  expect(screen.getByText("Done").className).toContain("text-status-done-fg")
-  expect(screen.getByText("Current").className).toContain("text-status-active-fg")
+  const build = screen.getByRole("tab", { name: /Build/ })
+  expect(build.getAttribute("data-step-state")).toBe("done")
+  expect(within(build).getByText("Done")).toBeTruthy()
+  expect(screen.getByRole("tab", { name: /Test/ }).getAttribute("data-step-state")).toBe("current")
+  expect(within(screen.getByRole("tabpanel")).getByText("Current").className).toContain(
+    "text-status-active-fg",
+  )
 })
 
 it("marks every column done for a finished task, in the completion colour", () => {
@@ -91,7 +103,11 @@ it("marks every column done for a finished task, in the completion colour", () =
     ],
   })
   renderScreen(<WorkflowSteps task={task} steps={STEPS} />)
-  const done = screen.getAllByText("Done")
-  expect(done).toHaveLength(2)
-  for (const badge of done) expect(badge.className).toContain("text-status-done-fg")
+  for (const tab of screen.getAllByRole("tab")) {
+    expect(tab.getAttribute("data-step-state")).toBe("done")
+    expect(within(tab).getByText("Done")).toBeTruthy()
+  }
+  expect(within(screen.getByRole("tabpanel")).getByText("Done").className).toContain(
+    "text-status-done-fg",
+  )
 })

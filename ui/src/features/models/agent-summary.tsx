@@ -1,13 +1,13 @@
 /**
- * One staffed agent in two lines: its skills, wrapped over as many lines as
- * they need, and below them the model it runs on, in muted text.
+ * One staffed agent on one line: its skills, then the model it runs on in
+ * muted text after a separator, wrapping onto a second line only where the
+ * skills alone overrun it.
  *
  * An agent has no name and no page: it is what it knows and what it runs on.
  * So the skills are the identity — each one linking to itself — and the model
- * beneath them is quiet secondary text, drawn by {@link ModelPin} in its
+ * after them is quiet secondary text, drawn by {@link ModelPin} in its
  * one-line mode so a long id is cut in the middle rather than breaking the
- * fact it sits in over three lines; the whole pin is still a focus away, in
- * its tooltip.
+ * line it sits on; the whole pin is still a focus away, in its tooltip.
  *
  * There is nothing behind the pin to disagree with it. What the orchestrator
  * sized this agent at, or what the user chose instead, is simply what it runs
@@ -42,26 +42,27 @@ export function AgentSummary({
   className?: string
 }) {
   return (
-    <span className={cn("flex min-w-0 flex-col gap-0.5", className)}>
-      <span className="flex flex-wrap items-baseline gap-x-1">
-        {skills.length === 0 ? (
-          // Legal, and rarely what anybody wanted: an agent with nothing but
-          // its task. Said plainly rather than left as a gap.
-          <span className="text-muted-foreground italic">no skills</span>
-        ) : (
-          skills.map((skill, at) => (
-            // No box to clip the name: the line wraps whole skills onto as
-            // many lines as it needs, rather than cutting one short. A flex
-            // item's default min-width is its content's, which would push a
-            // long unbroken name past the cell instead of wrapping it — so
-            // this one is let shrink (`min-w-0`) and break inside itself
-            // (`break-words`) where a name has nowhere else to fold.
-            <span key={skill} className="min-w-0 break-words">
-              {at > 0 ? <span className="text-muted-foreground">, </span> : null}
-              <SkillName name={skill} />
-            </span>
-          ))
-        )}
+    <span className={cn("flex min-w-0 flex-wrap items-baseline gap-x-1.5", className)}>
+      {skills.length === 0 ? (
+        // Legal, and rarely what anybody wanted: an agent with nothing but
+        // its task. Said plainly rather than left as a gap.
+        <span className="text-muted-foreground italic">no skills</span>
+      ) : (
+        skills.map((skill, at) => (
+          // No box to clip the name: the line wraps whole skills onto as
+          // many lines as it needs, rather than cutting one short. A flex
+          // item's default min-width is its content's, which would push a
+          // long unbroken name past the cell instead of wrapping it — so
+          // this one is let shrink (`min-w-0`) and break inside itself
+          // (`break-words`) where a name has nowhere else to fold.
+          <span key={skill} className="min-w-0 break-words">
+            {at > 0 ? <span className="text-muted-foreground">, </span> : null}
+            <SkillName name={skill} />
+          </span>
+        ))
+      )}
+      <span className="text-muted-foreground" aria-hidden>
+        ·
       </span>
       <ModelPin model={model} effort={effort} mode="line" className="text-muted-foreground" />
     </span>
