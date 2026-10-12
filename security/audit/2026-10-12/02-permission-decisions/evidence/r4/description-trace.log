@@ -1,0 +1,22 @@
+────────────
+ Nextest run ID 246578c2-758c-4b4e-87fc-675306fdd9f4 with nextest profile: default
+    Starting 2 tests across 1 binary (241 tests skipped)
+       START [         ] (1/2) ariadne-daemon ai_permissions::derive::tests::perm_001_candidate_a_bash_description_carrying_the_directive_is_as_invisible_as_an_edits_new_string
+
+running 1 test
+PERM-001 candidate (Bash description): benign=[]/None | hostile_description=[]/None
+test ai_permissions::derive::tests::perm_001_candidate_a_bash_description_carrying_the_directive_is_as_invisible_as_an_edits_new_string ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 242 filtered out; finished in 0.06s
+
+        PASS [   0.076s] (1/2) ariadne-daemon ai_permissions::derive::tests::perm_001_candidate_a_bash_description_carrying_the_directive_is_as_invisible_as_an_edits_new_string
+       START [         ] (2/2) ariadne-daemon ai_permissions::derive::tests::the_proposed_fixs_command_is_empty_guard_would_still_skip_a_bash_description
+
+running 1 test
+test ai_permissions::derive::tests::the_proposed_fixs_command_is_empty_guard_would_still_skip_a_bash_description ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 242 filtered out; finished in 0.00s
+
+        PASS [   0.011s] (2/2) ariadne-daemon ai_permissions::derive::tests::the_proposed_fixs_command_is_empty_guard_would_still_skip_a_bash_description
+────────────
+     Summary [   0.087s] 2 tests run: 2 passed, 241 skipped
