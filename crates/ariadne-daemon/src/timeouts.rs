@@ -80,6 +80,16 @@ pub struct Timeouts {
     /// clock, and a tick that finds readers in the way costs the next one
     /// nothing.
     pub checkpoint: Duration,
+    /// How long a test may wait for one dead agent launch to be noticed
+    /// and retried (`crate::scheduler`'s spawn-retry budget). Not a pace
+    /// the runtime itself keeps — a dead launch is noticed on the next
+    /// [`Self::full_reconcile`] tick, whatever that is set to — but a real
+    /// subprocess spawn and exit, proved under the full suite's own load
+    /// on every core at once, taking longer than a short tick alone would
+    /// suggest. A test driving that budget out sets this rather than
+    /// keeping its own `Duration` constant, so every clock a test waits on
+    /// stays in one place.
+    pub dead_launch_patience: Duration,
 }
 
 impl Default for Timeouts {
@@ -101,6 +111,7 @@ impl Default for Timeouts {
             tunnel_retry: Duration::from_secs(1),
             forge_details: Duration::from_secs(30),
             checkpoint: Duration::from_secs(30),
+            dead_launch_patience: Duration::from_secs(30),
         }
     }
 }

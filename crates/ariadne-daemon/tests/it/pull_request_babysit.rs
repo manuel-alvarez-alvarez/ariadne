@@ -27,13 +27,6 @@ const PIN: &str = "stub:babysit-model";
 /// the daemon's ordinary five seconds.
 const SWEEPS_SOON: Duration = Duration::from_millis(100);
 
-/// How long one dead launch of the budget below may take to be noticed
-/// and retried under the full suite's own load: a real subprocess spawn
-/// and exit, under every core at once, rather than merely a scheduler
-/// tick — longer than [`TIMEOUT`] gives everything else, since this is
-/// the one test that drives that churn on purpose (032).
-const DEAD_LAUNCH_PATIENCE: Duration = Duration::from_secs(120);
-
 /// How the stub forge shows one request of mine: its state, the head
 /// repository it lives in, and the comments on its conversation, oldest
 /// first.
@@ -950,13 +943,15 @@ async fn a_keeper_fetches_a_forks_head_through_the_configured_remotes_own_push_u
 #[tokio::test]
 async fn a_keeper_whose_agent_dies_the_moment_it_starts_gives_up_after_the_budget() {
     let stub = stub_forge_cli(json!([]));
+    let timeouts = Timeouts {
+        full_reconcile: SWEEPS_SOON,
+        dead_launch_patience: Duration::from_secs(300),
+        ..Timeouts::default()
+    };
     let h = harness()
         .scheduler()
         .dying_agent()
-        .timeouts(Timeouts {
-            full_reconcile: SWEEPS_SOON,
-            ..Timeouts::default()
-        })
+        .timeouts(timeouts)
         .forge_cli(&stub)
         .await;
     let (path, head) = checkout(&h);
@@ -983,7 +978,7 @@ async fn a_keeper_whose_agent_dies_the_moment_it_starts_gives_up_after_the_budge
     // dead, but this still holds once it does, whatever that takes.
     for attempt in 1..=SPAWN_RETRY_BUDGET as usize {
         eventually(
-            DEAD_LAUNCH_PATIENCE,
+            timeouts.dead_launch_patience,
             "the next dead launch to be counted",
             async || {
                 h.state.forge_poll.wake(&repo);
