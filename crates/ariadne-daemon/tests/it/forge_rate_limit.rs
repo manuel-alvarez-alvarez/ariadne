@@ -402,14 +402,15 @@ async fn continued_wakes_do_not_extend_the_debounce_window() {
     let (sent_continued, continued) = oneshot::channel();
     let deliveries = tokio::spawn(async move {
         let mut every = tokio::time::interval(window / 4);
-        let mut sent_continued = Some(sent_continued);
         every.tick().await;
-        for number in 0.. {
+        every.tick().await;
+        poll.wake(&id);
+        every.tick().await;
+        poll.wake(&id);
+        let _ = sent_continued.send(());
+        loop {
             every.tick().await;
             poll.wake(&id);
-            if number == 1 {
-                let _ = sent_continued.take().unwrap().send(());
-            }
         }
     });
     continued
