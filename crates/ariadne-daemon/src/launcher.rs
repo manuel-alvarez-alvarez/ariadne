@@ -1535,16 +1535,32 @@ impl Launcher {
         Ok((worktree, branch))
     }
 
-    /// Where a keeper pushes a fix to (032): the request's own head
-    /// repository, which a fork keeps away from the repository's own
-    /// remote — the same repository [`Self::keeper_worktree`] fetches the
-    /// head branch from.
+    /// Where a keeper pushes a fix to, and checks its safety against
+    /// (032): the repository's own configured remote, whatever protocol it
+    /// uses, for a head on the same repository — the forge always reports
+    /// that one over HTTPS, which an SSH-only remote cannot push to — or
+    /// the request's own head repository for a genuine fork, the same one
+    /// [`Self::keeper_worktree`] fetches the head branch from.
     fn keeper_remote(&self, pull: &PullRequest, repo: &Repository) -> String {
-        pull.head_repo.clone().unwrap_or_else(|| {
-            repo.forge
-                .as_ref()
-                .map_or_else(|| "origin".to_string(), |forge| forge.remote.clone())
-        })
+        let configured = repo
+            .forge
+            .as_ref()
+            .map_or_else(|| "origin".to_string(), |forge| forge.remote.clone());
+        let Some(head_repo) = pull.head_repo.as_deref() else {
+            return configured;
+        };
+        let same = repo.forge.as_ref().is_some_and(|forge| {
+            crate::forge::Remote::parse(head_repo).is_some_and(|parsed| {
+                parsed.host.eq_ignore_ascii_case(&forge.host)
+                    && parsed.owner.eq_ignore_ascii_case(&forge.owner)
+                    && parsed.name.eq_ignore_ascii_case(&forge.name)
+            })
+        });
+        if same {
+            configured
+        } else {
+            head_repo.to_string()
+        }
     }
 
     /// The command a keeper session pushes a fix with (032): its local
@@ -1559,25 +1575,32 @@ impl Launcher {
     }
 
     /// Whether a keeper's local branch is safe for teardown to discard
-    /// (032): its worktree holds no uncommitted change, and its tip is
-    /// already what the request's head repository has for the head
-    /// branch. Unsafe otherwise, since removing the worktree or the branch
-    /// would then throw away the only copy of a change nobody pushed.
-    async fn keeper_work_is_safe_to_discard(
+    /// (032): its tip is already what the request's head repository has
+    /// for the head branch, read with `git ls-remote` rather than a fetch.
+    /// Where the remote carries no such branch any more — a merge that
+    /// deleted it, most often — safe instead where the local tip is
+    /// exactly the head the forge itself last read for the request: past
+    /// that, teardown has no evidence the forge ever saw the work, so it
+    /// must not throw away the only copy of it.
+    async fn keeper_branch_is_safe_to_discard(
         &self,
         repo_path: &Path,
-        worktree: &Path,
         pull: &PullRequest,
         repo: &Repository,
         branch: &str,
     ) -> Result<bool> {
-        if !self.git.is_clean(worktree).await? {
-            return Ok(false);
-        }
+        let local = self.git.branch_tip(repo_path, branch).await?;
         let remote = self.keeper_remote(pull, repo);
-        self.git
-            .remote_has_commit(repo_path, &remote, branch, &pull.head_branch)
-            .await
+        Ok(
+            match self
+                .git
+                .remote_branch_tip(repo_path, &remote, &pull.head_branch)
+                .await?
+            {
+                Some(tip) => tip == local,
+                None => local == pull.head_sha,
+            },
+        )
     }
 
     /// Refuse a second live session of `seat` on one request.
@@ -1952,19 +1975,25 @@ impl Launcher {
             Seat::Keeper => Some(self.keeper_branch(pull_request_id)),
             _ => None,
         };
+        // Computed once, whether or not a worktree still exists: a branch
+        // nobody checked out any more can still hold a commit the
+        // request's head repository never got, and teardown must not
+        // drop the only reference to it (032).
+        let branch_safe = match &keeper_branch {
+            Some(branch) if self.git.branch_exists(&repo_path, branch).await? => match pull {
+                Some(pull) => {
+                    self.keeper_branch_is_safe_to_discard(&repo_path, pull, &repo, branch)
+                        .await?
+                }
+                None => false,
+            },
+            _ => true,
+        };
         let mut preserved = false;
         for worktree in worktrees.iter().filter(|w| w.exists()) {
-            if let Some(branch) = &keeper_branch {
-                let safe = match pull {
-                    Some(pull) => {
-                        self.keeper_work_is_safe_to_discard(
-                            &repo_path, worktree, pull, &repo, branch,
-                        )
-                        .await?
-                    }
-                    None => false,
-                };
-                if !safe {
+            if keeper_branch.is_some() {
+                let clean = self.git.is_clean(worktree).await?;
+                if !clean || !branch_safe {
                     tracing::warn!(pull_request = %pull_request_id, worktree = %worktree.display(), "the keeper's worktree holds work the request's head lacks, leaving it on disk");
                     preserved = true;
                     continue;
@@ -1976,6 +2005,7 @@ impl Launcher {
         self.git.prune_worktrees(&repo_path).await.ok();
         if let Some(branch) = &keeper_branch
             && !preserved
+            && branch_safe
             && self.git.branch_exists(&repo_path, branch).await?
         {
             self.git.delete_branch(&repo_path, branch).await?;

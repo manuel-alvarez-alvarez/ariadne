@@ -172,6 +172,7 @@ impl super::Scheduler {
         }
         self.launcher.live.remove(id);
         self.pull_request_cleanup_retry.remove(id);
+        self.keeper_skills_applied.remove(id);
         Ok(())
     }
 
@@ -662,18 +663,32 @@ impl super::Scheduler {
             model: pull.babysit_model.clone().unwrap_or_default(),
             effort: pull.babysit_effort.clone(),
         };
+        let skills = pull.babysit_skills();
         let Some(session) = running else {
+            self.keeper_skills_applied
+                .insert(pull.id.clone(), skills.clone());
             return self.start_babysit_session(pull, pin).await;
         };
-        // A second ask can move the pin while this session still runs on
-        // the old one (032): kill it and start fresh on the new pin, which
-        // reuses the worktree and the local branch rather than cutting
-        // them again, so its unpushed local work survives the restart.
-        if session.model != pin.model || session.effort != pin.effort {
+        // A second ask can move the pin or the skills while this session
+        // still runs on the old ones (032): kill it and start fresh on the
+        // new ones, which reuses the worktree and the local branch rather
+        // than cutting them again, so its unpushed local work survives
+        // the restart. The skills a live session runs are not on its own
+        // row, so they are read off the last ask this map saw rather than
+        // off the session: absent, as right after the daemon restarts, a
+        // session already running is taken to run the current ones.
+        let skills_changed = self
+            .keeper_skills_applied
+            .get(&pull.id)
+            .is_some_and(|applied| *applied != skills);
+        if session.model != pin.model || session.effort != pin.effort || skills_changed {
             info!(pull_request = %pull.id, session = %session.id, "the keeper's pin changed, restarting it on the new one");
             self.launcher.kill_session(&session.id).await?;
+            self.keeper_skills_applied
+                .insert(pull.id.clone(), skills.clone());
             return self.start_babysit_session(pull, pin).await;
         }
+        self.keeper_skills_applied.insert(pull.id.clone(), skills);
         if matches!(
             session.status(),
             SessionStatus::Running | SessionStatus::Idle

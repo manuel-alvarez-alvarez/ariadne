@@ -353,27 +353,23 @@ impl GitManager {
             .is_some_and(|sha| sha == local))
     }
 
-    /// Whether `local_branch`'s tip is also what `remote` has for
-    /// `remote_branch`, read with `git ls-remote` rather than a fetch: a
-    /// keeper's own branch and the request's head branch, which may differ
-    /// in name from a fork (032). Unlike [`Self::remote_has_branch_tip`],
-    /// the local and the remote name need not match.
-    pub(crate) async fn remote_has_commit(
+    /// The tip `remote` has for `branch`, read with `git ls-remote` rather
+    /// than a fetch, None where the remote carries no such branch: one
+    /// deleted after the request it served merged (032).
+    pub(crate) async fn remote_branch_tip(
         &self,
         repo: &Path,
         remote: &str,
-        local_branch: &str,
-        remote_branch: &str,
-    ) -> Result<bool> {
-        let local = self.git(repo, &["rev-parse", local_branch]).await?;
+        branch: &str,
+    ) -> Result<Option<String>> {
         let refs = self
-            .git(repo, &["ls-remote", "--heads", remote, remote_branch])
+            .git(repo, &["ls-remote", "--heads", remote, branch])
             .await?;
         Ok(refs
             .lines()
             .next()
             .and_then(|line| line.split_whitespace().next())
-            .is_some_and(|sha| sha == local))
+            .map(str::to_string))
     }
 
     /// Whether `worktree` holds no uncommitted change: a keeper's own

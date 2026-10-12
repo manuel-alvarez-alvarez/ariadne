@@ -402,6 +402,64 @@ async fn stopping_before_a_push_preserves_the_keepers_unpublished_commit() {
     );
 }
 
+/// The branch itself holds the only copy of an unpublished commit once its
+/// worktree is already gone: teardown must keep checking it against the
+/// request's head repository rather than skip straight to deleting it
+/// because there is no worktree left to check against (032).
+#[tokio::test]
+async fn a_branch_with_no_worktree_left_keeps_its_unpublished_commit_too() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    h.flush_scheduler().await;
+
+    let asked: Value = h
+        .json(
+            babysit(&repo, 1, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    let id = asked["id"].as_str().expect("a row").to_string();
+    let session = idle_keeper(&h, &id).await;
+    let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
+
+    sh(
+        &worktree,
+        "echo b > b.txt && git add b.txt && \
+         git -c user.email=t@t -c user.name=t commit -qm b",
+    );
+    let unpublished = sh(&worktree, "git rev-parse HEAD");
+    let branch = format!("ariadne/keep-{id}");
+
+    // The worktree is gone before teardown ever runs: the branch is its
+    // only trace now, and nothing has checked it against the remote yet.
+    sh(
+        &path,
+        &format!("git worktree remove --force '{}'", worktree.display()),
+    );
+    assert!(!worktree.exists());
+
+    let _: Value = h
+        .json(babysit(&repo, 1, json!({"asked": false})), StatusCode::OK)
+        .await;
+    eventually(TIMEOUT, "the keeper session to end", async || {
+        !h.session_status(&session).await.is_live()
+    })
+    .await;
+    eventually(TIMEOUT, "Ariadne to stop working on it", async || {
+        h.store.get_pull_request(&id).await.is_err()
+    })
+    .await;
+    assert_eq!(
+        sh(&path, &format!("git rev-parse {branch}")),
+        unpublished,
+        "the branch naming the unpublished commit is left too"
+    );
+}
+
 /// A second ask that moves the keeper's model while its session still runs
 /// kills that session and starts a fresh one on the new pin, reusing the
 /// same worktree and local branch rather than cutting them again (032).
@@ -467,6 +525,76 @@ async fn a_second_ask_that_moves_the_pin_restarts_the_live_keeper() {
     );
 }
 
+/// A second ask that moves only the keeper's skills, its model and effort
+/// left as they were, relaunches the live session on its own row — the
+/// same agent and model need no new one — rather than leave it running on
+/// the skills it was first briefed on: the skills a running session loads
+/// are not on its own row, read instead off the pin the scheduler last
+/// applied, so a skills-only change must move that mark as surely as a
+/// model change does (032).
+#[tokio::test]
+async fn a_second_ask_that_moves_only_the_skills_restarts_the_live_keeper() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    h.flush_scheduler().await;
+
+    let asked: Value = h
+        .json(
+            babysit(
+                &repo,
+                1,
+                json!({"asked": true, "model": PIN, "skills": ["coding"]}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    let id = asked["id"].as_str().expect("a row").to_string();
+    let session = idle_keeper(&h, &id).await;
+    let first_launch = session.launch_id.clone();
+
+    let moved: Value = h
+        .json(
+            babysit(
+                &repo,
+                1,
+                json!({"asked": true, "model": PIN, "skills": ["migration"]}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(moved["babysit_skills"], json!(["migration"]));
+
+    eventually(
+        TIMEOUT,
+        "the keeper to relaunch, its model and effort letting it keep its row",
+        async || {
+            sessions(&h, &id).await.into_iter().any(|s| {
+                s.seat() == Some(Seat::Keeper)
+                    && s.id == session.id
+                    && s.status() == SessionStatus::Idle
+                    && s.launch_id.is_some()
+                    && s.launch_id != first_launch
+            })
+        },
+    )
+    .await;
+    let launch = h.launch_file(&session.id).expect("a launch file");
+    assert!(
+        launch.system_prompt.contains("- migration: "),
+        "{}",
+        launch.system_prompt
+    );
+    assert!(
+        !launch.system_prompt.contains("- coding: "),
+        "{}",
+        launch.system_prompt
+    );
+}
+
 /// A keeper pushes a fix onto the request's own head repository, not the
 /// base repository's remote: a fork's head lives away from it, and the
 /// command the briefing names must reach the fork, not `origin` (032).
@@ -501,6 +629,93 @@ async fn a_keeper_on_a_fork_is_told_to_push_to_the_forks_own_repository() {
         !told.contains("git push origin"),
         "a fork's head is not origin's to push to: {told}"
     );
+}
+
+/// A keeper on the same repository as its base pushes through the
+/// repository's own configured remote, not the HTTPS URL the forge always
+/// reports for the head: an SSH-only remote could never push to that one
+/// (032).
+#[tokio::test]
+async fn a_keeper_on_the_same_repository_pushes_through_the_configured_remote() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    h.flush_scheduler().await;
+
+    let asked: Value = h
+        .json(
+            babysit(&repo, 1, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    let id = asked["id"].as_str().expect("a row").to_string();
+    let session = idle_keeper(&h, &id).await;
+
+    let told = h.told(&session.id);
+    assert!(told.contains("git push origin HEAD:fix"), "{told}");
+}
+
+/// A merge that deletes its head branch at once still lets teardown clean
+/// up a commit the keeper already pushed: `ls-remote` finds no ref any
+/// more, but the local tip is exactly the head the forge itself last read
+/// for the request, which is confirmation enough that it is not only on
+/// disk here (032).
+#[tokio::test]
+async fn a_merge_that_auto_deletes_the_head_branch_still_cleans_up_published_work() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    h.flush_scheduler().await;
+
+    let asked: Value = h
+        .json(
+            babysit(&repo, 1, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    let id = asked["id"].as_str().expect("a row").to_string();
+    let session = idle_keeper(&h, &id).await;
+    let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
+    let branch = format!("ariadne/keep-{id}");
+
+    // The keeper pushes its fix to the request's head branch.
+    sh(
+        &worktree,
+        "echo b > b.txt && git add b.txt && \
+         git -c user.email=t@t -c user.name=t commit -qm b",
+    );
+    let pushed = sh(&worktree, "git rev-parse HEAD");
+    sh(&worktree, &format!("git push -q origin {branch}:fix"));
+
+    // GitHub records the pushed head, merges it, and deletes its head
+    // branch — all before Ariadne's own teardown ever runs.
+    sh(&path, "git push -q origin --delete fix");
+    stub.reprogram(script(&Shown {
+        state: "MERGED",
+        ..Shown::open(&pushed)
+    }));
+    h.state.forge_poll.wake(&repo);
+
+    eventually(
+        TIMEOUT,
+        "the keeper session to end, its worktree to go and its branch with it",
+        async || {
+            !h.session_status(&session).await.is_live()
+                && !worktree.exists()
+                && sh(&path, "git branch --list ariadne/keep-*").is_empty()
+        },
+    )
+    .await;
+    eventually(TIMEOUT, "Ariadne to stop working on it", async || {
+        h.store.get_pull_request(&id).await.is_err()
+    })
+    .await;
 }
 
 /// A keeper's agent that comes up and exits at once — a broken binary, a
