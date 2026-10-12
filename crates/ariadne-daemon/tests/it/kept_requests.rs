@@ -713,7 +713,7 @@ async fn the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side()
     }
     stub.reprogram(script.clone());
 
-    let before = stub.invocations().len();
+    let before = replies(&stub);
     h.error(
         as_session(
             &format!("/v1/pull-requests/{id}/comments/{other_side}/reply"),
@@ -724,9 +724,9 @@ async fn the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side()
     )
     .await;
     assert_eq!(
-        stub.invocations().len(),
+        replies(&stub),
         before,
-        "a second reply to the same body calls the forge CLI no further"
+        "a second reply to the same body posts no further reply"
     );
 
     h.error(
@@ -739,9 +739,9 @@ async fn the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side()
     )
     .await;
     assert_eq!(
-        stub.invocations().len(),
+        replies(&stub),
         before,
-        "a reply to the agent's own side's body calls the forge CLI no further"
+        "a reply to the agent's own side's body posts no further reply"
     );
 }
 
@@ -1630,7 +1630,25 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_pr_agent() {
         entries.insert(0, entry);
     }
     stub.reprogram(script.clone());
-    fetch_again(&h, &stub, &repo).await;
+    // The setup fetch can finish after the fixture changes but before this
+    // wake records its detail-call baseline. Wait for the state that either
+    // fetch must leave instead of missing that completed refresh.
+    h.state.forge_poll.wake(&repo);
+    eventually(
+        TIMEOUT,
+        "the detail fetch to read the new head",
+        async || {
+            h.launcher.live.get(&id).is_some_and(|live| {
+                live.pull.head_sha == tip
+                    && live
+                        .details
+                        .as_ref()
+                        .is_some_and(|details| details.head_sha == tip)
+            })
+        },
+    )
+    .await;
+    h.flush_scheduler().await;
 
     let ask = Request::builder()
         .method("PUT")
@@ -1710,8 +1728,9 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_pr_agent() {
         "the finding and the summary wait"
     );
 
-    fetch_again(&h, &stub, &repo).await;
+    h.state.forge_poll.wake(&repo);
     eventually(TIMEOUT, "the finding to reach the agent", async || {
+        h.flush_scheduler().await;
         h.prompts_to(&agent)
             .iter()
             .skip(told)
