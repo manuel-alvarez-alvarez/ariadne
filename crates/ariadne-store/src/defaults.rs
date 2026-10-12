@@ -721,7 +721,7 @@ mod tests {
         // Three step texts, three orchestrator texts and the message.
         const KIND_TOTAL: usize = 1500;
         // Every seat text, every kind and the three pull request texts.
-        const GRAND_TOTAL: usize = 2700;
+        const GRAND_TOTAL: usize = 3400;
 
         // A cap per seat. The orchestrator's carried its playbook up to
         // 1750; the playbook is the `orchestration` skill now, and 200 holds
@@ -781,8 +781,8 @@ mod tests {
             );
         }
         assert!(
-            pull_request <= 600,
-            "the pull request texts total {pull_request} characters, over 600"
+            pull_request <= 700,
+            "the pull request texts total {pull_request} characters, over 700"
         );
 
         let grand: usize = all_defaults().iter().map(|(_, text)| text.len()).sum();

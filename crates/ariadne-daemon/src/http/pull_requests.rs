@@ -659,8 +659,7 @@ pub(super) async fn report(
         // keeper's.
         let keeper_seat = match row.origin_task_id {
             Some(_) => ariadne_core::Seat::Agent,
-            None if row.babysit_asked => ariadne_core::Seat::Keeper,
-            None => ariadne_core::Seat::Agent,
+            None => ariadne_core::Seat::Keeper,
         };
         if (row.origin_task_id.is_some() || row.babysit_asked)
             && session.seat() != Some(keeper_seat)

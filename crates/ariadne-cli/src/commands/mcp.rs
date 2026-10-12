@@ -747,8 +747,9 @@ pub(crate) mod tests {
         assert!(instructions.contains("pull request 01PR"), "{instructions}");
     }
 
-    /// A keeper pull request session (032) is listed six tools: the
-    /// request, its diff, its comments, one comment and a reply, and the
+    /// A keeper pull request session (032) is listed eight tools:
+    /// `wait_for_user` and `withdraw_wait_for_user`, and six of its own —
+    /// the request, its diff, its comments, one comment, a reply, and the
     /// report. It has no task tool, no message tool, and nothing it is
     /// listed resolves a thread or submits a review: those are the
     /// reviewer seat's alone.
@@ -784,7 +785,7 @@ pub(crate) mod tests {
                 "wait_for_user",
                 "withdraw_wait_for_user",
             ],
-            "the pull request keeper is listed six tools"
+            "the pull request keeper is listed eight tools, six of its own"
         );
         for tool in [
             "get_task",

@@ -408,14 +408,7 @@ impl super::Scheduler {
         pull: &PullRequest,
         pin: AgentPin,
     ) -> anyhow::Result<()> {
-        let last = self
-            .store
-            .list_sessions(SessionFilter {
-                pull_request_id: Some(pull.id.clone()),
-                ..Default::default()
-            })
-            .await?
-            .pop();
+        let last = self.last_session_of(&pull.id, Seat::Reviewer).await?;
         if let Some(last) = &last
             && self.spent_on_a_dead_launch(&pull.id, &pull.id, last)
         {
@@ -694,15 +687,58 @@ impl super::Scheduler {
         Ok(())
     }
 
-    /// Start a keeper session, or put the one it had back on its feet.
+    /// Start a keeper session, or put the one it had back on its feet,
+    /// within the spawn-retry budget: the same guard
+    /// `start_pull_request_session` keeps a reviewer under, on a budget
+    /// key of its own (`<id>:keep`) so a dead keeper launch never spends
+    /// the reviewer's count, or the other way round, on a row that asks
+    /// for both.
     async fn start_babysit_session(
         &mut self,
         pull: &PullRequest,
         pin: AgentPin,
     ) -> anyhow::Result<()> {
-        let session = self.launcher.resume_keeper_session(pull, pin).await?;
-        info!(pull_request = %pull.id, session = %session.id, "the request's keeper session is up");
-        Ok(())
+        let budget = format!("{}:keep", pull.id);
+        let last = self.last_session_of(&pull.id, Seat::Keeper).await?;
+        if let Some(last) = &last
+            && self.spent_on_a_dead_launch(&budget, &budget, last)
+        {
+            *self.spawn_failures.entry(budget.clone()).or_default() += 1;
+        }
+        if self.spawn_failures.get(&budget).copied().unwrap_or(0) >= SPAWN_RETRY_BUDGET {
+            warn!(pull_request = %pull.id, "the keeper session died on arrival too many times, giving up for now");
+            return Ok(());
+        }
+        match self.launcher.resume_keeper_session(pull, pin).await {
+            Ok(session) => {
+                info!(pull_request = %pull.id, session = %session.id, "the request's keeper session is up");
+                Ok(())
+            }
+            Err(e) => {
+                *self.spawn_failures.entry(budget).or_default() += 1;
+                Err(e)
+            }
+        }
+    }
+
+    /// The newest session of `seat` on a request, if any: what the
+    /// spawn-retry budget reads to tell a dead launch from a live one, kept
+    /// seat-scoped since a row can carry a reviewer and a keeper session
+    /// at once (032).
+    async fn last_session_of(
+        &self,
+        pull_request_id: &str,
+        seat: Seat,
+    ) -> anyhow::Result<Option<AgentSession>> {
+        Ok(self
+            .store
+            .list_sessions(SessionFilter {
+                pull_request_id: Some(pull_request_id.to_string()),
+                ..Default::default()
+            })
+            .await?
+            .into_iter()
+            .rfind(|s| s.seat() == Some(seat)))
     }
 
     /// A request asked for by hand that wants no keeper session (032):

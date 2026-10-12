@@ -4,18 +4,28 @@
 //! and taken down with its worktree and its branch once the request ends
 //! or asking stops.
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
-use crate::common::forge::{answer, stub_forge_cli};
-use crate::common::{Harness, TIMEOUT, as_session, eventually, harness, post_json, put_json, sh};
+use crate::common::forge::{StubForgeCli, answer, stub_forge_cli};
+use crate::common::{
+    Harness, QUIET, TIMEOUT, as_session, eventually, harness, post_json, put_json, sh,
+};
 use ariadne_core::{Seat, SessionStatus};
 use ariadne_daemon::forge::poll::Mode;
+use ariadne_daemon::scheduler::SPAWN_RETRY_BUDGET;
+use ariadne_daemon::timeouts::Timeouts;
 use ariadne_store::{AgentSession, SessionFilter};
 
 const PIN: &str = "stub:babysit-model";
+
+/// How often the scheduler's full reconcile tick runs, sped up so a dead
+/// launch's own budget runs out within the test's own timeout rather than
+/// the daemon's ordinary five seconds.
+const SWEEPS_SOON: Duration = Duration::from_millis(100);
 
 /// How the stub forge shows one request of mine: its state, and the
 /// comments on its conversation, oldest first.
@@ -121,6 +131,27 @@ fn babysit(repo: &str, number: i64, body: Value) -> axum::http::Request<Body> {
     )
 }
 
+/// How many detail fetches of the repository the stub has answered.
+fn detail_fetches(stub: &StubForgeCli) -> usize {
+    stub.invocations()
+        .iter()
+        .filter(|i| i.args.get(1).is_some_and(|a| a.contains("/compare/")))
+        .count()
+}
+
+/// Fetch the repository once more, and wait for the resulting pass to end,
+/// so a test that proves "no news the second time" first proves the
+/// second fetch actually ran.
+async fn fetch_again(h: &Harness, stub: &StubForgeCli, repo: &str) {
+    let before = detail_fetches(stub);
+    h.state.forge_poll.wake(repo);
+    eventually(TIMEOUT, "the detail fetch", async || {
+        detail_fetches(stub) > before
+    })
+    .await;
+    h.flush_scheduler().await;
+}
+
 async fn sessions(h: &Harness, pull_request_id: &str) -> Vec<AgentSession> {
     h.store
         .list_sessions(SessionFilter {
@@ -190,6 +221,15 @@ async fn asking_keeps_a_request_of_mine_by_hand_until_the_merge() {
     assert_eq!(h.store.get_pull_request(&id).await.unwrap().role, "author");
 
     let session = idle_keeper(&h, &id).await;
+    assert_eq!(
+        sessions(&h, &id)
+            .await
+            .iter()
+            .filter(|s| s.seat() == Some(Seat::Keeper) && s.status().is_live())
+            .count(),
+        1,
+        "exactly one live keeper session, never two on the same request"
+    );
     assert_eq!(session.model, PIN);
     let launch = h.launch_file(&session.id).expect("a launch file");
     assert!(
@@ -228,8 +268,32 @@ async fn asking_keeps_a_request_of_mine_by_hand_until_the_merge() {
             .is_some_and(|news| news.contains("ic-301"))
     })
     .await;
+    let told = h.prompts_to(&session).len();
     let news = h.prompts_to(&session).pop().unwrap();
     assert!(news.contains("alice"), "{news}");
+
+    // The same comment is told once: a later fetch that reads the same
+    // details hands the keeper no second prompt naming it.
+    fetch_again(&h, &stub, &repo).await;
+    tokio::time::sleep(QUIET).await;
+    assert_eq!(
+        h.prompts_to(&session).len(),
+        told,
+        "the same comment is no news the second time"
+    );
+
+    // A reply from the keeper follows the keeping agent's own rule (026
+    // rule 16): it answers an inline review comment, the thread of a
+    // defect, and a reply to the conversation itself is refused.
+    h.error(
+        as_session(
+            &format!("/v1/pull-requests/{id}/comments/ic-301/reply"),
+            &session.id,
+            json!({"body": "Thanks!"}),
+        ),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
 
     // The keeper reports the request ready, on the head it read.
     let reported: Value = h
@@ -266,6 +330,68 @@ async fn asking_keeps_a_request_of_mine_by_hand_until_the_merge() {
         h.store.get_pull_request(&id).await.is_err()
     })
     .await;
+}
+
+/// A keeper's agent that comes up and exits at once — a broken binary, a
+/// pin that will not run — spends the same spawn-retry budget a dead
+/// reviewer launch does (`start_pull_request_session`), on a budget key of
+/// its own: three dead launches, and Ariadne stops trying, rather than a
+/// fresh session every pass for as long as the row lives (032).
+#[tokio::test]
+async fn a_keeper_whose_agent_dies_the_moment_it_starts_gives_up_after_the_budget() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness()
+        .scheduler()
+        .dying_agent()
+        .timeouts(Timeouts {
+            full_reconcile: SWEEPS_SOON,
+            ..Timeouts::default()
+        })
+        .forge_cli(&stub)
+        .await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    let mut rows: Vec<Value> = Vec::new();
+    eventually(TIMEOUT, "the request to be listed", async || {
+        rows = h.get("/v1/pull-requests").await;
+        rows.len() == 1
+    })
+    .await;
+
+    let asked: Value = h
+        .json(
+            babysit(&repo, 1, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    let id = asked["id"].as_str().expect("a row").to_string();
+
+    eventually(
+        TIMEOUT,
+        "the dead launches to run the budget out",
+        async || {
+            h.state.forge_poll.wake(&repo);
+            let rows = sessions(&h, &id).await;
+            rows.len() >= SPAWN_RETRY_BUDGET as usize && rows.iter().all(|s| !s.status().is_live())
+        },
+    )
+    .await;
+
+    // And nothing has been started again: given up on, rather than between
+    // two launches. Three more wakes is what "a tick later" needs proving,
+    // and a flush sent after them is what proves they ran, rather than a
+    // wait that only bets they were fast enough.
+    let exhausted = sessions(&h, &id).await.len();
+    for _ in 0..3 {
+        h.state.forge_poll.wake(&repo);
+    }
+    h.flush_scheduler().await;
+    assert_eq!(
+        sessions(&h, &id).await.len(),
+        exhausted,
+        "a keeper given up on after the budget is not spawned again"
+    );
 }
 
 /// Asking needs a model the catalog holds, and a skill a task agent is

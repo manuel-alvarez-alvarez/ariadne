@@ -462,19 +462,36 @@ fn babysit_path(repo_id: &str, number: i64) -> String {
 /// one — this poll would then attach to a console already gone rather than
 /// waiting for the one the ask on this line started.
 async fn wait_for_review_session(client: &Client, pull_request_id: &str) -> Result<String> {
-    poll_review_session(client, pull_request_id, ATTACH_TIMEOUT, ATTACH_POLL).await
+    poll_review_session(
+        client,
+        pull_request_id,
+        ariadne_core::Seat::Reviewer,
+        ATTACH_TIMEOUT,
+        ATTACH_POLL,
+    )
+    .await
 }
 
 /// `pr babysit --attach`: the same poll `wait_for_review_session` runs,
 /// since both wait for the one live session the scheduler starts on a
-/// request Ariadne has just been asked to work on (032).
+/// request Ariadne has just been asked to work on (032). Filtered to its
+/// own seat: a row can carry a reviewer and a keeper session at once (032
+/// rule 11), and each `--attach` opens its own, never the other's.
 async fn wait_for_keeper_session(client: &Client, pull_request_id: &str) -> Result<String> {
-    poll_review_session(client, pull_request_id, ATTACH_TIMEOUT, ATTACH_POLL).await
+    poll_review_session(
+        client,
+        pull_request_id,
+        ariadne_core::Seat::Keeper,
+        ATTACH_TIMEOUT,
+        ATTACH_POLL,
+    )
+    .await
 }
 
 async fn poll_review_session(
     client: &Client,
     pull_request_id: &str,
+    seat: ariadne_core::Seat,
     timeout: Duration,
     poll: Duration,
 ) -> Result<String> {
@@ -485,6 +502,7 @@ async fn poll_review_session(
                 "/v1/sessions",
                 &SessionPageQuery {
                     pull_request: Some(pull_request_id.to_string()),
+                    seat: Some(seat),
                     ..SessionPageQuery::default()
                 },
             )?)
@@ -494,7 +512,8 @@ async fn poll_review_session(
         }
         if Instant::now() >= deadline {
             anyhow::bail!(
-                "no review session appeared for pull request {pull_request_id} within {timeout:?}"
+                "no {} session appeared for pull request {pull_request_id} within {timeout:?}",
+                seat.as_str()
             );
         }
         tokio::time::sleep(poll).await;
@@ -507,7 +526,7 @@ mod tests {
     use axum::{
         Router,
         body::to_bytes,
-        extract::{Request, State},
+        extract::{Query, Request, State},
         response::IntoResponse,
         routing::{get, post, put},
     };
@@ -1003,6 +1022,7 @@ mod tests {
         let id = poll_review_session(
             &client,
             "01PR",
+            ariadne_core::Seat::Reviewer,
             Duration::from_millis(500),
             Duration::from_millis(5),
         )
@@ -1015,6 +1035,42 @@ mod tests {
             calls.lock().unwrap().len() >= 2,
             "the empty page must be polled past rather than answered as the live session"
         );
+    }
+
+    /// `pr review --attach` and `pr babysit --attach` each open their own
+    /// seat's console, never the other's, on a row that carries both at
+    /// once (032 rule 11): the poll sends `seat=` and a stub that actually
+    /// filters by it answers each with its own session alone.
+    #[tokio::test]
+    async fn attach_opens_the_session_of_its_own_seat_and_not_the_others() {
+        async fn seated_sessions(
+            Query(params): Query<std::collections::HashMap<String, String>>,
+        ) -> axum::Json<SessionPageDto> {
+            let seat = params.get("seat").map(String::as_str);
+            let sessions = match seat {
+                Some("reviewer") => vec![session_row("01REV")],
+                Some("keeper") => vec![session_row("01KEEP")],
+                _ => vec![session_row("01REV"), session_row("01KEEP")],
+            };
+            let total = sessions.len();
+            axum::Json(SessionPageDto {
+                sessions,
+                next_cursor: None,
+                total,
+                snapshot_at: "2026-10-10T00:00:00Z".into(),
+            })
+        }
+        let app = Router::new().route("/v1/sessions", get(seated_sessions));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = Client::tcp(format!("http://{}", listener.local_addr().unwrap()));
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let reviewer = wait_for_review_session(&client, "01PR").await.unwrap();
+        let keeper = wait_for_keeper_session(&client, "01PR").await.unwrap();
+        server.abort();
+
+        assert_eq!(reviewer, "01REV", "pr review --attach opens its own seat");
+        assert_eq!(keeper, "01KEEP", "pr babysit --attach opens its own seat");
     }
 
     #[derive(Clone)]

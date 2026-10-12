@@ -105,7 +105,12 @@ impl GitManager {
     /// Create a worktree on a fresh local `branch` cut at `at`, for a
     /// session that keeps a request of the user's own by hand (032): unlike
     /// [`Self::add_detached_worktree`] this worktree commits and pushes, so
-    /// it needs a branch of its own rather than a detached head.
+    /// it needs a branch of its own rather than a detached head. `-B`
+    /// rather than `-b`: an earlier cleanup that removed the worktree but
+    /// failed to delete the branch (its own error is swallowed, and the
+    /// next ask retries) must not leave this call refusing to recreate
+    /// either, since nothing but a keeper ever commits there — a fresh
+    /// worktree always starts the branch over at the head given here.
     pub async fn add_worktree_at(
         &self,
         repo: &Path,
@@ -114,7 +119,7 @@ impl GitManager {
         at: &str,
     ) -> Result<()> {
         let wt = worktree.display().to_string();
-        self.git(repo, &["worktree", "add", "-b", branch, &wt, at])
+        self.git(repo, &["worktree", "add", "-B", branch, &wt, at])
             .await?;
         Ok(())
     }
