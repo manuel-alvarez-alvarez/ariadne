@@ -76,6 +76,10 @@ Out: what the daemon does once running (009, 012).
 6. Only conventional commits are seen by release-please; anything else is
    silently ignored, neither moving the version nor appearing in the notes.
    The allowed types live in `AGENTS.md` and nowhere else.
+   Release-please puts automatic breaking changes first.
+   Its `changelog-sections` setting in `release-please-config.json` then adds
+   ✨ Features, 🐛 Bug fixes, ⚡ Performance, and ⏪ Reverts. It hides `docs`,
+   `refactor`, `test`, `chore`, `style`, `build`, and `ci` from the notes.
 7. `feat!:` does not jump to 1.0.0 while the project is pre-1.0.
 8. History is linear: no merge commits. A task branch lands on its base by
    squash or fast-forward, and the commit that lands carries a conventional
@@ -169,6 +173,9 @@ Out: what the daemon does once running (009, 012).
   service registered: `ui_stop_daemon` waits out the slow `print`, and
   `install.sh` retries the failed `bootstrap`, rather than either one
   calling `ui_die` (`scripts/tests/install-service-macos.sh`).
+- `release-please-config.json` defines ✨ Features, 🐛 Bug fixes, ⚡
+  Performance, and ⏪ Reverts in that order. It hides the other allowed
+  commit types from release notes.
 
 ## Known gap
 

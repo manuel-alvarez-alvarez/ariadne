@@ -85,11 +85,16 @@ lowercase type and an imperative subject ("add", not "added"/"adds").
 
 Allowed types, and what each one does to a release:
 
-| Type | Effect while pre-1.0 |
-| --- | --- |
-| `feat` | minor bump (0.1.0 → 0.2.0) |
-| `fix`, `perf`, `revert` | patch bump (0.1.0 → 0.1.1) |
-| `docs`, `refactor`, `test`, `chore`, `style`, `build`, `ci` | hidden: they ride along in a release triggered by something else and never trigger one on their own |
+| Type | Effect while pre-1.0 | Release notes |
+| --- | --- | --- |
+| `feat` | minor bump (0.1.0 → 0.2.0) | ✨ Features |
+| `fix` | patch bump (0.1.0 → 0.1.1) | 🐛 Bug fixes |
+| `perf` | patch bump (0.1.0 → 0.1.1) | ⚡ Performance |
+| `revert` | patch bump (0.1.0 → 0.1.1) | ⏪ Reverts |
+| `docs`, `refactor`, `test`, `chore`, `style`, `build`, `ci` | ride along in a release triggered by another type and never trigger one | Do not appear in release notes |
+
+The `changelog-sections` setting in `release-please-config.json` sets these
+release-note sections. Release-please puts automatic breaking changes first.
 
 Mark a breaking change with `!` before the colon (`feat!: …`) or a
 `BREAKING CHANGE:` footer; while pre-1.0 that is still a minor bump.
