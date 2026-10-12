@@ -13,6 +13,25 @@ leads (FORGE-002's permission-mode correction, FORGE-003's provenance
 spoof). Where the original report was simply wrong, this revision says so
 rather than quietly fixing the wording.
 
+**Second revision note.** The orchestrator relayed evidence from two
+parallel audit tasks working the same commit: EXEC (Git worktree
+execution) and PERM (permission policy). EXEC independently reproduced,
+in its own isolated harness, that a detached reviewer worktree still
+accepts a commit and an explicit-refspec push — corroborating FORGE-002
+with evidence this report did not itself generate, now cited there with
+attribution. EXEC also found that a branch name containing shell
+metacharacters survives into a generated command shape; tracing where
+that command shape is built, and whether a forge-sourced branch name can
+actually reach it, is FORGE's own ingestion question, and is answered
+below as new finding FORGE-007. The division of ownership is now
+three-way, as the orchestrator stated it: **FORGE owns ingestion and
+influence; EXEC owns execution capability; PERM owns permission policy.**
+This revision updates the Cross-boundary section accordingly and does not
+re-derive EXEC's own command-execution evidence — only FORGE's half of
+each finding (what forge content reaches the hazard, and whether the
+system's own gating already prevents it from an external attacker) is
+independently verified here.
+
 ## Question
 
 Can hostile forge traffic or content cause unauthorized local work, secret
@@ -294,6 +313,32 @@ reproduction, and what remains inferred or unresolved.
   `approve`).
 - `crates/ariadne-store/src/defaults.rs:383` (the reviewer's "commit
   nothing, push nothing" instruction — prose only).
+
+**Corroborating evidence from EXEC's parallel audit** (relayed by the
+orchestrator; I did not re-run this myself, to avoid duplicating EXEC's own
+work): an isolated reproduction against the real reviewer-session code
+path found `launcher.rs:1648-1675` creates reviewer sessions through the
+ordinary launch path (the same one FORGE-002 traces), `acp.rs:2052-2270`
+routes permission decisions such that `auto` allows a request while
+`ask`/`learn`/`ai` can constrain it, `acp.rs:2620-2625` advertises no
+client terminal capability — and a missing client handler does not disable
+an agent's own native tools — and `acp.rs:965-978`/`gitwt.rs:94-105` apply
+no reviewer-specific filesystem or process isolation: a detached worktree
+is an ordinary git worktree, not a sandbox. EXEC's own isolated test
+(logged at `/tmp/exec-reviewer-capabilities.log`, EXEC's artifact, not
+reproduced here) performed tracked-file changes, a sibling marker write,
+and a detached commit successfully; a plain `git push` failed only because
+`HEAD` was detached, and an explicit-refspec push succeeded against a
+disposable local bare remote standing in for the forge. EXEC's own caveats
+apply in full: this does not prove malicious-comment causation, no real
+model or installed agent accepted an injected instruction, and a real
+remote push additionally needs credentials and remote write authorization
+that this reproduction stood in for locally. This evidence corroborates
+FORGE-002's claim from the execution-capability side (EXEC's assigned
+territory) while this report's own evidence covers the ingestion/influence
+side (FORGE's assigned territory) — together they answer the "is there a
+technical backstop" question for the `auto`-mode default more completely
+than either audit could alone.
 
 **Prerequisites:**
 - The repository runs the default `auto` permission mode (or any mode
@@ -784,6 +829,137 @@ dialog actually provides. This is a VIEW/CLI-scoped UX change, not a
 daemon change — flagged to the orchestrator rather than scoped further
 here.
 
+### FORGE-007 — The keeper's briefing hands the agent a literal, unescaped shell command built from a forge-sourced branch name — but the one call site that builds it is gated to requests the user authored themselves (Confirmed code hazard; not externally attacker-reachable under the current role gate; Medium as a hardening item)
+
+**How this finding arose:** the orchestrator relayed EXEC's own result that
+"a valid branch containing shell metacharacters executed a synthetic
+marker through the generated shell-command shape," with instructions that
+FORGE trace whether, and how, such a branch name can actually originate
+from forge-ingested content, without claiming EXEC's command-execution
+mechanics as this report's own finding. EXEC's command-shape evidence is
+cited by attribution; what follows is this report's own tracing.
+
+**Affected files/lines:**
+- `crates/ariadne-daemon/src/launcher.rs:1579-1585` (`keeper_push_command`):
+  ```rust
+  async fn keeper_push_command(&self, pull: &PullRequest, repo: &Repository) -> Result<String> {
+      Ok(format!(
+          "git push {} HEAD:{}",
+          self.keeper_remote(pull, repo).await?,
+          pull.head_branch
+      ))
+  }
+  ```
+  `pull.head_branch` — the forge's own report of the request's head branch
+  name — is folded into a plain `format!` string with no escaping or
+  quoting at all.
+- `crates/ariadne-store/src/defaults.rs:412-423`
+  (`PULL_REQUEST_KEEPER_BRIEFING`): the resulting string is handed to the
+  agent in its very first briefing as `"Push with: {push_command}"` —
+  phrased as the literal command to run, not as descriptive prose (compare
+  the reviewer's own briefing, `defaults.rs:386-397`, which shows
+  `{head_branch}` only inside the sentence "Branch: {head_branch} onto
+  {base_branch}," never inside a composed command). This specific
+  operational detail — the exact remote and refspec — is also not optional
+  busywork: because the keeper's local branch name differs from the
+  request's own head branch name, a bare `git push` would not work without
+  it, so the agent has a genuine, legitimate reason to run this string
+  verbatim via its own shell tool, not merely a suggestion it might ignore.
+
+**Confirmed, by this report's own reproduction (local only, no network,
+not committed): git's own ref-name rules permit shell metacharacters.**
+```
+$ git init -q -b main /tmp/forge-branch-check && cd /tmp/forge-branch-check
+$ git check-ref-format --branch 'fix$(touch,pwned)'; echo "exit=$?"
+fix$(touch,pwned)
+exit=0
+$ git branch 'fix$(touch,pwned)'; echo "exit=$?"
+exit=0
+```
+`git branch` itself accepted and created a branch literally named
+`fix$(touch,pwned)`. Nothing in git's own ref-naming rules (`space`,
+`~^:?*[\`, consecutive dots, a leading/trailing `/` or a trailing `.lock`
+are the actual restrictions — not `$`, `(`, `)`, `;`, `|`, `&`, or a
+backtick) would stop an attacker from creating such a branch in their own
+fork and pushing it to a real forge, which validates against the same
+git-level rules.
+
+**Confirmed, by tracing every call site in this codebase: the one function
+that builds this unsafe string is gated to requests the user authored
+themselves, and a third party cannot reach it.**
+`keeper_push_command` is called only from `keeper_briefing_of`
+(`launcher.rs:1876-1897`), which is called only from
+`resume_keeper_session`/`pull_request_switch`
+(`launcher.rs:1835-1870, 2032-2047`) and from
+`scheduler/pull_requests.rs::babysit_pass`/`start_babysit_session`
+(lines 648-744). `babysit_pass` itself is reached only from
+`pull_request_pass` (`scheduler/pull_requests.rs:76-131`), whose very first
+branch is:
+```rust
+if pull.role != "author" {
+    return self.review_pass(&pull).await;
+}
+```
+— every other path to a keeper session returns before ever reaching
+`babysit_pass`. `pull.role` is `"author"` only when
+`author_login.eq_ignore_ascii_case(integration.login)`
+(`forge/pulls.rs::role`) — the forge's own, unforgeable record of who
+actually authenticated as the PR's creator. A third party cannot make
+their own PR's `author_login` equal the integration's login without
+breaking the forge's own authentication, which is out of this audit's
+scope. **Grepping every caller of `keeper_push_command`,
+`keeper_worktree`, `resume_keeper_session`, and `keeper_briefing_of`
+confirms none bypasses this gate.** So, under the system's design as it
+stands, the branch name reaching this unsafe construction was always
+chosen by the legitimate forge account the user themselves operates
+through — not by an external attacker — because a keeper session exists
+*only* to babysit the user's own request.
+
+**Why this is still reported, not dismissed, per the orchestrator's
+explicit instruction not to exclude repository-controlled input affecting
+a trusted agent under the malicious-installed-agent exception:**
+1. The protection is *indirect* — a scheduler-level routing decision, not
+   a check at the point the unsafe string is built. A future change to
+   `pull_request_pass`'s routing, or a new call site that reaches
+   `keeper_push_command` some other way, would silently inherit this
+   hazard with no test or review signal pointing at it, since nothing
+   there currently defends against it directly.
+2. The branch name is still "repository content" within this audit's own
+   threat model (forge content treated as potentially hostile) even when
+   its author happens to be the legitimate user: an unusual or
+   accidentally-dangerous branch name (copy-pasted from somewhere, or
+   containing confusable characters) would be handed to the agent as a
+   literal command exactly the same way a deliberately crafted one would.
+3. The general pattern — composing a shell command string for an agent to
+   run from unescaped external data, rather than giving the agent
+   structured values (a remote, a refspec) to use with its own tool's
+   normal quoting — is itself worth naming regardless of today's
+   reachability, since the next field folded into a similar string might
+   not enjoy the same role gate.
+
+**What is not claimed:** that any external attacker can reach this today;
+that a real coding agent would copy-paste and execute the string verbatim
+rather than, say, quoting the branch name itself when constructing its own
+shell invocation (a capable agent might reasonably do so); or that EXEC's
+own isolated command-execution mechanics are reproduced here — they are
+cited by attribution only.
+
+**Recommendation (smallest remediation, split along the orchestrator's own
+line):** FORGE's part — validate `pull.head_branch` against a conservative
+allow-list (alphanumeric, `-`, `_`, `/`, `.`) before it is used to build
+*any* templated instructional text, refusing or escaping it otherwise, at
+the point it is read off the forge (`forge/pulls.rs`) rather than at each
+later call site. EXEC's part — regardless of that upstream validation,
+`keeper_push_command` should not compose a raw shell string at all; the
+briefing should give the agent the remote and the refspec as separate,
+structured values (as it already does for `{branch}` and `{base_branch}`
+elsewhere in the same template) and let the agent's own tool quote them,
+the same defense-in-depth split the orchestrator asked for. **Regression
+criterion:** a `launcher.rs` test asserting `keeper_push_command` (or its
+replacement) refuses or safely escapes a `head_branch` containing shell
+metacharacters, run alongside a `forge/pulls.rs` test asserting such a
+branch name is rejected or sanitized at ingestion.
+
 ## Rejected hypotheses (with reasoning)
 
 - **GitLab review-comment `-f position[new_path]=<attacker-chosen
@@ -855,9 +1031,27 @@ stronger reproduction built from the project's own existing, maintained
 test suite rather than a purpose-built unit test whose scope was too
 narrow to support its conclusion.
 
-**High confidence**, by direct code citation: FORGE-002's core fact
-(review/keeper sessions take the repository's own permission mode, which
-defaults to `auto`, which grants without a human gate). **High confidence**,
+**What this second round adds:** EXEC's independent, parallel audit
+corroborated FORGE-002's execution-capability half with its own isolated
+reproduction (a detached worktree accepted a commit and an explicit-refspec
+push), which this report cites by attribution rather than re-deriving.
+Tracing the branch-name hazard EXEC separately reported led to a new
+finding, FORGE-007, with this report's own honest conclusion that the one
+call site building the unsafe string is, under the system's current
+design, gated to the user's own authored requests — not externally
+attacker-reachable today, which is why it is reported as a hardening item
+rather than a confirmed exploit, even though the underlying construction
+pattern is a real hazard.
+
+**High confidence**, by direct code citation and now by an independent,
+corroborating reproduction from EXEC's parallel audit: FORGE-002's core
+fact (review/keeper sessions take the repository's own permission mode,
+which defaults to `auto`, which grants without a human gate, and a
+detached worktree imposes no sandboxing of its own). **High confidence**,
+by this report's own local reproduction (git's own CLI accepting a branch
+name containing shell metacharacters) and by exhaustive call-site tracing:
+FORGE-007's two halves — the hazard is real, and today's role-gating
+genuinely prevents external reach. **High confidence**,
 by reproduction against the project's own committed test and independent
 re-run: FORGE-001's structural gap and its reach to a live agent prompt.
 **High confidence**, by reproduction plus primary-source corroboration:
@@ -892,25 +1086,41 @@ confirmed by GitLab's own documentation).
 
 ## Cross-boundary evidence for the orchestrator
 
-- **FORGE-002** is a cross-boundary finding by construction: its
+The orchestrator relayed a three-way split that this revision adopts
+throughout: **FORGE owns ingestion and influence; EXEC owns execution
+capability; PERM owns permission policy.**
+
+- **FORGE-002** belongs to **PERM**, not EXEC, under that split: its
   consequence (an unintended forge action) is squarely FORGE's assigned
-  question, but its enforcement point — the ACP permission-mode default
-  and the absence of any seat-specific tool restriction — lives in the
-  ACP runtime and permission-mode subsystem (specs 021/022), which this
-  task's cross-task contract assigns to EXEC ("Git worktree execution")
-  rather than FORGE. I am not proposing a fix to that subsystem myself;
-  I am reporting the gap precisely so EXEC's own audit (if one covers this
-  area) or a follow-up remediation task can own the actual change, per
+  question, and its enforcement point — the ACP permission-mode default
+  and the absence of any seat-specific gate — is the permission-policy
+  engine itself (specs 021/022), which is PERM's stated territory. EXEC's
+  corroborating evidence (cited within FORGE-002 above) instead answers
+  the adjacent *execution-capability* question — that a detached worktree
+  carries no sandboxing of its own — which is EXEC's territory and a
+  distinct fact from the policy gate PERM owns. I am not proposing a fix
+  to either subsystem myself; I am reporting the gap precisely so PERM's
+  own audit, and EXEC's where the two meet, can own the actual change, per
   "Keep ownership of the root cause explicit to avoid duplicate
   remediation tasks."
+- **FORGE-007** is a genuine three-way boundary case: FORGE's own tracing
+  (this report) establishes which forge-sourced field reaches the hazard
+  and that today's scheduler routing happens to gate it to non-attacker
+  content; EXEC owns whatever safer command-construction replaces the
+  naive `format!` string (not scoped here); and if the smallest fix
+  instead targets the permission layer (e.g., requiring confirmation for
+  any `Bash` call shaped like a raw multi-token shell command rather than
+  a single program invocation), that choice is PERM's to make. This report
+  proposes FORGE's own half (ingestion-side validation) without assuming
+  which of EXEC's or PERM's remediation, if either, is also adopted.
 - **FORGE-004**'s fix is deliberately scoped to FORGE's own ingestion code
   (validate `head_repo`'s host before handing it to `launcher.rs`), *not*
   to the git-command layer in `gitwt.rs`/`launcher.rs` itself, specifically
   to avoid creating a second, overlapping remediation task with EXEC over
   the same file.
 - **FORGE-001 and FORGE-003** are entirely within FORGE's own ingestion
-  layer (`forge/live.rs`, `forge/news.rs`); no EXEC coordination is needed
-  for either's proposed fix.
+  layer (`forge/live.rs`, `forge/news.rs`); no EXEC or PERM coordination is
+  needed for either's proposed fix.
 - VIEW owns how forge content is displayed; FORGE-006's suggested
   mitigation (a confirmation step in the CLI import path) is a CLI/UX
   change, not a daemon change.
@@ -950,9 +1160,9 @@ confirmed by GitLab's own documentation).
 
 ## Proposed follow-up tasks
 
-- A remediation task scoped to the ACP runtime/permission-mode subsystem
-  (likely EXEC's or a dedicated owner's, per compatibility question 1)
-  addressing FORGE-002.
+- A remediation task scoped to the ACP permission-policy subsystem,
+  **owned by PERM** per the orchestrator's three-way split, addressing
+  FORGE-002, per compatibility question 1.
 - A remediation task scoped to `ariadne-daemon`/`ariadne-store`
   (`forge/live.rs`, `forge/news.rs`) addressing FORGE-003 and, together
   with it since they share a root cause and files, FORGE-001, once the
@@ -963,6 +1173,12 @@ confirmed by GitLab's own documentation).
 - A remediation task scoped to `ariadne-daemon/src/forge/pulls.rs`/
   `launcher.rs::review_worktree`'s call site addressing FORGE-004, once the
   user answers compatibility question 4.
+- A remediation task addressing FORGE-007, split along the same line as
+  its finding: FORGE's half (validate `head_branch` at ingestion, in
+  `forge/pulls.rs`) can be scoped independently; EXEC's half (replace the
+  raw shell-string `push_command` with structured values) and PERM's
+  alternative (gate multi-token `Bash` calls more tightly) are choices for
+  those audits or the user to make, not scoped here.
 - (Optional, low priority) A CLI/VIEW-scoped task addressing FORGE-006.
 - (Optional) A short verification task to install `glab` and confirm its
   `-f`/`-F` behavior and webhook token delivery against the real binary,
