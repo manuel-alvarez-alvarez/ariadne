@@ -1,4 +1,4 @@
---- generated output ---
+--- generated output, with `<<: *base` ---
 export type paths = Record<string, never>;
 export type webhooks = Record<string, never>;
 export interface components {
@@ -16,6 +16,23 @@ export interface components {
 export type $defs = Record<string, never>;
 export type operations = Record<string, never>;
 
+--- generated output, control without the merge ---
+export type paths = Record<string, never>;
+export type webhooks = Record<string, never>;
+export interface components {
+    schemas: {
+        Proof: components["schemas"]["schema"];
+        schema: unknown;
+    };
+    responses: never;
+    parameters: never;
+    requestBodies: never;
+    headers: never;
+    pathItems: never;
+}
+export type $defs = Record<string, never>;
+export type operations = Record<string, never>;
 
-OK: the generated output contains the field produced only by resolving external.yaml's `<<: *base` merge.
-This confirms @redocly/openapi-core's YAML merge-key parser ran on externally-referenced content — not that GHSA-2883-xcg3-v3hh's CPU-exhaustion behavior was reproduced.
+OK: with `<<: *base`, `schema` is `string` described `from_yaml_merge` — both inherited solely from the anchor.
+OK: the control without the merge carries neither field.
+This confirms @redocly/openapi-core's YAML merge-key processing ran on externally-referenced content — not that GHSA-2883-xcg3-v3hh's CPU-exhaustion behavior was reproduced.

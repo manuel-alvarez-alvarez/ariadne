@@ -152,10 +152,11 @@ gaps, on top of what the previous revision already fixed. What changed:
   reachability, not `GHSA-2883-xcg3-v3hh`'s specific resource-exhaustion
   behavior), and the prerequisite that narrows it (an externally-referenced,
   untrusted document — not the daemon's own default, self-contained one).
-  The same trace surfaced `brace-expansion@2.1.4`'s real chain (via
-  `@redocly/openapi-core -> minimatch`, the same `gen:api` devDependency
-  path, not `shadcn`), which the previous revision's inventory omitted
-  entirely.
+  The same trace surfaced `brace-expansion@2.1.4`'s real dependency chain
+  (via `@redocly/openapi-core -> minimatch`, the same `gen:api`
+  devDependency path, not `shadcn`), which the previous revision's
+  inventory omitted entirely. (Commit `499ddbae` then overstated it as
+  reached by the YAML reproduction; the next section corrects that.)
 - **The npm advisory inventory is now complete and committed as evidence**
   (`repro/supply-006-npm-evidence/`): every package's exact resolved
   version(s), every GHSA id (deduplicated, `semver`-checked against the
@@ -196,6 +197,30 @@ gaps, on top of what the previous revision already fixed. What changed:
   Tauri build) before this one test's failure was found by the reviewer's
   independent run — recorded as the actual, current state rather than
   claimed clean.
+
+## Corrections since the reviewed version (commit 499ddbae)
+
+- **`brace-expansion` is no longer claimed reached by the YAML
+  reproduction.** Its dependency chain on the `gen:api` path is real, but
+  `@redocly/openapi-core`'s only `minimatch` call (`lib/utils.js:106`)
+  matches remote `$ref` URLs against configured Redocly header patterns
+  (`lib/utils.js:85-88`); YAML content never becomes that pattern, and
+  `openapi-typescript` configures no headers. SUPPLY-006 now lists
+  `brace-expansion` as dependency presence with that call-site gap, apart
+  from `js-yaml`'s confirmed parser reachability, and the Confidence
+  section says the same.
+- **The YAML reproduction now tests a real merge.** Its earlier marker
+  (`description: from_yaml_merge`) sat directly under `schema`, outside the
+  anchor, so it appeared with or without merge-key processing. Both fields
+  now live only under `base: &base`, `schema` is only `<<: *base`, and a
+  control run without the merge line must generate `schema: unknown` with
+  no description. The script asserts both outcomes; its README and
+  transcript describe that assertion. The finding it supports — `js-yaml`'s
+  merge-key parser is reached through an external `$ref` — is unchanged.
+- The application test failure recorded in the previous section
+  (`scheduler_attention.rs:1855`) remains a separately reported
+  application/test issue. This revision does not touch it and does not
+  claim a new full-suite pass.
 
 ## Threat assumptions
 
@@ -716,8 +741,8 @@ gives the exact resolved versions at each node.
   build`/`npm run dev`. Real, build-time reachable, **not**
   `shadcn`-rooted.
 
-- **`js-yaml`, `brace-expansion`, and `@redocly/openapi-core` — corrected
-  reachability, per the review's independent reproduction.** The previous
+- **`js-yaml` and `@redocly/openapi-core` — corrected reachability, per
+  the review's independent reproduction.** The previous
   revision rejected any `js-yaml` exploit path through `gen:api`, reasoning
   that `gen-api.mjs`'s `fetchSpec` calls `res.json()`/`JSON.parse` and
   hands `openapiTS()` a plain object, never raw text. **That reasoning is
@@ -728,20 +753,18 @@ gives the exact resolved versions at each node.
   fetches or reads for each one with `@redocly/openapi-core`'s own
   `parseYaml` (`lib/js-yaml/index.js`: `js_yaml_1.load` with a schema whose
   `implicit` types explicitly include `js_yaml_1.types.merge`, i.e.
-  merge-key support is deliberately enabled). This also explains
-  `brace-expansion@2.1.4`'s real chain: `openapi-typescript ->
-  @redocly/openapi-core -> minimatch -> brace-expansion`, a glob-matching
-  dependency of `@redocly/openapi-core` itself, reached by the same
-  `gen:api` devDependency path — **not** `shadcn`-rooted, contrary to an
-  earlier, incomplete trace.
+  merge-key support is deliberately enabled).
 
   A bounded, harmless reproduction (`repro/supply-006-yaml-ref/`, run three
   consecutive times this revision, deterministic) confirms the mechanism:
   a plain JS OpenAPI object — the same shape `gen-api.mjs` builds — with a
-  `$ref` to an external YAML file using `<<: *anchor` merge syntax, run
-  through the real, installed `openapiTS()`, produces generated output
-  containing a field that exists only because the merge was resolved. This
-  proves the merge-key YAML parser **is reached** by this dependency chain
+  `$ref` to an external YAML file whose `schema` is only `<<: *base`, run
+  through the real, installed `openapiTS()`, generates `schema: string`
+  with the `from_yaml_merge` description — both fields defined only under
+  the anchor. A control run with the same file minus the merge line
+  generates `schema: unknown` with no description, and the script asserts
+  both outcomes. This proves the merge-key YAML parser **is reached** by
+  this dependency chain
   given the right input; it does **not** reproduce `GHSA-2883-xcg3-v3hh`'s
   specific CPU-exhaustion behavior (an empty merge source `maxTotalMergeKeys`
   fails to bound) — no exhaustion payload was built or run, only a
@@ -755,10 +778,31 @@ gives the exact resolved versions at each node.
   `npm run gen:api -- <url-or-path>` against a target whose document (or
   anything it `$ref`s) is not self-contained and points at content the
   developer has not reviewed, or if the daemon's own generated document
-  ever gains an external `$ref` (not the case today). `js-yaml` and
-  `brace-expansion` stay in the advisory inventory as present, real,
-  build-reachable-given-that-prerequisite dependencies — confirmed reached
-  by the parser, not confirmed as a demonstrated CPU-exhaustion exploit.
+  ever gains an external `$ref` (not the case today). `js-yaml` stays in
+  the advisory inventory as a present, real dependency whose parser is
+  confirmed reached given that prerequisite — not as a demonstrated
+  CPU-exhaustion exploit.
+
+- **`brace-expansion` — dependency present, vulnerable operation not shown
+  reachable (corrected from the previous revision).** The chain is real:
+  `openapi-typescript -> @redocly/openapi-core@1.34.19 -> minimatch@5.1.9
+  -> brace-expansion@2.1.4`, on the `gen:api` devDependency path, not
+  `shadcn`'s (the nested `brace-expansion@5.0.9` is `shadcn`'s, via
+  `ts-morph -> @ts-morph/common -> minimatch@10.2.6`). But the previous
+  revision wrongly counted it as confirmed by the YAML reproduction.
+  `@redocly/openapi-core` calls `minimatch` in one place,
+  `lib/utils.js:106` (`match`), from `readFileFromUrl`
+  (`lib/utils.js:85-88`), to match a remote `$ref` URL against the
+  `header.matches` pattern of each configured Redocly resolve header. The
+  pattern brace-expansion would expand comes from Redocly configuration,
+  not from document or YAML content, and `openapi-typescript`'s own
+  `createConfig` call (`dist/index.mjs:31-38`) configures no headers, so
+  that loop has no pattern to match under `gen:api`. The YAML reproduction
+  does not reach it; the review's own instrumentation recorded zero
+  `brace-expansion` calls while the external YAML merge succeeded. Its
+  three advisories stay in the inventory as dependency presence, with the
+  call-site gap stated rather than assumed: no attacker-controlled path to
+  a `brace-expansion` pattern was found under `gen:api`'s configuration.
 
 - **`@vitest/mocker`/`vitest`**: reachable on every `npm test`/`npm run
   check`/CI run. Needs a malicious test file to matter — a
@@ -769,9 +813,9 @@ gives the exact resolved versions at each node.
   anything; `braces` (and the inherited
   `ts-morph`/`fast-glob`/`micromatch`/`@ts-morph/common`/`shadcn` cluster)
   needs a major `shadcn` bump and can be deferred, since nothing reaches
-  it. For the `gen:api` chain specifically (`js-yaml`, `brace-expansion`,
-  transitively via `@redocly/openapi-core`/`minimatch`), `npm audit fix`
-  also applies without a major bump; additionally, a developer-facing
+  it. For the `gen:api` chain specifically (`js-yaml` directly, and
+  `brace-expansion` via `@redocly/openapi-core -> minimatch`), `npm audit
+  fix` also applies without a major bump; additionally, a developer-facing
   warning or an allowlist of trusted `gen:api` targets would close the
   external-`$ref` prerequisite this finding depends on, if that is judged
   worth doing for a tool invoked by hand against a developer-chosen target.
@@ -783,10 +827,13 @@ gives the exact resolved versions at each node.
   in this revision (`npm ls --all` plus a direct, `semver`-checked
   cross-reference of `ui/package-lock.json` against a freshly captured
   `npm audit --json`, both committed as evidence — not inferred or
-  eyeballed). The `js-yaml`/`brace-expansion` parser-reachability claim is
-  confirmed by a committed, deterministic reproduction; the specific
-  CPU-exhaustion behavior of `GHSA-2883-xcg3-v3hh` is not claimed to have
-  been reproduced, only the parser's reachability given an external `$ref`.
+  eyeballed). The `js-yaml` parser-reachability claim is confirmed by a
+  committed, deterministic reproduction with a no-merge control; the
+  specific CPU-exhaustion behavior of `GHSA-2883-xcg3-v3hh` is not claimed
+  to have been reproduced, only the parser's reachability given an
+  external `$ref`. `brace-expansion` is confirmed present on the `gen:api`
+  chain; its vulnerable operation is not shown reachable from
+  attacker-controlled input — see its entry above.
 
 ### Hardening suggestions, new this revision
 
@@ -952,11 +999,15 @@ committed raw evidence rather than vague counts. The places confidence is
 intentionally split, each disclosed rather than smoothed over: SUPPLY-002
 (metrics confirmed, intent not, and explicitly not claimed); SUPPLY-007
 (the dependency/call-site chain is confirmed; a working exploit was not
-built or run); and SUPPLY-006's `js-yaml`/`brace-expansion` reachability
-(the parser is confirmed reached via an external `$ref`, by a committed
-reproduction; the specific CPU-exhaustion behavior of `GHSA-2883-xcg3-v3hh`
-is not claimed to have been reproduced, and the default developer workflow
-does not trigger the external-`$ref` prerequisite at all).
+built or run); SUPPLY-006's `js-yaml` reachability (the parser is
+confirmed reached via an external `$ref`, by a committed reproduction with
+a no-merge control; the specific CPU-exhaustion behavior of
+`GHSA-2883-xcg3-v3hh` is not claimed to have been reproduced, and the
+default developer workflow does not trigger the external-`$ref`
+prerequisite at all); and SUPPLY-006's `brace-expansion` (dependency
+presence confirmed; its only Redocly call site matches configured header
+patterns, not document content, and no attacker-controlled path to it was
+found).
 
 ## Unresolved design questions for the orchestrator
 

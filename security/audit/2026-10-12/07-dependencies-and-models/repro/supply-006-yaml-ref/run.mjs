@@ -28,56 +28,65 @@ const repoRoot = findRepoRoot(here)
 const openapiTSPath = pathToFileURL(join(repoRoot, "ui/node_modules/openapi-typescript/dist/index.mjs")).href
 const { default: openapiTS } = await import(openapiTSPath)
 
-const scratch = mkdtempSync(join(tmpdir(), "supply-006-yaml-ref-"))
-try {
-  // An external YAML file with an anchor merged via `<<:` — the exact
-  // feature GHSA-2883-xcg3-v3hh's `maxTotalMergeKeys` advisory is about,
-  // and the exact schema feature @redocly/openapi-core's parseYaml enables
-  // (`implicit: [js_yaml_1.types.merge]`). This is a two-key merge, not a
-  // CPU-exhaustion payload.
-  const yamlPath = join(scratch, "external.yaml")
-  writeFileSync(
-    yamlPath,
-    [
-      "base: &base",
-      "  type: string",
-      "schema:",
-      "  <<: *base",
-      "  description: from_yaml_merge",
-      "",
-    ].join("\n"),
-  )
+const { astToString } = await import(openapiTSPath)
 
-  // The same shape gen-api.mjs builds: a plain JS object, as if parsed by
-  // `JSON.parse`/`res.json()` — gen-api.mjs never hands openapiTS raw text.
-  const spec = {
-    openapi: "3.0.3",
-    info: { title: "supply-006 proof", version: "0.0.0" },
-    paths: {},
-    components: {
-      schemas: {
-        Proof: { $ref: `./external.yaml#/schema` },
-      },
-    },
+// Generates types for a spec whose one schema is an external `$ref` into a
+// YAML file holding `yamlLines`, in a fresh scratch directory each call.
+async function generate(yamlLines) {
+  const scratch = mkdtempSync(join(tmpdir(), "supply-006-yaml-ref-"))
+  try {
+    writeFileSync(join(scratch, "external.yaml"), yamlLines.join("\n") + "\n")
+    // The same shape gen-api.mjs builds: a plain JS object, as if parsed by
+    // `JSON.parse`/`res.json()` — gen-api.mjs never hands openapiTS raw text.
+    const spec = {
+      openapi: "3.0.3",
+      info: { title: "supply-006 proof", version: "0.0.0" },
+      paths: {},
+      components: { schemas: { Proof: { $ref: "./external.yaml#/schema" } } },
+    }
+    // A relative $ref resolves against the directory of `cwd`, which
+    // openapiTS treats as the root document's own file path.
+    const ast = await openapiTS(spec, { cwd: pathToFileURL(join(scratch, "doc.json")) })
+    return astToString(ast)
+  } finally {
+    rmSync(scratch, { recursive: true, force: true })
   }
-  // openapiTS resolves a relative $ref against the *directory* of its `cwd`
-  // option, treated as the root document's own file path (not a directory
-  // path) — so this must name a file inside `scratch`, not `scratch` itself.
-  const ast = await openapiTS(spec, { cwd: pathToFileURL(join(scratch, "doc.json")) })
-  const { astToString } = await import(
-    pathToFileURL(join(repoRoot, "ui/node_modules/openapi-typescript/dist/index.mjs")).href
-  )
-  const output = astToString(ast)
-
-  console.log("--- generated output ---")
-  console.log(output)
-
-  if (!output.includes("from_yaml_merge")) {
-    console.error("FAIL: generated output does not contain the merged YAML field — the external $ref/YAML-merge path was not exercised as expected")
-    process.exit(1)
-  }
-  console.log("\nOK: the generated output contains the field produced only by resolving external.yaml's `<<: *base` merge.")
-  console.log("This confirms @redocly/openapi-core's YAML merge-key parser ran on externally-referenced content — not that GHSA-2883-xcg3-v3hh's CPU-exhaustion behavior was reproduced.")
-} finally {
-  rmSync(scratch, { recursive: true, force: true })
 }
+
+// Both fields live only under the anchor. `schema` gets them solely through
+// `<<: *base` — the merge-key feature GHSA-2883-xcg3-v3hh concerns and that
+// @redocly/openapi-core's parseYaml enables (`implicit: [types.merge]`).
+// A two-key merge, not a CPU-exhaustion payload.
+const merged = await generate([
+  "base: &base",
+  "  type: string",
+  "  description: from_yaml_merge",
+  "schema:",
+  "  <<: *base",
+])
+// Control: the same file with the merge line removed. Without merge-key
+// processing, `schema` is empty and inherits nothing from `base`.
+const control = await generate([
+  "base: &base",
+  "  type: string",
+  "  description: from_yaml_merge",
+  "schema: {}",
+])
+
+console.log("--- generated output, with `<<: *base` ---")
+console.log(merged)
+console.log("--- generated output, control without the merge ---")
+console.log(control)
+
+const inherited = (out) => out.includes("from_yaml_merge") && /\bschema: string;/.test(out)
+if (!inherited(merged)) {
+  console.error("FAIL: with the merge, `schema` did not inherit both `description` and `type: string` from the anchor")
+  process.exit(1)
+}
+if (inherited(control) || control.includes("from_yaml_merge")) {
+  console.error("FAIL: the control without a merge still shows the anchored fields — the assertion would not distinguish a merge")
+  process.exit(1)
+}
+console.log("OK: with `<<: *base`, `schema` is `string` described `from_yaml_merge` — both inherited solely from the anchor.")
+console.log("OK: the control without the merge carries neither field.")
+console.log("This confirms @redocly/openapi-core's YAML merge-key processing ran on externally-referenced content — not that GHSA-2883-xcg3-v3hh's CPU-exhaustion behavior was reproduced.")
