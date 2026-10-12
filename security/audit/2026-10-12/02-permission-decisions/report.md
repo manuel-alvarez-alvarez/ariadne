@@ -659,23 +659,82 @@ warning, one yanked-version warning). No advisory affects this tracer.
   behavior — this is stronger than "we trust the agent," it is "the
   transport will not do this."
 
+## Cross-task boundary with NET
+
+A parallel audit (NET) independently reproduced HTTP caller-authority
+failures: a caller with no demonstrated relationship to a session or goal
+reading another session's console events (`console-cross-task`, returning a
+synthetic `SYNTHETIC-NET-PRIVATE-MARKER` payload), writing and reading a
+skill document, and cancelling or completing a goal that was not its own
+(`cancel-cross-task`, `complete-cross-goal-exited-orchestrator`) — all
+reproduced with no installed agent running, per
+`/tmp/net-review-reproduction.log` (a log NET's own reviewer wrote; it is
+not evidence this report produced, and I have not re-run it myself).
+
+These are HTTP caller-authority failures — whether the request reached the
+daemon with standing to act on the session/goal it named at all — and
+**stay owned by NET**, not PERM. Every reproduction in this report's
+PERM-001/PERM-002 sections starts from a request that has already,
+legitimately reached a specific session's `handle_permission` call inside a
+specific repository; nothing in `acp.rs`, `derive.rs`, `operations.rs`,
+`decide.rs` or `learned_key.rs` checks who the HTTP caller is, because by
+the time a tool-call permission request exists, the ACP connection already
+belongs to one agent process the daemon itself spawned for one session —
+caller authority over *that* HTTP surface is a different, and prior,
+question than anything this report traces. I did not reproduce, and do not
+claim, that NET's caller-authority gaps and PERM's own findings combine into
+a *single* exploit — see the entity-scope question below for the one place
+they could plausibly compound, and why that compounding is not claimed as
+confirmed here.
+
 ## Design questions for the orchestrator
 
 1. Should the `remote` risk tag (and similarly coarse tags) distinguish the
    destination, so that a `learn`/`ai` family-level grant for a push/fetch
    tool does not transparently extend to a destination host the original
-   approval never saw? Current, documented behavior, not a bug.
+   approval never saw? Current, documented behavior, not a bug. Preserved as
+   an open question for the user, not resolved here.
 2. Should an explicit console denial of a request ever be able to suppress
    a later AI-mode confident auto-allow of the same normalized request in
-   the same repository? Current behavior is explicit spec text, not an
-   oversight.
+   the same repository (denial precedence)? Current behavior is explicit
+   spec text, not an oversight. Preserved as an open question for the user,
+   not resolved here.
 3. The `<ID>` placeholder in `learned_key::normalize` means a single "Allow
    this command" grant for an MCP tool covers that tool's shape for *any*
-   Ariadne entity id in the same repository. I did not verify whether the
-   MCP tool handlers themselves re-check that the target id belongs to the
-   caller's own session/task before acting. Cross-boundary evidence for
-   whoever audits tool execution (EXEC) or the MCP server's own scope
-   checks, not a PERM-owned finding.
+   Ariadne entity id in the same repository (entity scope). This is a
+   normalization property of PERM's own layer, confirmed by reading
+   `learned_key.rs` and its tests — not by a new execution reproduction this
+   revision, and I am not claiming it as a confirmed PERM finding on its
+   own, since it does nothing by itself: it only matters once something
+   else hands a mismatched entity id to an already-authorized tool call,
+   which is a question about what the MCP tool handlers themselves check
+   (EXEC, or the MCP server's own scope checks), not about the permission
+   decision. Whether this placeholder *combines* with NET's caller-authority
+   findings above into an actual cross-task access path is a real, open
+   question — and, per this task's own standard, one that needs its own
+   concrete execution evidence naming both halves of the chain before it is
+   called a vulnerability under either task's name. I have not produced
+   that evidence. Routed to the orchestrator as a joint NET/PERM question,
+   not asserted as a PERM cross-task vulnerability.
+4. Console input (`POST /v1/sessions/{id}/console/input`) is what answers a
+   pending permission question (`acp.rs`'s `pending_permission` channel,
+   `021` rule 9). *Who* may legitimately post to a given session's console —
+   whether the HTTP caller has standing over that session at all — is the
+   same caller-authority question NET's `console-cross-task` reproduction
+   above raises for reading events; I did not check whether the console
+   *input* endpoint enforces the same, a different, or no scoping, since
+   that is a read/write distinction NET's own report should settle. *What*
+   an accepted answer does once it is accepted — which option it selects,
+   whether it writes a `learned_permissions` row, how broadly that row then
+   answers later requests — is what this report traces. This is recorded
+   here as an **unresolved approval-policy boundary shared with NET**: if a
+   caller without standing over a session could post its console input, the
+   damage that answer can do (a one-time choice versus a `family`-level
+   grant recorded for the whole repository) is governed entirely by the
+   permission-decision rules this report describes, so the two tasks'
+   findings would need to be read together, not separately, to size that
+   risk. Not resolved here; preserved for the user and for whoever
+   reconciles the two reports.
 
 ## Recommendation
 
@@ -690,9 +749,12 @@ independent fix to the same file-reading area of `operations.rs`/
 `derive.rs` and can ride in the same change or land separately — it shares
 no code path with PERM-001's fix.
 
-Treat the three "design questions" as separate, user-facing policy
-conversations rather than bugs: each is current behavior matching its own
-spec text, and each trades convenience for breadth in a way a person should
+Treat the four "design questions" — destination scope, denial precedence,
+entity scope, and the console-input approval boundary shared with NET — as
+separate, user-facing policy conversations rather than bugs: each is current
+behavior matching its own spec text (or, for the fourth, an open boundary
+between two reports rather than either's settled behavior), and each trades
+convenience for breadth, or awaits another task's finding, in a way a person should
 decide on, not have audited away.
 
 ## Confidence
