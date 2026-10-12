@@ -300,7 +300,7 @@ Out: the daemon endpoints themselves (012).
     lost panel. The goal, task and session panels open on a dense fact list
     above their tabs — `text-xs`, three columns at `sm` and four at `lg`, no
     card frame — rather than the framed grid further down an entity's own
-    screen; a stepped task's own Agents fact and step strip are rule 40's.
+    screen; a stepped task's own workflow section is rule 40's.
 21. Every session is shown in its console, as the CLI draws it: a terminal
     emulator (xterm.js) on the daemon's terminal socket
     (`GET /v1/sessions/{id}/console/terminal`, 008), in which the daemon
@@ -623,12 +623,15 @@ Out: the daemon endpoints themselves (012).
     as many columns as it has, at the same width floors; the board scrolls
     sideways to its widest lane. A card whose status shows names the step
     where the status said `in progress`.
-40. The task panel of a stepped task draws a step strip under its facts: one
-    segment per column, the current one highlighted, the ones behind it
-    marked done, each segment's hint the column's description. Its Agents
-    fact lists one row per column — the column, the skills, the pin and a
-    link to its live session — and no author or reviewer fact. The history
-    names a step move by its `from_step` and `to_step` columns.
+40. The task panel of a stepped task draws one workflow section under its
+    facts, in place of a separate Agents fact and step strip: one row per
+    column, in order, closed by default. A row's state — done, current or
+    pending — is a colour paired with a label or icon, never colour alone,
+    and the current row carries `aria-current="step"`. Opening a row
+    reveals the column's description, its agent's skills, model and
+    effort, and a link to its live session, so inspecting one column never
+    requires opening the rest; there is no author or reviewer fact. The
+    history names a step move by its `from_step` and `to_step` columns.
 41. The task form shows one row per column of the goal's workflow, prefilled
     with the column's skills, with the column's preferred rank beside the pin
     picker, and sends `agents`, seat `agent` and the column's `step` each, on
@@ -1040,8 +1043,18 @@ Out: the daemon endpoints themselves (012).
   and Done, with a task under way in the middle one
   (`ui/src/features/goals/goal-swimlanes.test.tsx::draws each goal workflow columns`,
   `::draws an in-progress task of a stepless goal in its own column`).
-- The task panel of a stepped task lists one agent per column
-  (`ui/src/features/tasks/task-panel.test.tsx::shows workflow agents by column`).
+- The task panel of a stepped task draws one workflow section in place of
+  its old Agents fact and step strip, naming every column collapsed by
+  default and opening one without expanding the rest
+  (`ui/src/features/tasks/task-panel.test.tsx::shows workflow agents by column`,
+  `ui/src/features/tasks/workflow-steps.test.tsx::lists every column's name and progress, without opening any of them`,
+  `::opens one column's description, skills, model and session from the keyboard, leaving the rest closed`).
+- A pending task's columns are all pending, an in-progress task's own
+  column is current with the ones behind it done, and a finished task's
+  columns are all done
+  (`ui/src/features/tasks/workflow-steps.test.tsx::marks every column pending for a task that has not started, in the pending colour`,
+  `::marks the columns behind the current one done, and the rest ahead, in their own colours`,
+  `::marks every column done for a finished task, in the completion colour`).
 - The task form maps one agent to every workflow column, prefilled with the
   column's skills, and sends the complete staffing on create and on update
   (`ui/src/features/tasks/task-form-values.test.ts::maps one workflow agent for every column`,

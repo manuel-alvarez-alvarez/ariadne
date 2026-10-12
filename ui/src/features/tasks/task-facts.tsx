@@ -8,13 +8,11 @@ import { CopyableId } from "@/components/copyable-id"
 import { Fact, FactList } from "@/components/fact-list"
 import { stepUsageRows, TokenFigure } from "@/components/token-figure"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { AgentSummary } from "@/features/models/agent-summary"
 import { cn, shortSha } from "@/lib/format"
 import { useTaskPanelTo } from "@/routes/paths"
 import { taskQueryOptions } from "./queries"
 import { TASK_STATUS_META } from "./status"
 import { stepTitle } from "./steps"
-import { SessionLink } from "./task-sessions"
 
 export function TaskFacts({ task, steps = [] }: { task: TaskDto; steps?: WorkflowStepDto[] }) {
   return (
@@ -31,9 +29,6 @@ export function TaskFacts({ task, steps = [] }: { task: TaskDto; steps?: Workflo
         ) : (
           <Muted>not created yet</Muted>
         )}
-      </Fact>
-      <Fact label="Agents">
-        <StepAgents task={task} steps={steps} />
       </Fact>
       <Fact label="Tokens">
         <TokenFigure
@@ -74,29 +69,6 @@ export function TaskFacts({ task, steps = [] }: { task: TaskDto; steps?: Workflo
         </Fact>
       ) : null}
     </FactList>
-  )
-}
-
-function StepAgents({ task, steps }: { task: TaskDto; steps: WorkflowStepDto[] }) {
-  return (
-    <ul className="flex flex-col gap-2 text-xs">
-      {steps.map((step) => {
-        const agent = task.agents.find((candidate) => candidate.step === step.id)
-        return (
-          <li key={step.id} className="flex flex-col gap-0.5">
-            <span className="flex items-center gap-2">
-              <span className="font-medium">{step.title}</span>
-              {agent?.session_id ? <SessionLink sessionId={agent.session_id} /> : null}
-            </span>
-            {agent ? (
-              <AgentSummary skills={agent.skills} model={agent.model} effort={agent.effort} />
-            ) : (
-              <Muted>none staffed</Muted>
-            )}
-          </li>
-        )
-      })}
-    </ul>
   )
 }
 

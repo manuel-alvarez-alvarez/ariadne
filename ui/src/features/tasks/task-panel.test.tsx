@@ -28,7 +28,7 @@ it("shows workflow agents by column", async () => {
       client.setQueryData(qk.goals.detail(goal.id), goal)
     },
   })
-  expect(await screen.findByText("Agents")).toBeTruthy()
-  expect(screen.getAllByText("Build").length).toBeGreaterThan(0)
-  expect(screen.getAllByText("Test").length).toBeGreaterThan(0)
+  expect(await screen.findByText("Build")).toBeTruthy()
+  expect(screen.getByText("Test")).toBeTruthy()
+  expect(screen.queryByText("Agents")).toBeNull()
 })

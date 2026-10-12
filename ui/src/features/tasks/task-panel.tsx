@@ -42,13 +42,13 @@ import { paths, usePanelSessionNavigation } from "@/routes/paths"
 import { taskMessagesQueryOptions, taskQueryOptions } from "./queries"
 import { StalledBadge } from "./stalled"
 import { TASK_STATUS_META } from "./status"
-import { StepStrip } from "./step-strip"
 import { TaskActions } from "./task-actions"
 import { TaskDiff } from "./task-diff"
 import { TaskFacts } from "./task-facts"
 import { TaskHistory } from "./task-history"
 import { TaskMessages } from "./task-messages"
 import { TaskSessions, TaskSessionView } from "./task-sessions"
+import { WorkflowSteps } from "./workflow-steps"
 
 // Description leads the strip and is where the panel opens: it is what the
 // task *is*, and the first thing to read on a task just landed on.
@@ -128,7 +128,7 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
           <TaskHeader task={task.data} />
           <PaneBody>
             <TaskFacts task={task.data} steps={steps} />
-            {steps.length > 0 ? <StepStrip task={task.data} steps={steps} /> : null}
+            {steps.length > 0 ? <WorkflowSteps task={task.data} steps={steps} /> : null}
 
             <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
               <TabsList>
